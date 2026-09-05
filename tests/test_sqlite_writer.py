@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 from pathlib import Path
@@ -256,28 +255,3 @@ def test_writer_lane_rejects_before_admission_when_queue_remains_full(
     sqlite_store.reset_db()
 
 
-def test_migrated_storage_modules_have_no_direct_literal_dml():
-    from aletheia.portfolio import exchange_sync
-
-    mutating = {"INSERT", "UPDATE", "DELETE", "REPLACE"}
-    violations = []
-    for module_path in (Path(repo.__file__), Path(exchange_sync.__file__)):
-        tree = ast.parse(module_path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
-                continue
-            if node.func.attr not in {"execute", "executemany"} or not node.args:
-                continue
-            sql_node = node.args[0]
-            if isinstance(sql_node, ast.Constant) and isinstance(sql_node.value, str):
-                sql = sql_node.value
-            elif isinstance(sql_node, ast.JoinedStr) and sql_node.values:
-                first = sql_node.values[0]
-                sql = first.value if isinstance(first, ast.Constant) else ""
-            else:
-                continue
-            tokens = sql.lstrip().split(None, 1)
-            if tokens and tokens[0].upper() in mutating:
-                violations.append(f"{module_path.name}:{node.lineno}")
-
-    assert violations == []

@@ -97,7 +97,7 @@ Profile and reaches `NO_PLAN` without a model call.
 
 `entry_behavior_fingerprint` and `schema_fingerprint` are derived from the
 canonical schemas, prompt, compiler/profile registry, execution-route
-capabilities, and first-input acquisition/availability implementation. A mismatch
+capabilities, first-input acquisition/availability, and causal requalification implementation. A mismatch
 creates one compatibility-cutover cycle while retaining
 the old row and JSON unchanged. `cycle_number`, predecessor, reason, model/compiler
 invocation facts, last stage, and typed outcome are durable audit facts.
@@ -111,6 +111,31 @@ context, not its nullable database projection. New projections use that same
 source. Material-evidence requalification requires a completed active snapshot
 and a later context cutoff; unresolved Order/Fill/Position guards still apply.
 Historical context bytes and hashes are not backfilled or rewritten.
+
+Planning requalification is separate from stable discovery ownership. Before
+publication takes the writer, the existing Planner causal-window validator and
+market-structure kernel project the latest confirmed 15m high, low and structure
+break (at most three facts). Their canonical material fingerprint excludes
+Candidate price/rank/score, rolling-window hashes, ATR-only changes, and cutoff
+churn. A fact disappearing from the window is not a new event.
+
+A terminal generation without a Plan may gain one successor only on a later
+active completed snapshot, the same thread and behavior/schema, and a new fact
+confirmed after its birth/frozen-input cutoff. The transaction rechecks the
+expected current generation, exact Candidate context and instrument, monotonic
+source time and unresolved execution before CAS. A waiting/triggered/reserved
+Plan is not superseded by this path. Missing material proof grants no recovery.
+The proof and selected fact values belong to the generation's existing
+requalification source JSON; attention renewals retain this birth proof.
+
+Pre-model missing-book/required-context releases keep their existing backoff
+and cycle while active. Once terminal, those exact operational outcomes may
+instead use a completed causal window plus an exact persisted book observed
+after terminalization and fresh at the new cutoff. A model-invoked or already
+frozen failure cannot use this dependency-recovery path. Neither recovery edits
+the old input/hash, result, or attempt count; economic NO_PLAN remains final for
+the same material. No new ledger, scoring admission, or execution authority is
+introduced.
 
 ## Exact-venue execution eligibility
 

@@ -99,12 +99,26 @@ def _execution_eligible(member: object) -> bool:
     return bool(getattr(member, "execution_eligible", True))
 
 
+def _prepare_planning_requalifications(members) -> dict[str, dict | None]:
+    proofs = {}
+    for member in members:
+        candidate = member if isinstance(member, dict) else member.model_dump()
+        try:
+            proofs[candidate["id"]] = repo.prepare_candidate_requalification(candidate)
+        except ValueError as exc:
+            logger.info("Candidate requalification unavailable: candidate=%s reason=%s", candidate["id"], exc)
+            proofs[candidate["id"]] = None
+    return proofs
+
+
+
 def _ensure_planning_generations(
     members,
     *,
     soft_lease_sec: int,
     max_attention_age_sec: int,
     now: datetime,
+    requalifications: dict[str, dict | None] | None = None,
 ) -> tuple[set[str], set[str], int]:
     """Publish planning authority only for execution-eligible Candidates."""
 
@@ -121,6 +135,7 @@ def _ensure_planning_generations(
                 soft_lease_sec=soft_lease_sec,
                 max_attention_age_sec=max_attention_age_sec,
                 now=now,
+                requalification=requalifications.get(candidate_id) if requalifications is not None else None,
             )
         except ValueError as exc:
             logger.info(
@@ -1464,6 +1479,8 @@ class UniverseService:
                     entry_ts=entry_ts,
                     allocated=allocated,
                 )
+                previous_members = repo.list_universe_members(prev_snapshot_id, limit=500)
+                requalifications = _prepare_planning_requalifications(previous_members)
                 with _atomic_universe_publication():
                     if candidate_selection_authority_bundle is not None:
                         _assert_candidate_selection_publication_authority(
@@ -1478,10 +1495,11 @@ class UniverseService:
                     _persist_attempt_learning_exposures(deferred_exposure_writes)
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
-                            repo.list_universe_members(prev_snapshot_id, limit=500),
+                            previous_members,
                             soft_lease_sec=cfg.universe.entry_ttl_sec,
                             max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
                             now=now,
+                            requalifications=requalifications,
                         )
                     )
                     repo.reconcile_candidate_attention(
@@ -1699,6 +1717,7 @@ class UniverseService:
                 allocated=allocated,
             )
             sample_alpha_control = _should_sample_alpha_control(now)
+            requalifications = _prepare_planning_requalifications(member_models)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
             # healthy snapshot is the final write in this publication unit.
@@ -1718,6 +1737,7 @@ class UniverseService:
                         soft_lease_sec=cfg.universe.entry_ttl_sec,
                         max_attention_age_sec=cfg.universe.candidate_max_continuous_age_sec,
                         now=now,
+                        requalifications=requalifications,
                     )
                 )
 

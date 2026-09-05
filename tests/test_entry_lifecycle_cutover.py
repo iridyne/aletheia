@@ -517,3 +517,167 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
     assert stored["compiler_invoked"] == 0
     assert stored["outcome_class"] == "planning_blocked"
     assert stored["attempt_count"] == 1
+
+
+def _legacy_structure_candidate(source_at, *, price=100, rank=1):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember, UniverseSnapshot
+    from aletheia.universe.candidate_opportunity import legacy_candidate_opportunity_context
+
+    snapshot = UniverseSnapshot(created_at=source_at, expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_snapshot(snapshot)
+    member = UniverseMember(snapshot_id=snapshot.id, asset_id="asset-btc", venue="bitget",
+        symbol="BTC/USDT", market_type="perp", rank=rank, total_score=90-rank,
+        scanner_family="momentum", scanner_direction="long", entry_price_usd=price,
+        expires_at="2099-01-01T00:00:00+00:00")
+    context = legacy_candidate_opportunity_context(candidate_id=member.id,
+        candidate=member.model_dump(), detected_at=source_at)
+    member.candidate_opportunity_context_json = context.model_dump_json()
+    member.candidate_opportunity_context_hash = context.context_hash
+    repo.insert_candidate(member)
+    return member
+
+
+def _seed_requalification_bars():
+    import math
+    from datetime import datetime, timezone
+    from aletheia.data.providers import Candle
+    from aletheia.storage import repositories as repo
+
+    start = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    interval = 900_000
+    bars = []
+    for index in range(104):
+        price = 100 + math.sin(index * math.pi / 8)
+        bars.append(Candle(start + index * interval, price, price + .2, price - .2, price, 1000))
+    repo.upsert_ohlcv_candles("BTC/USDT", "15m", bars, exchange="bitget", market_type="perp")
+    repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?,last_mutated_at=?",
+        ("2026-09-01T00:00:00+00:00", "2026-09-01T00:00:00+00:00"))
+    return [datetime.fromtimestamp((start + n * interval) / 1000, timezone.utc)
+        for n in (100, 101, 104)]
+
+
+
+
+
+def test_legacy_no_plan_does_not_loop_on_price_rank_or_new_bar(_inmemory_db):
+    from aletheia.storage import repositories as repo
+    first_at, unchanged_at, _ = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate(first_at.isoformat())
+    first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+    repo.execute_write("UPDATE candidate_planning_generations SET status='no_plan', "
+        "result_kind='no_plan',attention_status='terminal' WHERE id=?", (first["id"],))
+    for rank in (2, 3):
+        later = _legacy_structure_candidate(unchanged_at.isoformat(), price=104, rank=rank)
+        same, created = repo.ensure_candidate_planning_generation(later.id, now=unchanged_at)
+        assert not created and same["id"] == first["id"]
+    assert repo.get_candidate_planning_generation(first["id"])["last_candidate_id"] == candidate.id
+
+
+@pytest.mark.parametrize("guard", ["superseded_snapshot", "future_cutoff", "corrupt_proof", "missing_proof", "schema_changed"])
+def test_b1_rejects_unproven_requalification(_inmemory_db, guard):
+    from datetime import timedelta
+    from aletheia.storage import repositories as repo
+    first_at, _, later_at = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate(first_at.isoformat())
+    first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+    repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable',attention_status='terminal' WHERE id=?", (first["id"],))
+    later = _legacy_structure_candidate(later_at.isoformat())
+    proof = repo.prepare_candidate_requalification(later.model_dump())
+    if guard == "superseded_snapshot":
+        repo.execute_write("UPDATE universe_snapshots SET status='superseded' WHERE id=?", (later.snapshot_id,))
+    elif guard == "corrupt_proof":
+        proof.pop("material")
+    elif guard == "missing_proof":
+        proof = None
+    elif guard == "schema_changed":
+        repo.execute_write("UPDATE candidate_planning_generations SET schema_fingerprint=? WHERE id=?", ("0"*64, first["id"]))
+    with repo.transaction(immediate=True):
+        same, created = repo.ensure_candidate_planning_generation(later.id, requalification=proof,
+            now=later_at-timedelta(seconds=1) if guard == "future_cutoff" else later_at)
+    assert not created and same["id"] == first["id"]
+
+
+@pytest.mark.parametrize("execution", ["waiting", "order", "fill", "position"])
+def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, Fill, Position
+    first_at, _, later_at = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate(first_at.isoformat())
+    first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+    _insert_expired_plan(repo, first, candidate.id, "plan-b1", first_at.isoformat())
+    if execution in {"waiting", "triggered", "risk_reserved"}:
+        repo.execute_write("UPDATE entry_plans SET status=? WHERE id='plan-b1'", (execution,))
+    else:
+        order = Order(symbol="BTC/USDT", market_type="perp", direction="long", order_type="limit",
+            quantity=1, price=100, execution_mode="paper_internal", entry_plan_id="plan-b1",
+            status="submission_unknown" if execution == "order" else "filled")
+        repo._insert("orders", order.model_dump())
+        if execution == "fill":
+            repo._insert("fills", Fill(order_id=order.id, fill_price=100, fill_quantity=.5).model_dump())
+        if execution == "position":
+            repo._insert("positions", Position(symbol="BTC/USDT", market_type="perp", direction="long",
+                quantity=1, entry_price=100, execution_mode="paper_internal", order_id=order.id).model_dump())
+    repo.execute_write("UPDATE candidate_planning_generations SET attention_status='terminal' WHERE id=?", (first["id"],))
+    later = _legacy_structure_candidate(later_at.isoformat())
+    same, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert not created and same["id"] == first["id"]
+
+
+@pytest.mark.real_db
+def test_b1_concurrent_publications_and_reopen_create_one_successor(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from aletheia.storage import repositories as repo, sqlite as store
+    from tests.test_sqlite_writer import _setup_db
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage.models import UniverseAsset
+    repo.upsert_universe_asset(UniverseAsset(id="asset-btc", venue="bitget", market_type="perp", symbol="BTC/USDT"))
+    try:
+        first_at, _, later_at = _seed_requalification_bars()
+        candidate = _legacy_structure_candidate(first_at.isoformat())
+        first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+        repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable',attention_status='terminal' WHERE id=?", (first["id"],))
+        later = [_legacy_structure_candidate(later_at.isoformat()) for _ in range(2)]
+        proofs = [repo.prepare_candidate_requalification(c.model_dump()) for c in later]
+        def publish(index):
+            with repo.transaction(immediate=True):
+                return repo.ensure_candidate_planning_generation(later[index].id,
+                    requalification=proofs[index], now=later_at)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(publish, range(2)))
+        assert sum(created for _, created in results) == 1
+        assert results[0][0]["id"] == results[1][0]["id"]
+        successor = results[0][0]
+        store.reset_db()
+        same, created = repo.ensure_candidate_planning_generation(later[0].id, now=later_at)
+        assert not created and same["id"] == successor["id"]
+        assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 2
+    finally:
+        store.reset_db()
+
+
+@pytest.mark.parametrize("model_invoked", [False, True])
+def test_b1_terminal_dependency_recovery_requires_real_book_and_no_model(_inmemory_db, model_invoked):
+    from datetime import timedelta
+    from aletheia.storage import repositories as repo
+    from aletheia.data.models import OrderbookSnapshot
+    first_at, later_at, _ = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate(first_at.isoformat())
+    first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+    repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable',result_kind='unavailable', "
+        "result_json=?,attention_status='terminal',attention_terminal_at=?,model_invoked=? WHERE id=?",
+        ('{"reason":"ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE"}', (first_at+timedelta(minutes=1)).isoformat(), model_invoked, first["id"]))
+    later = _legacy_structure_candidate(later_at.isoformat())
+    same, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert not created and same["id"] == first["id"]
+    book = OrderbookSnapshot(symbol="BTC/USDT", exchange="bitget", market_type="perp",
+        bid_price=99.9, ask_price=100.1, spread_bps=20, total_depth_10bps_usd=10000,
+        bid_depth_10bps_usd=5000, ask_depth_10bps_usd=5000,
+        observed_at=(later_at-timedelta(seconds=1)).isoformat())
+    repo.insert_orderbook_snapshot(book.model_dump())
+    recovered, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert created is (not model_invoked)
+    if not model_invoked:
+        assert recovered["cycle_reason"] == "planning_dependencies_recovered"
+        assert recovered["previous_generation_id"] == first["id"]
+

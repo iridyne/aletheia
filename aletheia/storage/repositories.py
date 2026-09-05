@@ -9342,6 +9342,7 @@ def reconcile_candidate_attention(
                 source_json = json.dumps(
                     {
                         **refresh_source,
+                        **{k: v for k, v in json.loads(row["requalification_source_json"] or "{}").items() if k == "birth_material"},
                         "planning_generation_id": generation_id,
                         "planning_identity": row["planning_identity"],
                     },
@@ -9374,6 +9375,54 @@ def reconcile_candidate_attention(
     return counts
 
 
+def prepare_candidate_requalification(candidate: dict) -> dict | None:
+    """Freeze bounded local PA evidence before entering publication's writer."""
+    from aletheia.storage.sqlite import read_snapshot
+    from aletheia.trading.entry_analysis import entry_causal_windows, fingerprint, planning_structure_material
+    from aletheia.trading.entry_analysis import entry_orderbook_available
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    if get_db().in_transaction:
+        raise ValueError("requalification_preparation_inside_transaction")
+    if not candidate.get("execution_eligible") or not candidate.get("candidate_opportunity_context_json"):
+        return None
+    context = CandidateOpportunityContextV1.model_validate_json(candidate["candidate_opportunity_context_json"])
+    cutoff = _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
+    behavior, schema = entry_contract_fingerprints()
+    instrument = tuple(str(candidate[key]) for key in ("venue", "symbol", "market_type"))
+    with read_snapshot():
+        current = get_db().execute(
+            "SELECT id FROM candidate_planning_generations "
+            "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
+            "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1",
+            instrument,
+        ).fetchone()
+        rows = get_ohlcv_candles(candidate["symbol"], "15m", 96, candidate["venue"],
+            candidate["market_type"], int(cutoff.timestamp()*1000), include_provenance=True)
+        book = latest_orderbook(candidate["symbol"], candidate["venue"], candidate["market_type"])
+    windows, structures, _, _ = entry_causal_windows(*instrument, candidate["scanner_direction"], {"15m": rows}, cutoff)
+    material = planning_structure_material(structures)
+    if material is None:
+        return None
+    proof = {
+        "candidate_id": candidate["id"], "snapshot_id": candidate["snapshot_id"],
+        "candidate_context_hash": context.context_hash,
+        "expected_generation_id": current["id"] if current else None,
+        "planning_key": candidate_planning_identity(candidate)[0],
+        "instrument": dict(zip(("venue", "symbol", "market_type"), instrument)),
+        "source_cutoff_at": cutoff.isoformat(),
+        "entry_behavior_fingerprint": behavior, "schema_fingerprint": schema,
+        "source_fingerprint": windows["15m"]["source_fingerprint"],
+        "material": material,
+        "orderbook": ({k: book[k] for k in ("id", "observed_at", "bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd")}
+            if entry_orderbook_available(book, cutoff) else None),
+    }
+    return {**proof, "proof_hash": fingerprint(proof)}
+
+
+
 def ensure_candidate_planning_generation(
     candidate_id: str,
     *,
@@ -9381,12 +9430,19 @@ def ensure_candidate_planning_generation(
     soft_lease_sec: int = 900,
     max_attention_age_sec: int = 3600,
     now: datetime | None = None,
+    requalification: dict | None = None,
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
     from aletheia.trading.entry_plan import candidate_planning_identity
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.trading.entry_analysis import fingerprint, planning_structure_material
+
+    if requalification is None and not get_db().in_transaction:
+        preparation_candidate = get_candidate(candidate_id)
+        if preparation_candidate is not None:
+            requalification = prepare_candidate_requalification(preparation_candidate)
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
@@ -9488,6 +9544,66 @@ def ensure_candidate_planning_generation(
                 ).fetchone()
             )
         )
+        # The proof is prepared without the writer. Recheck its exact owner and
+        # publication identity here; a concurrent successor makes it stale.
+        if requalification is not None:
+            proof_payload = {k: v for k, v in requalification.items() if k != "proof_hash"}
+            expected = {
+                "candidate_id": candidate_id, "snapshot_id": candidate["snapshot_id"],
+                "candidate_context_hash": context.context_hash,
+                "expected_generation_id": existing["id"] if existing else None,
+                "planning_key": planning_key,
+                "instrument": {k: candidate[k] for k in ("venue", "symbol", "market_type")},
+                "source_cutoff_at": _normalized_utc_datetime(str(context.source["source_cutoff_at"])).isoformat(),
+                "entry_behavior_fingerprint": entry_behavior_fingerprint,
+                "schema_fingerprint": schema_fingerprint,
+            }
+            if (not candidate_snapshot_complete
+                or context.candidate_id != candidate_id
+                or context.context_hash != candidate.get("candidate_opportunity_context_hash")
+                or _normalized_utc_datetime(expected["source_cutoff_at"]) > current_time
+                or any(requalification.get(k) != v for k, v in expected.items())
+                or fingerprint(proof_payload) != requalification.get("proof_hash")):
+                requalification = None
+        structure_requalified = False
+        dependency_recovered = False
+        if (requalification is not None and existing is not None
+            and existing["planning_key"] == planning_key
+            and existing.get("entry_behavior_fingerprint") == entry_behavior_fingerprint
+            and existing.get("schema_fingerprint") == schema_fingerprint
+            and existing.get("attention_status") == "terminal"
+            and existing_plan is None and not unresolved_execution
+            and later_completed_requalification):
+            birth = json.loads(existing["requalification_source_json"] or "{}").get("birth_material")
+            baseline = birth["material"] if birth else None
+            compared_at = birth["source_cutoff_at"] if birth else existing_context.source["source_cutoff_at"]
+            if existing.get("planner_input_json"):
+                frozen = json.loads(existing["planner_input_json"])
+                frozen_material = planning_structure_material(frozen.get("market_structure", {}))
+                if frozen_material is not None:
+                    baseline = frozen_material
+                compared_at = max(_normalized_utc_datetime(compared_at),
+                    _normalized_utc_datetime(frozen["analysis_cutoff_at"])).isoformat()
+            material = requalification["material"]
+            prior_ids = {f["id"] for f in baseline["facts"]} if baseline else set()
+            structure_requalified = bool(
+                baseline and baseline["fingerprint"] != material["fingerprint"]
+                and any(f["id"] not in prior_ids
+                    and f["known_at_ms"] > _normalized_utc_datetime(compared_at).timestamp()*1000
+                    for f in material["facts"])
+            )
+            blocked_reason = json.loads(existing["result_json"] or "{}").get("reason")
+            book = requalification.get("orderbook")
+            dependency_recovered = bool(
+                existing.get("result_kind") == "unavailable"
+                and not existing.get("model_invoked") and not existing.get("planner_input_json")
+                and blocked_reason in {"ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE", "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE"}
+                and book and existing.get("attention_terminal_at")
+                and _normalized_utc_datetime(book["observed_at"])
+                    > _normalized_utc_datetime(existing["attention_terminal_at"])
+            )
+
+
         eligibility_recovered = bool(
             eligibility_recovered
             and later_completed_requalification
@@ -9532,15 +9648,17 @@ def ensure_candidate_planning_generation(
             and not eligibility_recovered
             and not expired_requalified
             and not material_input_changed
+            and not structure_requalified
+            and not dependency_recovered
             and not compatibility_cutover
         ):
             execute_write(
                 "UPDATE candidate_planning_generations SET "
-                "last_candidate_id=CASE WHEN planner_input_json IS NULL THEN ? ELSE last_candidate_id END, "
+                "last_candidate_id=CASE WHEN planner_input_json IS NULL AND attention_status='active' THEN ? ELSE last_candidate_id END, "
                 "updated_at=? WHERE id=?",
                 (candidate_id, timestamp, existing["id"]),
             )
-            if existing.get("planner_input_json") is None:
+            if existing.get("planner_input_json") is None and existing.get("attention_status") == "active":
                 existing["last_candidate_id"] = candidate_id
             existing["updated_at"] = timestamp
             return existing, False
@@ -9554,6 +9672,10 @@ def ensure_candidate_planning_generation(
             if compatibility_cutover
             else "material_input_changed"
             if material_input_changed
+            else "confirmed_structure_requalified"
+            if structure_requalified
+            else "planning_dependencies_recovered"
+            if dependency_recovered
             else "execution_eligibility_recovered"
             if eligibility_recovered
             else "incompatible_planning_generation"
@@ -9564,13 +9686,15 @@ def ensure_candidate_planning_generation(
                 if reason == "canonical_compatibility_cutover"
                 else "planning_generation_superseded"
             )
-            execute_write(
+            superseded = execute_write(
                 "UPDATE candidate_planning_generations SET is_current=0, "
                 "status='superseded', attention_status='terminal', "
                 "attention_terminal_at=?, attention_terminal_reason=?, "
                 "updated_at=? WHERE id=? AND is_current=1",
                 (timestamp, terminal_reason, timestamp, existing["id"]),
             )
+            if superseded.rowcount != 1:
+                raise ValueError("candidate_requalification_cas_lost")
             execute_write(
                 "UPDATE entry_plans SET status='invalidated', terminal_at=?, "
                 "terminal_reason=?, updated_at=? WHERE planning_generation_id=? "
@@ -9621,8 +9745,11 @@ def ensure_candidate_planning_generation(
                 else "canonical_compatibility_cutover" if compatibility_cutover
                 else "runtime_authority_recovered" if eligibility_recovered
                 else "material_input_changed" if material_input_changed
+                else "confirmed_structure_requalified" if structure_requalified
+                else "planning_dependencies_recovered" if dependency_recovered
                 else "initial_candidate"
             ),
+            requalification_source_json=(json.dumps({"birth_material": requalification}, sort_keys=True, separators=(",", ":")) if requalification is not None else None),
             requalification_candidate_id=candidate_id,
             entry_behavior_fingerprint=entry_behavior_fingerprint,
             schema_fingerprint=schema_fingerprint,
