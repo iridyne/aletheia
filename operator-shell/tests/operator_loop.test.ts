@@ -6583,7 +6583,7 @@ test('pi runtime adapter returns structured result from llm-session endpoint', a
   }
 
   try {
-    const adapter = new PiRuntimeAdapter({} as any, 'http://localhost:8787')
+    const adapter = new PiRuntimeAdapter('http://localhost:8787')
     const result = await adapter.runSession({
       goal: 'Diagnose system health status',
       allowedCommands: ['get_system_status', 'get_agent_activity'],
@@ -6618,7 +6618,7 @@ test('pi runtime adapter handles fetch errors gracefully', async () => {
   }
 
   try {
-    const adapter = new PiRuntimeAdapter({} as any, 'http://localhost:8787')
+    const adapter = new PiRuntimeAdapter('http://localhost:8787')
     const result = await adapter.runSession({ goal: 'test' })
 
     assert.equal(result.status, 'error')

@@ -37,12 +37,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-execute", action="store_true")
     args = parser.parse_args(argv)
 
-    plan_args = ["--event", "local"]
-    if args.base_ref:
-        plan_args.extend(["--base-ref", args.base_ref])
-    for changed in args.changed_file:
-        plan_args.extend(["--changed-file", changed])
-    plan_args.extend(["--changed-files-complete", args.changed_files_complete])
     base_sha, head_sha, changes = ci_plan._load_changes(argparse.Namespace(  # noqa: SLF001
         base_sha=None,
         head_sha=None,

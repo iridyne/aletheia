@@ -204,3 +204,14 @@ async def test_pi_health_uses_windows_sync_harness(monkeypatch):
 
     assert health.available is False
     assert health.error == "no_configured_models"
+
+
+@pytest.mark.parametrize("provider", ["claude_cli", "codex_cli", "pi_cli"])
+def test_cli_json_extraction_handles_quoted_delimiters(provider):
+    from importlib import import_module
+
+    extract = import_module(f"aletheia.model_provider.{provider}")._extract_json
+    expected = {"message": "a } brace and an escaped \"quote\"", "nested": {"ok": True}}
+    assert extract(f"Result: {json.dumps(expected)} trailing prose") == expected
+    with pytest.raises(RuntimeError):
+        extract("Result: {not valid JSON}")

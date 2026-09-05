@@ -191,6 +191,11 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 
 #### stock_observer (removed 2026-06-17 — superseded by equity_observer)
 
+The retired name is absent from the manual agent catalog and is rejected with
+HTTP 403 by `POST /api/agent-runs/start`, including Operator service calls.
+Use `equity_observer`; historical runs and the existing `observed_stocks`
+configuration fallback remain readable.
+
 #### prediction_observer
 
 - **Trigger**: scheduler every 30min

@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
@@ -373,7 +373,6 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     # Observational — read-only market data, no model calls, no artifacts
     "market_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "equity_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
-    "stock_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "prediction_observer": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     "divergence_scanner": {"side_effect_class": "observe", "cost_class": "low", "gate_check": False},
     # Research / analysis — uses LLM, writes knowledge/insight artifacts only
@@ -395,7 +394,6 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
 _OPERATOR_SERVICE_AGENT_ALLOWLIST: frozenset[str] = frozenset({
     "market_observer",
     "equity_observer",
-    "stock_observer",
     "prediction_observer",
     "divergence_scanner",
     "research_agent",

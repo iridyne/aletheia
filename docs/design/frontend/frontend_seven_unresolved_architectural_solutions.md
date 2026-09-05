@@ -142,34 +142,11 @@ export function initWakeupGate(queryClient: QueryClient) {
   - “Today PnL” 到底从哪个时刻开始算？中国操作员的本地凌晨 00:00？还是币安结算的 UTC 00:00？
   - 本地电脑时钟如果慢了 3 秒，1 分钟 K 线的倒计时就会出现负数或跳动。
 
-### 2. 奥卡姆剃刀方案：HTTP 响应头时差对齐 + 显式窗口注脚
-* **拒绝方案**：引入复杂的网络时间协议（NTP）客户端轮询或第三方时区数据库包。
-* **极简方案**：
-  1. **零成本获取权威时差**：在 `fetchJson` 中直接读取网关返回的 HTTP `Date` 标头，计算 `serverOffsetMs`，一劳永逸对齐秒针。
-  2. **消除所有“相对词汇”**：坚决废除界面上模糊的 "Today"、"24h"，强制标注物理界限。
+### 2. 当前实现：显式 UTC 窗口注脚
 
-### 3. 具体落地实现
-```typescript
-// 1. 零网络开销的时钟对准 (api/client.ts)
-let serverTimeOffsetMs = 0
+PnL 窗口由后端定义，界面明确标注 UTC 边界。浏览器相对时间仍使用本地时钟，未提供网关时钟同步；没有消费者的 HTTP `Date` 偏移缓存已删除。
 
-// 在 fetchJson 响应处理中提取
-const serverDate = res.headers.get('date')
-if (serverDate) {
-  serverTimeOffsetMs = new Date(serverDate).getTime() - Date.now()
-}
-
-export function getSyncedNow(): number {
-  return Date.now() + serverTimeOffsetMs
-}
-
-// 2. 显式化时间窗口注脚 (Overview & Usage)
-// 以前: Today PnL
-// 以后: Day PnL · UTC 00:00~NOW
-<span className="text-muted text-xs">Day PnL · UTC 00:00 → NOW</span>
-```
-
----
+不引入 NTP 轮询或第三方时区数据库。
 
 ## 议题 4：长周期运行后万级历史数据的伸缩性天花板（Data Scalability Ceiling）
 
@@ -310,7 +287,7 @@ export function dumpIncidentSnapshot(queryClient: QueryClient) {
 |---|---|---|---|---|
 | **1. 多标签页并发** | 原生 `BroadcastChannel` 单连接主从模型 | Web Broadcast API | `frontend/src/lib/tabSync.ts` | ✅ **已实现** (失效广播与跨 Tab 同步) |
 | **2. 休眠唤醒雷暴** | 单兵探活苏醒闸门 (`WakeupGate`) | 原生时间差检测 + `/api/ready` | `frontend/src/lib/wakeupGate.ts` | ✅ **已实现** (时间差 $>8\text{s}$ 阻断雷暴) |
-| **3. 双时钟与时区** | HTTP `Date` 头对齐 + 显式窗口注脚 | 响应头读取 + 文本微调 | `frontend/src/api/client.ts`<br>`frontend/src/components/PnLZone.tsx` | ✅ **已实现** (`getSyncedNow()` + UTC 窗口注脚) |
+| **3. 双时钟与时区** | 显式 UTC 窗口注脚 | 窗口文本标注；相对时间使用浏览器时钟 | `frontend/src/components/PnLZone.tsx` | UTC 窗口注脚已实现；未提供时钟同步 |
 | **4. 大数据量天花板** | 列表轻量标量投影 + 详情按需拉取 | 后端标量裁剪 + 游标分页 | `aletheia/server/routes/persistence.py`<br>`frontend/src/pages/TradesPositions.tsx` | ✅ **已实现** (13标量投影 + Keyset游标翻页) |
 | **5. 事故黑盒转储** | 纯前端内存缓存一键下载 JSON | 原生 `Blob` + ObjectURL | `frontend/src/lib/incidentDump.ts` | ✅ **已实现** (TanStack Cache 快照导出) |
 | **6. 移动端真实值守** | 纯 CSS 响应式“表格自动变卡片” | 媒体查询 + `data-label` | `frontend/src/index.css`<br>`frontend/src/components/DataTable.tsx` | ✅ **已实现** ($\le 640\text{px}$ 自动翻转卡片流) |

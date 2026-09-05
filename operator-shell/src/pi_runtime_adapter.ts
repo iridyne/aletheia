@@ -1,4 +1,3 @@
-import type { BackendGatewayClient } from './schemas.js'
 import { gatewayRequestFailureMessage } from './gateway_errors.js'
 import { applyOperatorServiceHeader } from './service_auth.js'
 
@@ -25,16 +24,10 @@ export interface PiSessionResult {
 }
 
 export class PiRuntimeAdapter {
-  private readonly backendClient: BackendGatewayClient
   private readonly baseUrl: string
 
-  constructor(backendClient: BackendGatewayClient, baseUrl: string) {
-    this.backendClient = backendClient
+  constructor(baseUrl: string) {
     this.baseUrl = baseUrl
-  }
-
-  providerLabel(): string {
-    return 'pi-shell'
   }
 
   async runSession(request: PiSessionRequest): Promise<PiSessionResult> {
