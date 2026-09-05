@@ -10226,6 +10226,10 @@ def complete_candidate_planning_with_plan(
             return "claim_lost", None
         if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
+            from aletheia.trading.entry_contract import entry_contract_fingerprints
+
+            if (row["entry_behavior_fingerprint"], row["schema_fingerprint"]) != entry_contract_fingerprints():
+                raise ValueError("entry_plan_running_contract_mismatch")
 
             try:
                 frozen_context = EntryAnalysisContext.model_validate_json(
