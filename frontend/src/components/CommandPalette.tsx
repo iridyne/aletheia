@@ -55,8 +55,18 @@ export async function runCommandAction(
   }
 }
 
-export default function CommandPalette({ initialOpen = false }: { initialOpen?: boolean }) {
-  const [open, setOpen] = useState(initialOpen)
+export default function CommandPalette({
+  open: controlledOpen,
+  onClose,
+  initialOpen = false,
+}: {
+  open?: boolean
+  onClose?: () => void
+  initialOpen?: boolean
+}) {
+  const [internalOpen, setInternalOpen] = useState(initialOpen)
+  const isControlled = controlledOpen !== undefined
+  const open = isControlled ? controlledOpen : internalOpen
   const [commandError, setCommandError] = useState('')
   const [executingCommand, setExecutingCommand] = useState<string | null>(null)
   const executingRef = useRef(false)
@@ -65,10 +75,16 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
   const navigate = useNavigate()
   const qc = useQueryClient()
   const confirm = useConfirm()
-  const close = useCallback(() => {
-    if (!executingRef.current) setOpen(false)
-  }, [])
 
+  const close = useCallback(() => {
+    if (!executingRef.current) {
+      if (isControlled) {
+        onClose?.()
+      } else {
+        setInternalOpen(false)
+      }
+    }
+  }, [isControlled, onClose])
   useDialogFocus(open, dialogRef, close)
   useEffect(() => {
     if (open) inputRef.current?.focus()
@@ -78,12 +94,18 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
-        if (!executingRef.current) setOpen(prev => !prev)
+        if (!executingRef.current) {
+          if (isControlled) {
+            if (open) onClose?.()
+          } else {
+            setInternalOpen(prev => !prev)
+          }
+        }
       }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [])
+  }, [isControlled, open, onClose])
 
   const exec = useCallback(async (command: CmdAction) => {
     if (executingRef.current) return
@@ -93,7 +115,8 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
 
     const result = await runCommandAction(command.action)
     if (result.ok) {
-      setOpen(false)
+      if (isControlled) onClose?.()
+      else setInternalOpen(false)
     } else {
       setCommandError(`${command.label}: ${result.error}`)
     }
@@ -167,7 +190,7 @@ export default function CommandPalette({ initialOpen = false }: { initialOpen?: 
               const input = (e.target as HTMLInputElement)?.value?.trim() || ''
               if (input.length >= 20) {
                 e.preventDefault()
-                setOpen(false)
+                close()
                 navigate(`/command-center?draft=${encodeURIComponent(input)}`)
               }
             }

@@ -3158,9 +3158,75 @@ button.market-instrument-group-title { font-family: inherit; }
   flex-direction: column;
   min-height: 0;
 }
-.feed-list { display: flex; flex-direction: column; }
+.feed-list { display: flex; flex-direction: column; gap: 1px; }
 .agent-feed-viewport .feed-list-scroll {
   flex: 1;
+}
+.feed-row {
+  display: grid;
+  grid-template-columns: 3.8rem 1.4rem minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-radius: var(--r-sm);
+  color: var(--text) !important;
+  font-family: var(--sans);
+  font-weight: normal !important;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: background 80ms;
+}
+.feed-row:last-child {
+  border-bottom: none !important;
+}
+.feed-row:hover {
+  background: var(--surface-2) !important;
+}
+.feed-ts {
+  font-size: var(--fs-2xs);
+  color: var(--faint);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.feed-icon {
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.feed-headline {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-detail {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-meta {
+  font-size: var(--fs-2xs);
+  color: var(--faint);
+  font-family: var(--mono);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4210,8 +4276,17 @@ body.privacy-redact-mode .market-context-price {
 /* 40px hit target — WCAG AA minimum touch target (44px relaxed to 40px for density) */
 .topbar-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: var(--space-2); font-size: 0.9rem; line-height: 1;
-  border-radius: var(--r-sm); min-width: 40px; min-height: 40px;
+  padding: 0 var(--space-2); font-size: var(--fs-xs); line-height: 1;
+  border-radius: var(--r-sm); min-width: 32px; height: 28px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  color: var(--muted); cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.topbar-btn:hover {
+  background: var(--surface); color: var(--text); border-color: var(--border-strong);
+}
+.topbar-btn.active {
+  background: rgba(34, 211, 238, 0.12); border-color: var(--accent); color: var(--accent);
 }
 .runtime-reload-pill {
   display: inline-flex;

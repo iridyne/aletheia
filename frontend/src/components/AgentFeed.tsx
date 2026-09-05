@@ -353,7 +353,7 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
                 )}
               </span>
               {it.status && (
-                <span className={`badge ${it.status === 'completed' || it.status === 'approved' ? 'badge-green' : FAILURE_STATUSES.has(String(it.status)) ? 'badge-red' : 'badge-yellow'}`}>
+                <span className={`badge ${it.status === 'completed' || it.status === 'approved' ? 'badge-green' : FAILURE_STATUSES.has(String(it.status)) ? 'badge-red' : it.status === 'expired' || it.status === 'invalidated' ? 'badge-muted' : 'badge-yellow'}`}>
                   {it.status}
                 </span>
               )}
