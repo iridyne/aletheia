@@ -712,6 +712,8 @@ async def llm_structured(
     semantic_validator_exception: BaseException | None = None
     active_structured_attempt: int | None = None
     recorded_structured_attempts: set[int] = set()
+    finish_reason = "unknown"
+    output_tokens = 0
 
     def _record_structured_outcome(outcome: str) -> None:
         if (
@@ -733,6 +735,13 @@ async def llm_structured(
         nonlocal inference_finished
         if inference_call is not None and not inference_finished:
             failure_diagnostics: dict[str, str] = {}
+            if last_response is not None:
+                failure_diagnostics.update(
+                    finish_reason=finish_reason, output_tokens=str(output_tokens),
+                    output_limit=str(max_tokens),
+                )
+            if error.startswith("structured_semantic_invalid") and last_semantic_error_code:
+                failure_diagnostics["semantic_error_code"] = last_semantic_error_code
             if error.startswith((
                 "structured_parse_error", "structured_schema_invalid",
                 "structured_semantic_invalid",
@@ -867,8 +876,14 @@ async def llm_structured(
             except BudgetExceededError:
                 return _failure("llm_budget_exhausted")
             content = (resp.content or "").strip()
-            usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
+            raw = resp.raw if isinstance(resp.raw, dict) else {}
+            usage = resp.usage or raw.get("usage") or {}
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
+            choices = raw.get("choices") or []
+            reason = choices[0].get("finish_reason") if choices else raw.get("stop_reason")
+            if (raw.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
+                reason = "incomplete"
+            finish_reason = reason if reason in {"stop", "length", "max_tokens", "incomplete"} else "unknown"
             last_schema_error_code = None
             last_schema_error_text = ""
 
@@ -968,7 +983,9 @@ async def llm_structured(
                 break
 
             # Parse failure — retry once with a nonce-bearing repair message.
-            truncated = output_tokens > 0 and output_tokens >= max_tokens * 0.9
+            truncated = finish_reason in {"length", "max_tokens", "incomplete"} or (
+                output_tokens > 0 and output_tokens >= max_tokens * 0.9
+            )
             _record_structured_outcome("truncated_output" if truncated else "parse_error")
             _remember_failed_model(resp)
             if attempt < max_attempts - 1:

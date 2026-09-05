@@ -1382,8 +1382,8 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
     assert persisted["attention_status"] == "active"
 
 
-@pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout"])
-def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book):
+@pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout", "load", "fetch", "invalid", "persistence"])
+def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book, caplog):
     from aletheia.data.collectors.microstructure import MicrostructureCollector, _parse_orderbook
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
@@ -1413,6 +1413,8 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
             0, market_type="perp",
         )
         if not recovered:
+            if bad_book in {"load", "fetch", "invalid"}:
+                return {"snapshots": [], "errors": [{"load": "load_markets:TimeoutError", "fetch": "fetch_order_book:NetworkError", "invalid": "parse:invalid_orderbook"}[bad_book]]}
             if bad_book == "missing":
                 return {"snapshots": [], "errors": []}
             if bad_book == "venue":
@@ -1430,10 +1432,24 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
         raise PlannerBackpressure("busy")
 
     monkeypatch.setattr(MicrostructureCollector, "collect", collect)
+    insert = repo.insert_orderbook_snapshot
+    def persist(book):
+        if not recovered and bad_book == "persistence":
+            raise sqlite3.OperationalError("private database detail")
+        return insert(book)
+    monkeypatch.setattr(repo, "insert_orderbook_snapshot", persist)
     result = asyncio.run(plan_next_candidate(planner))
     stored = repo.get_candidate_planning_generation(generation["id"])
     assert result["status"] == "unavailable" and calls == []
     assert stored["planner_input_json"] is None and stored["attempt_count"] == 0
+    diagnostic = [record for record in caplog.records if record.msg == "entry_orderbook_unavailable"][-1]
+    assert diagnostic.category == {
+        "missing": "invalid_payload", "venue": "identity_mismatch", "market": "identity_mismatch",
+        "future": "future", "stale": "stale", "timeout": "timeout",
+        "load": "collector_error", "fetch": "collector_error", "invalid": "invalid_payload",
+        "persistence": "persistence_error",
+    }[bad_book]
+    assert "private database detail" not in caplog.text
     recovered = True
     repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?", (generation["id"],))
     result = asyncio.run(plan_next_candidate(planner))
@@ -1565,3 +1581,39 @@ def test_real_task_cancellation_is_shielded_and_dispatch_retries_are_bounded(mon
             assert row["attention_terminal_reason"] == "planning_unavailable"
             assert repo.claim_next_candidate_planning("later") is None
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("field,wrong", [("mechanism", "continuation"), ("direction", "short")])
+@pytest.mark.parametrize("repair", [True, False])
+def test_system_planner_repairs_identity_without_rewriting(monkeypatch, field, wrong, repair):
+    from tests.test_entry_analysis import _maximal_context
+    from aletheia.agent_shell.entry_planner import system_operator_entry_planner, PlanIntentError
+    from aletheia.agents import helpers
+    from aletheia.model_provider.base import ModelResponse
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    context = _maximal_context()
+    valid = EntryHypothesis(
+        decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS", mechanism="reversal",
+        direction="long", risk_tier="NONE", horizon="NONE",
+    ).model_dump(mode="json")
+    responses = iter([{**valid, field: wrong}, valid if repair else {**valid, field: wrong}])
+    calls = []
+
+    async def complete(request, **kwargs):
+        calls.append(request)
+        return ModelResponse(content=json.dumps(next(responses)), model="test")
+
+    async def provider(name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    if repair:
+        result = asyncio.run(system_operator_entry_planner(context.model_dump(mode="json"), "test"))
+        assert result.model_dump(mode="json") == valid
+    else:
+        with pytest.raises(PlanIntentError, match="PLANNER_SCHEMA_INVALID:"):
+            asyncio.run(system_operator_entry_planner(context.model_dump(mode="json"), "test"))
+    assert len(calls) == 2
+    assert calls[0].structured_schema["properties"][field]["enum"] == [valid[field]]

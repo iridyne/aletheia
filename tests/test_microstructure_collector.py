@@ -25,15 +25,19 @@ def test_parse_orderbook_accepts_ccxt_count_column_and_contract_size():
     assert snapshot.imbalance_ratio == pytest.approx(-0.1429)
 
 
-def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkeypatch):
+@pytest.mark.parametrize("failure", [None, "load_markets", "fetch_order_book", "parse"])
+def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkeypatch, failure):
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data import ccxt_provider
     from aletheia.data.symbols import InstrumentId
 
+    closed = []
     class Exchange:
         options = {}
 
         async def load_markets(self):
+            if failure == "load_markets":
+                raise TimeoutError("private provider detail")
             return None
 
         def market(self, symbol):
@@ -42,6 +46,10 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
             return {"contractSize": 1.0}
 
         async def fetch_order_book(self, symbol, limit):
+            if failure == "fetch_order_book":
+                raise ConnectionError("private provider detail")
+            if failure == "parse":
+                return {"bids": [], "asks": []}
             assert symbol == "BTC/USDT:USDT"
             assert limit == 20
             return {"bids": [[99.9, 1.0]], "asks": [[100.1, 1.0]]}
@@ -56,7 +64,7 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
             return Exchange()
 
         async def close(self):
-            return None
+            closed.append(True)
 
     monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **kwargs: Provider())
     result = asyncio.run(
@@ -64,6 +72,14 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
             [InstrumentId("binance", "BTC/USDT", "futures")]
         )
     )
+    assert closed == [True]
+    if failure:
+        assert result == {"snapshots": [], "errors": [{
+            "load_markets": "load_markets:TimeoutError",
+            "fetch_order_book": "fetch_order_book:ConnectionError",
+            "parse": "parse:invalid_orderbook",
+        }[failure]]}
+        return
     assert result["errors"] == []
     assert result["snapshots"][0].market_type == "futures"
 

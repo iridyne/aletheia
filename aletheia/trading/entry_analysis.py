@@ -189,6 +189,20 @@ class EntryHypothesis(BaseModel):
         return self
 
 
+def entry_reference_contract(context: EntryAnalysisContext) -> dict[str, list[str]]:
+    """Expose exactly the facts accepted by hypothesis validation, not provenance."""
+    current = {
+        str(ref)
+        for section in (context.market_structure, context.quant_context,
+                        context.portfolio_context, context.execution_context)
+        for ref in section.get("fact_refs", ())
+    }
+    citable = current | {str(ref) for ref in context.candidate.get("fact_refs", ())}
+    citable.update(anchor.anchor_id for anchor in context.anchors)
+    current.update(anchor.anchor_id for anchor in context.anchors if anchor.kind != "candidate_reference")
+    return {"citable_fact_refs": sorted(citable), "current_market_fact_refs": sorted(current)}
+
+
 def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
     """Project frozen evidence into the bounded facts exposed to the model."""
 
@@ -198,6 +212,7 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
     return {
         "analysis_cutoff_at": data["analysis_cutoff_at"],
         "context_fingerprint": data["context_fingerprint"],
+        "reference_contract": entry_reference_contract(context),
         "instrument": data["instrument"],
         "planning_generation": {key: planning.get(key) for key in ("id", "candidate_id", "candidate_family")},
         "candidate": {"fact_refs": data["candidate"].get("fact_refs", [])},
@@ -255,19 +270,11 @@ def validate_hypothesis_references(
     context: EntryAnalysisContext,
 ) -> None:
     supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs)
+    reference_contract = entry_reference_contract(context)
     anchors = {}
     if supplied_refs or hypothesis.decision != "NO_PLAN":
         anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
-        facts = set(anchors)
-        for section in (
-            context.market_structure,
-            context.quant_context,
-            context.portfolio_context,
-            context.execution_context,
-            context.candidate,
-        ):
-            refs = section.get("fact_refs", ()) if isinstance(section, dict) else ()
-            facts.update(str(item) for item in refs)
+        facts = set(reference_contract["citable_fact_refs"])
         if not supplied_refs.issubset(facts):
             raise ValueError("hypothesis_fact_ref_not_supplied")
     opportunity = context.candidate_opportunity_context["opportunity"]
@@ -308,15 +315,7 @@ def validate_hypothesis_references(
                 raise ValueError("hypothesis_profile_market_structure_unavailable")
         elif section.get("availability") != "available":
             raise ValueError(f"hypothesis_profile_{section_name}_unavailable")
-    current_facts = set()
-    for section in (
-        context.market_structure,
-        context.quant_context,
-        context.portfolio_context,
-        context.execution_context,
-    ):
-        current_facts.update(str(item) for item in section.get("fact_refs", ()))
-    current_facts.update(anchor.anchor_id for anchor in context.anchors if anchor.kind != "candidate_reference")
+    current_facts = set(reference_contract["current_market_fact_refs"])
     if not set(hypothesis.supporting_fact_refs) & current_facts:
         raise ValueError("hypothesis_current_market_fact_required")
 
