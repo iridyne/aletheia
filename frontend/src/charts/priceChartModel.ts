@@ -20,6 +20,13 @@ export interface PositionLevel {
 }
 export interface VolumeProfileBin { priceLow: number; priceHigh: number; volume: number; isPoc: boolean; isValueArea: boolean }
 export interface VisibleVolumeProfile { poc: number; vah: number; val: number; bins: VolumeProfileBin[]; maxVolume: number }
+export interface ThesisEnvelope {
+  openedAt: number
+  closedAt?: number | null
+  entryPrice: number
+  takeProfitPrice: number
+  stopPrice: number
+}
 export interface Bar { time: number; open: number; high: number; low: number; close: number; volume: number }
 
 

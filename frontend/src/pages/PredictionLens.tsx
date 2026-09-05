@@ -244,8 +244,7 @@ function ProbabilityMoversTab({ markets, state, onSelect }: { markets: Predictio
           <thead>
             <tr>
               <th>Event</th>
-              <th>YES Now</th>
-              <th>24h Change</th>
+              <th>YES Prob (24h Δ)</th>
               <th>Volume</th>
               <th>Liquidity</th>
               <th>Signal</th>
@@ -268,9 +267,11 @@ function ProbabilityMoversTab({ markets, state, onSelect }: { markets: Predictio
                 }}
               >
                 <td className="pred-event-cell td-ellipsis">{m.event_title}</td>
-                <td className="mono">{pctFmt(m.yes_probability)}</td>
-                <td className={`mono ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : ''}`}>
-                  {deltaFmt(m.probability_change_24h)}
+                <td className="mono">
+                  {pctFmt(m.yes_probability)}{' '}
+                  <span className={`text-sm ${(m.probability_change_24h ?? 0) > 0 ? 'pnl-positive' : (m.probability_change_24h ?? 0) < 0 ? 'pnl-negative' : 'text-muted'}`}>
+                    ({deltaFmt(m.probability_change_24h)})
+                  </span>
                 </td>
                 <td className="mono">{volFmt(m.volume_24h)}</td>
                 <td className="mono">{volFmt(m.liquidity)}</td>

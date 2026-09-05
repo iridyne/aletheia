@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Routes, Route, NavLink, Navigate, Link, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Diamond, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { Diamond, Eye, EyeOff, Menu, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { bootApi } from './api/boot'
 import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
@@ -16,7 +16,6 @@ import { useTabSync } from './lib/tabSync'
 import { initWakeupGate } from './lib/wakeupGate'
 import { dumpIncidentSnapshot } from './lib/incidentDump'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
-import { deferTask } from './lib/deferred'
 import { NAV } from './routeManifest'
 
 // Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
@@ -75,6 +74,7 @@ export default function App() {
     try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
   })
   const [paletteRequested, setPaletteRequested] = useState(false)
+  const [privacyMode, setPrivacyMode] = useState(false)
   const [updateRequested, setUpdateRequested] = useState(false)
   const shellMarked = useRef(false)
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -120,19 +120,30 @@ export default function App() {
       performance.mark('aletheia:first-real-shell')
     }
   }, [shell.data])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteRequested(true)
+      } else if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setPrivacyMode(prev => !prev)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  useEffect(() => deferTask(() => setUpdateRequested(true), { delayMs: 3000 }), [])
+  useEffect(() => {
+    const timer = setTimeout(() => setUpdateRequested(true), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (privacyMode) document.body.classList.add('privacy-redact-mode')
+    else document.body.classList.remove('privacy-redact-mode')
+    return () => document.body.classList.remove('privacy-redact-mode')
+  }, [privacyMode])
 
   const toggle = (group: string) => setCollapsed(value => ({ ...value, [group]: !value[group] }))
   const closeSidebar = () => setSidebarOpen(false)
@@ -209,6 +220,15 @@ export default function App() {
             title="Download frontend cache snapshot for incident debugging"
           >
             <span aria-hidden="true" style={{ fontSize: '0.75rem' }}>⬇ Dump</span>
+          </button>
+          <button
+            type="button"
+            className={`topbar-btn${privacyMode ? ' active' : ''}`}
+            onClick={() => setPrivacyMode(prev => !prev)}
+            aria-label={privacyMode ? 'Disable privacy redact mode' : 'Enable privacy redact mode (Cmd+Shift+P)'}
+            title={privacyMode ? 'Privacy redact mode active (click to reveal balances)' : 'Privacy redact mode (Cmd+Shift+P) — blur balances for screenshotting'}
+          >
+            {privacyMode ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
           </button>
           <NotificationCenter />
           <StatusCluster data={shell.data} realtime={realtime} />

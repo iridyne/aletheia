@@ -171,7 +171,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* number cells / monospace data — tabular figures everywhere */
-table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'cv01' 1; }
+table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'cv01' 1, 'zero' 1; }
 
 /* ---------- Layout ---------- */
 .layout { display: flex; min-height: 100vh; }
@@ -4178,6 +4178,22 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
   border-color: var(--accent);
   color: var(--accent);
 }
+/* ─────────────────────────────────────────────────────────────────────────────
+   Privacy / Redact Mode (Cmd+Shift+P) for public sharing and screenshotting.
+   Blurs balances, prices, and PnL values for safe sharing.
+   ──────────────────────────────────────────────────────────────────────────── */
+body.privacy-redact-mode .ticker-price,
+body.privacy-redact-mode .metric-value,
+body.privacy-redact-mode .exposure-val,
+body.privacy-redact-mode .pnl-positive,
+body.privacy-redact-mode .pnl-negative,
+body.privacy-redact-mode .cc-pnl-table,
+body.privacy-redact-mode .market-context-price {
+  filter: blur(5px);
+  user-select: none;
+  transition: filter 150ms ease;
+}
+
 
 .timeline-event:hover { background: var(--surface-2); }
 .timeline-ts { color: var(--faint); font-family: var(--mono); min-width: 4rem; font-size: 0.7rem; }

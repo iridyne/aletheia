@@ -8,7 +8,6 @@ import { DataTable, StatusBadge } from '../components/DataTable'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
 import Tabs from '../components/Tabs'
 import PageHeader from '../components/PageHeader'
-import { MeasuredPathSelector } from '../components/MeasuredPathSelector'
 import { Badge, Button, Card, CardHeader, ListRowButton, Meter, StatusText, useConfirm } from '../components/ui'
 import type { StatusTone } from '../components/ui'
 import { fmtNum, fmtSigned, humanize, fmtTimestamp } from '../lib/format'
@@ -16,6 +15,35 @@ import { guardActivationConfirmation, guardEffectText, type GuardRow } from '../
 import { authorityLabel, contributionPartialCopy, deriveContributionViewState, measuredContributionPathIds } from '../lib/learningContribution'
 import { learningPulseValue, learningReadState, optionalBooleanLabel, type LearningReadState } from '../lib/learningWorkbench'
 
+export interface MeasuredPathSelectorProps {
+  pathIds: string[]
+  activePath: string
+  generatedLabel: string
+  onChange: (pathId: string) => void
+}
+
+export function MeasuredPathSelector({
+  pathIds,
+  activePath,
+  generatedLabel,
+  onChange,
+}: MeasuredPathSelectorProps) {
+  return (
+    <div className="lco-path-selector">
+      <label htmlFor="lco-measured-path">Measured path</label>
+      <select
+        id="lco-measured-path"
+        value={activePath}
+        onChange={event => onChange(event.target.value)}
+      >
+        {pathIds.map(pathId => (
+          <option key={pathId} value={pathId}>{humanize(pathId)}</option>
+        ))}
+      </select>
+      <span>Generated {generatedLabel}</span>
+    </div>
+  )
+}
 /**
  * Learning — measured contribution first, then the memory & evolution surfaces.
  *
@@ -682,7 +710,7 @@ type LessonRow = {
 
 const lessonCol = createColumnHelper<LessonRow>()
 const lessonColumns = [
-  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span>{(info.getValue() || '').slice(0, 120)}{(info.getValue() || '').length > 120 ? '…' : ''}</span> }),
+  lessonCol.accessor('summary', { header: 'Summary', cell: info => <span title={info.getValue() || ''}>{(info.getValue() || '').slice(0, 120)}{(info.getValue() || '').length > 120 ? '…' : ''}</span> }),
   lessonCol.accessor('category', { header: 'Category', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
   // severity enum is warning/critical/info (NOT high/medium/low) — map by meaning, not literal.
   lessonCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
@@ -696,7 +724,7 @@ const guardColumns = [
   guardCol.accessor('severity', { header: 'Severity', cell: info => <Badge tone={severityTone(info.getValue())}>{humanize(info.getValue() || '—')}</Badge> }),
   guardCol.accessor('lifecycle_status', { header: 'State', cell: info => <StatusBadge status={info.getValue() || ''} /> }),
   guardCol.accessor('scope', { header: 'Scope', cell: info => <Badge tone="blue">{humanize(info.getValue() || '—')}</Badge> }),
-  guardCol.accessor(row => row.actual_effect?.score_penalty, { id: 'baselinePenalty', header: 'Baseline Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : '—'}</span> } }),
+  guardCol.accessor(row => row.actual_effect?.score_penalty, { id: 'baselinePenalty', header: 'Baseline Penalty', cell: info => { const v = info.getValue(); return <span className="mono">{v ? `-${v}` : <span className="text-muted">observe only</span>}</span> } }),
 ]
 
 export function KnowledgeTab() {

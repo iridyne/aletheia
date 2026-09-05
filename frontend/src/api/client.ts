@@ -1,6 +1,6 @@
 import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
-import type { MarketSnapshot, Opportunity, Position } from "../types";
+import type { MarketMicrostructure, MarketSnapshot, Opportunity, Position } from "../types";
 import type { SettingsResponse } from "./settings";
 import { safeErrorText } from "../lib/mutationErrors";
 
@@ -2663,7 +2663,10 @@ export const api = {
 		fetchJson<MarketSnapshot[]>(
 			`/market/snapshots${symbol ? `?symbol=${encodeURIComponent(symbol)}&limit=${limit}` : `?limit=${limit}`}`,
 		),
-
+	getMarketMicrostructure: (symbol: string, exchange = "", marketType = "spot") =>
+		fetchJson<MarketMicrostructure>(
+			`/market/microstructure?symbol=${encodeURIComponent(symbol)}&exchange=${encodeURIComponent(exchange)}&market_type=${encodeURIComponent(marketType)}`,
+		),
 	getDefaultExchange: () => fetchJson<{ exchange: string }>("/config/default-exchange"),
 
 	// Macro indicators (VIX, DXY, SPY, BTC dominance, risk regime)

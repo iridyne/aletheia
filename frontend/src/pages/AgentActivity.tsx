@@ -98,8 +98,16 @@ const runColumns = [
 ]
 
 const oppColumns = [
-  oppCol.accessor('symbol', { header: 'Symbol', cell: info => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market} bold /> }),
-  oppCol.accessor('market', { header: 'Market', cell: info => humanize(info.getValue()) }),
+  oppCol.accessor('symbol', {
+    header: 'Instrument',
+    cell: info => (
+      <span>
+        <SymbolLink symbol={info.getValue()} marketType={info.row.original.market} bold />
+        <br />
+        <span className="text-muted text-sm mono">{humanize(info.row.original.market || 'spot')}</span>
+      </span>
+    ),
+  }),
   oppCol.accessor('direction_bias', { header: 'Direction', cell: info => humanize(info.getValue()) }),
   oppCol.accessor('confidence_score', {
     header: 'Score',

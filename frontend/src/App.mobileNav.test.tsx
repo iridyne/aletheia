@@ -17,7 +17,6 @@ vi.mock('./components/MarketTicker', () => ({ default: () => null }))
 vi.mock('./components/RouteErrorBoundary', () => ({ default: ({ children }: { children: React.ReactNode }) => children }))
 vi.mock('./components/StatusCluster', () => ({ default: () => null }))
 vi.mock('./dev-preview', () => ({ devPreviewLabel: () => '' }))
-vi.mock('./lib/deferred', () => ({ deferTask: (task: () => void) => { task(); return () => {} } }))
 vi.mock('./lib/useRealtimeUpdates', () => ({
   useRealtimeUpdates: () => ({ state: 'connected', malformedFrameCount: 0, unknownCategoryCount: 0, lastFrameAt: null }),
 }))
