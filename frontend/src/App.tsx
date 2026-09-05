@@ -194,12 +194,12 @@ export default function App() {
           <DriftUpdatePill driftIssue={driftIssue} driftRange={driftRange} />
           <button
             type="button"
-            className="cmdk-topbar-pill mono"
+            className="command-pill mono"
             onClick={() => setPaletteRequested(true)}
             aria-label="Open command palette"
             title="Command palette (⌘K)"
           >
-            <span className="cmdk-icon" aria-hidden="true">⌘K</span>
+            <span className="command-pill-icon" aria-hidden="true">⌘K</span>
           </button>
           <button
             type="button"

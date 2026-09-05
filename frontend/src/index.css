@@ -4161,7 +4161,7 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
   transition: background 0.1s;
 }
 /* ⌘K topbar search pill */
-.cmdk-topbar-pill {
+.command-pill {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -4174,7 +4174,7 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
   cursor: pointer;
   transition: border-color 80ms, color 80ms;
 }
-.cmdk-topbar-pill:hover {
+.command-pill:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
