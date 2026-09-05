@@ -797,7 +797,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
-@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "FROZEN_CONTEXT_IDENTITY_MISMATCH"])
+@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED"])
 def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
@@ -922,8 +922,14 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, pro
 
     if compiler_error:
         from aletheia.agent_shell.entry_planner import PlanIntentError
+        from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
         def fail_compile(*args, **kwargs):
+            if compiler_error == "RUNNING_CONTRACT_CHANGED":
+                plan = compile_entry_plan(*args, **kwargs)
+                monkeypatch.setattr("aletheia.trading.entry_contract.entry_contract_fingerprints",
+                    lambda: ("new-running-behavior", "new-running-schema"))
+                return plan
             raise PlanIntentError(compiler_error)
         monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", fail_compile)
     result = asyncio.run(
