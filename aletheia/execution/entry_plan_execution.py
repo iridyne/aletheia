@@ -99,6 +99,7 @@ def build_entry_execution_receipt(
 ) -> EntryExecutionReceiptV1:
     """Bind exact runtime evidence to one immutable Proposal without mutating it."""
 
+    _require_entry_trigger_evidence(plan, trigger_evidence)
     channels = tuple(dict.fromkeys(str(item) for item in required_channels))
     if not channels or any(item not in _RECEIPT_CHANNELS for item in channels):
         raise ValueError("entry_execution_receipt_channels_invalid")
@@ -210,6 +211,12 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         or not generation.get("schema_fingerprint")
     ):
         raise ValueError("ai_entry_generation_contract_mismatch")
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+
+    if (
+        generation["entry_behavior_fingerprint"], generation["schema_fingerprint"]
+    ) != entry_contract_fingerprints():
+        raise ValueError("ai_entry_running_contract_mismatch")
     from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
 
     try:
@@ -232,6 +239,8 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         raise ValueError("ai_entry_context_identity_mismatch")
     candidate = repo.get_candidate(str(plan.candidate_id))
     opportunity = context.candidate_opportunity_context
+    if opportunity.get("opportunity", {}).get("capability_status") != "supported":
+        raise ValueError("ai_entry_candidate_capability_unavailable")
     if (
         candidate is None
         or candidate.get("candidate_opportunity_context_hash") != opportunity.get("context_hash")
@@ -280,6 +289,21 @@ def _instant(raw: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _require_entry_trigger_evidence(plan: EntryPlan, trigger_evidence: dict | None) -> None:
+    trigger_id = _trigger_id(plan)
+    if trigger_id not in {_MOMENTUM_GEOMETRY_TRIGGER, "anchor-retrace-reclaim"}:
+        return
+    if not isinstance(trigger_evidence, dict):
+        raise ValueError("ai_entry_trigger_evidence_required")
+    if (
+        trigger_evidence.get("trigger_spec_id") != trigger_id
+        or not plan.trigger_params.get("geometry_fingerprint")
+        or trigger_evidence.get("geometry_fingerprint")
+        != plan.trigger_params["geometry_fingerprint"]
+    ):
+        raise ValueError("ai_entry_trigger_identity_mismatch")
+
+
 def build_entry_plan_order_intent(
     plan: EntryPlan,
     *,
@@ -292,17 +316,7 @@ def build_entry_plan_order_intent(
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
     require_entry_plan_runtime_authority(plan)
-    if _trigger_id(plan) == _MOMENTUM_GEOMETRY_TRIGGER:
-        if trigger_evidence is None:
-            raise ValueError("ai_entry_trigger_evidence_required")
-        trigger_id = _trigger_id(plan)
-        if (
-            trigger_id is None
-            or trigger_evidence.get("trigger_spec_id") != trigger_id
-            or trigger_evidence.get("geometry_fingerprint")
-            != plan.trigger_params.get("geometry_fingerprint")
-        ):
-            raise ValueError("ai_entry_trigger_identity_mismatch")
+    _require_entry_trigger_evidence(plan, trigger_evidence)
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
@@ -433,6 +447,9 @@ def execute_entry_plan(
         from aletheia.execution.gateway import execute_existing_proposal
 
         proposal = TradeProposal.model_validate(existing)
+        if trigger_evidence is None:
+            attribution = json.loads(proposal.attribution_snapshot or "{}")
+            trigger_evidence = attribution.get("entry_trigger")
         receipt = build_entry_execution_receipt(
             plan,
             proposal,
@@ -495,6 +512,10 @@ def execute_entry_plan(
         if existing is None:
             raise
         proposal = TradeProposal.model_validate(existing)
+        receipt = receipt.model_copy(update={"proposal_id": proposal.id})
+        receipt = receipt.model_copy(update={
+            "receipt_hash": hashlib.sha256(receipt.canonical_json().encode()).hexdigest(),
+        })
 
     from aletheia.execution.gateway import execute_existing_proposal
 

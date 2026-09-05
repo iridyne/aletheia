@@ -45,6 +45,10 @@ before being referenced. The cutoff is selected after acquisition. Missing,
 invalid, or stale inputs release the claim with a typed unavailable reason and
 a bounded retry delay, without consuming a model attempt or economic NO_PLAN.
 Already-bound JSON/hash is never refreshed in place.
+Compiler risk-policy, leverage and account-budget unavailability use the existing
+bounded unavailable retries with model/compiler invocation facts retained.
+Frozen identity, geometry and execution-context failures remain terminal for
+that input; no failure is converted into an economic NO_PLAN or unlimited retry.
 
 `anchor-resting-maker` and `anchor-retrace-reclaim` are deterministic compiler
 Profiles. The latter reuses the existing retrace/sweep/reclaim engine and 0.25 ATR
@@ -58,8 +62,11 @@ Proposal or Risk.
 The canonical implementation consumes the typed Candidate opportunity context
 through one `EntryAnalysisContext` and one `EntryHypothesis` path for
 Continuation, Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
-direction are upstream facts and must match exactly. Candidate T0 evidence,
-Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
+direction are upstream facts and must match exactly.
+Candidate capability must be `supported` before market acquisition or inference.
+`observe_only` and `unavailable` are typed planning blocks, not economic NO_PLAN;
+execution rechecks capability in the immutable planning context.
+Candidate T0 evidence, Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
 only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing Entry
 authority. At least one current Planning fact is mandatory, and AI owns no price,
 size, leverage, stop, target, slippage, trigger parameter, or Risk field.
@@ -111,6 +118,10 @@ context, not its nullable database projection. New projections use that same
 source. Material-evidence requalification requires a completed active snapshot
 and a later context cutoff; unresolved Order/Fill/Position guards still apply.
 Historical context bytes and hashes are not backfilled or rewritten.
+When a replacement Candidate reuses a cycle, publication records its exact
+Candidate/cycle association in the existing audit ledger, transactionally and
+idempotently. Detail reads may follow this association without changing the
+cycle's frozen Candidate or inferring historical links from symbol/time.
 
 Planning requalification is separate from stable discovery ownership. Before
 publication takes the writer, the existing Planner causal-window validator and

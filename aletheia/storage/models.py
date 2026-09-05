@@ -1697,7 +1697,11 @@ class UniverseMember(BaseModel):
         if not target and (
             self.candidate_selection_policy_epoch is not None
             or self.candidate_selection_utility_pct is not None
-            or any(value is not None for value in mechanism_evidence)
+            or any(value is not None for value in (
+                self.opportunity_mechanism_version,
+                self.opportunity_source_component,
+                self.opportunity_evidence_hash,
+            ))
         ):
             raise ValueError("legacy Candidate cannot carry target selection evidence")
         context_fields = (
@@ -1722,10 +1726,16 @@ class UniverseMember(BaseModel):
                 or context.candidate_selection["policy"] != self.candidate_selection_policy
                 or context.candidate_selection.get("policy_epoch") != self.candidate_selection_policy_epoch
                 or context.opportunity["direction"] != self.scanner_direction
+                or (
+                    self.opportunity_source_cutoff_at is not None
+                    and self.opportunity_source_cutoff_at != context.source["source_cutoff_at"]
+                )
             ):
                 raise ValueError("Candidate Opportunity context identity mismatch")
         elif target:
             raise ValueError("target Candidate Opportunity context is missing")
+        elif self.opportunity_source_cutoff_at is not None:
+            raise ValueError("Candidate source cutoff requires validated opportunity context")
         return self
 
 
