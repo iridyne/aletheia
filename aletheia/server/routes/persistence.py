@@ -142,20 +142,77 @@ def list_orders(status: str | None = None, mode: str = "paper", limit: int = Que
     return [dict(r) for r in rows]
 
 
+# Light-projection scalar fields returned by default (no raw_json blob).
+# Each is ~10 bytes; 50 rows ≈ 4 KB. Callers may request individual detail
+# rows via GET /positions/{id} which includes the full raw_json payload.
+_POSITION_LIST_FIELDS = (
+    "position_id", "mode", "venue", "symbol", "side",
+    "quantity", "avg_entry_price", "realized_pnl", "unrealized_pnl",
+    "status", "opened_at", "closed_at", "updated_at",
+)
+
+
 @router.get("/positions")
-def list_positions(mode: str = "paper", status: str | None = None):
-    """Query persisted positions."""
+def list_positions(
+    mode: str = "paper",
+    status: str | None = None,
+    limit: int = 200,
+    cursor_id: str | None = None,
+):
+    """Query persisted positions (light projection).
+
+    Returns scalar fields only — no raw_json payload.  Use GET /positions/{id}
+    to fetch the full detail record including reasoning evidence when the
+    operator drills into a specific row.
+
+    Pagination: pass the last returned ``position_id`` as ``cursor_id`` to
+    fetch the next page (keyset pagination, stable regardless of inserts).
+    """
     from aletheia.storage.sqlite import get_db
 
+    cols = ", ".join(_POSITION_LIST_FIELDS)
     db = get_db()
-    sql = "SELECT * FROM ps_positions WHERE mode = ?"
+    sql = f"SELECT {cols} FROM ps_positions WHERE mode = ?"  # noqa: S608
     params: list = [mode]
     if status:
         sql += " AND status = ?"
         params.append(status)
-    sql += " ORDER BY opened_at DESC"
+    if cursor_id:
+        # Keyset: rows opened strictly before the cursor row (DESC order means
+        # lower opened_at / earlier position_id comes after the cursor).
+        sql += " AND (opened_at, position_id) < (SELECT opened_at, position_id FROM ps_positions WHERE position_id = ?)"
+        params.append(cursor_id)
+    sql += " ORDER BY opened_at DESC, position_id DESC LIMIT ?"
+    params.append(max(1, min(limit, 500)))
     rows = db.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+@router.get("/positions/{position_id}")
+def get_position(position_id: str):
+    """Return a single position with full raw_json detail payload."""
+    from aletheia.storage.sqlite import get_db
+    import json as _json
+
+    db = get_db()
+    row = db.execute(
+        "SELECT * FROM ps_positions WHERE position_id = ?", [position_id]
+    ).fetchone()
+    if row is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Position not found")
+    data = dict(row)
+    raw = data.pop("raw_json", None)
+    if raw:
+        try:
+            parsed = _json.loads(raw)
+            if isinstance(parsed, dict):
+                # Merge parsed fields; explicit columns win on conflict.
+                merged = {**parsed, **data}
+                return merged
+        except Exception:
+            pass
+    return data
 
 
 # --- Backups ---

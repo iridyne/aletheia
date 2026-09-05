@@ -435,6 +435,8 @@ export default function TradesPositions() {
 	const requestedTab = searchParams.get("tab");
 	const entryPlanId = searchParams.get("entry_plan_id");
 	const activeTab = isTradesTab(requestedTab) ? requestedTab : "blotter";
+	const [closedExhausted, setClosedExhausted] = useState(false);
+	const [closedExtra, setClosedExtra] = useState<Position[]>([]);
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
 		queryFn: api.getPositions,
@@ -458,6 +460,23 @@ export default function TradesPositions() {
 		? overviewBootstrap.account.execution_mode
 		: undefined;
 
+	const [closedLoadingMore, setClosedLoadingMore] = useState(false);
+	const loadMoreClosed = useCallback(async (currentClosed: Position[]) => {
+		const last = currentClosed[currentClosed.length - 1];
+		if (!last) return;
+		setClosedLoadingMore(true);
+		try {
+			const next = await api.getPositionsPaged({ limit: 100, cursor_id: last.id, status: 'closed' });
+			if (next.length) {
+				setClosedExtra(prev => [...prev, ...next]);
+			} else {
+				setClosedExhausted(true);
+			}
+		} finally {
+			setClosedLoadingMore(false);
+		}
+	}, []);
+
 	const positionsArray = positions ?? []
 	const ordersArray = orders ?? []
 	const positionsAvailable = !positionsPending && !positionsError && positions != null
@@ -473,7 +492,7 @@ export default function TradesPositions() {
 
 	const allPos = positionsArray as Position[];
 	const open = allPos.filter((p) => p.status === "open");
-	const closed = allPos.filter((p) => p.status !== "open");
+	const closed = [...allPos.filter((p) => p.status !== "open"), ...closedExtra];
 	const orderRows = ordersArray as Order[];
 	const selectedOrder =
 		sel?.kind === "order"
@@ -483,6 +502,15 @@ export default function TradesPositions() {
 		sel?.kind === "position"
 			? allPos.find((position) => position.id === sel.id) ?? null
 			: null;
+	// Lazy-load full position detail (includes raw_json reasoning fields) when drawer opens.
+	// Falls back to the light projection row already in memory while loading.
+	const { data: positionDetail } = useQuery({
+		queryKey: ['position-detail', selectedPosition?.id],
+		queryFn: () => api.getPosition(selectedPosition!.id),
+		enabled: !!selectedPosition,
+		staleTime: 60_000,
+	});
+	const displayedPosition = positionDetail ?? selectedPosition;
 
 	useEffect(() => {
 		if (requestedTab === activeTab) return;
@@ -669,22 +697,36 @@ export default function TradesPositions() {
 											</Card>
 									</div>
 
-									{closed.length > 0 && (
-										<div className="blotter-col">
-											<div className="blotter-section-head">
-												<h3>Closed Positions</h3>
-											</div>
-												<Card>
-													<DataTable
-														data={closed}
-														columns={closedColumns}
-														onRowClick={(p) =>
-															setSel({ kind: "position", id: p.id })
-														}
-													/>
-												</Card>
+								{closed.length > 0 && (
+									<div className="blotter-col">
+										<div className="blotter-section-head">
+											<h3>Closed Positions</h3>
+											{closed.length >= 200 && (
+												<span className="text-muted text-sm">First {closed.length} rows</span>
+											)}
 										</div>
-									)}
+										<Card>
+											<DataTable
+												data={closed}
+												columns={closedColumns}
+												onRowClick={(p) =>
+													setSel({ kind: "position", id: p.id })
+												}
+											/>
+										</Card>
+										{!closedExhausted && (closed.length >= 200 || closedExtra.length > 0) && (
+											<div className="mt-2 flex justify-end">
+												<Button
+													variant="secondary"
+													onClick={() => loadMoreClosed(closed)}
+													disabled={closedLoadingMore}
+												>
+													{closedLoadingMore ? 'Loading…' : 'Load more closed positions'}
+												</Button>
+											</div>
+										)}
+									</div>
+								)}
 								</div>
 							</>
 						),
@@ -726,11 +768,11 @@ export default function TradesPositions() {
 						)
 					)}
 					{sel?.kind === "position" && (
-						positionsAvailable && selectedPosition ? (
-							<PositionDetail
-								position={selectedPosition}
-								onClose={() => setSel(null)}
-							/>
+					positionsAvailable && displayedPosition ? (
+						<PositionDetail
+							position={displayedPosition}
+							onClose={() => setSel(null)}
+						/>
 						) : (
 							<SelectionUnavailable kind="position" unavailable={!positionsAvailable} />
 						)

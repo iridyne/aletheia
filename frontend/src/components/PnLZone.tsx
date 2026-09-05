@@ -348,7 +348,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             available in the /trades blotter drill-down. */}
         <div className="pnl-tiles">
           <HoverTile
-            label="Today PnL"
+            label="Day PnL · UTC"
             value={todayNum == null ? 'not available' : fmtCompactSigned(todayNum)}
             tone={toneOf(todayNum)}
             flashValue={todayNum}
@@ -358,7 +358,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
                 ? 'includes open-position uPnL (legacy today_pnl)'
                 : !todayComplete
                   ? dayPct != null ? `${fmtCompactSigned(dayPct)}% · some closes unverified` : 'some closes unverified'
-                  : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed` : undefined}
+                  : dayPct != null ? `${fmtCompactSigned(dayPct)}% of managed · UTC 00:00→now` : 'UTC 00:00→now'}
             onClick={() => navigate('/trades?tab=blotter')}
             tooltip={todayPnlBySymbol}
           />
