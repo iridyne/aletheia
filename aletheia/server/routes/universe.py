@@ -1,7 +1,7 @@
 """Universe Generator and owner-facing Entry Workbench API routes."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict
@@ -72,12 +72,18 @@ def _entry_plan_projection(row: dict) -> dict:
     return item
 
 
+def _entry_plan_projections(status: str = "active", limit: int = 100) -> list[dict]:
+    items = [_entry_plan_projection(row) for row in repo.list_entry_plans(status=status, limit=limit)]
+    if status == "active" and any(not item["contract_valid"] for item in items):
+        raise ValueError("entry_plan_contract_invalid")
+    return items
+
+
 def _active_entry_plan_projections(limit: int) -> list[dict]:
     items = [_entry_plan_projection(row) for row in repo.list_active_entry_plans(limit)]
     if any(not item["contract_valid"] for item in items):
         raise ValueError("entry_plan_contract_invalid")
     return items
-
 
 def _entry_plan_lineage(row: dict) -> dict:
     order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
@@ -111,9 +117,11 @@ def _entry_plan_lineage(row: dict) -> dict:
 
 
 @router.get("/workbench", response_model=EntryWorkbenchResponse)
-def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
+def get_entry_workbench(
+    limit: int = Query(default=100, ge=1, le=200),
+    plan_status: Annotated[str, Query(pattern="^(active|expired|all)$")] = "active",
+):
     """Bounded direct-ledger projection; section failures remain explicit."""
-
     response = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "availability": {},
@@ -165,7 +173,11 @@ def get_entry_workbench(limit: int = Query(default=100, ge=1, le=200)):
         }
     readers = {
         "summary": lambda: repo.get_entry_workbench_summary(),
-        "entry_plans": lambda: _active_entry_plan_projections(limit),
+        "entry_plans": lambda: (
+            _active_entry_plan_projections(limit)
+            if plan_status == "active"
+            else _entry_plan_projections(status=plan_status, limit=limit)
+        ),
         "current_candidates": lambda: (
             repo.list_current_candidate_workbench(active_snapshot_id)
             if active_snapshot_id

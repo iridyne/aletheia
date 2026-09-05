@@ -1,5 +1,6 @@
 """Tests for universe API routes."""
 
+import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -375,3 +376,25 @@ def test_registry_stats(client):
     with patch("aletheia.storage.sqlite.get_db", return_value=mock_db):
         resp = client.get("/api/universe/registry/stats")
     assert resp.status_code == 200
+
+def test_workbench_supports_plan_status_filter(client, enabled_cfg):
+    expired_plan = {
+        "id": "expired-plan-1",
+        "planning_generation_id": "gen-1",
+        "candidate_id": "c-1",
+        "status": "expired",
+        "plan_json": json.dumps({"thesis": "test", "expires_at": "2026-01-01T00:00:00Z"}),
+        "plan_hash": "a" * 64,
+        "contract_valid": True,
+    }
+    with patch("aletheia.server.routes.universe.load_config", return_value=enabled_cfg), \
+         patch("aletheia.server.routes.universe.repo.get_active_universe_snapshot", return_value=None), \
+         patch("aletheia.server.routes.universe.repo.get_entry_workbench_summary", return_value={}), \
+         patch("aletheia.server.routes.universe.repo.list_entry_plans", return_value=[expired_plan]), \
+         patch("aletheia.server.routes.universe.repo.list_current_candidate_workbench", return_value=[]), \
+         patch("aletheia.server.routes.universe.repo.list_entry_workbench_candidates", return_value=[]):
+        resp = client.get("/api/universe/workbench?plan_status=expired")
+    plans = resp.json()["entry_plans"]
+    assert len(plans) == 1
+    assert plans[0]["id"] == "expired-plan-1"
+    assert plans[0]["status"] == "expired"

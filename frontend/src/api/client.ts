@@ -2858,10 +2858,15 @@ export const api = {
 	getUniverseCurrent: () =>
 		fetchJson<UniverseCurrentResponse>("/universe/current"),
 	getEntryWorkbench: ((opts?: EntryWorkbenchQuery | unknown) => {
-		const isOpts = opts && typeof opts === "object" && "limit" in opts;
-		const limit = isOpts ? (opts as EntryWorkbenchQuery).limit : undefined;
-		const qs = limit ? `?limit=${encodeURIComponent(limit)}` : "";
-		return fetchJson<EntryWorkbenchResponse>(`/universe/workbench${qs}`);
+		const isOpts = opts && typeof opts === "object" && ("limit" in opts || "plan_status" in opts);
+		const q = new URLSearchParams();
+		if (isOpts) {
+			const o = opts as EntryWorkbenchQuery;
+			if (o.limit) q.set("limit", String(o.limit));
+			if (o.plan_status) q.set("plan_status", o.plan_status);
+		}
+		const qs = q.toString();
+		return fetchJson<EntryWorkbenchResponse>(`/universe/workbench${qs ? `?${qs}` : ""}`);
 	}) as {
 		(): Promise<EntryWorkbenchResponse>;
 		(opts: EntryWorkbenchQuery): Promise<EntryWorkbenchResponse>;

@@ -22350,6 +22350,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                plan_status?: string;
             };
             header?: never;
             path?: never;

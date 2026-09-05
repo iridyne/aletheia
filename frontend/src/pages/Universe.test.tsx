@@ -212,4 +212,14 @@ describe('Entry Workbench', () => {
     expect(html).toContain('BTCUSDT')
     expect(html).not.toContain('Entry Workbench is unavailable')
   })
+
+  it('renders peer Entry Plans tab with status filters and honest badge tones', () => {
+    const html = renderWorkbench(workbench, '/universe?tab=plans')
+    expect(html).toContain('Plan status:')
+    expect(html).toContain('Active')
+    expect(html).toContain('Expired')
+    expect(html).toContain('All')
+    expect(html).toContain('AVAXUSDT')
+    expect(html).toContain('Waiting')
+  })
 })
