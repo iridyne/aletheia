@@ -17,7 +17,7 @@ import { Badge, Button, Card, CardHeader, ListRowButton, TableWrap } from '../co
 import { DataStateMessage } from '../components/DataState'
 import { useDialogFocus } from '../components/ui/useDialogFocus'
 import { fmtCompact, fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
-import type { Candidate, CandidateDetail, EntryPlan, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
+import type { Candidate, CandidateDetail, EntryPlan, MarketMicrostructure, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
@@ -134,12 +134,14 @@ function InstrumentDialog({ open, id, children, onClose }: {
 function StructureTab({
   active,
   snapshot,
+  microstructure,
   candidateDetail,
   entryPlan,
   position,
 }: {
   active: MarketInstrument
   snapshot?: MarketSnapshot | null
+  microstructure?: MarketMicrostructure | null
   candidateDetail?: CandidateDetail | null
   entryPlan?: EntryPlan | null
   position?: Position | null
@@ -157,6 +159,18 @@ function StructureTab({
             <div className="flex justify-between"><span className="text-muted">Price</span><span className="mono">{snapshot?.price != null ? fmtNum(snapshot.price) : '—'}</span></div>
             <div className="flex justify-between"><span className="text-muted">24h Change</span><span className={`mono ${snapshot?.change_pct_24h != null && snapshot.change_pct_24h > 0 ? 'pnl-positive' : snapshot?.change_pct_24h != null && snapshot.change_pct_24h < 0 ? 'pnl-negative' : 'text-muted'}`}>{snapshot?.change_pct_24h != null ? `${fmtSigned(snapshot.change_pct_24h)}%` : '—'}</span></div>
             <div className="flex justify-between"><span className="text-muted">24h Volume</span><span className="mono">{snapshot?.volume_24h != null ? `$${fmtCompact(snapshot.volume_24h)}` : '—'}</span></div>
+            {microstructure?.spread_bps != null && (
+              <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{microstructure.spread_bps} bps</span></div>
+            )}
+            {microstructure?.depth_10bps_usd != null && (
+              <div className="flex justify-between"><span className="text-muted">Depth (10bps)</span><span className="mono">${fmtCompact(microstructure.depth_10bps_usd)}</span></div>
+            )}
+            {microstructure?.funding_rate != null && (
+              <div className="flex justify-between"><span className="text-muted">Funding Rate</span><span className="mono">{fmtSigned(microstructure.funding_rate * 100)}%</span></div>
+            )}
+            {microstructure?.open_interest_usd != null && (
+              <div className="flex justify-between"><span className="text-muted">Open Interest</span><span className="mono">${fmtCompact(microstructure.open_interest_usd)}</span></div>
+            )}
           </div>
         </Card>
         <Card>
@@ -674,6 +688,11 @@ export default function Charts() {
     queryFn: () => api.getMarketOpportunities(active.symbol, active.marketType), refetchInterval: 60_000,
   })
   const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades, refetchInterval: 30_000 })
+  const { data: microstructure } = useQuery({
+    queryKey: ['market-microstructure', active.symbol, active.exchange, active.marketType],
+    queryFn: () => api.getMarketMicrostructure(active.symbol, active.exchange, active.marketType),
+    refetchInterval: 15_000,
+  })
 
   const snapshotMap = useMemo(() => {
     const map = new Map<string, MarketSnapshot>()
@@ -833,6 +852,12 @@ export default function Charts() {
       {currentSnapshot?.volume_24h != null && (
         <span className="mono text-muted">VOL ${fmtCompact(currentSnapshot.volume_24h)}</span>
       )}
+      {microstructure?.funding_rate != null && (
+        <span className="mono text-muted">FR {(microstructure.funding_rate * 100).toFixed(4)}%</span>
+      )}
+      {microstructure?.spread_bps != null && (
+        <span className="mono text-muted">SPREAD {microstructure.spread_bps} bp</span>
+      )}
       {dataMeta?.ageMs != null && (
         <span className="mono text-muted market-context-age">{metaAge}</span>
       )}
@@ -883,6 +908,7 @@ export default function Charts() {
         <StructureTab
           active={active}
           snapshot={currentSnapshot}
+          microstructure={microstructure}
           candidateDetail={candidateDetail}
           entryPlan={entryPlan}
           position={positions.find(p => p.symbol === active.symbol && p.status === 'open') ?? null}

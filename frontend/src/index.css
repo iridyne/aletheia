@@ -171,7 +171,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 /* number cells / monospace data — tabular figures everywhere */
-table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'cv01' 1; }
+table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'cv01' 1, 'zero' 1; }
 
 /* ---------- Layout ---------- */
 .layout { display: flex; min-height: 100vh; }
@@ -3158,9 +3158,75 @@ button.market-instrument-group-title { font-family: inherit; }
   flex-direction: column;
   min-height: 0;
 }
-.feed-list { display: flex; flex-direction: column; }
+.feed-list { display: flex; flex-direction: column; gap: 1px; }
 .agent-feed-viewport .feed-list-scroll {
   flex: 1;
+}
+.feed-row {
+  display: grid;
+  grid-template-columns: 3.8rem 1.4rem minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-radius: var(--r-sm);
+  color: var(--text) !important;
+  font-family: var(--sans);
+  font-weight: normal !important;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none !important;
+  outline: none !important;
+  transition: background 80ms;
+}
+.feed-row:last-child {
+  border-bottom: none !important;
+}
+.feed-row:hover {
+  background: var(--surface-2) !important;
+}
+.feed-ts {
+  font-size: var(--fs-2xs);
+  color: var(--faint);
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+.feed-icon {
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.feed-headline {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-detail {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-meta {
+  font-size: var(--fs-2xs);
+  color: var(--faint);
+  font-family: var(--mono);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -4178,6 +4244,22 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
   border-color: var(--accent);
   color: var(--accent);
 }
+/* ─────────────────────────────────────────────────────────────────────────────
+   Privacy / Redact Mode (Cmd+Shift+P) for public sharing and screenshotting.
+   Blurs balances, prices, and PnL values for safe sharing.
+   ──────────────────────────────────────────────────────────────────────────── */
+body.privacy-redact-mode .ticker-price,
+body.privacy-redact-mode .metric-value,
+body.privacy-redact-mode .exposure-val,
+body.privacy-redact-mode .pnl-positive,
+body.privacy-redact-mode .pnl-negative,
+body.privacy-redact-mode .cc-pnl-table,
+body.privacy-redact-mode .market-context-price {
+  filter: blur(5px);
+  user-select: none;
+  transition: filter 150ms ease;
+}
+
 
 .timeline-event:hover { background: var(--surface-2); }
 .timeline-ts { color: var(--faint); font-family: var(--mono); min-width: 4rem; font-size: 0.7rem; }
@@ -4194,8 +4276,17 @@ button.metric-tile:active:not(:disabled) { transform: none; filter: none; }
 /* 40px hit target — WCAG AA minimum touch target (44px relaxed to 40px for density) */
 .topbar-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  padding: var(--space-2); font-size: 0.9rem; line-height: 1;
-  border-radius: var(--r-sm); min-width: 40px; min-height: 40px;
+  padding: 0 var(--space-2); font-size: var(--fs-xs); line-height: 1;
+  border-radius: var(--r-sm); min-width: 32px; height: 28px;
+  background: var(--surface-2); border: 1px solid var(--border-2);
+  color: var(--muted); cursor: pointer;
+  transition: background 80ms, color 80ms, border-color 80ms;
+}
+.topbar-btn:hover {
+  background: var(--surface); color: var(--text); border-color: var(--border-strong);
+}
+.topbar-btn.active {
+  background: rgba(34, 211, 238, 0.12); border-color: var(--accent); color: var(--accent);
 }
 .runtime-reload-pill {
   display: inline-flex;

@@ -337,6 +337,20 @@ export interface MarketSnapshot {
   snapshot_at: string
 }
 
+export interface MarketMicrostructure {
+  symbol: string
+  exchange: string
+  market_type: string
+  spread_bps: number | null
+  depth_10bps_usd: number | null
+  imbalance_ratio: number | null
+  funding_rate: number | null
+  funding_rate_annualized: number | null
+  open_interest_usd: number | null
+  oi_change_1h_pct: number | null
+  observed_at: string | null
+}
+
 export interface PortfolioSnapshot {
   id: string
   total_value_usdt: number

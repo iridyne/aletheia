@@ -315,47 +315,56 @@ const closedColumns = [
 const orderColumns = [
 	ordCol.display({
 		id: "intent",
-		header: "Intent",
-		cell: ({ row }) => orderIntentBadge(row.original),
-	}),
-	ordCol.accessor("symbol", {
-		header: "Symbol",
-		cell: (info) => <SymbolLink symbol={info.getValue()} marketType={info.row.original.market_type} bold />,
-	}),
-	ordCol.accessor("direction", {
-		header: "Dir",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	ordCol.accessor("quantity", {
-		header: "Qty",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	ordCol.accessor("price", {
-		header: "Price (USDT)",
-		cell: (info) => <span className="mono">{fmtNum(info.getValue())}</span>,
-	}),
-	ordCol.accessor("execution_mode", {
-		header: "Mode",
-		cell: (info) => humanize(info.getValue()),
-	}),
-	ordCol.accessor("status", {
-		header: "Status",
-		cell: (info) => <StatusBadge status={info.getValue()} />,
-	}),
-	ordCol.accessor("error_reason", {
-		header: "Error",
-		cell: (info) => info.getValue() || "—",
-	}),
-	ordCol.accessor("filled_at", {
-		header: "Filled",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
+		header: "Intent / Side",
+		cell: ({ row }) => (
+			<span>
+				{orderIntentBadge(row.original)}
+				<br />
+				<span className="mono text-sm">{humanize(row.original.direction)}</span>
+			</span>
 		),
 	}),
-	ordCol.accessor("created_at", {
-		header: "Created",
-		cell: (info) => (
-			<span className="mono">{fmtTimestamp(info.getValue())}</span>
+	ordCol.display({
+		id: "instrument",
+		header: "Instrument",
+		cell: ({ row }) => (
+			<span>
+				<SymbolLink symbol={row.original.symbol} marketType={row.original.market_type} bold />
+				<br />
+				<span className="text-muted text-sm mono">{humanize(row.original.execution_mode)} · {row.original.market_type}</span>
+			</span>
+		),
+	}),
+	ordCol.display({
+		id: "qty_price",
+		header: "Qty @ Price",
+		cell: ({ row }) => (
+			<span className="mono">
+				{fmtNum(row.original.quantity)}
+				<br />
+				<span className="text-muted text-sm">@ {row.original.price != null ? fmtNum(row.original.price) : 'MKT'}</span>
+			</span>
+		),
+	}),
+	ordCol.display({
+		id: "status",
+		header: "Status",
+		cell: ({ row }) => (
+			<span>
+				<StatusBadge status={row.original.status} />
+				{row.original.error_reason && (
+					<><br /><span className="text-red text-sm">{row.original.error_reason}</span></>
+				)}
+			</span>
+		),
+	}),
+	ordCol.display({
+		id: "time",
+		header: "Time",
+		cell: ({ row }) => (
+			<span className="mono text-sm">
+				{fmtTimestamp(row.original.filled_at || row.original.created_at)}
+			</span>
 		),
 	}),
 ];

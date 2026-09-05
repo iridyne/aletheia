@@ -1562,6 +1562,88 @@ def get_market_snapshots(
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
 
+@router.get("/market/microstructure")
+def get_market_microstructure(
+    symbol: str,
+    exchange: str = "",
+    market_type: str = "spot",
+):
+    """Return latest microstructure telemetry (orderbook depth/spread, funding rate, open interest)."""
+    _ensure_db()
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    res: dict[str, Any] = {
+        "symbol": symbol,
+        "exchange": exchange,
+        "market_type": market_type,
+        "spread_bps": None,
+        "depth_10bps_usd": None,
+        "imbalance_ratio": None,
+        "funding_rate": None,
+        "funding_rate_annualized": None,
+        "open_interest_usd": None,
+        "oi_change_1h_pct": None,
+        "observed_at": None,
+    }
+
+    ob_sql = (
+        "SELECT spread_bps, total_depth_10bps_usd, imbalance_ratio, observed_at "
+        "FROM orderbook_snapshots WHERE symbol = ? "
+    )
+    ob_params: list = [symbol]
+    if exchange:
+        ob_sql += "AND exchange = ? "
+        ob_params.append(exchange)
+    ob_sql += "ORDER BY observed_at DESC LIMIT 1"
+
+    try:
+        ob_row = db.execute(ob_sql, ob_params).fetchone()
+        if ob_row:
+            res["spread_bps"] = ob_row[0]
+            res["depth_10bps_usd"] = ob_row[1]
+            res["imbalance_ratio"] = ob_row[2]
+            res["observed_at"] = ob_row[3]
+    except Exception as e:
+        logger.debug("orderbook query skipped: %s", e)
+
+    if market_type in {"perp", "futures"}:
+        fr_sql = (
+            "SELECT funding_rate, funding_rate_annualized "
+            "FROM funding_rate_snapshots WHERE symbol = ? "
+        )
+        fr_params: list = [symbol]
+        if exchange:
+            fr_sql += "AND exchange = ? "
+            fr_params.append(exchange)
+        fr_sql += "ORDER BY observed_at DESC LIMIT 1"
+        try:
+            fr_row = db.execute(fr_sql, fr_params).fetchone()
+            if fr_row:
+                res["funding_rate"] = fr_row[0]
+                res["funding_rate_annualized"] = fr_row[1]
+        except Exception as e:
+            logger.debug("funding query skipped: %s", e)
+
+        oi_sql = (
+            "SELECT open_interest_usd, oi_change_1h_pct "
+            "FROM open_interest_snapshots WHERE symbol = ? "
+        )
+        oi_params: list = [symbol]
+        if exchange:
+            oi_sql += "AND exchange = ? "
+            oi_params.append(exchange)
+        oi_sql += "ORDER BY observed_at DESC LIMIT 1"
+        try:
+            oi_row = db.execute(oi_sql, oi_params).fetchone()
+            if oi_row:
+                res["open_interest_usd"] = oi_row[0]
+                res["oi_change_1h_pct"] = oi_row[1]
+        except Exception as e:
+            logger.debug("oi query skipped: %s", e)
+
+    return res
+
 
 @router.get("/market/ohlcv")
 async def get_market_ohlcv(

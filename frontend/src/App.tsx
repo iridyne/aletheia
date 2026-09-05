@@ -7,16 +7,13 @@ import MarketTicker from './components/MarketTicker'
 import BackendConnectionGuard from './components/BackendConnectionGuard'
 import FetchProgress from './components/FetchProgress'
 import { DriftUpdatePill } from './components/DriftUpdatePill'
-import { NotificationCenter } from './components/notifications/NotificationCenter'
 import StatusCluster from './components/StatusCluster'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { devPreviewLabel } from './dev-preview'
 import { useDialogFocus } from './components/ui/useDialogFocus'
 import { useTabSync } from './lib/tabSync'
 import { initWakeupGate } from './lib/wakeupGate'
-import { dumpIncidentSnapshot } from './lib/incidentDump'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
-import { deferTask } from './lib/deferred'
 import { NAV } from './routeManifest'
 
 // Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
@@ -74,7 +71,8 @@ export default function App() {
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
   })
-  const [paletteRequested, setPaletteRequested] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [privacyMode, setPrivacyMode] = useState(false)
   const [updateRequested, setUpdateRequested] = useState(false)
   const shellMarked = useRef(false)
   const sidebarRef = useRef<HTMLElement | null>(null)
@@ -120,19 +118,30 @@ export default function App() {
       performance.mark('aletheia:first-real-shell')
     }
   }, [shell.data])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
-        setPaletteRequested(true)
+        setPaletteOpen(prev => !prev)
+      } else if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') {
+        event.preventDefault()
+        setPrivacyMode(prev => !prev)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  useEffect(() => deferTask(() => setUpdateRequested(true), { delayMs: 3000 }), [])
+  useEffect(() => {
+    const timer = setTimeout(() => setUpdateRequested(true), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  useEffect(() => {
+    if (privacyMode) document.body.classList.add('privacy-redact-mode')
+    else document.body.classList.remove('privacy-redact-mode')
+    return () => document.body.classList.remove('privacy-redact-mode')
+  }, [privacyMode])
 
   const toggle = (group: string) => setCollapsed(value => ({ ...value, [group]: !value[group] }))
   const closeSidebar = () => setSidebarOpen(false)
@@ -140,7 +149,7 @@ export default function App() {
   return (
     <div className={`layout${railCollapsed ? ' rail' : ''}`}>
       <FetchProgress />
-      {paletteRequested && <Suspense fallback={null}><CommandPalette initialOpen /></Suspense>}
+      <Suspense fallback={null}><CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /></Suspense>
       {updateRequested && shell.data?.runtime?.mode === 'packaged' && <Suspense fallback={null}><PackagedUpdateBanner /></Suspense>}
       {sidebarOpen && <div className="sidebar-backdrop" onClick={closeSidebar} aria-hidden="true" />}
       <aside
@@ -195,22 +204,12 @@ export default function App() {
           <button
             type="button"
             className="command-pill mono"
-            onClick={() => setPaletteRequested(true)}
+            onClick={() => setPaletteOpen(true)}
             aria-label="Open command palette"
             title="Command palette (⌘K)"
           >
             <span className="command-pill-icon" aria-hidden="true">⌘K</span>
           </button>
-          <button
-            type="button"
-            className="topbar-btn"
-            onClick={() => dumpIncidentSnapshot(qc)}
-            aria-label="Download incident snapshot"
-            title="Download frontend cache snapshot for incident debugging"
-          >
-            <span aria-hidden="true" style={{ fontSize: '0.75rem' }}>⬇ Dump</span>
-          </button>
-          <NotificationCenter />
           <StatusCluster data={shell.data} realtime={realtime} />
         </header>
         <main className="main">

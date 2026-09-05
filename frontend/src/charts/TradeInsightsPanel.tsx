@@ -33,10 +33,12 @@ const C = {
   accent:  '#22d3ee',
   yellow:  '#f5b942',
   purple:  '#a78bfa',
+  blue:    '#38bdf8',
+  pink:    '#f472b6',
   surface: '#141a21',
   border:  '#232c36',
   text:    '#e6edf3',
-  muted:   '#7a8a99',
+  muted:   '#7d8997',
 }
 
 // ── Shared Recharts props ─────────────────────────────────────────────────────
@@ -542,7 +544,7 @@ function RMultipleDistribution({ data }: { data: TradeInsights['r_multiple_distr
 
 // ── 13. Exit Reason Breakdown ────────────────────────────────────────────────
 function ExitReasonBreakdown({ data }: { data: TradeInsights['by_exit_reason'] }) {
-  const PIE_COLORS = [C.accent, C.green, C.yellow, C.red, C.purple, '#60a5fa', '#f472b6']
+  const PIE_COLORS = [C.accent, C.green, C.yellow, C.red, C.purple, C.blue, C.pink]
   return (
     <Card>
       <SectionLabel>Exit Reason Breakdown</SectionLabel>

@@ -30,9 +30,20 @@ const usd = (value: number | null | undefined) => value == null ? 'N/A' : new In
 const delta = (complete: boolean, value: number | null | undefined, points = false) => !complete || value == null ? 'Selected window' : `${value > 0 ? '+' : ''}${value.toFixed(1)}${points ? ' pp' : '%'} vs previous`
 
 const agentColumns: ColumnDef<UsageAgentBreakdown>[] = [
-  { accessorKey: 'agent', header: 'Agent' }, { accessorKey: 'runs', header: 'Runs', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'calls', header: 'LLM calls', cell: info => integer(info.getValue<number>()) }, { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) },
-  { accessorKey: 'tokens', header: 'Tokens', cell: info => integer(info.getValue<number | null>()) }, { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
+  { accessorKey: 'agent', header: 'Agent' },
+  {
+    id: 'runs_calls',
+    header: 'Runs · Calls',
+    cell: ({ row }) => (
+      <span className="mono">
+        {integer(row.original.runs)}
+        <span className="text-muted text-sm ml-1">({integer(row.original.calls)} calls)</span>
+      </span>
+    ),
+  },
+  { accessorKey: 'success_rate_pct', header: 'Success', cell: info => percent(info.getValue<number | null>()) },
+  { accessorKey: 'tokens', header: 'Tokens', cell: info => integer(info.getValue<number | null>()) },
+  { accessorKey: 'cost_usd', header: 'Cost', cell: info => usd(info.getValue<number | null>()) },
   { accessorKey: 'p95_latency_ms', header: 'P95 latency', cell: info => duration(info.getValue<number | null>()) },
 ]
 const modelColumns: ColumnDef<UsageModelBreakdown>[] = [
@@ -73,13 +84,42 @@ const providerColumns: ColumnDef<UsageProviderBreakdown>[] = [
   { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const toolColumns: ColumnDef<UsageToolBreakdown>[] = [
-  { accessorKey: 'tool', header: 'Tool' }, { accessorKey: 'class', header: 'Class' }, { accessorKey: 'permitted', header: 'Permitted', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'denied', header: 'Denied', cell: info => integer(info.getValue<number>()) }, { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
-  { accessorKey: 'p50_latency_ms', header: 'P50', cell: info => duration(info.getValue<number | null>()) }, { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
+  { accessorKey: 'tool', header: 'Tool' }, { accessorKey: 'class', header: 'Class' },
+  {
+    id: 'permitted_denied',
+    header: 'Permitted / Denied',
+    cell: ({ row }) => (
+      <span className="mono">
+        <span className="text-green">{integer(row.original.permitted)}</span>
+        {' / '}
+        <span className={row.original.denied > 0 ? 'text-red' : 'text-muted'}>{integer(row.original.denied)}</span>
+      </span>
+    ),
+  },
+  { accessorKey: 'calls', header: 'Calls', cell: info => integer(info.getValue<number>()) },
+  { accessorKey: 'p50_latency_ms', header: 'P50', cell: info => duration(info.getValue<number | null>()) },
+  { accessorKey: 'p95_latency_ms', header: 'P95', cell: info => duration(info.getValue<number | null>()) },
 ]
 const budgetColumns: ColumnDef<UsageBudget>[] = [
-  { accessorKey: 'limit_usd', header: 'Limit', cell: info => usd(info.getValue<number>()) }, { accessorKey: 'spend_usd', header: 'Spend', cell: info => usd(info.getValue<number | null>()) },
-  { accessorKey: 'remaining_usd', header: 'Remaining', cell: info => usd(info.getValue<number | null>()) }, { accessorKey: 'utilization_pct', header: 'Utilization', cell: info => percent(info.getValue<number | null>()) },
+  {
+    id: 'spend_limit',
+    header: 'Spend / Limit',
+    cell: ({ row }) => (
+      <span className="mono">
+        {usd(row.original.spend_usd)} / {usd(row.original.limit_usd)}
+      </span>
+    ),
+  },
+  {
+    id: 'remaining_util',
+    header: 'Remaining (% Used)',
+    cell: ({ row }) => (
+      <span className="mono">
+        {usd(row.original.remaining_usd)}
+        <span className="text-muted text-sm ml-1">({percent(row.original.utilization_pct)})</span>
+      </span>
+    ),
+  },
   { accessorKey: 'period', header: 'Period' },
 ]
 

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api } from '../../../api/client'
-import { GuardAuthorityNotice } from '../../../components/GuardAuthorityNotice'
 import {
   CollapsibleSection as Collapsible,
   SettingsRow as Row,
@@ -37,6 +36,18 @@ export const LEARNING_SECTION = {
   description: 'Controls whether agents autonomously generate research, knowledge, and strategy ideas.',
   searchTerms: ['dreaming', 'research', 'pi daemon', 'paper learning', 'experiments', 'contribution', 'lifecycle', 'guard', 'lesson guard', 'auto promote', 'guard candidate', 'controller', 'shadow', 'filter tuning', 'opportunity funnel'],
 } satisfies SettingsFeatureDescriptor
+
+export function GuardAuthorityNotice({ legacyAutoPromoteEnabled = false }: { legacyAutoPromoteEnabled?: boolean }) {
+  return (
+    <div className="hint mb-2">
+      <p>Owner-authored guards can enforce their configured effect. Learned guards remain observe-only by default; loss counts alone never grant blocking or score-penalty authority.</p>
+      <p>Learned effects require an exact prospective experiment treatment assignment. Candidate expiry and deprecation continue automatically.</p>
+      {legacyAutoPromoteEnabled && (
+        <p className="text-warning">Legacy auto-promote is saved in config, but it cannot promote or unshadow learned guard candidates.</p>
+      )}
+    </div>
+  )
+}
 
 export const REGIME_SECTION = {
   id: 'regime-detection', title: 'Regime Detection', tab: 'agent',

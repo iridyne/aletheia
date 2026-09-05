@@ -11,11 +11,12 @@ import {
   MAIN_INDICATOR_IDS, MAX_INDICATORS_PER_ZONE, SUBCHART_INDICATOR_IDS,
   type Bar, type ChartMarker, type ChartMarkerBucket, type ChartSettings, type MainIndicatorId,
   type MarkerKind, type PositionLevel, type SubchartIndicatorId, type VisibleVolumeProfile, type VolumeProfileBin,
+  type ThesisEnvelope,
 } from './priceChartModel'
 
 export type {
   Bar, ChartMarker, ChartMarkerBucket, ChartSettings, MainIndicatorId, MarkerKind,
-  PositionLevel, SubchartIndicatorId, VisibleVolumeProfile, VolumeProfileBin,
+  PositionLevel, SubchartIndicatorId, VisibleVolumeProfile, VolumeProfileBin, ThesisEnvelope,
 }
 export {
   bucketChartMarkers, calculateAtr, calculateBollingerBands, calculateEma, calculateMacd,
@@ -100,6 +101,7 @@ export interface PriceChartProps {
   exchange?: string
   markers?: ChartMarker[]
   positionLevels?: PositionLevel[]
+  thesisEnvelope?: ThesisEnvelope | null
   settings: ChartSettings
   onMarkerClick?: (events: ChartMarker[]) => void
   onMetaChange?: (meta: OhlcvResult['meta'] | null) => void
@@ -285,7 +287,7 @@ function IndicatorPane({
 
 export default function PriceChart({
   symbol, timeframe = '1h', marketType = 'spot', exchange = '', markers = [], positionLevels = [],
-  settings, onMarkerClick, onMetaChange,
+  thesisEnvelope, settings, onMarkerClick, onMetaChange,
 }: PriceChartProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const priceContainerRef = useRef<HTMLDivElement>(null)
@@ -303,6 +305,8 @@ export default function PriceChart({
   const profileLinesRef = useRef<IPriceLine[]>([])
   const vpCanvasRef = useRef<HTMLCanvasElement>(null)
   const profileRef = useRef<VisibleVolumeProfile | null>(null)
+  const thesisEnvelopeRef = useRef(thesisEnvelope)
+  thesisEnvelopeRef.current = thesisEnvelope
   const levelLinesRef = useRef<IPriceLine[]>([])
   const initializedRef = useRef(false)
   const isSyncingRangeRef = useRef(false)
@@ -338,14 +342,12 @@ export default function PriceChart({
       }))
     }
   }, [])
-  const drawVpCanvas = useCallback(() => {
+  const drawCanvasOverlay = useCallback(() => {
     const canvas = vpCanvasRef.current
     const series = candleRef.current
-    const profile = profileRef.current
-    if (!canvas || !series || !profile || !profile.bins.length) {
-      if (canvas) { const ctx = canvas.getContext('2d'); ctx?.clearRect(0, 0, canvas.width, canvas.height) }
-      return
-    }
+    const chart = chartRef.current
+    if (!canvas || !series) return
+
     const container = canvas.parentElement
     if (!container) return
     const { width, height } = container.getBoundingClientRect()
@@ -360,27 +362,97 @@ export default function PriceChart({
     if (!ctx) return
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.scale(dpr, dpr)
-    const BAR_MAX_WIDTH = Math.round(width * 0.12) // max 12% of chart width for VP bars
-    const { bins, maxVolume } = profile
-    for (const bin of bins) {
-      const y1 = series.priceToCoordinate(bin.priceHigh)
-      const y2 = series.priceToCoordinate(bin.priceLow)
-      if (y1 == null || y2 == null) continue
-      const barHeight = Math.max(1, Math.abs(y2 - y1) - 1)
-      const barWidth = maxVolume > 0 ? Math.max(2, (bin.volume / maxVolume) * BAR_MAX_WIDTH) : 2
-      const x = width - barWidth // right-aligned
-      const y = Math.min(y1, y2)
-      if (bin.isPoc) {
-        ctx.fillStyle = 'rgba(46, 230, 168, 0.65)'
-      } else if (bin.isValueArea) {
-        ctx.fillStyle = 'rgba(34, 211, 238, 0.22)'
-      } else {
-        ctx.fillStyle = 'rgba(125, 137, 151, 0.18)'
+
+    // 1. Draw Thesis Envelope (AI Thesis Envelope per §S07)
+    const envelope = thesisEnvelopeRef.current
+    if (envelope && chart) {
+      const timeScale = chart.timeScale()
+      const x1 = timeScale.timeToCoordinate(envelope.openedAt as Time)
+      const x2 = envelope.closedAt ? timeScale.timeToCoordinate(envelope.closedAt as Time) : width
+      const yTP = series.priceToCoordinate(envelope.takeProfitPrice)
+      const ySL = series.priceToCoordinate(envelope.stopPrice)
+      const yEntry = series.priceToCoordinate(envelope.entryPrice)
+
+      if (x1 != null && yTP != null && ySL != null) {
+        const leftX = Math.max(0, x1)
+        const rightX = x2 != null ? Math.min(width, Math.max(leftX + 24, x2)) : width
+        const topY = Math.min(yTP, ySL)
+        const bottomY = Math.max(yTP, ySL)
+        const rectW = Math.max(10, rightX - leftX)
+        const rectH = Math.max(10, bottomY - topY)
+
+        // Envelope fill
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.07)'
+        ctx.fillRect(leftX, topY, rectW, rectH)
+
+        // Envelope border
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.4)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([])
+        ctx.strokeRect(leftX, topY, rectW, rectH)
+
+        // TP horizontal boundary (green dashed)
+        ctx.strokeStyle = '#2ee6a8'
+        ctx.setLineDash([4, 4])
+        ctx.beginPath()
+        ctx.moveTo(leftX, yTP)
+        ctx.lineTo(rightX, yTP)
+        ctx.stroke()
+
+        // SL horizontal boundary (red dashed)
+        ctx.strokeStyle = '#ff5d6c'
+        ctx.beginPath()
+        ctx.moveTo(leftX, ySL)
+        ctx.lineTo(rightX, ySL)
+        ctx.stroke()
+
+        // Entry line (neutral dashed)
+        if (yEntry != null) {
+          ctx.strokeStyle = '#7d8997'
+          ctx.beginPath()
+          ctx.moveTo(leftX, yEntry)
+          ctx.lineTo(rightX, yEntry)
+          ctx.stroke()
+        }
+        ctx.setLineDash([])
+
+        // Micro labels
+        ctx.font = '10px var(--mono, monospace)'
+        ctx.fillStyle = '#2ee6a8'
+        ctx.fillText(`TP ${envelope.takeProfitPrice}`, leftX + 4, yTP - 3)
+        ctx.fillStyle = '#ff5d6c'
+        ctx.fillText(`SL ${envelope.stopPrice}`, leftX + 4, ySL + 11)
       }
-      ctx.fillRect(x, y, barWidth, barHeight)
     }
+
+    // 2. Draw Volume Profile Histogram on the right edge
+    const profile = profileRef.current
+    if (profile && profile.bins.length && settingsRef.current.overlays.profile) {
+      const BAR_MAX_WIDTH = Math.round(width * 0.12)
+      const { bins, maxVolume } = profile
+      for (const bin of bins) {
+        const y1 = series.priceToCoordinate(bin.priceHigh)
+        const y2 = series.priceToCoordinate(bin.priceLow)
+        if (y1 == null || y2 == null) continue
+        const barHeight = Math.max(1, Math.abs(y2 - y1) - 1)
+        const barWidth = maxVolume > 0 ? Math.max(2, (bin.volume / maxVolume) * BAR_MAX_WIDTH) : 2
+        const x = width - barWidth
+        const y = Math.min(y1, y2)
+        if (bin.isPoc) {
+          ctx.fillStyle = 'rgba(46, 230, 168, 0.65)'
+        } else if (bin.isValueArea) {
+          ctx.fillStyle = 'rgba(34, 211, 238, 0.22)'
+        } else {
+          ctx.fillStyle = 'rgba(125, 137, 151, 0.18)'
+        }
+        ctx.fillRect(x, y, barWidth, barHeight)
+      }
+    }
+
     ctx.setTransform(1, 0, 0, 1, 0, 0)
   }, [])
+
+  const drawVpCanvas = drawCanvasOverlay
 
   const applyProfile = useCallback((range?: LogicalRange | null) => {
     const chart = chartRef.current
@@ -587,7 +659,7 @@ export default function PriceChart({
       bbMiddleRef.current = null
       bbLowerRef.current = null
     }
-  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, exchange, marketType, symbol, timeframe])
+  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, drawVpCanvas, exchange, marketType, symbol, timeframe])
 
   useEffect(() => { markersRef.current = markers; applyMarkers() }, [applyMarkers, markers])
   useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [applyLevels, positionLevels])
