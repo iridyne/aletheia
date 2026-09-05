@@ -191,6 +191,25 @@ async def plan_next_candidate(
         candidate: dict | None = None
         feature: dict = {}
         if generation.get("entry_behavior_fingerprint"):
+            from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+            candidate = repo.get_candidate(generation["last_candidate_id"])
+            if candidate is None:
+                raise ValueError("candidate_not_found")
+            opportunity = CandidateOpportunityContextV1.model_validate_json(
+                candidate.get("candidate_opportunity_context_json") or ""
+            )
+            if (opportunity.candidate_id != candidate["id"]
+                or opportunity.context_hash != candidate.get("candidate_opportunity_context_hash")):
+                raise ValueError("candidate_opportunity_context_identity_mismatch")
+            capability = opportunity.opportunity["capability_status"]
+            if capability != "supported":
+                stored = repo.block_candidate_planning(
+                    generation["id"], owner, f"CANDIDATE_CAPABILITY:{capability}",
+                    stage="runtime_preflight",
+                )
+                return {"status": "blocked" if stored else "stale",
+                        "planning_generation_id": generation["id"], "model_invoked": False}
             from aletheia.trading.entry_authority import resolve_entry_runtime_authority
 
             authority = resolve_entry_runtime_authority(cfg)
@@ -203,9 +222,6 @@ async def plan_next_candidate(
             if generation.get("planner_input_json"):
                 context_model = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
             else:
-                candidate = repo.get_candidate(generation["last_candidate_id"])
-                if candidate is None:
-                    raise ValueError("candidate_not_found")
                 from aletheia.data.collectors.microstructure import MicrostructureCollector
                 from aletheia.data.symbols import InstrumentId
 
@@ -243,10 +259,13 @@ async def plan_next_candidate(
                 feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
                 cutoff = datetime.now(timezone.utc)
                 cutoff_ms = int(cutoff.timestamp() * 1000)
+                from aletheia.data.ccxt_provider import timeframe_ms
+
                 windows = {
                     timeframe: repo.get_ohlcv_candles(
                         generation["symbol"], timeframe, limit, generation["venue"],
-                        generation["market_type"], cutoff_ms, include_provenance=True,
+                        generation["market_type"], cutoff_ms - timeframe_ms(timeframe) + 1,
+                        include_provenance=True,
                     )
                     for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96))
                 }
@@ -427,6 +446,17 @@ async def plan_next_candidate(
         plan = compile_entry_plan(generation, context_model, intent, cfg)
     except ValueError as exc:
         code = exc.code if isinstance(exc, PlanIntentError) else type(exc).__name__
+        if code in {
+            "RISK_POLICY_UNKNOWN", "COMPILER_LEVERAGE_UNAVAILABLE",
+            "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_INTERNAL",
+        }:
+            stored = repo.defer_candidate_planning(
+                generation["id"], owner, f"ENTRY_PLAN_COMPILE_UNAVAILABLE:{code}",
+                stage="compiler", model_invoked=True, compiler_invoked=True,
+            )
+            return {"status": "unavailable" if stored else "stale",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True, "compiler_invoked": True}
         repo.fail_candidate_planning(
             generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{code}",
             stage="compiler", model_invoked=True, compiler_invoked=True,

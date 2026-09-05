@@ -9197,6 +9197,14 @@ def get_candidate_planning_for_candidate(
             )
             .fetchone()
         )
+    if row is None:
+        row = get_db().execute(
+            "SELECT pg.* FROM audit_events ae JOIN candidate_planning_generations pg "
+            "ON pg.id=json_extract(CASE WHEN json_valid(ae.after_state) THEN ae.after_state ELSE '{}' END, '$.planning_generation_id') "
+            "WHERE ae.event_type='candidate_planning_associated' AND ae.entity_type='candidate' "
+            "AND ae.entity_id=? ORDER BY pg.is_current DESC,pg.cycle_number DESC,pg.id DESC LIMIT 1",
+            (candidate_id,),
+        ).fetchone()
     projected = _effective_candidate_attention(dict(row) if row else None, now=now)
     if projected is not None:
         for field in ("identity_version", "planner_contract_version", "activation_identity"):
@@ -9400,7 +9408,7 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
             instrument,
         ).fetchone()
         rows = get_ohlcv_candles(candidate["symbol"], "15m", 96, candidate["venue"],
-            candidate["market_type"], int(cutoff.timestamp()*1000), include_provenance=True)
+            candidate["market_type"], int(cutoff.timestamp()*1000) - 900_000 + 1, include_provenance=True)
         book = latest_orderbook(candidate["symbol"], candidate["venue"], candidate["market_type"])
     windows, structures, _, _ = entry_causal_windows(*instrument, candidate["scanner_direction"], {"15m": rows}, cutoff)
     material = planning_structure_material(structures)
@@ -9415,6 +9423,7 @@ def prepare_candidate_requalification(candidate: dict) -> dict | None:
         "source_cutoff_at": cutoff.isoformat(),
         "entry_behavior_fingerprint": behavior, "schema_fingerprint": schema,
         "source_fingerprint": windows["15m"]["source_fingerprint"],
+        "last_closed_at_ms": windows["15m"]["bars"][-1]["ts"] + 900_000,
         "material": material,
         "orderbook": ({k: book[k] for k in ("id", "observed_at", "bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd")}
             if entry_orderbook_available(book, cutoff) else None),
@@ -9565,6 +9574,19 @@ def ensure_candidate_planning_generation(
                 or any(requalification.get(k) != v for k, v in expected.items())
                 or fingerprint(proof_payload) != requalification.get("proof_hash")):
                 requalification = None
+            if requalification is not None:
+                # Candle corrections may land between preparation and this writer.
+                # Compare the exact admitted rows; do not rerun the structure kernel here.
+                rows = get_ohlcv_candles(
+                    candidate["symbol"], "15m", 96, candidate["venue"],
+                    candidate["market_type"],
+                    int(_normalized_utc_datetime(expected["source_cutoff_at"]).timestamp()*1000) - 900_000 + 1,
+                    include_provenance=True,
+                )
+                if (fingerprint(rows) != requalification.get("source_fingerprint")
+                    or not rows
+                    or rows[-1]["ts"] + 900_000 != requalification.get("last_closed_at_ms")):
+                    requalification = None
         structure_requalified = False
         dependency_recovered = False
         if (requalification is not None and existing is not None
@@ -9593,12 +9615,21 @@ def ensure_candidate_planning_generation(
                     for f in material["facts"])
             )
             blocked_reason = json.loads(existing["result_json"] or "{}").get("reason")
+            dependency_failure = blocked_reason in {
+                "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+                "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+            }
+            if dependency_failure:
+                structure_requalified = False
             book = requalification.get("orderbook")
             dependency_recovered = bool(
                 existing.get("result_kind") == "unavailable"
                 and not existing.get("model_invoked") and not existing.get("planner_input_json")
-                and blocked_reason in {"ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE", "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE"}
+                and dependency_failure
                 and book and existing.get("attention_terminal_at")
+                and requalification.get("last_closed_at_ms", 0)
+                    > max(_normalized_utc_datetime(compared_at),
+                        _normalized_utc_datetime(existing["attention_terminal_at"])).timestamp()*1000
                 and _normalized_utc_datetime(book["observed_at"])
                     > _normalized_utc_datetime(existing["attention_terminal_at"])
             )
@@ -9652,6 +9683,15 @@ def ensure_candidate_planning_generation(
             and not dependency_recovered
             and not compatibility_cutover
         ):
+            if candidate_id not in {existing["candidate_id"], existing["last_candidate_id"]}:
+                insert_audit_event_once(AuditEvent(
+                    id=f"candidate-planning:{candidate_id}:{existing['id']}",
+                    timestamp=timestamp, actor="system", source="universe",
+                    event_type="candidate_planning_associated", entity_type="candidate",
+                    entity_id=candidate_id,
+                    after_state=json.dumps({"planning_generation_id": existing["id"]}),
+                    message="Candidate retained the existing planning cycle",
+                ))
             execute_write(
                 "UPDATE candidate_planning_generations SET "
                 "last_candidate_id=CASE WHEN planner_input_json IS NULL AND attention_status='active' THEN ? ELSE last_candidate_id END, "

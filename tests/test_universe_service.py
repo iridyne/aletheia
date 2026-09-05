@@ -193,8 +193,9 @@ def test_target_snapshot_empty_is_intentional_no_fill(svc, enabled_cfg):
 
 
 @pytest.mark.asyncio
-async def test_refresh_persists_legacy_family_without_opportunity_context(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize("family,mechanism", [("volatility", None), ("momentum", "continuation")])
+async def test_refresh_persists_legacy_family_opportunity_context(
+    tmp_path, monkeypatch, family, mechanism,
 ):
     from tests.test_entry_logic import setup_env
 
@@ -217,10 +218,10 @@ async def test_refresh_persists_legacy_family_without_opportunity_context(
         "execution_eligible": False,
     }
     scanner_result = {
-        "scanner_family": "volatility",
+        "scanner_family": family,
         "scanner_direction": "long",
         "opportunity_score": 70.0,
-        "all_scores": {"volatility": 70.0},
+        "all_scores": {family: 70.0},
         "reasons": ["volatility expansion"],
         "risk_flags": [],
     }
@@ -258,13 +259,30 @@ async def test_refresh_persists_legacy_family_without_opportunity_context(
     )
 
     snapshot_id = await UniverseService().refresh()
+    assert snapshot_id is not None
     member = repo.list_universe_members(snapshot_id, limit=10)[0]
 
-    assert member["scanner_family"] == "volatility"
-    assert member["opportunity_mechanism"] is None
-    assert member["candidate_opportunity_context_version"] is None
-    assert member["candidate_opportunity_context_json"] is None
-    assert member["candidate_opportunity_context_hash"] is None
+    assert member["scanner_family"] == family
+    assert member["opportunity_mechanism"] == mechanism
+    if mechanism is None:
+        assert member["candidate_opportunity_context_version"] is None
+        assert member["candidate_opportunity_context_json"] is None
+        assert member["candidate_opportunity_context_hash"] is None
+    else:
+        from aletheia.storage.models import UniverseMember
+
+        context = json.loads(member["candidate_opportunity_context_json"])
+        assert member["opportunity_source_cutoff_at"] == context["source"]["source_cutoff_at"]
+        for overrides in (
+            {"opportunity_source_cutoff_at": "2000-01-01T00:00:00+00:00"},
+            {"candidate_selection_utility_pct": 1.0},
+            {"opportunity_source_component": "target"},
+            {"candidate_opportunity_context_version": None,
+             "candidate_opportunity_context_json": None,
+             "candidate_opportunity_context_hash": None},
+        ):
+            with pytest.raises(ValueError):
+                UniverseMember.model_validate({**member, **overrides})
 
 
 def test_returns_active_members(svc, enabled_cfg):

@@ -567,14 +567,41 @@ def test_legacy_no_plan_does_not_loop_on_price_rank_or_new_bar(_inmemory_db):
     first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
     repo.execute_write("UPDATE candidate_planning_generations SET status='no_plan', "
         "result_kind='no_plan',attention_status='terminal' WHERE id=?", (first["id"],))
+    replacements = []
     for rank in (2, 3):
         later = _legacy_structure_candidate(unchanged_at.isoformat(), price=104, rank=rank)
+        replacements.append(later.id)
         same, created = repo.ensure_candidate_planning_generation(later.id, now=unchanged_at)
         assert not created and same["id"] == first["id"]
     assert repo.get_candidate_planning_generation(first["id"])["last_candidate_id"] == candidate.id
+    for candidate_id in replacements:
+        associated = repo.get_candidate_planning_for_candidate(candidate_id, now=unchanged_at)
+        assert associated is not None
+        assert associated["id"] == first["id"]
+        repo.ensure_candidate_planning_generation(candidate_id, now=unchanged_at)
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type='candidate_planning_associated'"
+    ).fetchone()[0] == 2
+    rolled_back = _legacy_structure_candidate(unchanged_at.isoformat(), rank=4)
+    with pytest.raises(RuntimeError, match="publication failed"):
+        with repo.transaction(immediate=True):
+            repo.ensure_candidate_planning_generation(rolled_back.id, now=unchanged_at)
+            raise RuntimeError("publication failed")
+    assert repo.get_candidate_planning_for_candidate(rolled_back.id) is None
 
 
-@pytest.mark.parametrize("guard", ["superseded_snapshot", "future_cutoff", "corrupt_proof", "missing_proof", "schema_changed"])
+def test_requalification_uses_closed_history_when_current_candle_exists(_inmemory_db):
+    from datetime import timedelta
+    from aletheia.storage import repositories as repo
+
+    first_at, _, _ = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate((first_at + timedelta(minutes=2)).isoformat())
+    proof = repo.prepare_candidate_requalification(candidate.model_dump())
+    assert proof is not None
+    assert proof["last_closed_at_ms"] == int(first_at.timestamp() * 1000)
+
+
+@pytest.mark.parametrize("guard", ["superseded_snapshot", "future_cutoff", "corrupt_proof", "missing_proof", "schema_changed", "candle_corrected"])
 def test_b1_rejects_unproven_requalification(_inmemory_db, guard):
     from datetime import timedelta
     from aletheia.storage import repositories as repo
@@ -592,6 +619,9 @@ def test_b1_rejects_unproven_requalification(_inmemory_db, guard):
         proof = None
     elif guard == "schema_changed":
         repo.execute_write("UPDATE candidate_planning_generations SET schema_fingerprint=? WHERE id=?", ("0"*64, first["id"]))
+    elif guard == "candle_corrected":
+        repo.execute_write("UPDATE market_ohlcv SET high=high+1,last_mutated_at=? WHERE ts=(SELECT MAX(ts) FROM market_ohlcv)",
+            ((later_at + timedelta(seconds=1)).isoformat(),))
     with repo.transaction(immediate=True):
         same, created = repo.ensure_candidate_planning_generation(later.id, requalification=proof,
             now=later_at-timedelta(seconds=1) if guard == "future_cutoff" else later_at)
@@ -657,11 +687,14 @@ def test_b1_concurrent_publications_and_reopen_create_one_successor(tmp_path, mo
 
 
 @pytest.mark.parametrize("model_invoked", [False, True])
-def test_b1_terminal_dependency_recovery_requires_real_book_and_no_model(_inmemory_db, model_invoked):
+@pytest.mark.parametrize("window", ["same", "new_bar", "new_structure"])
+def test_b1_terminal_dependency_recovery_requires_real_book_and_no_model(_inmemory_db, model_invoked, window):
     from datetime import timedelta
     from aletheia.storage import repositories as repo
     from aletheia.data.models import OrderbookSnapshot
-    first_at, later_at, _ = _seed_requalification_bars()
+    first_at, new_bar_at, new_structure_at = _seed_requalification_bars()
+    later_at = {"same": first_at + timedelta(minutes=2),
+                "new_bar": new_bar_at, "new_structure": new_structure_at}[window]
     candidate = _legacy_structure_candidate(first_at.isoformat())
     first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
     repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable',result_kind='unavailable', "
@@ -676,8 +709,7 @@ def test_b1_terminal_dependency_recovery_requires_real_book_and_no_model(_inmemo
         observed_at=(later_at-timedelta(seconds=1)).isoformat())
     repo.insert_orderbook_snapshot(book.model_dump())
     recovered, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
-    assert created is (not model_invoked)
-    if not model_invoked:
+    assert created is (not model_invoked and window != "same")
+    if created:
         assert recovered["cycle_reason"] == "planning_dependencies_recovered"
         assert recovered["previous_generation_id"] == first["id"]
-

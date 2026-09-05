@@ -994,7 +994,8 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
         assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
 
 
-def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
+@pytest.mark.parametrize("concurrent_insert", [False, True])
+def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch, concurrent_insert):
     from aletheia.config.loader import load_config
     from aletheia.data import price_feed
     from aletheia.portfolio import local_funding
@@ -1022,6 +1023,17 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
         "has_fresh_local_funding_schedule",
         lambda *_args, **_kwargs: True,
     )
+    if concurrent_insert:
+        import sqlite3
+        from uuid import uuid4
+
+        insert = repo.insert_trade_proposal
+
+        def competing_insert(proposal):
+            insert(proposal.model_copy(update={"id": uuid4().hex}))
+            raise sqlite3.IntegrityError("concurrent entry-plan proposal")
+
+        monkeypatch.setattr(repo, "insert_trade_proposal", competing_insert)
 
     now = datetime.now(timezone.utc)
     result = execute_entry_plan(
@@ -1043,6 +1055,7 @@ def test_paper_internal_entry_plan_passes_real_risk_gate(monkeypatch):
     assert fill["simulated_liquidity"] == "taker"
     assert fill["paper_fill_model_version"] == "paper-order-fill/v1"
     assert fill["execution_attempt_id"] == order["execution_attempt_id"]
+    assert order["proposal_id"] == repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"]
 
 
 def test_paper_entry_plan_crash_replay_rechecks_receipt_expiry(monkeypatch):
