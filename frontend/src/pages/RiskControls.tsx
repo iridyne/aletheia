@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import PageHeader from '../components/PageHeader'
@@ -509,7 +510,7 @@ export default function RiskControls() {
 
       {/* Zone 3 — Configured limits (read-only reference) */}
       <Card>
-        <CardHeader title="Configured Limits" meta="Read-only — edit in Settings → Risk." />
+        <CardHeader title="Configured Limits" meta={<>Read-only — <Link to="/settings?tab=risk" className="text-accent">Edit in Settings ↗</Link></>} />
         {boundariesPending && !boundaries ? (
           <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
         ) : boundariesError ? (

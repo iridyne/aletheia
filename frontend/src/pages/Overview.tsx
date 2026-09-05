@@ -295,8 +295,9 @@ function EntrySummaryStrip({ summary }: { summary?: OverviewBootstrap['summary']
   const active = summary?.active_entry_plans
   const needsPlanning = summary?.needs_planning
   const expiring = summary?.expiring_soon
+  const dest = needsPlanning && needsPlanning > 0 ? '/universe?tab=candidates' : '/universe'
   return (
-    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate('/universe')} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate('/universe') } }} title="Open Entry Workbench">
+    <div className="ov-blotter-strip" role="link" tabIndex={0} onClick={() => navigate(dest)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(dest) } }} title="Open Entry Workbench">
       <span className="ov-blotter-label">Entry Workbench</span><span className="ov-blotter-item">Active Plans <b className="mono">{active ?? '—'}</b></span><span className="ov-blotter-item">Needs Planning <b className={`mono ${needsPlanning ? 'ov-blotter-yellow' : ''}`}>{needsPlanning ?? '—'}</b></span><span className="ov-blotter-item">Expiring Soon <b className={`mono ${expiring ? 'ov-blotter-yellow' : ''}`}>{expiring ?? '—'}</b></span><span className="ov-blotter-arrow">→</span>
     </div>
   )
@@ -345,7 +346,7 @@ function GoLiveScoreCard() {
   return (
     <Card className="rail-card scorecard-panel">
       <Button type="button" variant="ghost" className="scorecard-header" onClick={() => setExpanded(value => !value)} aria-expanded={expanded}>
-        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={stale ? 'yellow' : dataTone}>{label}</StatusText></div><span className="text-muted text-xs">{expanded ? '▲' : '▼'}</span>
+        <div className="scorecard-title"><h3>Go-Live</h3><StatusText tone={stale ? 'yellow' : dataTone}>{label}</StatusText></div><span className="text-muted text-xs">{expanded ? '▼' : '▶'}</span>
       </Button>
       {expanded && scorecardQuery.isPending && !data && <p className="text-muted text-sm" role="status">Loading qualification details…</p>}
       {expanded && scorecardQuery.isError && !data && <div className="scorecard-unavailable" role="status"><p className="text-muted text-sm">Qualification details are unavailable.</p><Button type="button" variant="secondary" onClick={() => void scorecardQuery.refetch()}>Retry</Button></div>}
