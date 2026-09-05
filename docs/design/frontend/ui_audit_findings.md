@@ -83,9 +83,11 @@ Aletheia 前端不是常规的报表型 Web 仪表板，而是一套**以实盘�
 │   • 扇出延迟：StatusCluster 仅在 Hover/Focus 时延迟启动 8 个细表 Query (Cold Graph 优化) │
 ├────────────────────────────────────────────────────────────────────────────────────────┤
 │ 【2. 契约生成与类型安全】(Schema Contracts & Type Safety)                                │
-│   • generate-settings-types.mjs: 基于 Python OpenAPI Schema 闭包自动生成 settings.d.ts  │
-│   • check:settings-types: CI 门禁核对前后端契约，杜绝字段漂移                             │
-├────────────────────────────────────────────────────────────────────────────────────────┤
+│   • generate-api-types.mjs: 基于全量 OpenAPI Schema (351 路由/164 模型) 自动生成 api.d.ts │
+│   • generate-settings-types.mjs: 针对 /api/settings 的闭包切片生成 settings.d.ts         │
+│   • check:api-types & check:settings-types: CI 与本地 preflight 门禁核对前后端契约        │
+│   • 严格构建隔离：契约校验置于 preflight/CI，杜绝污染 npm run build 破坏 aletheia update │
+│   • 后端 ResponseModel 闭环：消灭裸 dict 返回，杜绝 OpenAPI 出参未知 (unknown) 漏洞     │
 │ 【1. 工程基建与性能门禁】(Build, Tooling & Performance Gate)                             │
 │   • 工作树保护：Vite 前置中间件 readonlyMasterApi 拦截向 127.0.0.1:8787 的一切写操作 (403)│
 │   • 静态 Token 审计：cssTokens.test.ts 自动化断言源码中所有 var(--token) 均有明确定义      │
@@ -149,9 +151,17 @@ Aletheia 前端不是常规的报表型 Web 仪表板，而是一套**以实盘�
 * **静态 Token 审计测试 (`cssTokens.test.ts`)**：
   利用 Vitest 在构建前遍历全量 `.tsx` 与 `.css` 源码，检测所有形如 `var(--xxx)` 的调用，断言每一个 Token 必须在 `:root` 中真实存在，杜绝暗黑终端因变量缺失回退到浏览器默认白色的故障。
 
-### 3. 全自动契约生成与 CI 校验 (`scripts/generate-settings-types.mjs`)
-* 通过 Python 端 `scripts/export_openapi_schema.py` 导出最新 OpenAPI 规范，计算 `/api/settings` 涉及的 Schema 传递闭包，利用 `openapi-typescript` 自动编译为 `src/api/generated/settings.d.ts`。在 CI 中使用 `--check` 参数运行，一旦前后端契约漂移立即阻断构建。
-
+### 3. 全自动契约生成与 CI 校验 (`scripts/generate-api-types.mjs` & `generate-settings-types.mjs`)
+* **全量 API 契约生成 (`scripts/generate-api-types.mjs`)**：
+  调用 Python 端 `scripts/export_openapi_schema.py` 导出包含全量 351 个路由与 164 个 Pydantic Schemas 的权威 OpenAPI 文档，利用 `openapi-typescript` 自动化生成 `src/api/generated/api.d.ts`（2.1 万行）。
+* **切片与全量双通道门禁**：
+  - `npm run check:api-types`：全量端点契约比对，检测路由定义、Query/Path 入参以及 ResponseModel 漂移；
+  - `npm run check:settings-types`：针对高频配置修改的轻量切片比对；
+  - 接入 `scripts/ci_plan.py` 本地 Preflight 与 GitHub CI 工作流，一旦前后端契约漂移立即阻断提交。
+* **架构经验与教训（构建隔离原则）**：
+  **严禁将契约生成/检查命令绑进 `package.json` 的 `"build"` 脚本！** 生产升级命令 `aletheia update`（`applier.py` / `auto.py`）在运行时执行 `npm run build` 生成静态托管产物；若在 `"build"` 中执行 Python 生成逻辑，会导致升级过程强依赖当时处于过渡态的 Python 环境，且破坏 `tests/test_frontend_ci_build_contract.py` 的 `EXPECTED_BUILD` 门禁。因此契约守卫必须严格放在开发期 preflight 和 CI 管道中。
+* **Pydantic ResponseModel 闭环铁律**：
+  FastAPI 路由若仅返回原生 `dict`，OpenAPI 规范会将出参标注为 `{}`（前端解析为 `unknown`），导致前端编译期完全丧失类型保护。后端高频交易、风控与首屏路由（`/positions`, `/trades`, `/risk/*`, `/ui/*`, `/universe/*`）必须显式挂载 Pydantic `response_model`，形成端到端双向强类型。
 ### 4. 生产打包性能硬预算门禁 (`scripts/check-performance.mjs`)
 * 生产打包强制串联：`tsc -b && vite build && compress-assets.mjs && check-performance.mjs`。
 * 检查机制：
