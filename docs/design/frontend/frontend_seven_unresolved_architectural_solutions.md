@@ -1,8 +1,10 @@
-# Aletheia 前端七大未决深水区议题：极简架构解决方案（初稿）
+# Aletheia 前端七大未决深水区议题：极简架构解决方案（已全面实施验收）
 
 > **设计哲学与核心原则**：
 > 1. **第一性原理（First Principles）**：紧扣金融系统的本质问题，直面物理世界与交易事实，不被既定框架约束。
 > 2. **奥卡姆剃刀（Occam's Razor）**：“如无必要，勿增实体”。能用浏览器原生特性搞定的，绝不引入外部依赖；能用 20 行代码解决的，绝不设计复杂微架构。
+> 3. **拒绝过度工程化（Anti-Overengineering）**：坚决摒弃虚高的多标签分布式锁、重型状态机与复杂云探针，追求最高的可靠性与最低的维护成本。
+> **验收状态**：**全部 7 大议题已 100% 完整实现并入库 master（86f492cd1 / d54b10cf3）**。
 > 3. **拒绝过度工程化（Anti-Overengineering）**：坚决摒弃虚高的多标签分布式锁、重型状态机与复杂云探针，追求最高的可靠性与最低的维护成本。
 
 ---
@@ -302,20 +304,20 @@ export function dumpIncidentSnapshot(queryClient: QueryClient) {
 
 ---
 
-## 七、 总结与实施路线总览
+## 七、 总结与全量实施验收对照表（100% 已落地）
 
-| 议题 | 选定方案 | 核心技术载体 | 代码增量估算 | 外部依赖增量 |
+| 议题 | 选定方案 | 核心技术载体 | 落地文件 | 实施状态 |
 |---|---|---|---|---|
-| **1. 多标签页并发** | 原生 `BroadcastChannel` 单连接主从模型 | Web Broadcast API | ~35 行 | **0 依赖** |
-| **2. 休眠唤醒雷暴** | 单兵探活苏醒闸门 (`WakeupGate`) | 原生时间差检测 + `/api/ready` | ~25 行 | **0 依赖** |
-| **3. 双时钟与时区** | HTTP `Date` 头对齐 + 显式窗口注脚 | 响应头读取 + 文本微调 | ~15 行 | **0 依赖** |
-| **4. 大数据量天花板** | 列表轻量投影 + 单条按需拉取明细 | 接口字段裁剪 + 游标参数 | 前端 ~20 行 | **0 依赖** |
-| **5. 事故黑盒转储** | 纯前端内存缓存一键下载 JSON | 原生 `Blob` + ObjectURL | ~20 行 | **0 依赖** |
-| **6. 移动端真实值守** | 纯 CSS 响应式“表格自动变卡片” | 媒体查询 + `data-label` | ~30 行 CSS | **0 依赖** |
-| **7. AI 假设复盘** | K 线画布轻量“计划信封框（Envelope）” | Lightweight Charts PriceLines | ~30 行 | **0 依赖** |
+| **1. 多标签页并发** | 原生 `BroadcastChannel` 单连接主从模型 | Web Broadcast API | `frontend/src/lib/tabSync.ts` | ✅ **已实现** (失效广播与跨 Tab 同步) |
+| **2. 休眠唤醒雷暴** | 单兵探活苏醒闸门 (`WakeupGate`) | 原生时间差检测 + `/api/ready` | `frontend/src/lib/wakeupGate.ts` | ✅ **已实现** (时间差 $>8\text{s}$ 阻断雷暴) |
+| **3. 双时钟与时区** | HTTP `Date` 头对齐 + 显式窗口注脚 | 响应头读取 + 文本微调 | `frontend/src/api/client.ts`<br>`frontend/src/components/PnLZone.tsx` | ✅ **已实现** (`getSyncedNow()` + UTC 窗口注脚) |
+| **4. 大数据量天花板** | 列表轻量标量投影 + 详情按需拉取 | 后端标量裁剪 + 游标分页 | `aletheia/server/routes/persistence.py`<br>`frontend/src/pages/TradesPositions.tsx` | ✅ **已实现** (13标量投影 + Keyset游标翻页) |
+| **5. 事故黑盒转储** | 纯前端内存缓存一键下载 JSON | 原生 `Blob` + ObjectURL | `frontend/src/lib/incidentDump.ts` | ✅ **已实现** (TanStack Cache 快照导出) |
+| **6. 移动端真实值守** | 纯 CSS 响应式“表格自动变卡片” | 媒体查询 + `data-label` | `frontend/src/index.css`<br>`frontend/src/components/DataTable.tsx` | ✅ **已实现** ($\le 640\text{px}$ 自动翻转卡片流) |
+| **7. AI 假设复盘** | K 线画布轻量“计划信封框（Envelope）” | Canvas 价格时间包络多边形 | `frontend/src/charts/priceChartModel.ts`<br>`frontend/src/charts/PriceChart.tsx` | ✅ **已实现** (TP/SL 虚线带与时间包络入图) |
 
-$$\textbf{总计：以大约 175 行原生、高内聚且完全零外部依赖的代码，彻底终结这 7 个长线深水区隐患。}$$
+$$\textbf{总计：以原生、高内聚且完全零外部依赖的代码，彻底终结这 7 个长线深水区隐患。}$$
 
 ---
 
-*（本方案初稿已完整保存在本地：`docs/design/frontend/frontend_seven_unresolved_architectural_solutions.md`，供后续逐项审阅与审批）*
+*（本文档已通过全量实施验收，作为 Aletheia 前端抗崩溃与多端鲁棒性设计的核心架构参考）*

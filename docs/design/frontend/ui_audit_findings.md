@@ -1,8 +1,7 @@
-# Aletheia 前端架构全景分析与 UI 深度审计报告
+# Aletheia 前端架构全景分析与 UI 深度审计及验收报告（已全量实施）
 
-> **文档性质**：本文档为 Aletheia 前端（`frontend/`）从底层工程基建到顶层交互机制的完整架构分析、全页面深度审计、CodeGraph 符号拓扑洞察、ast-grep 结构化扫描发现及 Ponytail 极简优化建议的权威固化记录。
-
----
+> **文档性质**：本文档为 Aletheia 前端（`frontend/`）从底层工程基建到顶层交互机制的完整架构分析、全页面深度审计、CodeGraph 符号拓扑洞察、ast-grep 结构化扫描发现及 Ponytail 极简优化建议的权威固化记录。  
+> **实施验收状态**：**文档中识别的 P0 高危 Bug（ActivityTimeline、CommandCenter SSE 等）、P1 质量缺陷（35+ 处 as any 强转、80+ 处行内样式滥用、缺失无障碍）、YAGNI 僵尸组件清理（SetupBanner, ObjectDetail, deferred 等）均已 100% 修复并合并入库 master（86f492cd1 / d54b10cf3）**。
 
 ## 目录
 1. [系统整体架构图谱与工程哲学](#一-系统整体架构图谱与工程哲学)
