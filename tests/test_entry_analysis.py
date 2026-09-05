@@ -218,6 +218,17 @@ def test_v2_hypothesis_binds_mechanism_profile_and_current_market_fact():
         supporting_fact_refs=(invalidation.anchor_id,), learning_evidence_refs=("learning:1",),
     )
     validate_hypothesis_references(hypothesis, context)
+    contract = entry_model_view(context)["reference_contract"]
+    assert contract == {
+        "citable_fact_refs": sorted(["candidate:c1", primary.anchor_id, invalidation.anchor_id]),
+        "current_market_fact_refs": [invalidation.anchor_id],
+    }
+    for ref in contract["citable_fact_refs"]:
+        validate_hypothesis_references(hypothesis.model_copy(update={"opposing_fact_refs": (ref,)}), context)
+    with pytest.raises(ValueError, match="hypothesis_fact_ref_not_supplied"):
+        validate_hypothesis_references(
+            hypothesis.model_copy(update={"opposing_fact_refs": ("swing:s1",)}), context,
+        )
 
     with pytest.raises(ValueError, match="hypothesis_opportunity_identity_mismatch"):
         validate_hypothesis_references(

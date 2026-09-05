@@ -13,6 +13,20 @@ from aletheia.model_provider.base import (
     portable_json_schema_payload,
 )
 
+def test_entry_no_plan_nullable_enum_matches_provider_schema():
+    from aletheia.agents.helpers import _validate_json_schema_value
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    payload = EntryHypothesis(
+        decision="NO_PLAN", reason_code="INSUFFICIENT_EVIDENCE",
+        mechanism="continuation", direction="long", risk_tier="NONE", horizon="NONE",
+    ).model_dump(mode="json")
+    for schema in (EntryHypothesis.model_json_schema(), portable_json_schema_payload(EntryHypothesis)):
+        _validate_json_schema_value(payload, schema, root=schema)
+        with pytest.raises(ValueError):
+            _validate_json_schema_value({**payload, "execution_urgency": "INVALID"}, schema, root=schema)
+        with pytest.raises((TypeError, ValueError)):
+            _validate_json_schema_value({**payload, "direction": None}, schema, root=schema)
 
 
 class FakeProvider:
@@ -865,3 +879,42 @@ async def test_openai_compatible_retries_without_json_schema_when_unsupported(mo
     assert payloads[1]["messages"][-1]["content"].startswith(
         "Respond with valid JSON matching this schema:"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content,raw,usage,reason,tokens", [
+    ("broken", {"usage": {"completion_tokens": 95}}, {}, "unknown", 95),
+    ("broken", {"choices": [{"finish_reason": "length"}], "usage": {"completion_tokens": 95}}, {"output_tokens": 12}, "length", 12),
+    ("", {"stop_reason": "max_tokens"}, {"output_tokens": 100}, "max_tokens", 100),
+    ("broken", {"incomplete_details": {"reason": "max_output_tokens"}}, {}, "incomplete", 0),
+    ("broken", {"choices": [{"finish_reason": "private-provider-text"}]}, {}, "unknown", 0),
+])
+async def test_structured_failure_retains_content_free_completion_state(
+    tmp_path, monkeypatch, content, raw, usage, reason, tokens,
+):
+    from aletheia.agents import helpers
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    calls = []
+
+    async def complete(request, **kwargs):
+        calls.append(request)
+        return ModelResponse(content=content, model="test", usage=usage, raw=raw)
+
+    async def provider(name):
+        return object()
+
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr(helpers, "get_provider_async", provider)
+    data, error = await helpers.llm_structured("sys", "user", schema=_ObjectSchema, max_tokens=100)
+    assert data is None and error.startswith("structured_")
+    assert len(calls) == 2
+    from aletheia.economics.schema import ensure_economics_schema
+    row = ensure_economics_schema().execute(
+        "SELECT metadata_json FROM llm_inference_calls WHERE logical_call_id=?",
+        (calls[-1].inference.logical_call_id,),
+    ).fetchone()
+    diagnostics = json.loads(row[0])["structured_failure"]
+    assert diagnostics["finish_reason"] == reason
+    assert diagnostics["output_tokens"] == str(tokens)
+    assert diagnostics["output_limit"] == "100"
+    assert "private-provider-text" not in json.dumps(diagnostics)

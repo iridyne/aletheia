@@ -227,24 +227,59 @@ async def plan_next_candidate(
                         instrument = InstrumentId(
                             generation["venue"], generation["symbol"], generation["market_type"]
                         )
+                        started = asyncio.get_running_loop().time()
+                        category, phase, exception_type = "invalid_payload", "parse", None
+                        book_age_ms = None
+                        orderbook = None
                         try:
                             async with asyncio.timeout(5):
                                 result = await MicrostructureCollector().collect(
                                     [instrument], venue=generation["venue"]
                                 )
-                            orderbook = None
+                            for error in result.get("errors", ()):
+                                error_phase, _, error_type = error.partition(":")
+                                if error_phase in {"provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse"}:
+                                    phase = error_phase
+                                    if error_type.isascii() and error_type.isidentifier() and len(error_type) <= 80:
+                                        exception_type = error_type
+                                    category = "invalid_payload" if error_type == "invalid_orderbook" else "collector_error"
+                                    break
                             for snapshot in result["snapshots"]:
-                                if (snapshot.exchange, snapshot.symbol, snapshot.market_type) == (
+                                if (snapshot.exchange, snapshot.symbol, snapshot.market_type) != (
                                     generation["venue"], generation["symbol"], generation["market_type"]
                                 ):
-                                    orderbook = snapshot.model_dump()
-                                    if entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
-                                        repo.insert_orderbook_snapshot(orderbook)
-                                    else:
-                                        orderbook = None
-                                    break
-                        except Exception:
-                            orderbook = None
+                                    category = "identity_mismatch"
+                                    continue
+                                candidate_book = snapshot.model_dump()
+                                now = datetime.now(timezone.utc)
+                                observed = datetime.fromisoformat(candidate_book["observed_at"].replace("Z", "+00:00"))
+                                if observed.tzinfo is not None:
+                                    book_age_ms = int((now - observed).total_seconds() * 1000)
+                                if entry_orderbook_available(candidate_book, now):
+                                    orderbook = candidate_book
+                                elif book_age_ms is not None:
+                                    category = "future" if book_age_ms < 0 else "stale"
+                                break
+                        except Exception as exc:
+                            category = "timeout" if isinstance(exc, TimeoutError) else "collector_error"
+                            phase, exception_type = "collect", type(exc).__name__
+                        if orderbook is not None:
+                            try:
+                                repo.insert_orderbook_snapshot(orderbook)
+                            except Exception as exc:
+                                orderbook = None
+                                category, phase, exception_type = "persistence_error", "persistence", type(exc).__name__
+                        if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
+                            if orderbook is not None:
+                                book_age_ms = int((datetime.now(timezone.utc) - observed).total_seconds() * 1000)
+                                category, phase, exception_type = "stale", "freshness", None
+                            logger.warning("entry_orderbook_unavailable", extra={
+                                "generation_id": generation["id"], "venue": generation["venue"],
+                                "symbol": generation["symbol"], "market_type": generation["market_type"],
+                                "category": category, "phase": phase, "exception_type": exception_type,
+                                "elapsed_ms": int((asyncio.get_running_loop().time() - started) * 1000),
+                                "book_age_ms": book_age_ms,
+                            })
                     if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
                         repo.release_candidate_planning_claim(
                             generation["id"], owner, "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
@@ -520,6 +555,17 @@ async def system_operator_entry_planner(
     provider_name = provider_name or get_provider_for_tier("deep")
     planning_generation_id = str(context_model.planning_generation.get("id") or "")
     from aletheia.trading.entry_contract import CANONICAL_ENTRY_SYSTEM_PROMPT
+
+    opportunity = context_model.candidate_opportunity_context["opportunity"]
+
+    class BoundEntryHypothesis(EntryHypothesis):
+        @classmethod
+        def model_json_schema(cls, **kwargs):
+            schema = super().model_json_schema(**kwargs)
+            schema["properties"]["mechanism"]["enum"] = [opportunity["primary_mechanism"]]
+            schema["properties"]["direction"]["enum"] = [opportunity["direction"]]
+            return schema
+
     def _validate_semantics(data: dict[str, object]) -> str | None:
         hypothesis = EntryHypothesis.model_validate(data)
         try:
@@ -529,8 +575,8 @@ async def system_operator_entry_planner(
         return None
 
     call_kwargs = {
-        "schema": EntryHypothesis,
-        "max_tokens": 768,
+        "schema": BoundEntryHypothesis,
+        "max_tokens": 3072,
         "provider": provider_name,
         "fallback_to_defaults": False,
         "context_symbol": str(context_model.instrument.get("symbol") or ""),
