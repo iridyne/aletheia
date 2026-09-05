@@ -317,7 +317,7 @@ def test_preflight_computes_settleability_only_after_strict_mismatch(monkeypatch
     }
 
 
-def test_update_progress_separates_stop_settlement_backup_and_keeps_lock(
+def test_update_progress_separates_stop_settlement_and_keeps_lock(
     tmp_path, monkeypatch,
 ):
     from aletheia.backup import service as backup_service
@@ -389,13 +389,12 @@ def test_update_progress_separates_stop_settlement_backup_and_keeps_lock(
             pass
 
         def create_backup(self, *, label, profile):
-            assert profile == "authoritative"
             events.append("backup")
-            return tmp_path / "authoritative.tar.gz"
+            return tmp_path / "backup.tar.gz"
 
     def apply(*, restart, progress=None, preactivation_backup=""):
         assert restart is True
-        assert preactivation_backup
+        assert preactivation_backup == ""
         events.append("apply")
         if progress:
             progress("Applying source update")
@@ -454,18 +453,18 @@ def test_update_progress_separates_stop_settlement_backup_and_keeps_lock(
     )
 
     assert result["continuity_verified"] is True
-    assert phases[:5] == [
+    assert phases[:4] == [
         "Running preflight checks",
         "Stopping runtime",
         "Settling Observation data",
-        "Creating recovery backup",
         "Applying source update",
     ]
     assert phases[-1] == "Verifying continuity"
+    assert "Creating recovery backup" not in phases
     assert events == [
         "barrier:enter",
-        "backup",
         "apply",
         "reanchor",
         "barrier:exit",
     ]
+    assert "backup" not in events

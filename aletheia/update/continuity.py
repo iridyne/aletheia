@@ -1036,29 +1036,18 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "continuity_verified": False, "continuity_state": "failed",
                 "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
             }
-        mark_phase("Creating recovery backup")
-        try:
-            from aletheia.backup.service import BackupService
-            from aletheia.config.loader import get_data_dir
-            preactivation_backup = str(
-                BackupService(get_data_dir()).create_backup(
-                    label="interactive_update_activate", profile="authoritative"
-                )
-            )
-        except Exception as exc:
-            barrier.__exit__(None, None, None)
-            barrier = None
-            restarted = applier._restart_gateway()
-            finish_phase()
-            return {
-                "applied": False,
-                "mode": "development",
-                "reason": "observation_backup_failed" if restarted.get("ok") else "old_runtime_restart_failed",
-                "message": type(exc).__name__,
-                "continuity_verified": False,
-                "continuity_state": "failed",
-                "continuity": {"preflight": preflight, "before": before, "settlement": settlement},
-            }
+        # No unconditional recovery backup. Two independent safety nets already
+        # cover activation failure:
+        #   1. `applier.apply_update` creates an authoritative backup inside its
+        #      `if schema_changed` branch when the target commit actually alters
+        #      the migration ledger.
+        #   2. When schema is unchanged, source activation is a pure
+        #      `git reset --hard` + optional dep/frontend rebuild — no data
+        #      mutation — so `git reflog` plus the durable WAL are the rollback
+        #      path. On a multi-GiB DB this reclaims ~54 s that would otherwise
+        #      be spent on a tar.gz of an unchanged database (Issue: skip
+        #      recovery backup when target has no pending migration).
+        preactivation_backup = ""
     else:
         barrier = None
         preactivation_backup = ""
