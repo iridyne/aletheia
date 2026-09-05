@@ -36,19 +36,7 @@ export interface CandidateSelectionStatus {
 	configured_policy_epoch: string | null;
 	authority_enabled: boolean;
 	authority_block_reason: string | null;
-	admission_block_reason: string | null;
-	evaluation_available: boolean;
-	evaluation_error: string | null;
-	qualification: {
-		verdict: "insufficient_data" | "positive" | "neutral" | "negative" | "invalid" | "unavailable";
-		promotion_eligible: boolean;
-		policy_epoch_id: string | null;
-		fixed_look_cluster_n?: number;
-		consecutive_eligible_utc_days?: number;
-		full_arm_outcome_coverage?: number;
-		blocking_reasons?: string[];
-		invalid_reasons?: string[];
-	};
+	selection_bases: ("measured" | "startup")[];
 }
 
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
@@ -2865,11 +2853,9 @@ export const api = {
 			enabled: boolean;
 			refresh_interval_min: number;
 			max_candidates: number;
-			core_pool_size: number;
 			min_volume_24h_usdt: number;
 			max_spread_bps: number;
 			min_depth_10bps_usd: number;
-			explore_ratio: number;
 			snapshot_ttl_enabled: boolean;
 			snapshot_ttl_hours: number;
 			entry_ttl_sec: number;
@@ -2877,23 +2863,10 @@ export const api = {
 			blacklist: string[];
 			fallback_symbols: string[];
 			market_type: string;
-			family_quota: Record<string, number>;
-			family_quota_by_regime: Record<string, Record<string, number>>;
 		}>,
 	) => post<any>("/settings/universe", body),
 	getCandidateSelectionStatus: () =>
 		fetchJson<CandidateSelectionStatus>("/settings/universe/candidate-selection"),
-	admitCandidateSelection: (expectedPolicyEpoch: string, reason: string) =>
-		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/admit", {
-			expected_policy_epoch: expectedPolicyEpoch,
-			reason,
-			confirm_admission: true,
-		}),
-	rollbackCandidateSelection: (reason: string) =>
-		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/rollback", {
-			reason,
-			confirm_rollback: true,
-		}),
 	updateFastTriggerConfig: (
 		body: Partial<{
 			mode: "off" | "shadow" | "execute";

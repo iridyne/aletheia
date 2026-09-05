@@ -8,7 +8,6 @@ import { describe, expect, it, vi } from 'vitest'
 import { api } from '../../../api/client'
 import type { RiskPolicyDraft } from './RiskTab'
 import { RiskPolicyEditor, RiskTab } from './RiskTab'
-import SRC from './RiskTab.tsx?raw'
 
 const DEMO_POLICY = {
   policy_id: 'demo-policy',
@@ -26,6 +25,11 @@ function changeNumber(input: HTMLInputElement, value: string) {
 
 function renderRiskTab(universe: Record<string, unknown> = {}) {
   const client = new QueryClient()
+  client.setQueryData(['candidate-selection-authority'], {
+    configured_policy: 'candidate_selection_utility_v1', configured_policy_epoch: null,
+    authority_enabled: false, authority_block_reason: 'policy_epoch_missing',
+    selection_bases: ['measured', 'startup'],
+  })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <RiskTab
@@ -52,25 +56,25 @@ describe('RiskTab', () => {
   it('keeps every risk domain component and safety control composed', () => {
     const html = renderRiskTab()
 
-    expect(SRC).toContain('<UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />')
-    expect(SRC).toContain('<CandidateSelectionAuthorityCard qc={qc} />')
-    expect(SRC).toContain('Admit qualified epoch')
-    expect(SRC).toContain('Restore legacy policy')
-    expect(SRC).toContain('Configured policy:')
-    expect(SRC).not.toContain('Active policy:')
-    expect(SRC).toContain('<EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />')
     expect(html).toContain('Empty — all symbols are tradable.')
     expect(html).toContain('Max daily loss')
     expect(html).toContain('Kill switch auto-trigger (live)')
-    expect(SRC).toContain('<RiskPolicyProfiles risk={risk} qc={qc} onDirty={onDirty} />')
   })
 
   it('describes target Candidate selection without legacy score semantics', () => {
     const html = renderRiskTab({ candidate_selection_policy: 'candidate_selection_utility_v1' })
 
-    expect(html).toContain('above-floor 4h cost-after Utility')
-    expect(html).toContain('It does not fill empty slots')
-    expect(html).not.toContain('legacy selector scans')
+    expect(html).toContain('收益排序：预期净收益')
+    expect(html).toContain('冷启动：信号强度')
+    expect(html).toContain('未知收益不是 0')
+    expect(html).toContain('未启用')
+    expect(html).toContain('Policy Epoch Missing')
+    expect(html).not.toContain('Fixed look')
+    expect(html).not.toContain('Explore ratio')
+    expect(html).not.toContain('Core pool size')
+    expect(html).not.toContain('Family quota')
+    expect(html).not.toContain('Admit qualified epoch')
+    expect(html).not.toContain('Restore legacy policy')
   })
 
   it('gives Snapshot TTL its switch and numeric input separate names', () => {

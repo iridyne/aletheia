@@ -110,6 +110,52 @@ supersede 旧 generation，同时 fail-closed 终结旧的 pre-order Entry Plan�
 capability block 在同一周期恢复且不算 No-Plan；validation/compiler failure 也不进入经济学习分母。
 Plan expiry 仅在后续完成的 Universe requalification、更新 source cutoff 且无未决 Order/Fill/Position
 时创建下一周期。模型返回必须 CAS 当前周期；stale result 可审计但不可激活。
+相同发现身份不代表相同 PA 材料：终态且无 Plan 的周期，可凭更新的已确认 15m 结构证明建立一次 successor。
+未调用模型的缺失盘口/必需上下文终态，须有新闭合窗口及终态后的真实新鲜盘口恢复证明；不能清零旧尝试或刷新旧冻结输入。
+证明在 publication 写事务前准备，事务内重验 source/snapshot、current owner、behavior/schema 与未决执行；
+普通新 bar、时间、价格、排名变化不重开。材料边界及持久归属见 [Entry Plan contract](entry-plan-contract.md#contract-identity-and-planning-cycles)。
+
+缺少 registry/frozen-context Profile 是 runtime_preflight 非经济 block。依赖缺失
+或 backpressure 仅退还当前未 dispatch 尝试并记录 planning_unavailable。dispatch
+后取消保留尝试，以 PLANNER_CANCELLED_DISPATCH_UNKNOWN 进入既有有界 defer，
+不伪造物理调用或 model_skipped。dispatch 前取消用 shield/CAS 只释放本 owner
+claim；调用事实单调保留，经济 NO_PLAN 不因数据恢复重开。
+
+**Candidate business progress (accepted 2026-09-05)**
+
+`get_candidate_path_progress()` is a read-only SQLite snapshot over scanner
+metrics, exact active/current supported planning, watchable Plan readiness, and
+current frozen-epoch selection plus exact `entry-fill:<id>` 4h outcome debt. It
+does not evaluate qualification or load provider/model data. Historical process
+IDs never remove current debt. Other epochs and unrelated outcome keys do not
+enter the count. A pending scanner capture with its committed batch is projected
+as captured without repairing scanner JSON. Missing identities/clocks remain
+unavailable, not an empty or successful queue. Per-outcome provider defer reasons
+are not durably stored by the existing settler: report settlement reason unavailable,
+not an invented provider diagnosis.
+
+The background health job replaces one cache before `compute_health`; Workbench
+reads that same cache. It includes generated time/age, attempt/success/snapshot
+watermarks, policy/epoch, selection/support/observe-only and reason counts, ready
+planning count/oldest time, expired claims, due outcome count/oldest due, and bounded
+issues. Cache TTL is twice the actual health job interval (default 1200 seconds).
+Unconfigured/paused health job, failed or missing/expired cache means unavailable;
+Universe disabled or deliberate runtime pause is explicitly non-applicable.
+
+With Universe enabled and scheduler running, latest failed refresh degrades at
+the next sample. Last success older than twice refresh interval plus 600 seconds
+is stalled; a new process without success initializes only until that bound.
+Supported ready work uses pending created_at, unavailable retry_not_before, or
+expired claim_expires_at, never updated_at. Ready work older than 480 seconds,
+or an expired lease older than 180 seconds, is stalled. Due pending 4h outcomes
+older than 900 seconds are a backlog, not proof of deadlock or economic failure.
+Normal empty/observe-only selection, future retries, capability blocks, economic
+NO_PLAN and natural Trigger/Fill waits are not stalls.
+
+Only `candidate_refresh_failed`, `candidate_refresh_stalled`,
+`candidate_planning_stalled`, and `candidate_outcome_backlog` degrade business
+health; unavailable probes initialize. All are alert-only: no self-heal restart,
+Live/Risk/Gateway change, rescheduling, admission or rewritten due_at.
 
 `entry_plans` 是唯一 active plan ledger。不可变 JSON 固定 instrument、generation、方向、thesis、
 execution mode、注册 TriggerSpec、entry/invalidation/stop/target/horizon、风险上限、order tactic、
@@ -120,6 +166,22 @@ Candidate 精确详情与 Planning History 必须按同一 soft/hard attention d
 hard deadline 已过时为 `max_attention_age`，否则 soft deadline 已过时为 `ttl_expired`。该读投影不得
 写 planning generation，也不得改变 Entry Plan、Order 或其有效性；耐久终态仍只由 canonical expiry
 reconciliation 写入。
+
+逻辑机会仅是现有账本的只读关联，不增加 Opportunity ID/表/调度器/总状态。
+共享批量 snapshot reader 以 exact Plan→Proposal/Order→Fill→Position 及
+Position→close Order→close Fill 读取执行事实；冲突、缺失或多义为 unavailable，
+不按 symbol/time 猜测。cycles 保留原 Candidate/input/hash/Plan，列表不得逐 cycle
+重复查询。attention、planning、execution、economics 并列显示；attention 终态
+不覆盖已激活执行。零成交确认终态为 NO_FILL，Fill 缺 Position 为 UNAVAILABLE，
+open Position 优先于 entry 余单；closed 仍须区别成本待结算、terminal exclusion
+和已完成。paper_internal CLOSED 必须以既有只读经济一致性规则核对最终关闭
+事件、净现金及可复算 PnL（1e-8），GET 不补写。Position realized economics 与
+entry-fill:<fill_id> 的固定四小时 Entry outcome 分离，不以选择 T0 forward return
+冒充开仓结果。所有开平仓仍由既有 Risk/Gateway/Position/accounting owner 执行。
+本地资金结算保留不可变 Proposal 的请求数量；Risk 批准数量必须与 Order
+执行数量一致且不得超过请求。只有 filled 或 cancelled 终态 Entry Order
+可计入关闭账本；filled 的成交量必须等于执行数量，cancelled 只计真实已成交量，
+余单不构成敞口。全部精确 Fills 的数量及成本仍须与 Position 对齐。
 
 ### 2.2 Legacy/independent TradingDecision compatibility contract (`agent_shell/trading_decision.py:56`,dataclass)
 

@@ -86,6 +86,7 @@ def _typed_candidate(
     market_type: str = "perp",
     source_at: str = "2026-09-03T00:00:00+00:00",
     primary_ref: str = "fact-1",
+    capability: str = "supported",
 ):
     from uuid import uuid4
 
@@ -112,7 +113,7 @@ def _typed_candidate(
             "direction": direction,
             "horizon": "4h",
             "economic_utility_pct": 1.0 if policy == "candidate_selection_utility_v1" else None,
-            "capability_status": "supported",
+            "capability_status": capability,
             "capability_gaps": (),
             "primary_evidence_refs": (primary_ref,),
             "secondary_mechanisms": (),
@@ -152,6 +153,26 @@ def _typed_candidate(
     return candidate
 
 
+@pytest.mark.parametrize("mechanism,family,capability", [
+    ("positioning_forced_flow", "derivatives", "observe_only"),
+    ("information_catalyst", "catalyst", "unavailable"),
+])
+def test_candidate_capability_blocks_before_market_or_model_calls(monkeypatch, mechanism, family, capability):
+    candidate = _typed_candidate(mechanism=mechanism, family=family, capability=capability)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("capability-blocked Candidate must not acquire market data or call model")
+
+    monkeypatch.setattr(repo, "latest_orderbook", unexpected)
+    result = asyncio.run(plan_next_candidate(unexpected, owner_token="capability-owner"))
+    assert result["status"] == "blocked"
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["outcome_class"] == "planning_blocked"
+    assert stored["outcome_reason"] == f"CANDIDATE_CAPABILITY:{capability}"
+    assert not stored["model_invoked"]
+
+
 def _no_plan_intent(
     reason_code: str = "INSUFFICIENT_EVIDENCE",
 ) -> PlanIntent:
@@ -169,7 +190,7 @@ def _no_plan_intent(
     )
 
 
-def _plan(generation: dict) -> EntryPlan:
+def _plan(generation: dict, *, profiles=None) -> EntryPlan:
     from aletheia.learning.entry_context import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
         EntryAnalysisContext, EntryAnchor, EntryHypothesis, canonical_json, fingerprint,
@@ -218,7 +239,7 @@ def _plan(generation: dict) -> EntryPlan:
         portfolio_context={"availability": "unavailable", "fact_refs": []},
         execution_context={"availability": "unavailable", "fact_refs": []},
         anchors=(primary, invalidation),
-        entry_profiles=({"id": "grounded-anchor-retrace-reclaim"},),
+        entry_profiles=({"id": "grounded-anchor-retrace-reclaim"},) if profiles is None else profiles,
         learning_context=empty_entry_learning_context(
             as_of_at=now.isoformat(), mechanism=mechanism, direction=direction,
             market_type="perp", policy=generation["candidate_selection_policy"],
@@ -738,22 +759,11 @@ def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence()
 
 
 def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
-    from types import SimpleNamespace
     from aletheia.agent_shell.entry_planner import PlanIntentError
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
-    context = SimpleNamespace(
-        candle_windows={"15m": {"availability": "available"}},
-        execution_context={"availability": "available"},
-        anchors=(SimpleNamespace(anchor_id="anchor"),),
-        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
-        model_dump=lambda **_kwargs: {"full_context": True},
-    )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
-        lambda *_args, **_kwargs: context,
-    )
+    _plan(generation)
 
     async def planner(_context):
         raise PlanIntentError("PLANNER_SEMANTIC_INVALID:hypothesis_fact_ref_not_supplied")
@@ -778,7 +788,8 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
-def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, profile):
+@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED"])
+def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
@@ -900,9 +911,30 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, pro
         assert planner_context["market_structure"]["fact_refs"] == [invalidation.anchor_id]
         return await system_operator_entry_planner(planner_context, "test")
 
+    if compiler_error:
+        from aletheia.agent_shell.entry_planner import PlanIntentError
+        from aletheia.trading.entry_plan_compiler import compile_entry_plan
+
+        def fail_compile(*args, **kwargs):
+            if compiler_error == "RUNNING_CONTRACT_CHANGED":
+                plan = compile_entry_plan(*args, **kwargs)
+                monkeypatch.setattr("aletheia.trading.entry_contract.entry_contract_fingerprints",
+                    lambda: ("new-running-behavior", "new-running-schema"))
+                return plan
+            raise PlanIntentError(compiler_error)
+        monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", fail_compile)
     result = asyncio.run(
         plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
     )
+    if compiler_error:
+        stored = repo.get_candidate_planning_generation(generation["id"])
+        operational = compiler_error == "COMPILER_RISK_BUDGET_UNAVAILABLE"
+        assert result["status"] == ("unavailable" if operational else "failed")
+        assert stored["outcome_class"] == ("planning_unavailable" if operational else "planning_failed")
+        assert stored["planner_input_json"] == input_payload
+        assert stored["model_invoked"] == stored["compiler_invoked"] == 1
+        assert stored["attention_status"] == ("active" if operational else "terminal")
+        return
     assert result["status"] == "planned", repo.get_candidate_planning_generation(generation["id"])["result_json"]
     stored = repo.get_candidate_planning_generation(generation["id"])
     plan = EntryPlan.model_validate_json(
@@ -927,6 +959,34 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, pro
     from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
 
     _require_ai_entry_authority(plan)
+    if plan.execution_mode == "TRIGGERED":
+        from aletheia.execution.entry_plan_execution import (
+            build_entry_plan_order_intent, _require_entry_trigger_evidence,
+        )
+
+        with pytest.raises(ValueError, match="ai_entry_trigger_evidence_required"):
+            build_entry_plan_order_intent(
+                plan, bid=100, ask=100.05,
+                observed_at=plan.approved_at, source_observed_at=plan.approved_at,
+            )
+        evidence = {"trigger_spec_id": plan.trigger_spec_id,
+                    "geometry_fingerprint": plan.trigger_params["geometry_fingerprint"]}
+        _require_entry_trigger_evidence(plan, evidence)
+        for key in evidence:
+            with pytest.raises(ValueError, match="ai_entry_trigger_identity_mismatch"):
+                _require_entry_trigger_evidence(plan, {**evidence, key: "wrong"})
+    original_record = repo.get_entry_plan(plan.plan_id)
+    for running in (
+        ("changed-behavior", generation["schema_fingerprint"]),
+        (generation["entry_behavior_fingerprint"], "changed-schema"),
+    ):
+        monkeypatch.setattr(
+            "aletheia.trading.entry_contract.entry_contract_fingerprints",
+            lambda running=running: running,
+        )
+        with pytest.raises(ValueError, match="ai_entry_running_contract_mismatch"):
+            _require_ai_entry_authority(plan)
+    assert repo.get_entry_plan(plan.plan_id) == original_record
 
 
 
@@ -1385,3 +1445,123 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
     assert calls[0]["execution_context"]["availability"] == "available"
     assert book["id"] in str(calls[0]["execution_context"]["fact_refs"])
 
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_missing_profiles_are_non_economic_blocks(monkeypatch, frozen):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    if frozen:
+        _plan(generation, profiles=())
+    else:
+        monkeypatch.setattr("aletheia.trading.entry_profiles.compatible_entry_profiles", lambda _: ())
+    def unexpected(*args, **kwargs):
+        pytest.fail("missing profiles must block before market/model")
+    monkeypatch.setattr(repo, "latest_orderbook", unexpected)
+    result = asyncio.run(plan_next_candidate(unexpected))
+    row = repo.get_candidate_planning_generation(generation["id"])
+    assert result["status"] == "blocked"
+    assert row["outcome_class"] == "planning_blocked"
+    assert row["outcome_reason"] == "NO_VALID_ENTRY_PROFILE"
+    assert row["attempt_count"] == 0
+
+
+@pytest.mark.parametrize("phase", ["prefetch", "model", "persistence"])
+@pytest.mark.parametrize("replace_owner", [False, True])
+def test_cancellation_recovers_only_owned_claim(monkeypatch, phase, replace_owner):
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    if phase != "prefetch":
+        _plan(generation)
+    original = repo.get_candidate_planning_generation(generation["id"])
+    def cancel(*args, **kwargs):
+        if replace_owner:
+            repo.execute_write("UPDATE candidate_planning_generations SET owner_token='new-owner' WHERE id=?", (generation["id"],))
+        raise asyncio.CancelledError
+    async def planner(context):
+        if phase == "model":
+            cancel()
+        return {"decision": "NO_PLAN", "reason_code": "INSUFFICIENT_EVIDENCE",
+                "mechanism": "continuation", "direction": "long", "risk_tier": "NONE", "horizon": "NONE"}
+    if phase == "prefetch":
+        monkeypatch.setattr(repo, "latest_orderbook", cancel)
+    elif phase == "persistence":
+        monkeypatch.setattr(repo, "complete_candidate_planning_no_plan", cancel)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(plan_next_candidate(planner, owner_token="cancel-owner"))
+    row = repo.get_candidate_planning_generation(generation["id"])
+    assert row["planner_input_json"] == original["planner_input_json"]
+    assert row["planner_input_hash"] == original["planner_input_hash"]
+    if replace_owner:
+        assert row["status"] == "planning"
+        assert row["owner_token"] == "new-owner"
+        return
+    assert row["owner_token"] is None
+    assert row["status"] == "unavailable"
+    assert row["outcome_class"] == "planning_unavailable"
+    assert row["attempt_count"] == (0 if phase == "prefetch" else 1)
+    assert bool(row["model_invoked"]) == (phase == "persistence")
+    if phase == "model":
+        events = project_candidate_entry_lifecycle({}, [row])["cycles"][0]["events"]
+        assert "model_dispatch_unavailable" in {event["event"] for event in events}
+        assert "model_skipped" not in {event["event"] for event in events}
+
+
+@pytest.mark.parametrize("operation", ["release", "block", "defer", "fail"])
+def test_non_economic_results_preserve_invocation_history(operation):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("owner")
+    repo.mark_candidate_planning_stage(generation["id"], "owner", "compiler", model_invoked=True, compiler_invoked=True)
+    if operation == "release":
+        repo.release_candidate_planning_claim(generation["id"], "owner", "DEPENDENCY_UNAVAILABLE")
+    else:
+        getattr(repo, f"{operation}_candidate_planning")(
+            generation["id"], "owner", "DEPENDENCY_UNAVAILABLE", stage="runtime_preflight",
+            model_invoked=False, compiler_invoked=False)
+    row = repo.get_candidate_planning_generation(generation["id"])
+    assert row["model_invoked"] == row["compiler_invoked"] == 1
+    assert row["outcome_reason"] == "DEPENDENCY_UNAVAILABLE"
+    if operation == "release":
+        assert row["last_stage"] == "compiler"
+        assert row["outcome_class"] == "planning_unavailable"
+
+
+@pytest.mark.parametrize("phase", ["prefetch", "model"])
+def test_real_task_cancellation_is_shielded_and_dispatch_retries_are_bounded(monkeypatch, phase):
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    if phase == "model":
+        _plan(generation)
+    else:
+        monkeypatch.setattr(repo, "latest_orderbook", lambda *args: None)
+    original = repo.get_candidate_planning_generation(generation["id"])
+
+    async def exercise():
+        for attempt in range(3 if phase == "model" else 1):
+            entered = asyncio.Event()
+            async def wait_for_cancel(*args, **kwargs):
+                entered.set()
+                await asyncio.Event().wait()
+            if phase == "prefetch":
+                monkeypatch.setattr("aletheia.data.collectors.microstructure.MicrostructureCollector.collect", wait_for_cancel)
+            task = asyncio.create_task(plan_next_candidate(wait_for_cancel))
+            await asyncio.wait_for(entered.wait(), timeout=1)
+            task.cancel()
+            asyncio.get_running_loop().call_soon(task.cancel)
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            row = repo.get_candidate_planning_generation(generation["id"])
+            assert row["owner_token"] is None
+            assert row["attempt_count"] == (attempt + 1 if phase == "model" else 0)
+            assert row["planner_input_hash"] == original["planner_input_hash"]
+            assert not row["model_invoked"]
+            if phase == "model" and attempt < 2:
+                assert row["attention_status"] == "active"
+                repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=? WHERE id=?",
+                                   ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), generation["id"]))
+        if phase == "model":
+            assert row["attention_status"] == "terminal"
+            assert row["attention_terminal_reason"] == "planning_unavailable"
+            assert repo.claim_next_candidate_planning("later") is None
+    asyncio.run(exercise())

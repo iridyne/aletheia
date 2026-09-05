@@ -23,6 +23,15 @@ afterEach(() => {
 
 const workbench: EntryWorkbenchResponse = {
   generated_at: '2026-08-28T00:00:00Z',
+  progress: {
+    generated_at: null, availability: { available: false, reason: 'not_sampled' },
+    age_seconds: null, ttl_seconds: 1200, last_attempt_at: null, last_success_at: null,
+    last_snapshot_id: null, selection_policy: null, policy_epoch: null, selected_count: null,
+    planning_supported_count: null, observe_only_count: null, selection_reason_counts: {},
+    ready_planning_count: null, oldest_ready_at: null, expired_claim_count: null,
+    due_outcome_count: null, oldest_due_at: null, issues: [], blocking_reason_counts: {},
+    shadow_capture_status: null, shadow_capture_reason: null,
+  },
   availability: {
     summary: { available: true, stale: false },
     entry_plans: { available: true, stale: false },
@@ -156,10 +165,22 @@ describe('Entry Workbench', () => {
         candidate_selection_utility_pct: 1.25,
       })) ?? [],
     })
-    expect(html).toContain('Utility 1.25%')
+    expect(html).toContain('收益排序：预期净收益 1.25%')
     expect(html).not.toContain('Legacy score 88')
   })
 
+  it('keeps startup signal strength distinct from unknown net utility', () => {
+    const html = renderWorkbench({ ...workbench, current_candidates: [{
+      ...workbench.current_candidates![0],
+      candidate_selection_policy: 'candidate_selection_utility_v1', admission_basis: 'startup',
+      pessimistic_strength: 72, startup_reason: 'parent_sample_insufficient',
+      candidate_selection_utility_pct: null,
+    }] })
+    expect(html).toContain('冷启动：信号强度 72')
+    expect(html).toContain('预期净收益未知')
+    expect(html).toContain('父组样本不足')
+    expect(html).not.toContain('72%')
+  })
   it('exposes all six progressive Plan sections and exact downstream lineage', () => {
     const html = renderWorkbench(workbench, '/universe?tab=plans&plan_id=plan-1')
     for (const section of ['Plan Summary', 'Entry Geometry', 'Trigger &amp; Execution', 'Thesis &amp; Evidence', 'Risk Envelope', 'Lineage / exact execution']) {

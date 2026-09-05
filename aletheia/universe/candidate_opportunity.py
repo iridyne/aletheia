@@ -89,12 +89,40 @@ class CandidateOpportunityContextV1(BaseModel):
         if opportunity.get("capability_status") not in {"supported", "observe_only", "unavailable"}:
             raise ValueError("candidate_opportunity_capability_invalid")
         utility = opportunity.get("economic_utility_pct")
-        if selection.get("policy") == "candidate_selection_utility_v1" and (
-            isinstance(utility, bool)
-            or not isinstance(utility, (int, float))
-            or not math.isfinite(float(utility))
-        ):
-            raise ValueError("candidate_opportunity_utility_invalid")
+        basis = opportunity.get("admission_basis")
+        startup_reason = opportunity.get("startup_reason")
+        if basis not in {None, "measured", "startup"}:
+            raise ValueError("candidate_opportunity_admission_basis_invalid")
+        if basis == "startup":
+            strength = opportunity.get("pessimistic_strength")
+            if (
+                selection.get("policy") != "candidate_selection_utility_v1"
+                or selection.get("decision_version") != "candidate-selection-utility/v2"
+                or startup_reason not in {
+                    "no_history", "parent_sample_insufficient", "child_sample_insufficient",
+                }
+                or utility is not None
+                or opportunity.get("mechanism_source") != "target_authority"
+                or opportunity.get("capability_status") != "supported"
+                or opportunity.get("capability_gaps")
+                or isinstance(strength, bool)
+                or not isinstance(strength, (int, float))
+                or not math.isfinite(strength)
+                or not 0 <= strength <= 100
+            ):
+                raise ValueError("candidate_opportunity_startup_invalid")
+        else:
+            if startup_reason is not None:
+                raise ValueError("candidate_opportunity_startup_reason_invalid")
+            if selection.get("policy") == "candidate_selection_utility_v1" and (
+                isinstance(utility, bool)
+                or not isinstance(utility, (int, float))
+                or not math.isfinite(float(utility))
+            ):
+                raise ValueError("candidate_opportunity_utility_invalid")
+        if (selection.get("decision_version") == "candidate-selection-utility/v2"
+                and basis is None):
+            raise ValueError("candidate_opportunity_admission_basis_missing")
         for field, limit in (
             ("capability_gaps", 16), ("primary_evidence_refs", 32),
             ("secondary_mechanisms", 4),
@@ -130,6 +158,7 @@ def target_candidate_opportunity_context(
             "policy": "candidate_selection_utility_v1",
             "policy_epoch": policy_epoch,
             "source_record_hash": source_record_hash,
+            "decision_version": decision["version"],
         },
         source={
             "detected_at": detected_at,
@@ -147,6 +176,9 @@ def target_candidate_opportunity_context(
             "direction": decision["primary_direction"],
             "horizon": OPPORTUNITY_HORIZON,
             "economic_utility_pct": decision["economic_utility_pct"],
+            "admission_basis": decision.get("admission_basis"),
+            "startup_reason": decision.get("startup_reason"),
+            "pessimistic_strength": primary.get("pessimistic_strength"),
             "capability_status": capability,
             "capability_gaps": gaps,
             "primary_evidence_refs": tuple(primary.get("evidence_refs") or ()),

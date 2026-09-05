@@ -176,7 +176,6 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
 
     from aletheia.model_provider.base import portable_json_schema_payload
     from aletheia.trading.entry_analysis import EntryHypothesis
-    from aletheia.trading.trigger_specs import compatible_trigger_specs
 
     schema = portable_json_schema_payload(EntryHypothesis)
     assert set(schema["required"]) == set(schema["properties"])
@@ -186,7 +185,6 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
     assert "$ref" not in encoded and "$defs" not in encoded and "anyOf" not in encoded
     assert set(schema["properties"]) == set(EntryHypothesis.model_fields)
     no_plan = EntryHypothesis.model_validate({
-            "version": "entry-hypothesis/v2",
             "decision": "NO_PLAN",
             "reason_code": "CONFLICTING_SIGNALS",
             "mechanism": "continuation",
@@ -194,7 +192,6 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
             "primary_anchor_ref": "anchor:ignored",
             "invalidation_anchor_ref": "anchor:ignored-too",
             "entry_profile_id": "anchor-resting-maker",
-            "entry_profile_version": "v1",
             "execution_urgency": "PASSIVE",
             "risk_tier": "LOW",
             "horizon": "INTRADAY",
@@ -205,17 +202,9 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
     assert no_plan.primary_anchor_ref is None
     assert no_plan.invalidation_anchor_ref is None
     assert no_plan.entry_profile_id is None
-    assert no_plan.entry_profile_version is None
     assert no_plan.execution_urgency is None
     assert no_plan.risk_tier == "NONE"
     assert no_plan.horizon == "NONE"
-    assert [(spec.spec_id, spec.version) for spec in compatible_trigger_specs("momentum")] == [
-        ("momentum-retrace-reclaim", "v1"),
-    ]
-    from aletheia.trading.trigger_specs import registered_trigger_specs
-    assert compatible_trigger_specs("value") == ()
-    v2 = next(spec for spec in registered_trigger_specs() if spec.version == "v2")
-    assert v2.planner_visible is False
 
 
 @spec_claim(
@@ -311,30 +300,33 @@ def test_paper_outcome_cohort_requires_the_current_entry_fill_model():
 
 @spec_claim(
     SpecClaim(
-        "EP-S13", "entry_plan_contract", "Mechanism-aware Grounded Entry", "L2a",
-        "Planning V2 owns exact mechanism authority while ordinary Candidate churn cannot duplicate ownership.",
+        "EP-S13", "entry_plan_contract", "Contract identity and planning cycles", "L2b",
+        "Stable discovery ownership permits one successor on newer confirmed structure, preserving the old failed input and outcome.",
         status="implemented",
     )
 )
-def test_mechanism_planning_identity_and_runtime_revalidation_are_explicit():
-    from aletheia.agent_runtime.fast_trigger_watch import _load_entry_plan_watchers
-    from aletheia.execution.entry_plan_execution import _require_ai_entry_authority
+def test_legacy_terminal_failure_requalifies_on_confirmed_structure(_inmemory_db):
+    from tests.test_entry_lifecycle_cutover import _legacy_structure_candidate, _seed_requalification_bars, _bind_test_context
+    from aletheia.storage import repositories as repo
     from aletheia.trading.entry_plan import candidate_planning_identity
 
-    identity_source = inspect.getsource(candidate_planning_identity)
-    for field in (
-        "primary_mechanism", "direction", "policy", "policy_epoch", "mechanism_version",
-    ):
-        assert field in identity_source
-    for excluded in ("rank", "total_score", "entry_price_usd"):
-        assert excluded not in identity_source
-    authority_source = inspect.getsource(_require_ai_entry_authority)
-    assert "candidate_opportunity_context_hash" in authority_source
-    assert "candidate_selection_policy_epoch" in authority_source
-    assert "mechanism_version" in authority_source
-    assert "require_entry_plan_runtime_authority" in inspect.getsource(
-        _load_entry_plan_watchers
-    )
+    first_at, _, later_at = _seed_requalification_bars()
+    candidate = _legacy_structure_candidate(first_at.isoformat())
+    first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
+    _bind_test_context(repo, first)
+    repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable', "
+        "result_kind='unavailable', outcome_class='planning_failed', result_json='{}', "
+        "attention_status='terminal',attempt_count=3 WHERE id=?", (first["id"],))
+    frozen = repo.get_candidate_planning_generation(first["id"])
+    later = _legacy_structure_candidate(later_at.isoformat())
+    assert candidate_planning_identity(candidate.model_dump()) == candidate_planning_identity(later.model_dump())
+    second, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert created, "New confirmed PA material must be expressed independently of discovery identity"
+    assert second["planning_key"] == first["planning_key"]
+    assert second["previous_generation_id"] == first["id"] and second["cycle_number"] == 2
+    old = repo.get_candidate_planning_generation(first["id"])
+    for field in ("planner_input_json", "planner_input_hash", "result_json", "attempt_count", "outcome_class"):
+        assert old[field] == frozen[field]
 
 
 @spec_claim(
@@ -358,24 +350,3 @@ def test_workbench_projects_monitoring_and_exact_funding_readiness():
     assert "monitoring_evidence_json" in EntryPlanRecord.model_fields
 
 
-@spec_claim(
-    SpecClaim(
-        "EP-S14", "entry_plan_contract", "Mechanism-aware Grounded Entry", "L2a",
-        "One V2 hypothesis repeats upstream mechanism/direction, exposes no numeric execution authority, and sees only compatible Profiles.",
-        status="implemented",
-    )
-)
-def test_grounded_v2_is_one_bounded_schema_and_profile_registry():
-    from aletheia.trading.entry_analysis import EntryHypothesisV2
-    from aletheia.trading.entry_profiles import compatible_entry_profiles
-
-    assert {
-        "price", "size", "quantity", "leverage", "stop_price", "target_price",
-        "slippage_bps", "trigger_params",
-    }.isdisjoint(EntryHypothesisV2.model_fields)
-    assert set(EntryHypothesisV2.model_fields["horizon"].annotation.__args__) == {
-        "INTRADAY", "NONE",
-    }
-    for mechanism in ("continuation", "reversal", "positioning_forced_flow"):
-        assert compatible_entry_profiles(mechanism)
-    assert compatible_entry_profiles("information_catalyst") == ()

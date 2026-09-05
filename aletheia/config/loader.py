@@ -413,6 +413,25 @@ def _invalidate_config_cache() -> None:
     global _config_cache
     _config_cache = None
 
+def _normalize_candidate_selection(cfg: AletheiaConfig) -> bool:
+    """Derive Demo selection identity from current semantics, not admission."""
+    if (DATA_DIR / "candidate_selection_authority_transition.json").exists():
+        return False  # Recover the old journal before migrating its policy.
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.config.schema import UniverseConfig
+
+    epoch = canonical_fingerprint(candidate_selection_policy_identity(cfg))
+    if (cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1"
+            and cfg.universe.candidate_selection_policy_epoch == epoch):
+        return False
+    cfg.universe = UniverseConfig.model_validate({
+        **cfg.universe.model_dump(),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": epoch,
+    })
+    return True
+
 
 def load_config(
     *, persist_migrations: bool = True, use_cache: bool = True
@@ -488,7 +507,8 @@ def load_config(
                     "AletheiaConfig", safe_errors, hide_input=True
                 ) from None
             raise
-        changed = webhook_migrated or removed_agent_keys
+        candidate_selection_migrated = _normalize_candidate_selection(cfg)
+        changed = webhook_migrated or removed_agent_keys or candidate_selection_migrated
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
@@ -538,6 +558,7 @@ def load_config(
             _config_cache = (time.monotonic(), CONFIG_PATH, cfg)
         return cfg.model_copy(deep=True)
     cfg = AletheiaConfig()
+    _normalize_candidate_selection(cfg)
     cfg.operator.loop_enabled = False
     _apply_runtime_operator_authority(cfg)
     if use_cache:
@@ -571,6 +592,7 @@ def _save_config_locked(
         _raise_operator_authority_conflict(
             "The operator-shell process is still running; legacy fallback cannot become effective until that process is gone"
         )
+    _normalize_candidate_selection(cfg)
     cfg.runtime.set_pause_scope(cfg.exchange.mode)
     data = AletheiaConfig.model_validate(cfg.model_dump(mode="python")).model_dump(
         mode="json"

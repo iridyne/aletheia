@@ -3,20 +3,22 @@
 Authority: GitHub Issue #2729 and the accepted
 `docs/design/proposals/universe_continuous_scoring_safety.md` proposal.
 
-Status: implemented with legacy authority by default. Candidate Selection
-Utility records non-authoritative Shadow evidence until its prospective fixed
-look is positive and an owner explicitly admits that exact frozen policy epoch
-through the protected Settings boundary.
+Status: Demo runtime uses the existing Utility policy family
+`candidate_selection_utility_v1` with decision v2 and record v4. Measured
+economic admission has priority; genuine sample scarcity may fill remaining
+capacity through explicit Startup signal admission. Positive fixed-look
+qualification and an owner admission record are not runtime prerequisites.
 
 ## Boundary
 
 Candidate Selection Utility answers only which exact instruments deserve a
 scarce Candidate slot. It does not choose Entry geometry, size, leverage, order
 type, Risk exceptions, credentials, Gateway behavior, or exchange actions.
-Historical six-family and `total_score` records remain immutable compatibility
-evidence and the deterministic rollback control.
+Historical six-family and `total_score` records remain immutable audit evidence,
+not a runtime fallback or rollback allocator. Risk, Gateway, credentials and
+Live-unlock authority are unchanged.
 
-The V1 chain is:
+The current chain is:
 
 1. `universe-hard-gate/v1` records exact physical/data eligibility as
    `eligible`, `ineligible`, or `unavailable`, separately from actionability.
@@ -37,13 +39,33 @@ The V1 chain is:
    at least four hours. Those cross-sectional non-overlapping clusters are the
    statistical units used by `K=50` parent shrinkage, one independent-unit SE
    uncertainty penalty, explicit minimum support, and fail-closed tail status.
-4. `candidate-selection-utility/v1` chooses the highest available mechanism,
-   never sums utilities, rejects unresolved Long/Short conflicts, applies
-   `max(0.05, min_tradable_edge_pct)`, sorts admitted rows by Utility, and uses
-   existing `max_candidates` only as a ceiling. It never fills with below-floor
-   rows.
+4. `candidate-selection-utility/v2` chooses the highest available mechanism,
+   never sums utilities, rejects unresolved Long/Short conflicts and applies
+   `max(0.05, min_tradable_edge_pct)` to measured estimates. Parent support remains
+   50 independent clusters, 10 dates, 5 symbols and 80% coverage; the child
+   requires 20 clusters. These thresholds are not lowered for Startup.
+5. Only `no_history`, `parent_sample_insufficient` or
+   `child_sample_insufficient` can support Startup. It requires an eligible,
+   actionable instrument, explicit direction, available capabilities and finite
+   positive `pessimistic_strength`. Invalid-only history, missing costs/MAE,
+   invalid identities/times, overdue settlement, tail harm and known economic
+   rejection cannot be bypassed through another sparse mechanism. A mature
+   parent without a current percentile is unavailable, not Startup.
+6. Measured candidates sort first by Utility; Startup fills remaining existing
+   `max_candidates` slots by conservative signal strength. Stable identity breaks
+   ties. Cross-market deduplication uses the same order, with preferred market
+   only resolving equal economic/signal rank. All-cold runs may use all slots;
+   mature candidates filling capacity leave no reserved Startup allocation.
+   Below-floor rows never fill capacity. Legitimate empty sets remain empty.
 
-## Persistence and prospective evidence
+Startup stores `admission_basis=startup`, the exact `startup_reason` and
+`economic_utility_pct=null`. Measured admission stores `admission_basis=measured`.
+Rejected/historical records may have no basis. Signal strength is an ordinal
+heuristic, not calibrated expected return or success probability; unknown is
+neither zero nor economic qualification. Groups below 20 retain raw signal
+strength without an invented percentile.
+
+## Persistence and historical evidence
 
 The target path reuses `universe_twin_shadow_batches`,
 `universe_twin_shadow_records`, and `filter_candidate_outcomes`; it creates no
@@ -54,120 +76,58 @@ mechanism cohort labels to that shared outcome, so several labels cannot become
 duplicated economics. The same record freezes the numeric cost assumptions used
 at settlement, so a later Settings change cannot restate a pending outcome.
 
-When estimator support first becomes available, the path freezes its training
-cutoff, complete eligible training-dataset fingerprint, and selection settings
-including the exact Fast Monitoring mode, venue, and paper execution route
-plus the configured execution fee and slippage assumptions and the legacy
-control's explore ratio, family quotas, regime quotas, scanner weights, and
-complete Regime detector configuration/behavior version into a new
-behavior/policy identity. The frozen training cutoff is looked up only
-within that exact identity; changing those inputs independently earns support
-and freezes a new cutoff instead of reusing incompatible training rows.
-Per-cell source fingerprints remain in
-each estimate for audit but do not make the epoch depend on the current
-Candidate composition. Later outcomes cannot change that estimator.
-Qualification v2 consumes only post-cutoff batches from the latest frozen policy
-epoch that existed at the requested as-of instant and uses the first
-outcome-independent fixed look whose earliest greedily selected, non-overlapping
-T0 prefix contains at least 50 policy units and seven consecutive UTC dates.
-That prefix must then have at least 50 complete clusters, 80% full-arm coverage, positive
-paired capacity-normalized net Utility, a positive one-sided 95% lower bound,
-and preregistered loss-rate, MAE p95, CVaR5, cost, concentration, and catastrophic
-tail gates. A later cluster cannot replace an incomplete cluster in that frozen
-prefix. The look's coverage and exclusions freeze at that same stopping
-cluster, so later batches are not loaded or allowed to rewrite its verdict. A selected-arm
-outcome without finite MAE or fee, spread/slippage, and funding cost evidence
-leaves its cluster incomplete. Positive, negative, neutral, and invalid are
-terminal fixed-look states. Insufficient data continues collection. None grants
-authority without a positive result and explicit owner admission.
+Each runtime refresh freezes the historical view at its actual capture cutoff
+and records the training-source fingerprint. A later-settled row remains pending
+at that cutoff, without post-cutoff settlement fields; a not-yet-due exposure is
+waiting evidence, while a due exposure lacking settlement blocks Startup.
+Malformed persisted history or missing canonical outcomes fails closed instead
+of disappearing into clean zero history. The next refresh may absorb newly
+settled outcomes: the first empty training view is never frozen permanently.
 
-Historical outcomes are indexed once per refresh and then looked up per
-Candidate/mechanism, making computation `O(history + candidates)` rather than
-re-scanning history per mechanism. Non-authoritative Shadow first checks the
-Candidate Selection-specific four-hour evidence cadence, so a skipped capture
-does not load or aggregate historical outcomes. Production Candidate selection
-still computes on every Universe refresh. Record v3 and metric v2 identify the
-new sampling and independent-unit contract without reinterpreting v1/v2 rows.
-Capacity projection covers 20, 100, 250, and 500 denominator rows at six runs/day.
-For an admitted epoch,
-the immutable evidence prefix through its first admission audit and the global
-frozen training denominator remain protected. Any separately labelled
-post-admission operational telemetry uses the ordinary 30-day window; it cannot
-rewrite the fixed look. A protected epoch with no admission audit fails closed
-and retains all evidence. Once the first legal fixed look is positive, negative,
-neutral, or invalid, confirmatory capture for that epoch stops; insufficient
-data continues.
+The runtime policy epoch is the canonical fingerprint of the semantic/config
+identity, independent of whether economic support exists. It includes Hard Gate,
+Opportunity, estimator, outcome, cost and acquisition semantics plus current
+selection limits, physical-data thresholds and execution-route/cost inputs.
+Legacy ranking, allocation and calibration inputs are not Demo runtime
+dependencies. A meaningful config/semantic change produces a new identity.
+Commit/process fingerprints are provenance, not a replacement for this identity.
 
-The admitted epoch's evidence prefix, frozen training denominator, and linked
-canonical outcomes are retained for fixed-look replay rather than entering the
-generic 30-day Twin/outcome prune. Post-admission rows and their outcomes enter
-that prune after 30 days. Runtime Session attestations referenced by retained
-outcomes are retained with them. If configured policy state is unreadable,
-Candidate evidence pruning fails closed.
-At a frozen cutoff, a row settled later remains a pending denominator row with
-no post-cutoff settlement fields, while a post-cutoff exposure is excluded. The
-training cohort cannot disappear, expand, or borrow future facts.
+History is indexed once per refresh and reused across Candidate lookups.
+Production selection computes on every refresh; sampled full-denominator
+outcomes retain the existing four-hour evidence cadence. Unselected opportunities
+also accumulate market-and-cost-model outcomes. These are not actual Fill PnL
+and do not require first placing an order. No exploration allocator is added.
 
-`uv run aletheia evidence candidate-selection status --json` is read-only. A
-positive report sets `qualification_eligible=true` and
-`promotion_eligible=true`, but `owner_admission_required` remains true: evidence
-does not mutate authority. The generic Universe configuration endpoint cannot
-change the protected policy fields. The owner admission endpoint accepts only
-the exact positive epoch, refuses an overlapping Paper Universe-calibration
-authority, and persists an audit event under the same writer permit as the
-configuration transition. Because SQLite and the atomically replaced config
-file cannot share one physical transaction, a durable transition journal is
-written before the config replacement. Recovery holds the SQLite writer permit
-and restores the before-state when the audit did not commit, or confirms the
-after-state when it did, before deleting the journal. Target refresh publication revalidates that exact
-configured epoch under the shared permit. Every Settings writer for a frozen
-selection input uses that same permit, so no identity mutation can commit
-between revalidation and snapshot publication. A failed/compensated admission
-cannot publish a stale target snapshot. The same exclusion applies in reverse:
-Universe-family Learning admission and later Paper progression refuse to run
-while target Candidate authority is configured. Admission and rollback
-configure the policy for the next successful Universe refresh; they do not
-relabel the active snapshot or its Planning Generations. The runtime re-evaluates
-that same qualification before every target publication. Missing, stale,
-negative, neutral, insufficient, or invalid evidence fails closed and preserves
-the previous active snapshot.
+Snapshot publication rechecks the configured identity and runtime scope under
+the shared writer permit, then commits Candidate rows, Planning Generation
+handoffs and scanner completion atomically. Failure preserves the previous
+snapshot; no half-published generation or Legacy fallback is allowed. Existing
+transition-journal recovery precedes config migration/publication. TTL renewal
+on a change-suppressed refresh remains in the publication transaction.
 
-Qualification requires independently attested capture and settlement Runtime
-Sessions. Commit SHA and process-wide behavior fingerprints remain provenance
-but are not Candidate economic identity: unrelated deployments may coexist in
-one fixed look. Economic comparability is frozen by the explicit semantic
-manifest (Hard Gate, Opportunity Evidence, scorer, estimator, outcome, cost,
-and Candidate-selection contract versions) plus policy/cost inputs. A semantic
-contract change rotates the epoch even if the Git commit string does not.
-Missing, contradictory, or unattested provenance is invalid evidence, never a
-local-checkout inference.
+Legacy policies and prior decision JSON/hashes remain readable but no new Demo
+Candidate is selected by Legacy. Candidate rows expose Utility separately from
+named historical `total_score` evidence and preserve typed mechanism, source
+component, direction, cutoff and source-record hash. Downstream authority never
+comes from reason strings. A supported Startup Candidate uses the same Context,
+generation, Planner and Compiler path; Startup guarantees no Entry Plan or Fill.
 
-An active target snapshot may intentionally contain no members when every row
-is below-floor or unavailable. An admitted scan with no currently available
-estimate retains the admitted epoch and frozen training cutoff, so it can renew
-that intentionally empty snapshot. Reads preserve the empty Candidate set and
-do not replace it with legacy static fallback rows.
+### Historical fixed-look qualification
 
-Within a mechanism, usable Long and Short witnesses are an unresolved conflict
-and make that mechanism unavailable. Target allocation computes against the full
-instrument denominator but admits at most one preferred-market instrument per
-symbol thesis. Its deterministic decision/input hash is the Candidate handoff's
-source hash and does not require a same-refresh sampled Twin row. On a
-change-suppressed target refresh, TTL renewal still commits in the publication
-transaction.
+Read-only qualification v2 evaluates immutable record-v3 evidence only. Its
+frozen training cutoff, first outcome-independent non-overlapping 50-unit/seven-
+date prefix, complete-cluster/coverage requirements, paired Utility confidence
+bound, tail gates and provenance checks retain their historical meaning.
+Later batches cannot replace an incomplete prefix or rewrite its terminal result.
+Historical admission evidence, protected prefixes, linked outcomes and Runtime
+Session attestations retain their existing retention/audit protections.
 
-An authoritative refresh computes the target selection on every refresh and
-writes Candidate rows, Planning Generation handoffs, and scanner completion in
-one SQLite publication transaction. It does not append another full-denominator
-confirmatory sample after the epoch has a terminal fixed look. Candidate rows
-expose the target Utility
-separately and retain `total_score` only as named legacy compatibility evidence.
-They also persist typed `opportunity_mechanism`, mechanism version, source
-component, source cutoff, and evidence hash fields; downstream code does not
-recover authority from reason strings. This is the minimum carrier repair only;
-mechanism-aware Planning identity/context/compiler work remains owned by #2791.
-An explicit audited rollback restores `legacy_total_score_v1` without deleting
-or relabeling historical evidence.
+`uv run aletheia evidence candidate-selection status --json` remains a historical
+read-only audit. Its positive qualification flags do not grant current runtime
+authority. Runtime record-v4 dynamic cutoffs are not fixed-window confirmatory
+evidence and set `promotion_eligible=false`. Demo exposes no positive-admission
+or Legacy-rollback runtime control. This does not relax separate Learning,
+Risk, Gateway, Paper/Live scope or Live-unlock permissions.
 
 ## Typed Candidate Opportunity handoff
 
@@ -176,8 +136,11 @@ on the existing `universe_members` row, with a queryable primary mechanism and
 canonical JSON/hash. The payload freezes Candidate T0, the selection source
 cutoff, policy/epoch, exact target record hash, selected mechanism/direction,
 typed `source_component_id`, all bounded mechanism summaries, capability gaps,
-and volatility/regime/shock context. No downstream owner may recover authority
-from `inclusion_reason`, reason codes, or display prose.
+and volatility/regime/shock context. It also carries explicit admission basis
+and Startup reason. Only a valid, supported Startup decision may have null
+Utility; numeric Utility remains required for measured admission. Historical
+JSON/hashes are not rewritten to add the new fields. No downstream owner may
+recover authority from `inclusion_reason`, reason codes or display prose.
 
 Legacy projection is limited to Momentum/Short Bias → Continuation, Mean
 Reversion → Reversal, and Derivatives → Positioning proxy with liquidation,
@@ -186,11 +149,32 @@ mechanism. Information/Catalyst remains unavailable without exact external
 claim identity and provenance. A mechanism is a predictive hypothesis, not
 proved causal attribution.
 
+## Acquisition and publication amendment — 2026-09-05
+
+Discovery acquires exact venue/symbol/physical-market books independently of
+Candidate existence. Only durable observations enter evidence. Suppressed
+calculations becoming evidence persist current payload and timestamp. The
+manifest includes `feature_acquisition` from the features-owner constant
+`candidate-feature-acquisition/v2`; records store `feature_acquisition_version`.
+Training requires equality to the explicitly supplied frozen policy version
+before labels are built. Missing versions match only missing historical versions;
+training does not require epoch equality or mutate frozen historical rows.
+
+Canonical planning generations own refresh priority without legacy wakes.
+Scanner `candidate_path` metrics distinguish unavailable data, legitimate empty
+selection, supported planning and observe-only selection. Total acquisition or
+build failure preserves the prior snapshot. Metrics and completion commit with
+publication. Sampled evidence retains its existing cadence and operational
+pending/unavailable reporting. Historical terminal qualification is not a
+runtime selection gate. Candidate reads contain durable members only; static
+instruments remain explicit observation fallbacks. Read errors are unavailable,
+not empty success. Hard gates and execution permissions remain unchanged.
+
 ## Isolation
 
 Issue #2556 owns a separate frozen Observation Lab generation. This path never
 reads, relabels, backfills, or mutates its benchmark records, identities, cost
 model, stopping rule, or result package. Code/tests prove contract behavior and
-replayability. This implementation does not itself prove a positive prospective
-qualification, enable production authority, demonstrate profitability, or prove
-the exact code is deployed on Fedora.
+replayability. This implementation does not itself prove profitability, a
+positive prospective qualification, live-trading authority, or deployment of
+the exact code on Fedora.

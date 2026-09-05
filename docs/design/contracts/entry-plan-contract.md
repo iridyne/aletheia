@@ -45,6 +45,10 @@ before being referenced. The cutoff is selected after acquisition. Missing,
 invalid, or stale inputs release the claim with a typed unavailable reason and
 a bounded retry delay, without consuming a model attempt or economic NO_PLAN.
 Already-bound JSON/hash is never refreshed in place.
+Compiler risk-policy, leverage and account-budget unavailability use the existing
+bounded unavailable retries with model/compiler invocation facts retained.
+Frozen identity, geometry and execution-context failures remain terminal for
+that input; no failure is converted into an economic NO_PLAN or unlimited retry.
 
 `anchor-resting-maker` and `anchor-retrace-reclaim` are deterministic compiler
 Profiles. The latter reuses the existing retrace/sweep/reclaim engine and 0.25 ATR
@@ -58,8 +62,11 @@ Proposal or Risk.
 The canonical implementation consumes the typed Candidate opportunity context
 through one `EntryAnalysisContext` and one `EntryHypothesis` path for
 Continuation, Reversal, Positioning/Forced Flow, and Information/Catalyst. Mechanism and
-direction are upstream facts and must match exactly. Candidate T0 evidence,
-Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
+direction are upstream facts and must match exactly.
+Candidate capability must be `supported` before market acquisition or inference.
+`observe_only` and `unavailable` are typed planning blocks, not economic NO_PLAN;
+execution rechecks capability in the immutable planning context.
+Candidate T0 evidence, Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
 only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing Entry
 authority. At least one current Planning fact is mandatory, and AI owns no price,
 size, leverage, stop, target, slippage, trigger parameter, or Risk field.
@@ -70,6 +77,19 @@ price, and ordinary snapshot churn are excluded. Any authority-dimension change
 supersedes the old generation and invalidates its active pre-order plan; Fast
 Monitoring and execution revalidate both the current generation and exact
 Candidate context/hash before creating or cancelling an order.
+
+Demo Candidate selection uses one Utility-family path: measured returns rank
+first and genuine sample scarcity may fill unused slots by conservative signal
+strength. Startup carries explicit admission_basis/startup_reason and null
+economic_utility_pct through the typed Context; null is not zero return or
+economic qualification. A valid supported Startup Candidate may reach the same
+Planner/Compiler without measured-history admission, but still requires all
+planning-time facts, anchors, capability and profile checks. Invalid history,
+overdue settlement, missing costs/MAE and known economic/tail rejection cannot
+be relabelled Startup. Dynamic per-refresh cutoffs do not claim a frozen
+qualification window. Historical Legacy JSON/hashes remain unchanged; Legacy
+does not supply new Demo Candidates or fallback generations. Risk, Gateway and
+Live-unlock authority are unchanged.
 
 The generic `grounded-anchor-resting-maker` and
 `grounded-anchor-retrace-reclaim` Profiles declare compatible mechanisms,
@@ -90,14 +110,17 @@ are explicitly an exact profile or the declared `mechanism-aware-grounded/v1`
 parent summary. Any unavailable or mixed evidence is replaced by the deterministic
 empty context before inference. Observation Lab measures this path under
 `mechanism_entry_learning` with the same planning-generation outcome key.
-An unsupported mechanism, currently Information/Catalyst, has no visible
-Profile and reaches `NO_PLAN` without a model call.
+An unsupported mechanism, currently Information/Catalyst, is blocked without a
+model call. Positioning remains observe_only. Missing compatible registry or
+frozen-context Profiles produce `planning_blocked` / `NO_VALID_ENTRY_PROFILE`
+at `runtime_preflight`, never economic NO_PLAN. Registry preflight precedes
+market acquisition and inference.
 
 ## Contract identity and planning cycles
 
 `entry_behavior_fingerprint` and `schema_fingerprint` are derived from the
 canonical schemas, prompt, compiler/profile registry, execution-route
-capabilities, and first-input acquisition/availability implementation. A mismatch
+capabilities, first-input acquisition/availability, and causal requalification implementation. A mismatch
 creates one compatibility-cutover cycle while retaining
 the old row and JSON unchanged. `cycle_number`, predecessor, reason, model/compiler
 invocation facts, last stage, and typed outcome are durable audit facts.
@@ -111,6 +134,35 @@ context, not its nullable database projection. New projections use that same
 source. Material-evidence requalification requires a completed active snapshot
 and a later context cutoff; unresolved Order/Fill/Position guards still apply.
 Historical context bytes and hashes are not backfilled or rewritten.
+When a replacement Candidate reuses a cycle, publication records its exact
+Candidate/cycle association in the existing audit ledger, transactionally and
+idempotently. Detail reads may follow this association without changing the
+cycle's frozen Candidate or inferring historical links from symbol/time.
+
+Planning requalification is separate from stable discovery ownership. Before
+publication takes the writer, the existing Planner causal-window validator and
+market-structure kernel project the latest confirmed 15m high, low and structure
+break (at most three facts). Their canonical material fingerprint excludes
+Candidate price/rank/score, rolling-window hashes, ATR-only changes, and cutoff
+churn. A fact disappearing from the window is not a new event.
+
+A terminal generation without a Plan may gain one successor only on a later
+active completed snapshot, the same thread and behavior/schema, and a new fact
+confirmed after its birth/frozen-input cutoff. The transaction rechecks the
+expected current generation, exact Candidate context and instrument, monotonic
+source time and unresolved execution before CAS. A waiting/triggered/reserved
+Plan is not superseded by this path. Missing material proof grants no recovery.
+The proof and selected fact values belong to the generation's existing
+requalification source JSON; attention renewals retain this birth proof.
+
+Pre-model missing-book/required-context releases keep their existing backoff
+and cycle while active. Once terminal, those exact operational outcomes may
+instead use a completed causal window plus an exact persisted book observed
+after terminalization and fresh at the new cutoff. A model-invoked or already
+frozen failure cannot use this dependency-recovery path. Neither recovery edits
+the old input/hash, result, or attempt count; economic NO_PLAN remains final for
+the same material. No new ledger, scoring admission, or execution authority is
+introduced.
 
 ## Exact-venue execution eligibility
 
@@ -161,16 +213,20 @@ After the model selects `NO_PLAN`, execution-only fields are non-authoritative
 and are canonicalized to the null/`NONE` row above before semantic validation.
 The model-owned decision, reason, thesis, scenario, and evidence remain unchanged.
 
-The TriggerSpec registry is the only source of Candidate-family compatibility,
-data requirements, freshness, and parameter validation. Planner context lists
-only specs compatible with the Candidate family. An unsupported or absent
-family/spec combination is terminal `NO_PLAN` after at most one physical model
-attempt; it is not provider unavailability and cannot consume attempts two or
-three.
+Profile/TriggerSpec registries own compatibility, required data and validation.
+Missing capability/Profile blocks before inference; invalid model references,
+JSON/schema and compiler validation are terminal non-economic failures. Only
+valid model economic refusal produces terminal `NO_PLAN`. Provider timeout and
+empty content retain bounded unavailable retries.
 
-Provider timeout, empty content, invalid JSON, and schema failure retain the
-bounded `planning_unavailable` retry policy. Model economic refusal remains a
-terminal `NO_PLAN` with an allowed economic reason.
+Missing input releases refund the current attempt with 60-second backoff; broker
+backpressure uses one second. Releases record current planning_unavailable while
+preserving stage/invocation history. Pre-dispatch cancellation releases only the
+still-owned claim under shield/CAS. After entering the planner cancellation
+defers with `PLANNER_CANCELLED_DISPATCH_UNKNOWN`, retains the attempt and emits
+`model_dispatch_unavailable`, not `model_skipped`, without inventing invocation.
+Post-inference cancellation retains observed invocation facts. Block/defer/fail
+keep these facts monotonic; existing attempt limits and material recovery apply.
 
 Deterministic compiler validation failure is terminal after one model attempt
 and persists `ENTRY_PLAN_COMPILE_INVALID:<bounded-code>`. Unexpected internal

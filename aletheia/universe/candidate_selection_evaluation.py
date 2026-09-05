@@ -11,14 +11,13 @@ from typing import Any
 
 from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage import repositories as repo
-from aletheia.universe.candidate_selection_shadow import (
-    CANDIDATE_SELECTION_RECORD_VERSION,
-    candidate_selection_training_cutoff,
-)
+from aletheia.universe.candidate_selection_shadow import candidate_selection_training_cutoff
 from aletheia.universe.economic_utility import select_non_overlapping_t0_clusters
 
 
 CANDIDATE_SELECTION_QUALIFICATION_VERSION = "candidate-selection-utility-qualification/v2"
+# Fixed-look qualification belongs to immutable pre-startup evidence only.
+_QUALIFICATION_RECORD_VERSION = "candidate-selection-utility-record/v3"
 _MIN_COMPLETE_CLUSTERS = 50
 _MIN_CONSECUTIVE_DAYS = 7
 _MIN_FULL_ARM_COVERAGE = 0.80
@@ -129,7 +128,7 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         "WHERE record_version=? AND policy_epoch_id IS NOT NULL "
         "AND julianday(captured_at)<=julianday(?) "
         "ORDER BY captured_at DESC, scanner_run_id DESC LIMIT 1",
-        (CANDIDATE_SELECTION_RECORD_VERSION, now),
+        (_QUALIFICATION_RECORD_VERSION, now),
     ).fetchone()
     policy_epoch_id = str(latest["policy_epoch_id"]) if latest else None
     training_cutoff = (
@@ -170,7 +169,7 @@ def evaluate_candidate_selection_policy(*, as_of_at: str | None = None) -> dict[
         "AND policy_epoch_id=? AND julianday(captured_at)>=julianday(?) "
         "AND julianday(captured_at)<=julianday(?) "
         "ORDER BY captured_at, scanner_run_id",
-        (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
+        (_QUALIFICATION_RECORD_VERSION, policy_epoch_id, training_cutoff, now),
     ).fetchall()]
     report["raw_scanner_run_n"] = len(raw_batches)
     independent_batches = _independent_policy_batches(raw_batches)

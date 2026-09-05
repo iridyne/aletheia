@@ -832,10 +832,13 @@ export interface Candidate {
   asset_id: string
   symbol: string
   rank: number
-  total_score: number
+  total_score: number | null
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  admission_basis?: 'measured' | 'startup' | null
+  startup_reason?: string | null
+  pessimistic_strength?: number | null
   opportunity_mechanism: string | null
   opportunity_mechanism_version: string | null
   opportunity_source_component: string | null
@@ -966,6 +969,9 @@ export interface CandidateAttention {
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1' | null
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  admission_basis?: 'measured' | 'startup' | null
+  startup_reason?: string | null
+  pessimistic_strength?: number | null
   opportunity_mechanism: string | null
   opportunity_mechanism_version: string | null
   opportunity_source_component: string | null
@@ -1000,6 +1006,18 @@ export interface EntryLifecycleEvent {
   reason: string | null
 }
 
+export interface EntryExecutionLineage {
+  availability: { available: boolean; reason: string | null }
+  execution_state: string
+  order: { id: string; status: string; created_at: string | null; filled_at: string | null } | null
+  fills: { ids: string[]; quantity: number; latest_at: string | null } | null
+  position: { id: string; status: string; opened_at: string | null; closed_at: string | null } | null
+  close_orders: Array<{ id: string; status: string; created_at: string | null }>
+  close_fills: Array<{ id: string; order_id: string; filled_at: string | null }>
+  economics: { status: string; reason: string | null }
+  entry_outcomes: Array<{ fill_id: string; horizon: string; status: string; reason: string | null; id?: string }>
+}
+
 export interface EntryLifecycleCycle {
   generation_id: string
   cycle_number: number
@@ -1013,11 +1031,14 @@ export interface EntryLifecycleCycle {
   outcome_reason: string | null
   entry_plan_id: string | null
   entry_plan_status: string | null
+  execution: EntryExecutionLineage | null
+  execution_state: string
   events: EntryLifecycleEvent[]
 }
 
 export interface EntryLifecycleProjection {
   lifecycle_state: string
+  execution_state: string
   lifecycle_reason: string | null
   current_cycle_number: number | null
   expired_plan_count: number
@@ -1039,10 +1060,13 @@ export interface CandidateWorkbenchRow {
   symbol: string
   market_type: 'spot' | 'perp'
   rank: number
-  total_score: number
+  total_score: number | null
   candidate_selection_policy: 'legacy_total_score_v1' | 'candidate_selection_utility_v1'
   candidate_selection_policy_epoch: string | null
   candidate_selection_utility_pct: number | null
+  admission_basis?: 'measured' | 'startup' | null
+  startup_reason?: string | null
+  pessimistic_strength?: number | null
   opportunity_mechanism: string | null
   opportunity_mechanism_version: string | null
   opportunity_source_component: string | null
@@ -1080,7 +1104,33 @@ export interface CandidateWorkbenchRow {
   cycles: EntryLifecycleCycle[]
 }
 
+export interface CandidatePathProgress {
+  generated_at: string | null
+  availability: { available: boolean; reason: string | null }
+  age_seconds: number | null
+  ttl_seconds: number
+  last_attempt_at: string | null
+  last_success_at: string | null
+  last_snapshot_id: string | null
+  selection_policy: string | null
+  policy_epoch: string | null
+  selected_count: number | null
+  planning_supported_count: number | null
+  observe_only_count: number | null
+  selection_reason_counts: Record<string, number>
+  ready_planning_count: number | null
+  oldest_ready_at: string | null
+  expired_claim_count: number | null
+  due_outcome_count: number | null
+  oldest_due_at: string | null
+  issues: string[]
+  blocking_reason_counts: Record<string, number>
+  shadow_capture_status: string | null
+  shadow_capture_reason: string | null
+}
+
 export interface EntryWorkbenchResponse {
+  progress: CandidatePathProgress
   generated_at: string
   availability: Record<string, { available: boolean; stale: boolean; reason?: string }>
   universe: {
