@@ -3161,6 +3161,7 @@ button.market-instrument-group-title { font-family: inherit; }
 .feed-list { display: flex; flex-direction: column; }
 .agent-feed-viewport .feed-list-scroll {
   flex: 1;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    价格变动敏捷反馈 (尾数变色 + 高对比微底色 + 380ms 极速归位)

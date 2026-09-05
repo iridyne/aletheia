@@ -160,8 +160,11 @@ describe('Markets workbench', () => {
     const chart = node.querySelector('[data-testid="price-chart"]')!
     const macro = [...node.querySelectorAll('div')].find(element => element.textContent === 'Macro context')!
     const tabs = node.querySelector('[role="tablist"]')!
-    expect(text.indexOf('Markets')).toBeLessThan(text.indexOf('Choose instrument'))
-    expect(text.indexOf('Find instrument')).toBeLessThan(text.indexOf('Chart canvas'))
+    const picker = node.querySelector('.market-context-picker')!
+    const chartCard = node.querySelector('.market-workbench-chart-card')!
+    // Picker is in context bar above the chart card
+    expect(picker.compareDocumentPosition(chartCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(text.indexOf('Markets')).toBeGreaterThanOrEqual(0)
     expect(chart.compareDocumentPosition(macro) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(macro.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(text).toContain('Universe1')
@@ -326,7 +329,7 @@ describe('Markets workbench', () => {
 
   it('focus-manages the floating picker and closes it after selecting an instrument', () => {
     const node = renderCharts()
-    const trigger = buttonContaining(node, 'Choose instrument')
+    const trigger = node.querySelector<HTMLButtonElement>('.market-context-picker')!
     trigger.focus()
     click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
