@@ -659,7 +659,7 @@ export default function PriceChart({
       bbMiddleRef.current = null
       bbLowerRef.current = null
     }
-  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, exchange, marketType, symbol, timeframe])
+  }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, drawVpCanvas, exchange, marketType, symbol, timeframe])
 
   useEffect(() => { markersRef.current = markers; applyMarkers() }, [applyMarkers, markers])
   useEffect(() => { levelsRef.current = positionLevels; applyLevels() }, [applyLevels, positionLevels])
