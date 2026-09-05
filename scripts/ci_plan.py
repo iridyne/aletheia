@@ -595,6 +595,8 @@ def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
         })
     if required.get("frontend"):
         checks.extend([
+            {"name": "frontend settings types", "command": ["npm", "run", "check:settings-types"], "working_directory": "frontend"},
+            {"name": "frontend api types", "command": ["npm", "run", "check:api-types"], "working_directory": "frontend"},
             {"name": "frontend tests", "command": ["npm", "test"], "working_directory": "frontend"},
             {"name": "frontend build", "command": ["npm", "run", "build"], "working_directory": "frontend"},
         ])

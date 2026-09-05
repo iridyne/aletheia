@@ -1,3 +1,5 @@
+import type { components } from './api/generated/api'
+
 export interface TradeProposal {
   id: string
   strategy_id: string | null
@@ -70,42 +72,7 @@ export interface Fill {
   filled_at: string
 }
 
-export interface Position {
-  id: string
-  symbol: string
-  market_type: string
-  direction: string
-  quantity: number
-  entry_price: number
-  current_price: number | null
-  unrealized_pnl: number | null
-  unrealized_pnl_source?: 'exchange_exact' | 'local_estimate' | 'ambiguous' | 'unavailable' | string
-  realized_pnl: number | null
-  realized_pnl_complete?: boolean
-  realized_pnl_unavailable_reason?: string | null
-  execution_mode: string
-  strategy_id: string | null
-  proposal_id?: string | null
-  order_id?: string | null
-  status: string
-  stop_price: number | null
-  take_profit_price: number | null
-  close_reason: string | null
-  exit_reasoning?: string | null
-  source?: string  // "native" | "adopted"
-  opened_at: string
-  closed_at: string | null
-  decision_reasoning?: string | null
-  leverage?: number | null
-  liquidation_price?: number | null
-  entry_fee?: number | null
-  exit_fee?: number | null
-  /** Signed quote-currency funding: positive is a debit, negative a credit. */
-  funding_cost?: number | null
-  funding_source?: string | null
-  funding_status?: 'complete' | 'not_applicable' | 'unavailable' | string
-  slippage_cost?: number | null
-}
+export type Position = components['schemas']['PositionView']
 
 export interface ThesisLineageRecord {
   lineage_id: string

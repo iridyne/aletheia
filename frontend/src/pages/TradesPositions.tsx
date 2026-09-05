@@ -156,7 +156,7 @@ const marketBadge = (v: string) => (
 	</Badge>
 );
 
-const pnlSourceBadge = (source: string | undefined) => {
+const pnlSourceBadge = (source: string | null | undefined) => {
 	const value = source || "unavailable";
 	const tone = value === "exchange_exact"
 		? "green"
@@ -448,7 +448,7 @@ export default function TradesPositions() {
 	const [closedExtra, setClosedExtra] = useState<Position[]>([]);
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
-		queryFn: api.getPositions,
+		queryFn: () => api.getPositions(),
 		...positionFreshness,
 	});
 	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
@@ -475,9 +475,17 @@ export default function TradesPositions() {
 		if (!last) return;
 		setClosedLoadingMore(true);
 		try {
-			const next = await api.getPositionsPaged({ limit: 100, cursor_id: last.id, status: 'closed' });
+			const next = await api.getPositions({ limit: 100, status: "closed" });
 			if (next.length) {
-				setClosedExtra(prev => [...prev, ...next]);
+				setClosedExtra(prev => {
+					const existing = new Set([...currentClosed, ...prev].map(p => p.id));
+					const fresh = next.filter(p => !existing.has(p.id));
+					if (fresh.length === 0) {
+						setClosedExhausted(true);
+						return prev;
+					}
+					return [...prev, ...fresh];
+				});
 			} else {
 				setClosedExhausted(true);
 			}

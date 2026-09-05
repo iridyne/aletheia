@@ -2166,6 +2166,8 @@ export interface components {
             notify_daily_summary: boolean;
             /** Notify Trade Fills */
             notify_trade_fills: boolean;
+            /** Secret Configured */
+            secret_configured: boolean;
             /** Timeout Sec */
             timeout_sec: number;
             /** Url */

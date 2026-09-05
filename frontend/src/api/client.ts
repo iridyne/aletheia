@@ -1,8 +1,32 @@
-import type { InfraEvent, KnowledgeItem, SystemStatus, ThesisLineageRecord } from "../types";
 import type { GuardRow } from "../lib/guards";
-import type { MarketMicrostructure, MarketSnapshot, Opportunity, Position } from "../types";
+import type {
+	CandidateDetail,
+	EntryPlan,
+	EntryWorkbenchResponse,
+	InfraEvent,
+	KnowledgeItem,
+	MarketMicrostructure,
+	MarketSnapshot,
+	Opportunity,
+	PlanningHistoryResponse,
+	Position,
+	PositionsReconciliation,
+	SystemStatus,
+	ThesisLineageRecord,
+	UniverseCurrentResponse,
+	UniverseSnapshot,
+} from "../types";
 import type { SettingsResponse } from "./settings";
 import { safeErrorText } from "../lib/mutationErrors";
+import type { components, operations } from "./generated/api";
+
+// Core Trading OpenAPI Contract Types (derived directly from FastAPI schema)
+export type PositionsQuery = NonNullable<operations["get_positions_api_positions_get"]["parameters"]["query"]>;
+export type TradesQuery = NonNullable<operations["get_trades_api_trades_get"]["parameters"]["query"]>;
+export type KillSwitchRequest = components["schemas"]["KillSwitchRequest"];
+export type PlanningHistoryQuery = NonNullable<operations["get_planning_history_api_universe_planning_history_get"]["parameters"]["query"]>;
+export type EntryWorkbenchQuery = NonNullable<operations["get_entry_workbench_api_universe_workbench_get"]["parameters"]["query"]>;
+export type SnapshotsQuery = NonNullable<operations["list_snapshots_api_universe_snapshots_get"]["parameters"]["query"]>;
 
 const BASE = "/api";
 const REMOTE_CONTROL_TOKEN_KEY = "aletheia.remoteControlToken";
@@ -525,18 +549,7 @@ export interface MarketOpportunityInstrument {
 	latest_direction_bias: string | null;
 }
 
-export interface MarketTrade {
-	id: string;
-	symbol: string;
-	market_type?: string | null;
-	direction?: string | null;
-	filled_at?: string | null;
-	reduce_only?: boolean | number | null;
-	order_type?: string | null;
-	quantity?: number | null;
-	price?: number | null;
-	strategy_id?: string | null;
-}
+export type MarketTrade = components["schemas"]["OrderView"];
 
 export interface MarketNewsItem {
 	id: string;
@@ -1918,12 +1931,14 @@ export const api = {
 		),
 	getKillSwitch: () => fetchJson<{ active: boolean }>("/risk/kill-switch"),
 	// Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
-	setKillSwitch: (active: boolean, reason = "", confirmRelease = false) =>
-		post<{ active: boolean }>("/risk/kill-switch", {
+	setKillSwitch: (active: boolean, reason = "", confirmRelease = false) => {
+		const body: KillSwitchRequest = {
 			active,
 			reason,
 			confirm_release: confirmRelease,
-		}),
+		};
+		return post<{ active: boolean }>("/risk/kill-switch", body);
+	},
 	getRiskPolicies: () =>
 		fetchJson<Record<"demo" | "live", any>>("/settings/risk-policies"),
 	replaceRiskPolicy: (
@@ -2351,17 +2366,25 @@ export const api = {
 		}>(
 			`/orders/${id}/risk-decision`,
 		),
-	getTrades: (entryPlanId?: unknown) =>
+	getTrades: ((entryPlanId?: TradesQuery["entry_plan_id"] | unknown) =>
 		fetchJson<MarketTrade[]>(typeof entryPlanId === "string" && entryPlanId
 			? `/trades?entry_plan_id=${encodeURIComponent(entryPlanId)}`
-			: "/trades"),
+			: "/trades")) as {
+		(): Promise<MarketTrade[]>;
+		(entryPlanId: TradesQuery["entry_plan_id"]): Promise<MarketTrade[]>;
+	},
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
-	getPositions: () => fetchJson<Position[]>('/positions?limit=200'),
-	getPositionsPaged: (opts: { limit: number; cursor_id?: string; status?: string }) => {
-		const q = new URLSearchParams({ limit: String(opts.limit) });
-		if (opts.cursor_id) q.set('cursor_id', opts.cursor_id);
-		if (opts.status) q.set('status', opts.status);
-		return fetchJson<Position[]>(`/positions?${q.toString()}`);
+	getPositions: ((opts?: PositionsQuery) => {
+		const hasOptions = opts && typeof opts === "object" && ("status" in opts || "limit" in opts);
+		if (!hasOptions) return fetchJson<Position[]>("/positions?limit=200");
+		const q = new URLSearchParams();
+		if (opts.status) q.set("status", opts.status);
+		if (typeof opts.limit === "number") q.set("limit", String(opts.limit));
+		const qs = q.toString();
+		return fetchJson<Position[]>(qs ? `/positions?${qs}` : "/positions");
+	}) as {
+		(): Promise<Position[]>;
+		(opts: PositionsQuery): Promise<Position[]>;
 	},
 	getPosition: (id: string) => fetchJson<Position>(`/positions/${encodeURIComponent(id)}`),
 	getPositionsReconciliation: () =>
@@ -2833,22 +2856,43 @@ export const api = {
 
 	// Universe Generator endpoints
 	getUniverseCurrent: () =>
-		fetchJson<import("../types").UniverseCurrentResponse>("/universe/current"),
-	getEntryWorkbench: () =>
-		fetchJson<import("../types").EntryWorkbenchResponse>("/universe/workbench"),
-	getEntryPlan: (id: string) =>
-		fetchJson<import("../types").EntryPlan>(`/universe/entry-plans/${encodeURIComponent(id)}`),
-	getPlanningHistory: (limit = 50, before?: string | null) => {
-		const qs = new URLSearchParams({ limit: String(limit) });
-		if (before) qs.set("before", before);
-		return fetchJson<import("../types").PlanningHistoryResponse>(`/universe/planning-history?${qs}`);
+		fetchJson<UniverseCurrentResponse>("/universe/current"),
+	getEntryWorkbench: ((opts?: EntryWorkbenchQuery | unknown) => {
+		const isOpts = opts && typeof opts === "object" && "limit" in opts;
+		const limit = isOpts ? (opts as EntryWorkbenchQuery).limit : undefined;
+		const qs = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+		return fetchJson<EntryWorkbenchResponse>(`/universe/workbench${qs}`);
+	}) as {
+		(): Promise<EntryWorkbenchResponse>;
+		(opts: EntryWorkbenchQuery): Promise<EntryWorkbenchResponse>;
 	},
-	getUniverseSnapshots: () =>
-		fetchJson<import("../types").UniverseSnapshot[]>("/universe/snapshots"),
+	getEntryPlan: (id: string) =>
+		fetchJson<EntryPlan>(`/universe/entry-plans/${encodeURIComponent(id)}`),
+	getPlanningHistory: (opts?: PlanningHistoryQuery | number, before?: string | null) => {
+		const limit = typeof opts === "number" ? opts : opts?.limit ?? 50;
+		const beforeParam = typeof opts === "object" && opts?.before ? opts.before : before;
+		const qs = new URLSearchParams({ limit: String(limit) });
+		if (beforeParam) qs.set("before", beforeParam);
+		return fetchJson<PlanningHistoryResponse>(`/universe/planning-history?${qs}`);
+	},
+	getUniverseSnapshots: ((opts?: SnapshotsQuery | unknown) => {
+		const isOpts = opts && typeof opts === "object" && ("market_type" in opts || "limit" in opts);
+		const q = new URLSearchParams();
+		if (isOpts) {
+			const o = opts as SnapshotsQuery;
+			if (o.market_type) q.set("market_type", o.market_type);
+			if (o.limit) q.set("limit", String(o.limit));
+		}
+		const qs = q.toString();
+		return fetchJson<UniverseSnapshot[]>(qs ? `/universe/snapshots?${qs}` : "/universe/snapshots");
+	}) as {
+		(): Promise<UniverseSnapshot[]>;
+		(opts: SnapshotsQuery): Promise<UniverseSnapshot[]>;
+	},
 	getUniverseSnapshot: (id: string) =>
 		fetchJson<any>(`/universe/snapshots/${id}`),
 	getCandidate: (id: string) =>
-		fetchJson<import("../types").CandidateDetail>(
+		fetchJson<CandidateDetail>(
 			`/universe/candidates/${encodeURIComponent(id)}`,
 		),
 	refreshUniverse: () =>

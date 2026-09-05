@@ -62,9 +62,9 @@ jobs:
         run: |
           npm ci
           npm run check:settings-types
+          npm run check:api-types
           npm test
           npm run build
-
       - name: Test and build Operator Shell
         working-directory: operator-shell
         run: |

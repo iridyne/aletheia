@@ -28,6 +28,7 @@ def test_manual_full_validation_keeps_frontend_contract_checks() -> None:
 
     assert "npm ci" in commands
     assert "npm run check:settings-types" in commands
+    assert "npm run check:api-types" in commands
     assert "npm test" in commands
     assert "npm run build" in commands
 
