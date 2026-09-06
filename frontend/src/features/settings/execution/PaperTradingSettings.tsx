@@ -138,7 +138,7 @@ export function PaperAccountCard({ qc, onDirty }: { qc: ReturnType<typeof useQue
       {(account?.events || []).length > 0 && (
         <div style={{ marginTop: '1rem' }}>
           <p className="hint">Recent local account activity</p>
-          {(account.events as any[]).slice(0, 5).map(event => (
+          {(account?.events || []).slice(0, 5).map((event: { id?: string | number; created_at?: string; action?: string; amount_usdt?: number; note?: string }) => (
             <p className="hint mono" key={event.id} style={{ margin: '0.2rem 0' }}>
               {event.created_at} · {event.action} · {Number(event.amount_usdt).toFixed(2)} USDT {event.note ? `· ${event.note}` : ''}
             </p>
@@ -249,13 +249,13 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
           <button className="btn-inline-retry" onClick={() => refetchEvents()}>Retry</button>
         </p>
       )}
-      {!eventsLoading && !eventsError && (events as any[]).length > 0 && (
+      {!eventsLoading && !eventsError && events.length > 0 && (
         <>
           <p className="hint mt-2">Showing {events.length} of {eventPage.total} retained events.</p>
           <table className="mini-table mt-2">
             <thead><tr><th>Date</th><th>Type</th><th>Broker</th><th>Amount</th><th>Note</th></tr></thead>
             <tbody>
-              {events.map((e: any) => (
+              {events.map(e => (
                 <tr key={e.id}>
                   <td>{(e.detected_at || '').slice(0, 10)}</td>
                   <td>{e.event_type}</td>

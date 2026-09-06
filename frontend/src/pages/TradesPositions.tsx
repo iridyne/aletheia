@@ -1036,10 +1036,9 @@ function OrderDetail({
 					<Button
 						variant="secondary"
 						onClick={() =>
-							navigate({
-								pathname: "/charts",
-								search: `?symbol=${encodeURIComponent(order.symbol)}&market_type=${encodeURIComponent(order.market_type || "spot")}`,
-							} as any)
+							navigate(
+								`/charts?symbol=${encodeURIComponent(order.symbol)}&market_type=${encodeURIComponent(order.market_type || "spot")}`,
+							)
 						}
 					>
 						View on Chart

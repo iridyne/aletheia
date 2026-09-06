@@ -701,7 +701,7 @@ export default function PredictionLens() {
         title="Prediction Markets"
         role="Observe · prediction market probability trends from Polymarket. Observation-only — not routed to Paper Trader or Live Execution."
         actions={
-          <Button variant="secondary" onClick={() => refresh.mutate(undefined as any)} disabled={refresh.isPending || statusView.state !== 'enabled'}>
+          <Button variant="secondary" onClick={() => refresh.mutate()} disabled={refresh.isPending || statusView.state !== 'enabled'}>
             {refresh.isPending ? 'Refreshing…' : 'Refresh Now'}
           </Button>
         }

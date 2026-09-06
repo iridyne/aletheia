@@ -31,6 +31,6 @@ describe('CapitalEventsCard — read-failure semantic honesty', () => {
     expect(SRC).toContain('Capital events unavailable.')
     expect(SRC).toContain('Loading capital events…')
     // Table only rendered when not loading and not errored
-    expect(SRC).toContain('!eventsLoading && !eventsError && (events as any[]).length > 0')
+    expect(SRC).toContain('!eventsLoading && !eventsError && events.length > 0')
   })
 })
