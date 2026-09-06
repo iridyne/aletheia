@@ -23,29 +23,12 @@ observe_app = typer.Typer(
 
 def _experiment_authority_source() -> str:
     """Read the durable cutover row without bootstrapping a missing app DB."""
-    import sqlite3
-
     try:
-        from aletheia.storage.sqlite import readonly_db
+        from aletheia.observation_lab.experiment_owner import (
+            select_experiment_mutation_owner,
+        )
 
-        with readonly_db(allow_missing=True) as db:
-            if db is None:
-                return "legacy"
-            try:
-                row = db.execute(
-                    "SELECT authority_source FROM observation_authority_state "
-                    "WHERE state_key='experiment_authority'"
-                ).fetchone()
-            except sqlite3.OperationalError as exc:
-                if "no such table: observation_authority_state" in str(exc):
-                    return "legacy"
-                return "unavailable"
-            if row is None:
-                return "unavailable"
-            source = str(row[0])
-            return source if source in {"legacy", "lab"} else "unavailable"
-    except FileNotFoundError:
-        return "legacy"
+        return select_experiment_mutation_owner().source
     except Exception:
         return "unavailable"
 
@@ -1153,13 +1136,15 @@ def close_observation(
     only halts further collection. Historical evaluations remain queryable.
     """
     if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.canonical import record_owner_action
+        from aletheia.observation_lab.experiment_owner import (
+            record_selected_lab_owner_action,
+        )
 
         target = _find_lab_generation(observation_id)
         if target is None:
             typer.echo("canonical Lab observation unavailable or ambiguous", err=True)
             raise typer.Exit(code=1)
-        receipt_id = record_owner_action(
+        receipt_id = record_selected_lab_owner_action(
             action="close",
             actor="operator",
             reason=reason,
@@ -1183,7 +1168,9 @@ def close_observation(
             )
         return
 
-    from aletheia.storage import repositories as repo
+    from aletheia.observation_lab.experiment_owner import (
+        update_selected_legacy_filter_experiment,
+    )
 
     row = _find_observation(observation_id)
     if row is None:
@@ -1192,7 +1179,7 @@ def close_observation(
         typer.echo(f"observation is not collecting (status={row['status']}); no-op")
         return
     now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-    repo.update_filter_shadow_experiment(
+    update_selected_legacy_filter_experiment(
         row["id"],
         status="invalidated",
         last_evaluated_at=now,

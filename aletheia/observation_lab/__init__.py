@@ -100,7 +100,6 @@ from aletheia.observation_lab.canonical import (  # noqa: F401
     record_observation_nomination,
     record_observation_result,
     register_observation_spec,
-    record_owner_action,
     register_inference_plan,
     register_treatment_adapter,
     registered_treatment_adapters,

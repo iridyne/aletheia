@@ -55,14 +55,11 @@ logger = logging.getLogger("aletheia.learning.lifecycle")
 
 
 def _lab_authority() -> bool:
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
 
-        return get_authority_source().source == "lab"
-    except FileNotFoundError:
-        return False
-    except Exception as exc:
-        return "no such table: observation_authority_state" not in str(exc)
+    return select_experiment_mutation_owner().source == "lab"
 
 class _ExperimentAlreadyClosedError(RuntimeError):
     """Raised inside a lifecycle transaction when the predecessor row is gone.
@@ -138,16 +135,27 @@ def measurement_to_lifecycle_action(verdict: str) -> str:
         raise ValueError(f"unsupported measurement verdict: {verdict!r}") from exc
 
 
-def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> LifecycleResult:
+def process_lifecycle(
+    experiment_id: str,
+    *,
+    current_policy_epoch: str,
+    authority_epoch: str | None = None,
+) -> LifecycleResult:
     """Apply at most one durable lifecycle action for one current experiment.
 
     The database transition is transactional and event-deduplicated.  A caller
     may retry after a crash at any point without manufacturing a successor.
     """
-    if _lab_authority():
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
+
+    owner = select_experiment_mutation_owner()
+    if owner.source == "lab":
         return LifecycleResult(
             "hold", "hold", "canonical_lab_authority", experiment_id,
         )
+    authority_epoch = authority_epoch or owner.epoch
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return LifecycleResult("hold", "hold", "experiment_not_found", experiment_id)
@@ -292,6 +300,7 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
             recommended,
             current_policy_epoch,
             reason=("stale_safety_measurement" if identity_reason else None),
+            authority_epoch=authority_epoch,
         )
     if experiment.stage == "shadow":
         return LifecycleResult(
@@ -326,8 +335,14 @@ def process_lifecycle(experiment_id: str, *, current_policy_epoch: str) -> Lifec
     if gate_reason == "lifecycle_automation_disabled":
         return LifecycleResult("hold", "promote_stage", gate_reason, experiment_id, verdict_id=verdict["verdict_id"])
     if gate_reason is not None:
-        return _record_blocked_recommendation(experiment, hypothesis, verdict, current_policy_epoch, gate_reason)
-    return _promote_one_stage(experiment, hypothesis, verdict, current_policy_epoch)
+        return _record_blocked_recommendation(
+            experiment, hypothesis, verdict, current_policy_epoch, gate_reason,
+            authority_epoch=authority_epoch,
+        )
+    return _promote_one_stage(
+        experiment, hypothesis, verdict, current_policy_epoch,
+        authority_epoch=authority_epoch,
+    )
 
 
 def admit_shadow_trial(
@@ -360,6 +375,7 @@ def _execute_trial_admission(
     verdict_id: str,
     expected_policy_epoch: str,
     reason: str,
+    authority_epoch: str | None = None,
 ) -> LifecycleResult:
     """Shadow-to-paper_10 transition callable only from the protected owner route.
 
@@ -367,11 +383,17 @@ def _execute_trial_admission(
     The current epoch is derived server-side; caller input is optimistic
     concurrency evidence only and can never define measurement identity.
     """
-    if _lab_authority():
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
+
+    owner = select_experiment_mutation_owner()
+    if owner.source == "lab":
         return LifecycleResult(
             "hold", "admit_trial", "canonical_lab_authority", experiment_id,
             verdict_id=verdict_id,
         )
+    authority_epoch = authority_epoch or owner.epoch
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None:
         return LifecycleResult("hold", "admit_trial", "experiment_not_found", experiment_id, verdict_id=verdict_id)
@@ -510,6 +532,13 @@ def _execute_trial_admission(
     )
     try:
         with transaction(immediate=True):
+            from aletheia.observation_lab.experiment_owner import (
+                require_experiment_mutation_owner,
+            )
+
+            require_experiment_mutation_owner(
+                "legacy", authority_epoch, db=get_db()
+            )
             gate_reason = trial_admission_gate_reason(
                 hypothesis.path_id,
                 persist_config_migrations=False,
@@ -635,12 +664,9 @@ def _promote_one_stage(
     hypothesis: LearningHypothesis,
     verdict: dict[str, Any],
     policy_epoch: str,
+    *,
+    authority_epoch: str,
 ) -> LifecycleResult:
-    if _lab_authority():
-        return LifecycleResult(
-            "hold", "promote_stage", "canonical_lab_authority",
-            experiment.experiment_id, verdict_id=str(verdict["verdict_id"]),
-        )
     to_stage = STAGE_SUCCESSOR[experiment.stage]
     # #1452: resolve allocation before opening the transaction; fail closed if
     # config is unavailable rather than silently committing a 0.80 default.
@@ -684,6 +710,13 @@ def _promote_one_stage(
     )
     try:
         with transaction(immediate=True):
+            from aletheia.observation_lab.experiment_owner import (
+                require_experiment_mutation_owner,
+            )
+
+            require_experiment_mutation_owner(
+                "legacy", authority_epoch, db=get_db()
+            )
             gate_reason = _promotion_gate_reason(
                 hypothesis.path_id,
                 persist_config_migrations=False,
@@ -745,12 +778,8 @@ def _apply_safety_action(
     policy_epoch: str,
     *,
     reason: str | None = None,
+    authority_epoch: str,
 ) -> LifecycleResult:
-    if _lab_authority():
-        return LifecycleResult(
-            "hold", action, "canonical_lab_authority", experiment.experiment_id,
-            verdict_id=str(verdict["verdict_id"]),
-        )
     try:
         gate_reason = _safety_action_gate_reason()
         if gate_reason is not None:
@@ -782,6 +811,13 @@ def _apply_safety_action(
     )
     try:
         with transaction():
+            from aletheia.observation_lab.experiment_owner import (
+                require_experiment_mutation_owner,
+            )
+
+            require_experiment_mutation_owner(
+                "legacy", authority_epoch, db=get_db()
+            )
             if not insert_lifecycle_event(event):
                 return LifecycleResult(action, action, "already_transitioned", experiment.experiment_id, verdict_id=verdict["verdict_id"])
             db = get_db()
@@ -815,6 +851,8 @@ def _record_blocked_recommendation(
     verdict: dict[str, Any],
     policy_epoch: str,
     reason: str,
+    *,
+    authority_epoch: str,
 ) -> LifecycleResult:
     dedup_key = f"{verdict['verdict_id']}:{experiment.stage}:hold"
     event = LearningLifecycleEvent(
@@ -827,7 +865,16 @@ def _record_blocked_recommendation(
         reason=f"recommended_action=promote_stage; blocked={reason}",
         policy_epoch=policy_epoch,
     )
-    if insert_lifecycle_event(event):
+    from aletheia.observation_lab.experiment_owner import (
+        require_experiment_mutation_owner,
+    )
+
+    with transaction(immediate=True):
+        require_experiment_mutation_owner(
+            "legacy", authority_epoch, db=get_db()
+        )
+        inserted = insert_lifecycle_event(event)
+    if inserted:
         _write_lifecycle_audit(event)
     return LifecycleResult("hold", "promote_stage", reason, experiment.experiment_id, verdict_id=verdict["verdict_id"])
 
@@ -1047,9 +1094,16 @@ def run_contribution_evaluator() -> dict[str, int | str]:
         raise
 
 
-def run_lifecycle_controller() -> dict[str, int | str]:
+def run_lifecycle_controller(
+    *, authority_epoch: str | None = None,
+) -> dict[str, int | str]:
     """Evaluate current-stage actions; scheduler gating supplies autonomy safety."""
-    if _lab_authority():
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
+
+    owner = select_experiment_mutation_owner()
+    if owner.source == "lab":
         return {
             "status": "canonical_lab_authority",
             "experiments": 0,
@@ -1059,6 +1113,7 @@ def run_lifecycle_controller() -> dict[str, int | str]:
             "retired_idle": 0,
             "failed_experiments": 0,
         }
+    authority_epoch = authority_epoch or owner.epoch
     results = []
     failed_experiments = 0
     seen: set[str] = set()
@@ -1082,13 +1137,16 @@ def run_lifecycle_controller() -> dict[str, int | str]:
 
                     evaluate_experiment(experiment_id)
                 result = process_lifecycle(
-                    experiment_id, current_policy_epoch=epoch,
+                    experiment_id,
+                    current_policy_epoch=epoch,
+                    authority_epoch=authority_epoch,
                 )
                 if idle and result.action == "hold":
                     result = _retire_idle_experiment(
                         experiment_id,
                         policy_epoch=epoch,
                         verdict_id=result.verdict_id,
+                        authority_epoch=authority_epoch,
                     )
                 results.append(result)
             except Exception:
@@ -1136,12 +1194,8 @@ def _retire_idle_experiment(
     *,
     policy_epoch: str,
     verdict_id: str | None,
+    authority_epoch: str,
 ) -> LifecycleResult:
-    if _lab_authority():
-        return LifecycleResult(
-            "hold", "retire_idle", "canonical_lab_authority", experiment_id,
-            verdict_id=verdict_id,
-        )
     experiment_row = get_record("learning_experiments", experiment_id)
     if experiment_row is None or experiment_row.get("ended_at") is not None:
         return LifecycleResult(
@@ -1178,6 +1232,13 @@ def _retire_idle_experiment(
         created_at=now,
     )
     with transaction():
+        from aletheia.observation_lab.experiment_owner import (
+            require_experiment_mutation_owner,
+        )
+
+        require_experiment_mutation_owner(
+            "legacy", authority_epoch, db=get_db()
+        )
         if not insert_lifecycle_event(event):
             return LifecycleResult(
                 "retire_idle", "retire_idle", "already_transitioned",

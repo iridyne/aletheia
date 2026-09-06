@@ -2383,7 +2383,8 @@ def test_lifecycle_controller_isolates_a_failing_experiment(monkeypatch):
 
     seen: list[str] = []
 
-    def fake_process(experiment_id, *, current_policy_epoch):
+    def fake_process(experiment_id, *, current_policy_epoch, authority_epoch):
+        assert authority_epoch
         seen.append(experiment_id)
         if experiment_id == bad_exp.experiment_id:
             raise RuntimeError("boom")
@@ -2431,7 +2432,7 @@ def test_lifecycle_controller_final_evaluates_and_retires_idle_experiment(monkey
     monkeypatch.setattr(
         lifecycle,
         "process_lifecycle",
-        lambda experiment_id, *, current_policy_epoch: (
+            lambda experiment_id, *, current_policy_epoch, authority_epoch: (
             calls.append(f"process:{experiment_id}")
             or lifecycle.LifecycleResult(
                 "hold", "hold", "no_current_stage_measurement", experiment_id,

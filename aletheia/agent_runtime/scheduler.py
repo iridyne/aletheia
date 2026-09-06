@@ -1173,17 +1173,6 @@ def _initial_learning_evaluator_run_time(
     return min(durable_due, default_run)
 
 
-def _observation_lab_owns_experiment_cycle() -> bool:
-    """Keep Main's legacy evaluator/lifecycle jobs out of Lab authority mode."""
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        return get_authority_source().source == "lab"
-    except Exception as exc:  # fail closed on an unreadable authority boundary
-        logger.warning("Observation experiment authority unavailable at scheduler startup: %s", exc)
-        return True
-
-
 def _run_pricing_reference_refresh() -> None:
     try:
         from aletheia.economics.pricing_sync import start_pricing_refresh
@@ -1565,7 +1554,21 @@ def init_scheduler() -> BackgroundScheduler | None:
     # AT-01 evaluator/lifecycle jobs remain a legacy compatibility lane only.
     # Once Lab is authoritative, the observation bridge/runner owns this cycle;
     # registering the old jobs would leave two lifecycle authorities in Main.
-    if not _observation_lab_owns_experiment_cycle():
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        select_experiment_mutation_owner,
+    )
+    try:
+        legacy_experiment_owner = (
+            select_experiment_mutation_owner().source == "legacy"
+        )
+    except ExperimentMutationAuthorityError as exc:
+        logger.warning(
+            "Observation experiment authority unavailable at scheduler startup: %s",
+            exc,
+        )
+        legacy_experiment_owner = False
+    if legacy_experiment_owner:
         _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
         _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
             _learning_interval,
@@ -3306,9 +3309,11 @@ def _run_cleanup():
         experiment_floor_read_ok = False
         min_open_exp_at = None
         try:
-            from aletheia.observation_lab.canonical import get_authority_source
+            from aletheia.observation_lab.experiment_owner import (
+                select_experiment_mutation_owner,
+            )
 
-            lab_authority = get_authority_source().source == "lab"
+            lab_authority = select_experiment_mutation_owner().source == "lab"
         except Exception as exc:
             logger.debug("Cannot read Observation authority for cleanup: %s", exc)
             lab_authority = False
@@ -3759,18 +3764,14 @@ def _run_filter_controller_observe():
         )
         try:
             with worker_cycle_exclusion():
-                if ctrl and ctrl.shadow_enabled:
-                    from aletheia.analytics.filter_controller import run_controller_observe
+                from aletheia.observation_lab.experiment_owner import (
+                    run_selected_observation_cycle,
+                )
 
-                    summary = run_controller_observe(min_samples=int(ctrl.min_samples_gate))
-                else:
-                    from aletheia.observation_lab.runner import run_lab_windows
-
-                    summary = {
-                        "pass_status": "success",
-                        "recommendations_written": 0,
-                        "lab_windows": run_lab_windows(),
-                    }
+                summary = run_selected_observation_cycle(
+                    min_samples=int(ctrl.min_samples_gate) if ctrl else 50,
+                    legacy_controller_enabled=bool(ctrl and ctrl.shadow_enabled),
+                )
         except WorkerCycleLockError as lock_exc:
             logger.info("filter_controller_observe deferred: %s", lock_exc)
             _record_job_failure(
@@ -4021,8 +4022,12 @@ def _run_learning_contribution_evaluator():
 
 def _run_learning_lifecycle_controller():
     try:
-        from aletheia.learning.lifecycle import run_lifecycle_controller
-        return _run_sync_with_timeout("learning_lifecycle_controller", run_lifecycle_controller)
+        from aletheia.observation_lab.experiment_owner import (
+            run_selected_lifecycle_cycle,
+        )
+        return _run_sync_with_timeout(
+            "learning_lifecycle_controller", run_selected_lifecycle_cycle
+        )
     except Exception as e:
         logger.warning("learning_lifecycle_controller failed: %s", e)
         _record_job_failure("learning_lifecycle_controller", str(e))

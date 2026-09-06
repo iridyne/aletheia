@@ -1618,6 +1618,7 @@ async def test_trial_admission_route_passes_expected_epoch_not_owner_text(
         "verdict_id": "verdict",
         "expected_policy_epoch": "epoch-current",
         "reason": "begin bounded paper trial",
+        "authority_epoch": "legacy-v1",
     }
 
 

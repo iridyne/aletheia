@@ -3336,7 +3336,7 @@ def _attach_receipt(
     })
 
 
-def record_owner_action(
+def _record_owner_action(
     *,
     action: str,
     actor: str,
@@ -3347,6 +3347,7 @@ def record_owner_action(
     manifest_hash: str | None = None,
     expected_manifest_hash: str | None = None,
     expected_generation: int | None = None,
+    expected_authority_epoch: str | None = None,
     dedup_key: str | None = None,
 ) -> str:
     """Persist safety denial plus owner-action transport in one app transaction."""
@@ -3384,6 +3385,12 @@ def record_owner_action(
                 ),
             )
         authority = get_authority_source(db=db)
+        if (
+            authority.source != "lab"
+            or expected_authority_epoch is None
+            or authority.epoch != expected_authority_epoch
+        ):
+            raise RuntimeError("lab_experiment_mutation_authority_changed")
         return append_delivery_receipt(
             receipt_kind="owner_action",
             receipt_id=f"owner-action:{dedup_key}",
@@ -4784,7 +4791,6 @@ __all__ = [
     "record_observation_nomination",
     "record_observation_result",
     "register_observation_spec",
-    "record_owner_action",
     "register_treatment_adapter",
     "register_inference_plan",
     "registered_treatment_adapters",

@@ -1306,22 +1306,6 @@ class LearningConfigUpdate(SettingsRequest):
     paper_active_allocation_pct: Optional[float] = None
 
 
-def _lab_experiment_authority() -> bool:
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        return get_authority_source().source == "lab"
-    except FileNotFoundError:
-        return False
-    except (AttributeError, TypeError):
-        # Test/read-model doubles may expose only ``execute``; that is not a
-        # usable authority source and must keep the compatibility projection
-        # path, while real SQLite/runtime failures remain fail-closed below.
-        return False
-    except Exception as exc:
-        return "no such table: observation_authority_state" not in str(exc)
-
-
 def _validated_paper_influence_paths(values: list[str]) -> list[str]:
     requested_paths = sorted({
         str(path).strip() for path in values if str(path).strip()
@@ -1398,7 +1382,15 @@ async def update_learning_config(req: LearningConfigUpdate):
 @router.get("/learning/experiments")
 def list_learning_experiments(limit: int = 100):
     """List all learning experiments with lightweight summary (path, stage, status)."""
-    if _lab_experiment_authority():
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        select_experiment_mutation_owner,
+    )
+    try:
+        lab_authority = select_experiment_mutation_owner().source == "lab"
+    except ExperimentMutationAuthorityError as exc:
+        raise HTTPException(503, "experiment authority unavailable") from exc
+    if lab_authority:
         from aletheia.observation_lab.db import readonly_lab_db
 
         try:
@@ -1452,7 +1444,15 @@ def list_learning_experiments(limit: int = 100):
 @router.get("/learning/experiments/{experiment_id}")
 def get_learning_experiment(experiment_id: str):
     """Read-only lifecycle/operator view for one experiment."""
-    if _lab_experiment_authority():
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        select_experiment_mutation_owner,
+    )
+    try:
+        lab_authority = select_experiment_mutation_owner().source == "lab"
+    except ExperimentMutationAuthorityError as exc:
+        raise HTTPException(503, "experiment authority unavailable") from exc
+    if lab_authority:
         from aletheia.observation_lab.db import readonly_lab_db
 
         try:
@@ -1635,15 +1635,24 @@ class ObservationOwnerActionRequest(SettingsRequest):
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
 def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
-    if _lab_experiment_authority():
-        raise HTTPException(409, "canonical Lab authority requires the Observation owner-action surface")
-    from aletheia.learning.lifecycle import _execute_trial_admission
-    result = _execute_trial_admission(
-        experiment_id,
-        verdict_id=req.verdict_id,
-        expected_policy_epoch=req.expected_policy_epoch,
-        reason=req.reason,
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        admit_selected_legacy_trial,
     )
+    try:
+        result = admit_selected_legacy_trial(
+            experiment_id,
+            verdict_id=req.verdict_id,
+            expected_policy_epoch=req.expected_policy_epoch,
+            reason=req.reason,
+        )
+    except ExperimentMutationAuthorityError as exc:
+        if str(exc) == "legacy_experiment_owner_not_selected":
+            raise HTTPException(
+                409,
+                "canonical Lab authority requires the Observation owner-action surface",
+            ) from exc
+        raise HTTPException(503, "experiment authority unavailable") from exc
     if result.action == "hold":
         raise HTTPException(409, {"action": result.action, "reason": result.reason})
     return {
@@ -1661,8 +1670,10 @@ def queue_observation_owner_action(
     req: ObservationOwnerActionRequest,
 ):
     """Queue an owner action and report transport state, never Lab success."""
-    if not _lab_experiment_authority():
-        raise HTTPException(409, "canonical Lab authority is not selected")
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        record_selected_lab_owner_action,
+    )
     from aletheia.observation_lab.db import readonly_lab_db
 
     try:
@@ -1700,8 +1711,6 @@ def queue_observation_owner_action(
         raise HTTPException(503, "observation Lab unavailable") from exc
 
     from hashlib import sha256
-    from aletheia.observation_lab.canonical import record_owner_action
-
     dedup_key = "lab-owner-action:" + sha256(
         json.dumps(
             {
@@ -1716,7 +1725,7 @@ def queue_observation_owner_action(
         ).encode("utf-8")
     ).hexdigest()
     try:
-        receipt_id = record_owner_action(
+        receipt_id = record_selected_lab_owner_action(
             action=req.action,
             actor="dashboard_owner",
             reason=req.reason,
@@ -1734,6 +1743,10 @@ def queue_observation_owner_action(
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except ExperimentMutationAuthorityError as exc:
+        if str(exc) == "lab_experiment_owner_not_selected":
+            raise HTTPException(409, "canonical Lab authority is not selected") from exc
+        raise HTTPException(503, "experiment authority unavailable") from exc
     except Exception as exc:
         raise HTTPException(503, "owner action receipt unavailable") from exc
     return {

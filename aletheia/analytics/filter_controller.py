@@ -701,27 +701,26 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     """
     generated_at = _now_iso()
     try:
-        from aletheia.observation_lab.canonical import get_authority_source
+        from aletheia.observation_lab.experiment_owner import (
+            select_experiment_mutation_owner,
+        )
 
-        if get_authority_source().source == "lab":
+        if select_experiment_mutation_owner().source == "lab":
             return {
                 **_empty_run_summary(min_samples, generated_at=generated_at),
                 "pass_status": "success",
                 "pass_reason": "canonical_lab_authority",
             }
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        if "no such table: observation_authority_state" not in str(exc):
-            return {
-                **_empty_run_summary(
-                    min_samples,
-                    generated_at=generated_at,
-                    skipped_reason="experiment_authority_unavailable",
-                ),
-                "pass_status": "error",
-                "pass_reason": "experiment_authority_unavailable",
-            }
+    except Exception:
+        return {
+            **_empty_run_summary(
+                min_samples,
+                generated_at=generated_at,
+                skipped_reason="experiment_authority_unavailable",
+            ),
+            "pass_status": "error",
+            "pass_reason": "experiment_authority_unavailable",
+        }
 
     # Freshness gate — skip if the latest observe row is younger than half the
     # configured cadence. Prevents Main APScheduler misfires + manual

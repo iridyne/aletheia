@@ -193,7 +193,11 @@ def register_replay_ready_experiments(
             )
             summary["registered" if registered.get("_created") else "already_registered"] += 1
             continue
-        if repo.insert_filter_shadow_experiment(record):
+        from aletheia.observation_lab.experiment_owner import (
+            insert_selected_legacy_filter_experiment,
+        )
+
+        if insert_selected_legacy_filter_experiment(record):
             summary["registered"] += 1
         else:
             summary["already_registered"] += 1
@@ -257,7 +261,11 @@ def evaluate_active_shadow_experiments(
                 update["completed_at"] = timestamp
         with transaction():
             repo.insert_filter_shadow_evaluation(evaluation)
-            repo.update_filter_shadow_experiment(experiment["id"], **update)
+            from aletheia.observation_lab.experiment_owner import (
+                update_selected_legacy_filter_experiment,
+            )
+
+            update_selected_legacy_filter_experiment(experiment["id"], **update)
         summary["evaluated"] += 1
         if disposition != "collecting":
             summary[disposition] += 1
@@ -331,7 +339,11 @@ def register_observation_from_spec(
         "production_mutation_allowed": 0,
         "adapter_identity_hash": _adapter_causal_identity_hash(scope["filter_name"]),
     }
-    if not repo.insert_filter_shadow_experiment(record):
+    from aletheia.observation_lab.experiment_owner import (
+        insert_selected_legacy_filter_experiment,
+    )
+
+    if not insert_selected_legacy_filter_experiment(record):
         raise ValueError(
             f"observation with identical scope + treatment already exists "
             f"(experiment_key={experiment_key})"
@@ -392,7 +404,11 @@ def evaluate_one_experiment(
             update["completed_at"] = timestamp
     with transaction():
         repo.insert_filter_shadow_evaluation(evaluation)
-        repo.update_filter_shadow_experiment(target["id"], **update)
+        from aletheia.observation_lab.experiment_owner import (
+            update_selected_legacy_filter_experiment,
+        )
+
+        update_selected_legacy_filter_experiment(target["id"], **update)
     return evaluation
 
 

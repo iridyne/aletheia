@@ -12688,7 +12688,7 @@ def latest_controller_run_id() -> str | None:
     return row["run_id"] if row else None
 
 
-def insert_filter_shadow_experiment(experiment: dict) -> bool:
+def _insert_filter_shadow_experiment(experiment: dict) -> bool:
     """Insert an immutable prospective plan, returning False for a duplicate key."""
     if _canonical_lab_authority():
         raise RuntimeError("observation_lab_authority_required")
@@ -12719,7 +12719,7 @@ def list_filter_shadow_experiments(*, status: str | None = None, limit: int = 10
     return _select_all("filter_shadow_experiments", order="started_at DESC", limit=limit)
 
 
-def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
+def _update_filter_shadow_experiment(experiment_id: str, **values) -> None:
     if _canonical_lab_authority():
         raise RuntimeError("observation_lab_authority_required")
     db = get_db()

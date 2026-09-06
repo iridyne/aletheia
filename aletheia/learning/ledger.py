@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 from pydantic import BaseModel
 
 from aletheia.storage.repositories import (
@@ -29,28 +27,41 @@ _TABLE_ID = {
 
 def _lab_authority() -> bool:
     """Return whether the canonical Lab owns Experiment behavior."""
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
 
-        return get_authority_source().source == "lab"
-    except sqlite3.OperationalError as exc:
-        if "no such table: observation_authority_state" in str(exc):
-            return False
-        return True
-    except FileNotFoundError:
-        return False
-    except (sqlite3.Error, RuntimeError):
-        return True
+    return select_experiment_mutation_owner().source == "lab"
+
+
+def _require_legacy_experiment_write() -> None:
+    from aletheia.observation_lab.experiment_owner import (
+        ExperimentMutationAuthorityError,
+        require_experiment_mutation_owner,
+        select_experiment_mutation_owner,
+    )
+
+    owner = select_experiment_mutation_owner()
+    if owner.source != "legacy":
+        raise ExperimentMutationAuthorityError("legacy_experiment_owner_not_selected")
+    require_experiment_mutation_owner("legacy", owner.epoch, db=get_db())
 
 
 def insert_record(table: str, record: BaseModel, *, ignore_duplicates: bool = False) -> bool:
     if table not in _TABLE_ID:
         raise ValueError(f"unsupported Learning ledger table: {table}")
-    if _lab_authority() and table in {
+    protected = table in {
         "learning_experiments", "learning_exposures", "learning_contribution_verdicts",
         "learning_inference_decisions", "learning_lifecycle_events",
-    }:
-        raise RuntimeError("observation_lab_authority_required")
+    }
+    if protected:
+        with transaction(immediate=True, savepoint=True):
+            _require_legacy_experiment_write()
+            return _insert_record(table, record, ignore_duplicates=ignore_duplicates)
+    return _insert_record(table, record, ignore_duplicates=ignore_duplicates)
+
+
+def _insert_record(table: str, record: BaseModel, *, ignore_duplicates: bool) -> bool:
     data = record.model_dump()
     db = get_db()
     was_in_tx = db.in_transaction
@@ -119,9 +130,8 @@ def insert_exposure(
     makes lifecycle validation and insertion one atomic operation. A concurrent
     close/refreeze therefore cannot append evidence to the ended experiment.
     """
-    if _lab_authority():
-        raise RuntimeError("observation_lab_authority_required")
     with transaction(immediate=require_open_experiment_id is not None):
+        _require_legacy_experiment_write()
         db = get_db()
         if require_open_experiment_id is not None:
             row = db.execute(
@@ -157,10 +167,9 @@ def insert_exposure(
 
 
 def insert_lifecycle_event(record) -> bool:
-    if _lab_authority():
-        raise RuntimeError("observation_lab_authority_required")
     data = record.model_dump()
     with transaction(savepoint=True):
+        _require_legacy_experiment_write()
         db = get_db()
         columns = ", ".join(data)
         placeholders = ", ".join("?" for _ in data)

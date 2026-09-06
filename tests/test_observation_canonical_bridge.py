@@ -1251,9 +1251,9 @@ def test_lab_authority_blocks_legacy_experiment_behavior_paths():
     from aletheia.analytics.filter_controller import run_controller_observe
 
     set_authority_source("lab", actor="owner", reason="legacy-path-guard-test")
-    with pytest.raises(RuntimeError, match="observation_lab_authority_required"):
+    with pytest.raises(RuntimeError, match="legacy_experiment_owner_not_selected"):
         ledger.insert_experiment(object())
-    with pytest.raises(RuntimeError, match="observation_lab_authority_required"):
+    with pytest.raises(RuntimeError, match="legacy_experiment_owner_not_selected"):
         ledger.insert_exposure(object())
     assert run_verdict_cycle()["status"] == "canonical_lab_authority"
     assert run_lifecycle_controller()["status"] == "canonical_lab_authority"
@@ -1264,11 +1264,13 @@ def test_lab_authority_blocks_legacy_experiment_behavior_paths():
 def test_owner_close_is_imported_as_terminal_lab_lifecycle():
     from aletheia.observation_lab.canonical import (
         import_delivery_receipts,
-        record_owner_action,
         register_observation_spec,
         register_treatment_adapter,
         resolve_observation_treatment,
         set_authority_source,
+    )
+    from aletheia.observation_lab.experiment_owner import (
+        record_selected_lab_owner_action,
     )
     from aletheia.observation_lab.manifest import (
         build_manifest,
@@ -1312,7 +1314,7 @@ def test_owner_close_is_imported_as_terminal_lab_lifecycle():
         owner_admission_ref="owner:close-test",
     )
     publish_manifest(manifest)
-    receipt_id = record_owner_action(
+    receipt_id = record_selected_lab_owner_action(
         action="close",
         actor="owner",
         reason="owner closed generation",
@@ -1346,9 +1348,11 @@ def test_owner_close_is_imported_as_terminal_lab_lifecycle():
 def test_owner_admission_creates_lab_successor_and_applied_receipt():
     from aletheia.observation_lab.canonical import (
         import_delivery_receipts,
-        record_owner_action,
         register_observation_spec,
         set_authority_source,
+    )
+    from aletheia.observation_lab.experiment_owner import (
+        record_selected_lab_owner_action,
     )
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
@@ -1364,7 +1368,7 @@ def test_owner_admission_creates_lab_successor_and_applied_receipt():
         "control": {"value": 1.0},
         "treatment": {"value": 2.0},
     })
-    receipt_id = record_owner_action(
+    receipt_id = record_selected_lab_owner_action(
         action="admit",
         actor="owner",
         reason="owner approved paper admission",
@@ -1418,10 +1422,12 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
     from aletheia.observation_lab.canonical import (
         import_delivery_receipts,
         publish_manifest_with_lifecycle,
-        record_owner_action,
         register_observation_spec,
         register_treatment_adapter,
         set_authority_source,
+    )
+    from aletheia.observation_lab.experiment_owner import (
+        record_selected_lab_owner_action,
     )
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.manifest import build_manifest
@@ -1438,7 +1444,7 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
         "control": {"value": 1.0},
         "treatment": {"value": 2.0},
     })
-    receipt_id = record_owner_action(
+    receipt_id = record_selected_lab_owner_action(
         action="admit",
         actor="owner",
         reason="owner approved paper publication",
@@ -1514,7 +1520,7 @@ def test_paper_manifest_publication_commits_plan_manifest_and_audit_together():
         "SELECT 1 FROM lab_audit_outbox WHERE dedup_key=?",
         (f"observation-lifecycle:manifest-publish:{manifest.manifest_hash}",),
     ).fetchone() is not None
-    adoption_receipt = record_owner_action(
+    adoption_receipt = record_selected_lab_owner_action(
         action="adopt",
         actor="owner",
         reason="owner adopted paper treatment as baseline",

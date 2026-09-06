@@ -10,14 +10,11 @@ from aletheia.learning.registry import LEARNING_PATHS
 
 
 def _lab_authority() -> bool:
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.observation_lab.experiment_owner import (
+        select_experiment_mutation_owner,
+    )
 
-        return get_authority_source().source == "lab"
-    except FileNotFoundError:
-        return False
-    except Exception as exc:
-        return "no such table: observation_authority_state" not in str(exc)
+    return select_experiment_mutation_owner().source == "lab"
 
 
 def _unmeasurable_open_experiments() -> list[dict[str, Any]]:
@@ -59,12 +56,20 @@ def archive_unmeasurable_experiments(*, dry_run: bool = True) -> dict[str, Any]:
 
     from aletheia.learning.ledger import insert_lifecycle_event
     from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.observation_lab.experiment_owner import (
+        require_experiment_mutation_owner,
+        select_experiment_mutation_owner,
+    )
     from aletheia.storage.repositories import transaction
     from aletheia.storage.sqlite import get_db
 
+    owner = select_experiment_mutation_owner()
+    if owner.source != "legacy":
+        return _summary([], dry_run=False)
     now = datetime.now(timezone.utc).isoformat()
     lifecycle_event_ids: list[str] = []
     with transaction(immediate=True, savepoint=True):
+        require_experiment_mutation_owner("legacy", owner.epoch, db=get_db())
         rows = _unmeasurable_open_experiments()
         db = get_db()
         for row in rows:
@@ -163,12 +168,24 @@ def refreeze_redundant_universe_family_shadows(
 
     from aletheia.learning.ledger import insert_lifecycle_event
     from aletheia.learning.models import LearningLifecycleEvent
+    from aletheia.observation_lab.experiment_owner import (
+        require_experiment_mutation_owner,
+        select_experiment_mutation_owner,
+    )
     from aletheia.storage.repositories import transaction
     from aletheia.storage.sqlite import get_db
 
+    owner = select_experiment_mutation_owner()
+    if owner.source != "legacy":
+        return {
+            **summary,
+            "dry_run": False,
+            "status": "canonical_lab_authority",
+        }
     now = datetime.now(timezone.utc).isoformat()
     lifecycle_event_ids: list[str] = []
     with transaction(immediate=True, savepoint=True):
+        require_experiment_mutation_owner("legacy", owner.epoch, db=get_db())
         rows = _redundant_universe_family_shadows(keep_experiment_id)
         db = get_db()
         for row in rows:

@@ -491,49 +491,11 @@ def _register_default_windows() -> None:
     subsystems until each pass executes.
     """
     def _filter_shadow_evaluate() -> dict[str, Any]:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        if get_authority_source().source == "lab":
-            # Canonical filter-shadow roots are advanced by the durable
-            # ObservationHandler window.  Keep this compatibility window as a
-            # projection only; evaluating here as well would append a second
-            # snapshot in the same runner pass.
-            from aletheia.observation_lab.filter_shadow import (
-                list_filter_shadow_observations,
-            )
-
-            roots = list_filter_shadow_observations(status="active", limit=1000) or []
-            evaluation = {
-                "evaluated": len(roots),
-                "ready_for_review": 0,
-                "completed_no_support": 0,
-                "invalidated": 0,
-                "canonical_handler": True,
-            }
-            for root in roots:
-                disposition = str(
-                    ((root.get("latest_evaluation") or {}).get("disposition") or "")
-                )
-                if disposition in {
-                    "ready_for_review", "completed_no_support", "invalidated",
-                }:
-                    evaluation[disposition] += 1
-            return {
-                "status": "canonical_lab_authority",
-                "frozen_units_captured": 0,
-                "evaluation": evaluation,
-            }
-        from aletheia.counterfactual.filter_experiments import (
-            capture_frozen_units_for,
-            evaluate_active_shadow_experiments,
+        from aletheia.observation_lab.experiment_owner import (
+            run_selected_filter_experiment_cycle,
         )
-        from aletheia.storage import repositories as _repo
 
-        captured = 0
-        for experiment in _repo.list_filter_shadow_experiments(status="collecting"):
-            captured += capture_frozen_units_for(experiment)
-        evaluation = evaluate_active_shadow_experiments()
-        return {"frozen_units_captured": captured, "evaluation": evaluation}
+        return run_selected_filter_experiment_cycle()
 
     def _ufc_shadow_equivalence() -> dict[str, Any]:
         from aletheia.observation_lab.ufc_shadow import run_ufc_shadow_equivalence_pass
