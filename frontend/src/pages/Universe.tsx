@@ -521,7 +521,7 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Family / why selected" value={`${humanize(attention?.candidate_family ?? currentCandidate?.scanner_family)} · ${evidenceLabel(detail.data?.member.inclusion_reason ?? currentCandidate?.inclusion_reason)}`} />
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Selection policy" value={humanize(detail.data?.member.candidate_selection_policy)} mono />
-        <DrawerField label="Candidate utility" value={detail.data?.member.candidate_selection_utility_pct == null ? 'Not applicable' : `${fmtNum(detail.data.member.candidate_selection_utility_pct)}%`} />
+        <DrawerField label="Candidate utility" value={detail.data?.member.candidate_selection_utility_pct == null ? (detail.data?.member.candidate_selection_policy === 'candidate_selection_utility_v1' ? 'Awaiting initial observation sample' : 'Not applicable') : `${fmtNum(detail.data.member.candidate_selection_utility_pct)}%`} />
         <DrawerField label="Legacy score (compatibility)" value={detail.data?.member.total_score} />
         <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />
         <DrawerField label="Execution eligible" value={detail.data?.member.execution_eligible == null ? 'Unavailable' : detail.data.member.execution_eligible ? 'Yes' : 'No'} />

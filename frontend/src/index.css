@@ -2786,7 +2786,7 @@ button.market-instrument-group-title { font-family: inherit; }
   gap: var(--space-3);
   align-items: start;
 }
-.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.cockpit-rail { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; position: sticky; top: var(--space-4); }
 .cockpit-rail .card { margin-bottom: 0; }
 @media (max-width: 1023px) {
   .cockpit-main { grid-template-columns: 1fr; }
