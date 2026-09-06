@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   api, type MarketNewsItem, type MarketOpportunityInstrument, type MarketTrade, type OhlcvResult,
@@ -254,17 +254,27 @@ export function NewsTab() {
   if (isLoading && !data) return <DataStateMessage state="loading" message="Loading news…" />
   if (isError && !data) return <DataStateMessage state="unavailable" message="News data unavailable. The read failed; this is not an unconfigured source." />
   if (isError && data && !news.length) return <DataStateMessage state="stale" message="News data is stale. The failed latest read cannot confirm source configuration." />
-  return <>
-    {isError && data && <DataStateMessage state="stale" message="News data is stale. Retained rows may not reflect the latest read." />}
-    {!news.length ? <p className="hint">News ingestion not configured — add news sources in Settings or create items manually.</p> : <div className="news-feed">{news.map((item: MarketNewsItem) => {
-    const sentiment = item.sentiment || 'neutral'
-    return <div key={item.id} className="news-item">
-      <div className="news-item-head"><span className="news-item-title">{item.title}</span><Badge tone={sentiment === 'positive' ? 'green' : sentiment === 'negative' ? 'red' : 'blue'}>{sentiment}</Badge></div>
-      <div className="news-item-meta">{item.source && <span className="news-item-source">{item.source}</span>}{item.published_at && <span className="mono news-item-ts">{fmtTimestamp(item.published_at)}</span>}</div>
-      {item.summary && <p className="news-item-summary">{item.summary}</p>}
-    </div>
-  })}</div>}
-  </>
+  return (
+    <>
+      {isError && data && <DataStateMessage state="stale" message="News data is stale. Retained rows may not reflect the latest read." />}
+      {!news.length ? (
+        <p className="hint">News ingestion not configured — add news sources in <Link to="/settings?tab=signals&section=news-feeds" className="text-accent">Settings ↗</Link> or create items manually.</p>
+      ) : (
+        <div className="news-feed">
+          {news.map((item: MarketNewsItem) => {
+            const sentiment = item.sentiment || 'neutral'
+            return (
+              <div key={item.id} className="news-item">
+                <div className="news-item-head"><span className="news-item-title">{item.title}</span><Badge tone={sentiment === 'positive' ? 'green' : sentiment === 'negative' ? 'red' : 'blue'}>{sentiment}</Badge></div>
+                <div className="news-item-meta">{item.source && <span className="news-item-source">{item.source}</span>}{item.published_at && <span className="mono news-item-ts">{fmtTimestamp(item.published_at)}</span>}</div>
+                {item.summary && <p className="news-item-summary">{item.summary}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
 }
 
 function PredictionsTab() {
