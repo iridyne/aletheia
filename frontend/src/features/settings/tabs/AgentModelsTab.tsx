@@ -81,8 +81,8 @@ export const LLM_COST_SECTION = {
 
 export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const confirm = useConfirm()
-  const agent = settings?.agent as any || {}
-  const runtime = settings?.runtime as any || {}
+  const agent = settings?.agent || {}
+  const runtime = settings?.runtime || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
   // (validation, permission, backend error) failed silently. Toggle appears to
   // work, config never persists. Route every failure through a shared local
@@ -143,9 +143,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const bypassDistressGate = !!agent.bypass_distress_gate
   const schedulerEnabled = runtime.scheduler_enabled !== false
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
-  const piDaemon = (settings?.pi_daemon ?? {}) as any
+  const piDaemon = settings?.pi_daemon ?? {}
   const piDaemonEnabled = piDaemon.enabled !== false
-  const piDaemonRuntime = (settings?.pi_daemon_runtime ?? {}) as any
+  const piDaemonRuntime = settings?.pi_daemon_runtime ?? {}
   const piDaemonRuntimeAvailable = typeof piDaemonRuntime.running === 'boolean'
   const piDaemonRunning = piDaemonRuntime.running === true
   const piDaemonActiveParams = piDaemonRuntime.active_params as Record<string, number> | null | undefined
@@ -156,17 +156,17 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
       Number(piDaemonActiveParams?.heartbeat_sec) !== Number(piDaemon.heartbeat_sec ?? 60)
     )
   ))
-  const serenity = (settings?.serenity ?? {}) as any
+  const serenity = settings?.serenity ?? {}
   const serenityEnabled = !!serenity.enabled
   const serenityAutoPromote = !!serenity.auto_promote
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
   const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
   const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
-  const controllerCfg = (settings?.controller ?? {}) as any
+  const controllerCfg = settings?.controller ?? {}
   const controllerShadowEnabled = controllerCfg.shadow_enabled !== false
   const controllerObserveHours = Number(controllerCfg.observe_interval_hours ?? 6)
   const controllerMinSamples = Number(controllerCfg.min_samples_gate ?? 20)
-  const learningCfg = (settings?.learning ?? {}) as any
+  const learningCfg = settings?.learning ?? {}
   const contributionEvaluationEnabled = learningCfg.contribution_evaluation_enabled !== false
   const lifecycleAutomationEnabled = !!learningCfg.lifecycle_automation_enabled
   const paperInfluenceEnabled = !!learningCfg.paper_influence_enabled
@@ -184,7 +184,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const autoRefreeze = learningCfg.auto_refreeze !== false
   const evaluationInterval = Number(learningCfg.evaluation_interval_minutes ?? 60)
   const paperActiveAllocation = Number(learningCfg.paper_active_allocation_pct ?? 0.80)
-  const guardCfg = (settings?.guard ?? {}) as any
+  const guardCfg = settings?.guard ?? {}
   const legacyGuardAutoPromote = !!guardCfg.auto_promote_enabled
 
   const guardMut = useMutation({
@@ -193,7 +193,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
     onError: onSaveError('Guard promotion'),
   })
 
-  const regimeCfg = (settings?.regime ?? {}) as any
+  const regimeCfg = settings?.regime ?? {}
   const regimeMut = useMutation({
     mutationFn: (body: any) => api.updateRegimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
@@ -711,7 +711,7 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   if (modelError && !data) return <DataStateMessage state="unavailable" message="Provider list unavailable. The read failed; retry when the backend is reachable." />
   if (!data) return <DataStateMessage state="unavailable" message="Provider list unavailable." />
 
-  const providers = Object.entries((data as any).providers ?? {}) as Array<[string, any]>
+  const providers = Object.entries(data.providers ?? {})
   const enabled = providers.filter(([, cfg]) => cfg?.enabled === true)
 
   if (enabled.length === 0) {
@@ -858,7 +858,7 @@ function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
         <span className="hint">0 RPM/TPM means unlimited. Priority slots are reserved for interactive/trading work.</span>
       </div>
       {save.isSuccess && <div className="settings-save-msg ok">Inference limits saved.</div>}
-      {save.isError && <div className="settings-save-msg err">{(save.error as any)?.message || 'Save failed'}</div>}
+      {save.isError && <div className="settings-save-msg err">{save.error?.message || 'Save failed'}</div>}
     </div>
   )
 }

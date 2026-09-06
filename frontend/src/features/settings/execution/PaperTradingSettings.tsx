@@ -232,7 +232,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
         {netError && <button className="btn-inline-retry" onClick={() => refetchNet()}>Retry</button>}
       </p>
       <div className="capital-form">
-        <select value={eventType} onChange={e => setEventType(e.target.value as any)}>
+        <select value={eventType} onChange={e => setEventType(e.target.value as 'deposit' | 'withdraw')}>
           <option value="deposit">Deposit</option>
           <option value="withdraw">Withdraw</option>
         </select>
@@ -280,7 +280,7 @@ export function CapitalEventsCard({ onDirty }: { onDirty?: (id: string, isDirty:
 }
 
 export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const trading = settings?.trading as any
+  const trading = settings?.trading
   const [stopLoss, setStopLoss] = useState('')
   const [takeProfit, setTakeProfit] = useState('')
   const [holdHours, setHoldHours] = useState('')

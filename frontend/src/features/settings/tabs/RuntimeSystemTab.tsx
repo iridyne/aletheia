@@ -16,6 +16,7 @@ import {
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import type { SettingsDirtyProps, SettingsStatusProps } from '../types'
+import type { components } from '../../../api/settings'
 
 export const APP_SECTION = {
   id: 'app', title: 'App', tab: 'runtime', description: 'Dashboard process settings.',
@@ -47,7 +48,7 @@ export const NETWORK_PROXY_SECTION = {
 } satisfies SettingsFeatureDescriptor
 
 function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const hd = settings?.historical_data as any
+  const hd = settings?.historical_data
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -72,7 +73,7 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   })
 
   const { mutate: save } = useMutation({
-    mutationFn: () => api.updateHistoricalDataConfig(vals as any),
+    mutationFn: () => api.updateHistoricalDataConfig(vals as components['schemas']['HistoricalDataConfig']),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
@@ -108,9 +109,9 @@ function HistoricalDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
 function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
   const confirm = useConfirm()
-  const app = settings?.app as any || {}
-  const runtime = settings?.runtime as any || {}
-  const remoteControl = settings?.remote_control as any || {}
+  const app = settings?.app || {}
+  const runtime = settings?.runtime || {}
+  const remoteControl = settings?.remote_control || {}
   const remoteBindHosts = Array.isArray(remoteControl.bind_hosts) ? remoteControl.bind_hosts as string[] : []
   const [remoteToken, setRemoteToken] = useState('')
   const [remoteTokenMessage, setRemoteTokenMessage] = useState<{ ok: boolean; text: string } | null>(null)
@@ -323,7 +324,7 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
 }
 
 function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const retention = settings?.retention as any
+  const retention = settings?.retention || {}
   const [vals, setVals] = useState<Record<string, any>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -350,7 +351,7 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const mut = useMutation({
     mutationFn: () => api.updateRetentionConfig(
-      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as any,
+      Object.fromEntries(RETENTION_FIELDS.map(({ key }) => [key, vals[key]])) as unknown as components['schemas']['RetentionConfig'],
     ),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -372,7 +373,7 @@ function RetentionCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
 function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const confirm = useConfirm()
-  const updateCfg = settings?.update as any || {}
+  const updateCfg = settings?.update || {}
   const [branch, setBranch] = useState('master')
   const [enabled, setEnabled] = useState(true)
   const [cfgMsg, setCfgMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -472,7 +473,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 }
 
 function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const net = (settings?.network as any) || {}
+  const net = settings?.network || {}
   const [protocol, setProtocol] = useState<string>(net.proxy_protocol || 'http')
   const [host, setHost] = useState<string>(net.proxy_host ?? '')
   const [port, setPort] = useState<string>(net.proxy_port != null ? String(net.proxy_port) : '')
@@ -583,7 +584,7 @@ function NetworkCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         </button>
       </div>
       {mut.isSuccess && <div className="settings-save-msg ok">Saved.</div>}
-      {mut.isError && <div className="settings-save-msg err">{(mut.error as any)?.message}</div>}
+      {mut.isError && <div className="settings-save-msg err">{mut.error?.message}</div>}
       {testResult && (
         <div className={`settings-save-msg ${testResult.reachable ? 'ok' : 'err'}`}>
           {testResult.reachable ? `✓ reachable (${testResult.latency_ms}ms)` : `✗ ${testResult.error || 'unreachable'}`}
