@@ -607,5 +607,18 @@ The three audit concerns are removed only when all of the following are true:
 - No simultaneous Candidate/Entry strategy redesign; this audit concerns ownership and
   proof, not trading Alpha.
 
-The current task is therefore singular: implement Contract 1 as one Issue-sized root
-repair. Contracts 2–6 are dependency-ordered follow-up scope, not parallel work.
+## 9. Implementation disposition
+
+Contracts 1–6 have now been implemented on the audit branch in the dependency order
+above. The local evidence gate is the credential-free `production_parity` suite: it
+uses production migrations, a real SQLite file and writer lock, owner-selection
+matrices, and a public-fixture Candidate that reaches a compiled EntryPlan and active
+monitor without direct Candidate/EntryPlan insertion. The same explicit suite and the
+fourteen-module trust-boundary coverage floors are wired into the Linux full-CI job.
+
+The older frozen Golden Path file remains byte-for-byte unchanged. It is not counted as
+new proof because its Observer-output assertion already fails on the frozen base SHA;
+silently marking a pre-existing red test as the new parity gate would make CI knowingly
+red. The new positive chain covers the previously missing Candidate-to-monitor segment,
+while the old failure remains separately attributable debt. Remote Linux CI is still
+required before claiming merge or deployment qualification.

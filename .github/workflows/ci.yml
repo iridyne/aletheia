@@ -45,6 +45,44 @@ jobs:
       - name: Lint Python
         run: uv run ruff check aletheia/ tests/
 
+      - name: Run production composition parity gate
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-production-parity-${{ github.run_id }}-${{ github.run_attempt }}
+        run: uv run pytest tests/test_production_parity.py -m production_parity -q --tb=short --timeout=120
+
+      - name: Enforce trust-boundary coverage floors
+        env:
+          ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-trust-coverage-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          uv run pytest \
+            tests/test_profit_gradient.py \
+            tests/test_profit_gradient_properties.py \
+            tests/test_profit_gradient_evidence.py \
+            tests/test_p3_evidence_epoch.py \
+            tests/test_filter_replay.py \
+            tests/test_momentum_geometry_replay.py \
+            tests/test_position_replay.py \
+            tests/test_reconciliation.py \
+            tests/test_oco_reconcile.py \
+            tests/test_cr_ex01_reconcile.py \
+            tests/test_position_reconciler.py \
+            tests/test_scheduler_reconcile.py \
+            tests/test_reconciliation_integrity_incident.py \
+            tests/test_reconciliation_properties.py \
+            tests/test_context_effectiveness.py \
+            tests/test_context_artifacts_properties.py \
+            tests/test_filter_replay_properties.py \
+            tests/test_policy_epoch_properties.py \
+            tests/test_profit_gradient_evidence_properties.py \
+            tests/test_agent_runtime.py \
+            tests/test_experiment_mutation_owner.py \
+            tests/test_production_parity.py \
+            tests/uta/test_execution_coordinator.py \
+            tests/uta/test_selected_account_port.py \
+            --cov --cov-report=term-missing:skip-covered -q
+          uv run python scripts/coverage_floors.py --selftest
+          uv run python scripts/coverage_floors.py
+
       - name: Run Python regression suite serially
         env:
           ALETHEIA_DATA_DIR: ${{ runner.temp }}/aletheia-manual-full-${{ github.run_id }}-${{ github.run_attempt }}

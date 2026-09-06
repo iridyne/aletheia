@@ -13,7 +13,7 @@ or bypasses a check — nothing else.
 
 ## What is gated
 
-`.coveragerc` scopes measurement to ten files:
+`.coveragerc` scopes measurement to fourteen files:
 
 | Boundary | File |
 |---|---|
@@ -27,6 +27,17 @@ or bypasses a check — nothing else.
 | Filter replay | `aletheia/counterfactual/filter_replay.py` |
 | Momentum geometry replay | `aletheia/analytics/momentum_geometry_replay.py` |
 | Cost / order reconciliation | `aletheia/execution/reconciliation.py` |
+| AgentRun lifecycle owner | `aletheia/agent_runtime/run_logger.py` |
+| Selected execution mutation owner | `aletheia/execution/coordinator.py` |
+| Observation mutation owner | `aletheia/observation_lab/experiment_owner.py` |
+| UTA account authority selector | `aletheia/uta/manager.py` |
+
+The lifecycle CAS operations still live in the large
+`storage/repositories.py` module. It is intentionally not assigned a
+file-percentage floor: unrelated repository growth would move that number
+without changing lifecycle safety. Its DB constraints, transition CAS, and
+real-file writer races are instead mandatory assertions in the production
+composition parity gate.
 
 Measurement is **branch coverage on top of line coverage** — the same
 combined percentage `pytest-cov` prints in its terminal `Cover` column.
@@ -46,7 +57,7 @@ fails; a new file that touches these boundaries must be added to the
 
 ## How the gate runs
 
-The `review` job in `.github/workflows/ci.yml` runs `pytest --cov` against
+The `full-ci-verdict` job in `.github/workflows/ci.yml` runs `pytest --cov` against
 the tests that exercise the boundaries, then:
 
 1. `scripts/coverage_floors.py --selftest` (hermetic; asserts the
@@ -65,6 +76,7 @@ uv run pytest \
   tests/test_profit_gradient_evidence.py \
   tests/test_p3_evidence_epoch.py \
   tests/test_filter_replay.py \
+  tests/test_momentum_geometry_replay.py \
   tests/test_position_replay.py \
   tests/test_reconciliation.py \
   tests/test_oco_reconcile.py \
@@ -78,11 +90,17 @@ uv run pytest \
   tests/test_filter_replay_properties.py \
   tests/test_policy_epoch_properties.py \
   tests/test_profit_gradient_evidence_properties.py \
+  tests/test_agent_runtime.py \
+  tests/test_experiment_mutation_owner.py \
+  tests/test_production_parity.py \
+  tests/uta/test_execution_coordinator.py \
+  tests/uta/test_selected_account_port.py \
   --cov --cov-report=term-missing:skip-covered -q
+uv run python scripts/coverage_floors.py --selftest
 uv run python scripts/coverage_floors.py
 ```
 
-## Frozen baseline (2025-11, post property tests)
+## Frozen baseline (2026-09, ownership parity cutover)
 
 | Module | Combined line+branch |
 |---|---|
@@ -95,6 +113,10 @@ uv run python scripts/coverage_floors.py
 | `aletheia/counterfactual/filter_replay.py` | 57.8 % |
 | `aletheia/analytics/profit_gradient_evidence.py` | 53.4 % |
 | `aletheia/execution/reconciliation.py` | 31.5 % |
+| `aletheia/agent_runtime/run_logger.py` | 75.2 % |
+| `aletheia/execution/coordinator.py` | 63.9 % |
+| `aletheia/observation_lab/experiment_owner.py` | 33.6 % |
+| `aletheia/uta/manager.py` | 29.1 % |
 
 Floors are set 2-15 points below measured, so ordinary refactors do not
 false-positive. Bring a module up by adding **invariant** tests, not by

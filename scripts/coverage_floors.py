@@ -42,6 +42,10 @@ FLOORS: dict[str, float] = {
     "aletheia/execution/reconciliation.py": 25.0,
     "aletheia/learning/evidence_epoch.py": 85.0,
     "aletheia/learning/policy_epochs.py": 70.0,
+    "aletheia/agent_runtime/run_logger.py": 72.0,
+    "aletheia/execution/coordinator.py": 60.0,
+    "aletheia/observation_lab/experiment_owner.py": 28.0,
+    "aletheia/uta/manager.py": 25.0,
 }
 
 def _measured_percentages(data_file: Path) -> dict[str, float]:
