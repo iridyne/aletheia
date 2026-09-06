@@ -3928,6 +3928,54 @@ def update_position(pid: str, **kwargs) -> None:
     _update("positions", pid, kwargs)
 
 
+class PositionClaimConflict(RuntimeError):
+    pass
+
+
+def claim_position_close(
+    position_id: str,
+    *,
+    order_id: str,
+    status: str,
+    requested_at: str,
+) -> None:
+    """Claim one open Position for exactly one durable close Order."""
+
+    updated = execute_write(
+        "UPDATE positions SET pending_close_order_id=?, pending_close_status=?, "
+        "pending_close_requested_at=? WHERE id=? AND status='open' "
+        "AND pending_close_order_id IS NULL",
+        (order_id, status, requested_at, position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_claim_conflict:{position_id}")
+
+
+def update_position_close_claim(
+    position_id: str,
+    *,
+    order_id: str,
+    status: str,
+) -> None:
+    updated = execute_write(
+        "UPDATE positions SET pending_close_status=? "
+        "WHERE id=? AND status='open' AND pending_close_order_id=?",
+        (status, position_id, order_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_claim_lost:{position_id}")
+
+
+def release_position_close_claim(position_id: str, *, order_id: str) -> None:
+    updated = execute_write(
+        "UPDATE positions SET pending_close_order_id=NULL, pending_close_status=NULL, "
+        "pending_close_requested_at=NULL WHERE id=? AND pending_close_order_id=?",
+        (position_id, order_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_release_conflict:{position_id}")
+
+
 def get_position(position_id: str) -> dict | None:
     """Return one Position by durable identity without list pagination."""
     return _select_one("positions", position_id)

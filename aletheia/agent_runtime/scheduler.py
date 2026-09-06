@@ -3026,11 +3026,11 @@ def _claim_observed_tpsl_close(
             error_reason="private_fill_evidence_pending",
         )
         repo.insert_order(close_order)
-        repo.update_position(
+        repo.claim_position_close(
             position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="materialization_missing",
-            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+            order_id=close_order.id,
+            status="materialization_missing",
+            requested_at=datetime.now(timezone.utc).isoformat(),
         )
         return repo.get_order(close_order.id), True
 

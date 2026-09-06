@@ -18,6 +18,7 @@ from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
+    claim_position_close,
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
@@ -327,11 +328,11 @@ def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
             status="pending",
         )
         insert_order(close_order)
-        update_position(
+        claim_position_close(
             position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="pending",
-            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+            order_id=close_order.id,
+            status="pending",
+            requested_at=datetime.now(timezone.utc).isoformat(),
         )
         return row, close_order
 

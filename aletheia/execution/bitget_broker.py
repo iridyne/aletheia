@@ -43,6 +43,7 @@ from aletheia.execution.close_convergence import (
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
+    claim_position_close,
     finalize_exchange_acknowledgement,
     get_trade_proposal,
     insert_order,
@@ -521,11 +522,11 @@ def _claim_close_order(
             status="pending",
         )
         insert_order(close_order)
-        update_position(
+        claim_position_close(
             position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="pending",
-            pending_close_requested_at=requested_at,
+            order_id=close_order.id,
+            status="pending",
+            requested_at=requested_at,
         )
         return row, close_order, requested_at
 
