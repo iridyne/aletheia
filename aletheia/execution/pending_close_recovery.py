@@ -414,18 +414,7 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
             raise RuntimeError("pending_close_recovery: rate-limited close must be parked, not released")
 
         repo.transition_order(order_id, status="cancelled", error_reason=reason_code)
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open' AND pending_close_order_id=?
-            """,
-            (position_id, order_id),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError("pending_close_recovery: position claim release failed")
+        repo.release_position_close_claim(position_id, order_id=order_id)
 
         repo.insert_audit_event(
             AuditEvent(
@@ -505,16 +494,11 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
             status="cancelled",
             error_reason=TRADE_RATE_LIMIT_CANCEL_REASON,
         )
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_status=?
-            WHERE id=? AND status='open' AND pending_close_order_id=?
-            """,
-            (VENUE_TRADE_RATE_LIMITED_STATUS, position_id, order_id),
+        repo.update_position_close_claim(
+            position_id,
+            order_id=order_id,
+            status=VENUE_TRADE_RATE_LIMITED_STATUS,
         )
-        if cursor.rowcount != 1:
-            raise RuntimeError("pending_close_recovery: rate-limit park failed")
 
         repo.insert_audit_event(
             AuditEvent(
@@ -635,21 +619,7 @@ def release_rate_limited_close_claim(
             ("operator_authorized_cleanup_trade_rate_limited",
              order_id, TRADE_RATE_LIMIT_CANCEL_REASON),
         )
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open'
-              AND pending_close_order_id=? AND pending_close_status=?
-            """,
-            (position_id, order_id, claim_status),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError(
-                "pending_close_recovery: owner-authorized park release failed"
-            )
+        repo.release_position_close_claim(position_id, order_id=order_id)
         repo.insert_audit_event(
             AuditEvent(
                 actor=str(actor or "human"),
@@ -835,18 +805,10 @@ def _apply_submission_rejected_release(position: dict) -> bool:
             "pending_close_order_id": position_row.get("pending_close_order_id"),
             "pending_close_status": position_row.get("pending_close_status"),
         }
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open' AND pending_close_status='submission_rejected'
-            """,
-            (position_id,),
-        )
-        if cursor.rowcount != 1:
+        order_id = str(position_row.get("pending_close_order_id") or "")
+        if not order_id:
             return False
+        repo.release_position_close_claim(position_id, order_id=order_id)
         repo.insert_audit_event(
             AuditEvent(
                 actor="system",

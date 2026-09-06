@@ -43,6 +43,7 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
     insert_order, insert_fill, insert_position, update_position,
+    update_position_close_claim,
     transition_order, transaction,
 )
 from aletheia.storage.sqlite import get_db
@@ -719,7 +720,11 @@ def close_okx_position(
                 status="error",
                 error_reason="close_client_initialization_failed_before_submission",
             )
-            update_position(position_id, pending_close_status="error")
+            update_position_close_claim(
+                position_id,
+                order_id=close_order.id,
+                status="error",
+            )
         raise
     direction = row["direction"]
     is_long = direction in ("long", "buy")

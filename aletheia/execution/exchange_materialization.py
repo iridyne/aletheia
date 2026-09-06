@@ -1299,12 +1299,7 @@ def _materialize_complete_private_close(
             error_reason=None,
             filled_at=max(item.filled_at for item in evidence),
         )
-        repo.update_position(
-            position["id"],
-            pending_close_order_id=None,
-            pending_close_status=None,
-            pending_close_requested_at=None,
-        )
+        repo.release_position_close_claim(position["id"], order_id=order_id)
 
     from aletheia.portfolio.pnl import close_position
 
@@ -1490,10 +1485,8 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                             error_reason=None,
                             filled_at=_ms_to_iso(max(item.filled_at_ms for item in evidence)),
                         )
-                        repo.update_position(
-                            position["id"],
-                            pending_close_order_id=None,
-                            pending_close_status=None,
+                        repo.release_position_close_claim(
+                            position["id"], order_id=order_id
                         )
                         return MaterializationResult(
                             state="filled_clip_partial_position",
@@ -1520,10 +1513,8 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                         error_reason=None,
                         filled_at=_ms_to_iso(closed_at_ms),
                     )
-                    repo.update_position(
-                        position["id"],
-                        pending_close_order_id=None,
-                        pending_close_status=None,
+                    repo.release_position_close_claim(
+                        position["id"], order_id=order_id
                     )
                 else:
                     repo.transition_order(
@@ -1532,10 +1523,10 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                         error_reason=None,
                         filled_at=None,
                     )
-                    repo.update_position(
+                    repo.update_position_close_claim(
                         position["id"],
-                        pending_close_order_id=order_id,
-                        pending_close_status="partially_filled",
+                        order_id=order_id,
+                        status="partially_filled",
                     )
                 _materialize_partial_close_accounting(
                     position,
@@ -1556,10 +1547,8 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                     error_reason="exchange_close_quantity_exceeds_position",
                     filled_at=max(item.filled_at for item in evidence),
                 )
-                repo.update_position(
-                    position["id"],
-                    pending_close_order_id=order_id,
-                    pending_close_status="overfilled",
+                repo.update_position_close_claim(
+                    position["id"], order_id=order_id, status="overfilled"
                 )
                 return MaterializationResult(
                     state="overfilled",
@@ -1590,12 +1579,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                 filled_at=max(i.filled_at for i in evidence),
                 exchange_order_id=exchange_order_id,
             )
-            repo.update_position(
-                position["id"],
-                pending_close_order_id=None,
-                pending_close_status=None,
-                pending_close_requested_at=None,
-            )
+            repo.release_position_close_claim(position["id"], order_id=order_id)
             return MaterializationResult(
                 state="filled_clip_partial_position",
                 new_fill_count=len(delta_evidence),
@@ -1619,10 +1603,10 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                     )
                     position = _position_for_close_order(order)
                     if position is not None and position.get("status") == "open":
-                        repo.update_position(
+                        repo.update_position_close_claim(
                             position["id"],
-                            pending_close_order_id=order_id,
-                            pending_close_status="materialization_missing",
+                            order_id=order_id,
+                            status="materialization_missing",
                         )
         except Exception:
             pass

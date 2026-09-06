@@ -50,6 +50,7 @@ from aletheia.storage.repositories import (
     transaction,
     transition_order,
     update_order_metadata,
+    update_position_close_claim,
     update_position,
 )
 from aletheia.storage.sqlite import get_db
@@ -583,7 +584,11 @@ def close_demo_position(
                 status="error",
                 error_reason="close_client_initialization_failed_before_submission",
             )
-            update_position(position_id, pending_close_status="error")
+            update_position_close_claim(
+                position_id,
+                order_id=close_order.id,
+                status="error",
+            )
         raise
     direction = row["direction"]
     is_long = direction in ("long", "buy")

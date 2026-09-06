@@ -3560,16 +3560,11 @@ def finalize_exchange_acknowledgement(
             )
             applied = True
             if applied and close_position_id:
-                position_cursor = execute_write(
-                    """
-                    UPDATE positions
-                    SET pending_close_status=?
-                    WHERE id=? AND status='open' AND pending_close_order_id=?
-                    """,
-                    (pending_close_status, close_position_id, order_id),
+                update_position_close_claim(
+                    close_position_id,
+                    order_id=order_id,
+                    status=str(pending_close_status or status),
                 )
-                if position_cursor.rowcount != 1:
-                    raise RuntimeError("close acknowledgement lost its Position claim")
 
         order = get_order(order_id)
         position_id = order.get("position_id") if order else close_position_id
