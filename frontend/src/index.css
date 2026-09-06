@@ -1608,6 +1608,26 @@ button.market-instrument-group-title { font-family: inherit; }
 .market-instrument-secondary.positive { color: var(--green); }
 .market-instrument-secondary.negative { color: var(--red); }
 .market-instrument-empty { margin: 0; padding: var(--space-3); color: var(--faint); font-size: 0.72rem; }
+.market-quick-pills-bar {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3); background: var(--surface-2);
+  border-radius: var(--r-sm); border: 1px solid var(--border);
+  margin-bottom: var(--space-2); overflow-x: auto;
+}
+.market-quick-pill {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: 2px var(--space-2); border-radius: var(--r-sm);
+  font-size: var(--text-2xs); border: 1px solid var(--border);
+  background: var(--surface); color: var(--muted); cursor: pointer;
+  white-space: nowrap; transition: all 0.12s ease;
+}
+.market-quick-pill:hover { background: rgba(255,255,255,0.06); color: var(--text); border-color: var(--border-2); }
+.market-quick-pill.active { background: rgba(0, 229, 255, 0.12); color: var(--accent); border-color: var(--accent); }
+.market-quick-pill-badge { font-size: 0.62rem; padding: 0 4px; border-radius: 2px; font-family: var(--mono); }
+.market-quick-pill-badge.green { color: var(--green); background: rgba(16, 185, 129, 0.15); }
+.market-quick-pill-badge.red { color: var(--red); background: rgba(244, 63, 94, 0.15); }
+.market-quick-pill-badge.blue { color: #3b82f6; background: rgba(59, 130, 246, 0.15); }
+.market-quick-pill-badge.neutral { color: var(--muted); background: var(--border); }
 .market-workbench-chart-card.card {
   padding: 0; margin-bottom: 0; min-height: 0;
   display: flex; flex-direction: column;
