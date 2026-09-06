@@ -456,30 +456,41 @@ function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // SIGNALS TAB — market data, news, macro signals, prediction markets, equities
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function SignalsTab({ settings, qc, onDirty }: SettingsDirtyProps) {
+export function SignalsTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>
-        <Collapsible title="Data Source Overrides">
-          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </SettingsFeatureSection>
+      {isVisible(MARKET_DATA_SECTION.id) && (
+        <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>
+          <Collapsible title="Data Source Overrides">
+            <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={MACRO_SIGNALS_SECTION}>
-        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(MACRO_SIGNALS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={MACRO_SIGNALS_SECTION}>
+          <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
-        <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(NEWS_FEEDS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
+          <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
-        <PredictionToggleCard qc={qc} />
-      </SettingsFeatureSection>
+      {isVisible(PREDICTION_MARKETS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
+          <PredictionToggleCard qc={qc} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
-        <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(EQUITIES_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
+          <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }

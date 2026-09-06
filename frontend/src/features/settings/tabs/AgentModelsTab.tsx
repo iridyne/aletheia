@@ -10,6 +10,7 @@ import {
 } from '../../../components/ui'
 import { DataStateMessage } from '../../../components/DataState'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
+import { MODEL_PROVIDERS_SECTION } from '../model-providers/modelProviderState'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsData, SettingsProvider } from '../../../api/settings'
@@ -79,7 +80,8 @@ export const LLM_COST_SECTION = {
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
 
-export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   const confirm = useConfirm()
   const agent = settings?.agent || {}
   const runtime = settings?.runtime || {}
@@ -207,6 +209,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           Save failed — {saveErr}
         </div>
       )}
+{isVisible(PERMISSION_SECTION.id) && (
       <SettingsFeatureSection descriptor={PERMISSION_SECTION}>
         <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
           <select value={perm} onChange={async e => {
@@ -223,7 +226,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </select>
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(LEARNING_SECTION.id) && (
       <SettingsFeatureSection descriptor={LEARNING_SECTION}>
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} persistence="immediate" onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
@@ -396,7 +401,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </Row>
         </Collapsible>
       </SettingsFeatureSection>
+)}
 
+{isVisible(REGIME_SECTION.id) && (
       <SettingsFeatureSection descriptor={REGIME_SECTION}>
         <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into System Operator context.">
           <Toggle checked={regimeCfg.enabled !== false} persistence="immediate" onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
@@ -421,7 +428,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           />
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(SERENITY_SECTION.id) && (
       <SettingsFeatureSection descriptor={SERENITY_SECTION}>
         <Row
           label="Serenity Lens enabled"
@@ -509,7 +518,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           />
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(SCHEDULER_SECTION.id) && (
       <SettingsFeatureSection descriptor={SCHEDULER_SECTION}>
         <Row
           label="Scheduler enabled"
@@ -606,16 +617,21 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </>
         )}
       </SettingsFeatureSection>
+)}
 
-      <ModelProvidersSection qc={qc} onDirty={onDirty} />
+      {isVisible(MODEL_PROVIDERS_SECTION.id) && <ModelProvidersSection qc={qc} onDirty={onDirty} />}
 
-      <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
-        <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(INFERENCE_ADMISSION_SECTION.id) && (
+        <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
+          <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
-        <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
-      </SettingsFeatureSection>
+      {isVisible(LLM_COST_SECTION.id) && (
+        <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
+          <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }
@@ -717,7 +733,7 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   if (enabled.length === 0) {
     return (
       <p className="hint">
-        No providers enabled. Enable a provider under "AI Model Providers" above
+        No providers enabled. Enable a provider under "AI Model Providers"
         to configure its inference admission.
       </p>
     )

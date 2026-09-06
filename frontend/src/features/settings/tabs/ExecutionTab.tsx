@@ -46,7 +46,8 @@ export const PAPER_ACCOUNT_SECTION = {
   searchTerms: ['no exchange', 'paper cash', 'available balance', 'close positions'],
 } satisfies SettingsFeatureDescriptor
 
-export function ExecutionTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   const currentPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
     currentPaperMode, String(settings?.exchange?.name || ''),
@@ -54,37 +55,46 @@ export function ExecutionTab({ status, settings, qc, onDirty }: SettingsStatusPr
   const currentDataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const currentDiverged = currentExecutionExchange !== null
     && currentExecutionExchange !== currentDataExchange
+  const showDivergedWarning = currentDiverged && (isVisible(EXCHANGE_CONNECTION_SECTION.id) || isVisible(TRADING_MODE_SECTION.id))
   return (
     <div>
-      {currentDiverged && (
+      {showDivergedWarning && (
         <div className="settings-save-msg err mb-3">
           Exchange split active: orders execute on <strong>{currentExecutionExchange}</strong>,
           while market analysis uses <strong>{currentDataExchange}</strong>. Keep this only if intentional.
         </div>
       )}
-      <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
-        <PrimaryExchangeCard settings={settings} qc={qc} />
-        <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(EXCHANGE_CONNECTION_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
+          <PrimaryExchangeCard settings={settings} qc={qc} />
+          <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
-        <ExchangeModeRow status={status} qc={qc} settings={settings} />
-        <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
-        <div className="danger-zone">
-          <div className="danger-zone-header">Danger Zone</div>
-          <LiveStateRow status={status} settings={settings} qc={qc} />
-        </div>
-      </SettingsFeatureSection>
+      {isVisible(TRADING_MODE_SECTION.id) && (
+        <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
+          <ExchangeModeRow status={status} qc={qc} settings={settings} />
+          <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
+          <div className="danger-zone">
+            <div className="danger-zone-header">Danger Zone</div>
+            <LiveStateRow status={status} settings={settings} qc={qc} />
+          </div>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={PAPER_PARAMETERS_SECTION}>
-        <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(PAPER_PARAMETERS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={PAPER_PARAMETERS_SECTION}>
+          <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={CAPITAL_EVENTS_SECTION}>
-        <CapitalEventsCard onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(CAPITAL_EVENTS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={CAPITAL_EVENTS_SECTION}>
+          <CapitalEventsCard onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      {String(settings?.exchange?.paper_execution_mode) === 'paper_internal' && (
+      {String(settings?.exchange?.paper_execution_mode) === 'paper_internal' && isVisible(PAPER_ACCOUNT_SECTION.id) && (
         <SettingsFeatureSection descriptor={PAPER_ACCOUNT_SECTION}>
           <PaperAccountCard qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>

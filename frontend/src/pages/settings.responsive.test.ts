@@ -21,44 +21,46 @@ function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, ' ')
 }
 
-describe('Settings responsive shell', () => {
+describe('Settings responsive single-column layout', () => {
   const css = stripComments(CSS)
-  const settingsStart = css.indexOf('.settings-nav {')
-  const tablet = mediaBlock(css, '(max-width: 1023px)', settingsStart)
-  const mobile = mediaBlock(css, '(max-width: 767px)', settingsStart)
+  const shellStart = css.indexOf('.settings-shell {')
+  expect(shellStart).toBeGreaterThan(-1)
+  const mobile = mediaBlock(css, '(max-width: 767px)', shellStart)
 
-  it('keeps the persisted nav width on desktop and caps only expanded tablet nav', () => {
-    const navBase = css.slice(settingsStart, css.indexOf('@media (max-width: 1023px)', settingsStart))
-    expect(navBase).toContain('width: var(--settings-nav-width)')
-    expect(navBase).toContain('flex: 0 0 var(--settings-nav-width)')
-    expect(tablet).toMatch(/\.settings-nav:not\(\.is-collapsed\)\s*\{[\s\S]*?width:\s*220px !important/)
-    expect(tablet).toMatch(/\.settings-nav:not\(\.is-collapsed\)\s*\{[\s\S]*?flex-basis:\s*220px !important/)
-    expect(tablet).not.toMatch(/\.settings-nav\s*\{[\s\S]*?width:\s*220px !important/)
-  })
-
-  it('forces both persisted states to the 52px mobile rail and protects panel width', () => {
-    expect(mobile).toMatch(/\.settings-nav,\s*\.settings-nav:not\(\.is-collapsed\)\s*\{[\s\S]*?width:\s*52px !important/)
-    expect(mobile).toMatch(/\.settings-nav,\s*\.settings-nav:not\(\.is-collapsed\)\s*\{[\s\S]*?flex-basis:\s*52px !important/)
-    expect(mobile).toContain('.settings-nav .settings-nav-heading')
-    expect(mobile).toContain('.settings-nav .settings-nav-copy')
-    expect(mobile).toContain('.settings-nav-item')
-    expect(mobile).toContain('width: 36px')
-    expect(mobile).toContain('overflow: visible')
-    expect(mobile).toContain('.settings-panel { margin-inline-start: var(--space-3); }')
-    expect(css).toContain('overflow-x: clip')
+  it('renders a single-column full-width container on desktop and tablet with overflow protection', () => {
+    const shellBase = css.slice(shellStart, shellStart + 400)
+    expect(shellBase).toContain('display: flex')
+    expect(shellBase).toContain('flex-direction: column')
+    expect(shellBase).toContain('max-width: 1200px')
+    expect(shellBase).toContain('overflow-x: clip')
+    expect(css).toContain('.settings-shell,')
+    expect(css).toContain('min-width: 0;')
+    expect(css).toContain('max-width: 100%;')
     expect(css).toMatch(/\.settings-panel \.mini-table\s*\{[\s\S]*?overflow-x:\s*auto/)
   })
 
-  it('retains persisted expanded/collapsed state and keyboard labels/tooltips', () => {
-    expect(SETTINGS).toContain("const SETTINGS_NAV_KEY = 'aletheia.settings.navLayout.v1'")
-    expect(SETTINGS).toContain('window.localStorage.getItem(SETTINGS_NAV_KEY)')
-    expect(SETTINGS).toContain('window.localStorage.setItem(SETTINGS_NAV_KEY')
-    expect(SETTINGS).toMatch(/if \(parsed\.collapsed\) \{[\s\S]*?setIsNavCollapsed\(true\)[\s\S]*?setNavWidth\(SETTINGS_NAV_COLLAPSED\)/)
-    expect(SETTINGS).toMatch(/setIsNavCollapsed\(false\)[\s\S]*?setNavWidth\(width\)/)
-    expect(SETTINGS).toContain("aria-label={isNavCollapsed ? 'Expand Settings navigation' : 'Collapse Settings navigation'}")
-    expect(SETTINGS).toContain('aria-expanded={!isNavCollapsed}')
-    expect(SETTINGS).toContain('aria-label={t.label}')
-    expect(SETTINGS).toContain('title={isNavCollapsed ? `${t.label}: ${t.description}` : undefined}')
-    expect(css).toContain('.settings-nav-toggle:focus-visible')
+  it('adapts Category Hub grid and breadcrumbs cleanly for mobile screens', () => {
+    expect(css).toContain('.settings-hub-grid')
+    expect(css).toMatch(/grid-template-columns:\s*repeat\(auto-fill,\s*minmax\(280px,\s*1fr\)\)/)
+    expect(mobile).toMatch(/\.settings-hub-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr/)
+    expect(mobile).toMatch(/\.settings-breadcrumb-bar\s*\{[\s\S]*?flex-direction:\s*column/)
+    expect(mobile).toMatch(/\.settings-sibling-switcher\s*\{[\s\S]*?width:\s*100%/)
+  })
+
+  it('enforces touch target sizes and keyboard focus indicators for accessibility', () => {
+    expect(css).toContain('.settings-hub-card:focus-visible')
+    expect(css).toContain('.settings-breadcrumb-back:focus-visible')
+    expect(css).toContain('.settings-pill:focus-visible')
+    expect(css).toMatch(/\.settings-hub-card\s*\{[\s\S]*?min-height:\s*110px/)
+    expect(css).toMatch(/\.settings-breadcrumb-back\s*\{[\s\S]*?min-height:\s*32px/)
+    expect(css).toMatch(/\.settings-pill\s*\{[\s\S]*?min-height:\s*32px/)
+  })
+
+  it('wires top Tabs, CategoryHub, breadcrumbs, and sibling pills in Settings.tsx', () => {
+    expect(SETTINGS).toContain('<Tabs tabs={tabsDef} value={tab}')
+    expect(SETTINGS).toContain('<CategoryHub')
+    expect(SETTINGS).toContain('className="settings-breadcrumb-bar"')
+    expect(SETTINGS).toContain('className="settings-sibling-switcher"')
+    expect(SETTINGS).toContain('aria-label="Settings section breadcrumb"')
   })
 })

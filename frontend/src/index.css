@@ -749,10 +749,13 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 
 .settings-shell {
   display: flex;
-  align-items: start;
+  flex-direction: column;
   width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  gap: var(--space-4);
   min-width: 0;
-  /* clip horizontal paint without creating a scroll container that breaks sticky nav */
+  /* clip horizontal paint without creating an unwanted scroll container */
   overflow-x: clip;
 }
 
@@ -761,126 +764,216 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   min-width: 0;
   max-width: 100%;
 }
-.settings-nav {
-  position: sticky; top: calc(var(--header-height) + var(--space-4));
-  display: flex; flex-direction: column; gap: var(--space-1);
-  padding: var(--space-2);
-  background: rgba(20,26,33,0.72);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  width: var(--settings-nav-width);
-  flex: 0 0 var(--settings-nav-width);
-  min-width: 0;
-  max-height: calc(100vh - var(--header-height) - (2 * var(--space-4)));
-  overflow-y: auto;
-}
-.settings-nav-header {
-  display: flex; align-items: center; justify-content: space-between;
-  min-height: 32px; padding: 0 var(--space-1) var(--space-1);
-  border-bottom: 1px solid var(--border);
-}
-.settings-nav-heading {
-  color: var(--muted); font-size: var(--fs-xs); font-weight: 700;
-  letter-spacing: 0.09em; text-transform: uppercase;
-}
-.settings-nav-toggle {
-  width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
-  display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid transparent; border-radius: var(--r-sm);
-  background: transparent; color: var(--muted); cursor: pointer;
-}
-.settings-nav-toggle:hover { background: var(--surface-2); color: var(--text); filter: none; }
-.settings-nav-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.settings-nav-toggle svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.settings-nav.is-collapsed { align-items: center; overflow: visible; }
-.settings-nav.is-collapsed .settings-nav-header { width: 100%; justify-content: center; padding-bottom: var(--space-1); }
-.settings-nav.is-collapsed .settings-nav-heading,
-.settings-nav.is-collapsed .settings-nav-copy { display: none; }
-.settings-nav.is-collapsed .settings-nav-item { width: 36px; min-height: 36px; padding: 0; align-items: center; justify-content: center; }
-.settings-nav.is-collapsed .settings-nav-icon { width: 18px; height: 18px; margin: 0; }
 
-/* Below the canonical lg breakpoint (ui_design_system.md §3.x), cap the
-   nav width regardless of the persisted --settings-nav-width. A user who
-   dragged the resize handle wide on a big monitor should not have that
-   preference eat the whole content area on a narrower window. Resize
-   handle is hidden here — it's a wide-screen affordance only. */
-@media (max-width: 1023px) {
-  /* Cap only the expanded nav. A collapsed nav keeps its 52px icon-only
-     width (var(--settings-nav-width) set by JS); the !important cap must
-     not override it, or the collapsed nav renders as a 220px empty box
-     with a single column of centred icons. */
-  .settings-nav:not(.is-collapsed) {
-    width: 220px !important;
-    flex-basis: 220px !important;
-  }
-  .settings-nav-resize-handle { display: none; }
-}
-
-/* Below md the panel needs the whole content area. Force icon-only mode
-   even if the operator's persisted preference is expanded. The manual
-   collapse toggle in the nav header still works to switch back to full
-   labels on wider windows. */
-@media (max-width: 767px) {
-  /* Match the tablet guard's specificity for an expanded persisted nav. The
-     plain selector still covers the collapsed state, while the second selector
-     wins the !important cascade when both media queries match. */
-  .settings-nav,
-  .settings-nav:not(.is-collapsed) {
-    width: 52px !important;
-    flex-basis: 52px !important;
-    align-items: center;
-    overflow: visible;
-  }
-  .settings-nav .settings-nav-heading,
-  .settings-nav .settings-nav-copy { display: none; }
-  .settings-nav .settings-nav-item {
-    width: 36px; min-height: 36px; padding: 0;
-    align-items: center; justify-content: center;
-  }
-  .settings-nav .settings-nav-icon { width: 18px; height: 18px; margin: 0; }
-  .settings-nav-header { width: 100%; justify-content: center; padding-bottom: var(--space-1); }
-  /* The panel already has margin-inline-start: --space-5; tighten it so
-     the ~750px content area isn't dominated by a big gutter. */
-  .settings-panel { margin-inline-start: var(--space-3); }
-}
-.settings-nav-resize-handle {
-  width: 8px;
-  flex: 0 0 8px;
-  cursor: col-resize;
-  position: relative;
-  touch-action: none;
-}
-.settings-nav-resize-handle::after { content: ''; position: absolute; top: var(--space-2); bottom: var(--space-2); left: 3px; width: 1px; background: var(--border); transition: background 120ms; }
-.settings-nav-resize-handle:hover::after { background: var(--accent); }
-.settings-shell.is-collapsed .settings-nav-resize-handle { display: none; }
-.settings-nav-item {
-  position: relative; display: flex; align-items: flex-start; gap: var(--space-2);
-  width: 100%; padding: var(--space-3);
-  background: transparent; color: var(--muted);
-  border: 1px solid transparent; border-radius: var(--r-sm);
-  text-align: left; filter: none;
-}
-.settings-nav-item:hover { background: var(--surface-2); color: var(--text); filter: none; }
-.settings-nav-item.active {
-  background: rgba(34,211,238,0.06);
-  border-color: rgba(34,211,238,0.28);
-  color: var(--text);
-}
-.settings-nav-label { font-size: 0.84rem; font-weight: 700; }
-.settings-nav-desc { font-size: 0.72rem; color: var(--muted); line-height: 1.35; font-weight: 400; }
-.settings-nav-icon { width: 18px; height: 18px; margin-top: 1px; flex: 0 0 18px; color: var(--muted); }
-.settings-nav-icon svg { display: block; width: 100%; height: 100%; }
-.settings-nav-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
-.settings-nav-item.active .settings-nav-icon { color: var(--accent); }
-.settings-panel { 
-  flex: 1 1 0;
+.settings-panel {
   width: 100%;
-  max-width: 1180px;
+  max-width: 100%;
   min-width: 0;
-  /* Secondary navigation is an inset surface, not a docked app sidebar. */
-  margin-inline-start: var(--space-5);
   word-break: break-word;
   overflow-wrap: anywhere;
+}
+
+.settings-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.settings-hub-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease;
+  min-height: 110px;
+}
+
+.settings-hub-card:hover {
+  background: var(--surface-2);
+  border-color: rgba(34, 211, 238, 0.4);
+  filter: none;
+}
+
+.settings-hub-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-hub-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.settings-hub-card-title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.settings-hub-card-desc {
+  font-size: 0.76rem;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0;
+  flex: 1 1 auto;
+}
+
+.settings-hub-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-hub-card-badge {
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-hub-card-action {
+  font-size: 0.76rem;
+  color: var(--accent);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.settings-hub-draft-dot,
+.settings-pill-draft-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--yellow, #eab308);
+  flex-shrink: 0;
+}
+
+.settings-breadcrumb-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-breadcrumb {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.84rem;
+}
+
+.settings-breadcrumb-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.settings-breadcrumb-back:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.settings-breadcrumb-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.settings-breadcrumb-current {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.settings-sibling-switcher {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 2px 0;
+}
+
+.settings-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1) var(--space-2);
+  font-size: 0.76rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  min-height: 32px;
+  transition: all 120ms ease;
+}
+
+.settings-pill:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: rgba(34, 211, 238, 0.3);
+}
+
+.settings-pill.active {
+  background: rgba(34, 211, 238, 0.1);
+  border-color: var(--accent);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .settings-hub-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-breadcrumb-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  .settings-sibling-switcher {
+    width: 100%;
+  }
 }
 
 .settings-panel table {
@@ -901,9 +994,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .settings-field-label,
 .settings-row-label,
 .settings-row-hint,
-.settings-section-desc,
-.settings-nav-label,
-.settings-nav-desc {
+.settings-section-desc {
   max-width: 100%;
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -919,14 +1010,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   display: block;
   overflow-x: auto;
 }
-/* No narrow-screen override here on purpose. The nav collapses through the two
-   canonical guards only: lg−1 (max-width:1023px) caps it to a 220px vertical
-   column, md−1 (max-width:767px) drops it to a 52px icon rail. A former
-   A former 900px block turned the nav into a full-width horizontal row — a
-   banned legacy breakpoint (ui_design_system.md §responsive) that also
-   collided with the 1023 !important width cap, jamming the row into a 220px
-   square. Keep the nav vertical at every width; do not reintroduce 900. */
-
 /* Section: display-font header + accent-dim left bar + sealing rule. */
 .settings-section { margin-bottom: var(--space-8); scroll-margin-top: calc(var(--header-height) + var(--space-4)); }
 .settings-section-head {

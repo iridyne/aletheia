@@ -551,30 +551,39 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function RiskTab({ settings, qc, onDirty }: SettingsDirtyProps) {
+export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
   // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
   // now adopts or preserves local state through useSettingsDraftLifecycle.
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
-        <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
-        <CandidateSelectionAuthorityCard qc={qc} />
-        <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(UNIVERSE_SECTION.id) && (
+        <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
+          <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+          <CandidateSelectionAuthorityCard qc={qc} />
+          <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
-        <Collapsible title="Trigger Thresholds">
-          <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </SettingsFeatureSection>
+      {isVisible(EVENT_TRIGGERS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
+          <Collapsible title="Trigger Thresholds">
+            <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
-        <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(TRADABLE_SYMBOLS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
+          <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
-        <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(RISK_LIMITS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
+          <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }

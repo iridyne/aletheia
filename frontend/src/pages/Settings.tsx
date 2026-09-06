@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useConfirm } from '../components/ui'
 import PageHeader from '../components/PageHeader'
+import Tabs, { type TabDef } from '../components/Tabs'
 import { hasUncontrolledDraft, isFallbackDraftControl, shouldBlockNavigation } from '../features/settings/dirtyGuard'
 import { MODEL_PROVIDERS_SECTION } from '../features/settings/model-providers/modelProviderState'
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from '../features/settings/health/healthState'
@@ -51,44 +52,124 @@ const TAB_ALIASES: Record<string, Tab> = {
   infrastructure: 'runtime',
 }
 
-const SETTINGS_NAV_KEY = 'aletheia.settings.navLayout.v1'
-const SETTINGS_NAV_DEFAULT = 248
-const SETTINGS_NAV_MIN = 216
-const SETTINGS_NAV_MAX = 320
-const SETTINGS_NAV_COLLAPSED = 52
-
-type SettingsNavState = {
-  width: number
-  collapsed: boolean
-}
-
-function clampSettingsNavWidth(value: number): number {
-  if (!Number.isFinite(value)) return SETTINGS_NAV_DEFAULT
-  return Math.min(SETTINGS_NAV_MAX, Math.max(SETTINGS_NAV_MIN, Math.round(value)))
-}
-
-function clampSettingsNavResize(value: number): number {
-  return clampSettingsNavWidth(value)
-}
-
-function SettingsNavIcon({ tab }: { tab: Tab }) {
-  const props = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
-  switch (tab) {
-    case 'agent':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><circle cx="12" cy="12" r="3" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" /></svg>
-    case 'execution':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M5 12h13M14 7l5 5-5 5M5 6v12" /></svg>
-    case 'risk':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M12 3 20 6v5c0 5-3.4 8.4-8 10-4.6-1.6-8-5-8-10V6l8-3Z" /><path d="m9 12 2 2 4-4" /></svg>
-    case 'health':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M3 12h4l2-5 4 10 2-5h6" /></svg>
-    case 'runtime':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M4 7h16M4 17h16M8 4v6M16 14v6" /></svg>
-    case 'signals':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><path d="M3 17 8 12l4 3 7-8" /><path d="M17 7h2v2" /></svg>
-    case 'advanced':
-      return <svg viewBox="0 0 24 24" aria-hidden="true" {...props}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-3v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H5.2v-3h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6v-.2h3v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v3h-.2a1.7 1.7 0 0 0-1.6 1Z" /></svg>
+function getSectionSummary(id: string, settings: any, status: any): string | null {
+  switch (id) {
+    case 'exchange-connection': {
+      const name = String(settings?.exchange?.name || 'bitget')
+      const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
+      return paperMode === 'paper_internal' ? 'Paper (internal)' : name.toUpperCase()
+    }
+    case 'trading-mode':
+      return status?.exchange_mode ? `Mode: ${status.exchange_mode}` : null
+    case 'paper-trading-parameters':
+      return 'Configured'
+    case 'capital-events':
+      return 'Audit log active'
+    case 'local-paper-account':
+      return 'Internal simulator'
+    case 'permission-mode':
+      return settings?.agent?.permission_mode ? `Mode: ${settings.agent.permission_mode}` : 'Configured'
+    case 'learning':
+      return settings?.learning?.enabled !== false ? 'Enabled' : 'Disabled'
+    case 'regime-detection':
+      return settings?.regime?.enabled !== false ? 'Enabled' : 'Disabled'
+    case 'serenity-research':
+      return settings?.serenity?.enabled ? 'Active' : 'Disabled'
+    case 'scheduler':
+      return settings?.runtime?.scheduler_enabled !== false ? 'Active' : 'Paused'
+    case 'ai-model-providers':
+      return 'Models & keys'
+    case 'inference-admission':
+      return 'Rate & concurrency limits'
+    case 'llm-cost-usage':
+      return settings?.economics?.budgets_shadow_enabled ? 'Shadow enabled' : 'Configured'
+    case 'universe':
+      return settings?.universe?.enabled ? 'Active' : 'Configured'
+    case 'event-triggers':
+      return 'Thresholds active'
+    case 'tradable-symbols': {
+      const mode = settings?.risk?.symbol_filter_mode ?? 'blacklist'
+      const count = (settings?.risk?.symbol_list ?? []).length
+      return `${mode}: ${count} symbol${count === 1 ? '' : 's'}`
+    }
+    case 'risk-limits':
+      return 'Hard risk caps'
+    case 'health-monitoring':
+      return 'Self-heal & probes'
+    case 'telegram':
+      return 'Alert channel'
+    case 'webhook':
+      return settings?.webhook?.url ? 'Configured' : 'Not configured'
+    case 'app':
+      return settings?.app?.theme ? `Theme: ${settings.app.theme}` : 'Dashboard'
+    case 'data-retention':
+      return 'Storage & retention'
+    case 'data-export':
+      return 'CSV export'
+    case 'software-updates':
+      return 'Manual update'
+    case 'network-proxy':
+      return settings?.network?.proxy_host ? 'Configured' : 'Direct'
+    case 'market-data-sources':
+      return settings?.market_data?.ccxt_exchange ? String(settings.market_data.ccxt_exchange).toUpperCase() : 'Default'
+    case 'macro-sentiment-signals':
+      return 'Macro & sentiment'
+    case 'news-feeds':
+      return 'RSS ingestion'
+    case 'prediction-markets':
+      return 'Polymarket observer'
+    case 'observed-us-equities': {
+      const count = (settings?.market_data?.observed_equities ?? []).length
+      return `${count} ticker${count === 1 ? '' : 's'}`
+    }
+    case 'configuration-matrix':
+      return 'Read-only audit'
+    default:
+      return null
   }
+}
+
+function CategoryHub({
+  tab,
+  settings,
+  status,
+  dirtyIds,
+  onSelectSection,
+}: {
+  tab: Tab
+  settings: any
+  status: any
+  dirtyIds: Set<string>
+  onSelectSection: (slug: string) => void
+}) {
+  const sections = SETTINGS_INDEX.filter(it => it.tab === tab)
+  return (
+    <div className="settings-hub-grid" role="region" aria-label={`${TABS.find(t => t.id === tab)?.label} sections`}>
+      {sections.map(s => {
+        const isDirty = dirtyIds.has(s.slug)
+        const summary = getSectionSummary(s.slug, settings, status)
+        return (
+          <button
+            key={s.slug}
+            type="button"
+            className="settings-hub-card"
+            onClick={() => onSelectSection(s.slug)}
+            aria-label={`Configure ${s.title}`}
+          >
+            <div className="settings-hub-card-header">
+              <h3 className="settings-hub-card-title">{s.title}</h3>
+              {isDirty && <span className="settings-hub-draft-dot" title="Unsaved changes" />}
+            </div>
+            <p className="settings-hub-card-desc">{s.description}</p>
+            <div className="settings-hub-card-footer">
+              {summary && <span className="settings-hub-card-badge">{summary}</span>}
+              <span className="settings-hub-card-action">Configure →</span>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
 }
 
 /**
@@ -106,46 +187,50 @@ function SettingsNavIcon({ tab }: { tab: Tab }) {
  * registry row. The invariant is enforced by a test rather than this comment,
  * which had already drifted three times (#632).
  */
-const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[] = [
+const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; description: string; alt?: string[] }[] = [
   // Agent & Models
-  { title: PERMISSION_SECTION.title,          tab: PERMISSION_SECTION.tab, slug: PERMISSION_SECTION.id, alt: [...PERMISSION_SECTION.searchTerms] },
-  { title: LEARNING_SECTION.title,            tab: LEARNING_SECTION.tab, slug: LEARNING_SECTION.id, alt: [...LEARNING_SECTION.searchTerms] },
-  { title: REGIME_SECTION.title,              tab: REGIME_SECTION.tab, slug: REGIME_SECTION.id, alt: [...REGIME_SECTION.searchTerms] },
-  { title: SERENITY_SECTION.title,            tab: SERENITY_SECTION.tab, slug: SERENITY_SECTION.id, alt: [...SERENITY_SECTION.searchTerms] },
-  { title: SCHEDULER_SECTION.title,           tab: SCHEDULER_SECTION.tab, slug: SCHEDULER_SECTION.id, alt: [...SCHEDULER_SECTION.searchTerms] },
-  { title: MODEL_PROVIDERS_SECTION.title,     tab: MODEL_PROVIDERS_SECTION.tab, slug: MODEL_PROVIDERS_SECTION.id, alt: [...MODEL_PROVIDERS_SECTION.searchTerms] },
-  { title: INFERENCE_ADMISSION_SECTION.title, tab: INFERENCE_ADMISSION_SECTION.tab, slug: INFERENCE_ADMISSION_SECTION.id, alt: [...INFERENCE_ADMISSION_SECTION.searchTerms] },
-  { title: LLM_COST_SECTION.title,            tab: LLM_COST_SECTION.tab, slug: LLM_COST_SECTION.id, alt: [...LLM_COST_SECTION.searchTerms] },
+  { title: PERMISSION_SECTION.title,          tab: PERMISSION_SECTION.tab, slug: PERMISSION_SECTION.id, description: PERMISSION_SECTION.description, alt: [...PERMISSION_SECTION.searchTerms] },
+  { title: LEARNING_SECTION.title,            tab: LEARNING_SECTION.tab, slug: LEARNING_SECTION.id, description: LEARNING_SECTION.description, alt: [...LEARNING_SECTION.searchTerms] },
+  { title: REGIME_SECTION.title,              tab: REGIME_SECTION.tab, slug: REGIME_SECTION.id, description: REGIME_SECTION.description, alt: [...REGIME_SECTION.searchTerms] },
+  { title: SERENITY_SECTION.title,            tab: SERENITY_SECTION.tab, slug: SERENITY_SECTION.id, description: SERENITY_SECTION.description, alt: [...SERENITY_SECTION.searchTerms] },
+  { title: SCHEDULER_SECTION.title,           tab: SCHEDULER_SECTION.tab, slug: SCHEDULER_SECTION.id, description: SCHEDULER_SECTION.description, alt: [...SCHEDULER_SECTION.searchTerms] },
+  { title: MODEL_PROVIDERS_SECTION.title,     tab: MODEL_PROVIDERS_SECTION.tab, slug: MODEL_PROVIDERS_SECTION.id, description: MODEL_PROVIDERS_SECTION.description, alt: [...MODEL_PROVIDERS_SECTION.searchTerms] },
+  { title: INFERENCE_ADMISSION_SECTION.title, tab: INFERENCE_ADMISSION_SECTION.tab, slug: INFERENCE_ADMISSION_SECTION.id, description: INFERENCE_ADMISSION_SECTION.description, alt: [...INFERENCE_ADMISSION_SECTION.searchTerms] },
+  { title: LLM_COST_SECTION.title,            tab: LLM_COST_SECTION.tab, slug: LLM_COST_SECTION.id, description: LLM_COST_SECTION.description, alt: [...LLM_COST_SECTION.searchTerms] },
   // Execution
-  { title: EXCHANGE_CONNECTION_SECTION.title, tab: EXCHANGE_CONNECTION_SECTION.tab, slug: EXCHANGE_CONNECTION_SECTION.id, alt: [...EXCHANGE_CONNECTION_SECTION.searchTerms] },
-  { title: TRADING_MODE_SECTION.title,        tab: TRADING_MODE_SECTION.tab, slug: TRADING_MODE_SECTION.id, alt: [...TRADING_MODE_SECTION.searchTerms] },
-  { title: PAPER_PARAMETERS_SECTION.title,    tab: PAPER_PARAMETERS_SECTION.tab, slug: PAPER_PARAMETERS_SECTION.id, alt: [...PAPER_PARAMETERS_SECTION.searchTerms] },
-  { title: CAPITAL_EVENTS_SECTION.title,      tab: CAPITAL_EVENTS_SECTION.tab, slug: CAPITAL_EVENTS_SECTION.id, alt: [...CAPITAL_EVENTS_SECTION.searchTerms] },
-  { title: PAPER_ACCOUNT_SECTION.title,       tab: PAPER_ACCOUNT_SECTION.tab, slug: PAPER_ACCOUNT_SECTION.id, alt: [...PAPER_ACCOUNT_SECTION.searchTerms] },
+  { title: EXCHANGE_CONNECTION_SECTION.title, tab: EXCHANGE_CONNECTION_SECTION.tab, slug: EXCHANGE_CONNECTION_SECTION.id, description: EXCHANGE_CONNECTION_SECTION.description, alt: [...EXCHANGE_CONNECTION_SECTION.searchTerms] },
+  { title: TRADING_MODE_SECTION.title,        tab: TRADING_MODE_SECTION.tab, slug: TRADING_MODE_SECTION.id, description: TRADING_MODE_SECTION.description, alt: [...TRADING_MODE_SECTION.searchTerms] },
+  { title: PAPER_PARAMETERS_SECTION.title,    tab: PAPER_PARAMETERS_SECTION.tab, slug: PAPER_PARAMETERS_SECTION.id, description: PAPER_PARAMETERS_SECTION.description, alt: [...PAPER_PARAMETERS_SECTION.searchTerms] },
+  { title: CAPITAL_EVENTS_SECTION.title,      tab: CAPITAL_EVENTS_SECTION.tab, slug: CAPITAL_EVENTS_SECTION.id, description: CAPITAL_EVENTS_SECTION.description, alt: [...CAPITAL_EVENTS_SECTION.searchTerms] },
+  { title: PAPER_ACCOUNT_SECTION.title,       tab: PAPER_ACCOUNT_SECTION.tab, slug: PAPER_ACCOUNT_SECTION.id, description: PAPER_ACCOUNT_SECTION.description, alt: [...PAPER_ACCOUNT_SECTION.searchTerms] },
   // Risk & Universe
-  { title: UNIVERSE_SECTION.title,         tab: UNIVERSE_SECTION.tab, slug: UNIVERSE_SECTION.id, alt: [...UNIVERSE_SECTION.searchTerms] },
-  { title: EVENT_TRIGGERS_SECTION.title,   tab: EVENT_TRIGGERS_SECTION.tab, slug: EVENT_TRIGGERS_SECTION.id, alt: [...EVENT_TRIGGERS_SECTION.searchTerms] },
-  { title: TRADABLE_SYMBOLS_SECTION.title, tab: TRADABLE_SYMBOLS_SECTION.tab, slug: TRADABLE_SYMBOLS_SECTION.id, alt: [...TRADABLE_SYMBOLS_SECTION.searchTerms] },
-  { title: RISK_LIMITS_SECTION.title,      tab: RISK_LIMITS_SECTION.tab, slug: RISK_LIMITS_SECTION.id, alt: [...RISK_LIMITS_SECTION.searchTerms] },
+  { title: UNIVERSE_SECTION.title,         tab: UNIVERSE_SECTION.tab, slug: UNIVERSE_SECTION.id, description: UNIVERSE_SECTION.description, alt: [...UNIVERSE_SECTION.searchTerms] },
+  { title: EVENT_TRIGGERS_SECTION.title,   tab: EVENT_TRIGGERS_SECTION.tab, slug: EVENT_TRIGGERS_SECTION.id, description: EVENT_TRIGGERS_SECTION.description, alt: [...EVENT_TRIGGERS_SECTION.searchTerms] },
+  { title: TRADABLE_SYMBOLS_SECTION.title, tab: TRADABLE_SYMBOLS_SECTION.tab, slug: TRADABLE_SYMBOLS_SECTION.id, description: TRADABLE_SYMBOLS_SECTION.description, alt: [...TRADABLE_SYMBOLS_SECTION.searchTerms] },
+  { title: RISK_LIMITS_SECTION.title,      tab: RISK_LIMITS_SECTION.tab, slug: RISK_LIMITS_SECTION.id, description: RISK_LIMITS_SECTION.description, alt: [...RISK_LIMITS_SECTION.searchTerms] },
   // Health & Alerts
-  { title: HEALTH_MONITORING_SECTION.title, tab: HEALTH_MONITORING_SECTION.tab, slug: HEALTH_MONITORING_SECTION.id, alt: [...HEALTH_MONITORING_SECTION.searchTerms] },
-  { title: TELEGRAM_SECTION.title,          tab: TELEGRAM_SECTION.tab, slug: TELEGRAM_SECTION.id, alt: [...TELEGRAM_SECTION.searchTerms] },
-  { title: WEBHOOK_SECTION.title,           tab: WEBHOOK_SECTION.tab, slug: WEBHOOK_SECTION.id, alt: [...WEBHOOK_SECTION.searchTerms] },
+  { title: HEALTH_MONITORING_SECTION.title, tab: HEALTH_MONITORING_SECTION.tab, slug: HEALTH_MONITORING_SECTION.id, description: HEALTH_MONITORING_SECTION.description, alt: [...HEALTH_MONITORING_SECTION.searchTerms] },
+  { title: TELEGRAM_SECTION.title,          tab: TELEGRAM_SECTION.tab, slug: TELEGRAM_SECTION.id, description: TELEGRAM_SECTION.description, alt: [...TELEGRAM_SECTION.searchTerms] },
+  { title: WEBHOOK_SECTION.title,           tab: WEBHOOK_SECTION.tab, slug: WEBHOOK_SECTION.id, description: WEBHOOK_SECTION.description, alt: [...WEBHOOK_SECTION.searchTerms] },
   // Runtime & System
-  { title: APP_SECTION.title,              tab: APP_SECTION.tab, slug: APP_SECTION.id, alt: [...APP_SECTION.searchTerms] },
-  { title: DATA_RETENTION_SECTION.title,   tab: DATA_RETENTION_SECTION.tab, slug: DATA_RETENTION_SECTION.id, alt: [...DATA_RETENTION_SECTION.searchTerms] },
-  { title: DATA_EXPORT_SECTION.title,      tab: DATA_EXPORT_SECTION.tab, slug: DATA_EXPORT_SECTION.id, alt: [...DATA_EXPORT_SECTION.searchTerms] },
-  { title: SOFTWARE_UPDATES_SECTION.title, tab: SOFTWARE_UPDATES_SECTION.tab, slug: SOFTWARE_UPDATES_SECTION.id, alt: [...SOFTWARE_UPDATES_SECTION.searchTerms] },
-  { title: NETWORK_PROXY_SECTION.title,    tab: NETWORK_PROXY_SECTION.tab, slug: NETWORK_PROXY_SECTION.id, alt: [...NETWORK_PROXY_SECTION.searchTerms] },
+  { title: APP_SECTION.title,              tab: APP_SECTION.tab, slug: APP_SECTION.id, description: APP_SECTION.description, alt: [...APP_SECTION.searchTerms] },
+  { title: DATA_RETENTION_SECTION.title,   tab: DATA_RETENTION_SECTION.tab, slug: DATA_RETENTION_SECTION.id, description: DATA_RETENTION_SECTION.description, alt: [...DATA_RETENTION_SECTION.searchTerms] },
+  { title: DATA_EXPORT_SECTION.title,      tab: DATA_EXPORT_SECTION.tab, slug: DATA_EXPORT_SECTION.id, description: DATA_EXPORT_SECTION.description, alt: [...DATA_EXPORT_SECTION.searchTerms] },
+  { title: SOFTWARE_UPDATES_SECTION.title, tab: SOFTWARE_UPDATES_SECTION.tab, slug: SOFTWARE_UPDATES_SECTION.id, description: SOFTWARE_UPDATES_SECTION.description, alt: [...SOFTWARE_UPDATES_SECTION.searchTerms] },
+  { title: NETWORK_PROXY_SECTION.title,    tab: NETWORK_PROXY_SECTION.tab, slug: NETWORK_PROXY_SECTION.id, description: NETWORK_PROXY_SECTION.description, alt: [...NETWORK_PROXY_SECTION.searchTerms] },
   // Signals
-  { title: MARKET_DATA_SECTION.title,        tab: MARKET_DATA_SECTION.tab, slug: MARKET_DATA_SECTION.id, alt: [...MARKET_DATA_SECTION.searchTerms] },
-  { title: MACRO_SIGNALS_SECTION.title,      tab: MACRO_SIGNALS_SECTION.tab, slug: MACRO_SIGNALS_SECTION.id, alt: [...MACRO_SIGNALS_SECTION.searchTerms] },
-  { title: NEWS_FEEDS_SECTION.title,         tab: NEWS_FEEDS_SECTION.tab, slug: NEWS_FEEDS_SECTION.id, alt: [...NEWS_FEEDS_SECTION.searchTerms] },
-  { title: PREDICTION_MARKETS_SECTION.title, tab: PREDICTION_MARKETS_SECTION.tab, slug: PREDICTION_MARKETS_SECTION.id, alt: [...PREDICTION_MARKETS_SECTION.searchTerms] },
-  { title: EQUITIES_SECTION.title,           tab: EQUITIES_SECTION.tab, slug: EQUITIES_SECTION.id, alt: [...EQUITIES_SECTION.searchTerms] },
+  { title: MARKET_DATA_SECTION.title,        tab: MARKET_DATA_SECTION.tab, slug: MARKET_DATA_SECTION.id, description: MARKET_DATA_SECTION.description, alt: [...MARKET_DATA_SECTION.searchTerms] },
+  { title: MACRO_SIGNALS_SECTION.title,      tab: MACRO_SIGNALS_SECTION.tab, slug: MACRO_SIGNALS_SECTION.id, description: MACRO_SIGNALS_SECTION.description, alt: [...MACRO_SIGNALS_SECTION.searchTerms] },
+  { title: NEWS_FEEDS_SECTION.title,         tab: NEWS_FEEDS_SECTION.tab, slug: NEWS_FEEDS_SECTION.id, description: NEWS_FEEDS_SECTION.description, alt: [...NEWS_FEEDS_SECTION.searchTerms] },
+  { title: PREDICTION_MARKETS_SECTION.title, tab: PREDICTION_MARKETS_SECTION.tab, slug: PREDICTION_MARKETS_SECTION.id, description: PREDICTION_MARKETS_SECTION.description, alt: [...PREDICTION_MARKETS_SECTION.searchTerms] },
+  { title: EQUITIES_SECTION.title,           tab: EQUITIES_SECTION.tab, slug: EQUITIES_SECTION.id, description: EQUITIES_SECTION.description, alt: [...EQUITIES_SECTION.searchTerms] },
   // Advanced
-  { title: ADVANCED_SECTION.title,     tab: ADVANCED_SECTION.tab, slug: ADVANCED_SECTION.id, alt: [...ADVANCED_SECTION.searchTerms] },
+  { title: ADVANCED_SECTION.title,     tab: ADVANCED_SECTION.tab, slug: ADVANCED_SECTION.id, description: ADVANCED_SECTION.description, alt: [...ADVANCED_SECTION.searchTerms] },
 ]
+
+const SECTION_BY_SLUG = new Map<string, typeof SETTINGS_INDEX[number]>(
+  SETTINGS_INDEX.map(item => [item.slug, item]),
+)
 
 function matchesSearch(item: typeof SETTINGS_INDEX[number], q: string): boolean {
   const needle = q.toLowerCase().trim()
@@ -177,10 +262,6 @@ export default function Settings() {
     refetchInterval: 30_000,
     refetchIntervalInBackground: true,
   })
-  const [navWidth, setNavWidth] = useState(SETTINGS_NAV_DEFAULT)
-  const [isNavCollapsed, setIsNavCollapsed] = useState(false)
-  const navExpandedWidthRef = useRef(SETTINGS_NAV_DEFAULT)
-  const navDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [tab, setTab] = useState<Tab>(() => {
     return parseTab(searchParams.get('tab')) ?? 'agent'
   })
@@ -231,73 +312,6 @@ export default function Settings() {
     setDraftEpoch(epoch => epoch + 1)
   }
 
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(SETTINGS_NAV_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw) as SettingsNavState
-      if (typeof parsed.width === 'number') {
-        if (parsed.collapsed) {
-          setIsNavCollapsed(true)
-          setNavWidth(SETTINGS_NAV_COLLAPSED)
-          navExpandedWidthRef.current = clampSettingsNavWidth(parsed.width)
-        } else {
-          const width = clampSettingsNavWidth(parsed.width)
-          setIsNavCollapsed(false)
-          setNavWidth(width)
-          navExpandedWidthRef.current = width
-        }
-      }
-      if (typeof parsed.collapsed === 'boolean' && typeof parsed.width !== 'number') {
-        setIsNavCollapsed(parsed.collapsed)
-      }
-    } catch {
-      // ignore stale/corrupt localStorage data
-    }
-  }, [])
-
-  useEffect(() => {
-    window.localStorage.setItem(SETTINGS_NAV_KEY, JSON.stringify({
-      width: isNavCollapsed ? navExpandedWidthRef.current : navWidth,
-      collapsed: isNavCollapsed,
-    }))
-  }, [navWidth, isNavCollapsed])
-
-  const toggleNav = () => {
-    if (isNavCollapsed) {
-      setIsNavCollapsed(false)
-      setNavWidth(clampSettingsNavWidth(navExpandedWidthRef.current))
-      return
-    }
-    navExpandedWidthRef.current = navWidth
-    setIsNavCollapsed(true)
-    setNavWidth(SETTINGS_NAV_COLLAPSED)
-  }
-
-  const onResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    if (isNavCollapsed) return
-    navDragRef.current = { startX: e.clientX, startWidth: navWidth }
-    const moveHandler = (ev: PointerEvent) => {
-      if (!navDragRef.current) return
-      const next = navDragRef.current.startWidth + (ev.clientX - navDragRef.current.startX)
-      const clamped = clampSettingsNavResize(next)
-      navExpandedWidthRef.current = clamped
-      setNavWidth(clamped)
-    }
-    const stopHandler = () => {
-      navDragRef.current = null
-      document.body.style.userSelect = ''
-      window.removeEventListener('pointermove', moveHandler)
-      window.removeEventListener('pointerup', stopHandler)
-      window.removeEventListener('pointercancel', stopHandler)
-    }
-    document.body.style.userSelect = 'none'
-    window.addEventListener('pointermove', moveHandler)
-    window.addEventListener('pointerup', stopHandler)
-    window.addEventListener('pointercancel', stopHandler)
-  }
 
   useEffect(() => {
     const requestedTab = parseTab(searchParams.get('tab'))
@@ -379,6 +393,8 @@ export default function Settings() {
   // effect above can scroll to that section instead of leaving the operator at
   // the top of an 11-section tab.
   const selectTab = async (next: Tab, slug?: string) => {
+    const currentSection = searchParams.get('section')
+    if (next === tab && slug === (currentSection ?? undefined)) return
     if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
       if (!(await confirm({
         title: 'Discard unsaved changes?',
@@ -393,6 +409,40 @@ export default function Settings() {
     nextParams.set('tab', next)
     if (slug) nextParams.set('section', slug)
     else nextParams.delete('section')
+    setSearchParams(nextParams, { replace: true })
+  }
+
+  const selectSection = async (nextSection: string) => {
+    const currentSection = searchParams.get('section')
+    if (nextSection === currentSection) return
+    if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
+      if (!(await confirm({
+        title: 'Discard unsaved changes?',
+        description: 'You have unsaved changes in this section. Switch sections and discard them?',
+        confirmLabel: 'Switch and discard',
+        variant: 'warning',
+      }))) return
+    }
+    clearDirty()
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('tab', tab)
+    nextParams.set('section', nextSection)
+    setSearchParams(nextParams, { replace: true })
+  }
+
+  const backToHub = async () => {
+    if (shouldBlockNavigation(dirtyRef.current.size, touchedRef.current)) {
+      if (!(await confirm({
+        title: 'Discard unsaved changes?',
+        description: 'You have unsaved changes in this section. Leave this section and discard them?',
+        confirmLabel: 'Leave and discard',
+        variant: 'warning',
+      }))) return
+    }
+    clearDirty()
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('tab', tab)
+    nextParams.delete('section')
     setSearchParams(nextParams, { replace: true })
   }
 
@@ -441,6 +491,70 @@ export default function Settings() {
     )
   }
 
+  const section = searchParams.get('section')
+  const tabSections = SETTINGS_INDEX.filter(it => it.tab === tab)
+  const activeSectionDef = section ? SECTION_BY_SLUG.get(section) : undefined
+  const isFocusedView = Boolean(section && activeSectionDef && activeSectionDef.tab === tab)
+
+  const tabsDef: TabDef[] = TABS.map(t => ({
+    id: t.id,
+    label: t.label,
+    render: () => (
+      <div
+        className="settings-shell"
+        onBlurCapture={suppressDiscardBlur}
+        onFocus={handleNumericFocus}
+        onInput={markTouched}
+        onChange={markTouched}
+      >
+        <div className="settings-panel" key={draftEpoch}>
+          {!isFocusedView ? (
+            <CategoryHub
+              tab={t.id}
+              settings={settings}
+              status={status}
+              dirtyIds={dirtyRef.current}
+              onSelectSection={selectSection}
+            />
+          ) : (
+            <>
+              <div className="settings-breadcrumb-bar">
+                <nav className="settings-breadcrumb" aria-label="Settings section breadcrumb">
+                  <button type="button" className="settings-breadcrumb-back" onClick={backToHub}>
+                    ← Back to {t.label}
+                  </button>
+                  <span className="settings-breadcrumb-separator" aria-hidden="true">/</span>
+                  <span className="settings-breadcrumb-current">{activeSectionDef?.title}</span>
+                </nav>
+                <div className="settings-sibling-switcher" role="navigation" aria-label="Sections in this category">
+                  {tabSections.map(s => (
+                    <button
+                      key={s.slug}
+                      type="button"
+                      className={`settings-pill ${s.slug === section ? 'active' : ''}`}
+                      onClick={() => selectSection(s.slug)}
+                      aria-current={s.slug === section ? 'page' : undefined}
+                    >
+                      <span>{s.title}</span>
+                      {dirtyRef.current.has(s.slug) && <span className="settings-pill-draft-dot" title="Unsaved changes" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {t.id === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} sectionId={section ?? undefined} />}
+              {t.id === 'advanced'  && <AdvancedTab           settings={settings} sectionId={section ?? undefined} />}
+            </>
+          )}
+        </div>
+      </div>
+    ),
+  }))
+
   return (
     <div>
       <PageHeader
@@ -459,60 +573,7 @@ export default function Settings() {
         </div>
       )}
 
-      <div
-        className={`settings-shell ${isNavCollapsed ? 'is-collapsed' : ''}`}
-        style={{ '--settings-nav-width': `${navWidth}px` } as React.CSSProperties}
-        onBlurCapture={suppressDiscardBlur}
-        onFocus={handleNumericFocus}
-        onInput={markTouched}
-        onChange={markTouched}
-      >
-        <aside className={`settings-nav ${isNavCollapsed ? 'is-collapsed' : ''}`} aria-label="Settings sections">
-          <div className="settings-nav-header">
-            <span className="settings-nav-heading">Settings</span>
-            <button
-              type="button"
-              className="settings-nav-toggle"
-              aria-label={isNavCollapsed ? 'Expand Settings navigation' : 'Collapse Settings navigation'}
-              aria-expanded={!isNavCollapsed}
-              title={isNavCollapsed ? 'Expand Settings navigation' : 'Collapse Settings navigation'}
-              onClick={toggleNav}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d={isNavCollapsed ? 'm9 18 6-6-6-6' : 'm15 18-6-6 6-6'} /></svg>
-            </button>
-          </div>
-          {TABS.map(t => (
-            <button
-              key={t.id}
-              className={`settings-nav-item ${tab === t.id ? 'active' : ''}`}
-              aria-label={t.label}
-              aria-current={tab === t.id ? 'page' : undefined}
-              title={isNavCollapsed ? `${t.label}: ${t.description}` : undefined}
-              onClick={() => selectTab(t.id)}
-            >
-              <span className="settings-nav-icon"><SettingsNavIcon tab={t.id} /></span>
-              <span className="settings-nav-copy">
-                <span className="settings-nav-label">{t.label}</span>
-                <span className="settings-nav-desc">{t.description}</span>
-              </span>
-            </button>
-          ))}
-        </aside>
-        <div
-          className="settings-nav-resize-handle"
-          aria-hidden="true"
-          onPointerDown={onResizePointerDown}
-        />
-        <div className="settings-panel" key={draftEpoch}>
-          {tab === 'agent'     && <AgentModelsTab        status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'execution' && <ExecutionTab          status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'risk'      && <RiskTab               settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'health'    && <HealthNotificationsTab settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'runtime'   && <RuntimeSystemTab      status={status} settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'signals'   && <SignalsTab            settings={settings} qc={qc} onDirty={registerDirty} />}
-          {tab === 'advanced'  && <AdvancedTab           settings={settings} />}
-        </div>
-      </div>
+      <Tabs tabs={tabsDef} value={tab} onChange={id => selectTab(id as Tab)} />
     </div>
   )
 }

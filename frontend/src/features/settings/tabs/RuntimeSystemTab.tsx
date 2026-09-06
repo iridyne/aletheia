@@ -692,39 +692,48 @@ function DataExportCard() {
   )
 }
 
-export function RuntimeSystemTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+export function RuntimeSystemTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={APP_SECTION}>
-        <AppRows status={status} settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(APP_SECTION.id) && (
+        <SettingsFeatureSection descriptor={APP_SECTION}>
+          <AppRows status={status} settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={DATA_RETENTION_SECTION}>
-        <Collapsible title="Historical Data">
-          <p className="hint mb-2">Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.</p>
-          <Collapsible title="Backfill & Storage Parameters">
+      {isVisible(DATA_RETENTION_SECTION.id) && (
+        <SettingsFeatureSection descriptor={DATA_RETENTION_SECTION}>
+          <Collapsible title="Historical Data">
+            <p className="hint mb-2">Controls local OHLCV bulk storage for backtesting. Nightly backfill downloads missing candles so backtests run entirely offline.</p>
             <HistoricalDataCard settings={settings} qc={qc} onDirty={onDirty} />
           </Collapsible>
-        </Collapsible>
-        <Collapsible title="Data Retention">
-          <p className="hint mb-2">How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.</p>
-          <RetentionCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </SettingsFeatureSection>
+          <Collapsible title="Data Retention">
+            <p className="hint mb-2">How long telemetry is kept before automatic pruning. Trust-bearing records (trades, audit log) are never pruned.</p>
+            <RetentionCard settings={settings} qc={qc} onDirty={onDirty} />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={DATA_EXPORT_SECTION}>
-        <Collapsible title="Export">
-          <DataExportCard />
-        </Collapsible>
-      </SettingsFeatureSection>
+      {isVisible(DATA_EXPORT_SECTION.id) && (
+        <SettingsFeatureSection descriptor={DATA_EXPORT_SECTION}>
+          <Collapsible title="Export">
+            <DataExportCard />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={SOFTWARE_UPDATES_SECTION}>
-        <UpdateCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(SOFTWARE_UPDATES_SECTION.id) && (
+        <SettingsFeatureSection descriptor={SOFTWARE_UPDATES_SECTION}>
+          <UpdateCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={NETWORK_PROXY_SECTION}>
-        <NetworkCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(NETWORK_PROXY_SECTION.id) && (
+        <SettingsFeatureSection descriptor={NETWORK_PROXY_SECTION}>
+          <NetworkCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }
