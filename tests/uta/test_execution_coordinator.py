@@ -304,6 +304,38 @@ def test_stale_entry_qualification_creates_no_order(tmp_path, monkeypatch):
     assert repo.list_orders(limit=10) == []
 
 
+def test_stale_close_qualification_creates_no_claim(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.coordinator import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from aletheia.trust.uta_qualification import UTAQualificationError
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.01,
+        entry_price=100.0,
+        execution_mode="binance_testnet",
+        status="open",
+    )
+    repo.insert_position(position)
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.require_selected_uta_mutation",
+        lambda _mode: (_ for _ in ()).throw(
+            UTAQualificationError("qualification_code_mismatch")
+        ),
+    )
+
+    with pytest.raises(UTAQualificationError) as caught:
+        close_position(position.id)
+
+    assert caught.value.reason_code == "qualification_code_mismatch"
+    assert repo.list_orders(limit=10) == []
+    assert repo.get_position(position.id)["pending_close_order_id"] is None
+
+
 def test_entry_sends_through_the_selected_qualified_adapter(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     proposal_id, risk_id = "proposal-qualified-adapter", "risk-qualified-adapter"

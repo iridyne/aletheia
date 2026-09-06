@@ -365,6 +365,9 @@ def close_position(
         raise ValueError(f"position not found: {position_id}")
     if current.get("status") != "open":
         raise ValueError(f"position {position_id} is not open")
+    selected = None
+    if not has_unresolved_close_claim(current):
+        selected = require_selected_uta_mutation(current["execution_mode"])
     row, order = _claim_close(position_id, reason, close_reasoning)
     if order is None:
         existing = repo.get_order(row["pending_close_order_id"])
@@ -378,7 +381,12 @@ def close_position(
             "already_pending": True,
         }
     try:
-        adapter = _create_qualified_adapter(row["execution_mode"])
+        adapter = _create_qualified_adapter(
+            row["execution_mode"],
+            expected_generation=(
+                selected.identity.credential_generation if selected else None
+            ),
+        )
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,

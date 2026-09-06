@@ -51,3 +51,29 @@ def test_production_has_no_generic_position_update_entrypoint():
         if "update_position(" in source.read_text(encoding="utf-8"):
             offenders.append(str(source.relative_to(root)))
     assert offenders == []
+
+
+def test_known_pre_submission_error_can_be_reclaimed_by_one_new_close_order():
+    position = _position()
+    repo.claim_position_close(
+        position.id,
+        order_id="failed-close",
+        status="pending",
+        requested_at="2026-09-06T00:00:00+00:00",
+    )
+    repo.update_position_close_claim(
+        position.id,
+        order_id="failed-close",
+        status="error",
+    )
+
+    repo.claim_position_close(
+        position.id,
+        order_id="retry-close",
+        status="pending",
+        requested_at="2026-09-06T00:01:00+00:00",
+    )
+
+    stored = repo.get_position(position.id)
+    assert stored["pending_close_order_id"] == "retry-close"
+    assert stored["pending_close_status"] == "pending"

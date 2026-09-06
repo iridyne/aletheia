@@ -4072,7 +4072,7 @@ def claim_position_close(
     updated = execute_write(
         "UPDATE positions SET pending_close_order_id=?, pending_close_status=?, "
         "pending_close_requested_at=? WHERE id=? AND status='open' "
-        "AND pending_close_order_id IS NULL",
+        "AND (pending_close_order_id IS NULL OR pending_close_status='error')",
         (order_id, status, requested_at, position_id),
     )
     if updated.rowcount != 1:

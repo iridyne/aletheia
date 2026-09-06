@@ -518,7 +518,7 @@ def _materialize_paper_entry(
                     existing["id"],
                     updated_plan,
                     provenance="paper_position_addition_v1",
-                    extra_position_updates=update_kwargs,
+                    materialization_updates=update_kwargs,
                 )
             else:
                 exit_fields = {

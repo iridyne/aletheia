@@ -781,7 +781,7 @@ def _maybe_update_trailing_stop(
                 position["id"],
                 persisted_plan,
                 provenance="deterministic_trailing_v2",
-                extra_position_updates={
+                exit_plan_updates={
                     key: value for key, value in updates.items() if key != "stop_price"
                 },
                 effective_at=effective_at,
@@ -1909,7 +1909,7 @@ def apply_operator_adjustment(
             new_plan,
             provenance="system_operator_adjustment_v1",
             expected_version=plan.version,
-            extra_position_updates=(
+            observation_updates=(
                 {"horizon_wake_sent_at": None} if horizon_changed else None
             ),
         )
