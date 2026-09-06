@@ -19,6 +19,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Backend state, authority, and production-parity audit — 2026-09-06](audits/BACKEND_STATE_AUTHORITY_PRODUCTION_PARITY_AUDIT_2026-09-06.md)
+  identifies the shared ownership failure behind weak lifecycle boundaries,
+  distributed authority enforcement, and test/production semantic drift; it records
+  evidence and dependency-ordered repair contracts without changing Runtime behavior.
 - [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
   records the #1002 repository-wide scope check against OKX's checksum
   deprecation and the active REST-only snapshot boundary.
