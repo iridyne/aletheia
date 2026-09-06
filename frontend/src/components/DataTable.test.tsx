@@ -57,4 +57,15 @@ describe('DataTable state contract', () => {
     row.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
     expect(onRowClick).toHaveBeenCalledTimes(1)
   })
+
+  it('applies custom maxHeight to the table wrap container', async () => {
+    const container = document.createElement('div')
+    root = createRoot(container)
+
+    await act(async () => root?.render(
+      <DataTable data={[{ name: 'BTC' }]} columns={columns} maxHeight="500px" />,
+    ))
+    const wrap = container.querySelector('.table-wrap') as HTMLElement
+    expect(wrap.style.maxHeight).toBe('500px')
+  })
 })

@@ -635,6 +635,9 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3); box-shadow: var(--shadow);
   min-width: 0; overflow: hidden;
 }
+.card:has(.table-wrap) {
+  overflow: clip;
+}
 .card-flush { margin-bottom: 0; }
 .card h3 {
   margin-bottom: var(--space-2); font-size: 0.78rem; font-weight: 600; color: var(--muted);
