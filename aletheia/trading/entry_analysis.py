@@ -189,6 +189,20 @@ class EntryHypothesis(BaseModel):
         return self
 
 
+def entry_reference_contract(context: EntryAnalysisContext) -> dict[str, list[str]]:
+    """Expose exactly the facts accepted by hypothesis validation, not provenance."""
+    current = {
+        str(ref)
+        for section in (context.market_structure, context.quant_context,
+                        context.portfolio_context, context.execution_context)
+        for ref in section.get("fact_refs", ())
+    }
+    citable = current | {str(ref) for ref in context.candidate.get("fact_refs", ())}
+    citable.update(anchor.anchor_id for anchor in context.anchors)
+    current.update(anchor.anchor_id for anchor in context.anchors if anchor.kind != "candidate_reference")
+    return {"citable_fact_refs": sorted(citable), "current_market_fact_refs": sorted(current)}
+
+
 def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
     """Project frozen evidence into the bounded facts exposed to the model."""
 
@@ -198,6 +212,7 @@ def entry_model_view(context: EntryAnalysisContext) -> dict[str, object]:
     return {
         "analysis_cutoff_at": data["analysis_cutoff_at"],
         "context_fingerprint": data["context_fingerprint"],
+        "reference_contract": entry_reference_contract(context),
         "instrument": data["instrument"],
         "planning_generation": {key: planning.get(key) for key in ("id", "candidate_id", "candidate_family")},
         "candidate": {"fact_refs": data["candidate"].get("fact_refs", [])},
@@ -255,19 +270,11 @@ def validate_hypothesis_references(
     context: EntryAnalysisContext,
 ) -> None:
     supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs)
+    reference_contract = entry_reference_contract(context)
     anchors = {}
     if supplied_refs or hypothesis.decision != "NO_PLAN":
         anchors = {anchor.anchor_id: anchor for anchor in context.anchors}
-        facts = set(anchors)
-        for section in (
-            context.market_structure,
-            context.quant_context,
-            context.portfolio_context,
-            context.execution_context,
-            context.candidate,
-        ):
-            refs = section.get("fact_refs", ()) if isinstance(section, dict) else ()
-            facts.update(str(item) for item in refs)
+        facts = set(reference_contract["citable_fact_refs"])
         if not supplied_refs.issubset(facts):
             raise ValueError("hypothesis_fact_ref_not_supplied")
     opportunity = context.candidate_opportunity_context["opportunity"]
@@ -308,15 +315,7 @@ def validate_hypothesis_references(
                 raise ValueError("hypothesis_profile_market_structure_unavailable")
         elif section.get("availability") != "available":
             raise ValueError(f"hypothesis_profile_{section_name}_unavailable")
-    current_facts = set()
-    for section in (
-        context.market_structure,
-        context.quant_context,
-        context.portfolio_context,
-        context.execution_context,
-    ):
-        current_facts.update(str(item) for item in section.get("fact_refs", ()))
-    current_facts.update(anchor.anchor_id for anchor in context.anchors if anchor.kind != "candidate_reference")
+    current_facts = set(reference_contract["current_market_fact_refs"])
     if not set(hypothesis.supporting_fact_refs) & current_facts:
         raise ValueError("hypothesis_current_market_fact_required")
 
@@ -361,19 +360,11 @@ def entry_orderbook_available(orderbook: dict | None, cutoff: datetime) -> bool:
     return observed.tzinfo is not None and 0 <= (cutoff - observed).total_seconds() <= 2
 
 
-def build_entry_analysis_context(
-    generation: dict,
-    candidate: dict,
-    feature: dict,
-    candle_windows: dict[str, list[dict]],
-    *,
-    cutoff_at: datetime,
-    candidate_detected_at: str | None,
-    positions: list[dict] | None = None,
-    orderbook: dict | None = None,
-    model_provider: str = "custom_planner",
-) -> EntryAnalysisContext:
-    """Freeze exact stored bars and existing causal structure into one model input."""
+def entry_causal_windows(
+    venue: str, symbol: str, market_type: str, direction: str,
+    candle_windows: dict, cutoff: datetime,
+) -> tuple[dict, dict, list[EntryAnchor], list[str]]:
+    """Share the Planner's exact causal admission and structure kernel."""
     from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.data.market_structure import (
         CONTRACT_VERSION,
@@ -385,40 +376,11 @@ def build_entry_analysis_context(
     from aletheia.data.providers import Candle
     from aletheia.data.symbols import InstrumentId
 
-    cutoff = cutoff_at.astimezone(timezone.utc)
     cutoff_ms = int(cutoff.timestamp() * 1000)
     serialized: dict[str, Any] = {}
     structures: dict[str, Any] = {}
     anchors: list[EntryAnchor] = []
     fact_refs: list[str] = []
-    venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
-    opportunity_context = None
-    if generation.get("entry_behavior_fingerprint"):
-        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
-
-        opportunity_context = CandidateOpportunityContextV1.model_validate_json(
-            candidate.get("candidate_opportunity_context_json") or ""
-        )
-        if (
-            opportunity_context.candidate_id != candidate.get("id")
-            or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
-            or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
-            or opportunity_context.opportunity["direction"] != generation.get("direction")
-            or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")
-            or opportunity_context.candidate_selection.get("policy_epoch")
-            != generation.get("candidate_selection_policy_epoch")
-            or opportunity_context.opportunity["mechanism_version"] != generation.get("mechanism_version")
-        ):
-            raise ValueError("candidate_opportunity_generation_identity_mismatch")
-    if (
-        candidate.get("id") != generation.get("last_candidate_id")
-        or candidate.get("venue") != venue
-        or candidate.get("symbol") != symbol
-        or candidate.get("market_type") != market_type
-        or (opportunity_context is None and candidate.get("scanner_family") != generation.get("candidate_family"))
-        or candidate.get("scanner_direction") != generation.get("direction")
-    ):
-        raise ValueError("candidate_generation_identity_mismatch")
     instrument_id = InstrumentId.from_parts(venue, symbol, market_type)
     for timeframe, limit in (("4h", 30), ("1h", 48), ("15m", 96)):
         interval = timeframe_ms(timeframe)
@@ -525,7 +487,6 @@ def build_entry_analysis_context(
             "fact_refs": section_refs,
         }
         if timeframe == "15m" and geometry.availability == "available":
-            direction = str(generation["direction"])
             for item in swings:
                 anchors.append(
                     EntryAnchor(
@@ -563,6 +524,76 @@ def build_entry_analysis_context(
                         aliases=("price_action", "smc"),
                     )
                 )
+    return serialized, structures, anchors, fact_refs
+
+def planning_structure_material(structures: dict) -> dict | None:
+    """Only the latest confirmed 15m high, low and break can requalify a thesis.
+
+    Rolling-window hashes, ATR, candidate anchors and disappearing old facts
+    are not new material. The full immutable fact values remain replayable.
+    """
+    section = structures.get("15m", {})
+    if section.get("availability") != "available":
+        return None
+    swings = section.get("swings", ())
+    groups = ([s for s in swings if s["kind"] == "high"],
+              [s for s in swings if s["kind"] == "low"], section.get("events", ()))
+    facts = [max(group, key=lambda f: (f["known_at_ms"], f["id"])) for group in groups if group]
+    if not facts:
+        return None
+    facts = sorted(facts, key=lambda f: f["id"])
+    return {"facts": facts, "fingerprint": fingerprint(facts)}
+
+
+
+
+
+def build_entry_analysis_context(
+    generation: dict,
+    candidate: dict,
+    feature: dict,
+    candle_windows: dict[str, list[dict]],
+    *,
+    cutoff_at: datetime,
+    candidate_detected_at: str | None,
+    positions: list[dict] | None = None,
+    orderbook: dict | None = None,
+    model_provider: str = "custom_planner",
+) -> EntryAnalysisContext:
+    """Freeze exact stored bars and existing causal structure into one model input."""
+    cutoff = cutoff_at.astimezone(timezone.utc)
+    cutoff_ms = int(cutoff.timestamp() * 1000)
+    venue, symbol, market_type = (str(generation["venue"]), str(generation["symbol"]), str(generation["market_type"]))
+    opportunity_context = None
+    if generation.get("entry_behavior_fingerprint"):
+        from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+        opportunity_context = CandidateOpportunityContextV1.model_validate_json(
+            candidate.get("candidate_opportunity_context_json") or ""
+        )
+        if (
+            opportunity_context.candidate_id != candidate.get("id")
+            or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
+            or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
+            or opportunity_context.opportunity["direction"] != generation.get("direction")
+            or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")
+            or opportunity_context.candidate_selection.get("policy_epoch")
+            != generation.get("candidate_selection_policy_epoch")
+            or opportunity_context.opportunity["mechanism_version"] != generation.get("mechanism_version")
+        ):
+            raise ValueError("candidate_opportunity_generation_identity_mismatch")
+    if (
+        candidate.get("id") != generation.get("last_candidate_id")
+        or candidate.get("venue") != venue
+        or candidate.get("symbol") != symbol
+        or candidate.get("market_type") != market_type
+        or (opportunity_context is None and candidate.get("scanner_family") != generation.get("candidate_family"))
+        or candidate.get("scanner_direction") != generation.get("direction")
+    ):
+        raise ValueError("candidate_generation_identity_mismatch")
+    serialized, structures, anchors, fact_refs = entry_causal_windows(
+        venue, symbol, market_type, str(generation["direction"]), candle_windows, cutoff,
+    )
     if opportunity_context is not None:
         candidate_detected_at = str(opportunity_context.source["detected_at"])
     if candidate_detected_at is None:

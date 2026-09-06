@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -76,6 +77,16 @@ def _safe_failure_diagnostics(value: dict[str, str] | None) -> dict[str, str]:
     schema_error_code = value.get("schema_error_code")
     if schema_error_code in _SAFE_SCHEMA_ERROR_CODES:
         safe["schema_error_code"] = schema_error_code
+    semantic_code = value.get("semantic_error_code")
+    if isinstance(semantic_code, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", semantic_code):
+        safe["semantic_error_code"] = semantic_code
+    finish_reason = value.get("finish_reason")
+    if finish_reason in {"stop", "length", "max_tokens", "incomplete", "unknown"}:
+        safe["finish_reason"] = finish_reason
+    for key in ("output_tokens", "output_limit"):
+        count = value.get(key)
+        if isinstance(count, str) and re.fullmatch(r"[0-9]{1,12}", count):
+            safe[key] = count
     return safe
 
 

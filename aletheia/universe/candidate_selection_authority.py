@@ -1,4 +1,4 @@
-"""Single qualification and owner-admission gate for Candidate authority."""
+"""Operational Candidate identity and historical transition recovery."""
 
 from __future__ import annotations
 
@@ -114,41 +114,10 @@ def candidate_selection_policy_identity(
     identity: dict[str, object] = {
         "semantic_manifest": candidate_selection_semantic_manifest(),
         "max_candidates": universe.max_candidates,
-        "min_volume_24h_usdt": universe.min_volume_24h_usdt,
-        "max_spread_bps": universe.max_spread_bps,
-        "min_depth_10bps_usd": universe.min_depth_10bps_usd,
+        "min_volume_24h_usdt": float(universe.min_volume_24h_usdt),
+        "max_spread_bps": float(universe.max_spread_bps),
+        "min_depth_10bps_usd": float(universe.min_depth_10bps_usd),
         "blacklist": sorted({str(item).upper() for item in universe.blacklist}),
-        "legacy_control": {
-            "explore_ratio": universe.explore_ratio,
-            "family_quota": {
-                str(family): float(quota)
-                for family, quota in sorted(universe.family_quota.items())
-            },
-            "family_quota_by_regime": {
-                str(regime): {
-                    str(family): float(quota)
-                    for family, quota in sorted(quotas.items())
-                }
-                for regime, quotas in sorted(universe.family_quota_by_regime.items())
-            },
-            "scanner_weights": {
-                str(family): float(weight)
-                for family, weight in sorted(universe.scanner_weights.items())
-            },
-            **(
-                {
-                    "family_spread_tolerances": {
-                        str(family): float(tolerance)
-                        for family, tolerance in sorted(family_spread_tolerances.items())
-                    }
-                }
-                if family_spread_tolerances is not None else {}
-            ),
-            **(
-                {"family_spread_tolerance_source": dict(family_spread_evidence)}
-                if family_spread_evidence is not None else {}
-            ),
-        },
     }
     if all(hasattr(cfg, field) for field in ("fast_trigger", "exchange", "market_data")):
         from aletheia.universe.fast_stream import fast_market_data_venue_for_config
@@ -167,13 +136,6 @@ def candidate_selection_policy_identity(
         identity["cost_assumptions"] = {
             "execution_fee_pct": cfg.trading.execution_fee_pct,
             "slippage_bps": cfg.trading.slippage_bps,
-        }
-    if hasattr(cfg, "regime"):
-        from aletheia.regime.detector import REGIME_DETECTOR_BEHAVIOR_VERSION
-
-        identity["legacy_control"]["regime_detection"] = {
-            "behavior_version": REGIME_DETECTOR_BEHAVIOR_VERSION,
-            **cfg.regime.model_dump(mode="json"),
         }
     return identity
 
@@ -195,8 +157,10 @@ def candidate_selection_semantic_manifest() -> dict[str, str]:
     )
     from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
     from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+    from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_VERSION
 
     return {
+        "feature_acquisition": CANDIDATE_FEATURE_ACQUISITION_VERSION,
         "hard_gate": HARD_GATE_VERSION,
         "hard_gate_policy": HARD_GATE_POLICY_VERSION,
         "opportunity_evidence": OPPORTUNITY_EVIDENCE_VERSION,
@@ -239,57 +203,18 @@ def candidate_selection_overlap_block_reason() -> str | None:
     return None
 
 
-def candidate_selection_authority_block_reason(
-    cfg: object,
-    qualification: Mapping[str, object],
-    *,
-    require_admission_record: bool = True,
-) -> str | None:
-    """Return why configured target authority cannot run; legacy is always valid."""
+def candidate_selection_authority_block_reason(cfg: object) -> str | None:
+    """Validate operational identity, never statistical profitability."""
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
 
     universe = getattr(cfg, "universe", cfg)
     if not isinstance(universe, UniverseConfig):
         return "candidate_selection_universe_config_unavailable"
-    if universe.candidate_selection_policy == LEGACY_CANDIDATE_POLICY:
-        return None
-    expected_epoch = str(universe.candidate_selection_policy_epoch or "")
-    if not expected_epoch:
-        return "candidate_selection_policy_epoch_missing"
-    if require_admission_record:
-        try:
-            from aletheia.storage import repositories as repo
-
-            admitted = repo.candidate_selection_epoch_is_admitted(expected_epoch)
-        except Exception:
-            return "candidate_selection_admission_evidence_unavailable"
-        if not admitted:
-            return "candidate_selection_admission_record_missing"
-    if qualification.get("verdict") != "positive":
-        return "candidate_selection_qualification_not_positive"
-    if qualification.get("promotion_eligible") is not True:
-        return "candidate_selection_promotion_not_eligible"
-    if str(qualification.get("policy_epoch_id") or "") != expected_epoch:
+    if universe.candidate_selection_policy != TARGET_CANDIDATE_POLICY:
+        return "candidate_selection_legacy_runtime_removed"
+    expected_epoch = canonical_fingerprint(candidate_selection_policy_identity(cfg))
+    if universe.candidate_selection_policy_epoch != expected_epoch:
         return "candidate_selection_policy_epoch_mismatch"
-    qualification_policy = qualification.get("selection_policy")
-    frozen_tolerances = None
-    frozen_tolerance_source = None
-    if isinstance(qualification_policy, Mapping):
-        legacy_control = qualification_policy.get("legacy_control")
-        if isinstance(legacy_control, Mapping):
-            value = legacy_control.get("family_spread_tolerances")
-            if isinstance(value, Mapping):
-                frozen_tolerances = value
-            value = legacy_control.get("family_spread_tolerance_source")
-            if isinstance(value, Mapping):
-                frozen_tolerance_source = value
-    if qualification_policy != candidate_selection_policy_identity(
-        cfg,
-        family_spread_tolerances=frozen_tolerances,
-        family_spread_evidence=frozen_tolerance_source,
-    ):
-        return "candidate_selection_policy_identity_mismatch"
-    if qualification.get("blocking_reasons") or qualification.get("invalid_reasons"):
-        return "candidate_selection_qualification_invalid"
     return None
 
 

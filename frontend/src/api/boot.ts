@@ -3,9 +3,38 @@ import type { components } from './generated/api'
 
 export type BootstrapAvailability = 'available' | 'unavailable'
 
-// Static contract assertion note: operator?: { permission_mode?: string }
-export type ShellBootstrap = components['schemas']['ShellBootstrapResponse']
-export type OverviewBootstrap = components['schemas']['OverviewBootstrapResponse']
+export interface ShellBootstrap {
+  schema_version: 'ui-shell-v1'
+  generated_at: string
+  freshness?: { state: string; max_age_sec: number }
+  availability?: BootstrapAvailability
+  reason?: string
+  gateway?: { running?: boolean; paused?: boolean }
+  scheduler?: { running?: boolean; state?: string; enabled?: boolean }
+  live?: { state?: string; enabled?: boolean }
+  permission?: { mode?: string }
+  kill_switch?: { active?: boolean }
+  risk?: { status?: string; violations?: string[]; kill_switch_active?: boolean }
+  exchange?: { status?: string; execution_exchange?: string | null; data_exchange?: string | null; exchange_diverged?: boolean; paper_execution_mode?: string | null }
+  operator?: { status?: string; mode?: string; permission_mode?: string; model_provider?: string | null; last_seen_at?: string | null; stale?: boolean; heartbeat_age_sec?: number; current_intent?: string | null; trading_daemon?: { evaluating?: boolean; state?: string; last_error_summary?: string | null } }
+  connectivity?: { state: 'reachable' | 'unavailable' | 'recovering' | 'unknown'; reason: string }
+  health?: { status?: string; issues?: string[]; availability?: string; reason?: string | null }
+  runtime?: { version?: string; boot_commit?: string | null; current_commit?: string | null; mode?: string; update?: Record<string, unknown> }
+  ticker?: Record<string, Record<string, unknown>>
+}
+
+export interface OverviewBootstrap {
+  schema_version: 'ui-overview-v1'
+  generated_at: string
+  availability?: BootstrapAvailability
+  reason?: string
+  account?: Record<string, unknown>
+  summary?: { active_entry_plans?: number; needs_planning?: number; expiring_soon?: number; runs_24h?: number } | null
+  activity?: Array<Record<string, unknown>>
+  setup_required?: boolean
+  coverage?: Record<string, unknown>
+  errors?: Record<string, string>
+}
 
 export const bootApi = {
   getShellBootstrap: ({ signal }: { signal?: AbortSignal } = {}) =>

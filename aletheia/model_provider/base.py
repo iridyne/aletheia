@@ -140,14 +140,9 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
                 primary = normalize(non_null[0])
                 if isinstance(primary, dict) and primary.get("type"):
                     node = {
-                        **primary,
+                        **nullable(primary),
                         **{key: value for key, value in node.items() if key != "anyOf"},
                     }
-                    primary_type = primary["type"]
-                    if isinstance(primary_type, list):
-                        node["type"] = [*primary_type, "null"]
-                    else:
-                        node["type"] = [primary_type, "null"]
 
         normalized: dict[str, Any] = {}
         required = set(node.get("required") or ())

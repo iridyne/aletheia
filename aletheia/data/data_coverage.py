@@ -9,7 +9,7 @@ from collections import Counter
 import logging
 import time
 
-from aletheia.data.freshness import assess_freshness
+from aletheia.data.freshness import MAX_FUTURE_SKEW, assess_freshness
 from aletheia.storage.sqlite import get_db
 
 
@@ -91,49 +91,63 @@ DOMAIN_DEFINITIONS = (
 )
 
 
-def _query_domain(definition: DomainDefinition) -> dict:
+def _query_domain(definition: DomainDefinition, *, targets: list[tuple] | None = None) -> dict:
     db = get_db()
-    where = f" WHERE {definition.where_sql}" if definition.where_sql else ""
-    symbol_expr = (
-        f"COUNT(DISTINCT {definition.symbol_column})" if definition.symbol_column else "0"
-    )
+    clauses = [definition.where_sql] if definition.where_sql else []
+    params = definition.where_params
+    identity = "symbol, exchange"
+    if targets is not None:
+        if definition.domain in {"orderbook", "ohlcv"}:
+            identity += ", market_type"
+        if targets:
+            placeholders = ",".join("(" + ",".join("?" for _ in target) + ")" for target in targets)
+            clauses.append(f"({identity}) IN ({placeholders})")
+            params += tuple(value for target in targets for value in target)
+        else:
+            clauses.append("0")
+    where = " WHERE " + " AND ".join(f"({clause})" for clause in clauses) if clauses else ""
+    symbol_expr = f"COUNT(DISTINCT {definition.symbol_column})" if definition.symbol_column else "0"
     row = db.execute(
         f"SELECT COUNT(*) AS row_count, {symbol_expr} AS symbol_count, "
-        f"MAX({definition.newest_column}) AS newest FROM {definition.table}{where}",
-        definition.where_params,
+        f"MAX({definition.newest_column}) AS newest FROM {definition.table}{where}", params,
     ).fetchone()
-
-    source_counts: dict[str, int] = {}
+    source_counts = {}
     if definition.source_column:
-        source_rows = db.execute(
-            f"SELECT COALESCE({definition.source_column}, 'unknown') AS source, "
-            f"COUNT(*) AS count FROM {definition.table}{where} GROUP BY source",
-            definition.where_params,
-        ).fetchall()
-        source_counts = {str(item["source"]): int(item["count"]) for item in source_rows}
-
-    freshness_rows: list[dict] | None = None
-    if definition.domain in _PRIMARY_FRESHNESS_DOMAINS:
-        latest_rows = db.execute(
-            "SELECT observed_at, source_observed_at, acquired_at, source_time_status "
-            "FROM (SELECT observed_at, source_observed_at, acquired_at, "
-            "source_time_status, ROW_NUMBER() OVER ("
-            "PARTITION BY symbol, COALESCE(exchange, '') "
-            "ORDER BY COALESCE(acquired_at, observed_at) DESC, rowid DESC) "
-            "AS freshness_rank "
-            f"FROM {definition.table}{where}) WHERE freshness_rank=1",
-            definition.where_params,
-        ).fetchall()
-        freshness_rows = [dict(item) for item in latest_rows]
-
+        source_counts = {
+            str(item["source"]): int(item["count"])
+            for item in db.execute(
+                f"SELECT COALESCE({definition.source_column}, 'unknown') AS source, "
+                f"COUNT(*) AS count FROM {definition.table}{where} GROUP BY source", params,
+            )
+        }
     result = {
         "row_count": int(row["row_count"] or 0),
         "symbol_count": int(row["symbol_count"] or 0),
         "newest": row["newest"],
         "source_counts": source_counts,
     }
-    if freshness_rows is not None:
-        result["freshness_rows"] = freshness_rows
+    if definition.domain in _PRIMARY_FRESHNESS_DOMAINS:
+        # Current positioning must describe the latest OI row, not resurrect an
+        # older non-null ratio after the latest collector omitted that target.
+        latest_where = where
+        value_expr = "1"
+        if targets is not None and definition.domain == "long_short_ratio":
+            latest_clauses = [_PRIMARY_DERIVATIVE_WHERE, *clauses[1:]]
+            latest_where = " WHERE " + " AND ".join(f"({clause})" for clause in latest_clauses)
+            value_expr = "long_short_ratio IS NOT NULL"
+        result["freshness_rows"] = [dict(item) for item in db.execute(
+            "SELECT observed_at, source_observed_at, acquired_at, source_time_status, has_value "
+            "FROM (SELECT observed_at, source_observed_at, acquired_at, source_time_status, "
+            f"{value_expr} AS has_value, ROW_NUMBER() OVER ("
+            "PARTITION BY symbol, COALESCE(exchange, '') "
+            "ORDER BY COALESCE(acquired_at, observed_at) DESC, rowid DESC) AS freshness_rank "
+            f"FROM {definition.table}{latest_where}) WHERE freshness_rank=1", params,
+        )]
+    elif targets is not None:
+        result["freshness_rows"] = [dict(item) for item in db.execute(
+            f"SELECT MAX({definition.newest_column}) AS observed_at "
+            f"FROM {definition.table}{where} GROUP BY {identity}", params,
+        )]
     return result
 
 
@@ -143,7 +157,7 @@ def _parse_newest(value: object, *, timestamp_ms: bool) -> datetime | None:
     if timestamp_ms:
         try:
             return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc)
-        except (TypeError, ValueError, OSError):
+        except (TypeError, ValueError, OSError, OverflowError):
             return None
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
@@ -154,100 +168,114 @@ def _parse_newest(value: object, *, timestamp_ms: bool) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dict:
-    domain_rows: list[dict] = []
-    critical_problem_count = 0
-    problem_count = 0
+def _summarize_domain(
+    definition: DomainDefinition, values: dict, now: datetime, *, target_count: int | None = None,
+) -> dict:
+    newest = _parse_newest(values["newest"], timestamp_ms=definition.timestamp_ms)
+    rows = values.get("freshness_rows")
+    if rows is None:
+        rows = [{"observed_at": values["newest"]}] if values["row_count"] else []
+    missing_targets = 0 if target_count is None else target_count - sum(
+        bool(row.get("has_value", True)) for row in rows
+    )
+    counts: Counter[str] = Counter()
+    ages: list[float] = []
+    for row in rows:
+        if not row.get("has_value", True):
+            continue
+        if definition.domain in _PRIMARY_FRESHNESS_DOMAINS:
+            verdict = assess_freshness(
+                {**row, "source_time_status": row.get("source_time_status") or "missing"},
+                _PRIMARY_FRESHNESS_DOMAINS[definition.domain], now=now,
+            )
+            state, age = verdict.state, verdict.age_seconds
+        else:
+            observed = _parse_newest(row["observed_at"], timestamp_ms=definition.timestamp_ms)
+            age = (now - observed).total_seconds() if observed else None
+            state = (
+                "invalid" if observed is None
+                else "future" if age < -MAX_FUTURE_SKEW.total_seconds()
+                else "stale" if age > definition.max_age_sec
+                else "fresh"
+            )
+        counts[state] += 1
+        if age is not None:
+            ages.append(max(0.0, age))
+    unavailable = sum(counts[state] for state in ("missing", "invalid", "future"))
+    if target_count == 0:
+        state = "idle"
+    elif values["row_count"] == 0:
+        state = "idle" if definition.idle_when_old else "empty"
+    elif unavailable:
+        state = "invalid"
+    elif missing_targets:
+        state = "idle" if definition.idle_when_old else "invalid"
+    elif counts["stale"]:
+        state = "idle" if definition.idle_when_old else "stale"
+    else:
+        state = "fresh"
+    if missing_targets:
+        counts["missing"] += missing_targets
+    return {
+        "state": state,
+        "row_count": values["row_count"],
+        "symbol_count": values["symbol_count"],
+        "source_counts": values["source_counts"],
+        "newest_observed_at": newest.isoformat() if newest else None,
+        "age_sec": round(max(ages), 1) if ages else None,
+        "fresh_row_count": counts["fresh"],
+        "stale_row_count": counts["stale"],
+        "unavailable_row_count": unavailable + missing_targets,
+        "freshness_state_counts": dict(sorted(counts.items())),
+        "missing_target_count": missing_targets,
+    }
 
+
+def _build_report(now: datetime, timings: dict[str, float] | None = None) -> dict:
+    from aletheia.agent_runtime.scheduler import get_collector_targets
+    from aletheia.config.loader import load_config
+
+    cfg = load_config(persist_migrations=False)
+    instruments, derivative_symbols = get_collector_targets(cfg)
+    instrument_targets = list(dict.fromkeys(
+        (item.symbol, item.exchange, item.market_type) for item in instruments
+    ))
+    derivative_targets = [(symbol, cfg.market_data.ccxt_exchange) for symbol in derivative_symbols]
+    domains: list[dict] = []
     for definition in DOMAIN_DEFINITIONS:
         started = time.perf_counter()
-        values = _query_domain(definition)
-        if timings is not None:
-            timings[definition.domain] = (time.perf_counter() - started) * 1000.0
-        newest = _parse_newest(values["newest"], timestamp_ms=definition.timestamp_ms)
-        age_sec = max(0.0, (now - newest).total_seconds()) if newest else None
-        freshness_state_counts: Counter[str] = Counter()
-        unavailable_count = 0
-        freshness_rows = values.get("freshness_rows")
-        if freshness_rows is not None:
-            verdicts = [
-                assess_freshness(
-                    {
-                        **row,
-                        "source_time_status": row.get("source_time_status")
-                        or "missing",
-                    },
-                    _PRIMARY_FRESHNESS_DOMAINS[definition.domain],
-                    now=now,
-                )
-                for row in freshness_rows
-            ]
-            freshness_state_counts.update(verdict.state for verdict in verdicts)
-            ages = [
-                verdict.age_seconds
-                for verdict in verdicts
-                if verdict.age_seconds is not None
-            ]
-            age_sec = max(0.0, max(ages)) if ages else None
-            unavailable_count = sum(
-                freshness_state_counts[state]
-                for state in ("missing", "invalid", "future")
-            )
-            if values["row_count"] == 0:
-                state = "idle" if definition.idle_when_old else "empty"
-            elif unavailable_count or not verdicts:
-                state = "invalid"
-            elif freshness_state_counts["stale"]:
-                state = "idle" if definition.idle_when_old else "stale"
-            else:
-                state = "fresh"
-        elif values["row_count"] == 0:
-            state = "idle" if definition.idle_when_old else "empty"
-        elif newest is None:
-            state = "invalid"
-        elif age_sec is not None and age_sec > definition.max_age_sec:
-            state = "idle" if definition.idle_when_old else "stale"
-        else:
-            state = "fresh"
-
-        is_problem = state in {"empty", "invalid", "stale"}
-        if is_problem:
-            problem_count += 1
-            if definition.critical:
-                critical_problem_count += 1
-        domain_row = {
+        targets = (
+            instrument_targets if definition.domain in {"orderbook", "ohlcv"}
+            else derivative_targets if definition.domain in _PRIMARY_FRESHNESS_DOMAINS
+            else None
+        )
+        inventory = _summarize_domain(definition, _query_domain(definition), now)
+        current = inventory if targets is None else _summarize_domain(
+            definition, _query_domain(definition, targets=targets), now, target_count=len(targets),
+        )
+        domains.append({
             "domain": definition.domain,
             "label": definition.label,
-            "state": state,
             "critical": definition.critical,
-            "row_count": values["row_count"],
-            "symbol_count": values["symbol_count"],
-            "source_counts": values["source_counts"],
-            "newest_observed_at": newest.isoformat() if newest else None,
-            "age_sec": round(age_sec, 1) if age_sec is not None else None,
             "max_age_sec": definition.max_age_sec,
-        }
-        if freshness_rows is not None:
-            domain_row.update({
-                "fresh_row_count": freshness_state_counts["fresh"],
-                "stale_row_count": freshness_state_counts["stale"],
-                "unavailable_row_count": unavailable_count,
-                "freshness_state_counts": dict(sorted(freshness_state_counts.items())),
-            })
-        domain_rows.append(domain_row)
-
-    status = "healthy" if problem_count == 0 else "attention"
-    if all(row["state"] == "empty" for row in domain_rows):
-        status = "empty"
+            **current,
+            "scope": "global" if targets is None else "current_targets",
+            "target_count": None if targets is None else len(targets),
+            "inventory": inventory,
+        })
+        if timings is not None:
+            timings[definition.domain] = (time.perf_counter() - started) * 1000.0
+    problems = [row for row in domains if row["state"] in {"empty", "invalid", "stale"}]
     return {
-        "status": status,
+        "status": "empty" if all(row["state"] == "empty" for row in domains) else "attention" if problems else "healthy",
         "generated_at": now.isoformat(),
-        "domain_count": len(domain_rows),
-        "fresh_count": sum(row["state"] == "fresh" for row in domain_rows),
-        "problem_count": problem_count,
-        "critical_problem_count": critical_problem_count,
-        "domains": domain_rows,
+        "domain_count": len(domains),
+        "fresh_count": sum(row["state"] == "fresh" for row in domains),
+        "problem_count": len(problems),
+        "critical_problem_count": sum(row["critical"] for row in problems),
+        "domains": domains,
     }
+
 
 
 def clear_data_coverage_cache() -> None:

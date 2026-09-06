@@ -7,6 +7,211 @@ unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 import sqlite3
 
 
+def test_candidate_progress_observe_only_and_missing_profiles_are_not_stalls(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from tests.test_entry_planner import _typed_candidate
+    setup_env(tmp_path, monkeypatch)
+    start = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    for mechanism, family, capability in (("positioning_forced_flow", "derivatives", "observe_only"),
+                                          ("information_catalyst", "catalyst", "unavailable")):
+        candidate = _typed_candidate(mechanism=mechanism, family=family, capability=capability)
+        repo.ensure_candidate_planning_generation(candidate.id, now=start)
+        progress = repo.get_candidate_path_progress(now=start+timedelta(seconds=481))
+        assert progress["ready_planning_count"] == 0
+        assert "candidate_planning_stalled" not in progress["issues"]
+    candidate = _typed_candidate(mechanism="continuation", family="momentum")
+    repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    monkeypatch.setattr("aletheia.trading.entry_profiles.compatible_entry_profiles", lambda mechanism: ())
+    assert repo.get_candidate_path_progress(now=start+timedelta(seconds=481))["ready_planning_count"] == 0
+
+
+def test_candidate_progress_exact_epoch_and_entry_outcome_debt(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import (UniverseScannerRun, UniverseTwinShadowBatch,
+        UniverseTwinShadowEvidence, FilterCandidateOutcome, EntryPlanRecord, Order, Fill)
+    from tests.test_entry_lifecycle_cutover import _typed_candidate
+    setup_env(tmp_path, monkeypatch)
+    now = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    cfg = load_config()
+    cfg.universe = type(cfg.universe).model_validate({**cfg.universe.model_dump(),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": "epoch-1"})
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
+    for index, epoch in enumerate(("old-epoch", "epoch-1")):
+        run_id = f"health-shadow-{index}"
+        repo.insert_universe_scanner_run(UniverseScannerRun(id=run_id, status="completed",
+            started_at=(now-timedelta(minutes=2-index)).isoformat(), completed_at=now.isoformat(),
+            metrics=json.dumps({"candidate_path": {"shadow_capture_status": "pending"}})))
+        batch = UniverseTwinShadowBatch(scanner_run_id=run_id, policy_epoch_id=epoch,
+            record_version="candidate-selection-utility-record/v3", authority_behavior_version="fixture",
+            shadow_behavior_version="fixture", allocation_replay_contract="fixture", feature_source_fingerprint="f",
+            metric_version="fixture", allocator_random_state_json="null", policy_json="{}",
+            allocation_context_json="{}", candidate_count=1, batch_hash=f"hash-{index}", captured_at=now.isoformat())
+        repo._insert("universe_twin_shadow_batches", batch.model_dump())
+        evidence = UniverseTwinShadowEvidence(scanner_run_id=run_id, candidate_key=f"candidate-{index}",
+            candidate_index=0, symbol="BTC/USDT", market_type="perp", authority_total_score=0,
+            compact_output_json=json.dumps({"outcome_candidate_keys": {"long": f"selection-{index}"}}),
+            input_json="{}", record_hash=f"record-{index}")
+        repo._insert("universe_twin_shadow_records", evidence.model_dump())
+    candidate = _typed_candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=now)
+    plan = EntryPlanRecord(id="health-plan", planning_generation_id=generation["id"], candidate_id=candidate.id,
+        planning_key=generation["planning_key"], venue="bitget", symbol="BTC/USDT", market_type="perp",
+        direction="long", execution_mode="RESTING_MAKER", plan_json="{}", plan_hash="a"*64,
+        order_id="health-order", status="filled")
+    repo._insert("entry_plans", plan.model_dump())
+    repo.insert_order(Order(id="health-order", entry_plan_id=plan.id, symbol="BTC/USDT", market_type="perp",
+        direction="long", order_type="limit", quantity=1, execution_mode="paper_internal", status="filled",
+        source="adopted"))  # Historical read fixture, not evidence of native execution authority.
+    repo.insert_fill(Fill(id="health-fill", order_id="health-order", fill_price=100, fill_quantity=1))
+    for key in ("selection-0", "selection-1", "entry-fill:unrelated"):
+        repo.insert_filter_candidate_outcomes_batch([FilterCandidateOutcome(
+            outcome_candidate_key=key, venue="bitget", symbol="BTC/USDT", market_type="perp", direction="long",
+            horizon="4h", entry_price_usd=100, entry_ts=(now-timedelta(hours=5)).isoformat(),
+            due_at=(now-timedelta(seconds=901)).isoformat(), producer_runtime_session_id="previous-process")])
+    repo.execute_write("UPDATE filter_candidate_outcomes SET due_at=?,producer_runtime_session_id=? "
+        "WHERE outcome_candidate_key='entry-fill:health-fill'",
+        ((now-timedelta(seconds=901)).isoformat(), "previous-process"))
+    progress = repo.get_candidate_path_progress(now=now)
+    repo.execute_write("UPDATE universe_twin_shadow_records SET compact_output_json='not json' "
+        "WHERE scanner_run_id='health-shadow-0'")
+    assert repo.get_candidate_path_progress(now=now)["due_outcome_count"] == 2
+    assert progress["due_outcome_count"] == 2
+    assert "candidate_outcome_backlog" in progress["issues"]
+    assert progress["shadow_capture_status"] == "captured"
+    stored = repo.get_db().execute("SELECT metrics FROM universe_scanner_runs WHERE id='health-shadow-1'").fetchone()[0]
+    assert json.loads(stored)["candidate_path"]["shadow_capture_status"] == "pending"
+    repo.execute_write("UPDATE filter_candidate_outcomes SET due_at=? WHERE outcome_candidate_key IN (?,?)",
+        ((now+timedelta(seconds=1)).isoformat(), "selection-1", "entry-fill:health-fill"))
+    assert repo.get_candidate_path_progress(now=now)["due_outcome_count"] == 0
+    repo.execute_write("UPDATE entry_plans SET order_id='missing-order' WHERE id='health-plan'")
+    assert repo.get_candidate_path_progress(now=now)["availability"]["reason"] == "entry_outcome_identity_unavailable"
+
+
+def test_candidate_progress_planning_uses_original_clocks_and_exact_identity(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from tests.test_entry_lifecycle_cutover import _typed_candidate
+    setup_env(tmp_path, monkeypatch)
+    start = datetime(2026, 9, 4, tzinfo=timezone.utc)
+    candidate = _typed_candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
+    now = start + timedelta(seconds=481)
+    progress = repo.get_candidate_path_progress(now=now)
+    assert progress["ready_planning_count"] == 1
+    assert progress["oldest_ready_at"] == start.isoformat()
+    assert "candidate_planning_stalled" in progress["issues"]
+    claimed = repo.claim_next_candidate_planning("health-owner", now=now, lease_seconds=10)
+    assert claimed["id"] == generation["id"]
+    assert repo.get_candidate_path_progress(now=now)["ready_planning_count"] == 0
+    expired = repo.get_candidate_path_progress(now=now+timedelta(seconds=191))
+    assert expired["expired_claim_count"] == 1
+    assert "candidate_planning_stalled" in expired["issues"]
+    repo.execute_write("UPDATE candidate_planning_generations SET status='unavailable',retry_not_before=?,updated_at=? WHERE id=?",
+                       ((now+timedelta(seconds=10)).isoformat(), now.isoformat(), generation["id"]))
+    assert repo.get_candidate_path_progress(now=now)["ready_planning_count"] == 0
+    repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=?,updated_at=? WHERE id=?",
+                       (start.isoformat(), now.isoformat(), generation["id"]))
+    assert "candidate_planning_stalled" in repo.get_candidate_path_progress(now=now)["issues"]
+    repo.execute_write("UPDATE universe_members SET venue='wrong' WHERE id=?", (candidate.id,))
+    invalid = repo.get_candidate_path_progress(now=now)
+    assert invalid["ready_planning_count"] == 0
+    assert invalid["availability"]["reason"] == "planning_identity_unavailable"
+
+
+def test_candidate_progress_health_cadence_and_disabled(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import health, scheduler
+    from aletheia.config.loader import load_config
+    from aletheia.storage.models import UniverseScannerRun
+    setup_env(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    repo.insert_universe_scanner_run(UniverseScannerRun(
+        started_at=now.isoformat(), completed_at=now.isoformat(), status="completed",
+        metrics='{"candidate_path":{"selected_count":0}}'))
+    cfg = load_config()
+    monkeypatch.setattr(health, "load_config", lambda: cfg)
+    monkeypatch.setattr(scheduler, "scheduled_job_status", lambda job: {"registered": True, "paused": False})
+    monkeypatch.setattr(scheduler, "_current_scheduler", lambda: SimpleNamespace(
+        get_job=lambda name: SimpleNamespace(trigger=SimpleNamespace(interval=timedelta(seconds=45)))))
+    health._refresh_candidate_path_progress()
+    assert health.get_candidate_path_progress_snapshot()["ttl_seconds"] == 90
+    assert health.compute_health()["healthy"] is True
+    repo.execute_write("UPDATE universe_scanner_runs SET completed_at=?",
+        ((now-timedelta(seconds=2*cfg.universe.refresh_interval_min*60+601)).isoformat(),))
+    health._refresh_candidate_path_progress()
+    assert "candidate_refresh_stalled" in health.compute_health()["issues"]
+    monkeypatch.setattr(scheduler, "_current_scheduler", lambda: None)
+    health._refresh_candidate_path_progress()
+    assert health.get_candidate_path_progress_snapshot()["availability"]["reason"] == "not_configured"
+    assert health.compute_health()["healthy"] is False
+    cfg.universe.enabled = False
+    health._refresh_candidate_path_progress()
+    assert health.get_candidate_path_progress_snapshot()["availability"]["reason"] == "disabled"
+    assert health.compute_health()["healthy"] is True
+
+
+def test_candidate_progress_refresh_failure_and_valid_empty(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from aletheia.storage.models import UniverseScannerRun
+    setup_env(tmp_path, monkeypatch)
+    now = datetime.now(timezone.utc)
+    repo.insert_universe_scanner_run(UniverseScannerRun(
+        id="health-empty", started_at=(now-timedelta(minutes=1)).isoformat(),
+        completed_at=now.isoformat(), status="completed", snapshot_id="empty-snapshot",
+        metrics=json.dumps({"candidate_path": {"selected_count": 0, "planning_supported_count": 0,
+            "observe_only_count": 0, "selection_reason_counts": {"hard_gate_failed": 3},
+            "shadow_capture_status": "terminal"}}),
+    ))
+    progress = repo.get_candidate_path_progress(now=now)
+    assert progress["availability"]["available"] is True
+    assert progress["selected_count"] == 0
+    assert progress["issues"] == []
+    assert progress["last_snapshot_id"] == "empty-snapshot"
+    repo.insert_universe_scanner_run(UniverseScannerRun(
+        id="health-failed", started_at=(now+timedelta(seconds=1)).isoformat(), status="failed",
+    ))
+    failed = repo.get_candidate_path_progress(now=now+timedelta(seconds=2))
+    assert failed["issues"] == ["candidate_refresh_failed"]
+    assert failed["last_success_at"] == now.isoformat()
+
+
+def test_candidate_progress_cache_health_and_alert_only(tmp_path, monkeypatch):
+    from aletheia.agent_runtime import health
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(health, "_candidate_path_progress", None)
+    assert health.compute_health()["status"] == "initializing"
+    monkeypatch.setattr(health, "_refresh_candidate_path_progress", lambda: None)
+    monkeypatch.setattr(health, "_candidate_path_progress", {
+        "generated_at": "2000-01-01T00:00:00+00:00", "ttl_seconds": 1200,
+        "availability": {"available": True, "reason": None}, "issues": [],
+    })
+    assert health.get_candidate_path_progress_snapshot()["availability"]["reason"] == "cache_expired"
+    assert health.compute_health()["healthy"] is False
+    from datetime import datetime, timezone
+    health._candidate_path_progress["generated_at"] = datetime.now(timezone.utc).isoformat()
+    health._candidate_path_progress["issues"] = ["candidate_planning_stalled", "candidate_outcome_backlog"]
+    monkeypatch.setattr(health, "_trigger_restart", lambda reason: (_ for _ in ()).throw(AssertionError(reason)))
+    monkeypatch.setattr(health, "_send_alert", lambda message: None)
+    result = health.run_health_check()
+    assert result["status"] == "degraded"
+    assert "candidate_outcome_backlog" in result["issues"]
+
+
+def test_candidate_progress_probe_failure_replaces_cache(tmp_path, monkeypatch):
+    from aletheia.agent_runtime import health
+    setup_env(tmp_path, monkeypatch)
+    monkeypatch.setattr(repo, "get_candidate_path_progress", lambda: (_ for _ in ()).throw(RuntimeError("read failed")))
+    health._refresh_candidate_path_progress()
+    progress = health.get_candidate_path_progress_snapshot()
+    assert progress["availability"] == {"available": False, "reason": "probe_failed"}
+    assert progress["generated_at"] is not None
+    assert health.compute_health()["healthy"] is False
+
+
 async def _make_async_provider(provider):
     """Helper for tests: wrap sync mock provider in async."""
     return provider
@@ -34,6 +239,11 @@ def setup_env(tmp_path, monkeypatch):
     # Capture the real function before patching so callers can restore it.
     real_market_stale = health._market_data_stale_minutes
     health.reset_llm_failures()
+    from datetime import datetime, timezone
+    monkeypatch.setattr(health, "_candidate_path_progress", {
+        "generated_at": datetime.now(timezone.utc).isoformat(), "ttl_seconds": 1200,
+        "availability": {"available": True, "reason": None}, "issues": [],
+    })
     monkeypatch.setattr(health, "_exchange_reachable", lambda cfg=None: True)
     # Patch new tri-state helpers to healthy defaults so tests focused on
     # unrelated signals (LLM, code drift, …) get a clean baseline.

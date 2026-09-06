@@ -108,11 +108,9 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [enabled, setEnabled] = useState(false)
   const [refreshMin, setRefreshMin] = useState('10')
   const [maxCandidates, setMaxCandidates] = useState('30')
-  const [corePool, setCorePool] = useState('10')
   const [minVolume, setMinVolume] = useState('5000000')
   const [maxSpread, setMaxSpread] = useState('25')
   const [minDepth, setMinDepth] = useState('25000')
-  const [exploreRatio, setExploreRatio] = useState('0.2')
   const [snapshotTtlEnabled, setSnapshotTtlEnabled] = useState(true)
   const [snapshotTtlHours, setSnapshotTtlHours] = useState('24')
   const [candidateSoftLease, setCandidateSoftLease] = useState('900')
@@ -120,8 +118,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [blacklist, setBlacklist] = useState('')
   const [fallbackSymbols, setFallbackSymbols] = useState('BTC/USDT, ETH/USDT, SOL/USDT')
   const [marketType, setMarketType] = useState('crypto')
-  const [familyQuota, setFamilyQuota] = useState<Record<string, string>>({})
-  const [familyQuotaByRegime, setFamilyQuotaByRegime] = useState<Record<string, Record<string, string>>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [changed, setChanged] = useState(false)
 
@@ -135,11 +131,9 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setEnabled(!!universe.enabled)
       setRefreshMin(String(universe.refresh_interval_min ?? 10))
       setMaxCandidates(String(universe.max_candidates ?? 30))
-      setCorePool(String(universe.core_pool_size ?? 10))
       setMinVolume(String(universe.min_volume_24h_usdt ?? 5000000))
       setMaxSpread(String(universe.max_spread_bps ?? 25))
       setMinDepth(String(universe.min_depth_10bps_usd ?? 25000))
-      setExploreRatio(String(universe.explore_ratio ?? 0.2))
       setSnapshotTtlEnabled(universe.snapshot_ttl_enabled ?? true)
       setSnapshotTtlHours(String(universe.snapshot_ttl_hours ?? 24))
       setCandidateSoftLease(String(universe.entry_ttl_sec ?? 900))
@@ -147,39 +141,18 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setBlacklist(listToCsv(universe.blacklist))
       setFallbackSymbols(listToCsv(universe.fallback_symbols ?? ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']))
       setMarketType(universe.market_type || 'crypto')
-      const fq = universe.family_quota || { momentum: 0.3, mean_reversion: 0.2, derivatives: 0.3, event: 0.2 }
-      const stringified: Record<string, string> = {}
-      for (const [k, v] of Object.entries(fq)) stringified[k] = String(v)
-      setFamilyQuota(stringified)
-      const fqr = (universe.family_quota_by_regime || {}) as Record<string, Record<string, number>>
-      const fqrStr: Record<string, Record<string, string>> = {}
-      for (const [regime, quota] of Object.entries(fqr)) {
-        fqrStr[regime] = {}
-        for (const [fam, v] of Object.entries(quota)) fqrStr[regime][fam] = String(v)
-      }
-      setFamilyQuotaByRegime(fqrStr)
     },
   })
 
   const mut = useMutation({
     mutationFn: () => {
-      const fqParsed: Record<string, number> = {}
-      for (const [k, v] of Object.entries(familyQuota)) fqParsed[k] = parseFloat(v) || 0
-      const fqrParsed: Record<string, Record<string, number>> = {}
-      for (const [regime, quota] of Object.entries(familyQuotaByRegime)) {
-        fqrParsed[regime] = {}
-        for (const [fam, v] of Object.entries(quota)) fqrParsed[regime][fam] = parseFloat(v) || 0
-      }
       return api.updateUniverseConfig({
-        family_quota_by_regime: fqrParsed,
         enabled,
         refresh_interval_min: parseInt(refreshMin),
         max_candidates: parseInt(maxCandidates),
-        core_pool_size: parseInt(corePool),
         min_volume_24h_usdt: parseFloat(minVolume),
         max_spread_bps: parseFloat(maxSpread),
         min_depth_10bps_usd: parseFloat(minDepth),
-        explore_ratio: parseFloat(exploreRatio),
         snapshot_ttl_enabled: snapshotTtlEnabled,
         snapshot_ttl_hours: parseFloat(snapshotTtlHours),
         entry_ttl_sec: parseInt(candidateSoftLease),
@@ -187,7 +160,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         blacklist: parseCsvList(blacklist),
         fallback_symbols: parseCsvList(fallbackSymbols),
         market_type: marketType,
-        family_quota: fqParsed,
       })
     },
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); setChanged(false); qc.invalidateQueries({ queryKey: ['settings'] }) },
@@ -216,11 +188,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
             onChange={e => { setMaxCandidates(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <label className="settings-field">
-          <span>Core pool size</span>
-          <input type="number" min={1} max={50} step={1} value={corePool}
-            onChange={e => { setCorePool(e.target.value); setChanged(true); setMsg(null) }} />
-        </label>
-        <label className="settings-field">
           <span>Min 24h volume (USDT)</span>
           <input type="number" min={100000} max={500000000} step={100000} value={minVolume}
             onChange={e => { setMinVolume(e.target.value); setChanged(true); setMsg(null) }} />
@@ -234,11 +201,6 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           <span>Min depth @ 10bps (USD)</span>
           <input type="number" min={1000} max={10000000} step={1000} value={minDepth}
             onChange={e => { setMinDepth(e.target.value); setChanged(true); setMsg(null) }} />
-        </label>
-        <label className="settings-field">
-          <span>Explore ratio</span>
-          <input type="number" min={0} max={0.5} step={0.05} value={exploreRatio}
-            onChange={e => { setExploreRatio(e.target.value); setChanged(true); setMsg(null) }} />
         </label>
         <div className="settings-field">
           <span id={snapshotTtlLabelId}>Snapshot TTL</span>
@@ -288,72 +250,15 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           </select>
         </label>
       </div>
-      <div className="mb-3">
-        <span className="settings-field-label">Family quota (must sum to 1.0)</span>
-        <div className="settings-field-grid">
-          {Object.entries(familyQuota).map(([family, val]) => (
-            <label className="settings-field" key={family}>
-              <span>{humanize(family)}</span>
-              <input type="number" min={0} max={1} step={0.05} value={val}
-                onChange={e => { setFamilyQuota(prev => ({ ...prev, [family]: e.target.value })); setChanged(true); setMsg(null) }} />
-            </label>
-          ))}
-        </div>
-        {(() => {
-          const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
-          const ok = Math.abs(total - 1.0) < 0.001
-          return <div className={`text-2xs mt-1 ${ok ? 'text-green' : 'text-red'}`}>Total: {total.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
-        })()}
-      </div>
-      <Collapsible title="Per-regime family quota overrides">
-      <div className="mb-3">
-        <span className="settings-field-label">Per-regime family quota (2A+.9 — overrides the static quota above when that regime is active; each row must sum to 1.0)</span>
-        {Object.entries(familyQuotaByRegime).map(([regime, quota]) => {
-          const rt = Object.values(quota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
-          const ok = Math.abs(rt - 1.0) < 0.001
-          return (
-            <div key={regime} className="mb-2">
-              <span className="settings-field-label">{humanize(regime)}</span>
-              <div className="settings-field-grid">
-                {Object.entries(quota).map(([family, val]) => (
-                  <label className="settings-field" key={family}>
-                    <span>{humanize(family)}</span>
-                    <input type="number" min={0} max={1} step={0.05} value={val}
-                      onChange={e => {
-                        const nv = e.target.value
-                        setFamilyQuotaByRegime(prev => ({ ...prev, [regime]: { ...prev[regime], [family]: nv } }))
-                        setChanged(true); setMsg(null)
-                      }} />
-                  </label>
-                ))}
-              </div>
-              <div className={`text-2xs mt-1 ${ok ? 'text-green' : 'text-red'}`}>Total: {rt.toFixed(3)}{ok ? ' ✓' : ' — must equal 1.0'}</div>
-            </div>
-          )
-        })}
-      </div>
-      </Collapsible>
       <div className="flex items-center gap-2">
         <button onClick={() => {
-          const total = Object.values(familyQuota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
-          if (Math.abs(total - 1.0) > 0.001) {
-            setMsg({ ok: false, text: `Family quota must sum to 1.0 (currently ${total.toFixed(3)})` })
-            return
-          }
-          for (const [regime, quota] of Object.entries(familyQuotaByRegime)) {
-            const rt = Object.values(quota).reduce((s, v) => s + (parseFloat(v) || 0), 0)
-            if (Math.abs(rt - 1.0) > 0.001) {
-              setMsg({ ok: false, text: `${humanize(regime)} regime quota must sum to 1.0 (currently ${rt.toFixed(3)})` })
-              return
-            }
-          }
           mut.mutate()
         }} disabled={mut.isPending}>{mut.isPending ? 'Saving…' : 'Save'}</button>
       </div>
       <SaveMsg msg={msg} />
       {((universe?.scanner_weights && Object.keys(universe.scanner_weights).length > 0) ||
         (universe?.scanner_regime_scoring && Object.keys(universe.scanner_regime_scoring).length > 0)) && (
-      <Collapsible title="Scanner internals (read-only)">
+      <Collapsible title="Legacy scanner internals (historical, read-only)">
       {universe?.scanner_weights && Object.keys(universe.scanner_weights).length > 0 && (
         <div className="mb-3">
           <span className="settings-field-label">Scanner weights (operator-adjusted, read-only)</span>
@@ -365,7 +270,7 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
               </label>
             ))}
           </div>
-          <p className="hint m-0">Adjusted autonomously by the System Operator. Reset via <code>aletheia config set universe.scanner_weights &#123;&#125;</code>.</p>
+          <p className="hint m-0">Historical Legacy weights; not used by current Candidate selection.</p>
         </div>
       )}
       {universe?.scanner_regime_scoring && Object.keys(universe.scanner_regime_scoring).length > 0 && (
@@ -379,15 +284,13 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
               </label>
             ))}
           </div>
-          <p className="hint m-0">Soft ranker score deltas applied per candidate by regime × direction/family (applies to strategy-less opportunities too — not a hard block). Tune via <code>aletheia config set universe.scanner_regime_scoring &#123;…&#125;</code>.</p>
+          <p className="hint m-0">Historical Legacy scoring deltas; not current Candidate admission or allocation controls.</p>
         </div>
       )}
       </Collapsible>
       )}
       <p className="hint">
-        {universe?.candidate_selection_policy === 'candidate_selection_utility_v1'
-          ? `When enabled, the Universe Generator scans observable instruments every ${refreshMin} min, applies the exact Hard Gate and admits only actionable, above-floor 4h cost-after Utility up to the ${maxCandidates}-Candidate ceiling. It does not fill empty slots.`
-          : `When enabled, the legacy selector scans all exchange USDT pairs every ${refreshMin} min, scores momentum/mean-reversion/volatility/derivatives, and keeps the top ${maxCandidates} as Candidates. Explore ratio (${(parseFloat(exploreRatio) * 100).toFixed(0)}%) adds random diversity.`}
+        {`每 ${refreshMin} 分钟检查真实行情与硬门槛，最多选择 ${maxCandidates} 个 Candidate。收益排序：预期净收益；成熟且收益合格者优先，冷启动：信号强度，仅在样本不足时补剩余名额。未知收益不是 0，信号强度不是收益概率。`}
         {' '}
         Interval and TTL changes take effect after gateway restart.
       </p>
@@ -395,79 +298,18 @@ function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   )
 }
 
-function CandidateSelectionAuthorityCard({ qc }: Pick<SettingsDirtyProps, 'qc'>) {
-  const confirm = useConfirm()
-  const [reason, setReason] = useState('')
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const status = useQuery({
-    queryKey: ['candidate-selection-authority'],
-    queryFn: api.getCandidateSelectionStatus,
-  })
-  const refresh = () => {
-    qc.invalidateQueries({ queryKey: ['settings'] })
-    qc.invalidateQueries({ queryKey: ['candidate-selection-authority'] })
-  }
-  const admit = useMutation({
-    mutationFn: (epoch: string) => api.admitCandidateSelection(epoch, reason.trim()),
-    onSuccess: () => { setMsg({ ok: true, text: 'Target policy configured; the active snapshot changes after a successful refresh' }); setReason(''); refresh() },
-    onError: (error: any) => setMsg({ ok: false, text: error.message }),
-  })
-  const rollback = useMutation({
-    mutationFn: () => api.rollbackCandidateSelection(reason.trim()),
-    onSuccess: () => { setMsg({ ok: true, text: 'Legacy policy configured; the active snapshot changes after a successful refresh' }); setReason(''); refresh() },
-    onError: (error: any) => setMsg({ ok: false, text: error.message }),
-  })
-  const qualification = status.data?.qualification
-  const epoch = qualification?.policy_epoch_id
-  const reasonValid = reason.trim().length >= 8
-  const canAdmit = status.data?.configured_policy === 'legacy_total_score_v1'
-    && qualification?.verdict === 'positive'
-    && qualification.promotion_eligible
-    && !!epoch
-  const displayBlockReason = status.data?.configured_policy === 'legacy_total_score_v1'
-    ? status.data?.admission_block_reason
-    : status.data?.authority_block_reason
-
+function CandidateSelectionAuthorityCard() {
+  const status = useQuery({ queryKey: ['candidate-selection-authority'], queryFn: api.getCandidateSelectionStatus })
   return (
     <div className="card mb-0 mt-3">
-      <div className="section-label">Candidate Selection Authority</div>
-      {status.isError ? <p className="hint">Qualification evidence is unavailable.</p> : status.isPending ? <p className="hint">Loading qualification…</p> : <>
-        <p className="hint">
-          Configured policy: <span className="mono">{humanize(status.data?.configured_policy)}</span>. Qualification: {humanize(qualification?.verdict)}.
-          {' '}Fixed look: {qualification?.fixed_look_cluster_n ?? 0} clusters, {qualification?.consecutive_eligible_utc_days ?? 0} UTC days, {fmtNum((qualification?.full_arm_outcome_coverage ?? 0) * 100)}% outcome coverage.
-        </p>
-        {displayBlockReason && <p className="hint">Authority block: <span className="mono">{humanize(displayBlockReason)}</span></p>}
-        <label className="settings-form-field">
-          <span className="settings-form-label">Owner reason</span>
-          <input aria-label="Candidate selection authority reason" value={reason} onChange={event => { setReason(event.target.value); setMsg(null) }} placeholder="At least 8 characters" />
-        </label>
-        <div className="settings-action-row">
-          {status.data?.configured_policy === 'legacy_total_score_v1' ? <button
-            disabled={!canAdmit || !reasonValid || admit.isPending}
-            onClick={async () => {
-              if (!epoch || !(await confirm({
-                title: 'Admit Candidate Selection Utility?',
-                description: `This exact qualified epoch (${epoch}) will be authorized for the next successful Candidate refresh. Risk and execution gates remain unchanged.`,
-                confirmLabel: 'Admit exact epoch',
-                variant: 'warning',
-              }))) return
-              admit.mutate(epoch)
-            }}
-          >{admit.isPending ? 'Admitting…' : 'Admit qualified epoch'}</button> : <button
-            disabled={!reasonValid || rollback.isPending}
-            onClick={async () => {
-              if (!(await confirm({
-                title: 'Restore legacy Candidate selection?',
-                description: 'Future Universe refreshes will use legacy total score. Existing evidence remains immutable.',
-                confirmLabel: 'Restore legacy',
-                variant: 'danger',
-              }))) return
-              rollback.mutate()
-            }}
-          >{rollback.isPending ? 'Rolling back…' : 'Restore legacy policy'}</button>}
-        </div>
+      <div className="section-label">Candidate Selection</div>
+      {status.isError ? <p className="hint">选择状态不可用</p> : status.isPending ? <p className="hint">正在加载选择状态…</p> : <>
+        <p className="hint">Configured policy: <span className="mono">{humanize(status.data.configured_policy)}</span></p>
+        <p className="hint">Epoch: <span className="mono">{status.data.configured_policy_epoch ?? '未知'}</span></p>
+        <p className="hint">运行选择：{status.data.authority_enabled ? '已启用' : '未启用'}</p>
+        <p className="hint">收益排序：预期净收益；冷启动：信号强度。冷启动不代表经济资格通过。Risk 与执行门槛不变。</p>
+        {status.data.authority_block_reason && <p className="hint">阻止原因：{humanize(status.data.authority_block_reason)}</p>}
       </>}
-      <SaveMsg msg={msg} />
     </div>
   )
 }
@@ -560,7 +402,7 @@ export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps
       {isVisible(UNIVERSE_SECTION.id) && (
         <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
           <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
-          <CandidateSelectionAuthorityCard qc={qc} />
+          <CandidateSelectionAuthorityCard />
           <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>
       )}

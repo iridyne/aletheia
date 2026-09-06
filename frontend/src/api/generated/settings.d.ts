@@ -2400,7 +2400,7 @@ export interface components {
             candidate_max_continuous_age_sec: number;
             /**
              * Candidate Selection Policy
-             * @default legacy_total_score_v1
+             * @default candidate_selection_utility_v1
              * @enum {string}
              */
             candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";

@@ -503,7 +503,8 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   min-width: 0;
 }
-.sp-value-wrap { white-space: normal; line-height: 1.4; }
+.sp-value-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
+.system-panel .sp-label { overflow-wrap: anywhere; }
 /* Debug rows: dimmed, smaller — internal state for developers only */
 .sp-row-debug { opacity: 0.45; }
 .sp-label-muted { color: var(--muted) !important; font-style: italic; }
@@ -2613,7 +2614,7 @@ button.market-instrument-group-title { font-family: inherit; }
 .status-board .status-cell { padding-left: 4px; }
 .status-value {
   font-family: var(--mono); font-size: 0.78rem; color: var(--text);
-  min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0; flex: 1 1 0; white-space: normal; overflow-wrap: anywhere;
 }
 .status-light {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--faint);
@@ -2708,7 +2709,7 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 .chd-domain-name {
   font-family: var(--mono); font-weight: 500; color: var(--text); letter-spacing: 0.03em;
-  flex-shrink: 0;
+  min-width: 0; overflow-wrap: anywhere;
 }
 .chd-status { font-family: var(--mono); font-size: var(--fs-sm); flex-shrink: 0; }
 .chd-status-red    { color: var(--red); }
@@ -2723,7 +2724,7 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 .chd-domain-meta {
   display: flex; gap: var(--space-3); flex-wrap: wrap;
-  font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; padding-left: 18px;
+  font-size: var(--fs-2xs); color: var(--muted); margin-top: 2px; padding-left: 18px; overflow-wrap: anywhere;
 }
 .chd-err-code {
   font-family: var(--mono); color: var(--red); font-size: var(--fs-2xs);

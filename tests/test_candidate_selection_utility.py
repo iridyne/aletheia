@@ -6,6 +6,89 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.config.schema import UniverseConfig
+def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direction, market_type):
+    import asyncio
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseMember
+    from aletheia.config.loader import save_config, load_config
+    from aletheia.data.ccxt_provider import CCXTProvider, timeframe_ms
+    from aletheia.universe.service import UniverseService
+
+    save_config(cfg)
+    cfg = load_config()
+    class Exchange:
+        id = "bitget"
+        def __init__(self):
+            self.options = {}
+            self.markets = {}
+            for i in range(20):
+                symbol = f"COIN{i}/USDT" + (":USDT" if market_type == "perp" else "")
+                self.markets[symbol] = {"id": f"COIN{i}USDT", "symbol": symbol, "base": f"COIN{i}", "quote": "USDT",
+                    "active": True, "spot": market_type == "spot", "swap": market_type == "perp", "contract": market_type == "perp",
+                    "linear": market_type == "perp", "settle": "USDT" if market_type == "perp" else None, "contractSize": 1,
+                    "precision": {"price": 4, "amount": 6}, "limits": {"cost": {"min": 1}}}
+        async def load_markets(self):
+            return self.markets
+        def market(self, symbol):
+            return self.markets[symbol]
+        async def fetch_tickers(self, symbols):
+            return {s: {"last": 100, "quoteVolume": 10_000_000, "percentage": 5 if mechanism == "continuation" else 0, "bid": 99.99, "ask": 100.01} for s in symbols}
+        async def fetch_order_book(self, symbol, limit=20):
+            return {"symbol": symbol, "bids": [[99.99, 10000]], "asks": [[100.01, 10000]]}
+        async def fetch_ohlcv(self, symbol, timeframe="1h", limit=100, **kwargs):
+            step = timeframe_ms(timeframe)
+            end = int(datetime.now(timezone.utc).timestamp()*1000) // step * step
+            index = int(symbol.split("/")[0].removeprefix("COIN")) if symbol.startswith("COIN") else 0
+            slope = (.1 + index*.002 if symbol.startswith("COIN") else 0) if mechanism == "continuation" else .1
+            closes = [100+slope*(i-limit+1) + (.3*(-1)**i if mechanism == "continuation" else 0) for i in range(limit)]
+            return [[end-(limit-i)*step, close, close+.1, close-.1, close, 1000] for i, close in enumerate(closes)]
+    monkeypatch.setattr(CCXTProvider, "_ensure_primary", lambda self, *args, **kwargs: Exchange())
+    from aletheia.storage.models import MarketSnapshot
+    for i in range(20):
+        repo.insert_market_snapshot(MarketSnapshot(symbol=f"COIN{i}/USDT", exchange="bitget", market_type=market_type, price=100, volume_24h=10_000_000))
+    service = UniverseService()
+    snapshot_id = asyncio.run(service.refresh())
+    assert snapshot_id is not None, [dict(r) for r in repo.get_db().execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1")]
+    members = service.get_current_universe()
+    assert members, repo.get_db().execute("SELECT metrics FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+    candidate = UniverseMember.model_validate(members[0])
+    assert candidate.opportunity_mechanism == mechanism and candidate.scanner_direction == direction
+    assert candidate.candidate_selection_policy_epoch == cfg.universe.candidate_selection_policy_epoch
+    return candidate
+
+def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.universe.candidate_selection_shadow import load_candidate_selection_outcomes
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    outcomes = load_candidate_selection_outcomes(selection_policy=candidate_selection_policy_identity(load_config()))
+    assert any(row["symbol"] == candidate.symbol and row["direction"] == "long"
+               and row["mechanism_id"] == "continuation" for row in outcomes)
+
+
+
+def test_runtime_epoch_does_not_require_economic_admission():
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
+    from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity, candidate_selection_authority_block_reason,
+    )
+    cfg = AletheiaConfig()
+    cfg.universe = UniverseConfig.model_validate({**cfg.universe.model_dump(),
+        "candidate_selection_policy": "candidate_selection_utility_v1",
+        "candidate_selection_policy_epoch": canonical_fingerprint(candidate_selection_policy_identity(cfg))})
+    assert candidate_selection_authority_block_reason(cfg) is None
+    cfg.universe.max_candidates += 1
+    assert candidate_selection_authority_block_reason(cfg) is not None
+
+
 
 
 def _feature(index: int = 0, **overrides):
@@ -283,8 +366,8 @@ def test_economic_utility_uses_exact_4h_clustered_shrunk_economics():
         source_cutoff_at="2026-09-02T00:00:00+00:00",
         cost_assumptions=cost_assumptions,
     )
-    assert frozen.expected_net_return_pct == estimate.expected_net_return_pct
-    assert frozen.source_outcome_fingerprint == estimate.source_outcome_fingerprint
+    assert frozen.economic_utility_pct is None
+    assert frozen.unavailable_reason == "history_economics_incomplete"
 
     other_venue = [
         {**row, "venue": "bitget", "net_return_pct": 99.0}
@@ -492,7 +575,8 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
     assert conflict.admission_status == "direction_conflict"
 
 
-def test_candidate_selection_shadow_persists_same_t0_full_denominator():
+@pytest.mark.parametrize("historical", [False, True])
+def test_candidate_selection_shadow_persists_same_t0_full_denominator(historical):
     import json
 
     from aletheia.storage import repositories as repo
@@ -522,6 +606,13 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     assert bundle.batch.candidate_count == 20
     assert len(bundle.evidence) == 20
     assert len(bundle.outcomes) >= 20
+    policy = json.loads(bundle.batch.policy_json)["selection_policy"]
+    if historical:
+        policy["semantic_manifest"].pop("feature_acquisition")
+        for evidence in bundle.evidence:
+            payload = json.loads(evidence.compact_output_json)
+            payload["evidence_contract"].pop("feature_acquisition_version")
+            evidence.compact_output_json = json.dumps(payload)
     assert repo.insert_universe_twin_shadow_bundle(
         bundle.batch, bundle.evidence, outcomes=bundle.outcomes, min_interval_sec=0,
     ) == 20
@@ -532,9 +623,13 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator():
     } <= priority_keys
     stored = repo.list_universe_twin_shadow_records("candidate-selection-run")
     payload = json.loads(stored[0]["compact_output_json"])
-    assert payload["candidate_selection"]["version"] == "candidate-selection-utility/v1"
+    assert payload["candidate_selection"]["version"] == "candidate-selection-utility/v2"
     assert payload["evidence_contract"]["shadow_authority_applied"] is False
-    loaded = load_candidate_selection_outcomes()
+    diagnostics = {}
+    wrong_policy = {"semantic_manifest": {"feature_acquisition": "candidate-feature-acquisition/v2"} if historical else {}}
+    assert load_candidate_selection_outcomes(selection_policy=wrong_policy, diagnostics_out=diagnostics) == []
+    assert diagnostics["feature_acquisition_excluded"] == 20
+    loaded = load_candidate_selection_outcomes(selection_policy=policy)
     assert loaded
     assert {
         row["mechanism_behavior_version"] for row in loaded
@@ -593,7 +688,7 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     after_cutoff_keys = {
         outcome.outcome_candidate_key for outcome in after_cutoff.outcomes
     }
-    key = load_candidate_selection_outcomes()[0]["outcome_candidate_key"]
+    key = load_candidate_selection_outcomes(selection_policy={"semantic_manifest": {"feature_acquisition": "candidate-feature-acquisition/v2"}})[0]["outcome_candidate_key"]
     repo.get_db().execute(
         "UPDATE filter_candidate_outcomes SET status='settled', settled_at=?, "
         "net_return_pct=4.0, mae_pct=-2.0, cost_model_version='v1' "
@@ -603,6 +698,7 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     repo.get_db().commit()
 
     frozen = load_candidate_selection_outcomes(
+        selection_policy={"semantic_manifest": {"feature_acquisition": "candidate-feature-acquisition/v2"}},
         limit_batches=0,
         settled_through="2026-09-02T12:00:00+00:00",
     )
@@ -646,7 +742,7 @@ def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
     assert len(bundle.outcomes) == 1
 
 
-def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
+def test_target_selection_deduplicates_symbol_by_economic_rank(monkeypatch):
     import json
     from dataclasses import replace
 
@@ -670,7 +766,7 @@ def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
             replace(
                 decision,
                 economic_utility_pct=utilities[feature["feature_snapshot_id"]],
-                admission_status="admitted",
+                admission_status="admitted", admission_basis="measured", startup_reason=None,
             )
             for decision, feature in zip(decisions, population, strict=True)
         ]
@@ -696,7 +792,7 @@ def test_target_selection_deduplicates_symbol_by_preferred_market(monkeypatch):
         for row in bundle.evidence
         if json.loads(row.compact_output_json)["target_selected"]
     ]
-    assert selected == ["OTHER/USDT"]
+    assert selected == ["SAME/USDT"]
 
 
 def test_shadow_compacts_supported_multi_mechanism_record():
@@ -755,7 +851,7 @@ def test_shadow_compacts_supported_multi_mechanism_record():
     assert max(len(row.compact_output_json.encode()) for row in bundle.evidence) < 6 * 1024
 
 
-def test_candidate_selection_authority_requires_qualification_and_projects_target():
+def test_candidate_selection_authority_projects_without_qualification():
     import json
 
     from aletheia.storage import repositories as repo
@@ -823,25 +919,15 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
         },
     })
     assert changed_policy.batch.policy_epoch_id != shadow.batch.policy_epoch_id
-    with pytest.raises(ValueError, match="qualification_invalid"):
-        build_candidate_selection_shadow_bundle(**kwargs, authority_applied=True)
 
     authority = build_candidate_selection_shadow_bundle(
         **kwargs,
         authority_applied=True,
-        qualification_evidence={
-            "verdict": "positive",
-            "promotion_eligible": True,
-            "policy_epoch_id": shadow.batch.policy_epoch_id,
-            "selection_policy": kwargs["selection_policy"],
-            "blocking_reasons": [],
-            "invalid_reasons": [],
-        },
     )
     projected = target_candidates_from_bundle(authority, legacy_scored)
     assert 0 < len(projected) <= 3
     assert all(item["candidate_selection_policy"] == "candidate_selection_utility_v1" for item in projected)
-    assert all(item["candidate_selection_utility_pct"] > 0 for item in projected)
+    assert all(item["admission_basis"] in {"measured", "startup"} for item in projected)
     unavailable_population = [
         {**item, "spread_bps": None} for item in population
     ]
@@ -877,18 +963,6 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     assert candidate_selection_training_cutoff(
         selection_policy=selection_policy,
     ) == kwargs["captured_at"]
-    assert candidate_selection_frozen_family_spread_control(
-        {
-            **candidate_selection_policy_identity(universe_config),
-            "cost_assumptions": selection_policy["cost_assumptions"],
-        },
-    ) == (
-        {"momentum": 1.15},
-        {
-            "source_cutoff_at": "2026-09-01T00:00:00+00:00",
-            "source_fingerprint": "spread-source",
-        },
-    )
     changed_cost_policy = {
         **selection_policy,
         "cost_assumptions": {
@@ -909,7 +983,7 @@ def test_candidate_selection_authority_requires_qualification_and_projects_targe
     } <= columns
 
 
-def test_candidate_selection_identity_includes_regime_detection_policy():
+def test_candidate_selection_identity_excludes_legacy_regime_policy():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -921,13 +995,10 @@ def test_candidate_selection_identity_includes_regime_detection_policy():
 
     control_identity = candidate_selection_policy_identity(control)
     changed_identity = candidate_selection_policy_identity(changed)
-    assert control_identity != changed_identity
-    assert control_identity["legacy_control"]["regime_detection"][
-        "behavior_version"
-    ] == "regime-detector/v1"
+    assert control_identity == changed_identity
 
 
-def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_control():
+def test_candidate_selection_epoch_identity_includes_cost_and_route():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -951,35 +1022,17 @@ def test_candidate_selection_epoch_identity_includes_cost_route_and_legacy_contr
     cfg.universe.explore_ratio = 0.25
     after = candidate_selection_policy_identity(cfg)
 
-    assert before["legacy_control"] != after["legacy_control"]
+    assert before == after
 
     assert candidate_selection_policy_identity(
         cfg,
         family_spread_tolerances={"momentum": 1.0},
-    ) != candidate_selection_policy_identity(
+    ) == candidate_selection_policy_identity(
         cfg,
         family_spread_tolerances={"momentum": 1.1},
     )
 
 
-def test_candidate_selection_bundle_rejects_unavailable_adaptive_control():
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe.service import _build_candidate_selection_bundle
-
-    with pytest.raises(
-        ValueError,
-        match="candidate_selection_family_spread_evidence_unavailable",
-    ):
-        _build_candidate_selection_bundle(
-            population=[],
-            legacy_scored=[],
-            legacy_allocated=[],
-            scanner_run_id="adaptive-source-unavailable",
-            captured_at="2026-09-02T00:00:00+00:00",
-            cfg=AletheiaConfig(),
-            family_spread_tolerances={},
-            family_spread_evidence={},
-        )
 
 
 @pytest.mark.anyio
@@ -1002,7 +1055,7 @@ async def test_candidate_selection_shadow_skips_learning_controlled_legacy_arm(
         captured_at="2026-09-02T00:00:00+00:00",
         cfg=AletheiaConfig(),
         legacy_control_restricted=True,
-    ) == 0
+    ) == {"status": "restricted", "record_count": 0, "reason": "legacy_control_restricted"}
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monkeypatch):
@@ -1022,7 +1075,6 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
     from aletheia.universe.candidate_selection_shadow import (
         CANDIDATE_SELECTION_METRIC_VERSION,
         CANDIDATE_SELECTION_OUTCOME_VERSION,
-        CANDIDATE_SELECTION_RECORD_VERSION,
     )
 
     start = datetime(2026, 9, 3, tzinfo=timezone.utc)
@@ -1143,7 +1195,7 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
             experiment_id="candidate-selection-fixed-look",
             policy_epoch_id=policy_epoch,
             behavior_contract_hash=behavior_hash,
-            record_version=CANDIDATE_SELECTION_RECORD_VERSION,
+            record_version="candidate-selection-utility-record/v3",
             authority_behavior_version="universe-step-v3",
             shadow_behavior_version="candidate-selection-utility/v1",
             allocation_replay_contract="candidate-selection-utility-allocation/v1",
@@ -1384,3 +1436,82 @@ def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monk
         as_of_at=(start - timedelta(hours=12)).isoformat(),
     )
     assert historical["policy_epoch_id"] == "candidate-selection-utility:old-policy"
+
+
+def test_startup_requires_genuine_scarcity_and_cutoff_safe_settlement():
+    from aletheia.universe.economic_utility import estimate_economic_utility
+    row = _outcomes(1)[0]
+    def estimate(rows, cutoff="2026-09-02T00:00:00+00:00"):
+        return estimate_economic_utility(
+            candidate_key="x", mechanism_id="continuation", direction="long", venue="okx",
+            market_type="spot", strength_percentile=None, outcomes=rows,
+            source_cutoff_at=cutoff, cost_assumptions=row["cost_assumptions"],
+        )
+    assert estimate([]).unavailable_reason == "no_history"
+    assert estimate([row]).unavailable_reason == "parent_sample_insufficient"
+    for changes, reason in (
+        ({"outcome_candidate_key": None}, "history_identity_invalid"),
+        ({"entry_ts": "bad"}, "history_time_invalid"),
+        ({"mae_pct": None}, "history_economics_incomplete"),
+        ({"estimated_fee_pct": None}, "history_economics_incomplete"),
+        ({"net_return_pct": -20}, "tail_harm"),
+        ({"status": "pending"}, "settlement_overdue"),
+    ):
+        result = estimate([{**row, **changes}])
+        assert result.unavailable_reason == reason
+        assert result.economic_utility_pct is None
+    late = {**row, "settled_at": "2026-07-01T05:00:00+00:00"}
+    assert estimate([late], "2026-07-01T03:00:00+00:00").unavailable_reason == "parent_sample_insufficient"
+    assert estimate([late], "2026-07-01T04:00:00+00:00").unavailable_reason == "settlement_overdue"
+    assert estimate([late], "2026-07-01T05:00:00+00:00").unavailable_reason == "parent_sample_insufficient"
+
+
+def test_startup_projection_measured_first_and_capacity():
+    from aletheia.universe.candidate_selection_shadow import build_candidate_selection_shadow_bundle, target_candidates_from_bundle
+    population = [_feature(0), _feature(1, venue="bitget")]
+    def project(history, capacity):
+        bundle = build_candidate_selection_shadow_bundle(
+            population, scanner_run_id="startup", captured_at="2026-09-02T00:00:00+00:00",
+            universe_config=UniverseConfig(max_candidates=capacity), legacy_scored=[], legacy_allocated=[],
+            action_route_reasons={}, historical_outcomes=history, authority_applied=True,
+            selection_policy={"cost_assumptions": {"execution_fee_pct": .06, "slippage_bps": 5.0}},
+        )
+        return target_candidates_from_bundle(bundle, population)
+    cold = project([], 2)
+    assert len(cold) == 2
+    assert all(item["admission_basis"] == "startup" and item["candidate_selection_utility_pct"] is None for item in cold)
+    # A tiny cross-section has no percentile; mature history must not be called scarce.
+    assert [item["venue"] for item in project(_outcomes(), 2)] == ["bitget"]
+    assert project([{**_outcomes(1)[0], "net_return_pct": -20}], 2)[0]["venue"] == "bitget"
+    population[:] = [_feature(index, return_24h=5.0 + index % 20,
+                             venue="okx" if index < 20 else "bitget") for index in range(40)]
+    mixed = project(_outcomes(), 40)
+    measured = [item for item in mixed if item["admission_basis"] == "measured"]
+    startup = [item for item in mixed if item["admission_basis"] == "startup"]
+    assert measured and startup
+    assert mixed == measured + startup
+    assert project(_outcomes(), len(measured)) == measured
+
+
+def test_startup_direction_conflict_and_zero_signal_do_not_hide_economic_rejection():
+    from dataclasses import replace
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+    from aletheia.universe.opportunity_evidence import build_opportunity_evidence
+    from aletheia.universe.economic_utility import estimate_economic_utility
+    from aletheia.universe.candidate_selection_utility import build_candidate_selection_utility
+    cutoff = "2026-09-02T00:00:00+00:00"
+    feature = _feature()
+    gate = evaluate_hard_gate(feature, UniverseConfig(), candidate_key="x", evaluated_at=cutoff)
+    evidence = build_opportunity_evidence(feature, candidate_key="x", source_cutoff_at=cutoff)
+    long = next(item for item in evidence.mechanisms if item.mechanism_id == "continuation")
+    short = replace(long, mechanism_id="reversal", direction="short", pessimistic_strength=0.0)
+    long_estimate = estimate_economic_utility(candidate_key="x", mechanism_id="continuation", direction="long",
+        venue="okx", market_type="spot", strength_percentile=None, source_cutoff_at=cutoff)
+    short_estimate = replace(long_estimate, mechanism_id="reversal", direction="short")
+    def decide(short, short_estimate):
+        return build_candidate_selection_utility(hard_gate=gate,
+            opportunity_evidence=replace(evidence, mechanisms=(long, short)),
+            economic_estimates=(long_estimate, short_estimate), legacy_control={})
+    assert decide(short, short_estimate).admission_basis == "startup"
+    assert decide(replace(short, pessimistic_strength=1.0), short_estimate).admission_status == "direction_conflict"
+    assert decide(short, replace(short_estimate, unavailable_reason="tail_harm")).admission_status == "unavailable"

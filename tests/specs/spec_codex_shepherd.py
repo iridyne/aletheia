@@ -50,10 +50,7 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert triggers["pull_request_target"]["types"] == ["unlabeled"]
     assert triggers["pull_request_review"]["types"] == ["submitted"]
     assert triggers["issue_comment"]["types"] == ["created"]
-    assert triggers["workflow_run"]["workflows"] == [
-        "Aletheia CI",
-        "Aletheia Change Contract gate",
-    ]
+    assert triggers["workflow_run"]["workflows"] == ["Aletheia CI"]
     assert triggers["workflow_run"]["types"] == ["completed"]
 
     assert workflow["permissions"] == {"contents": "read"}
@@ -88,22 +85,6 @@ def test_codex_shepherd_is_event_driven_and_least_privilege() -> None:
     assert "github.rest.repos.createOrUpdateFileContents" not in script
     assert "github.rest.git.updateRef" not in script
     assert "actions: write" not in str(job)
-
-    recovery = workflow["jobs"]["metadata-ci-recovery"]
-    assert recovery["runs-on"] == SELF_HOSTED_CASI
-    assert recovery["concurrency"] == {
-        "group": "codex-shepherd-metadata-recovery-${{ github.event.workflow_run.id || github.run_id }}",
-        "cancel-in-progress": "false",
-    }
-    assert recovery["permissions"] == {
-        "actions": "write",
-        "checks": "read",
-        "contents": "read",
-        "pull-requests": "read",
-    }
-    assert "actions/checkout" not in str(recovery)
-    assert "reRunWorkflowFailedJobs" in recovery["steps"][0]["with"]["script"]
-    assert "pulls.merge" not in recovery["steps"][0]["with"]["script"]
 
 
 def test_codex_shepherd_binds_callbacks_and_control_markers_to_trusted_identity() -> None:

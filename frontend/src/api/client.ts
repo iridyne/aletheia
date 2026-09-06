@@ -55,7 +55,13 @@ export interface SoftwareUpdateStatus {
 	branch?: string;
 }
 
-export type CandidateSelectionStatus = operations["get_candidate_selection_status_api_settings_universe_candidate_selection_get"]["responses"][200]["content"]["application/json"];
+export interface CandidateSelectionStatus {
+	configured_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
+	configured_policy_epoch: string | null;
+	authority_enabled: boolean;
+	authority_block_reason: string | null;
+	selection_bases: ("measured" | "startup")[];
+}
 
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
@@ -416,17 +422,6 @@ export function extractApiError(status: number, body: string): string {
 // stuck for minutes when the backend is slow to respond after a restart.
 const _FETCH_TIMEOUT_MS = 15_000;
 
-// Server-clock offset: updated on every successful JSON response that carries
-// an HTTP `Date` header. Used by getSyncedNow() to align UI countdown timers,
-// freshness stamps, and PnL windows to the gateway's authoritative clock,
-// not the browser's potentially-drifted local clock.
-let _serverTimeOffsetMs = 0;
-
-/** Returns the current time aligned to the gateway's server clock (milliseconds). */
-export function getSyncedNow(): number {
-  return Date.now() + _serverTimeOffsetMs;
-}
-
 export async function fetchJson<T>(
 	path: string,
 	init?: RequestInit,
@@ -461,11 +456,6 @@ export async function fetchJson<T>(
 			signal: timeoutCtrl.signal,
 		});
 		if (!res.ok) throw parseApiError(res.status, await res.text(), res.headers);
-		const serverDate = res.headers.get('date');
-		if (serverDate) {
-			const parsed = new Date(serverDate).getTime();
-			if (Number.isFinite(parsed)) _serverTimeOffsetMs = parsed - Date.now();
-		}
 		const body: unknown = await res.json();
 		return decode ? decode(body, res.headers) : body as T;
 	} finally {
@@ -2791,21 +2781,24 @@ export const api = {
 	getUniverseCalibration: () =>
 		fetchJson<import("../types").CalibrationResponse>("/universe/calibration"),
 	updateUniverseConfig: (
-		body: operations["update_universe_config_api_settings_universe_post"]["requestBody"]["content"]["application/json"],
-	) => post<operations["update_universe_config_api_settings_universe_post"]["responses"][200]["content"]["application/json"]>("/settings/universe", body),
+		body: Partial<{
+			enabled: boolean;
+			refresh_interval_min: number;
+			max_candidates: number;
+			min_volume_24h_usdt: number;
+			max_spread_bps: number;
+			min_depth_10bps_usd: number;
+			snapshot_ttl_enabled: boolean;
+			snapshot_ttl_hours: number;
+			entry_ttl_sec: number;
+			candidate_max_continuous_age_sec: number;
+			blacklist: string[];
+			fallback_symbols: string[];
+			market_type: string;
+		}>,
+	) => post<any>("/settings/universe", body),
 	getCandidateSelectionStatus: () =>
 		fetchJson<CandidateSelectionStatus>("/settings/universe/candidate-selection"),
-	admitCandidateSelection: (expectedPolicyEpoch: string, reason: string) =>
-		post<operations["admit_candidate_selection_api_settings_universe_candidate_selection_admit_post"]["responses"][200]["content"]["application/json"]>("/settings/universe/candidate-selection/admit", {
-			expected_policy_epoch: expectedPolicyEpoch,
-			reason,
-			confirm_admission: true,
-		} satisfies operations["admit_candidate_selection_api_settings_universe_candidate_selection_admit_post"]["requestBody"]["content"]["application/json"]),
-	rollbackCandidateSelection: (reason: string) =>
-		post<operations["rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post"]["responses"][200]["content"]["application/json"]>("/settings/universe/candidate-selection/rollback", {
-			reason,
-			confirm_rollback: true,
-		} satisfies operations["rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post"]["requestBody"]["content"]["application/json"]),
 	updateFastTriggerConfig: (
 		body: Partial<{
 			mode: "off" | "shadow" | "execute";

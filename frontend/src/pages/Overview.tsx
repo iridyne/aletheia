@@ -15,11 +15,6 @@ import type { MarketDataCoverageReport } from '../types'
 import { parseAllIssues, sortedIssues, type ParsedIssue } from '../components/health-issues'
 import type { CollectorHealthReport, MarketDataCoverageDomain } from '../types'
 
-// The feed receives the compact bootstrap projection: <AgentFeed /> remains
-// the canonical layout contract while the prop avoids three cold REST lists.
-// Legacy local-paper contract is now rendered by PnLZone/AccountSnapshot:
-// uses_external_exchange; enabled: usesExternalExchange; Local paper · no exchange
-
 export function operatorMutationError(action: string, error: unknown): string {
   const detail = error instanceof Error && error.message
     ? error.message
@@ -27,17 +22,6 @@ export function operatorMutationError(action: string, error: unknown): string {
   return `${action}: ${detail}`
 }
 
-// The topbar owns these actions now; keep the shared error identity and the
-// legacy disable contract here for source-level safety checks and callers that
-// still import this helper.
-// operatorMutationError('Pause gateway failed', error)
-// operatorMutationError('Resume gateway failed', error)
-// const gatewayCommandPending = pauseMut.isPending || resumeMut.isPending
-// disabled={gatewayCommandPending || paused || !running}
-// disabled={gatewayCommandPending || !paused}
-// onMutate: () => setGatewayCommandError('')
-// onMutate: () => setGatewayCommandError('')
-// role="alert"
 
 export default function Overview() {
   const shell = useQuery({
@@ -138,11 +122,18 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const collectorHealth = collectorHealthQuery.data
   const coverageReport = coverage
   const collectorIncident = collectorHealth?.infrastructure_incident
+  const collectorCounts = new Map<string, number>()
+  for (const domain of collectorHealth?.domains ?? []) {
+    const status = domain.overdue ? 'overdue' : domain.degraded ? 'degraded' : domain.last_status
+    const label = status === 'not_configured' ? 'unconfigured' : status === 'never_run' ? 'unobserved' : status.replace(/_/g, ' ')
+    collectorCounts.set(label, (collectorCounts.get(label) ?? 0) + 1)
+  }
+  const collectorSummary = [...collectorCounts].map(([status, count]) => `${count} ${status}`).join(' · ')
   const collectorState: SemanticState = !collectorHealth
     ? collectorHealthQuery.isPending ? 'loading' : 'unknown'
     : collectorIncident?.status === 'active' || collectorIncident?.status === 'recovering'
       ? 'degraded'
-      : collectorHealth.status === 'healthy' ? 'active'
+      : collectorHealth.status === 'healthy' ? collectorCounts.has('success') ? 'active' : 'disabled'
         : collectorHealth.status === 'degraded' || collectorHealth.status === 'attention' ? 'degraded' : 'unknown'
   const collectorLight = semanticTone(collectorState)
   const collectorValue = !collectorHealth
@@ -151,13 +142,7 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
       ? `${collectorIncident.affected_domains.length} blocked by connectivity`
       : collectorIncident?.status === 'recovering'
         ? `${collectorIncident.affected_domains.length} retrying after recovery`
-        : collectorHealth.status === 'initializing'
-          ? 'initializing'
-          : collectorHealth.status === 'degraded'
-            ? `${collectorHealth.degraded_count} degraded · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
-            : collectorHealth.status === 'attention'
-              ? `${collectorHealth.transient_problem_count} transient · ${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
-              : `${collectorHealth.recorded_count}/${collectorHealth.domain_count} reporting`
+        : collectorHealth.status === 'initializing' ? `initializing · ${collectorSummary}` : collectorSummary
   const coverageHealthy = coverage?.status === 'healthy'
   const coverageLight = coverageReport
     ? coverage?.status === 'empty' ? 'muted' : coverageReport.critical_problem_count > 0 ? 'yellow' : coverageHealthy ? 'green' : 'yellow'
@@ -262,13 +247,22 @@ function DataCoverageDetail({ coverage }: { coverage: MarketDataCoverageReport }
   const domains = [...coverage.domains].sort((a, b) => (COVERAGE_RANK[a.state] ?? 5) - (COVERAGE_RANK[b.state] ?? 5))
   return (
     <div className="chd-panel">
-      <div className="chd-title">Data coverage</div>
+      <div className="chd-title">Current data coverage</div>
       {domains.map((domain: MarketDataCoverageDomain) => {
         const light = COVERAGE_LIGHT[domain.state] || 'muted'
         return (
           <div key={domain.domain} className="chd-domain">
             <div className="chd-domain-head"><span className={`status-light light-${light}`} /><span className="chd-domain-name">{(domain.label || domain.domain).toUpperCase()}</span><span className={`chd-status chd-status-${light}`}>{domain.state}</span></div>
-            <div className="chd-domain-meta"><span>{domain.symbol_count} symbols · {domain.row_count.toLocaleString()} rows</span><span>{fmtCoverageAge(domain.age_sec)}{domain.max_age_sec ? ` · max ${fmtCoverageMaxAge(domain.max_age_sec)}` : ''}</span></div>
+            <div className="chd-domain-meta">
+              <span>{domain.scope === 'current_targets' ? `${domain.target_count} current targets · ${domain.missing_target_count} missing targets` : 'Global scope'}</span>
+              <span>{domain.symbol_count} symbols · {domain.row_count.toLocaleString()} current rows · {domain.fresh_row_count} fresh · {domain.stale_row_count} stale · {domain.unavailable_row_count} unavailable</span>
+              <span>{fmtCoverageAge(domain.age_sec)}{domain.max_age_sec ? ` · max ${fmtCoverageMaxAge(domain.max_age_sec)}` : ''}</span>
+            </div>
+            <div className="chd-domain-meta">
+              <span>Historical inventory (all stored rows): {domain.inventory.state}</span>
+              <span>{domain.inventory.symbol_count} symbols · {domain.inventory.row_count.toLocaleString()} rows · {domain.inventory.fresh_row_count} fresh · {domain.inventory.stale_row_count} stale · {domain.inventory.unavailable_row_count} unavailable</span>
+              <span>{fmtCoverageAge(domain.inventory.age_sec)}</span>
+            </div>
           </div>
         )
       })}

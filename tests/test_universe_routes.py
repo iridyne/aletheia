@@ -10,6 +10,30 @@ from fastapi.testclient import TestClient
 from aletheia.config.schema import UniverseConfig
 
 
+def test_workbench_progress_uses_same_cache_without_ledger_probe(client, monkeypatch):
+    from aletheia.agent_runtime import health
+    from aletheia.storage import repositories
+    monkeypatch.setattr(health, "_candidate_path_progress", {
+        "generated_at": "2000-01-01T00:00:00+00:00", "ttl_seconds": 1200,
+        "availability": {"available": True, "reason": None},
+        "ready_planning_count": 7, "issues": ["candidate_planning_stalled"],
+    })
+    def forbidden(**kwargs):
+        raise AssertionError("Workbench must only read the progress cache")
+    monkeypatch.setattr(repositories, "get_candidate_path_progress", forbidden)
+    response = client.get("/api/universe/workbench")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["progress"]["ready_planning_count"] == 7
+    assert payload["progress"]["availability"] == health.get_candidate_path_progress_snapshot()["availability"]
+    assert payload["availability"]["progress"]["available"] is False
+    assert payload["availability"]["progress"]["stale"] is True
+    monkeypatch.setattr(health, "_candidate_path_progress", None)
+    missing = client.get("/api/universe/workbench").json()["progress"]
+    assert missing["ready_planning_count"] is None
+    assert missing["availability"]["reason"] == "not_sampled"
+
+
 @pytest.fixture
 def client():
     from aletheia.server.app import app
@@ -41,7 +65,7 @@ def test_get_current_when_disabled(client, disabled_cfg):
     data = resp.json()
     assert data["fallback"] is True
     assert data["enabled"] is False
-    assert len(data["members"]) == 3
+    assert data["members"] == []
 
 
 def test_get_current_with_active_snapshot(client, enabled_cfg):
@@ -133,43 +157,26 @@ def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
     assert candidate["setup_state"] is None
 
 
-def test_entry_plan_detail_lineage_uses_exact_linked_order_fill_and_position(monkeypatch):
+@pytest.mark.parametrize("failed_query", [0, 1])
+def test_candidate_handoff_read_failure_is_not_no_plan(monkeypatch, failed_query):
+    from aletheia.server.routes.universe import _attach_candidate_handoff_state
+    db = MagicMock()
+    empty = MagicMock()
+    empty.fetchall.return_value = []
+    db.execute.side_effect = [empty] * failed_query + [RuntimeError("read unavailable")]
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
+    with pytest.raises(RuntimeError, match="read unavailable"):
+        _attach_candidate_handoff_state([{"id": "candidate-1"}])
+
+
+def test_entry_plan_detail_lineage_reports_missing_plan(tmp_path, monkeypatch):
+    from tests.test_sqlite_writer import _setup_db
     from aletheia.server.routes.universe import _entry_plan_lineage
 
-    monkeypatch.setattr(
-        "aletheia.server.routes.universe.repo.get_order",
-        lambda order_id: {
-            "id": order_id,
-            "exchange_order_id": "exchange-1",
-            "status": "partially_filled",
-            "quantity": 1,
-            "position_id": "position-1",
-        },
-    )
-    monkeypatch.setattr(
-        "aletheia.server.routes.universe.repo.get_position",
-        lambda position_id: {
-            "id": position_id,
-            "status": "open",
-            "quantity": 0.4,
-            "entry_price": 100,
-        },
-    )
-    fill_row = {"count": 1, "quantity": 0.4, "latest_at": "2026-08-29T00:00:00Z"}
-    db = MagicMock()
-    db.execute.return_value.fetchone.return_value = fill_row
-    monkeypatch.setattr("aletheia.server.routes.universe.repo.get_db", lambda: db)
-
-    lineage = _entry_plan_lineage({"order_id": "order-1"})
-
-    assert lineage["order"]["id"] == "order-1"
-    assert lineage["fills"] == fill_row
-    assert lineage["position"]["id"] == "position-1"
-    db.execute.assert_called_once_with(
-        "SELECT COUNT(*) AS count, COALESCE(SUM(fill_quantity), 0) AS quantity, "
-        "MAX(filled_at) AS latest_at FROM fills WHERE order_id=?",
-        ("order-1",),
-    )
+    _setup_db(tmp_path, monkeypatch)
+    lineage = _entry_plan_lineage({"id": "missing-plan"})
+    assert lineage["availability"] == {"available": False, "reason": "entry_plan_missing"}
+    assert lineage["execution_state"] == "UNAVAILABLE"
 
 
 def test_workbench_surfaces_partial_read_failure_without_fake_zero(client, enabled_cfg):
@@ -285,6 +292,10 @@ def test_candidate_alias_and_exact_trade_plan_filter(client, monkeypatch):
     monkeypatch.setattr(
         "aletheia.server.routes.universe.repo.get_candidate_planning_for_candidate",
         lambda candidate_id: attention if candidate_id == "candidate-1" else None,
+    )
+    monkeypatch.setattr(
+        "aletheia.server.routes.universe.repo.get_candidate_entry_lifecycle",
+        lambda candidate_id: None,
     )
     calls = []
     monkeypatch.setattr(

@@ -549,4 +549,4 @@ $$\text{预计净收益：修复 1 处潜在崩溃 Bug，减少约 150+ 行冗�
 * **印证发现**：36 个配置节数据高度结构化，彻底印证了各 Tab 应当全面绑定自动生成的 `settings.d.ts`，消除 35+ 处 `as any` 类型逃逸的紧迫性与可行性。
 ---
 
-*（文档已完整、详尽、一字不差地持久化保存至本地权威位置：[`docs/design/frontend/ui_audit_findings.md`](docs/design/frontend/ui_audit_findings.md)）*
+*（文档已完整、详尽、一字不差地持久化保存至本地权威位置：[`docs/design/frontend/ui_audit_findings.md`](ui_audit_findings.md)）*

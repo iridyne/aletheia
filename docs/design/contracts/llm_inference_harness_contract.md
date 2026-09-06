@@ -209,7 +209,6 @@ the Contract spec.
 | `research_worker.themes` | `research_worker.themes` | `v1` | `text` | `none` |
 | `risk_critic.review` | `risk_critic.review` | `v1` | `text` | `none` |
 | `startup_gate.provider_probe` | `startup_gate.provider_probe` | `v1` | `text` | `none` |
-| `stock_observer.market_read` | `stock_observer.market_read` | `v1` | `structured` | `none` |
 | `system_operator.assess_opportunity` | `system_operator.assess_opportunity` | `v1` | `structured` | `none` |
 | `system_operator.debate_bear` | `system_operator.debate_bear` | `v1` | `structured` | `none` |
 | `system_operator.debate_bull` | `system_operator.debate_bull` | `v1` | `structured` | `none` |

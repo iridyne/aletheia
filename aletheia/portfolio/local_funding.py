@@ -275,7 +275,7 @@ def _load_exact_entry_fills(
             or row.get("order_risk_decision_id") != risk_decision_id
             or row.get("risk_proposal_id") != proposal_id
             or row.get("order_type") != row.get("proposal_order_type")
-            or row.get("order_status") != "filled"
+            or row.get("order_status") not in {"filled", "cancelled"}
             or row.get("proposal_status") != "executed"
             or row.get("order_source") != "native"
             or row.get("proposal_source") != "native"
@@ -293,12 +293,18 @@ def _load_exact_entry_fills(
             evaluated_quantity = float(row.get("risk_evaluated_quantity"))
         except (TypeError, ValueError, json.JSONDecodeError):
             return None, "entry_identity_mismatch"
+        # The immutable Proposal is the requested size; authoritative Risk and
+        # Order retain the executable size after venue-precision reduction.
         quantity_tolerance = max(1e-12, abs(order_quantity) * 1e-9)
         if (
             violations != []
             or not math.isfinite(order_quantity)
             or order_quantity <= 0
-            or abs(proposal_quantity - order_quantity) > quantity_tolerance
+            or not math.isfinite(proposal_quantity)
+            or proposal_quantity <= 0
+            or not math.isfinite(evaluated_quantity)
+            or evaluated_quantity <= 0
+            or order_quantity - proposal_quantity > quantity_tolerance
             or abs(evaluated_quantity - order_quantity) > quantity_tolerance
         ):
             return None, "entry_identity_mismatch"
@@ -333,6 +339,7 @@ def _load_exact_entry_fills(
         order_state = orders.setdefault(order_id, {
             "proposal_id": proposal_id,
             "quantity": order_quantity,
+            "status": row["order_status"],
             "fill_quantity": 0.0,
         })
         if order_state["proposal_id"] != proposal_id:
@@ -345,7 +352,9 @@ def _load_exact_entry_fills(
         return None, "entry_identity_mismatch"
     for state in orders.values():
         tolerance = max(1e-12, abs(float(state["quantity"])) * 1e-9)
-        if abs(float(state["fill_quantity"]) - float(state["quantity"])) > tolerance:
+        remainder = float(state["quantity"]) - float(state["fill_quantity"])
+        # Cancelled remainder never became exposure; funding follows exact Fills.
+        if remainder < -tolerance or (state["status"] == "filled" and remainder > tolerance):
             return None, "entry_quantity_mismatch"
 
     try:

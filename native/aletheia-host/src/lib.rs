@@ -11,6 +11,11 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub mod bootstrap;
+pub mod update;
+
+pub use bootstrap::ensure_bootstrapped;
+
 pub const DASHBOARD_URL: &str = "http://127.0.0.1:8787";
 pub const READY_PATH: &str = "/_infra/readyz";
 pub const HEALTH_PATH: &str = "/api/health";

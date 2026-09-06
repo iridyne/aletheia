@@ -130,6 +130,20 @@ function click(element: HTMLElement) {
   act(() => element.click())
 }
 describe('Markets workbench', () => {
+  it('shows startup scarcity without inventing utility', () => {
+    const node = renderCharts('/charts?candidate_id=btc-member', client => client.setQueryData(['candidate-charts', 'btc-member'], {
+      member: { ...universe.members[0],
+        candidate_selection_policy: 'candidate_selection_utility_v1', admission_basis: 'startup',
+        pessimistic_strength: 72, startup_reason: 'no_history', candidate_selection_utility_pct: null,
+      }, attention: null,
+    }))
+    click(buttonContaining(node, 'Structure & Profile'))
+    expect(node.textContent).toContain('冷启动：信号强度')
+    expect(node.textContent).toContain('预期净收益未知')
+    expect(node.textContent).toContain('暂无历史样本')
+    expect(node.textContent).not.toContain('72%')
+  })
+
   it('clears an incompatible Entry Plan identity and overlay after manual instrument switch', async () => {
     const plan: EntryPlan = {
       id: 'plan-sol', planning_generation_id: 'generation-sol', candidate_id: 'candidate-sol',

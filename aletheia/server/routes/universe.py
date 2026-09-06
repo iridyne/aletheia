@@ -673,34 +673,7 @@ def _active_entry_plan_projections(limit: int) -> list[dict]:
     return items
 
 def _entry_plan_lineage(row: dict) -> dict:
-    order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
-    if order is None:
-        return {"order": None, "fills": None, "position": None}
-    fill_row = repo.get_db().execute(
-        "SELECT COUNT(*) AS count, COALESCE(SUM(fill_quantity), 0) AS quantity, "
-        "MAX(filled_at) AS latest_at FROM fills WHERE order_id=?",
-        (order["id"],),
-    ).fetchone()
-    position = repo.get_position(order.get("position_id")) if order.get("position_id") else None
-    return {
-        "order": {
-            key: order.get(key)
-            for key in ("id", "exchange_order_id", "status", "quantity", "position_id")
-        },
-        "fills": {
-            "count": int(fill_row["count"] or 0),
-            "quantity": float(fill_row["quantity"] or 0),
-            "latest_at": fill_row["latest_at"],
-        },
-        "position": (
-            {
-                key: position.get(key)
-                for key in ("id", "status", "quantity", "entry_price")
-            }
-            if position
-            else None
-        ),
-    }
+    return repo.get_entry_plan_execution_lineage([row["id"]])[row["id"]]
 
 
 @router.get("/workbench", responses={200: {"model": EntryWorkbenchResponse}})
@@ -777,6 +750,10 @@ def get_entry_workbench(
     for section, read in readers.items():
         try:
             response[section] = read()
+            if section in {"current_candidates", "candidate_attention"}:
+                for candidate in response[section]:
+                    if candidate.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+                        candidate["total_score"] = None
             response["availability"][section] = {"available": True, "stale": False}
         except Exception as exc:
             response["availability"][section] = {
@@ -784,6 +761,11 @@ def get_entry_workbench(
                 "stale": False,
                 "reason": type(exc).__name__,
             }
+    from aletheia.agent_runtime.health import get_candidate_path_progress_snapshot
+
+    progress = get_candidate_path_progress_snapshot()
+    response["progress"] = progress
+    response["availability"]["progress"] = {**progress["availability"], "stale": progress["availability"].get("reason") == "cache_expired"}
     return response
 
 
@@ -827,37 +809,34 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     if not member_ids:
         return members
     placeholders = ",".join("?" for _ in member_ids)
-    try:
-        from aletheia.storage.sqlite import get_db
+    from aletheia.storage.sqlite import get_db
 
-        plan_rows = get_db().execute(
-            "SELECT pg.last_candidate_id, ep.id, ep.status, ep.execution_mode, "
-            "ep.created_at, ep.updated_at FROM candidate_planning_generations pg "
-            "JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
-            f"WHERE pg.is_current=1 AND pg.last_candidate_id IN ({placeholders})",
-            tuple(member_ids),
-        ).fetchall()
-        plans_by_candidate = {str(row["last_candidate_id"]): dict(row) for row in plan_rows}
-        # Backward-compatible wire fields only. New product surfaces consume the
-        # Entry Plan projection above; historical setup storage remains readable.
-        legacy_rows = get_db().execute(
-            "SELECT us.member_id, us.state, us.opportunity_id "
-            "FROM universe_setups us "
-            "JOIN ("
-            " SELECT member_id, MAX(datetime(created_at)) AS latest_created_at "
-            " FROM universe_setups "
-            f" WHERE member_id IN ({placeholders}) GROUP BY member_id"
-            ") latest ON latest.member_id=us.member_id "
-            "AND latest.latest_created_at=datetime(us.created_at)",
-            tuple(member_ids),
-        ).fetchall()
-        legacy_by_member = {str(row["member_id"]): dict(row) for row in legacy_rows}
-    except Exception:
-        plans_by_candidate = {}
-        legacy_by_member = {}
+    plan_rows = get_db().execute(
+        "SELECT pg.last_candidate_id, ep.id, ep.status, ep.execution_mode, "
+        "ep.created_at, ep.updated_at FROM candidate_planning_generations pg "
+        "JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+        f"WHERE pg.is_current=1 AND pg.last_candidate_id IN ({placeholders})",
+        tuple(member_ids),
+    ).fetchall()
+    plans_by_candidate = {str(row["last_candidate_id"]): dict(row) for row in plan_rows}
+    # Historical wire projection is not runtime authority.
+    legacy_rows = get_db().execute(
+        "SELECT us.member_id, us.state, us.opportunity_id "
+        "FROM universe_setups us "
+        "JOIN ("
+        " SELECT member_id, MAX(datetime(created_at)) AS latest_created_at "
+        " FROM universe_setups "
+        f" WHERE member_id IN ({placeholders}) GROUP BY member_id"
+        ") latest ON latest.member_id=us.member_id "
+        "AND latest.latest_created_at=datetime(us.created_at)",
+        tuple(member_ids),
+    ).fetchall()
+    legacy_by_member = {str(row["member_id"]): dict(row) for row in legacy_rows}
     enriched = []
     for member in members:
         item = dict(member)
+        if item.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+            item["total_score"] = None
         candidate_id = str(item.get("id") or "")
         plan = plans_by_candidate.get(candidate_id)
         item["entry_plan_id"] = plan.get("id") if plan else None
@@ -942,6 +921,10 @@ def get_candidate(candidate_id: str):
 
     detail = get_member(candidate_id)
     attention = repo.get_candidate_planning_for_candidate(candidate_id)
+    if attention is not None:
+        attention.update({field: detail["member"].get(field) for field in (
+            "admission_basis", "startup_reason", "pessimistic_strength",
+        )})
     detail["attention"] = attention
     try:
         detail["lifecycle"] = repo.get_candidate_entry_lifecycle(candidate_id)

@@ -15,6 +15,8 @@ from aletheia.universe.candidate_selection_utility import (
     CandidateSelectionUtilityV1,
     build_candidate_selection_utility,
     select_admitted_candidates,
+    candidate_selection_rank,
+    decision_rank,
 )
 from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
 from aletheia.universe.economic_utility import (
@@ -28,9 +30,9 @@ from aletheia.universe.opportunity_evidence import (
 )
 from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
 from aletheia.universe.twin_persistence import TwinShadowBundle
+from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_VERSION
 
-
-CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v3"
+CANDIDATE_SELECTION_RECORD_VERSION = "candidate-selection-utility-record/v4"
 CANDIDATE_SELECTION_METRIC_VERSION = "candidate-selection-utility-net-return-4h/v2"
 CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION = "candidate-selection-evidence-cadence/v2"
 CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC = 4 * 60 * 60
@@ -128,9 +130,16 @@ def _training_outcome_fingerprint(
     for row in outcomes:
         entry = parse_utc_instant(row.get("entry_ts"))
         settled = parse_utc_instant(row.get("settled_at"))
-        if entry is None or entry >= cutoff or (settled is not None and settled > cutoff):
+        if entry is not None and entry >= cutoff:
             continue
-        material.append({field: row.get(field) for field in fields})
+        material_row = {field: row.get(field) for field in fields}
+        if settled is not None and settled > cutoff:
+            for field in ("settled_at", "net_return_pct", "mae_pct", "cost_model_version",
+                          "min_tradable_edge_pct", "estimated_fee_pct",
+                          "estimated_spread_slippage_pct", "estimated_funding_pct"):
+                material_row[field] = None
+            material_row["status"] = "pending"
+        material.append(material_row)
     material.sort(key=lambda row: (
         str(row["outcome_candidate_key"]),
         str(row["mechanism_id"]),
@@ -199,7 +208,6 @@ def build_candidate_selection_shadow_bundle(
             if (
                 mechanism.applicability == "applicable"
                 and mechanism.direction in {"long", "short"}
-                and mechanism.within_run_percentile is not None
             ):
                 estimates.append(estimate_economic_utility(
                     candidate_key=gate.candidate_key,
@@ -238,15 +246,15 @@ def build_candidate_selection_shadow_bundle(
             str(decision_features[current.candidate_key].get("market_type") or "spot")
             if current is not None else None
         )
-        if current is None or market_rank.get(
+        if current is None or (decision_rank(decision)[:2], market_rank.get(
             str(feature.get("market_type") or "spot"), 2,
-        ) < market_rank.get(current_market, 2):
+        ), decision.candidate_key) < (decision_rank(current)[:2], market_rank.get(current_market, 2), current.candidate_key):
             target_by_symbol[symbol] = decision
     target_selected_keys = {
         item.candidate_key
         for item in sorted(
             target_by_symbol.values(),
-            key=lambda item: (-float(item.economic_utility_pct), item.candidate_key),
+            key=decision_rank,
         )[:universe_config.max_candidates]
     }
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
@@ -290,19 +298,10 @@ def build_candidate_selection_shadow_bundle(
                 outcomes_by_key[key] = built[0]
 
     available_source_fingerprints = sorted({
-        estimate.source_outcome_fingerprint
-        for decision in decisions
-        for estimate in decision.economic_estimates
-        if estimate.estimate_status == "available" and estimate.source_outcome_fingerprint
+        estimate.source_outcome_fingerprint for decision in decisions for estimate in decision.economic_estimates
+        if estimate.source_outcome_fingerprint
     })
-    frozen_epoch_available = bool(available_source_fingerprints) or bool(
-        authority_applied and estimator_training_cutoff
-    )
-    effective_training_cutoff = (
-        estimator_training_cutoff
-        if frozen_epoch_available and estimator_training_cutoff
-        else captured_at if available_source_fingerprints else None
-    )
+    effective_training_cutoff = captured_at if authority_applied else estimator_training_cutoff or captured_at
     training_outcome_fingerprint = (
         _training_outcome_fingerprint(
             historical_outcomes,
@@ -318,30 +317,10 @@ def build_candidate_selection_shadow_bundle(
         "training_outcome_fingerprint": training_outcome_fingerprint,
         "selection_policy": frozen_selection_policy,
     })
-    policy_epoch_id = (
-        f"candidate-selection-utility:{behavior_contract_hash[:24]}"
-        if frozen_epoch_available else None
-    )
-    experiment_id = (
-        f"candidate-selection-utility-shadow:{behavior_contract_hash[:24]}"
-        if frozen_epoch_available else None
-    )
-    qualified = bool(
-        authority_applied
-        and qualification_evidence
-        and qualification_evidence.get("verdict") == "positive"
-        and qualification_evidence.get("promotion_eligible") is True
-        and qualification_evidence.get("policy_epoch_id") == policy_epoch_id
-        and qualification_evidence.get("selection_policy")
-        == frozen_selection_policy
-        and not qualification_evidence.get("blocking_reasons")
-        and not qualification_evidence.get("invalid_reasons")
-    )
-    if authority_applied and not qualified:
-        raise ValueError("candidate_selection_authority_qualification_invalid")
-    blocking_reasons = [] if authority_applied else [
-        "prospective_qualification_not_complete", "owner_admission_required",
-    ]
+    policy_epoch_id = canonical_fingerprint(frozen_selection_policy)
+    experiment_id = f"candidate-selection-utility-shadow:{behavior_contract_hash[:24]}"
+    qualified = False  # Runtime authority is not an economic qualification verdict.
+    blocking_reasons = [] if authority_applied else ["shadow_only"]
 
     evidence_rows = []
     for index, (feature, decision) in enumerate(zip(population, decisions, strict=True)):
@@ -356,6 +335,7 @@ def build_candidate_selection_shadow_bundle(
             "target_selected": decision.candidate_key in target_selected_keys,
             "outcome_candidate_keys": outcome_keys,
             "evidence_contract": {
+                "feature_acquisition_version": CANDIDATE_FEATURE_ACQUISITION_VERSION,
                 "shadow_authority_applied": authority_applied,
                 "promotion_eligible": qualified,
                 "blocking_reasons": blocking_reasons,
@@ -365,6 +345,7 @@ def build_candidate_selection_shadow_bundle(
                 "policy_epoch_id": policy_epoch_id,
                 "estimator_training_cutoff": effective_training_cutoff,
                 "cost_assumptions": cost_assumptions,
+                "training_outcome_fingerprint": training_outcome_fingerprint,
             },
         }
         compact = _json(material)
@@ -436,7 +417,7 @@ def build_candidate_selection_shadow_bundle(
             "same_t0_population": True,
             "evidence_sampling_contract": CANDIDATE_SELECTION_EVIDENCE_CONTRACT_VERSION,
             "minimum_interval_sec": CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
-            "legacy_rollback": True,
+            "legacy_rollback": False,
             "authority_policy": (
                 "candidate_selection_utility_v1" if authority_applied else "legacy_total_score_v1"
             ),
@@ -476,6 +457,8 @@ def candidate_selection_storage_projection(
 
 def load_candidate_selection_outcomes(
     *,
+    selection_policy: Mapping[str, object],
+    diagnostics_out: dict[str, object] | None = None,
     limit_batches: int = 500,
     settled_through: str | None = None,
 ) -> list[dict[str, object]]:
@@ -500,6 +483,9 @@ def load_candidate_selection_outcomes(
         f"ORDER BY b.captured_at DESC, r.candidate_index{limit_clause}",
         params,
     ).fetchall()
+    manifest = selection_policy.get("semantic_manifest") or {}
+    expected_acquisition = manifest.get("feature_acquisition")
+    excluded = 0
     labels_by_key: dict[str, list[dict[str, object]]] = {}
     for row in records:
         try:
@@ -509,20 +495,27 @@ def load_candidate_selection_outcomes(
             keys = payload["outcome_candidate_keys"]
             contract = payload["evidence_contract"]
         except (KeyError, TypeError, ValueError):
+            if diagnostics_out is not None:
+                diagnostics_out["invalid_records"] = int(diagnostics_out.get("invalid_records", 0)) + 1
+            raise ValueError("candidate_selection_history_record_invalid")
+        if contract.get("feature_acquisition_version") != expected_acquisition:
+            excluded += 1
             continue
         for mechanism in mechanisms:
             direction = mechanism.get("direction")
             percentile = mechanism.get("within_run_percentile")
             key = keys.get(direction) if direction else None
-            if key and percentile is not None and mechanism.get("applicability") == "applicable":
+            if key and mechanism.get("applicability") == "applicable":
                 labels_by_key.setdefault(str(key), []).append({
                     "scanner_run_id": row["scanner_run_id"],
                     "mechanism_id": mechanism["mechanism_id"],
-                    "strength_quintile": min(5, int(float(percentile) * 5) + 1),
+                    "strength_quintile": min(5, int(float(percentile) * 5) + 1) if percentile is not None else None,
                     "mechanism_behavior_version": decision["opportunity_evidence"]["version"],
                     "outcome_contract_version": contract["outcome_contract_version"],
                     "cost_assumptions": contract["cost_assumptions"],
                 })
+    if diagnostics_out is not None:
+        diagnostics_out["feature_acquisition_excluded"] = excluded
     if not labels_by_key:
         return []
     keys = sorted(labels_by_key)
@@ -534,12 +527,16 @@ def load_candidate_selection_outcomes(
             f"SELECT * FROM filter_candidate_outcomes WHERE horizon='4h' AND outcome_candidate_key IN ({placeholders})",
             chunk,
         ).fetchall()
+        if {str(row["outcome_candidate_key"]) for row in rows} != set(chunk):
+            if diagnostics_out is not None:
+                diagnostics_out["missing_outcomes"] = len(set(chunk) - {str(row["outcome_candidate_key"]) for row in rows})
+            raise ValueError("candidate_selection_history_outcome_missing")
         for row in rows:
             base = dict(row)
             if cutoff:
                 entry_at = parse_utc_instant(base.get("entry_ts"))
                 settled_at = parse_utc_instant(base.get("settled_at"))
-                if entry_at is None or entry_at >= cutoff:
+                if entry_at is not None and entry_at >= cutoff:
                     continue
                 if settled_at is not None and settled_at > cutoff:
                     for field in (
@@ -569,14 +566,14 @@ def candidate_selection_training_cutoff(
 
     epoch_clause = " AND b.policy_epoch_id=?" if policy_epoch_id is not None else ""
     params: tuple[object, ...] = (
-        (CANDIDATE_SELECTION_RECORD_VERSION, policy_epoch_id)
-        if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION,)
+        (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3", policy_epoch_id)
+        if policy_epoch_id is not None else (CANDIDATE_SELECTION_RECORD_VERSION, "candidate-selection-utility-record/v3")
     )
     rows = repo.get_db().execute(
         "SELECT b.captured_at, b.policy_json, r.compact_output_json "
         "FROM universe_twin_shadow_batches b "
         "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
-        "WHERE b.record_version=? AND b.policy_epoch_id IS NOT NULL "
+        "WHERE b.record_version IN (?,?) AND b.policy_epoch_id IS NOT NULL "
         f"{epoch_clause} "
         "ORDER BY b.captured_at, r.candidate_index",
         params,
@@ -661,7 +658,13 @@ def target_candidates_from_bundle(
             family = str(mechanism["source_component_id"])
             if not family:
                 raise ValueError("candidate_selection_source_component_invalid")
-            utility = float(decision["economic_utility_pct"])
+            raw_utility = decision["economic_utility_pct"]
+            utility = float(raw_utility) if raw_utility is not None else None
+            if utility is None and not (
+                decision.get("admission_basis") == "startup"
+                and decision.get("startup_reason") in {"no_history", "parent_sample_insufficient", "child_sample_insufficient"}
+            ):
+                raise ValueError("candidate_selection_startup_invalid")
         except (KeyError, StopIteration, TypeError, ValueError) as exc:
             raise ValueError("candidate_selection_target_projection_invalid") from exc
         raw_reasons = source.get("reasons")
@@ -671,6 +674,10 @@ def target_candidates_from_bundle(
             "scanner_family": family,
             "scanner_direction": decision["primary_direction"],
             "candidate_selection_utility_pct": utility,
+            "admission_basis": decision.get("admission_basis"),
+            "startup_reason": decision.get("startup_reason"),
+            "pessimistic_strength": mechanism.get("pessimistic_strength"),
+            "candidate_selection_key": row.candidate_key,
             "candidate_selection_policy": "candidate_selection_utility_v1",
             "candidate_selection_policy_epoch": bundle.batch.policy_epoch_id,
             "opportunity_mechanism": decision["primary_mechanism"],
@@ -683,16 +690,14 @@ def target_candidates_from_bundle(
                 "source_record_hash": row.record_hash,
             },
             "reasons": source_reasons + [
-                f"candidate_selection_utility:{utility:.6f}",
+                f"candidate_selection_utility:{utility:.6f}" if utility is not None else f"candidate_selection_startup:{decision['startup_reason']}",
                 f"primary_mechanism:{decision['primary_mechanism']}",
             ],
         })
         selected.append(projected)
-    selected.sort(key=lambda item: (
-        -float(item["candidate_selection_utility_pct"]),
-        str(item.get("symbol") or ""),
-        str(item.get("venue") or ""),
-        str(item.get("market_type") or ""),
+    selected.sort(key=lambda item: candidate_selection_rank(
+        item.get("admission_basis"), item.get("candidate_selection_utility_pct"),
+        item.get("pessimistic_strength"), str(item["candidate_selection_key"]),
     ))
     return selected
 

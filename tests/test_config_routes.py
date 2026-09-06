@@ -582,7 +582,6 @@ async def test_universe_settings_are_visible_and_persisted(client):
         json={
             "enabled": False,
             "max_candidates": 20,
-            "explore_ratio": 0.15,
             "entry_ttl_sec": 600,
             "candidate_max_continuous_age_sec": 1800,
         },
@@ -604,263 +603,26 @@ async def test_universe_settings_are_visible_and_persisted(client):
     assert resp.json()["universe"]["max_candidates"] == 20
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_authority_requires_exact_positive_epoch_and_rolls_back(
-    client, monkeypatch,
-):
-    from aletheia.config.loader import load_config
-    from aletheia.storage import repositories as repo
-    from aletheia.universe.candidate_selection_authority import (
-        candidate_selection_policy_identity,
-    )
 
-    epoch = "candidate-selection-utility:qualified"
-    original_max_candidates = load_config().universe.max_candidates
-    qualification = {
-        "verdict": "positive",
-        "promotion_eligible": True,
-        "policy_epoch_id": epoch,
-        "selection_policy": candidate_selection_policy_identity(load_config()),
-        "blocking_reasons": [],
-        "invalid_reasons": [],
-    }
-    monkeypatch.setattr(
-        "aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy",
-        lambda **_kwargs: qualification,
-    )
 
-    protected = await client.post(
-        "/api/settings/universe",
-        json={"candidate_selection_policy": "candidate_selection_utility_v1"},
-    )
-    assert protected.status_code == 422
 
-    unconfirmed = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": epoch,
-            "reason": "owner reviewed qualification",
-            "confirm_admission": False,
-        },
-    )
-    assert unconfirmed.status_code == 422
 
-    stale = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": f"{epoch}-stale",
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-    assert stale.status_code == 409
-    assert load_config().universe.candidate_selection_policy == "legacy_total_score_v1"
 
-    changed = await client.post(
-        "/api/settings/universe",
-        json={"max_candidates": 21},
-    )
-    assert changed.status_code == 200
-    stale_policy = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": epoch,
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-    assert stale_policy.status_code == 409
-    assert stale_policy.json()["detail"] == "candidate_selection_policy_identity_mismatch"
-    restored = await client.post(
-        "/api/settings/universe",
-        json={"max_candidates": original_max_candidates},
-    )
-    assert restored.status_code == 200
-
-    route_changed = await client.post(
-        "/api/settings/fast-trigger",
-        json={"mode": "off"},
-    )
-    assert route_changed.status_code == 200
-    stale_route = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": epoch,
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-    assert stale_route.status_code == 409
-    assert stale_route.json()["detail"] == "candidate_selection_policy_identity_mismatch"
-    route_restored = await client.post(
-        "/api/settings/fast-trigger",
-        json={"mode": "shadow"},
-    )
-    assert route_restored.status_code == 200
-
-    def audit_after_commit(events, **_kwargs):
-        assert not repo.get_db().in_transaction
-        return {event["id"] for event in events}
-
-    with patch(
-        "aletheia.files.jsonl.write_audits_deduplicated",
-        side_effect=audit_after_commit,
-    ) as write_audits:
-        admitted = await client.post(
-            "/api/settings/universe/candidate-selection/admit",
-            json={
-                "expected_policy_epoch": epoch,
-                "reason": "owner reviewed qualification",
-                "confirm_admission": True,
-            },
-        )
-    assert admitted.status_code == 200, admitted.text
-    assert admitted.json()["authority_enabled"] is True
-    assert write_audits.call_args.args[0][0]["event_type"] == "candidate_selection_authority_admitted"
-    assert admitted.json()["audit_mirror_status"] == "mirrored"
-    assert load_config().universe.candidate_selection_policy_epoch == epoch
-    assert repo.candidate_selection_epoch_is_admitted(epoch) is True
-
-    frozen = await client.post(
-        "/api/settings/universe",
-        json={"max_candidates": 21},
-    )
-    assert frozen.status_code == 409
-    assert frozen.json()["detail"]["code"] == "candidate_selection_policy_identity_frozen"
-    assert load_config().universe.max_candidates == original_max_candidates
-
-    for update in (
-        {"explore_ratio": 0.25},
-        {"family_quota": {"momentum": 1.0}},
-        {"family_quota_by_regime": {"bull": {"momentum": 1.0}}},
-    ):
-        frozen_control = await client.post("/api/settings/universe", json=update)
-        assert frozen_control.status_code == 409
-        assert frozen_control.json()["detail"]["fields"] == list(update)
-
-    from aletheia.universe.service import (
-        _assert_candidate_selection_publication_authority,
-    )
-
-    _assert_candidate_selection_publication_authority(
-        epoch,
-        qualification["selection_policy"],
-    )
-    changed_during_refresh = await client.post(
-        "/api/settings/fast-trigger",
-        json={"mode": "off"},
-    )
-    assert changed_during_refresh.status_code == 200
-    with pytest.raises(
-        RuntimeError,
-        match="candidate_selection_authority_changed_before_publication",
-    ):
-        _assert_candidate_selection_publication_authority(
-            epoch,
-            qualification["selection_policy"],
-        )
-    restored_route = await client.post(
-        "/api/settings/fast-trigger",
-        json={"mode": "shadow"},
-    )
-    assert restored_route.status_code == 200
-
-    with patch(
-        "aletheia.files.jsonl.write_audits_deduplicated",
-        side_effect=audit_after_commit,
-    ) as write_audits:
-        rolled_back = await client.post(
-            "/api/settings/universe/candidate-selection/rollback",
-            json={
-                "reason": "owner requested rollback",
-                "confirm_rollback": True,
-            },
-        )
-    assert rolled_back.status_code == 200, rolled_back.text
-    assert rolled_back.json()["configured_policy"] == "legacy_total_score_v1"
-    assert write_audits.call_args.args[0][0]["event_type"] == "candidate_selection_authority_rolled_back"
-    assert rolled_back.json()["audit_mirror_status"] == "mirrored"
-    assert load_config().universe.candidate_selection_policy_epoch is None
-    assert repo.candidate_selection_epoch_is_admitted(epoch) is False
-    from pydantic import TypeAdapter
-    from aletheia.server.routes.settings import CandidateSelectionTransitionResponse
-    adapter = TypeAdapter(CandidateSelectionTransitionResponse)
-    for response in (admitted, rolled_back):
-        parsed = adapter.validate_json(response.content, strict=True)
-        assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == response.json()
 
 
 @pytest.mark.anyio
-async def test_candidate_selection_admission_rechecks_overlap_under_writer_permit(
-    client, monkeypatch,
-):
-    from contextlib import contextmanager
-
+async def test_universe_policy_inputs_rotate_identity_without_admission(client):
     from aletheia.config.loader import load_config
-    from aletheia.storage import repositories as repo
-    from aletheia.universe import candidate_selection_authority as authority
-
-    entered = False
-    real_transaction = repo.transaction
-
-    @contextmanager
-    def competing_learning_transition(*, immediate=False, savepoint=False):
-        nonlocal entered
-        assert immediate is True
-        with real_transaction(immediate=immediate, savepoint=savepoint):
-            entered = True
-            yield
-
-    monkeypatch.setattr(repo, "transaction", competing_learning_transition)
-    monkeypatch.setattr(
-        authority,
-        "candidate_selection_overlap_block_reason",
-        lambda: (
-            "candidate_selection_overlapping_learning_authority"
-            if entered else None
-        ),
-    )
-
-    response = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": "candidate-selection-utility:qualified",
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == "candidate_selection_overlapping_learning_authority"
-
-
-@pytest.mark.anyio
-async def test_universe_policy_inputs_recheck_latest_config_under_writer_permit(
-    client, monkeypatch,
-):
-    from aletheia.config.loader import load_config
-    from aletheia.config.schema import UniverseConfig
-    from aletheia.server.routes import settings
-
-    latest = load_config()
-    latest.universe = UniverseConfig.model_validate({
-        **latest.universe.model_dump(mode="json"),
-        "candidate_selection_policy": "candidate_selection_utility_v1",
-        "candidate_selection_policy_epoch": "candidate-selection-utility:concurrent",
-    })
-
-    def apply_after_concurrent_admission(mutator):
-        return mutator(latest)
-
-    monkeypatch.setattr(settings, "mutate_config", apply_after_concurrent_admission)
-    response = await client.post(
-        "/api/settings/universe",
-        json={"explore_ratio": 0.25},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "candidate_selection_policy_identity_frozen"
-    assert load_config().universe.candidate_selection_policy == "legacy_total_score_v1"
+    from aletheia.universe.candidate_selection_authority import candidate_selection_authority_block_reason
+    before = load_config().universe.candidate_selection_policy_epoch
+    response = await client.post("/api/settings/universe", json={"max_candidates": 17})
+    assert response.status_code == 200
+    current = load_config()
+    assert current.universe.max_candidates == 17
+    assert current.universe.candidate_selection_policy_epoch != before
+    assert candidate_selection_authority_block_reason(current) is None
+    for action in ("admit", "rollback"):
+        assert (await client.post(f"/api/settings/universe/candidate-selection/{action}", json={})).status_code == 404
 
 
 @pytest.mark.anyio
@@ -897,162 +659,16 @@ async def test_candidate_identity_config_write_holds_publication_permit(
     assert response.status_code == 200
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_admission_fails_closed_when_evidence_unavailable(
-    client, monkeypatch,
-):
-    from aletheia.config.loader import load_config
-
-    def unavailable(**_kwargs):
-        raise RuntimeError("read failed")
-
-    monkeypatch.setattr(
-        "aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy",
-        unavailable,
-    )
-    response = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": "candidate-selection-utility:unknown",
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "candidate_selection_qualification_unavailable"
-    assert load_config().universe.candidate_selection_policy == "legacy_total_score_v1"
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_admission_restores_legacy_when_audit_fails(
-    client, monkeypatch,
-):
-    from aletheia.config.loader import load_config
-    from aletheia.universe.candidate_selection_authority import (
-        candidate_selection_policy_identity,
-    )
-
-    epoch = "candidate-selection-utility:audit-failure"
-    qualification = {
-        "verdict": "positive",
-        "promotion_eligible": True,
-        "policy_epoch_id": epoch,
-        "selection_policy": candidate_selection_policy_identity(load_config()),
-        "blocking_reasons": [],
-        "invalid_reasons": [],
-    }
-    monkeypatch.setattr(
-        "aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy",
-        lambda **_kwargs: qualification,
-    )
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.insert_audit_event_outbox",
-        lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")),
-    )
-    response = await client.post(
-        "/api/settings/universe/candidate-selection/admit",
-        json={
-            "expected_policy_epoch": epoch,
-            "reason": "owner reviewed qualification",
-            "confirm_admission": True,
-        },
-    )
-    assert response.status_code == 500
-    assert response.json()["detail"]["code"] == "candidate_selection_admission_audit_failed"
-    cfg = load_config().universe
-    assert cfg.candidate_selection_policy == "legacy_total_score_v1"
-    assert cfg.candidate_selection_policy_epoch is None
-    from aletheia.universe.service import (
-        _assert_candidate_selection_publication_authority,
-    )
-    with pytest.raises(
-        RuntimeError,
-        match="candidate_selection_authority_changed_before_publication",
-    ):
-        _assert_candidate_selection_publication_authority(
-            epoch,
-            qualification["selection_policy"],
-        )
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_rollback_restores_target_when_audit_fails(
-    client, monkeypatch,
-):
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.config.schema import UniverseConfig
-
-    cfg = load_config()
-    cfg.universe = UniverseConfig.model_validate({
-        **cfg.universe.model_dump(mode="json"),
-        "candidate_selection_policy": "candidate_selection_utility_v1",
-        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
-    })
-    save_config(cfg)
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.insert_audit_event_outbox",
-        lambda _event: (_ for _ in ()).throw(OSError("audit unavailable")),
-    )
-
-    response = await client.post(
-        "/api/settings/universe/candidate-selection/rollback",
-        json={
-            "reason": "owner requested rollback",
-            "confirm_rollback": True,
-        },
-    )
-
-    assert response.status_code == 500
-    assert response.json()["detail"]["code"] == "candidate_selection_rollback_audit_failed"
-    restored = load_config().universe
-    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
-    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_rollback_recovers_config_when_sqlite_commit_fails(
-    client, monkeypatch,
-):
-    from contextlib import contextmanager
 
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.config.schema import UniverseConfig
-    from aletheia.storage import repositories as repo
 
-    cfg = load_config()
-    cfg.universe = UniverseConfig.model_validate({
-        **cfg.universe.model_dump(mode="json"),
-        "candidate_selection_policy": "candidate_selection_utility_v1",
-        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
-    })
-    save_config(cfg)
-    real_transaction = repo.transaction
-    first = True
 
-    @contextmanager
-    def fail_first_commit(*, immediate=False, savepoint=False):
-        nonlocal first
-        should_fail = first
-        first = False
-        with real_transaction(immediate=immediate, savepoint=savepoint):
-            yield
-            if should_fail:
-                raise OSError("sqlite commit failed")
 
-    monkeypatch.setattr(repo, "transaction", fail_first_commit)
-    response = await client.post(
-        "/api/settings/universe/candidate-selection/rollback",
-        json={"reason": "owner requested rollback", "confirm_rollback": True},
-    )
-
-    assert response.status_code == 500
-    assert response.json()["detail"]["code"] == "candidate_selection_rollback_audit_failed"
-    restored = load_config().universe
-    assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
-    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
-    assert repo.candidate_selection_epoch_is_admitted(
-        "candidate-selection-utility:active"
-    ) is False
 
 
 def test_candidate_selection_transition_journal_recovers_after_process_exit():
@@ -1095,7 +711,8 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
     assert recover_candidate_selection_authority_transition() is True
     restored = load_config().universe
     assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
-    assert restored.candidate_selection_policy_epoch == "candidate-selection-utility:active"
+    from aletheia.universe.candidate_selection_authority import candidate_selection_authority_block_reason
+    assert candidate_selection_authority_block_reason(load_config()) is None
     assert not (get_data_dir() / "candidate_selection_authority_transition.json").exists()
 
 

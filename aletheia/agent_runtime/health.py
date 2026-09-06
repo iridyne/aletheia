@@ -64,6 +64,91 @@ _llm_consecutive_failures = 0
 _process_start_time: float = time.monotonic()
 
 
+# Atomically replaced by the background health job; requests never query these ledgers.
+_candidate_path_progress: dict | None = None
+_CANDIDATE_PATH_ISSUES = frozenset({
+    "candidate_refresh_failed", "candidate_refresh_stalled",
+    "candidate_planning_stalled", "candidate_outcome_backlog",
+})
+
+
+def get_candidate_path_progress_snapshot() -> dict:
+    from copy import deepcopy
+
+    snapshot = {
+        **dict.fromkeys(("generated_at", "last_attempt_at", "last_success_at", "last_snapshot_id",
+            "selection_policy", "policy_epoch", "selected_count", "planning_supported_count",
+            "observe_only_count", "ready_planning_count", "oldest_ready_at", "expired_claim_count",
+            "due_outcome_count", "oldest_due_at", "shadow_capture_status", "shadow_capture_reason")),
+        "selection_reason_counts": {}, "blocking_reason_counts": {},
+        "availability": {"available": False, "reason": "not_sampled"},
+        "issues": [], "ttl_seconds": 1200,
+        **(deepcopy(_candidate_path_progress) if _candidate_path_progress else {}),
+    }
+    try:
+        age = _timestamp_age_minutes(snapshot.get("generated_at"))
+    except (TypeError, ValueError):
+        age = None
+    snapshot["age_seconds"] = age * 60 if age is not None else None
+    if snapshot.get("generated_at") and (age is None or age * 60 > snapshot["ttl_seconds"]):
+        snapshot["availability"] = {"available": False, "reason": "cache_expired"}
+    elif age is None and snapshot["availability"]["available"]:
+        snapshot["availability"] = {"available": False, "reason": "cache_invalid"}
+    return snapshot
+
+
+def _refresh_candidate_path_progress() -> None:
+    global _candidate_path_progress
+    from aletheia.storage.repositories import get_candidate_path_progress
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    try:
+        cfg = load_config()
+        snapshot = get_candidate_path_progress()
+        snapshot["ttl_seconds"] = 1200
+        if not cfg.universe.enabled:
+            snapshot["availability"] = {"available": True, "reason": "disabled"}
+            snapshot["issues"] = []
+        elif cfg.runtime.paused or not cfg.runtime.scheduler_enabled:
+            snapshot["availability"] = {"available": True, "reason": "paused"}
+            snapshot["issues"] = []
+        else:
+            from aletheia.agent_runtime.scheduler import _current_scheduler, scheduled_job_status
+            state = scheduled_job_status("health_check")
+            scheduler = _current_scheduler()
+            if not state["registered"] or scheduler is None:
+                snapshot["availability"] = {"available": False, "reason": "not_configured"}
+                snapshot["issues"] = []
+                _candidate_path_progress = snapshot
+                return
+            elif state["paused"]:
+                snapshot["availability"] = {"available": False, "reason": "health_job_paused"}
+                snapshot["issues"] = []
+                _candidate_path_progress = snapshot
+                return
+            else:
+                interval = scheduler.get_job("health_check").trigger.interval.total_seconds()
+                if not math.isfinite(interval) or interval <= 0:
+                    raise ValueError("health_interval_unavailable")
+                snapshot["ttl_seconds"] = 2 * interval
+            success_age = _timestamp_age_minutes(snapshot.get("last_success_at"))
+            stalled_after = 2 * cfg.universe.refresh_interval_min * 60 + 600
+            if success_age is not None and success_age * 60 > stalled_after:
+                snapshot["issues"].append("candidate_refresh_stalled")
+            elif success_age is None:
+                if time.monotonic() - _process_start_time > stalled_after:
+                    snapshot["issues"].append("candidate_refresh_stalled")
+                elif snapshot["availability"]["available"]:
+                    snapshot["availability"] = {"available": False, "reason": "initializing"}
+        _candidate_path_progress = snapshot
+    except Exception as exc:
+        logger.warning("candidate progress probe failed: %s", type(exc).__name__)
+        _candidate_path_progress = {
+            "generated_at": generated_at, "availability": {"available": False, "reason": "probe_failed"},
+            "issues": [], "ttl_seconds": 1200,
+        }
+
+
 class _FutureTimestampError(ValueError):
     """A health timestamp is too far ahead of the host clock."""
 
@@ -299,6 +384,11 @@ def compute_health() -> dict:
     cfg = load_config()
     issues: list[str] = []
     initializing: list[str] = []
+    progress = get_candidate_path_progress_snapshot()
+    if cfg.universe.enabled and cfg.runtime.scheduler_enabled and not cfg.runtime.paused:
+        issues.extend(issue for issue in progress.get("issues", []) if issue in _CANDIDATE_PATH_ISSUES)
+        if not progress["availability"]["available"]:
+            initializing.append("candidate_progress_unavailable")
 
     runs = list_agent_runs(limit=20)
     if runs:
@@ -816,6 +906,7 @@ def run_health_check() -> dict:
     cfg = load_config()
     if not cfg.runtime.paused and cfg.runtime.scheduler_enabled:
         _check_ranker_admission_starvation()
+    _refresh_candidate_path_progress()
     h = compute_health()
     current_issue_keys = frozenset(
         str(issue).partition(":")[0] for issue in h["issues"]

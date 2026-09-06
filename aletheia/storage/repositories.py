@@ -70,6 +70,7 @@ _CANDIDATE_SELECTION_RECORD_VERSIONS = frozenset({
     "candidate-selection-utility-record/v1",
     "candidate-selection-utility-record/v2",
     "candidate-selection-utility-record/v3",
+    "candidate-selection-utility-record/v4",
 })
 _sqlite_logger = logging.getLogger("aletheia.storage.sqlite")
 _retention_metrics_lock = threading.Lock()
@@ -7303,11 +7304,13 @@ def _prune_filter_candidate_outcomes_batches(
                 "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
                 "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
                 "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') "
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4') "
                 "AND ((b.policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') "
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -7328,7 +7331,8 @@ def _prune_filter_candidate_outcomes_batches(
                 "FROM universe_twin_shadow_batches WHERE policy_epoch_id IN ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') "
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT COALESCE(NULLIF(entity_id, ''), CASE WHEN "
@@ -7955,13 +7959,16 @@ def upsert_ohlcv_candles(
         "ON CONFLICT(exchange, symbol, market_type, timeframe, ts) DO UPDATE SET "
         "open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, "
         "volume=excluded.volume, provider=excluded.provider, "
+        "first_persisted_at=COALESCE(market_ohlcv.first_persisted_at, excluded.first_persisted_at), "
         "last_mutated_at=excluded.last_mutated_at "
         "WHERE market_ohlcv.open IS NOT excluded.open "
         "OR market_ohlcv.high IS NOT excluded.high "
         "OR market_ohlcv.low IS NOT excluded.low "
         "OR market_ohlcv.close IS NOT excluded.close "
         "OR market_ohlcv.volume IS NOT excluded.volume "
-        "OR market_ohlcv.provider IS NOT excluded.provider",
+        "OR market_ohlcv.provider IS NOT excluded.provider"
+        " OR market_ohlcv.first_persisted_at IS NULL "
+        "OR market_ohlcv.last_mutated_at IS NULL",
         [
             (
                 effective_exchange,
@@ -8490,7 +8497,7 @@ def _validate_universe_twin_prospective_bundle(
 
     if batch.record_version in _CANDIDATE_SELECTION_RECORD_VERSIONS:
         authority_applied = bool(batch.promotion_eligible)
-        if batch.record_version == "candidate-selection-utility-record/v3":
+        if batch.record_version in {"candidate-selection-utility-record/v3", "candidate-selection-utility-record/v4"}:
             try:
                 sampling = json.loads(batch.allocation_context_json)
             except (TypeError, ValueError):
@@ -8501,6 +8508,13 @@ def _validate_universe_twin_prospective_bundle(
                 or sampling.get("minimum_interval_sec") != 4 * 60 * 60
             ):
                 raise ValueError("candidate_selection_sampling_contract_invalid")
+        if batch.record_version == "candidate-selection-utility-record/v4":
+            authority_policy = sampling.get("authority_policy")
+            if authority_policy not in {"candidate_selection_utility_v1", "legacy_total_score_v1"}:
+                raise ValueError("candidate_selection_authority_contract_invalid")
+            authority_applied = authority_policy == "candidate_selection_utility_v1"
+            if batch.promotion_eligible:
+                raise ValueError("candidate_selection_runtime_promotion_invalid")
         try:
             batch_blockers = json.loads(batch.blocking_reasons_json)
         except (TypeError, ValueError):
@@ -8509,7 +8523,7 @@ def _validate_universe_twin_prospective_bundle(
             raise ValueError("candidate_selection_authority_blocking_state_invalid")
         if any(item.shadow_authority_applied != authority_applied for item in evidence):
             raise ValueError("candidate_selection_authority_state_mixed")
-        if any(item.promotion_eligible != authority_applied for item in evidence):
+        if any(item.promotion_eligible != batch.promotion_eligible for item in evidence):
             raise ValueError("candidate_selection_record_promotion_state_invalid")
         expected_keys: set[str] = set()
         expected_allocations: dict[str, bool] = {}
@@ -8538,7 +8552,7 @@ def _validate_universe_twin_prospective_bundle(
             if contract.get("outcome_contract_version") != "candidate-selection-utility-outcome/v1":
                 raise ValueError("candidate_selection_shadow_outcome_contract_invalid")
             if (
-                batch.record_version == "candidate-selection-utility-record/v3"
+                batch.record_version in {"candidate-selection-utility-record/v3", "candidate-selection-utility-record/v4"}
                 and contract.get("evidence_sampling_contract")
                 != "candidate-selection-evidence-cadence/v2"
             ):
@@ -8549,7 +8563,7 @@ def _validate_universe_twin_prospective_bundle(
                 raise ValueError("candidate_selection_policy_epoch_mismatch")
             if contract.get("shadow_authority_applied") is not authority_applied:
                 raise ValueError("candidate_selection_authority_contract_mismatch")
-            if contract.get("promotion_eligible") is not authority_applied:
+            if contract.get("promotion_eligible") is not batch.promotion_eligible:
                 raise ValueError("candidate_selection_promotion_contract_mismatch")
             if not isinstance(keys, dict) or set(keys) - {"long", "short"}:
                 raise ValueError("candidate_selection_shadow_outcome_keys_invalid")
@@ -9053,6 +9067,29 @@ def insert_universe_members_batch(members: list[UniverseMember]) -> int:
     )
 
 
+def _project_candidate_admission(row: dict) -> dict:
+    """Expose only hash- and identity-validated admission evidence; never infer it."""
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    fields = ("admission_basis", "startup_reason", "pessimistic_strength")
+    row.update(dict.fromkeys(fields))
+    encoded = row.get("candidate_opportunity_context_json")
+    if not encoded:
+        return row
+    try:
+        context = CandidateOpportunityContextV1.model_validate_json(encoded)
+    except ValueError:
+        return row
+    if (context.context_hash != row.get("candidate_opportunity_context_hash")
+            or context.candidate_id != row.get("last_candidate_id", row.get("id"))
+            or context.candidate_selection["policy"] != row.get("candidate_selection_policy")
+            or context.candidate_selection.get("policy_epoch") != row.get("candidate_selection_policy_epoch")
+            or context.opportunity["primary_mechanism"] != row.get("opportunity_mechanism")):
+        return row
+    row.update({field: context.opportunity.get(field) for field in fields})
+    return row
+
+
 def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict]:
     if limit is None:
         rows = (
@@ -9063,14 +9100,14 @@ def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict
             )
             .fetchall()
         )
-        return [dict(row) for row in rows]
-    return _select_all(
+        return [_project_candidate_admission(dict(row)) for row in rows]
+    return [_project_candidate_admission(row) for row in _select_all(
         "universe_members",
         where="snapshot_id = ?",
         params=(snapshot_id,),
         order="rank ASC",
         limit=limit,
-    )
+    )]
 
 
 list_candidates = list_universe_members
@@ -9139,7 +9176,8 @@ def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, 
 
 
 def get_universe_member(member_id: str) -> dict | None:
-    return _select_one("universe_members", member_id)
+    row = _select_one("universe_members", member_id)
+    return _project_candidate_admission(row) if row is not None else None
 
 
 get_candidate = get_universe_member
@@ -9197,6 +9235,14 @@ def get_candidate_planning_for_candidate(
             )
             .fetchone()
         )
+    if row is None:
+        row = get_db().execute(
+            "SELECT pg.* FROM audit_events ae JOIN candidate_planning_generations pg "
+            "ON pg.id=json_extract(CASE WHEN json_valid(ae.after_state) THEN ae.after_state ELSE '{}' END, '$.planning_generation_id') "
+            "WHERE ae.event_type='candidate_planning_associated' AND ae.entity_type='candidate' "
+            "AND ae.entity_id=? ORDER BY pg.is_current DESC,pg.cycle_number DESC,pg.id DESC LIMIT 1",
+            (candidate_id,),
+        ).fetchone()
     projected = _effective_candidate_attention(dict(row) if row else None, now=now)
     if projected is not None:
         for field in ("identity_version", "planner_contract_version", "activation_identity"):
@@ -9204,20 +9250,216 @@ def get_candidate_planning_for_candidate(
     return projected
 
 
+def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
+    """Read exact execution and settlement links from one SQLite snapshot."""
+    from aletheia.portfolio.paper_account import _TERMINAL_ECONOMICS_EXCLUSIONS
+    from aletheia.portfolio.pnl import _realized_economics_value
+    from aletheia.trading.trading_mandate import normalize_physical_market_type
+    from aletheia.analytics.outcome_semantics import validated_outcome_economics
+    from aletheia.learning.entry_context import _instant
+
+    cutoff = datetime.now(timezone.utc)
+
+    identifiers = list(dict.fromkeys(plan_ids))
+    result = {}
+    with transaction():
+        db = get_db()
+        for offset in range(0, len(identifiers), 200):
+            batch = identifiers[offset:offset + 200]
+            placeholders = ",".join("?" for _ in batch)
+            plans = {row["id"]: dict(row) for row in db.execute(
+                f"SELECT * FROM entry_plans WHERE id IN ({placeholders})", batch
+            )}
+            linked_ids = [p["order_id"] for p in plans.values() if p.get("order_id")]
+            linked_marks = ",".join("?" for _ in linked_ids) or "NULL"
+            orders = {row["id"]: dict(row) for row in db.execute(
+                f"SELECT * FROM orders WHERE entry_plan_id IN ({placeholders}) "
+                f"OR id IN ({linked_marks})", [*batch, *linked_ids]
+            )}
+            proposal_ids = [o["proposal_id"] for o in orders.values() if o.get("proposal_id")]
+            proposals = {row["id"]: dict(row) for row in db.execute(
+                "SELECT * FROM trade_proposals WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(proposal_ids),),
+            )}
+            order_ids = list(orders)
+            marks = ",".join("?" for _ in order_ids) or "NULL"
+            fills = [dict(row) for row in db.execute(
+                f"SELECT * FROM fills WHERE order_id IN ({marks})", order_ids
+            )]
+            outcomes = [dict(row) for row in db.execute(
+                "SELECT * FROM filter_candidate_outcomes WHERE horizon='4h' "
+                "AND outcome_candidate_key IN (SELECT value FROM json_each(?))",
+                (json.dumps([f"entry-fill:{f['id']}" for f in fills]),),
+            )]
+            position_ids = [o["position_id"] for o in orders.values() if o.get("position_id")]
+            position_marks = ",".join("?" for _ in position_ids) or "NULL"
+            positions = {row["id"]: dict(row) for row in db.execute(
+                f"SELECT * FROM positions WHERE order_id IN ({marks}) "
+                f"OR id IN ({position_marks})", [*order_ids, *position_ids]
+            )}
+            pids = list(positions)
+            pm = ",".join("?" for _ in pids) or "NULL"
+            closes = [dict(row) for row in db.execute(
+                f"SELECT * FROM orders WHERE position_id IN ({pm}) AND close_reason IS NOT NULL", pids
+            )]
+            cids = [row["id"] for row in closes]
+            close_fills = [dict(row) for row in db.execute(
+                "SELECT * FROM fills WHERE order_id IN (SELECT value FROM json_each(?))", (json.dumps(cids),)
+            )]
+            events = [dict(row) for row in db.execute(
+                f"SELECT * FROM position_close_events WHERE position_id IN ({pm}) AND is_partial=0", pids
+            )]
+            cash = [dict(row) for row in db.execute(
+                f"SELECT * FROM paper_account_events WHERE position_id IN ({pm}) "
+                "AND action IN ('position_closed','manual_credit','manual_debit')", pids
+            )]
+            for plan_id in batch:
+                item = {"order": None, "fills": None, "position": None,
+                        "close_orders": [], "close_fills": [],
+                        "entry_outcomes": [],
+                        "availability": {"available": True, "reason": None},
+                        "economics": {"status": "not_applicable", "reason": None},
+                        "execution_state": "NOT_STARTED"}
+                result[plan_id] = item
+                plan = plans.get(plan_id)
+                related = [o for o in orders.values() if o.get("entry_plan_id") == plan_id]
+                order = orders.get(plan.get("order_id")) if plan else None
+                reason = None
+                if plan is None:
+                    reason = "entry_plan_missing"
+                elif plan.get("order_id") and order is None:
+                    reason = "linked_order_missing"
+                elif len(related) > 1 or (order and related and related[0]["id"] != order["id"]):
+                    reason = "order_relation_ambiguous"
+                elif order and order.get("entry_plan_id") not in (None, plan_id):
+                    reason = "order_relation_conflict"
+                if order is None and not reason and related:
+                    order = related[0]
+                if order and plan and not reason:
+                    proposal = proposals.get(order.get("proposal_id"))
+                    if (proposal is None or proposal.get("entry_plan_id") != plan_id
+                        or normalize_physical_market_type(order.get("market_type")) != plan["market_type"]
+                        or to_canonical(str(order.get("symbol") or "")) != plan["symbol"]
+                        or order.get("direction") != plan["direction"]):
+                        reason = "order_proposal_identity_conflict"
+                if reason:
+                    item.update(availability={"available": False, "reason": reason}, execution_state="UNAVAILABLE")
+                    continue
+                if order is None:
+                    if plan["status"] in {"ordered", "partially_filled", "filled"}:
+                        item.update(availability={"available": False, "reason": "expected_order_missing"}, execution_state="UNAVAILABLE")
+                    continue
+                of = [f for f in fills if f["order_id"] == order["id"]]
+                quantity = sum(float(f["fill_quantity"]) for f in of)
+                item["order"] = {k: order.get(k) for k in ("id", "proposal_id", "risk_decision_id", "exchange_order_id", "status", "quantity", "position_id", "created_at", "filled_at")}
+                item["fills"] = {"ids": [f["id"] for f in of], "count": len(of), "quantity": quantity,
+                                 "latest_at": max((str(f["filled_at"]) for f in of), default=None)}
+                for fill in of:
+                    matching = [outcome for outcome in outcomes if outcome["outcome_candidate_key"] == f"entry-fill:{fill['id']}"]
+                    summary = {"fill_id": fill["id"], "horizon": "4h", "status": "unavailable", "reason": "fixed_horizon_outcome_missing"}
+                    if len(matching) == 1:
+                        outcome = matching[0]
+                        summary.update(id=outcome["id"], due_at=outcome.get("due_at"), settled_at=outcome.get("settled_at"))
+                        exact = all(outcome.get(key) == plan.get(key) for key in ("venue", "symbol", "market_type", "direction"))
+                        try:
+                            exact = exact and _instant(outcome["entry_ts"]) == _instant(fill["filled_at"])
+                            ready = _instant(outcome["due_at"]) <= cutoff and _instant(outcome["settled_at"]) <= cutoff
+                        except (TypeError, ValueError):
+                            ready = False
+                        economics = validated_outcome_economics(outcome) if exact and ready else None
+                        if exact and outcome["status"] == "pending":
+                            summary.update(status="pending", reason="fixed_horizon_pending")
+                        elif economics is not None and outcome["status"] == "settled":
+                            summary.update(status="complete", reason=None, economics=economics)
+                        else:
+                            summary["reason"] = "fixed_horizon_evidence_unavailable"
+                    item["entry_outcomes"].append(summary)
+                ps = [p for p in positions.values() if p["id"] == order.get("position_id") or p.get("order_id") == order["id"]]
+                if len(ps) > 1 or (quantity > 0 and not ps):
+                    item.update(availability={"available": False, "reason": "position_relation_unavailable"}, execution_state="UNAVAILABLE")
+                    continue
+                if not ps:
+                    item["execution_state"] = ("CANCEL_PENDING" if order["status"] == "cancel_pending" else
+                        "NO_FILL" if order["status"] in {"cancelled", "rejected", "failed"} and quantity == 0 else "ORDER_WORKING")
+                    continue
+                if not of:
+                    item.update(availability={"available": False, "reason": "entry_fill_relation_missing"}, execution_state="UNAVAILABLE")
+                    continue
+                position = ps[0]
+                if (position.get("proposal_id") != order.get("proposal_id")
+                    or position.get("symbol") != order.get("symbol")
+                    or normalize_physical_market_type(position.get("market_type")) != plan["market_type"]
+                    or position.get("direction") != order.get("direction")
+                    or position.get("execution_mode") != order.get("execution_mode")):
+                    item.update(availability={"available": False, "reason": "position_proposal_conflict"}, execution_state="UNAVAILABLE")
+                    continue
+                item["position"] = {k: position.get(k) for k in (
+                    "id", "status", "quantity", "entry_price", "opened_at", "closed_at", "pending_close_order_id",
+                    "pending_close_status", "outcome_eligible", "outcome_exclusion_reason")}
+                pc = [c for c in closes if c["position_id"] == position["id"]]
+                pci = {c["id"] for c in pc}
+                item["close_orders"] = [{k: c.get(k) for k in ("id", "status", "quantity", "created_at", "filled_at")} for c in pc]
+                item["close_fills"] = [{k: f.get(k) for k in ("id", "order_id", "fill_quantity", "filled_at")} for f in close_fills if f["order_id"] in pci]
+                if position["status"] == "open":
+                    item["execution_state"] = "POSITION_CLOSING" if position.get("pending_close_order_id") or position.get("pending_close_status") else "POSITION_OPEN"
+                    continue
+                exclusion = str(position.get("outcome_exclusion_reason") or "")
+                if exclusion in _TERMINAL_ECONOMICS_EXCLUSIONS:
+                    item["economics"] = {"status": "excluded", "reason": exclusion}
+                    item["execution_state"] = "OUTCOME_EXCLUDED"
+                    continue
+                pnl = _realized_economics_value(position)
+                if pnl is None:
+                    item["economics"] = {"status": "pending", "reason": "costs_incomplete"}
+                    item["execution_state"] = "CLOSED_PENDING_ECONOMICS"
+                    continue
+                pe = [e for e in events if e["position_id"] == position["id"]]
+                ce = [e for e in cash if e["position_id"] == position["id"]]
+                if position["execution_mode"] == "paper_internal" and (
+                    len(pe) != 1 or pe[0].get("realized_pnl") is None
+                    or not math.isclose(float(pe[0]["realized_pnl"]), pnl, rel_tol=0, abs_tol=1e-8)
+                    or not any(e["action"] == "position_closed" for e in ce)
+                    or not math.isclose(sum(float(e["amount_usdt"]) for e in ce), pnl, rel_tol=0, abs_tol=1e-8)
+                ):
+                    item["economics"] = {"status": "unavailable", "reason": "settlement_projection_inconsistent"}
+                    item["execution_state"] = "UNAVAILABLE"
+                elif not item["close_fills"]:
+                    item["economics"] = {"status": "unavailable", "reason": "close_fill_relation_missing"}
+                    item["execution_state"] = "UNAVAILABLE"
+                else:
+                    item["economics"] = {"status": "complete", "reason": None}
+                    item["execution_state"] = "CLOSED"
+    return result
+
+
+
+def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[str, list[dict]]:
+    keys = list(dict.fromkeys(planning_keys))
+    result = {key: [] for key in keys}
+    with transaction():
+        for offset in range(0, len(keys), 200):
+            batch = keys[offset:offset + 200]
+            placeholders = ",".join("?" for _ in batch)
+            rows = [dict(row) for row in get_db().execute(
+                "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
+                "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
+                "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
+                "ep.terminal_reason AS entry_plan_terminal_reason "
+                "FROM candidate_planning_generations pg "
+                "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+                f"WHERE pg.planning_key IN ({placeholders}) ORDER BY pg.cycle_number,pg.created_at,pg.id",
+                batch,
+            )]
+            lineage = get_entry_plan_execution_lineage([row["entry_plan_id"] for row in rows if row.get("entry_plan_id")])
+            for row in rows:
+                row["execution"] = lineage.get(row.get("entry_plan_id"))
+                result[row["planning_key"]].append(row)
+    return result
+
+
 def list_candidate_planning_cycles(*, planning_key: str) -> list[dict]:
-    return [
-        dict(row)
-        for row in get_db().execute(
-            "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
-            "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
-            "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
-            "ep.terminal_reason AS entry_plan_terminal_reason "
-            "FROM candidate_planning_generations pg "
-            "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
-            "WHERE pg.planning_key=? ORDER BY pg.cycle_number,pg.created_at,pg.id",
-            (planning_key,),
-        ).fetchall()
-    ]
+    return list_candidate_planning_cycles_batch(planning_keys=[planning_key])[planning_key]
+
 
 
 def get_candidate_entry_lifecycle(candidate_id: str) -> dict:
@@ -9342,6 +9584,7 @@ def reconcile_candidate_attention(
                 source_json = json.dumps(
                     {
                         **refresh_source,
+                        **{k: v for k, v in json.loads(row["requalification_source_json"] or "{}").items() if k == "birth_material"},
                         "planning_generation_id": generation_id,
                         "planning_identity": row["planning_identity"],
                     },
@@ -9374,6 +9617,55 @@ def reconcile_candidate_attention(
     return counts
 
 
+def prepare_candidate_requalification(candidate: dict) -> dict | None:
+    """Freeze bounded local PA evidence before entering publication's writer."""
+    from aletheia.storage.sqlite import read_snapshot
+    from aletheia.trading.entry_analysis import entry_causal_windows, fingerprint, planning_structure_material
+    from aletheia.trading.entry_analysis import entry_orderbook_available
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    if get_db().in_transaction:
+        raise ValueError("requalification_preparation_inside_transaction")
+    if not candidate.get("execution_eligible") or not candidate.get("candidate_opportunity_context_json"):
+        return None
+    context = CandidateOpportunityContextV1.model_validate_json(candidate["candidate_opportunity_context_json"])
+    cutoff = _normalized_utc_datetime(str(context.source["source_cutoff_at"]))
+    behavior, schema = entry_contract_fingerprints()
+    instrument = tuple(str(candidate[key]) for key in ("venue", "symbol", "market_type"))
+    with read_snapshot():
+        current = get_db().execute(
+            "SELECT id FROM candidate_planning_generations "
+            "WHERE venue=? AND symbol=? AND market_type=? AND is_current=1 "
+            "ORDER BY (entry_behavior_fingerprint IS NOT NULL) DESC,created_at DESC,id DESC LIMIT 1",
+            instrument,
+        ).fetchone()
+        rows = get_ohlcv_candles(candidate["symbol"], "15m", 96, candidate["venue"],
+            candidate["market_type"], int(cutoff.timestamp()*1000) - 900_000 + 1, include_provenance=True)
+        book = latest_orderbook(candidate["symbol"], candidate["venue"], candidate["market_type"])
+    windows, structures, _, _ = entry_causal_windows(*instrument, candidate["scanner_direction"], {"15m": rows}, cutoff)
+    material = planning_structure_material(structures)
+    if material is None:
+        return None
+    proof = {
+        "candidate_id": candidate["id"], "snapshot_id": candidate["snapshot_id"],
+        "candidate_context_hash": context.context_hash,
+        "expected_generation_id": current["id"] if current else None,
+        "planning_key": candidate_planning_identity(candidate)[0],
+        "instrument": dict(zip(("venue", "symbol", "market_type"), instrument)),
+        "source_cutoff_at": cutoff.isoformat(),
+        "entry_behavior_fingerprint": behavior, "schema_fingerprint": schema,
+        "source_fingerprint": windows["15m"]["source_fingerprint"],
+        "last_closed_at_ms": windows["15m"]["bars"][-1]["ts"] + 900_000,
+        "material": material,
+        "orderbook": ({k: book[k] for k in ("id", "observed_at", "bid_price", "ask_price", "spread_bps", "total_depth_10bps_usd")}
+            if entry_orderbook_available(book, cutoff) else None),
+    }
+    return {**proof, "proof_hash": fingerprint(proof)}
+
+
+
 def ensure_candidate_planning_generation(
     candidate_id: str,
     *,
@@ -9381,12 +9673,19 @@ def ensure_candidate_planning_generation(
     soft_lease_sec: int = 900,
     max_attention_age_sec: int = 3600,
     now: datetime | None = None,
+    requalification: dict | None = None,
 ) -> tuple[dict, bool]:
     """Own one thesis-level planning generation without snapshot/rank churn."""
 
     from aletheia.trading.entry_plan import candidate_planning_identity
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    from aletheia.trading.entry_analysis import fingerprint, planning_structure_material
+
+    if requalification is None and not get_db().in_transaction:
+        preparation_candidate = get_candidate(candidate_id)
+        if preparation_candidate is not None:
+            requalification = prepare_candidate_requalification(preparation_candidate)
 
     current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if not 300 <= int(soft_lease_sec) <= int(max_attention_age_sec) <= 86_400:
@@ -9488,6 +9787,88 @@ def ensure_candidate_planning_generation(
                 ).fetchone()
             )
         )
+        # The proof is prepared without the writer. Recheck its exact owner and
+        # publication identity here; a concurrent successor makes it stale.
+        if requalification is not None:
+            proof_payload = {k: v for k, v in requalification.items() if k != "proof_hash"}
+            expected = {
+                "candidate_id": candidate_id, "snapshot_id": candidate["snapshot_id"],
+                "candidate_context_hash": context.context_hash,
+                "expected_generation_id": existing["id"] if existing else None,
+                "planning_key": planning_key,
+                "instrument": {k: candidate[k] for k in ("venue", "symbol", "market_type")},
+                "source_cutoff_at": _normalized_utc_datetime(str(context.source["source_cutoff_at"])).isoformat(),
+                "entry_behavior_fingerprint": entry_behavior_fingerprint,
+                "schema_fingerprint": schema_fingerprint,
+            }
+            if (not candidate_snapshot_complete
+                or context.candidate_id != candidate_id
+                or context.context_hash != candidate.get("candidate_opportunity_context_hash")
+                or _normalized_utc_datetime(expected["source_cutoff_at"]) > current_time
+                or any(requalification.get(k) != v for k, v in expected.items())
+                or fingerprint(proof_payload) != requalification.get("proof_hash")):
+                requalification = None
+            if requalification is not None:
+                # Candle corrections may land between preparation and this writer.
+                # Compare the exact admitted rows; do not rerun the structure kernel here.
+                rows = get_ohlcv_candles(
+                    candidate["symbol"], "15m", 96, candidate["venue"],
+                    candidate["market_type"],
+                    int(_normalized_utc_datetime(expected["source_cutoff_at"]).timestamp()*1000) - 900_000 + 1,
+                    include_provenance=True,
+                )
+                if (fingerprint(rows) != requalification.get("source_fingerprint")
+                    or not rows
+                    or rows[-1]["ts"] + 900_000 != requalification.get("last_closed_at_ms")):
+                    requalification = None
+        structure_requalified = False
+        dependency_recovered = False
+        if (requalification is not None and existing is not None
+            and existing["planning_key"] == planning_key
+            and existing.get("entry_behavior_fingerprint") == entry_behavior_fingerprint
+            and existing.get("schema_fingerprint") == schema_fingerprint
+            and existing.get("attention_status") == "terminal"
+            and existing_plan is None and not unresolved_execution
+            and later_completed_requalification):
+            birth = json.loads(existing["requalification_source_json"] or "{}").get("birth_material")
+            baseline = birth["material"] if birth else None
+            compared_at = birth["source_cutoff_at"] if birth else existing_context.source["source_cutoff_at"]
+            if existing.get("planner_input_json"):
+                frozen = json.loads(existing["planner_input_json"])
+                frozen_material = planning_structure_material(frozen.get("market_structure", {}))
+                if frozen_material is not None:
+                    baseline = frozen_material
+                compared_at = max(_normalized_utc_datetime(compared_at),
+                    _normalized_utc_datetime(frozen["analysis_cutoff_at"])).isoformat()
+            material = requalification["material"]
+            prior_ids = {f["id"] for f in baseline["facts"]} if baseline else set()
+            structure_requalified = bool(
+                baseline and baseline["fingerprint"] != material["fingerprint"]
+                and any(f["id"] not in prior_ids
+                    and f["known_at_ms"] > _normalized_utc_datetime(compared_at).timestamp()*1000
+                    for f in material["facts"])
+            )
+            blocked_reason = json.loads(existing["result_json"] or "{}").get("reason")
+            dependency_failure = blocked_reason in {
+                "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
+                "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+            }
+            if dependency_failure:
+                structure_requalified = False
+            book = requalification.get("orderbook")
+            dependency_recovered = bool(
+                existing.get("result_kind") == "unavailable"
+                and not existing.get("model_invoked") and not existing.get("planner_input_json")
+                and dependency_failure
+                and book and existing.get("attention_terminal_at")
+                and requalification.get("last_closed_at_ms", 0)
+                    > max(_normalized_utc_datetime(compared_at),
+                        _normalized_utc_datetime(existing["attention_terminal_at"])).timestamp()*1000
+                and _normalized_utc_datetime(book["observed_at"])
+                    > _normalized_utc_datetime(existing["attention_terminal_at"])
+            )
+
+
         eligibility_recovered = bool(
             eligibility_recovered
             and later_completed_requalification
@@ -9532,15 +9913,26 @@ def ensure_candidate_planning_generation(
             and not eligibility_recovered
             and not expired_requalified
             and not material_input_changed
+            and not structure_requalified
+            and not dependency_recovered
             and not compatibility_cutover
         ):
+            if candidate_id not in {existing["candidate_id"], existing["last_candidate_id"]}:
+                insert_audit_event_once(AuditEvent(
+                    id=f"candidate-planning:{candidate_id}:{existing['id']}",
+                    timestamp=timestamp, actor="system", source="universe",
+                    event_type="candidate_planning_associated", entity_type="candidate",
+                    entity_id=candidate_id,
+                    after_state=json.dumps({"planning_generation_id": existing["id"]}),
+                    message="Candidate retained the existing planning cycle",
+                ))
             execute_write(
                 "UPDATE candidate_planning_generations SET "
-                "last_candidate_id=CASE WHEN planner_input_json IS NULL THEN ? ELSE last_candidate_id END, "
+                "last_candidate_id=CASE WHEN planner_input_json IS NULL AND attention_status='active' THEN ? ELSE last_candidate_id END, "
                 "updated_at=? WHERE id=?",
                 (candidate_id, timestamp, existing["id"]),
             )
-            if existing.get("planner_input_json") is None:
+            if existing.get("planner_input_json") is None and existing.get("attention_status") == "active":
                 existing["last_candidate_id"] = candidate_id
             existing["updated_at"] = timestamp
             return existing, False
@@ -9554,6 +9946,10 @@ def ensure_candidate_planning_generation(
             if compatibility_cutover
             else "material_input_changed"
             if material_input_changed
+            else "confirmed_structure_requalified"
+            if structure_requalified
+            else "planning_dependencies_recovered"
+            if dependency_recovered
             else "execution_eligibility_recovered"
             if eligibility_recovered
             else "incompatible_planning_generation"
@@ -9564,13 +9960,15 @@ def ensure_candidate_planning_generation(
                 if reason == "canonical_compatibility_cutover"
                 else "planning_generation_superseded"
             )
-            execute_write(
+            superseded = execute_write(
                 "UPDATE candidate_planning_generations SET is_current=0, "
                 "status='superseded', attention_status='terminal', "
                 "attention_terminal_at=?, attention_terminal_reason=?, "
                 "updated_at=? WHERE id=? AND is_current=1",
                 (timestamp, terminal_reason, timestamp, existing["id"]),
             )
+            if superseded.rowcount != 1:
+                raise ValueError("candidate_requalification_cas_lost")
             execute_write(
                 "UPDATE entry_plans SET status='invalidated', terminal_at=?, "
                 "terminal_reason=?, updated_at=? WHERE planning_generation_id=? "
@@ -9621,8 +10019,11 @@ def ensure_candidate_planning_generation(
                 else "canonical_compatibility_cutover" if compatibility_cutover
                 else "runtime_authority_recovered" if eligibility_recovered
                 else "material_input_changed" if material_input_changed
+                else "confirmed_structure_requalified" if structure_requalified
+                else "planning_dependencies_recovered" if dependency_recovered
                 else "initial_candidate"
             ),
+            requalification_source_json=(json.dumps({"birth_material": requalification}, sort_keys=True, separators=(",", ":")) if requalification is not None else None),
             requalification_candidate_id=candidate_id,
             entry_behavior_fingerprint=entry_behavior_fingerprint,
             schema_fingerprint=schema_fingerprint,
@@ -9705,6 +10106,214 @@ def claim_next_candidate_planning(
             .fetchone()
         )
         return dict(result) if result else None
+
+
+def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
+    """Read current Candidate debt in one snapshot, without evaluator or write paths."""
+    from aletheia.config.loader import load_config
+    from aletheia.trading.entry_profiles import compatible_entry_profiles
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = current.isoformat()
+    cfg = load_config()
+    policy = cfg.universe.candidate_selection_policy
+    epoch = cfg.universe.candidate_selection_policy_epoch
+    result = {
+        "generated_at": timestamp, "availability": {"available": True, "reason": None},
+        "last_attempt_at": None, "last_success_at": None, "last_snapshot_id": None,
+        "selection_policy": policy, "policy_epoch": epoch,
+        "selected_count": None, "planning_supported_count": None, "observe_only_count": None,
+        "selection_reason_counts": {}, "ready_planning_count": 0, "oldest_ready_at": None,
+        "expired_claim_count": 0, "due_outcome_count": 0, "oldest_due_at": None,
+        "issues": [], "blocking_reason_counts": {}, "shadow_capture_status": None,
+        "shadow_capture_reason": None,
+    }
+    with transaction():
+        db = get_db()
+        latest = db.execute("SELECT * FROM universe_scanner_runs ORDER BY started_at DESC,id DESC LIMIT 1").fetchone()
+        success = db.execute("SELECT * FROM universe_scanner_runs WHERE status='completed' "
+                             "ORDER BY completed_at DESC,id DESC LIMIT 1").fetchone()
+        if latest:
+            result["last_attempt_at"] = latest["started_at"]
+            if latest["status"] == "failed":
+                result["issues"].append("candidate_refresh_failed")
+        if success:
+            result["last_success_at"] = success["completed_at"]
+            result["last_snapshot_id"] = success["snapshot_id"]
+        source = latest or success
+        if source:
+            metrics = json.loads(source["metrics"] or "{}").get("candidate_path", {})
+            if not metrics:
+                result["availability"] = {"available": False, "reason": "scanner_metrics_unavailable"}
+            elif metrics.get("selection_policy", policy) != policy:
+                result["availability"] = {"available": False, "reason": "selection_identity_unavailable"}
+            for key in ("selected_count", "planning_supported_count", "observe_only_count",
+                        "selection_reason_counts", "shadow_capture_status", "shadow_capture_reason"):
+                if key in metrics:
+                    result[key] = metrics[key]
+            # A post-commit capture may have finished after its scanner status update was lost.
+            # Reconcile in the projection only: GET/health never repairs durable ledgers.
+            batch = db.execute("SELECT policy_epoch_id FROM universe_twin_shadow_batches "
+                               "WHERE scanner_run_id=?", (source["id"],)).fetchone()
+            if result["shadow_capture_status"] == "pending" and batch:
+                result["shadow_capture_status"] = "captured"
+                result["shadow_capture_reason"] = None
+            if policy == "legacy_total_score_v1":
+                epoch_row = db.execute(
+                    "SELECT b.policy_epoch_id, b.policy_json FROM universe_twin_shadow_batches b "
+                    "JOIN universe_scanner_runs s ON s.id=b.scanner_run_id "
+                    "WHERE b.policy_epoch_id IS NOT NULL AND s.status='completed' "
+                    "AND b.record_version LIKE 'candidate-selection-utility-record/%' "
+                    "ORDER BY b.captured_at DESC,b.scanner_run_id DESC LIMIT 1"
+                ).fetchone()
+                epoch = epoch_row[0] if epoch_row else None
+                if epoch_row:
+                    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+                    frozen = json.loads(epoch_row["policy_json"]).get("selection_policy", {})
+                    control = frozen.get("legacy_control", {})
+                    control.pop("family_spread_tolerances", None)
+                    control.pop("family_spread_tolerance_source", None)
+                    if frozen != candidate_selection_policy_identity(cfg):
+                        epoch = None
+                        result["blocking_reason_counts"]["selection_epoch_unavailable"] = 1
+        result["policy_epoch"] = epoch
+        result["watchable_plan_counts"] = {
+            row["state"]: row["count"] for row in db.execute(
+                "SELECT COALESCE(monitoring_state,'unavailable') AS state, COUNT(*) AS count "
+                "FROM entry_plans WHERE status IN ('waiting','triggered','risk_reserved','ordered','partially_filled') "
+                "GROUP BY COALESCE(monitoring_state,'unavailable')"
+            ).fetchall()
+        }
+        rows = db.execute(
+            "SELECT pg.*, um.candidate_opportunity_context_json AS context_json, "
+            "um.candidate_opportunity_context_hash AS context_hash, um.id AS member_id, "
+            "um.venue AS member_venue, um.symbol AS member_symbol, um.market_type AS member_market "
+            "FROM candidate_planning_generations pg LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
+            "WHERE pg.is_current=1 AND pg.attention_status='active' "
+            "AND pg.entry_behavior_fingerprint IS NOT NULL AND (um.execution_eligible=1 OR um.id IS NULL) "
+            "AND pg.soft_expires_at>? AND pg.hard_expires_at>? AND pg.attempt_count<3 "
+            "AND pg.entry_plan_id IS NULL AND NOT EXISTS (SELECT 1 FROM entry_plans ep "
+            "WHERE ep.planning_generation_id=pg.id AND ep.status IN "
+            "('waiting','triggered','risk_reserved','ordered','partially_filled')) "
+            "AND (pg.status='pending' OR (pg.status='unavailable' "
+            "AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
+            "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
+            (timestamp, timestamp, timestamp, timestamp),
+        ).fetchall()
+        clocks = []
+        blockers = result["blocking_reason_counts"]
+        for row in rows:
+            try:
+                context = CandidateOpportunityContextV1.model_validate_json(row["context_json"] or "")
+                if (context.candidate_id != row["member_id"] or context.context_hash != row["context_hash"]
+                    or any(row[field] != row["member_" + alias] for field, alias in
+                           (("venue", "venue"), ("symbol", "symbol"), ("market_type", "market")))
+                    or context.opportunity["primary_mechanism"] != row["opportunity_mechanism"]
+                    or context.opportunity["direction"] != row["direction"]
+                    or context.candidate_selection["policy"] != row["candidate_selection_policy"]
+                    or context.candidate_selection.get("policy_epoch") != row["candidate_selection_policy_epoch"]):
+                    raise ValueError("identity")
+            except ValueError:
+                blockers["planning_identity_unavailable"] = blockers.get("planning_identity_unavailable", 0) + 1
+                result["availability"] = {"available": False, "reason": "planning_identity_unavailable"}
+                continue
+            if context.opportunity["capability_status"] != "supported" or not compatible_entry_profiles(row["opportunity_mechanism"]):
+                continue
+            clock = row[{"pending": "created_at", "unavailable": "retry_not_before", "planning": "claim_expires_at"}[row["status"]]]
+            result["ready_planning_count"] += 1
+            if row["status"] == "planning":
+                result["expired_claim_count"] += 1
+            if row["status"] == "unavailable":
+                reason = str(row["outcome_reason"] or "dependency_unavailable").partition(":")[0]
+                # Provider exception text is not a diagnostic dimension.
+                reason = reason if reason in {
+                    "inference_queue_full", "PLANNER_TIMEOUT", "PLANNER_UNAVAILABLE", "PLANNER_INTERNAL",
+                    "PLANNER_CANCELLED_DISPATCH_UNKNOWN", "PLANNER_CANCELLED_BEFORE_DISPATCH",
+                    "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE", "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+                    "ENTRY_PLAN_COMPILE_UNAVAILABLE", "COMPILER_INTERNAL",
+                } else "dependency_unavailable"
+                blockers[reason] = blockers.get(reason, 0) + 1
+            try:
+                clock_at = datetime.fromisoformat(clock)
+                if clock_at.tzinfo is None or clock_at > current:
+                    raise ValueError("clock")
+            except (TypeError, ValueError):
+                result["availability"] = {"available": False, "reason": "planning_clock_unknown"}
+                continue
+            clocks.append(clock_at)
+            if (current - clock_at).total_seconds() > (180 if row["status"] == "planning" else 480):
+                if "candidate_planning_stalled" not in result["issues"]:
+                    result["issues"].append("candidate_planning_stalled")
+        if clocks:
+            result["oldest_ready_at"] = min(clocks).isoformat()
+        # Scope JSON expansion to one durable epoch first, not the entire outcome population.
+        relation_gaps = db.execute(
+            "SELECT COUNT(*) FROM entry_plans ep "
+            "JOIN candidate_planning_generations pg ON pg.id=ep.planning_generation_id "
+            "LEFT JOIN orders ord ON ord.id=ep.order_id "
+            "WHERE pg.candidate_selection_policy=? AND pg.candidate_selection_policy_epoch IS ? "
+            "AND ((ep.order_id IS NOT NULL AND (ord.id IS NULL OR ord.close_reason IS NOT NULL "
+            "OR (ord.entry_plan_id IS NOT NULL AND ord.entry_plan_id!=ep.id))) "
+            "OR (ep.order_id IS NULL AND ep.status IN ('ordered','partially_filled','filled') "
+            "AND (SELECT COUNT(*) FROM orders exact_order WHERE exact_order.entry_plan_id=ep.id "
+            "AND exact_order.close_reason IS NULL)!=1))",
+            (policy, epoch if policy == "candidate_selection_utility_v1" else None),
+        ).fetchone()[0]
+        if relation_gaps:
+            result["availability"] = {"available": False, "reason": "entry_outcome_identity_unavailable"}
+            blockers["entry_outcome_identity_unavailable"] = relation_gaps
+        due = db.execute(
+            "WITH epoch_batches AS MATERIALIZED (SELECT scanner_run_id FROM universe_twin_shadow_batches "
+            "WHERE policy_epoch_id=? AND record_version LIKE 'candidate-selection-utility-record/%'), "
+            "selection_keys AS (SELECT j.value AS key FROM epoch_batches b "
+            "JOIN universe_twin_shadow_records r ON r.scanner_run_id=b.scanner_run_id "
+            "JOIN json_each(r.compact_output_json,'$.outcome_candidate_keys') j), "
+            "entry_keys AS (SELECT 'entry-fill:'||f.id AS key FROM candidate_planning_generations pg "
+            "JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+            "JOIN orders ord ON (ord.id=ep.order_id OR (ep.order_id IS NULL AND ord.entry_plan_id=ep.id)) "
+            "JOIN fills f ON f.order_id=ord.id "
+            "WHERE pg.candidate_selection_policy=? AND pg.candidate_selection_policy_epoch IS ? "
+            "AND (ord.entry_plan_id IS NULL OR ord.entry_plan_id=ep.id) AND ord.close_reason IS NULL), "
+            "keys AS (SELECT key FROM selection_keys UNION SELECT key FROM entry_keys) "
+            "SELECT COUNT(*) AS count, MIN(o.due_at) AS oldest FROM filter_candidate_outcomes o "
+            "JOIN keys ON keys.key=o.outcome_candidate_key "
+            "WHERE o.horizon='4h' AND o.status='pending' AND o.due_at<=?",
+            (epoch, policy, epoch if policy == "candidate_selection_utility_v1" else None, timestamp),
+        ).fetchone()
+        result["due_outcome_count"] = due["count"]
+        result["oldest_due_at"] = due["oldest"]
+        if due["count"]:
+            # Deferred provider reasons are not persisted per outcome by the current settler.
+            blockers["settlement_reason_unavailable"] = due["count"]
+        if due["oldest"]:
+            if (current - datetime.fromisoformat(due["oldest"])).total_seconds() > 900:
+                result["issues"].append("candidate_outcome_backlog")
+    return result
+
+
+def list_candidate_planning_refresh_assets(
+    *, venue: str, now: datetime | None = None,
+) -> list[dict]:
+    """Return exact assets whose canonical active planning needs fresh facts."""
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    plan_status_placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
+    rows = get_db().execute(
+        "SELECT ur.* FROM candidate_planning_generations pg "
+        "JOIN universe_members um ON um.id=pg.last_candidate_id "
+        "JOIN universe_registry ur ON ur.id=um.asset_id "
+        "WHERE pg.is_current=1 AND pg.attention_status='active' "
+        "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
+        "AND pg.status IN ('pending','planning','unavailable') "
+        "AND pg.entry_plan_id IS NULL AND pg.venue=? "
+        "AND ur.venue=pg.venue AND ur.symbol=pg.symbol AND ur.market_type=pg.market_type "
+        "AND um.venue=pg.venue AND um.symbol=pg.symbol AND um.market_type=pg.market_type "
+        "AND NOT EXISTS (SELECT 1 FROM entry_plans ep WHERE ep.planning_generation_id=pg.id "
+        f"AND ep.status IN ({plan_status_placeholders})) "
+        "ORDER BY COALESCE(pg.retry_not_before,pg.created_at),pg.created_at,pg.id",
+        (timestamp, timestamp, venue, *_ACTIVE_ENTRY_PLAN_STATUSES),
+    ).fetchall()
+    return list({row["id"]: dict(row) for row in rows}.values())
 
 
 def count_pending_candidate_planning(
@@ -9796,8 +10405,8 @@ def block_candidate_planning(
         "owner_token=NULL, claim_expires_at=NULL, completed_at=NULL, "
         "attempt_count=CASE WHEN ? THEN attempt_count ELSE MAX(attempt_count-1,0) END, "
         "last_stage=?, "
-        "model_invoked=?, model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
-        "compiler_invoked=?, compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "model_invoked=MAX(model_invoked,?), model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=MAX(compiler_invoked,?), compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
         "outcome_class='planning_blocked', outcome_reason=?, updated_at=? "
         "WHERE id=? AND is_current=1 AND attention_status='active' "
         "AND status='planning' AND owner_token=?",
@@ -9860,8 +10469,8 @@ def fail_candidate_planning(
         "result_json=?, retry_not_before=NULL, owner_token=NULL, claim_expires_at=NULL, "
         "completed_at=?, attention_status='terminal', attention_terminal_at=?, "
         "attention_terminal_reason='planning_failed', last_stage=?, "
-        "model_invoked=?, model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
-        "compiler_invoked=?, compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
+        "model_invoked=MAX(model_invoked,?), model_invoked_at=CASE WHEN ? THEN COALESCE(model_invoked_at,?) ELSE model_invoked_at END, "
+        "compiler_invoked=MAX(compiler_invoked,?), compiler_invoked_at=CASE WHEN ? THEN COALESCE(compiler_invoked_at,?) ELSE compiler_invoked_at END, "
         "outcome_class='planning_failed', outcome_reason=?, updated_at=? "
         "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=?",
         (
@@ -9989,9 +10598,10 @@ def release_candidate_planning_claim(
         "UPDATE candidate_planning_generations SET status='unavailable', "
         "attempt_count=MAX(attempt_count-1, 0), result_kind='unavailable', "
         "result_json=?, retry_not_before=?, owner_token=NULL, claim_expires_at=NULL, "
+        "outcome_class='planning_unavailable', outcome_reason=?, "
         "completed_at=NULL, updated_at=? WHERE id=? AND is_current=1 "
         "AND attention_status='active' AND status='planning' AND owner_token=?",
-        (payload, retry_at, timestamp, generation_id, owner_token),
+        (payload, retry_at, str(reason)[:160], timestamp, generation_id, owner_token),
     )
     return updated.rowcount == 1
 
@@ -10059,6 +10669,10 @@ def complete_candidate_planning_with_plan(
             return "claim_lost", None
         if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
+            from aletheia.trading.entry_contract import entry_contract_fingerprints
+
+            if (row["entry_behavior_fingerprint"], row["schema_fingerprint"]) != entry_contract_fingerprints():
+                raise ValueError("entry_plan_running_contract_mismatch")
 
             try:
                 frozen_context = EntryAnalysisContext.model_validate_json(
@@ -10196,7 +10810,7 @@ def list_entry_plans(status: str | None = None, limit: int = 100) -> list[dict]:
 def list_active_candidate_attention(limit: int = 100) -> list[dict]:
     timestamp = datetime.now(timezone.utc).isoformat()
     return [
-        dict(row)
+        _project_candidate_admission(dict(row))
         for row in get_db()
         .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
@@ -10205,7 +10819,8 @@ def list_active_candidate_attention(limit: int = 100) -> list[dict]:
             "um.candidate_selection_policy, um.candidate_selection_policy_epoch, "
             "um.candidate_selection_utility_pct, um.opportunity_mechanism, "
             "um.opportunity_mechanism_version, um.opportunity_source_component, "
-            "um.opportunity_source_cutoff_at, um.opportunity_evidence_hash "
+            "um.opportunity_source_cutoff_at, um.opportunity_evidence_hash, "
+            "um.candidate_opportunity_context_json, um.candidate_opportunity_context_hash "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
@@ -10224,7 +10839,7 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     active_plan_states = _ACTIVE_ENTRY_PLAN_STATUSES
     placeholders = ",".join("?" for _ in active_plan_states)
     rows = [
-        dict(row) for row in get_db()
+        _project_candidate_admission(dict(row)) for row in get_db()
         .execute(
             "SELECT pg.*, um.rank, um.total_score, um.entry_price_usd, "
             "um.liquidity_score, um.spread_bps, um.inclusion_reason, um.risk_flags, "
@@ -10233,6 +10848,7 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
             "um.candidate_selection_utility_pct, um.opportunity_mechanism, "
             "um.opportunity_mechanism_version, um.opportunity_source_component, "
             "um.opportunity_source_cutoff_at, um.opportunity_evidence_hash, "
+            "um.candidate_opportunity_context_json, um.candidate_opportunity_context_hash, "
             "ep.id AS active_entry_plan_id, ep.status AS active_entry_plan_status "
             "FROM candidate_planning_generations pg "
             "LEFT JOIN universe_members um ON um.id=pg.last_candidate_id "
@@ -10248,12 +10864,13 @@ def list_entry_workbench_candidates(limit: int = 100) -> list[dict]:
     ]
     from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
 
+    cycles = list_candidate_planning_cycles_batch(planning_keys=[str(row["planning_key"]) for row in rows])
     projected = []
     for row in rows:
         projected.append({
             **row,
             **project_candidate_entry_lifecycle(
-                row, list_candidate_planning_cycles(planning_key=str(row["planning_key"]))
+                row, cycles[str(row["planning_key"])]
             ),
         })
     return projected
@@ -10290,13 +10907,13 @@ def list_current_candidate_workbench(snapshot_id: str) -> list[dict]:
     ]
     from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
 
+    cycles = list_candidate_planning_cycles_batch(planning_keys=[str(row["planning_key"]) for row in rows if row.get("planning_key")])
     return [
         {
-            **row,
+            **_project_candidate_admission(row),
             **project_candidate_entry_lifecycle(
                 row,
-                list_candidate_planning_cycles(planning_key=str(row["planning_key"]))
-                if row.get("planning_key") else [],
+                cycles.get(str(row.get("planning_key")), []),
             ),
         }
         for row in rows
@@ -11454,7 +12071,8 @@ def candidate_selection_cost_assumptions(outcome_candidate_key: str) -> dict | N
         "JOIN universe_twin_shadow_batches b ON b.scanner_run_id=r.scanner_run_id "
         "JOIN json_each(r.compact_output_json, '$.outcome_candidate_keys') j "
         "WHERE b.record_version IN ('candidate-selection-utility-record/v1', "
-        "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') "
+        "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+        "'candidate-selection-utility-record/v4') "
         "AND j.value=? LIMIT 1",
         (outcome_candidate_key,),
     ).fetchone()
@@ -13488,7 +14106,8 @@ def prune_universe_twin_shadow_evidence(
                 "protected_epochs(policy_epoch_id) AS ("
                 "SELECT policy_epoch_id FROM universe_twin_shadow_batches "
                 "WHERE record_version IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') "
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4') "
                 "AND promotion_eligible=1 AND policy_epoch_id IS NOT NULL "
                 "UNION SELECT ? WHERE ? IS NOT NULL "
                 "UNION SELECT policy_epoch_id FROM admissions), "
@@ -13499,7 +14118,8 @@ def prune_universe_twin_shadow_evidence(
                 "LEFT JOIN admissions a ON a.policy_epoch_id=b.policy_epoch_id "
                 "WHERE b.captured_at < ? AND ("
                 "b.record_version NOT IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3') OR "
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4') OR "
                 "((training.cutoff IS NULL OR b.captured_at > training.cutoff) AND ("
                 "COALESCE(b.policy_epoch_id, '') NOT IN protected_epochs OR "
                 "(a.admitted_at IS NOT NULL AND b.captured_at > a.admitted_at))))",
@@ -13510,7 +14130,8 @@ def prune_universe_twin_shadow_evidence(
                 "SELECT scanner_run_id FROM universe_twin_shadow_batches "
                 "WHERE captured_at < ? "
                 "AND record_version NOT IN ('candidate-selection-utility-record/v1', "
-                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3')",
+                "'candidate-selection-utility-record/v2', 'candidate-selection-utility-record/v3', "
+                "'candidate-selection-utility-record/v4')",
                 (cutoff,),
             ).fetchall()
         run_ids = [str(row[0]) for row in run_rows]

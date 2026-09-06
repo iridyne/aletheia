@@ -180,18 +180,10 @@ def _extract_json(text: str) -> dict:
     start = text.find("{")
     if start < 0:
         raise RuntimeError("Pi structured output contained no JSON object")
-    depth = 0
-    for index in range(start, len(text)):
-        if text[index] == "{":
-            depth += 1
-        elif text[index] == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    value = json.loads(text[start : index + 1])
-                except json.JSONDecodeError:
-                    break
-                if isinstance(value, dict):
-                    return value
-                break
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text, start)
+        if isinstance(value, dict):
+            return value
+    except json.JSONDecodeError:
+        pass
     raise RuntimeError("Pi structured output contained no parseable JSON object")

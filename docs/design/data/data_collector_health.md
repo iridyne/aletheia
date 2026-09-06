@@ -69,9 +69,16 @@ the domain is `failed` with a stable `derivatives_*_persist_failed` code and the
 `data_collectors` job records a partial failure. A fetched-but-unpersisted row
 is never reported as healthy data.
 
-Optional LSR enrichment has its own four-second local cap, and derivatives
-history runs only at the end of the context lane. Neither may consume the live
-Funding/OI collection budget.
+Optional LSR and top-position enrichment cover every unique supplied target with
+four concurrent public HTTP requests per stream and a four-second local deadline.
+Completed responses survive the deadline; missing targets make the result partial.
+Cancellation drains the HTTP tasks, and primary Funding/OI still runs after optional
+failure. No CCXT concurrency or scheduler budget is increased.
+
+History runs at the end of the context lane. Already-covered venue-specific history
+windows return explicit `already_current` evidence and count as successful work.
+Genuinely empty upstream results remain empty; mixed completed and uncovered work
+is partial. No new rows or source timestamps are fabricated for no-op backfills.
 
 ## Pause and no-exchange behavior
 
@@ -98,10 +105,23 @@ local-paper installation with no configured execution exchange.
   informational consequences. When connectivity is reachable, independent
   repeated or overdue Collector degradation remains a warning. Recovery is a
   priority-two informational state while affected jobs wait for their normal retry.
-- `GET /api/market/data-coverage` and Overview / System / Data coverage report
-  what is actually present in SQLite: row count, symbol count, source count, newest
-  observation, and freshness. This is intentionally separate: a successful empty
-  collector call and a fresh populated table are different facts.
+`GET /api/market/data-coverage` reports current collector targets separately from
+historical inventory. Orderbook and OHLCV targets retain exact venue and market
+identity; derivatives include current symbols, open local futures liabilities and
+watchable primary-venue plans from the same target resolver as live collection.
+Missing required targets cannot be covered by fresh peers or retired rows.
+Each domain retains an `inventory` projection with all stored row/source counts
+and historical freshness verdicts. Macro, on-chain and event-driven liquidations
+remain global domains. An empty current target set is idle, not proof of fresh data.
+Current long/short coverage uses the latest OI row, including a missing ratio, rather
+than resurrecting an older non-null value. Canonical source/acquisition freshness
+checks remain authoritative.
+
+Overview shows exact Collector outcome counts and empty/inactive reasons. Its
+Connectivity field reads the cached monitor snapshot without initiating probes.
+Stale or absent observations remain unknown. Signal-supply changes require a
+deliberate qualification deployment and fresh behavior/evidence handling; a local
+fix or successful build does not reset or validate a Fedora observation window.
 
 Overdue means no scheduled update for more than three expected cadences. Disabled
 and unconfigured domains are never declared overdue.

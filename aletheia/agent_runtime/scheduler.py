@@ -127,7 +127,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "fast_trigger_authorizer": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
-    "stock_observer": 240.0,  # kept for backwards-compat; superseded by equity_observer
     "prediction_observer": 240.0,
     "divergence_scanner": 60.0,
     "post_trade_reviewer": 300.0,
@@ -4713,17 +4712,10 @@ def _schedule_collector(
     tasks.append((label, _bounded(make_coro(), label, cap, deadline)))
 
 
-async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
-    import time as _time
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+def get_collector_targets(cfg):
+    """Share the live collector's target set with operator coverage diagnostics."""
     from aletheia.storage import repositories as repo
 
-    _DC_HEALTH_TICK.set(tick)
-    _deadline = _time.monotonic() + _DC_DEADLINE_S
-    job_error_codes: list[str] = []
-
-    # Keep venue + market identity for primary-exchange collectors.
     instruments = _get_observed_instruments(cfg)
     derivative_symbols = _get_derivative_symbols(instruments)
     funding_venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip().lower()
@@ -4739,6 +4731,21 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
         ]))
     except Exception:
         logger.debug("Watchable Entry Plan funding targets unavailable", exc_info=True)
+    return instruments, derivative_symbols
+
+
+async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
+    import time as _time
+    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from aletheia.storage import repositories as repo
+
+    _DC_HEALTH_TICK.set(tick)
+    _deadline = _time.monotonic() + _DC_DEADLINE_S
+    job_error_codes: list[str] = []
+
+    # Keep venue + market identity for primary-exchange collectors.
+    instruments, derivative_symbols = get_collector_targets(cfg)
 
     # --- Phase A: microstructure + derivatives (every tick) ---
     micro_result: dict = {}

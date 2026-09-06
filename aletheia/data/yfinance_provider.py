@@ -7,7 +7,7 @@ no agent instrumentation, is never persisted, and returns "" on any failure so t
 caller (market_context.build_market_context) silently omits the section.
 
 yfinance.download is synchronous and blocking, so it runs in the default executor —
-mirroring the pattern in agents/stock_observer.py (never await yfinance directly).
+mirroring the pattern in agents/equity_observer.py (never await yfinance directly).
 """
 
 from __future__ import annotations

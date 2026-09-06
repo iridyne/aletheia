@@ -55,7 +55,7 @@ test('PiRuntimeAdapter authenticates its raw internal LLM request', async () => 
   }
 
   try {
-    const result = await new PiRuntimeAdapter({} as never, 'http://127.0.0.1:8787').runSession({
+    const result = await new PiRuntimeAdapter('http://127.0.0.1:8787').runSession({
       goal: 'check service auth',
     })
     assert.equal(result.status, 'completed')
