@@ -3927,6 +3927,52 @@ class PositionClaimConflict(RuntimeError):
     pass
 
 
+_POSITION_CLOSE_FIELDS = frozenset({
+    "status", "current_price", "realized_pnl", "unrealized_pnl",
+    "close_reason", "closed_at", "btc_exit_price", "entry_fee", "exit_fee",
+    "funding_cost", "funding_source", "slippage_cost", "exit_reasoning",
+    "close_category", "exit_price_source", "exit_fill_verified",
+    "reconciliation_identity", "reconciliation_evidence",
+    "outcome_semantics_version", "outcome_eligible", "outcome_exclusion_reason",
+    "closed_runtime_session_id", "closed_producer_commit",
+    "closed_behavior_fingerprint", "pending_close_order_id",
+    "pending_close_status", "pending_close_requested_at",
+})
+
+
+def finalize_position_close(position_id: str, fields: Mapping[str, object]) -> None:
+    """Persist one complete close snapshot with an open-state CAS."""
+
+    unknown = set(fields) - _POSITION_CLOSE_FIELDS
+    if unknown or fields.get("status") != "closed":
+        detail = ",".join(sorted(unknown)) if unknown else "status"
+        raise ValueError(f"invalid_position_close_fields:{detail}")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status='open'",
+        (*fields.values(), position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_conflict:{position_id}")
+
+
+def reopen_position_for_verified_repair(
+    position_id: str,
+    fields: Mapping[str, object],
+) -> None:
+    """Explicit repair-only closed-to-open CAS before replaying verified evidence."""
+
+    if fields.get("status") != "open" or set(fields) - _POSITION_CLOSE_FIELDS:
+        raise ValueError("invalid_position_reopen_fields")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status='closed'",
+        (*fields.values(), position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_reopen_conflict:{position_id}")
+
+
 def claim_position_close(
     position_id: str,
     *,
