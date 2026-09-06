@@ -4,37 +4,624 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
+from typing_extensions import NotRequired, TypedDict
 
 
-class EntryWorkbenchResponse(BaseModel):
+# Read projections intentionally describe SQLite JSON, not domain write validators.
+# Documentation-only response schemas preserve historical keys and absent fields.
+
+class UniverseSnapshot(TypedDict):
+    id: str
+    created_at: str
+    market_type: str
+    policy_id: str | None
+    status: str
+    expires_at: str | None
+    summary: str | None
+
+
+class CandidateLedgerFields(TypedDict):
+    id: str
+    snapshot_id: str
+    asset_id: str
+    symbol: str
+    rank: int
+    total_score: float
+    opportunity_score: float | None
+    tradability_score: float | None
+    liquidity_score: float | None
+    estimated_cost: float | None
+    crowding_risk: float | None
+    late_entry_penalty: float | None
+    scanner_family: str | None
+    scanner_direction: str | None
+    ttl_sec: int
+    expires_at: str
+    inclusion_reason: str | None
+    risk_flags: str | None
+    execution_eligible: int | None
+    quote_volume_24h: float | None
+    spread_bps: float | None
+    entry_price_usd: float | None
+    market_type: str
+    regime_tag: str | None
+    atr_pct: float | None
+    all_scores: str | None
+    learning_candidate_key: str | None
+    candidate_selection_policy: str
+    candidate_selection_policy_epoch: str | None
+    candidate_selection_utility_pct: float | None
+    opportunity_mechanism: str | None
+    opportunity_mechanism_version: str | None
+    opportunity_source_component: str | None
+    opportunity_source_cutoff_at: str | None
+    opportunity_evidence_hash: str | None
+    candidate_opportunity_context_version: str | None
+    candidate_opportunity_context_json: str | None
+    candidate_opportunity_context_hash: str | None
+
+
+class CandidateRow(CandidateLedgerFields):
+    venue: str | None
+
+
+class Candidate(TypedDict):
+    id: str | None
+    snapshot_id: str | None
+    asset_id: str | None
+    symbol: str
+    rank: int
+    total_score: float
+    opportunity_score: NotRequired[float | None]
+    tradability_score: float | None
+    liquidity_score: NotRequired[float | None]
+    estimated_cost: NotRequired[float | None]
+    crowding_risk: NotRequired[float | None]
+    late_entry_penalty: NotRequired[float | None]
+    scanner_family: str | None
+    scanner_direction: NotRequired[str | None]
+    ttl_sec: int
+    expires_at: str | None
+    inclusion_reason: str | None
+    risk_flags: str | None
+    execution_eligible: int | None
+    quote_volume_24h: NotRequired[float | None]
+    spread_bps: NotRequired[float | None]
+    entry_price_usd: NotRequired[float | None]
+    market_type: NotRequired[str]
+    regime_tag: NotRequired[str | None]
+    atr_pct: NotRequired[float | None]
+    all_scores: NotRequired[str | None]
+    learning_candidate_key: NotRequired[str | None]
+    venue: NotRequired[str | None]
+    candidate_selection_policy: str
+    candidate_selection_policy_epoch: str | None
+    candidate_selection_utility_pct: float | None
+    opportunity_mechanism: NotRequired[str | None]
+    opportunity_mechanism_version: NotRequired[str | None]
+    opportunity_source_component: NotRequired[str | None]
+    opportunity_source_cutoff_at: NotRequired[str | None]
+    opportunity_evidence_hash: NotRequired[str | None]
+    candidate_opportunity_context_version: NotRequired[str | None]
+    candidate_opportunity_context_json: NotRequired[str | None]
+    candidate_opportunity_context_hash: NotRequired[str | None]
+    stale: NotRequired[bool]
+    entry_plan_id: NotRequired[str | None]
+    entry_plan_status: NotRequired[str | None]
+    entry_plan_execution_mode: NotRequired[str | None]
+    setup_state: NotRequired[str | None]
+    triggered_opportunity_id: NotRequired[str | None]
+
+
+class UniverseFeatureSnapshot(TypedDict):
+    id: str
+    asset_id: str
+    ts: str
+    quote_volume_24h: float | None
+    volume_1h: float | None
+    spread_bps: float | None
+    depth_10bps_usd: float | None
+    atr_pct: float | None
+    rsi_14: float | None
+    rsi_15m: float | None
+    atr_15m_pct: float | None
+    return_15m: float | None
+    last_candle_range_atr_15m: float | None
+    return_1h: float | None
+    return_4h: float | None
+    return_24h: float | None
+    funding_rate: float | None
+    open_interest: float | None
+    oi_delta_1h: float | None
+    data_freshness_sec: int | None
+    rsi_4h: float | None
+    atr_4h_pct: float | None
+    bb_width_4h: float | None
+    vol_ratio_4h: float | None
+    bb_squeeze: int | None
+    raw: str | None
+    btc_beta: float | None
+    taker_buy_ratio: float | None
+    vol_ratio: float | None
+    relative_strength_24h: float | None
+    oi_price_divergence: int | None
+    technical_algorithm_version: str | None
+    technical_snapshot_manifest: str
+    long_short_ratio: float | None
+    top_trader_position_ratio: float | None
+
+
+class CandidateOpportunity(TypedDict):
+    id: str
+    symbol: str
+    market: str
+    direction_bias: str | None
+    thesis: str | None
+    confidence: str
+    confidence_score: int | None
+    source_agent: str | None
+    created_at: str
+    status: str
+    last_ranked_at: str | None
+    linked_strategy_id: str | None
+    asset_class: str | None
+    metadata: str | None
+    universe_snapshot_id: str | None
+    universe_member_id: str | None
+    scanner_family: str | None
+    execution_eligible: int | None
+    valid_until: str | None
+    entry_zone: str | None
+    stop_loss_hint: float | None
+    tp_hint: float | None
+    asset_subclass: str
+    canonical_ticker: str
+    regime_tag: str | None
+    key_observations: str
+    funding_rate: float | None
+    open_interest: float | None
+    oi_delta_1h: float | None
+    runtime_session_id: str | None
+    producer_commit: str | None
+    behavior_fingerprint: str | None
+    setup_id: str | None
+    signal_mark: str | None
+    trigger_behavior_version: str | None
+    generation_version: str | None
+    generation_json: str | None
+    generation_hash: str | None
+
+
+class EntryLifecycleEvent(TypedDict):
+    event: str
+    at: str | None
+    reason: str | None
+
+
+class EntryLifecycleCycle(TypedDict):
+    generation_id: str | None
+    cycle_number: int
+    previous_generation_id: str | None
+    cycle_reason: str | None
+    requalification_candidate_id: str | None
+    last_stage: str | None
+    model_invoked: bool
+    compiler_invoked: bool
+    outcome_class: str | None
+    outcome_reason: str | None
+    entry_plan_id: str | None
+    entry_plan_status: str | None
+    events: list[EntryLifecycleEvent]
+
+
+class EntryLifecycleProjection(TypedDict):
+    lifecycle_state: str
+    lifecycle_reason: str | None
+    current_cycle_number: int | None
+    expired_plan_count: int
+    current_generation_id: str | None
+    current_plan_id: str | None
+    last_stage: str | None
+    model_invoked: bool
+    compiler_invoked: bool
+    state_changed_at: str | None
+    next_action: str
+    cycles: list[EntryLifecycleCycle]
+
+
+class CandidatePlanningFields(TypedDict):
+    id: str
+    planning_key: str
+    planning_identity: str
+    candidate_id: str
+    last_candidate_id: str
+    venue: str
+    symbol: str
+    market_type: str
+    candidate_family: str
+    direction: str
+    is_current: int
+    status: str
+    result_kind: str | None
+    owner_token: str | None
+    claim_expires_at: str | None
+    retry_not_before: str | None
+    attempt_count: int
+    result_json: str | None
+    entry_plan_id: str | None
+    created_at: str
+    updated_at: str
+    completed_at: str | None
+    runtime_session_id: str | None
+    producer_commit: str | None
+    behavior_fingerprint: str | None
+    attention_status: str
+    attention_started_at: str | None
+    last_requalified_at: str | None
+    requalification_source_json: str | None
+    soft_expires_at: str | None
+    hard_expires_at: str | None
+    attention_max_age_sec: int | None
+    attention_policy_version: str | None
+    attention_terminal_at: str | None
+    attention_terminal_reason: str | None
+    planner_input_json: str | None
+    planner_input_hash: str | None
+    opportunity_mechanism: str | None
+    candidate_selection_policy: str | None
+    candidate_selection_policy_epoch: str | None
+    mechanism_version: str | None
+    cycle_number: int | None
+    previous_generation_id: str | None
+    cycle_reason: str | None
+    requalification_candidate_id: str | None
+    planning_started_at: str | None
+    model_invoked_at: str | None
+    compiler_invoked_at: str | None
+    outcome_class: str | None
+    outcome_reason: str | None
+    entry_behavior_fingerprint: str | None
+    schema_fingerprint: str | None
+
+
+class CandidateAttention(CandidatePlanningFields):
+    model_invoked: int
+    compiler_invoked: int
+    last_stage: str | None
+
+
+class CandidateAttentionWorkbench(CandidatePlanningFields, EntryLifecycleProjection):
+    identity_version: str | None
+    planner_contract_version: str | None
+    activation_identity: str | None
+    rank: int | None
+    total_score: float | None
+    entry_price_usd: float | None
+    liquidity_score: float | None
+    spread_bps: float | None
+    inclusion_reason: str | None
+    risk_flags: str | None
+    execution_eligible: int | None
+    candidate_selection_utility_pct: float | None
+    opportunity_mechanism_version: str | None
+    opportunity_source_component: str | None
+    opportunity_source_cutoff_at: str | None
+    opportunity_evidence_hash: str | None
+    candidate_expires_at: str | None
+    active_entry_plan_id: str | None
+    active_entry_plan_status: str | None
+
+
+class CandidateWorkbenchRow(CandidateLedgerFields, EntryLifecycleProjection):
+    venue: str
+    registry_venue: str
+    planning_generation_id: str | None
+    planning_status: str | None
+    result_kind: str | None
+    planning_result_json: str | None
+    attempt_count: int | None
+    attention_status: str | None
+    soft_expires_at: str | None
+    hard_expires_at: str | None
+    attention_terminal_reason: str | None
+    planning_key: str | None
+    cycle_number: int | None
+    outcome_class: str | None
+    outcome_reason: str | None
+    entry_plan_id: str | None
+    entry_plan_status: str | None
+    entry_plan_terminal_reason: str | None
+
+
+class PlanningHistoryItem(CandidatePlanningFields):
+    identity_version: str | None
+    planner_contract_version: str | None
+    activation_identity: str | None
+    last_stage: str | None
+    model_invoked: int
+    compiler_invoked: int
+    entry_plan_status: str | None
+    execution_mode: str | None
+    order_id: str | None
+    entry_plan_terminal_at: str | None
+    entry_plan_terminal_reason: str | None
+
+
+class EntryPlanRow(TypedDict):
+    id: str
+    planning_generation_id: str
+    candidate_id: str
+    planning_key: str
+    version: str | None
+    venue: str
+    symbol: str
+    market_type: str
+    direction: str
+    execution_mode: str
+    plan_json: str
+    plan_hash: str
+    status: str
+    order_id: str | None
+    created_at: str
+    updated_at: str
+    terminal_at: str | None
+    terminal_reason: str | None
+    runtime_session_id: str | None
+    producer_commit: str | None
+    behavior_fingerprint: str | None
+    monitoring_state: str | None
+    monitoring_evidence_json: str | None
+    monitoring_evidence_hash: str | None
+
+
+class EntryPlanPayload(BaseModel):
+    """Stored JSON, including immutable historical extension fields."""
+
     model_config = ConfigDict(extra="allow")
+    __pydantic_extra__: dict[str, JsonValue]
 
+    plan_id: str | None = None
+    planning_generation_id: str
+    candidate_id: str
+    candidate_family: str
+    venue: str
+    symbol: str
+    market_type: str
+    direction: str
+    thesis: str
+    evidence_refs: list[str] | None = None
+    scenario: str
+    execution_mode: str
+    trigger_spec_id: str | None = None
+    trigger_params: dict[str, JsonValue] | None = None
+    trigger_data_requirements: list[str] | None = None
+    trigger_freshness_ms: int | None = None
+    entry_zone: tuple[float, float]
+    invalidation_conditions: list[str]
+    invalidation_price: float
+    stop_price: float
+    target_price: float
+    expected_horizon_hours: float
+    approved_at: str
+    expires_at: str
+    order_tactic: str
+    maker_required: bool
+    time_in_force: str
+    limit_price: float | None = None
+    price_rule: str
+    bbo_reference: str | None = None
+    max_wait_sec: int
+    cancel_replace_policy: str
+    max_requotes: int
+    partial_fill_policy: str
+    taker_fallback_allowed: bool | None = None
+    max_slippage_bps: float | None = None
+    worst_price: float | None = None
+    max_notional: float
+    max_risk_pct: float
+    max_leverage: int
+    required_permission: str
+    execution_account_mode: str
+    risk_policy_id: str
+    risk_policy_revision: int
+    risk_policy_hash: str
+    treatment_exposure_id: str | None = None
+    runtime_session_id: str | None = None
+    producer_commit: str | None = None
+    behavior_fingerprint: str | None = None
+    schema_fingerprint: str | None = None
+    planning_identity: str | None = None
+    cycle_number: int | None = None
+    analysis_context_fingerprint: str | None = None
+    entry_hypothesis_json: str | None = None
+    entry_hypothesis_hash: str | None = None
+    primary_anchor_snapshot: dict[str, JsonValue] | None = None
+    invalidation_anchor_snapshot: dict[str, JsonValue] | None = None
+    entry_profile_id: str | None = None
+    compiled_geometry_fingerprint: str | None = None
+    version: str | None = None
+    behavior_version: str | None = None
+    analysis_context_version: str | None = None
+    entry_hypothesis_version: str | None = None
+    entry_profile_version: str | None = None
+    trigger_spec_version: str | None = None
+
+
+class FundingReadiness(TypedDict):
+    ready: bool
+    reason: str | None
+    venue: NotRequired[str]
+    symbol: NotRequired[str]
+    market_type: NotRequired[str]
+    snapshot_id: NotRequired[str]
+    source_observed_at: NotRequired[str | None]
+    acquired_at: NotRequired[str | None]
+    next_funding_time: NotRequired[str]
+
+
+class EntryLineageOrder(TypedDict):
+    id: str | None
+    exchange_order_id: str | None
+    status: str | None
+    quantity: float | None
+    position_id: str | None
+
+
+class EntryLineageFills(TypedDict):
+    count: int
+    quantity: float
+    latest_at: str | None
+
+
+class EntryLineagePosition(TypedDict):
+    id: str | None
+    status: str | None
+    quantity: float | None
+    entry_price: float | None
+
+
+class EntryPlanLineage(TypedDict):
+    order: EntryLineageOrder | None
+    fills: EntryLineageFills | None
+    position: EntryLineagePosition | None
+
+
+class EntryPlanProjection(EntryPlanRow):
+    plan: EntryPlanPayload | None
+    contract_valid: bool
+    funding_readiness: NotRequired[FundingReadiness]
+    lineage: NotRequired[EntryPlanLineage]
+
+
+class UniverseAvailability(TypedDict):
+    available: bool
+    stale: bool
+    reason: NotRequired[str]
+
+
+class WorkbenchUniverse(TypedDict):
+    enabled: bool | None
+    status: str
+    snapshot: UniverseSnapshot | None
+    fallback_instruments: list[str]
+
+
+class WorkbenchSummary(TypedDict):
+    active_entry_plans: int
+    needs_planning: int
+    expiring_soon: int
+
+
+class EntryWorkbenchResponse(TypedDict):
     generated_at: str
-    availability: dict[str, Any] = {}
-    universe: dict[str, Any] | None = None
-    summary: dict[str, Any] | None = None
-    entry_plans: list[dict[str, Any]] | None = None
-    current_candidates: list[dict[str, Any]] | None = None
-    candidate_attention: list[dict[str, Any]] | None = None
+    availability: dict[str, UniverseAvailability]
+    universe: WorkbenchUniverse
+    summary: WorkbenchSummary | None
+    entry_plans: list[EntryPlanProjection] | None
+    current_candidates: list[CandidateWorkbenchRow] | None
+    candidate_attention: list[CandidateAttentionWorkbench] | None
 
 
-class UniverseCurrentResponse(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    snapshot: dict[str, Any] | None = None
-    members: list[dict[str, Any]] = []
-    enabled: bool = True
-    fallback: bool = False
-    stale: bool = False
-    stale_count: int = 0
+class UniverseCurrentResponse(TypedDict):
+    snapshot: UniverseSnapshot | None
+    members: list[Candidate]
+    enabled: bool
+    fallback: bool
+    stale: bool
+    stale_count: int
 
 
-class PlanningHistoryResponse(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class PlanningHistoryResponse(TypedDict):
+    items: list[PlanningHistoryItem]
+    next_before: str | None
 
-    items: list[dict[str, Any]] = []
-    next_before: str | None = None
+
+class UniverseSnapshotResponse(TypedDict):
+    snapshot: UniverseSnapshot
+    members: list[CandidateRow]
+
+
+class CandidateDetail(TypedDict):
+    member: Candidate
+    features: UniverseFeatureSnapshot | None
+    entry_plans: list[EntryPlanRow]
+    opportunities: list[CandidateOpportunity]
+    attention: CandidateAttention | None
+    lifecycle: EntryLifecycleProjection | None
+
+
+class UniverseRefreshResponse(TypedDict):
+    snapshot_id: str
+    status: str
+
+
+class UniverseRegistryStats(TypedDict):
+    total: int
+    active: int
+    blacklisted: int
+
+
+class UniverseStoredPolicy(TypedDict):
+    id: str
+    created_at: str
+    created_by: str
+    active: int | None
+    market_type: str
+    family_quota: str
+    scoring_weights: str
+    filters: str
+    ttl_policy: str
+    explore_ratio: float
+    max_weight_step: float | None
+    change_reason: str | None
+    previous_policy_id: str | None
+
+
+class UniverseDefaultPolicy(TypedDict):
+    id: None
+    source: str
+    market_type: str
+    family_quota: dict[str, float]
+    explore_ratio: float
+    max_candidates: int
+    min_volume_24h_usdt: float
+    max_spread_bps: float
+
+
+class CalibrationRow(TypedDict):
+    scanner_family: str | None
+    direction: str
+    market_type: str
+    horizon: str
+    cost_model_version: str
+    n: int
+    avg_return: float | None
+    win_count: int
+    min_return: float | None
+    max_return: float | None
+    source_outcome_fingerprint: str | None
+    source_window_start: str
+    independent_n: int
+    distinct_symbols: int
+    distinct_days: int
+
+
+class CalibrationFamilySummary(TypedDict):
+    family: str
+    direction: str
+    market_type: str
+    total_outcomes: int
+    hit_rate_pct: float
+    avg_return_pct: float
+
+
+class CalibrationResponse(TypedDict):
+    cost_model_version: str
+    by_cohort_horizon: list[CalibrationRow]
+    by_cohort: list[CalibrationFamilySummary]
+
+
 from aletheia.config.loader import load_config
 from aletheia.storage import repositories as repo
 
@@ -116,7 +703,7 @@ def _entry_plan_lineage(row: dict) -> dict:
     }
 
 
-@router.get("/workbench", response_model=EntryWorkbenchResponse)
+@router.get("/workbench", responses={200: {"model": EntryWorkbenchResponse}})
 def get_entry_workbench(
     limit: int = Query(default=100, ge=1, le=200),
     plan_status: Annotated[str, Query(pattern="^(active|expired|all)$")] = "active",
@@ -200,7 +787,7 @@ def get_entry_workbench(
     return response
 
 
-@router.get("/entry-plans/{plan_id}")
+@router.get("/entry-plans/{plan_id}", responses={200: {"model": EntryPlanProjection}})
 def get_entry_plan_detail(plan_id: str):
     row = repo.get_entry_plan(plan_id)
     if row is None:
@@ -212,7 +799,7 @@ def get_entry_plan_detail(plan_id: str):
     return projection
 
 
-@router.get("/planning-history", response_model=PlanningHistoryResponse)
+@router.get("/planning-history", responses={200: {"model": PlanningHistoryResponse}})
 def get_planning_history(
     limit: int = Query(default=50, ge=1, le=200),
     before: str | None = None,
@@ -283,7 +870,7 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     return enriched
 
 
-@router.get("/current", response_model=UniverseCurrentResponse)
+@router.get("/current", responses={200: {"model": UniverseCurrentResponse}})
 def get_current_universe():
     """Return the current active universe snapshot and its Candidates."""
     from aletheia.universe.service import UniverseService
@@ -313,13 +900,13 @@ def get_current_universe():
     }
 
 
-@router.get("/snapshots")
+@router.get("/snapshots", responses={200: {"model": list[UniverseSnapshot]}})
 def list_snapshots(market_type: str = "crypto", limit: int = 20):
     """List recent universe snapshots."""
     return repo.list_universe_snapshots(market_type, limit=limit)
 
 
-@router.get("/snapshots/{snapshot_id}")
+@router.get("/snapshots/{snapshot_id}", responses={200: {"model": UniverseSnapshotResponse}})
 def get_snapshot(snapshot_id: str):
     """Get a specific snapshot with its Candidates."""
     from aletheia.storage.sqlite import get_db
@@ -349,7 +936,7 @@ def get_member(member_id: str):
     }
 
 
-@router.get("/candidates/{candidate_id}")
+@router.get("/candidates/{candidate_id}", responses={200: {"model": CandidateDetail}})
 def get_candidate(candidate_id: str):
     """Canonical Candidate detail alias; /members remains compatibility."""
 
@@ -363,7 +950,7 @@ def get_candidate(candidate_id: str):
     return detail
 
 
-@router.post("/refresh")
+@router.post("/refresh", responses={200: {"model": UniverseRefreshResponse}})
 async def trigger_refresh():
     """Manually trigger a universe refresh. Returns immediately with the snapshot_id."""
     cfg = load_config()
@@ -378,7 +965,7 @@ async def trigger_refresh():
     return {"snapshot_id": snapshot_id, "status": "completed"}
 
 
-@router.get("/policy")
+@router.get("/policy", responses={200: {"model": UniverseStoredPolicy | UniverseDefaultPolicy}})
 def get_current_policy():
     """Return the current active universe policy."""
     cfg = load_config()
@@ -398,7 +985,7 @@ def get_current_policy():
     }
 
 
-@router.get("/calibration")
+@router.get("/calibration", responses={200: {"model": CalibrationResponse}})
 def get_calibration():
     """Net calibration: family/direction/market/horizon aggregate stats.
 
@@ -455,7 +1042,7 @@ def get_member_outcomes(member_id: str):
     return outcomes
 
 
-@router.get("/registry/stats")
+@router.get("/registry/stats", responses={200: {"model": UniverseRegistryStats}})
 def registry_stats():
     """Asset registry statistics."""
     from aletheia.storage.sqlite import get_db

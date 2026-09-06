@@ -55,25 +55,7 @@ export interface SoftwareUpdateStatus {
 	branch?: string;
 }
 
-export interface CandidateSelectionStatus {
-	configured_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
-	configured_policy_epoch: string | null;
-	authority_enabled: boolean;
-	authority_block_reason: string | null;
-	admission_block_reason: string | null;
-	evaluation_available: boolean;
-	evaluation_error: string | null;
-	qualification: {
-		verdict: "insufficient_data" | "positive" | "neutral" | "negative" | "invalid" | "unavailable";
-		promotion_eligible: boolean;
-		policy_epoch_id: string | null;
-		fixed_look_cluster_n?: number;
-		consecutive_eligible_utc_days?: number;
-		full_arm_outcome_coverage?: number;
-		blocking_reasons?: string[];
-		invalid_reasons?: string[];
-	};
-}
+export type CandidateSelectionStatus = operations["get_candidate_selection_status_api_settings_universe_candidate_selection_get"]["responses"][200]["content"]["application/json"];
 
 function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
@@ -746,41 +728,9 @@ export interface EconomicsModelHealthResponse {
 	snapshot: ModelHealthEntry[];
 }
 
-export type ModelHealthFreshness = "fresh" | "stale" | "unknown";
-export type ModelProviderState =
-	| "not_configured"
-	| "disabled"
-	| "unknown"
-	| "stale"
-	| "unavailable"
-	| "reachable"
-	| "verified";
-
-export interface ModelProviderHealth {
-	provider: string;
-	configured: boolean;
-	enabled: boolean;
-	reachable: boolean | null;
-	verified: boolean | null;
-	verified_at: string | null;
-	verification_identity: string | null;
-	verification_source: string | null;
-	verification_invalidated: boolean;
-	verification_detail: string | null;
-	state: ModelProviderState;
-	reason_code: string;
-	routing_roles: string[];
-	available: boolean;
-	model: string;
-	error: string | null;
-	models: string[];
-	model_metadata: Array<Record<string, unknown>>;
-	observed_at: string | null;
-	age_seconds: number | null;
-	freshness: ModelHealthFreshness;
-	cached: boolean;
-	stale_after_seconds: number;
-}
+export type ModelHealthFreshness = components["schemas"]["ModelHealthRecord"]["freshness"];
+export type ModelProviderState = components["schemas"]["ModelHealthRecord"]["state"];
+export type ModelProviderHealth = components["schemas"]["ModelHealthRecord"];
 
 export interface UsageWindow {
 	days: 1 | 7 | 30 | 90;
@@ -1606,21 +1556,12 @@ export const api = {
 	liveLock: () => post("/settings/live-lock"),
 
 	// Risk: boundaries display + kill switch + editable config
-	getRiskBoundaries: () => fetchJson<Record<string, any>>("/risk/boundaries"),
-	getRiskStatus: () => fetchJson<Record<string, any>>("/risk/status"),
+	getRiskBoundaries: () => fetchJson<components["schemas"]["RiskConfig"]>("/risk/boundaries"),
+	getRiskStatus: () => fetchJson<components["schemas"]["RiskStatusResponse"]>("/risk/status"),
 	// 24h pipeline counts — used by Risk Active Risk panel to surface "the system is
 	// actively guarding" (approved/rejected/top rejection reason) even in the healthy state.
 	getPipelineFunnel: (hours = 24) =>
-		fetchJson<{
-			window_hours: number;
-			risk_decisions: {
-				approved: number;
-				rejected: number;
-				approve_rate_pct: number | null;
-				top_rejection_reasons: { message: string; count: number }[];
-			};
-			fills: number;
-		}>(`/analytics/pipeline-funnel?hours=${hours}`),
+		fetchJson<components["schemas"]["PipelineFunnelResponse"]>(`/analytics/pipeline-funnel?hours=${hours}`),
 	// Recent terminal operator decisions — legacy compatibility projection.
 	// Non-terminal conviction deferrals remain in the opportunity trace.
 	//
@@ -1644,43 +1585,7 @@ export const api = {
 			if (value) params.set("outcome", value);
 		}
 		if (opts.symbol) params.set("symbol", opts.symbol);
-		return fetchJson<{
-			window_hours: number;
-			limit: number;
-			counts: {
-				trade: number;
-				operator_skip: number;
-				operator_watch: number;
-				portfolio_guard_reject: number;
-				user_reject: number;
-				auto_reject: number;
-				reject_unknown: number;
-			};
-			total_count: number;
-			matched_count: number;
-			items: Array<{
-				opportunity_id: string | null;
-				proposal_id: string | null;
-				decision_id: string | null;
-				symbol: string | null;
-				direction: string | null;
-				market_type: string | null;
-				decided_at: string;
-				outcome:
-					| "trade"
-					| "operator_skip"
-					| "operator_watch"
-					| "portfolio_guard_reject"
-					| "user_reject"
-					| "auto_reject"
-					| "reject_unknown";
-				action: string;
-				conviction: number | null;
-				one_line_reason: string | null;
-				rejected_actor?: string | null;
-				rejected_source?: string | null;
-			}>;
-		}>(`/analytics/operator-decisions?${params.toString()}`);
+		return fetchJson<components["schemas"]["OperatorDecisionsResponse"]>(`/analytics/operator-decisions?${params.toString()}`);
 	},
 
 	// Full lifecycle trace for one opportunity — powers the decision drawer.
@@ -1929,7 +1834,7 @@ export const api = {
 		fetchJson<LearningContributionProjection>(
 			"/analytics/learning-contribution",
 		),
-	getKillSwitch: () => fetchJson<{ active: boolean }>("/risk/kill-switch"),
+	getKillSwitch: () => fetchJson<components["schemas"]["KillSwitchStatusResponse"]>("/risk/kill-switch"),
 	// Releasing the brake requires confirm_release=true (backend returns 422 otherwise).
 	setKillSwitch: (active: boolean, reason = "", confirmRelease = false) => {
 		const body: KillSwitchRequest = {
@@ -1982,11 +1887,7 @@ export const api = {
 			},
 		),
 	getRiskBrakes: () =>
-		fetchJson<{
-			global_active: boolean;
-			demo_active: boolean;
-			live_active: boolean;
-		}>("/risk/brakes"),
+		fetchJson<components["schemas"]["BrakesStatusResponse"]>("/risk/brakes"),
 	setRiskBrake: (
 		scope: "global" | "demo" | "live",
 		active: boolean,
@@ -2366,25 +2267,19 @@ export const api = {
 		}>(
 			`/orders/${id}/risk-decision`,
 		),
-	getTrades: ((entryPlanId?: TradesQuery["entry_plan_id"] | unknown) =>
-		fetchJson<MarketTrade[]>(typeof entryPlanId === "string" && entryPlanId
-			? `/trades?entry_plan_id=${encodeURIComponent(entryPlanId)}`
-			: "/trades")) as {
-		(): Promise<MarketTrade[]>;
-		(entryPlanId: TradesQuery["entry_plan_id"]): Promise<MarketTrade[]>;
+	getTrades: (opts: TradesQuery = {}) => {
+		const q = new URLSearchParams();
+		if (opts.entry_plan_id != null) q.set("entry_plan_id", opts.entry_plan_id);
+		const qs = q.toString();
+		return fetchJson<MarketTrade[]>(qs ? `/trades?${qs}` : "/trades");
 	},
 	exportTradesCsv: () => `${BASE}/trades/export?fmt=csv`,
-	getPositions: ((opts?: PositionsQuery) => {
-		const hasOptions = opts && typeof opts === "object" && ("status" in opts || "limit" in opts);
-		if (!hasOptions) return fetchJson<Position[]>("/positions?limit=200");
+	getPositions: (opts: PositionsQuery = {}) => {
 		const q = new URLSearchParams();
-		if (opts.status) q.set("status", opts.status);
-		if (typeof opts.limit === "number") q.set("limit", String(opts.limit));
+		if (opts.status != null) q.set("status", opts.status);
+		if (opts.limit != null) q.set("limit", String(opts.limit));
 		const qs = q.toString();
 		return fetchJson<Position[]>(qs ? `/positions?${qs}` : "/positions");
-	}) as {
-		(): Promise<Position[]>;
-		(opts: PositionsQuery): Promise<Position[]>;
 	},
 	getPosition: (id: string) => fetchJson<Position>(`/positions/${encodeURIComponent(id)}`),
 	getPositionsReconciliation: () =>
@@ -2857,92 +2752,60 @@ export const api = {
 	// Universe Generator endpoints
 	getUniverseCurrent: () =>
 		fetchJson<UniverseCurrentResponse>("/universe/current"),
-	getEntryWorkbench: ((opts?: EntryWorkbenchQuery | unknown) => {
-		const isOpts = opts && typeof opts === "object" && ("limit" in opts || "plan_status" in opts);
+	getEntryWorkbench: (opts: EntryWorkbenchQuery = {}) => {
 		const q = new URLSearchParams();
-		if (isOpts) {
-			const o = opts as EntryWorkbenchQuery;
-			if (o.limit) q.set("limit", String(o.limit));
-			if (o.plan_status) q.set("plan_status", o.plan_status);
-		}
+		if (opts.limit != null) q.set("limit", String(opts.limit));
+		if (opts.plan_status != null) q.set("plan_status", opts.plan_status);
 		const qs = q.toString();
-		return fetchJson<EntryWorkbenchResponse>(`/universe/workbench${qs ? `?${qs}` : ""}`);
-	}) as {
-		(): Promise<EntryWorkbenchResponse>;
-		(opts: EntryWorkbenchQuery): Promise<EntryWorkbenchResponse>;
+		return fetchJson<EntryWorkbenchResponse>(qs ? `/universe/workbench?${qs}` : "/universe/workbench");
 	},
 	getEntryPlan: (id: string) =>
 		fetchJson<EntryPlan>(`/universe/entry-plans/${encodeURIComponent(id)}`),
-	getPlanningHistory: (opts?: PlanningHistoryQuery | number, before?: string | null) => {
-		const limit = typeof opts === "number" ? opts : opts?.limit ?? 50;
-		const beforeParam = typeof opts === "object" && opts?.before ? opts.before : before;
-		const qs = new URLSearchParams({ limit: String(limit) });
-		if (beforeParam) qs.set("before", beforeParam);
-		return fetchJson<PlanningHistoryResponse>(`/universe/planning-history?${qs}`);
-	},
-	getUniverseSnapshots: ((opts?: SnapshotsQuery | unknown) => {
-		const isOpts = opts && typeof opts === "object" && ("market_type" in opts || "limit" in opts);
+	getPlanningHistory: (opts: PlanningHistoryQuery = {}) => {
 		const q = new URLSearchParams();
-		if (isOpts) {
-			const o = opts as SnapshotsQuery;
-			if (o.market_type) q.set("market_type", o.market_type);
-			if (o.limit) q.set("limit", String(o.limit));
-		}
+		if (opts.limit != null) q.set("limit", String(opts.limit));
+		if (opts.before != null) q.set("before", opts.before);
+		const qs = q.toString();
+		return fetchJson<PlanningHistoryResponse>(qs ? `/universe/planning-history?${qs}` : "/universe/planning-history");
+	},
+	getUniverseSnapshots: (opts: SnapshotsQuery = {}) => {
+		const q = new URLSearchParams();
+		if (opts.market_type != null) q.set("market_type", opts.market_type);
+		if (opts.limit != null) q.set("limit", String(opts.limit));
 		const qs = q.toString();
 		return fetchJson<UniverseSnapshot[]>(qs ? `/universe/snapshots?${qs}` : "/universe/snapshots");
-	}) as {
-		(): Promise<UniverseSnapshot[]>;
-		(opts: SnapshotsQuery): Promise<UniverseSnapshot[]>;
 	},
 	getUniverseSnapshot: (id: string) =>
-		fetchJson<any>(`/universe/snapshots/${id}`),
+		fetchJson<operations["get_snapshot_api_universe_snapshots__snapshot_id__get"]["responses"][200]["content"]["application/json"]>(`/universe/snapshots/${id}`),
 	getCandidate: (id: string) =>
 		fetchJson<CandidateDetail>(
 			`/universe/candidates/${encodeURIComponent(id)}`,
 		),
 	refreshUniverse: () =>
-		post<{ snapshot_id: string; status: string }>("/universe/refresh"),
-	getUniversePolicy: () => fetchJson<any>("/universe/policy"),
+		post<operations["trigger_refresh_api_universe_refresh_post"]["responses"][200]["content"]["application/json"]>("/universe/refresh"),
+	getUniversePolicy: () => fetchJson<operations["get_current_policy_api_universe_policy_get"]["responses"][200]["content"]["application/json"]>("/universe/policy"),
 	getUniverseRegistryStats: () =>
-		fetchJson<{ total: number; active: number; blacklisted: number }>(
+		fetchJson<operations["registry_stats_api_universe_registry_stats_get"]["responses"][200]["content"]["application/json"]>(
 			"/universe/registry/stats",
 		),
 	getUniverseCalibration: () =>
 		fetchJson<import("../types").CalibrationResponse>("/universe/calibration"),
 	updateUniverseConfig: (
-		body: Partial<{
-			enabled: boolean;
-			refresh_interval_min: number;
-			max_candidates: number;
-			core_pool_size: number;
-			min_volume_24h_usdt: number;
-			max_spread_bps: number;
-			min_depth_10bps_usd: number;
-			explore_ratio: number;
-			snapshot_ttl_enabled: boolean;
-			snapshot_ttl_hours: number;
-			entry_ttl_sec: number;
-			candidate_max_continuous_age_sec: number;
-			blacklist: string[];
-			fallback_symbols: string[];
-			market_type: string;
-			family_quota: Record<string, number>;
-			family_quota_by_regime: Record<string, Record<string, number>>;
-		}>,
-	) => post<any>("/settings/universe", body),
+		body: operations["update_universe_config_api_settings_universe_post"]["requestBody"]["content"]["application/json"],
+	) => post<operations["update_universe_config_api_settings_universe_post"]["responses"][200]["content"]["application/json"]>("/settings/universe", body),
 	getCandidateSelectionStatus: () =>
 		fetchJson<CandidateSelectionStatus>("/settings/universe/candidate-selection"),
 	admitCandidateSelection: (expectedPolicyEpoch: string, reason: string) =>
-		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/admit", {
+		post<operations["admit_candidate_selection_api_settings_universe_candidate_selection_admit_post"]["responses"][200]["content"]["application/json"]>("/settings/universe/candidate-selection/admit", {
 			expected_policy_epoch: expectedPolicyEpoch,
 			reason,
 			confirm_admission: true,
-		}),
+		} satisfies operations["admit_candidate_selection_api_settings_universe_candidate_selection_admit_post"]["requestBody"]["content"]["application/json"]),
 	rollbackCandidateSelection: (reason: string) =>
-		post<CandidateSelectionStatus>("/settings/universe/candidate-selection/rollback", {
+		post<operations["rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post"]["responses"][200]["content"]["application/json"]>("/settings/universe/candidate-selection/rollback", {
 			reason,
 			confirm_rollback: true,
-		}),
+		} satisfies operations["rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post"]["requestBody"]["content"]["application/json"]),
 	updateFastTriggerConfig: (
 		body: Partial<{
 			mode: "off" | "shadow" | "execute";
@@ -3026,16 +2889,9 @@ export const api = {
 	// Trade Analytics panel. Every request MUST scope to a single
 	// `execution_mode` so operator surfaces never combine populations (#1939).
 	getTradeStats: (execution_mode?: string) =>
-		fetchJson<TradeStats>(_withMode("/analytics/trade-stats", execution_mode)),
+		fetchJson<operations["get_trade_stats_api_analytics_trade_stats_get"]["responses"][200]["content"]["application/json"]>(_withMode("/analytics/trade-stats", execution_mode)),
 	getStrategyKpis: (execution_mode?: string) =>
-		fetchJson<
-			OutcomeCohort & {
-				strategies: Record<
-					string,
-					{ trade_count: number; win_rate: number; total_pnl: number }
-				>;
-			}
-		>(_withMode("/analytics/strategy-kpis", execution_mode)),
+		fetchJson<operations["get_strategy_kpis_api_analytics_strategy_kpis_get"]["responses"][200]["content"]["application/json"]>(_withMode("/analytics/strategy-kpis", execution_mode)),
 	getEquityCurve: (days?: number, execution_mode?: string) => {
 		const q = new URLSearchParams();
 		if (days != null) q.set("days", String(days));
@@ -3046,7 +2902,7 @@ export const api = {
 		);
 	},
 	getTradeInsights: (execution_mode?: string) =>
-		fetchJson<TradeInsights>(_withMode("/analytics/trade-insights", execution_mode)),
+		fetchJson<operations["get_trade_insights_api_analytics_trade_insights_get"]["responses"][200]["content"]["application/json"]>(_withMode("/analytics/trade-insights", execution_mode)),
 	getThesisLineage: (params: {
 		days?: number;
 		position_id?: string;
@@ -3098,7 +2954,7 @@ export const api = {
 			empty_reason: "config_unavailable" | "controller_disabled" | "no_controller_runs" | "insufficient_run_history" | "no_persistent_signals" | null;
 		}>("/analytics/filter-controller/persistent"),
 	getCostSummary: (execution_mode?: string) =>
-		fetchJson<CostSummary>(_withMode("/analytics/cost-summary", execution_mode)),
+		fetchJson<operations["get_cost_summary_api_analytics_cost_summary_get"]["responses"][200]["content"]["application/json"]>(_withMode("/analytics/cost-summary", execution_mode)),
 	getConfidenceCalibration: (execution_mode?: string) =>
 		fetchJson<CalibrationReport>(
 			_withMode("/analytics/confidence-calibration", execution_mode),
@@ -3109,7 +2965,7 @@ export const api = {
 		),
 
 	getStrategyPerformance: (execution_mode?: string) =>
-		fetchJson<any>(_withMode("/analytics/strategy-performance", execution_mode)),
+		fetchJson<operations["get_strategy_performance_api_analytics_strategy_performance_get"]["responses"][200]["content"]["application/json"]>(_withMode("/analytics/strategy-performance", execution_mode)),
 	getSerenityPipeline: () => fetchJson<any>("/serenity/pipeline"),
 
 	// Generic helpers for pages that need simple get/post
@@ -3144,69 +3000,30 @@ export const api = {
 	},
 };
 
-export interface TradeStatsSource {
-	source_type: "ruleset" | "opportunity";
-	trade_count: number;
-	win_rate: number | null;
-	avg_hold_hours: number | null;
-	hold_time_available_count?: number;
-	hold_time_unavailable_count?: number;
-	expectancy_pct: number | null;
-	total_pnl: number | null;
-}
-
-export interface TradeStatsFamily {
-	family: string;
-	trade_count: number;
-	win_rate: number | null;
-	avg_hold_hours: number | null;
-	hold_time_available_count?: number;
-	hold_time_unavailable_count?: number;
-	expectancy_pct: number | null;
-}
-
-export interface HoldBucket {
-	bucket: string;
-	count: number;
-	pct: number;
-}
-
-export interface OutcomeCohort {
-	raw_event_count: number | null;
-	eligible_outcome_count: number | null;
-	excluded_outcome_count: number | null;
-	outcome_exclusion_reasons: Record<string, number>;
-	outcome_semantics_version: string;
-	cohort_state: "available" | "insufficient" | "unavailable";
-	raw_recorded_realized_pnl: number | null;
-	raw_economics_unavailable_count: number | null;
-	eligible_realized_pnl: number | null;
-	clean_window_anchor_id: string;
-	clean_window_anchor_iso: string;
-}
-
-export interface TradeStats extends OutcomeCohort {
-	by_source: TradeStatsSource[];
-	by_family: TradeStatsFamily[];
-	hold_distribution: HoldBucket[];
-	totals: {
-		trade_count: number;
-		win_rate: number | null;
-		avg_hold_hours: number | null;
-		median_hold_hours: number | null;
-		hold_time_available_count?: number;
-		hold_time_unavailable_count?: number;
-		total_pnl: number | null;
-	};
-}
+export type TradeStatsSource = components["schemas"]["TradeStatsSource"];
+export type TradeStatsFamily = components["schemas"]["TradeStatsFamily"];
+export type HoldBucket = components["schemas"]["HoldBucket"];
+export type TradeStats = components["schemas"]["TradeStatsResponse"];
+export type EquityPoint = components["schemas"]["InsightEquityPoint"];
+export type DrawdownPoint = components["schemas"]["InsightDrawdownPoint"];
+export type DirectionStats = components["schemas"]["DirectionStats"];
+export type ProfitFactorData = components["schemas"]["ProfitFactorStats"];
+export type DayStats = components["schemas"]["DayOfWeekStats"];
+export type HourStats = components["schemas"]["HourStats"];
+export type PnlBin = components["schemas"]["DistributionBin"];
+export type RegimeStats = components["schemas"]["RegimeStats"];
+export type StreakData = components["schemas"]["StreakStats"];
+export type HoldPnlPoint = components["schemas"]["HoldPnlPoint"];
+export type HourDayCell = components["schemas"]["HeatmapCell"];
+export type TradeFrequencyDay = components["schemas"]["TradeFrequencyDay"];
+export type SymbolDirectionEntry = components["schemas"]["SymbolDirectionStats"];
+export type HoldDurationBucket = components["schemas"]["HoldDurationStats"];
+export type RMultipleBin = components["schemas"]["DistributionBin"];
+export type ExitReasonEntry = components["schemas"]["ExitReasonStats"];
+export type TradeInsights = components["schemas"]["TradeInsightsResponse"];
 
 // ── Trade Insights (comprehensive charts) ────────────────────────────────────
 
-export interface EquityPoint {
-	time: string;
-	pnl: number;
-	cumulative_pnl: number;
-}
 
 export interface AccountEquityHistory {
 	source: "local_paper_ledger" | "exchange_account_snapshot";
@@ -3246,154 +3063,6 @@ export interface AccountEquityHistory {
 	as_of: string | null;
 }
 
-export interface DrawdownPoint {
-	time: string;
-	drawdown: number;
-}
-
-export interface DirectionStats {
-	trade_count: number;
-	win_rate: number;
-	total_pnl: number;
-	avg_pnl_pct: number;
-	avg_hold_hours: number | null;
-	hold_time_available_count?: number;
-	hold_time_unavailable_count?: number;
-}
-
-export interface ProfitFactorData {
-	gross_profit: number;
-	gross_loss: number;
-	profit_factor: number | null;
-	profit_factor_state?: 'finite' | 'unbounded_no_losses' | 'unavailable_no_outcomes';
-	avg_win: number;
-	avg_loss: number;
-	largest_win: number;
-	largest_loss: number;
-	win_count: number;
-	loss_count: number;
-}
-
-export interface DayStats {
-	day: string;
-	trade_count: number;
-	win_rate: number;
-	avg_pnl_pct: number;
-}
-
-export interface HourStats {
-	hour: number;
-	trade_count: number;
-	win_rate: number;
-	avg_pnl_pct: number;
-}
-
-export interface PnlBin {
-	bin: string;
-	count: number;
-}
-
-export interface RegimeStats {
-	regime: string;
-	trade_count: number;
-	win_rate: number;
-	avg_pnl_pct: number;
-}
-
-export interface StreakData {
-	max_consecutive_wins: number;
-	max_consecutive_losses: number;
-	current_streak: number;
-	current_streak_type: string;
-	total_wins: number;
-	total_losses: number;
-	total_flats: number;
-}
-
-export interface HoldPnlPoint {
-	hold_hours: number;
-	pnl_pct: number;
-	direction: string;
-	symbol: string;
-	market_type?: string;
-}
-
-export interface HourDayCell {
-	day: number;
-	hour: number;
-	avg_pnl_pct: number;
-	trade_count: number;
-}
-
-export interface TradeFrequencyDay {
-	date: string;
-	trades: { pnl_pct: number; direction: string }[];
-}
-
-export interface SymbolDirectionEntry {
-	symbol: string;
-	market_type: string;
-	direction: string;
-	win_rate: number;
-	avg_pnl_pct: number;
-	trade_count: number;
-}
-
-export interface HoldDurationBucket {
-	bucket: string;
-	trade_count: number;
-	win_rate: number;
-	avg_pnl_pct: number;
-	avg_win_pct: number;
-	avg_loss_pct: number;
-}
-
-export interface RMultipleBin {
-	bin: string;
-	count: number;
-}
-
-export interface ExitReasonEntry {
-	reason: string;
-	trade_count: number;
-	win_rate: number;
-	avg_pnl_pct: number;
-	total_pnl: number;
-	pnl_contribution_pct: number;
-}
-
-export interface TradeInsights extends OutcomeCohort {
-	since: string;
-	trade_count: number;
-	source_raw_count: number;
-	loaded_raw_count: number;
-	loaded_count: number;
-	omitted_count: number;
-	cohort_complete: boolean;
-	loaded_from: string | null;
-	loaded_through: string | null;
-	equity_curve: EquityPoint[];
-	drawdown_curve: DrawdownPoint[];
-	by_direction: Record<string, DirectionStats>;
-	profit_factor: ProfitFactorData;
-	by_day_of_week: DayStats[];
-	by_hour: HourStats[];
-	pnl_distribution: PnlBin[];
-	by_regime: RegimeStats[];
-	streaks: StreakData;
-	hold_vs_pnl: HoldPnlPoint[];
-	hour_day_heatmap: HourDayCell[];
-	trade_frequency: TradeFrequencyDay[];
-	symbol_direction_matrix: SymbolDirectionEntry[];
-	hold_duration_buckets: HoldDurationBucket[];
-	r_multiple_distribution: RMultipleBin[]; // #2061: always an array (bins only); diagnostics in r_multiple_distribution_meta
-	r_multiple_distribution_meta?: {
-		eligible_r_multiple_count: number;
-		unavailable_r_multiple_count: number;
-		unavailability_reasons: Record<string, number>;
-	};
-	by_exit_reason: ExitReasonEntry[];
-}
 
 export interface GoLiveCriterion {
 	key: string;
@@ -3413,29 +3082,7 @@ export interface GoLiveScorecard {
 	computed_at: string;
 }
 
-export interface CostSummary extends OutcomeCohort {
-	total_entry_fees: number | null;
-	total_exit_fees: number | null;
-	total_funding_cost: number | null;
-	total_fees: number | null;
-	total_slippage: number | null;
-	/** Backward-compatible execution-cost total (fees plus slippage). */
-	total_costs: number | null;
-	total_economic_costs: number | null;
-	total_execution_drag: number | null;
-	missing_cost_counts: Record<"entry_fee" | "exit_fee" | "funding_cost" | "slippage_cost", number>;
-	raw_recorded_costs: {
-		total_entry_fees: number | null;
-		total_exit_fees: number | null;
-		total_funding_cost: number | null;
-		total_fees: number | null;
-		total_slippage: number | null;
-		total_costs: number | null;
-		total_economic_costs: number | null;
-		total_execution_drag: number | null;
-		missing_cost_counts: Record<"entry_fee" | "exit_fee" | "funding_cost" | "slippage_cost", number>;
-	};
-}
+export type CostSummary = components["schemas"]["CostSummaryResponse"];
 
 export interface CalibrationBucket {
 	label: string;

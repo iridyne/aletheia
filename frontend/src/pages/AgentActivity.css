@@ -1,0 +1,5 @@
+
+.drawer-list { padding-left: 1rem; font-size: 0.8rem; }
+.drawer-list-error { color: var(--red); }
+.drawer-table { font-size: 0.78rem; width: 100%; }
+.opp-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }

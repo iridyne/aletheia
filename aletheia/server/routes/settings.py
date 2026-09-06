@@ -7,6 +7,8 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
+from pydantic import JsonValue
+from typing_extensions import NotRequired, TypedDict
 
 from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
 from aletheia.config.execution_costs import (
@@ -2833,6 +2835,75 @@ class CandidateSelectionRollbackRequest(SettingsRequest):
         return normalized[:200]
 
 
+class CandidateSelectionHarmMetrics(TypedDict):
+    target_loss_rate: NotRequired[float | None]
+    legacy_loss_rate: NotRequired[float | None]
+    target_mae_p95_pct: NotRequired[float | None]
+    legacy_mae_p95_pct: NotRequired[float | None]
+    target_cvar_05_pct: NotRequired[float | None]
+    legacy_cvar_05_pct: NotRequired[float | None]
+    target_mean_cost_pct: NotRequired[float | None]
+    legacy_mean_cost_pct: NotRequired[float | None]
+    target_max_symbol_share: NotRequired[float | None]
+    noninferiority_reasons: NotRequired[list[str]]
+
+
+class CandidateSelectionRuntimeProvenance(TypedDict):
+    producer_commits: list[str]
+    behavior_fingerprints: list[str]
+
+
+class CandidateSelectionQualification(TypedDict):
+    verdict: str
+    promotion_eligible: bool
+    policy_epoch_id: str | None
+    blocking_reasons: list[str]
+    invalid_reasons: list[str]
+    version: NotRequired[str]
+    authority: NotRequired[str]
+    owner_admission_required: NotRequired[bool]
+    training_cutoff: NotRequired[str | None]
+    selection_policy: NotRequired[JsonValue]
+    expected_cluster_n: NotRequired[int]
+    raw_scanner_run_n: NotRequired[int]
+    independent_policy_unit_n: NotRequired[int]
+    complete_cluster_n: NotRequired[int]
+    fixed_look_cluster_n: NotRequired[int]
+    consecutive_eligible_utc_days: NotRequired[int]
+    full_arm_outcome_coverage: NotRequired[float]
+    target_cluster_utility_mean: NotRequired[float | None]
+    legacy_cluster_utility_mean: NotRequired[float | None]
+    paired_utility_delta: NotRequired[float | None]
+    paired_utility_lower_bound: NotRequired[float | None]
+    harm_metrics: NotRequired[CandidateSelectionHarmMetrics]
+    outcome_exclusion_counts: NotRequired[dict[str, int]]
+    as_of_at: NotRequired[str]
+    runtime_provenance: NotRequired[CandidateSelectionRuntimeProvenance]
+    qualification_eligible: NotRequired[bool]
+
+
+class CandidateSelectionStatusResponse(TypedDict):
+    configured_policy: str
+    configured_policy_epoch: str | None
+    authority_enabled: bool
+    authority_block_reason: str | None
+    admission_block_reason: str | None
+    evaluation_available: bool
+    evaluation_error: str | None
+    qualification: CandidateSelectionQualification
+
+
+class CandidateSelectionTransitionResponse(CandidateSelectionStatusResponse):
+    audit_mirror_status: str
+
+
+class UniverseConfigUpdateResponse(TypedDict):
+    updated: UniverseConfigUpdate
+    rescheduled: bool
+    universe: UniverseConfig
+
+
+
 def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
     from aletheia.universe.candidate_selection_authority import (
         TARGET_CANDIDATE_POLICY,
@@ -2918,7 +2989,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
 }
 
 
-@router.post("/universe")
+@router.post("/universe", responses={200: {"model": UniverseConfigUpdateResponse}})
 def update_universe_config(req: UniverseConfigUpdate):
     """Update universe generator parameters."""
     cfg = load_config()
@@ -3062,7 +3133,7 @@ def update_universe_config(req: UniverseConfigUpdate):
     return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 
-@router.get("/universe/candidate-selection")
+@router.get("/universe/candidate-selection", responses={200: {"model": CandidateSelectionStatusResponse}})
 def get_candidate_selection_status():
     """Read the configured authority and its exact prospective qualification."""
 
@@ -3074,7 +3145,7 @@ def get_candidate_selection_status():
     return _candidate_selection_status(load_config())
 
 
-@router.post("/universe/candidate-selection/admit")
+@router.post("/universe/candidate-selection/admit", responses={200: {"model": CandidateSelectionTransitionResponse}})
 def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
     """Owner-only positive-qualification transition to target Candidate authority."""
 
@@ -3180,7 +3251,7 @@ def admit_candidate_selection(req: CandidateSelectionAdmissionRequest):
     }
 
 
-@router.post("/universe/candidate-selection/rollback")
+@router.post("/universe/candidate-selection/rollback", responses={200: {"model": CandidateSelectionTransitionResponse}})
 def rollback_candidate_selection(req: CandidateSelectionRollbackRequest):
     """Explicitly restore legacy Candidate authority without rewriting evidence."""
 

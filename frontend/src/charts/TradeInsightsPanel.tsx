@@ -736,7 +736,7 @@ export default function TradeInsightsPanel({ executionMode }: { executionMode?: 
   })
 
   if (!executionMode) return <Card><p className="text-muted text-sm">Insights unavailable — execution mode unresolved.</p></Card>
-  if (error || !data) return <Card><p className="text-muted text-sm">Insights unavailable.</p></Card>
+  if (error || !data || !("equity_curve" in data)) return <Card><p className="text-muted text-sm">Insights unavailable.</p></Card>
 
   // Runtime array guard: validate all array fields to prevent .map() crashes if backend
   // returns an object instead of array. This catches the #2061 class of bug at the

@@ -6931,6 +6931,17 @@ export interface components {
              */
             permission_mode: string;
         };
+        /** AnalyticsUnavailable */
+        AnalyticsUnavailable: {
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Outcome Status */
+            outcome_status: string;
+            /** Unavailable Reason */
+            unavailable_reason: string;
+        };
         /** AnalyzeRequest */
         AnalyzeRequest: Record<string, never>;
         /** AppConfig */
@@ -7039,6 +7050,609 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** CalibrationFamilySummary */
+        CalibrationFamilySummary: {
+            /** Avg Return Pct */
+            avg_return_pct: number;
+            /** Direction */
+            direction: string;
+            /** Family */
+            family: string;
+            /** Hit Rate Pct */
+            hit_rate_pct: number;
+            /** Market Type */
+            market_type: string;
+            /** Total Outcomes */
+            total_outcomes: number;
+        };
+        /** CalibrationResponse */
+        CalibrationResponse: {
+            /** By Cohort */
+            by_cohort: components["schemas"]["CalibrationFamilySummary"][];
+            /** By Cohort Horizon */
+            by_cohort_horizon: components["schemas"]["CalibrationRow"][];
+            /** Cost Model Version */
+            cost_model_version: string;
+        };
+        /** CalibrationRow */
+        CalibrationRow: {
+            /** Avg Return */
+            avg_return: number | null;
+            /** Cost Model Version */
+            cost_model_version: string;
+            /** Direction */
+            direction: string;
+            /** Distinct Days */
+            distinct_days: number;
+            /** Distinct Symbols */
+            distinct_symbols: number;
+            /** Horizon */
+            horizon: string;
+            /** Independent N */
+            independent_n: number;
+            /** Market Type */
+            market_type: string;
+            /** Max Return */
+            max_return: number | null;
+            /** Min Return */
+            min_return: number | null;
+            /** N */
+            n: number;
+            /** Scanner Family */
+            scanner_family: string | null;
+            /** Source Outcome Fingerprint */
+            source_outcome_fingerprint: string | null;
+            /** Source Window Start */
+            source_window_start: string;
+            /** Win Count */
+            win_count: number;
+        };
+        /** Candidate */
+        Candidate: {
+            /** All Scores */
+            all_scores?: string | null;
+            /** Asset Id */
+            asset_id: string | null;
+            /** Atr Pct */
+            atr_pct?: number | null;
+            /** Candidate Opportunity Context Hash */
+            candidate_opportunity_context_hash?: string | null;
+            /** Candidate Opportunity Context Json */
+            candidate_opportunity_context_json?: string | null;
+            /** Candidate Opportunity Context Version */
+            candidate_opportunity_context_version?: string | null;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Candidate Selection Utility Pct */
+            candidate_selection_utility_pct: number | null;
+            /** Crowding Risk */
+            crowding_risk?: number | null;
+            /** Entry Plan Execution Mode */
+            entry_plan_execution_mode?: string | null;
+            /** Entry Plan Id */
+            entry_plan_id?: string | null;
+            /** Entry Plan Status */
+            entry_plan_status?: string | null;
+            /** Entry Price Usd */
+            entry_price_usd?: number | null;
+            /** Estimated Cost */
+            estimated_cost?: number | null;
+            /** Execution Eligible */
+            execution_eligible: number | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string | null;
+            /** Inclusion Reason */
+            inclusion_reason: string | null;
+            /** Late Entry Penalty */
+            late_entry_penalty?: number | null;
+            /** Learning Candidate Key */
+            learning_candidate_key?: string | null;
+            /** Liquidity Score */
+            liquidity_score?: number | null;
+            /** Market Type */
+            market_type?: string;
+            /** Opportunity Evidence Hash */
+            opportunity_evidence_hash?: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism?: string | null;
+            /** Opportunity Mechanism Version */
+            opportunity_mechanism_version?: string | null;
+            /** Opportunity Score */
+            opportunity_score?: number | null;
+            /** Opportunity Source Component */
+            opportunity_source_component?: string | null;
+            /** Opportunity Source Cutoff At */
+            opportunity_source_cutoff_at?: string | null;
+            /** Quote Volume 24H */
+            quote_volume_24h?: number | null;
+            /** Rank */
+            rank: number;
+            /** Regime Tag */
+            regime_tag?: string | null;
+            /** Risk Flags */
+            risk_flags: string | null;
+            /** Scanner Direction */
+            scanner_direction?: string | null;
+            /** Scanner Family */
+            scanner_family: string | null;
+            /** Setup State */
+            setup_state?: string | null;
+            /** Snapshot Id */
+            snapshot_id: string | null;
+            /** Spread Bps */
+            spread_bps?: number | null;
+            /** Stale */
+            stale?: boolean;
+            /** Symbol */
+            symbol: string;
+            /** Total Score */
+            total_score: number;
+            /** Tradability Score */
+            tradability_score: number | null;
+            /** Triggered Opportunity Id */
+            triggered_opportunity_id?: string | null;
+            /** Ttl Sec */
+            ttl_sec: number;
+            /** Venue */
+            venue?: string | null;
+        };
+        /** CandidateAttention */
+        CandidateAttention: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Attention Max Age Sec */
+            attention_max_age_sec: number | null;
+            /** Attention Policy Version */
+            attention_policy_version: string | null;
+            /** Attention Started At */
+            attention_started_at: string | null;
+            /** Attention Status */
+            attention_status: string;
+            /** Attention Terminal At */
+            attention_terminal_at: string | null;
+            /** Attention Terminal Reason */
+            attention_terminal_reason: string | null;
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Family */
+            candidate_family: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string | null;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Claim Expires At */
+            claim_expires_at: string | null;
+            /** Compiler Invoked */
+            compiler_invoked: number;
+            /** Compiler Invoked At */
+            compiler_invoked_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Cycle Number */
+            cycle_number: number | null;
+            /** Cycle Reason */
+            cycle_reason: string | null;
+            /** Direction */
+            direction: string;
+            /** Entry Behavior Fingerprint */
+            entry_behavior_fingerprint: string | null;
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Hard Expires At */
+            hard_expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Is Current */
+            is_current: number;
+            /** Last Candidate Id */
+            last_candidate_id: string;
+            /** Last Requalified At */
+            last_requalified_at: string | null;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Market Type */
+            market_type: string;
+            /** Mechanism Version */
+            mechanism_version: string | null;
+            /** Model Invoked */
+            model_invoked: number;
+            /** Model Invoked At */
+            model_invoked_at: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Owner Token */
+            owner_token: string | null;
+            /** Planner Input Hash */
+            planner_input_hash: string | null;
+            /** Planner Input Json */
+            planner_input_json: string | null;
+            /** Planning Identity */
+            planning_identity: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Planning Started At */
+            planning_started_at: string | null;
+            /** Previous Generation Id */
+            previous_generation_id: string | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Requalification Candidate Id */
+            requalification_candidate_id: string | null;
+            /** Requalification Source Json */
+            requalification_source_json: string | null;
+            /** Result Json */
+            result_json: string | null;
+            /** Result Kind */
+            result_kind: string | null;
+            /** Retry Not Before */
+            retry_not_before: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Schema Fingerprint */
+            schema_fingerprint: string | null;
+            /** Soft Expires At */
+            soft_expires_at: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Updated At */
+            updated_at: string;
+            /** Venue */
+            venue: string;
+        };
+        /** CandidateAttentionWorkbench */
+        CandidateAttentionWorkbench: {
+            /** Activation Identity */
+            activation_identity: string | null;
+            /** Active Entry Plan Id */
+            active_entry_plan_id: string | null;
+            /** Active Entry Plan Status */
+            active_entry_plan_status: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Attention Max Age Sec */
+            attention_max_age_sec: number | null;
+            /** Attention Policy Version */
+            attention_policy_version: string | null;
+            /** Attention Started At */
+            attention_started_at: string | null;
+            /** Attention Status */
+            attention_status: string;
+            /** Attention Terminal At */
+            attention_terminal_at: string | null;
+            /** Attention Terminal Reason */
+            attention_terminal_reason: string | null;
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Expires At */
+            candidate_expires_at: string | null;
+            /** Candidate Family */
+            candidate_family: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string | null;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Candidate Selection Utility Pct */
+            candidate_selection_utility_pct: number | null;
+            /** Claim Expires At */
+            claim_expires_at: string | null;
+            /** Compiler Invoked */
+            compiler_invoked: boolean;
+            /** Compiler Invoked At */
+            compiler_invoked_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Current Cycle Number */
+            current_cycle_number: number | null;
+            /** Current Generation Id */
+            current_generation_id: string | null;
+            /** Current Plan Id */
+            current_plan_id: string | null;
+            /** Cycle Number */
+            cycle_number: number | null;
+            /** Cycle Reason */
+            cycle_reason: string | null;
+            /** Cycles */
+            cycles: components["schemas"]["EntryLifecycleCycle"][];
+            /** Direction */
+            direction: string;
+            /** Entry Behavior Fingerprint */
+            entry_behavior_fingerprint: string | null;
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Entry Price Usd */
+            entry_price_usd: number | null;
+            /** Execution Eligible */
+            execution_eligible: number | null;
+            /** Expired Plan Count */
+            expired_plan_count: number;
+            /** Hard Expires At */
+            hard_expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Identity Version */
+            identity_version: string | null;
+            /** Inclusion Reason */
+            inclusion_reason: string | null;
+            /** Is Current */
+            is_current: number;
+            /** Last Candidate Id */
+            last_candidate_id: string;
+            /** Last Requalified At */
+            last_requalified_at: string | null;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason: string | null;
+            /** Lifecycle State */
+            lifecycle_state: string;
+            /** Liquidity Score */
+            liquidity_score: number | null;
+            /** Market Type */
+            market_type: string;
+            /** Mechanism Version */
+            mechanism_version: string | null;
+            /** Model Invoked */
+            model_invoked: boolean;
+            /** Model Invoked At */
+            model_invoked_at: string | null;
+            /** Next Action */
+            next_action: string;
+            /** Opportunity Evidence Hash */
+            opportunity_evidence_hash: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Opportunity Mechanism Version */
+            opportunity_mechanism_version: string | null;
+            /** Opportunity Source Component */
+            opportunity_source_component: string | null;
+            /** Opportunity Source Cutoff At */
+            opportunity_source_cutoff_at: string | null;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Owner Token */
+            owner_token: string | null;
+            /** Planner Contract Version */
+            planner_contract_version: string | null;
+            /** Planner Input Hash */
+            planner_input_hash: string | null;
+            /** Planner Input Json */
+            planner_input_json: string | null;
+            /** Planning Identity */
+            planning_identity: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Planning Started At */
+            planning_started_at: string | null;
+            /** Previous Generation Id */
+            previous_generation_id: string | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Rank */
+            rank: number | null;
+            /** Requalification Candidate Id */
+            requalification_candidate_id: string | null;
+            /** Requalification Source Json */
+            requalification_source_json: string | null;
+            /** Result Json */
+            result_json: string | null;
+            /** Result Kind */
+            result_kind: string | null;
+            /** Retry Not Before */
+            retry_not_before: string | null;
+            /** Risk Flags */
+            risk_flags: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Schema Fingerprint */
+            schema_fingerprint: string | null;
+            /** Soft Expires At */
+            soft_expires_at: string | null;
+            /** Spread Bps */
+            spread_bps: number | null;
+            /** State Changed At */
+            state_changed_at: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Total Score */
+            total_score: number | null;
+            /** Updated At */
+            updated_at: string;
+            /** Venue */
+            venue: string;
+        };
+        /** CandidateDetail */
+        CandidateDetail: {
+            attention: components["schemas"]["CandidateAttention"] | null;
+            /** Entry Plans */
+            entry_plans: components["schemas"]["EntryPlanRow"][];
+            features: components["schemas"]["UniverseFeatureSnapshot"] | null;
+            lifecycle: components["schemas"]["EntryLifecycleProjection"] | null;
+            member: components["schemas"]["Candidate"];
+            /** Opportunities */
+            opportunities: components["schemas"]["CandidateOpportunity"][];
+        };
+        /** CandidateOpportunity */
+        CandidateOpportunity: {
+            /** Asset Class */
+            asset_class: string | null;
+            /** Asset Subclass */
+            asset_subclass: string;
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Canonical Ticker */
+            canonical_ticker: string;
+            /** Confidence */
+            confidence: string;
+            /** Confidence Score */
+            confidence_score: number | null;
+            /** Created At */
+            created_at: string;
+            /** Direction Bias */
+            direction_bias: string | null;
+            /** Entry Zone */
+            entry_zone: string | null;
+            /** Execution Eligible */
+            execution_eligible: number | null;
+            /** Funding Rate */
+            funding_rate: number | null;
+            /** Generation Hash */
+            generation_hash: string | null;
+            /** Generation Json */
+            generation_json: string | null;
+            /** Generation Version */
+            generation_version: string | null;
+            /** Id */
+            id: string;
+            /** Key Observations */
+            key_observations: string;
+            /** Last Ranked At */
+            last_ranked_at: string | null;
+            /** Linked Strategy Id */
+            linked_strategy_id: string | null;
+            /** Market */
+            market: string;
+            /** Metadata */
+            metadata: string | null;
+            /** Oi Delta 1H */
+            oi_delta_1h: number | null;
+            /** Open Interest */
+            open_interest: number | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Regime Tag */
+            regime_tag: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Scanner Family */
+            scanner_family: string | null;
+            /** Setup Id */
+            setup_id: string | null;
+            /** Signal Mark */
+            signal_mark: string | null;
+            /** Source Agent */
+            source_agent: string | null;
+            /** Status */
+            status: string;
+            /** Stop Loss Hint */
+            stop_loss_hint: number | null;
+            /** Symbol */
+            symbol: string;
+            /** Thesis */
+            thesis: string | null;
+            /** Tp Hint */
+            tp_hint: number | null;
+            /** Trigger Behavior Version */
+            trigger_behavior_version: string | null;
+            /** Universe Member Id */
+            universe_member_id: string | null;
+            /** Universe Snapshot Id */
+            universe_snapshot_id: string | null;
+            /** Valid Until */
+            valid_until: string | null;
+        };
+        /** CandidateRow */
+        CandidateRow: {
+            /** All Scores */
+            all_scores: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Atr Pct */
+            atr_pct: number | null;
+            /** Candidate Opportunity Context Hash */
+            candidate_opportunity_context_hash: string | null;
+            /** Candidate Opportunity Context Json */
+            candidate_opportunity_context_json: string | null;
+            /** Candidate Opportunity Context Version */
+            candidate_opportunity_context_version: string | null;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Candidate Selection Utility Pct */
+            candidate_selection_utility_pct: number | null;
+            /** Crowding Risk */
+            crowding_risk: number | null;
+            /** Entry Price Usd */
+            entry_price_usd: number | null;
+            /** Estimated Cost */
+            estimated_cost: number | null;
+            /** Execution Eligible */
+            execution_eligible: number | null;
+            /** Expires At */
+            expires_at: string;
+            /** Id */
+            id: string;
+            /** Inclusion Reason */
+            inclusion_reason: string | null;
+            /** Late Entry Penalty */
+            late_entry_penalty: number | null;
+            /** Learning Candidate Key */
+            learning_candidate_key: string | null;
+            /** Liquidity Score */
+            liquidity_score: number | null;
+            /** Market Type */
+            market_type: string;
+            /** Opportunity Evidence Hash */
+            opportunity_evidence_hash: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Opportunity Mechanism Version */
+            opportunity_mechanism_version: string | null;
+            /** Opportunity Score */
+            opportunity_score: number | null;
+            /** Opportunity Source Component */
+            opportunity_source_component: string | null;
+            /** Opportunity Source Cutoff At */
+            opportunity_source_cutoff_at: string | null;
+            /** Quote Volume 24H */
+            quote_volume_24h: number | null;
+            /** Rank */
+            rank: number;
+            /** Regime Tag */
+            regime_tag: string | null;
+            /** Risk Flags */
+            risk_flags: string | null;
+            /** Scanner Direction */
+            scanner_direction: string | null;
+            /** Scanner Family */
+            scanner_family: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Spread Bps */
+            spread_bps: number | null;
+            /** Symbol */
+            symbol: string;
+            /** Total Score */
+            total_score: number;
+            /** Tradability Score */
+            tradability_score: number | null;
+            /** Ttl Sec */
+            ttl_sec: number;
+            /** Venue */
+            venue: string | null;
+        };
         /** CandidateSelectionAdmissionRequest */
         CandidateSelectionAdmissionRequest: {
             /**
@@ -7051,6 +7665,83 @@ export interface components {
             /** Reason */
             reason: string;
         };
+        /** CandidateSelectionHarmMetrics */
+        CandidateSelectionHarmMetrics: {
+            /** Legacy Cvar 05 Pct */
+            legacy_cvar_05_pct?: number | null;
+            /** Legacy Loss Rate */
+            legacy_loss_rate?: number | null;
+            /** Legacy Mae P95 Pct */
+            legacy_mae_p95_pct?: number | null;
+            /** Legacy Mean Cost Pct */
+            legacy_mean_cost_pct?: number | null;
+            /** Noninferiority Reasons */
+            noninferiority_reasons?: string[];
+            /** Target Cvar 05 Pct */
+            target_cvar_05_pct?: number | null;
+            /** Target Loss Rate */
+            target_loss_rate?: number | null;
+            /** Target Mae P95 Pct */
+            target_mae_p95_pct?: number | null;
+            /** Target Max Symbol Share */
+            target_max_symbol_share?: number | null;
+            /** Target Mean Cost Pct */
+            target_mean_cost_pct?: number | null;
+        };
+        /** CandidateSelectionQualification */
+        CandidateSelectionQualification: {
+            /** As Of At */
+            as_of_at?: string;
+            /** Authority */
+            authority?: string;
+            /** Blocking Reasons */
+            blocking_reasons: string[];
+            /** Complete Cluster N */
+            complete_cluster_n?: number;
+            /** Consecutive Eligible Utc Days */
+            consecutive_eligible_utc_days?: number;
+            /** Expected Cluster N */
+            expected_cluster_n?: number;
+            /** Fixed Look Cluster N */
+            fixed_look_cluster_n?: number;
+            /** Full Arm Outcome Coverage */
+            full_arm_outcome_coverage?: number;
+            harm_metrics?: components["schemas"]["CandidateSelectionHarmMetrics"];
+            /** Independent Policy Unit N */
+            independent_policy_unit_n?: number;
+            /** Invalid Reasons */
+            invalid_reasons: string[];
+            /** Legacy Cluster Utility Mean */
+            legacy_cluster_utility_mean?: number | null;
+            /** Outcome Exclusion Counts */
+            outcome_exclusion_counts?: {
+                [key: string]: number;
+            };
+            /** Owner Admission Required */
+            owner_admission_required?: boolean;
+            /** Paired Utility Delta */
+            paired_utility_delta?: number | null;
+            /** Paired Utility Lower Bound */
+            paired_utility_lower_bound?: number | null;
+            /** Policy Epoch Id */
+            policy_epoch_id: string | null;
+            /** Promotion Eligible */
+            promotion_eligible: boolean;
+            /** Qualification Eligible */
+            qualification_eligible?: boolean;
+            /** Raw Scanner Run N */
+            raw_scanner_run_n?: number;
+            runtime_provenance?: components["schemas"]["CandidateSelectionRuntimeProvenance"];
+            selection_policy?: components["schemas"]["JsonValue"];
+            /** Target Cluster Utility Mean */
+            target_cluster_utility_mean?: number | null;
+            /** Training Cutoff */
+            training_cutoff?: string | null;
+            /** Verdict */
+            verdict: string;
+            /** Version */
+            version?: string;
+        };
         /** CandidateSelectionRollbackRequest */
         CandidateSelectionRollbackRequest: {
             /**
@@ -7060,6 +7751,190 @@ export interface components {
             confirm_rollback: true;
             /** Reason */
             reason: string;
+        };
+        /** CandidateSelectionRuntimeProvenance */
+        CandidateSelectionRuntimeProvenance: {
+            /** Behavior Fingerprints */
+            behavior_fingerprints: string[];
+            /** Producer Commits */
+            producer_commits: string[];
+        };
+        /** CandidateSelectionStatusResponse */
+        CandidateSelectionStatusResponse: {
+            /** Admission Block Reason */
+            admission_block_reason: string | null;
+            /** Authority Block Reason */
+            authority_block_reason: string | null;
+            /** Authority Enabled */
+            authority_enabled: boolean;
+            /** Configured Policy */
+            configured_policy: string;
+            /** Configured Policy Epoch */
+            configured_policy_epoch: string | null;
+            /** Evaluation Available */
+            evaluation_available: boolean;
+            /** Evaluation Error */
+            evaluation_error: string | null;
+            qualification: components["schemas"]["CandidateSelectionQualification"];
+        };
+        /** CandidateSelectionTransitionResponse */
+        CandidateSelectionTransitionResponse: {
+            /** Admission Block Reason */
+            admission_block_reason: string | null;
+            /** Audit Mirror Status */
+            audit_mirror_status: string;
+            /** Authority Block Reason */
+            authority_block_reason: string | null;
+            /** Authority Enabled */
+            authority_enabled: boolean;
+            /** Configured Policy */
+            configured_policy: string;
+            /** Configured Policy Epoch */
+            configured_policy_epoch: string | null;
+            /** Evaluation Available */
+            evaluation_available: boolean;
+            /** Evaluation Error */
+            evaluation_error: string | null;
+            qualification: components["schemas"]["CandidateSelectionQualification"];
+        };
+        /** CandidateWorkbenchRow */
+        CandidateWorkbenchRow: {
+            /** All Scores */
+            all_scores: string | null;
+            /** Asset Id */
+            asset_id: string;
+            /** Atr Pct */
+            atr_pct: number | null;
+            /** Attempt Count */
+            attempt_count: number | null;
+            /** Attention Status */
+            attention_status: string | null;
+            /** Attention Terminal Reason */
+            attention_terminal_reason: string | null;
+            /** Candidate Opportunity Context Hash */
+            candidate_opportunity_context_hash: string | null;
+            /** Candidate Opportunity Context Json */
+            candidate_opportunity_context_json: string | null;
+            /** Candidate Opportunity Context Version */
+            candidate_opportunity_context_version: string | null;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Candidate Selection Utility Pct */
+            candidate_selection_utility_pct: number | null;
+            /** Compiler Invoked */
+            compiler_invoked: boolean;
+            /** Crowding Risk */
+            crowding_risk: number | null;
+            /** Current Cycle Number */
+            current_cycle_number: number | null;
+            /** Current Generation Id */
+            current_generation_id: string | null;
+            /** Current Plan Id */
+            current_plan_id: string | null;
+            /** Cycle Number */
+            cycle_number: number | null;
+            /** Cycles */
+            cycles: components["schemas"]["EntryLifecycleCycle"][];
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Entry Plan Status */
+            entry_plan_status: string | null;
+            /** Entry Plan Terminal Reason */
+            entry_plan_terminal_reason: string | null;
+            /** Entry Price Usd */
+            entry_price_usd: number | null;
+            /** Estimated Cost */
+            estimated_cost: number | null;
+            /** Execution Eligible */
+            execution_eligible: number | null;
+            /** Expired Plan Count */
+            expired_plan_count: number;
+            /** Expires At */
+            expires_at: string;
+            /** Hard Expires At */
+            hard_expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Inclusion Reason */
+            inclusion_reason: string | null;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Late Entry Penalty */
+            late_entry_penalty: number | null;
+            /** Learning Candidate Key */
+            learning_candidate_key: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason: string | null;
+            /** Lifecycle State */
+            lifecycle_state: string;
+            /** Liquidity Score */
+            liquidity_score: number | null;
+            /** Market Type */
+            market_type: string;
+            /** Model Invoked */
+            model_invoked: boolean;
+            /** Next Action */
+            next_action: string;
+            /** Opportunity Evidence Hash */
+            opportunity_evidence_hash: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Opportunity Mechanism Version */
+            opportunity_mechanism_version: string | null;
+            /** Opportunity Score */
+            opportunity_score: number | null;
+            /** Opportunity Source Component */
+            opportunity_source_component: string | null;
+            /** Opportunity Source Cutoff At */
+            opportunity_source_cutoff_at: string | null;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Planning Generation Id */
+            planning_generation_id: string | null;
+            /** Planning Key */
+            planning_key: string | null;
+            /** Planning Result Json */
+            planning_result_json: string | null;
+            /** Planning Status */
+            planning_status: string | null;
+            /** Quote Volume 24H */
+            quote_volume_24h: number | null;
+            /** Rank */
+            rank: number;
+            /** Regime Tag */
+            regime_tag: string | null;
+            /** Registry Venue */
+            registry_venue: string;
+            /** Result Kind */
+            result_kind: string | null;
+            /** Risk Flags */
+            risk_flags: string | null;
+            /** Scanner Direction */
+            scanner_direction: string | null;
+            /** Scanner Family */
+            scanner_family: string | null;
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Soft Expires At */
+            soft_expires_at: string | null;
+            /** Spread Bps */
+            spread_bps: number | null;
+            /** State Changed At */
+            state_changed_at: string | null;
+            /** Symbol */
+            symbol: string;
+            /** Total Score */
+            total_score: number;
+            /** Tradability Score */
+            tradability_score: number | null;
+            /** Ttl Sec */
+            ttl_sec: number;
+            /** Venue */
+            venue: string;
         };
         /** CapitalEventRequest */
         CapitalEventRequest: {
@@ -7187,6 +8062,81 @@ export interface components {
             /** Shadow Enabled */
             shadow_enabled?: boolean | null;
         };
+        /** CostComponents */
+        CostComponents: {
+            /** Missing Cost Counts */
+            missing_cost_counts: {
+                [key: string]: number;
+            };
+            /** Total Costs */
+            total_costs: number | null;
+            /** Total Economic Costs */
+            total_economic_costs: number | null;
+            /** Total Entry Fees */
+            total_entry_fees: number | null;
+            /** Total Execution Drag */
+            total_execution_drag: number | null;
+            /** Total Exit Fees */
+            total_exit_fees: number | null;
+            /** Total Fees */
+            total_fees: number | null;
+            /** Total Funding Cost */
+            total_funding_cost: number | null;
+            /** Total Slippage */
+            total_slippage: number | null;
+        };
+        /** CostSummaryResponse */
+        CostSummaryResponse: {
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort State */
+            cohort_state: string;
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Missing Cost Counts */
+            missing_cost_counts: {
+                [key: string]: number;
+            };
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
+            raw_recorded_costs: components["schemas"]["CostComponents"];
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
+            /** Total Costs */
+            total_costs: number | null;
+            /** Total Economic Costs */
+            total_economic_costs: number | null;
+            /** Total Entry Fees */
+            total_entry_fees: number | null;
+            /** Total Execution Drag */
+            total_execution_drag: number | null;
+            /** Total Exit Fees */
+            total_exit_fees: number | null;
+            /** Total Fees */
+            total_fees: number | null;
+            /** Total Funding Cost */
+            total_funding_cost: number | null;
+            /** Total Slippage */
+            total_slippage: number | null;
+        };
         /** CreateModelProfileRequest */
         CreateModelProfileRequest: {
             /** Api Key */
@@ -7263,6 +8213,62 @@ export interface components {
             /** Url */
             url?: string | null;
         };
+        /** DayOfWeekStats */
+        DayOfWeekStats: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Day */
+            day: string;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
+        /** DecisionAttribution */
+        DecisionAttribution: {
+            /** Policy Basis */
+            policy_basis: string;
+            /** Policy Epoch Id */
+            policy_epoch_id: string | null;
+            /** Policy Relation */
+            policy_relation: string;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Runtime Id */
+            runtime_id: string | null;
+            /** Runtime Relation */
+            runtime_relation: string;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+        };
+        /** DecisionCounts */
+        DecisionCounts: {
+            /** Auto Reject */
+            auto_reject: number;
+            /** Operator Skip */
+            operator_skip: number;
+            /** Operator Watch */
+            operator_watch: number;
+            /** Portfolio Guard Reject */
+            portfolio_guard_reject: number;
+            /** Reject Unknown */
+            reject_unknown: number;
+            /** Trade */
+            trade: number;
+            /** User Reject */
+            user_reject: number;
+        };
+        /** DecisionCurrentContext */
+        DecisionCurrentContext: {
+            /** Policy Epoch Id */
+            policy_epoch_id: string | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Runtime Id */
+            runtime_id: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+        };
         /** DetectModelsRequest */
         DetectModelsRequest: {
             /** Api Key */
@@ -7279,6 +8285,30 @@ export interface components {
             type?: string | null;
             /** Workspace Url */
             workspace_url?: string | null;
+        };
+        /** DirectionStats */
+        DirectionStats: {
+            /** Avg Hold Hours */
+            avg_hold_hours: number | null;
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Hold Time Available Count */
+            hold_time_available_count: number;
+            /** Hold Time Unavailable Count */
+            hold_time_unavailable_count: number;
+            /** Total Pnl */
+            total_pnl: number;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
+        /** DistributionBin */
+        DistributionBin: {
+            /** Bin */
+            bin: string;
+            /** Count */
+            count: number;
         };
         /**
          * EconomicsConfig
@@ -7386,39 +8416,380 @@ export interface components {
              */
             terminal_cooldown_minutes: number;
         };
+        /** EntryLifecycleCycle */
+        EntryLifecycleCycle: {
+            /** Compiler Invoked */
+            compiler_invoked: boolean;
+            /** Cycle Number */
+            cycle_number: number;
+            /** Cycle Reason */
+            cycle_reason: string | null;
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Entry Plan Status */
+            entry_plan_status: string | null;
+            /** Events */
+            events: components["schemas"]["EntryLifecycleEvent"][];
+            /** Generation Id */
+            generation_id: string | null;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Model Invoked */
+            model_invoked: boolean;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Previous Generation Id */
+            previous_generation_id: string | null;
+            /** Requalification Candidate Id */
+            requalification_candidate_id: string | null;
+        };
+        /** EntryLifecycleEvent */
+        EntryLifecycleEvent: {
+            /** At */
+            at: string | null;
+            /** Event */
+            event: string;
+            /** Reason */
+            reason: string | null;
+        };
+        /** EntryLifecycleProjection */
+        EntryLifecycleProjection: {
+            /** Compiler Invoked */
+            compiler_invoked: boolean;
+            /** Current Cycle Number */
+            current_cycle_number: number | null;
+            /** Current Generation Id */
+            current_generation_id: string | null;
+            /** Current Plan Id */
+            current_plan_id: string | null;
+            /** Cycles */
+            cycles: components["schemas"]["EntryLifecycleCycle"][];
+            /** Expired Plan Count */
+            expired_plan_count: number;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Lifecycle Reason */
+            lifecycle_reason: string | null;
+            /** Lifecycle State */
+            lifecycle_state: string;
+            /** Model Invoked */
+            model_invoked: boolean;
+            /** Next Action */
+            next_action: string;
+            /** State Changed At */
+            state_changed_at: string | null;
+        };
+        /** EntryLineageFills */
+        EntryLineageFills: {
+            /** Count */
+            count: number;
+            /** Latest At */
+            latest_at: string | null;
+            /** Quantity */
+            quantity: number;
+        };
+        /** EntryLineageOrder */
+        EntryLineageOrder: {
+            /** Exchange Order Id */
+            exchange_order_id: string | null;
+            /** Id */
+            id: string | null;
+            /** Position Id */
+            position_id: string | null;
+            /** Quantity */
+            quantity: number | null;
+            /** Status */
+            status: string | null;
+        };
+        /** EntryLineagePosition */
+        EntryLineagePosition: {
+            /** Entry Price */
+            entry_price: number | null;
+            /** Id */
+            id: string | null;
+            /** Quantity */
+            quantity: number | null;
+            /** Status */
+            status: string | null;
+        };
+        /** EntryPlanLineage */
+        EntryPlanLineage: {
+            fills: components["schemas"]["EntryLineageFills"] | null;
+            order: components["schemas"]["EntryLineageOrder"] | null;
+            position: components["schemas"]["EntryLineagePosition"] | null;
+        };
+        /**
+         * EntryPlanPayload
+         * @description Stored JSON, including immutable historical extension fields.
+         */
+        EntryPlanPayload: {
+            /** Analysis Context Fingerprint */
+            analysis_context_fingerprint?: string | null;
+            /** Analysis Context Version */
+            analysis_context_version?: string | null;
+            /** Approved At */
+            approved_at: string;
+            /** Bbo Reference */
+            bbo_reference?: string | null;
+            /** Behavior Fingerprint */
+            behavior_fingerprint?: string | null;
+            /** Behavior Version */
+            behavior_version?: string | null;
+            /** Cancel Replace Policy */
+            cancel_replace_policy: string;
+            /** Candidate Family */
+            candidate_family: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Compiled Geometry Fingerprint */
+            compiled_geometry_fingerprint?: string | null;
+            /** Cycle Number */
+            cycle_number?: number | null;
+            /** Direction */
+            direction: string;
+            /** Entry Hypothesis Hash */
+            entry_hypothesis_hash?: string | null;
+            /** Entry Hypothesis Json */
+            entry_hypothesis_json?: string | null;
+            /** Entry Hypothesis Version */
+            entry_hypothesis_version?: string | null;
+            /** Entry Profile Id */
+            entry_profile_id?: string | null;
+            /** Entry Profile Version */
+            entry_profile_version?: string | null;
+            /** Entry Zone */
+            entry_zone: [
+                number,
+                number
+            ];
+            /** Evidence Refs */
+            evidence_refs?: string[] | null;
+            /** Execution Account Mode */
+            execution_account_mode: string;
+            /** Execution Mode */
+            execution_mode: string;
+            /** Expected Horizon Hours */
+            expected_horizon_hours: number;
+            /** Expires At */
+            expires_at: string;
+            /** Invalidation Anchor Snapshot */
+            invalidation_anchor_snapshot?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Invalidation Conditions */
+            invalidation_conditions: string[];
+            /** Invalidation Price */
+            invalidation_price: number;
+            /** Limit Price */
+            limit_price?: number | null;
+            /** Maker Required */
+            maker_required: boolean;
+            /** Market Type */
+            market_type: string;
+            /** Max Leverage */
+            max_leverage: number;
+            /** Max Notional */
+            max_notional: number;
+            /** Max Requotes */
+            max_requotes: number;
+            /** Max Risk Pct */
+            max_risk_pct: number;
+            /** Max Slippage Bps */
+            max_slippage_bps?: number | null;
+            /** Max Wait Sec */
+            max_wait_sec: number;
+            /** Order Tactic */
+            order_tactic: string;
+            /** Partial Fill Policy */
+            partial_fill_policy: string;
+            /** Plan Id */
+            plan_id?: string | null;
+            /** Planning Generation Id */
+            planning_generation_id: string;
+            /** Planning Identity */
+            planning_identity?: string | null;
+            /** Price Rule */
+            price_rule: string;
+            /** Primary Anchor Snapshot */
+            primary_anchor_snapshot?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Producer Commit */
+            producer_commit?: string | null;
+            /** Required Permission */
+            required_permission: string;
+            /** Risk Policy Hash */
+            risk_policy_hash: string;
+            /** Risk Policy Id */
+            risk_policy_id: string;
+            /** Risk Policy Revision */
+            risk_policy_revision: number;
+            /** Runtime Session Id */
+            runtime_session_id?: string | null;
+            /** Scenario */
+            scenario: string;
+            /** Schema Fingerprint */
+            schema_fingerprint?: string | null;
+            /** Stop Price */
+            stop_price: number;
+            /** Symbol */
+            symbol: string;
+            /** Taker Fallback Allowed */
+            taker_fallback_allowed?: boolean | null;
+            /** Target Price */
+            target_price: number;
+            /** Thesis */
+            thesis: string;
+            /** Time In Force */
+            time_in_force: string;
+            /** Treatment Exposure Id */
+            treatment_exposure_id?: string | null;
+            /** Trigger Data Requirements */
+            trigger_data_requirements?: string[] | null;
+            /** Trigger Freshness Ms */
+            trigger_freshness_ms?: number | null;
+            /** Trigger Params */
+            trigger_params?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Trigger Spec Id */
+            trigger_spec_id?: string | null;
+            /** Trigger Spec Version */
+            trigger_spec_version?: string | null;
+            /** Venue */
+            venue: string;
+            /** Version */
+            version?: string | null;
+            /** Worst Price */
+            worst_price?: number | null;
+        } & {
+            [key: string]: components["schemas"]["JsonValue"];
+        };
+        /** EntryPlanProjection */
+        EntryPlanProjection: {
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Contract Valid */
+            contract_valid: boolean;
+            /** Created At */
+            created_at: string;
+            /** Direction */
+            direction: string;
+            /** Execution Mode */
+            execution_mode: string;
+            funding_readiness?: components["schemas"]["FundingReadiness"];
+            /** Id */
+            id: string;
+            lineage?: components["schemas"]["EntryPlanLineage"];
+            /** Market Type */
+            market_type: string;
+            /** Monitoring Evidence Hash */
+            monitoring_evidence_hash: string | null;
+            /** Monitoring Evidence Json */
+            monitoring_evidence_json: string | null;
+            /** Monitoring State */
+            monitoring_state: string | null;
+            /** Order Id */
+            order_id: string | null;
+            plan: components["schemas"]["EntryPlanPayload"] | null;
+            /** Plan Hash */
+            plan_hash: string;
+            /** Plan Json */
+            plan_json: string;
+            /** Planning Generation Id */
+            planning_generation_id: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Terminal At */
+            terminal_at: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Updated At */
+            updated_at: string;
+            /** Venue */
+            venue: string;
+            /** Version */
+            version: string | null;
+        };
+        /** EntryPlanRow */
+        EntryPlanRow: {
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Created At */
+            created_at: string;
+            /** Direction */
+            direction: string;
+            /** Execution Mode */
+            execution_mode: string;
+            /** Id */
+            id: string;
+            /** Market Type */
+            market_type: string;
+            /** Monitoring Evidence Hash */
+            monitoring_evidence_hash: string | null;
+            /** Monitoring Evidence Json */
+            monitoring_evidence_json: string | null;
+            /** Monitoring State */
+            monitoring_state: string | null;
+            /** Order Id */
+            order_id: string | null;
+            /** Plan Hash */
+            plan_hash: string;
+            /** Plan Json */
+            plan_json: string;
+            /** Planning Generation Id */
+            planning_generation_id: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Terminal At */
+            terminal_at: string | null;
+            /** Terminal Reason */
+            terminal_reason: string | null;
+            /** Updated At */
+            updated_at: string;
+            /** Venue */
+            venue: string;
+            /** Version */
+            version: string | null;
+        };
         /** EntryWorkbenchResponse */
         EntryWorkbenchResponse: {
-            /**
-             * Availability
-             * @default {}
-             */
+            /** Availability */
             availability: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["UniverseAvailability"];
             };
             /** Candidate Attention */
-            candidate_attention?: {
-                [key: string]: unknown;
-            }[] | null;
+            candidate_attention: components["schemas"]["CandidateAttentionWorkbench"][] | null;
             /** Current Candidates */
-            current_candidates?: {
-                [key: string]: unknown;
-            }[] | null;
+            current_candidates: components["schemas"]["CandidateWorkbenchRow"][] | null;
             /** Entry Plans */
-            entry_plans?: {
-                [key: string]: unknown;
-            }[] | null;
+            entry_plans: components["schemas"]["EntryPlanProjection"][] | null;
             /** Generated At */
             generated_at: string;
-            /** Summary */
-            summary?: {
-                [key: string]: unknown;
-            } | null;
-            /** Universe */
-            universe?: {
-                [key: string]: unknown;
-            } | null;
-        } & {
-            [key: string]: unknown;
+            summary: components["schemas"]["WorkbenchSummary"] | null;
+            universe: components["schemas"]["WorkbenchUniverse"];
         };
         /** EquitiesConfigUpdate */
         EquitiesConfigUpdate: {
@@ -7427,10 +8798,13 @@ export interface components {
         };
         /** EquityCurveResponse */
         EquityCurveResponse: {
-            /** Current Mark Point */
-            current_mark_point?: {
-                [key: string]: unknown;
-            } | null;
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort State */
+            cohort_state: string;
+            current_mark_point?: components["schemas"]["EquityMarkPoint"] | null;
             /**
              * Current Unrealized
              * @default 0
@@ -7441,6 +8815,12 @@ export interface components {
              * @default genuine_verified
              */
             default_curve: string;
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
             /**
              * Genuine Curve Label
              * @default verified_strategy_outcomes
@@ -7451,6 +8831,12 @@ export interface components {
              * @default []
              */
             genuine_points: components["schemas"]["EquityPoint"][];
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
             /**
              * Points
              * @default []
@@ -7461,17 +8847,32 @@ export interface components {
              * @default raw_recorded_account_events
              */
             raw_curve_label: string;
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
             /**
              * Raw Recorded Points
              * @default []
              */
             raw_recorded_points: components["schemas"]["EquityPoint"][];
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
             /** Raw Total Recorded Realized */
             raw_total_recorded_realized?: number | null;
             /** Total Realized */
             total_realized?: number | null;
-        } & {
-            [key: string]: unknown;
+        };
+        /** EquityMarkPoint */
+        EquityMarkPoint: {
+            /** Closed Raw Pnl */
+            closed_raw_pnl: number;
+            /** Cumulative Pnl */
+            cumulative_pnl: number;
+            /** Current Unrealized */
+            current_unrealized: number;
+            /** Time */
+            time: string;
         };
         /** EquityPoint */
         EquityPoint: {
@@ -7481,12 +8882,12 @@ export interface components {
             execution_mode?: string | null;
             /** Outcome */
             outcome?: string | null;
+            /** Pnl */
+            pnl: number;
             /** Raw Pnl */
             raw_pnl?: number | null;
             /** Time */
             time: string;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * EventTriggerConfig
@@ -7639,6 +9040,21 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ExitReasonStats */
+        ExitReasonStats: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Pnl Contribution Pct */
+            pnl_contribution_pct: number;
+            /** Reason */
+            reason: string;
+            /** Total Pnl */
+            total_pnl: number;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
         /**
          * FastTriggerConfig
          * @description Deterministic trigger capability plus legacy Setup rollout compatibility.
@@ -7682,6 +9098,34 @@ export interface components {
             max_setups?: number | null;
             /** Mode */
             mode?: ("off" | "shadow" | "execute") | null;
+        };
+        /** FrequencyTrade */
+        FrequencyTrade: {
+            /** Direction */
+            direction: string;
+            /** Pnl Pct */
+            pnl_pct: number;
+        };
+        /** FundingReadiness */
+        FundingReadiness: {
+            /** Acquired At */
+            acquired_at?: string | null;
+            /** Market Type */
+            market_type?: string;
+            /** Next Funding Time */
+            next_funding_time?: string;
+            /** Ready */
+            ready: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Snapshot Id */
+            snapshot_id?: string;
+            /** Source Observed At */
+            source_observed_at?: string | null;
+            /** Symbol */
+            symbol?: string;
+            /** Venue */
+            venue?: string;
         };
         /** GatewaySnapshot */
         GatewaySnapshot: {
@@ -7979,6 +9423,17 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** HeatmapCell */
+        HeatmapCell: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Day */
+            day: number;
+            /** Hour */
+            hour: number;
+            /** Trade Count */
+            trade_count: number;
+        };
         /**
          * HistoricalDataConfig
          * @description Local OHLCV storage and bulk download settings.
@@ -8051,6 +9506,54 @@ export interface components {
             /** Nightly Backfill Hour Cst */
             nightly_backfill_hour_cst?: number | null;
         };
+        /** HoldBucket */
+        HoldBucket: {
+            /** Bucket */
+            bucket: string;
+            /** Count */
+            count: number;
+            /** Pct */
+            pct: number;
+        };
+        /** HoldDurationStats */
+        HoldDurationStats: {
+            /** Avg Loss Pct */
+            avg_loss_pct: number;
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Avg Win Pct */
+            avg_win_pct: number;
+            /** Bucket */
+            bucket: string;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
+        /** HoldPnlPoint */
+        HoldPnlPoint: {
+            /** Direction */
+            direction: string;
+            /** Hold Hours */
+            hold_hours: number;
+            /** Market Type */
+            market_type: string;
+            /** Pnl Pct */
+            pnl_pct: number;
+            /** Symbol */
+            symbol: string;
+        };
+        /** HourStats */
+        HourStats: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Hour */
+            hour: number;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
         /** ImportRequest */
         ImportRequest: {
             /**
@@ -8061,6 +9564,23 @@ export interface components {
             /** Path */
             path: string;
         };
+        /** InsightDrawdownPoint */
+        InsightDrawdownPoint: {
+            /** Drawdown */
+            drawdown: number;
+            /** Time */
+            time: string;
+        };
+        /** InsightEquityPoint */
+        InsightEquityPoint: {
+            /** Cumulative Pnl */
+            cumulative_pnl: number;
+            /** Pnl */
+            pnl: number;
+            /** Time */
+            time: string;
+        };
+        JsonValue: unknown;
         /** KillSwitchRequest */
         KillSwitchRequest: {
             /** Active */
@@ -8983,6 +10503,59 @@ export interface components {
             /** Title */
             title: string;
         };
+        /** OperatorDecisionItem */
+        OperatorDecisionItem: {
+            /** Action */
+            action: string;
+            attribution: components["schemas"]["DecisionAttribution"];
+            /** Conviction */
+            conviction: number | null;
+            /** Decided At */
+            decided_at: string;
+            /** Decision Id */
+            decision_id: string | null;
+            /** Direction */
+            direction: string | null;
+            /** Guard Block Reason */
+            guard_block_reason?: string | null;
+            /** Guard Filter */
+            guard_filter?: string | null;
+            /** Market Type */
+            market_type: string | null;
+            /** One Line Reason */
+            one_line_reason: string | null;
+            /** Opportunity Id */
+            opportunity_id: string | null;
+            /** Outcome */
+            outcome: string;
+            /** Proposal Id */
+            proposal_id: string | null;
+            /** Rejected Actor */
+            rejected_actor?: string | null;
+            /** Rejected Source */
+            rejected_source?: string | null;
+            /** Symbol */
+            symbol: string | null;
+            /** Time Basis */
+            time_basis?: string | null;
+        };
+        /** OperatorDecisionsResponse */
+        OperatorDecisionsResponse: {
+            counts: components["schemas"]["DecisionCounts"];
+            current_context: components["schemas"]["DecisionCurrentContext"];
+            current_policy_counts: components["schemas"]["DecisionCounts"];
+            historical_policy_counts: components["schemas"]["DecisionCounts"];
+            /** Items */
+            items: components["schemas"]["OperatorDecisionItem"][];
+            /** Limit */
+            limit: number;
+            /** Matched Count */
+            matched_count: number;
+            /** Total Count */
+            total_count: number;
+            /** Window Hours */
+            window_hours: number;
+        };
         /** OperatorEventCreate */
         OperatorEventCreate: {
             /** Event Type */
@@ -9532,19 +11105,224 @@ export interface components {
             /** Task Generation */
             task_generation: number;
         };
+        /** PipelineCohort */
+        PipelineCohort: {
+            /** Downstream Observed Through */
+            downstream_observed_through: string;
+            /** Right Censored */
+            right_censored: boolean;
+            /** Signal Stage Evidence */
+            signal_stage_evidence: string;
+            /** Unit */
+            unit: string;
+            /** Window Start */
+            window_start: string;
+        };
+        /** PipelineConversion */
+        PipelineConversion: {
+            /** Opp To Signal Pct */
+            opp_to_signal_pct: number | null;
+            /** Pi Trade To Fill Pct */
+            pi_trade_to_fill_pct: number | null;
+            /** Pi Trade To Risk Pct */
+            pi_trade_to_risk_pct: number | null;
+            /** Risk Approved To Fill Pct */
+            risk_approved_to_fill_pct: number | null;
+            /** Signal To Pi Trade Pct */
+            signal_to_pi_trade_pct: number | null;
+        };
+        /** PipelineDecisions */
+        PipelineDecisions: {
+            /** Skip */
+            skip: number;
+            /** Trade */
+            trade: number;
+        };
+        /** PipelineFunnelResponse */
+        PipelineFunnelResponse: {
+            cohort: components["schemas"]["PipelineCohort"];
+            conversion: components["schemas"]["PipelineConversion"];
+            /** Fills */
+            fills: number;
+            integrity: components["schemas"]["PipelineIntegrity"];
+            /** Opportunities */
+            opportunities: number;
+            pi_decisions: components["schemas"]["PipelineDecisions"];
+            risk_decisions: components["schemas"]["PipelineRiskDecisions"];
+            /** Signal Carrier Generations */
+            signal_carrier_generations: number;
+            /** Signal Pending */
+            signal_pending: number;
+            /** Window Hours */
+            window_hours: number;
+        };
+        /** PipelineIntegrity */
+        PipelineIntegrity: {
+            /** Close Fills Excluded */
+            close_fills_excluded: number;
+            /** Entry Fill Without Approved Risk */
+            entry_fill_without_approved_risk: number;
+            /** Retained Signal Pending Rows */
+            retained_signal_pending_rows: number;
+            /** Signal Without Terminal */
+            signal_without_terminal: number;
+            /** Source Terminal Breakdown */
+            source_terminal_breakdown: {
+                [key: string]: number;
+            };
+            /** Source Terminal Without Pi Terminal */
+            source_terminal_without_pi_terminal: number;
+            /** Trade Without Proposal */
+            trade_without_proposal: number;
+            /** Trade Without Signal Evidence */
+            trade_without_signal_evidence: number;
+        };
+        /** PipelineRiskDecisions */
+        PipelineRiskDecisions: {
+            /** Approve Rate Pct */
+            approve_rate_pct: number | null;
+            /** Approved */
+            approved: number;
+            /** Rejected */
+            rejected: number;
+            /** Top Rejection Reasons */
+            top_rejection_reasons: components["schemas"]["RejectionReasonCount"][];
+        };
+        /** PlanningHistoryItem */
+        PlanningHistoryItem: {
+            /** Activation Identity */
+            activation_identity: string | null;
+            /** Attempt Count */
+            attempt_count: number;
+            /** Attention Max Age Sec */
+            attention_max_age_sec: number | null;
+            /** Attention Policy Version */
+            attention_policy_version: string | null;
+            /** Attention Started At */
+            attention_started_at: string | null;
+            /** Attention Status */
+            attention_status: string;
+            /** Attention Terminal At */
+            attention_terminal_at: string | null;
+            /** Attention Terminal Reason */
+            attention_terminal_reason: string | null;
+            /** Behavior Fingerprint */
+            behavior_fingerprint: string | null;
+            /** Candidate Family */
+            candidate_family: string;
+            /** Candidate Id */
+            candidate_id: string;
+            /** Candidate Selection Policy */
+            candidate_selection_policy: string | null;
+            /** Candidate Selection Policy Epoch */
+            candidate_selection_policy_epoch: string | null;
+            /** Claim Expires At */
+            claim_expires_at: string | null;
+            /** Compiler Invoked */
+            compiler_invoked: number;
+            /** Compiler Invoked At */
+            compiler_invoked_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Created At */
+            created_at: string;
+            /** Cycle Number */
+            cycle_number: number | null;
+            /** Cycle Reason */
+            cycle_reason: string | null;
+            /** Direction */
+            direction: string;
+            /** Entry Behavior Fingerprint */
+            entry_behavior_fingerprint: string | null;
+            /** Entry Plan Id */
+            entry_plan_id: string | null;
+            /** Entry Plan Status */
+            entry_plan_status: string | null;
+            /** Entry Plan Terminal At */
+            entry_plan_terminal_at: string | null;
+            /** Entry Plan Terminal Reason */
+            entry_plan_terminal_reason: string | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Hard Expires At */
+            hard_expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Identity Version */
+            identity_version: string | null;
+            /** Is Current */
+            is_current: number;
+            /** Last Candidate Id */
+            last_candidate_id: string;
+            /** Last Requalified At */
+            last_requalified_at: string | null;
+            /** Last Stage */
+            last_stage: string | null;
+            /** Market Type */
+            market_type: string;
+            /** Mechanism Version */
+            mechanism_version: string | null;
+            /** Model Invoked */
+            model_invoked: number;
+            /** Model Invoked At */
+            model_invoked_at: string | null;
+            /** Opportunity Mechanism */
+            opportunity_mechanism: string | null;
+            /** Order Id */
+            order_id: string | null;
+            /** Outcome Class */
+            outcome_class: string | null;
+            /** Outcome Reason */
+            outcome_reason: string | null;
+            /** Owner Token */
+            owner_token: string | null;
+            /** Planner Contract Version */
+            planner_contract_version: string | null;
+            /** Planner Input Hash */
+            planner_input_hash: string | null;
+            /** Planner Input Json */
+            planner_input_json: string | null;
+            /** Planning Identity */
+            planning_identity: string;
+            /** Planning Key */
+            planning_key: string;
+            /** Planning Started At */
+            planning_started_at: string | null;
+            /** Previous Generation Id */
+            previous_generation_id: string | null;
+            /** Producer Commit */
+            producer_commit: string | null;
+            /** Requalification Candidate Id */
+            requalification_candidate_id: string | null;
+            /** Requalification Source Json */
+            requalification_source_json: string | null;
+            /** Result Json */
+            result_json: string | null;
+            /** Result Kind */
+            result_kind: string | null;
+            /** Retry Not Before */
+            retry_not_before: string | null;
+            /** Runtime Session Id */
+            runtime_session_id: string | null;
+            /** Schema Fingerprint */
+            schema_fingerprint: string | null;
+            /** Soft Expires At */
+            soft_expires_at: string | null;
+            /** Status */
+            status: string;
+            /** Symbol */
+            symbol: string;
+            /** Updated At */
+            updated_at: string;
+            /** Venue */
+            venue: string;
+        };
         /** PlanningHistoryResponse */
         PlanningHistoryResponse: {
-            /**
-             * Items
-             * @default []
-             */
-            items: {
-                [key: string]: unknown;
-            }[];
+            /** Items */
+            items: components["schemas"]["PlanningHistoryItem"][];
             /** Next Before */
-            next_before?: string | null;
-        } & {
-            [key: string]: unknown;
+            next_before: string | null;
         };
         /**
          * PositionView
@@ -9651,6 +11429,40 @@ export interface components {
             /** Exchange Id */
             exchange_id: string;
         };
+        /** ProfitFactorStats */
+        ProfitFactorStats: {
+            /** Avg Loss */
+            avg_loss: number;
+            /** Avg Win */
+            avg_win: number;
+            /** Gross Loss */
+            gross_loss: number;
+            /** Gross Profit */
+            gross_profit: number;
+            /** Largest Loss */
+            largest_loss: number;
+            /** Largest Win */
+            largest_win: number;
+            /** Loss Count */
+            loss_count: number;
+            /** Profit Factor */
+            profit_factor: number | null;
+            /** Profit Factor State */
+            profit_factor_state: string;
+            /** Win Count */
+            win_count: number;
+        };
+        /** RMultipleMetadata */
+        RMultipleMetadata: {
+            /** Eligible R Multiple Count */
+            eligible_r_multiple_count: number;
+            /** Unavailability Reasons */
+            unavailability_reasons: {
+                [key: string]: number;
+            };
+            /** Unavailable R Multiple Count */
+            unavailable_r_multiple_count: number;
+        };
         /** RegimeConfig */
         RegimeConfig: {
             /**
@@ -9684,6 +11496,24 @@ export interface components {
             min_hold_periods?: number | null;
             /** Short Enabled */
             short_enabled?: boolean | null;
+        };
+        /** RegimeStats */
+        RegimeStats: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Regime */
+            regime: string;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
+        /** RejectionReasonCount */
+        RejectionReasonCount: {
+            /** Count */
+            count: number;
+            /** Message */
+            message: string;
         };
         /**
          * RemoteControlConfig
@@ -11462,6 +13292,165 @@ export interface components {
             /** Walk Forward Min Bars */
             walk_forward_min_bars?: number | null;
         };
+        /** StrategyKpi */
+        StrategyKpi: {
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Total Pnl */
+            total_pnl: number;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
+        /** StrategyKpisResponse */
+        StrategyKpisResponse: {
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort State */
+            cohort_state: string;
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
+            /** Strategies */
+            strategies: {
+                [key: string]: components["schemas"]["StrategyKpi"];
+            };
+        };
+        /** StrategyKpisUnavailable */
+        StrategyKpisUnavailable: {
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Outcome Status */
+            outcome_status: string;
+            /** Strategies */
+            strategies: {
+                [key: string]: components["schemas"]["StrategyKpi"];
+            };
+            /** Unavailable Reason */
+            unavailable_reason: string;
+        };
+        /** StrategyPerformanceResponse */
+        StrategyPerformanceResponse: {
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort State */
+            cohort_state: string;
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Latest Backtest */
+            latest_backtest: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
+            /** Strategies */
+            strategies: {
+                [key: string]: components["schemas"]["StrategyKpi"];
+            };
+        };
+        /** StrategyPerformanceUnavailable */
+        StrategyPerformanceUnavailable: {
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Latest Backtest */
+            latest_backtest: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Outcome Status */
+            outcome_status: string;
+            /** Strategies */
+            strategies: {
+                [key: string]: components["schemas"]["StrategyKpi"];
+            };
+            /** Unavailable Reason */
+            unavailable_reason: string;
+        };
+        /** StreakStats */
+        StreakStats: {
+            /** Current Streak */
+            current_streak: number;
+            /** Current Streak Type */
+            current_streak_type: string;
+            /** Max Consecutive Losses */
+            max_consecutive_losses: number;
+            /** Max Consecutive Wins */
+            max_consecutive_wins: number;
+            /** Total Flats */
+            total_flats: number;
+            /** Total Losses */
+            total_losses: number;
+            /** Total Wins */
+            total_wins: number;
+        };
+        /** SymbolDirectionStats */
+        SymbolDirectionStats: {
+            /** Avg Pnl Pct */
+            avg_pnl_pct: number;
+            /** Direction */
+            direction: string;
+            /** Market Type */
+            market_type: string;
+            /** Symbol */
+            symbol: string;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number;
+        };
         /** SymbolsUpdate */
         SymbolsUpdate: {
             /**
@@ -11574,13 +13563,207 @@ export interface components {
             /** Mode */
             mode?: string | null;
         };
+        /** TradeFrequencyDay */
+        TradeFrequencyDay: {
+            /** Date */
+            date: string;
+            /** Trades */
+            trades: components["schemas"]["FrequencyTrade"][];
+        };
         /** TradeInsightsResponse */
         TradeInsightsResponse: {
-            [key: string]: unknown;
+            /** By Day Of Week */
+            by_day_of_week: components["schemas"]["DayOfWeekStats"][];
+            /** By Direction */
+            by_direction: {
+                [key: string]: components["schemas"]["DirectionStats"];
+            };
+            /** By Exit Reason */
+            by_exit_reason: components["schemas"]["ExitReasonStats"][];
+            /** By Hour */
+            by_hour: components["schemas"]["HourStats"][];
+            /** By Regime */
+            by_regime: components["schemas"]["RegimeStats"][];
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort Complete */
+            cohort_complete: boolean;
+            /** Cohort State */
+            cohort_state: string;
+            /** Drawdown Curve */
+            drawdown_curve: components["schemas"]["InsightDrawdownPoint"][];
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Equity Curve */
+            equity_curve: components["schemas"]["InsightEquityPoint"][];
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Heatmap Unbucketed Count */
+            heatmap_unbucketed_count: number;
+            /** Hold Duration Buckets */
+            hold_duration_buckets: components["schemas"]["HoldDurationStats"][];
+            /** Hold Vs Pnl */
+            hold_vs_pnl: components["schemas"]["HoldPnlPoint"][];
+            /** Hour Day Heatmap */
+            hour_day_heatmap: components["schemas"]["HeatmapCell"][];
+            /** Loaded Count */
+            loaded_count: number;
+            /** Loaded From */
+            loaded_from: string | null;
+            /** Loaded Raw Count */
+            loaded_raw_count: number;
+            /** Loaded Through */
+            loaded_through: string | null;
+            /** Omitted Count */
+            omitted_count: number;
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Pnl Distribution */
+            pnl_distribution: components["schemas"]["DistributionBin"][];
+            profit_factor: components["schemas"]["ProfitFactorStats"];
+            /** R Multiple Distribution */
+            r_multiple_distribution: components["schemas"]["DistributionBin"][];
+            r_multiple_distribution_meta: components["schemas"]["RMultipleMetadata"];
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
+            /** Since */
+            since: string;
+            /** Source Raw Count */
+            source_raw_count: number;
+            streaks: components["schemas"]["StreakStats"];
+            /** Symbol Direction Matrix */
+            symbol_direction_matrix: components["schemas"]["SymbolDirectionStats"][];
+            /** Temporal Unbucketed Count */
+            temporal_unbucketed_count: number;
+            /** Trade Count */
+            trade_count: number;
+            /** Trade Frequency */
+            trade_frequency: components["schemas"]["TradeFrequencyDay"][];
+        };
+        /** TradeStatsFamily */
+        TradeStatsFamily: {
+            /** Alpha Vs Btc Pct */
+            alpha_vs_btc_pct: number | null;
+            /** Avg Hold Hours */
+            avg_hold_hours: number | null;
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Expectancy Pct */
+            expectancy_pct: number | null;
+            /** Family */
+            family: string;
+            /** Hold Time Available Count */
+            hold_time_available_count: number;
+            /** Hold Time Unavailable Count */
+            hold_time_unavailable_count: number;
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Outcome Status */
+            outcome_status: string;
+            /** Shadow Count */
+            shadow_count: number | null;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number | null;
         };
         /** TradeStatsResponse */
         TradeStatsResponse: {
-            [key: string]: unknown;
+            /** By Family */
+            by_family: components["schemas"]["TradeStatsFamily"][];
+            /** By Source */
+            by_source: components["schemas"]["TradeStatsSource"][];
+            /** Clean Window Anchor Id */
+            clean_window_anchor_id: string;
+            /** Clean Window Anchor Iso */
+            clean_window_anchor_iso: string;
+            /** Cohort State */
+            cohort_state: string;
+            /** Eligible Outcome Count */
+            eligible_outcome_count: number | null;
+            /** Eligible Realized Pnl */
+            eligible_realized_pnl: number | null;
+            /** Excluded Outcome Count */
+            excluded_outcome_count: number | null;
+            /** Execution Mode */
+            execution_mode: string | null;
+            /** Execution Mode Status */
+            execution_mode_status: string;
+            /** Hold Distribution */
+            hold_distribution: components["schemas"]["HoldBucket"][];
+            /** Outcome Exclusion Reasons */
+            outcome_exclusion_reasons: {
+                [key: string]: number;
+            };
+            /** Outcome Semantics Version */
+            outcome_semantics_version: string;
+            /** Outcome Status */
+            outcome_status: string;
+            /** Raw Economics Unavailable Count */
+            raw_economics_unavailable_count: number | null;
+            /** Raw Event Count */
+            raw_event_count: number | null;
+            /** Raw Recorded Realized Pnl */
+            raw_recorded_realized_pnl: number | null;
+            totals: components["schemas"]["TradeStatsTotals"];
+        };
+        /** TradeStatsSource */
+        TradeStatsSource: {
+            /** Avg Hold Hours */
+            avg_hold_hours: number | null;
+            /** Expectancy Pct */
+            expectancy_pct: number | null;
+            /** Hold Time Available Count */
+            hold_time_available_count: number;
+            /** Hold Time Unavailable Count */
+            hold_time_unavailable_count: number;
+            /** Source Type */
+            source_type: string;
+            /** Total Pnl */
+            total_pnl: number | null;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number | null;
+        };
+        /** TradeStatsTotals */
+        TradeStatsTotals: {
+            /** Avg Hold Hours */
+            avg_hold_hours: number | null;
+            /** Hold Time Available Count */
+            hold_time_available_count: number;
+            /** Hold Time Unavailable Count */
+            hold_time_unavailable_count: number;
+            /** Median Hold Hours */
+            median_hold_hours: number | null;
+            /** Total Pnl */
+            total_pnl: number | null;
+            /** Trade Count */
+            trade_count: number;
+            /** Win Rate */
+            win_rate: number | null;
         };
         /** TradingConfig */
         TradingConfig: {
@@ -11830,6 +14013,15 @@ export interface components {
             /** Tunnel Id */
             tunnel_id?: string | null;
         };
+        /** UniverseAvailability */
+        UniverseAvailability: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string;
+            /** Stale */
+            stale: boolean;
+        };
         /** UniverseConfig */
         UniverseConfig: {
             /** Blacklist */
@@ -11972,41 +14164,188 @@ export interface components {
             /** Snapshot Ttl Hours */
             snapshot_ttl_hours?: number | null;
         };
+        /** UniverseConfigUpdateResponse */
+        UniverseConfigUpdateResponse: {
+            /** Rescheduled */
+            rescheduled: boolean;
+            universe: components["schemas"]["UniverseConfig"];
+            updated: components["schemas"]["UniverseConfigUpdate"];
+        };
         /** UniverseCurrentResponse */
         UniverseCurrentResponse: {
-            /**
-             * Enabled
-             * @default true
-             */
+            /** Enabled */
             enabled: boolean;
-            /**
-             * Fallback
-             * @default false
-             */
+            /** Fallback */
             fallback: boolean;
-            /**
-             * Members
-             * @default []
-             */
-            members: {
-                [key: string]: unknown;
-            }[];
-            /** Snapshot */
-            snapshot?: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Stale
-             * @default false
-             */
+            /** Members */
+            members: components["schemas"]["Candidate"][];
+            snapshot: components["schemas"]["UniverseSnapshot"] | null;
+            /** Stale */
             stale: boolean;
-            /**
-             * Stale Count
-             * @default 0
-             */
+            /** Stale Count */
             stale_count: number;
-        } & {
-            [key: string]: unknown;
+        };
+        /** UniverseDefaultPolicy */
+        UniverseDefaultPolicy: {
+            /** Explore Ratio */
+            explore_ratio: number;
+            /** Family Quota */
+            family_quota: {
+                [key: string]: number;
+            };
+            /** Id */
+            id: null;
+            /** Market Type */
+            market_type: string;
+            /** Max Candidates */
+            max_candidates: number;
+            /** Max Spread Bps */
+            max_spread_bps: number;
+            /** Min Volume 24H Usdt */
+            min_volume_24h_usdt: number;
+            /** Source */
+            source: string;
+        };
+        /** UniverseFeatureSnapshot */
+        UniverseFeatureSnapshot: {
+            /** Asset Id */
+            asset_id: string;
+            /** Atr 15M Pct */
+            atr_15m_pct: number | null;
+            /** Atr 4H Pct */
+            atr_4h_pct: number | null;
+            /** Atr Pct */
+            atr_pct: number | null;
+            /** Bb Squeeze */
+            bb_squeeze: number | null;
+            /** Bb Width 4H */
+            bb_width_4h: number | null;
+            /** Btc Beta */
+            btc_beta: number | null;
+            /** Data Freshness Sec */
+            data_freshness_sec: number | null;
+            /** Depth 10Bps Usd */
+            depth_10bps_usd: number | null;
+            /** Funding Rate */
+            funding_rate: number | null;
+            /** Id */
+            id: string;
+            /** Last Candle Range Atr 15M */
+            last_candle_range_atr_15m: number | null;
+            /** Long Short Ratio */
+            long_short_ratio: number | null;
+            /** Oi Delta 1H */
+            oi_delta_1h: number | null;
+            /** Oi Price Divergence */
+            oi_price_divergence: number | null;
+            /** Open Interest */
+            open_interest: number | null;
+            /** Quote Volume 24H */
+            quote_volume_24h: number | null;
+            /** Raw */
+            raw: string | null;
+            /** Relative Strength 24H */
+            relative_strength_24h: number | null;
+            /** Return 15M */
+            return_15m: number | null;
+            /** Return 1H */
+            return_1h: number | null;
+            /** Return 24H */
+            return_24h: number | null;
+            /** Return 4H */
+            return_4h: number | null;
+            /** Rsi 14 */
+            rsi_14: number | null;
+            /** Rsi 15M */
+            rsi_15m: number | null;
+            /** Rsi 4H */
+            rsi_4h: number | null;
+            /** Spread Bps */
+            spread_bps: number | null;
+            /** Taker Buy Ratio */
+            taker_buy_ratio: number | null;
+            /** Technical Algorithm Version */
+            technical_algorithm_version: string | null;
+            /** Technical Snapshot Manifest */
+            technical_snapshot_manifest: string;
+            /** Top Trader Position Ratio */
+            top_trader_position_ratio: number | null;
+            /** Ts */
+            ts: string;
+            /** Vol Ratio */
+            vol_ratio: number | null;
+            /** Vol Ratio 4H */
+            vol_ratio_4h: number | null;
+            /** Volume 1H */
+            volume_1h: number | null;
+        };
+        /** UniverseRefreshResponse */
+        UniverseRefreshResponse: {
+            /** Snapshot Id */
+            snapshot_id: string;
+            /** Status */
+            status: string;
+        };
+        /** UniverseRegistryStats */
+        UniverseRegistryStats: {
+            /** Active */
+            active: number;
+            /** Blacklisted */
+            blacklisted: number;
+            /** Total */
+            total: number;
+        };
+        /** UniverseSnapshot */
+        UniverseSnapshot: {
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Market Type */
+            market_type: string;
+            /** Policy Id */
+            policy_id: string | null;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string | null;
+        };
+        /** UniverseSnapshotResponse */
+        UniverseSnapshotResponse: {
+            /** Members */
+            members: components["schemas"]["CandidateRow"][];
+            snapshot: components["schemas"]["UniverseSnapshot"];
+        };
+        /** UniverseStoredPolicy */
+        UniverseStoredPolicy: {
+            /** Active */
+            active: number | null;
+            /** Change Reason */
+            change_reason: string | null;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Explore Ratio */
+            explore_ratio: number;
+            /** Family Quota */
+            family_quota: string;
+            /** Filters */
+            filters: string;
+            /** Id */
+            id: string;
+            /** Market Type */
+            market_type: string;
+            /** Max Weight Step */
+            max_weight_step: number | null;
+            /** Previous Policy Id */
+            previous_policy_id: string | null;
+            /** Scoring Weights */
+            scoring_weights: string;
+            /** Ttl Policy */
+            ttl_policy: string;
         };
         /** UpdateConfig */
         UpdateConfig: {
@@ -12119,6 +14458,25 @@ export interface components {
             timeout_sec?: number | null;
             /** Url */
             url?: string | null;
+        };
+        /** WorkbenchSummary */
+        WorkbenchSummary: {
+            /** Active Entry Plans */
+            active_entry_plans: number;
+            /** Expiring Soon */
+            expiring_soon: number;
+            /** Needs Planning */
+            needs_planning: number;
+        };
+        /** WorkbenchUniverse */
+        WorkbenchUniverse: {
+            /** Enabled */
+            enabled: boolean | null;
+            /** Fallback Instruments */
+            fallback_instruments: string[];
+            snapshot: components["schemas"]["UniverseSnapshot"] | null;
+            /** Status */
+            status: string;
         };
         /** ExportRequest */
         aletheia__server__routes__export__ExportRequest: {
@@ -12492,7 +14850,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CostSummaryResponse"] | components["schemas"]["AnalyticsUnavailable"];
                 };
             };
             /** @description Validation Error */
@@ -12699,7 +15057,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["OperatorDecisionsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12823,7 +15181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PipelineFunnelResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12939,7 +15297,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StrategyKpisResponse"] | components["schemas"]["StrategyKpisUnavailable"];
                 };
             };
             /** @description Validation Error */
@@ -12970,7 +15328,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["StrategyPerformanceResponse"] | components["schemas"]["StrategyPerformanceUnavailable"];
                 };
             };
             /** @description Validation Error */
@@ -13037,7 +15395,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TradeInsightsResponse"];
+                    "application/json": components["schemas"]["TradeInsightsResponse"] | components["schemas"]["AnalyticsUnavailable"];
                 };
             };
             /** @description Validation Error */
@@ -13088,7 +15446,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TradeStatsResponse"];
+                    "application/json": components["schemas"]["TradeStatsResponse"] | components["schemas"]["AnalyticsUnavailable"];
                 };
             };
             /** @description Validation Error */
@@ -21657,7 +24015,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseConfigUpdateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -21686,7 +24044,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CandidateSelectionStatusResponse"];
                 };
             };
         };
@@ -21710,7 +24068,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CandidateSelectionTransitionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -21743,7 +24101,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CandidateSelectionTransitionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22042,7 +24400,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CalibrationResponse"];
                 };
             };
         };
@@ -22064,7 +24422,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CandidateDetail"];
                 };
             };
             /** @description Validation Error */
@@ -22115,7 +24473,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["EntryPlanProjection"];
                 };
             };
             /** @description Validation Error */
@@ -22238,7 +24596,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseStoredPolicy"] | components["schemas"]["UniverseDefaultPolicy"];
                 };
             };
         };
@@ -22258,7 +24616,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseRefreshResponse"];
                 };
             };
         };
@@ -22278,7 +24636,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseRegistryStats"];
                 };
             };
         };
@@ -22301,7 +24659,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseSnapshot"][];
                 };
             };
             /** @description Validation Error */
@@ -22332,7 +24690,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["UniverseSnapshotResponse"];
                 };
             };
             /** @description Validation Error */

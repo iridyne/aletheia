@@ -483,7 +483,7 @@ function HeartbeatZone({
   })
   const { data: positions = [] } = useQuery<any[]>({
     queryKey: positionKeys.all,
-    queryFn: api.getPositions,
+    queryFn: () => api.getPositions(),
     ...positionFreshness,
     refetchInterval: 10000,
     staleTime: 8000,

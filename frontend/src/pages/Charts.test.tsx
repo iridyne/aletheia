@@ -138,7 +138,21 @@ describe('Markets workbench', () => {
       order_id: null, plan_hash: 'hash', created_at: '2026-08-13T00:00:00Z',
       updated_at: '2026-08-13T00:00:00Z', terminal_at: null, terminal_reason: null,
       contract_valid: true,
-      plan: { thesis: 'SOL plan', scenario: 'breakout', entry_zone: [100, 101], invalidation_price: 98, stop_price: 98, target_price: 105, expires_at: '2026-08-13T01:00:00Z' },
+      plan_json: '{}', runtime_session_id: null, producer_commit: null, behavior_fingerprint: null,
+      monitoring_state: null, monitoring_evidence_json: null, monitoring_evidence_hash: null,
+      plan: {
+        thesis: 'SOL plan', scenario: 'breakout', entry_zone: [100, 101], invalidation_price: 98,
+        stop_price: 98, target_price: 105, expires_at: '2026-08-13T01:00:00Z',
+        planning_generation_id: 'generation-sol', candidate_id: 'candidate-sol', candidate_family: 'momentum',
+        venue: 'bitget', symbol: 'SOL/USDT', market_type: 'perp', direction: 'long',
+        execution_mode: 'TRIGGERED', approved_at: '2026-08-13T00:00:00Z',
+        invalidation_conditions: [], maker_required: false, cancel_replace_policy: 'CANCEL_ONLY',
+        max_requotes: 0, risk_policy_hash: 'test-policy-hash', expected_horizon_hours: 4,
+        order_tactic: 'OPPOSING_BBO_IOC', time_in_force: 'IOC', price_rule: 'OPPOSING_BBO',
+        max_wait_sec: 0, partial_fill_policy: 'KEEP_PARTIAL_CANCEL_REMAINDER', max_notional: 100,
+        max_risk_pct: 0.25, max_leverage: 2, required_permission: 'Paper',
+        execution_account_mode: 'paper_internal', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
+      },
     }
     const node = renderCharts(
       '/charts?symbol=SOL%2FUSDT&exchange=bitget&market_type=perp&entry_plan_id=plan-sol',

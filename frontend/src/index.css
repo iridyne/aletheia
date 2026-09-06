@@ -531,7 +531,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 
 /* Code drift warning block */
-.sp-drift .sp-value { margin-bottom: var(--space-1); }
 
 /* Health issues list (shown when health.issues is non-empty) */
 .sp-issues {
@@ -628,9 +627,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 .page-header-actions { display: flex; gap: var(--space-2); flex-shrink: 0; }
 
 /* ---------- Honest notice banner (e.g. News ingestion not configured) ---------- */
-.notice-banner .notice-icon { color: var(--yellow); flex-shrink: 0; font-weight: 700; }
-.notice-banner .notice-text { line-height: 1.45; }
-.notice-banner .notice-text b { color: var(--yellow); }
 
 
 /* ---------- Cards ---------- */
@@ -1183,7 +1179,6 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 
 /* ---------- News Intelligence list ---------- */
-.news-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .news-card {
   display: block;
   width: 100%;
@@ -1198,20 +1193,13 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .news-card:hover { filter: none; background: var(--surface-2); border-color: var(--border-2); }
 button.news-card:active:not(:disabled) { transform: none; }
-.news-card-main { flex: 1; min-width: 0; }
-.news-title { font-size: 0.85rem; font-weight: 500; margin-bottom: var(--space-1); }
 /* clamp summary to 2 lines at a word boundary instead of a mid-word .slice() */
-.news-summary {
-  max-width: 80ch;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
 .news-prose { line-height: 1.6; }
 .news-feeds-grid { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-3); }
 .news-feed-row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-1) 0; }
 .news-feed-info { display: flex; flex-direction: column; }
 .news-feed-name { font-size: 0.82rem; }
 .news-feed-source { font-family: var(--mono); }
-.news-add-form { display: flex; flex-direction: column; gap: var(--space-2); }
 .news-add-form input, .news-add-form select, .news-add-form textarea {
   width: 100%; font-size: 0.82rem; font-family: var(--mono);
 }
@@ -1224,14 +1212,8 @@ button.news-card:active:not(:disabled) { transform: none; }
 .entry-workbench .tab-panel { min-width: 0; overflow-x: auto; }
 @media (max-width: 1023px) { .entry-workbench-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 639px) { .entry-workbench-summary { grid-template-columns: 1fr; } .entry-workbench .tab-bar { overflow-x: auto; } }
-.universe-disabled-card .hint { margin: 0; }
-.universe-allocation-track span, .universe-allocation-bar { display: block; height: 100%; background: var(--accent); }
-.universe-filter.active { background: var(--accent-dim); color: var(--text); }
-.universe-candidate, .universe-selection, .universe-market-quality, .universe-decision-state { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+.universe-candidate { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .universe-candidate { flex-direction: row; align-items: center; }
-.universe-decision-state .badge { color: var(--text); }
-@media (max-width: 1023px) { .universe-pool-health { grid-template-columns: repeat(2, minmax(0, 1fr)); } .universe-overview-grid { grid-template-columns: 1fr; } }
-@media (max-width: 639px) { .universe-allocation-row { grid-template-columns: minmax(90px, 1fr) 2ch; } .universe-allocation-track, .universe-allocation-row small { grid-column: 1 / -1; } }
 
 /* ---------- Tables ---------- */
 /* Utility for explicit scroll containers (H9). Cards use overflow: hidden by
@@ -1494,8 +1476,6 @@ th.sortable:hover { color: var(--text); }
   gap: var(--space-3);
   margin-bottom: var(--space-3);
 }
-@media (max-width: 639px) {
-}
 
 /* ---------- Clickable row ---------- */
 tr.clickable { cursor: pointer; transition: background 0.08s; }
@@ -1576,7 +1556,7 @@ tr.clickable:focus-visible { outline: 1px solid var(--accent); outline-offset: -
   display: flex; flex-direction: column; gap: var(--space-4);
 }
 .markets-page > .page-header, .markets-page > .macro-bar { margin-bottom: 0; }
-.market-instrument-form label, .market-instrument-search {
+.market-instrument-search {
   display: flex; flex-direction: column; gap: 4px; color: var(--muted);
   font-size: 0.68rem; font-weight: 600;
 }
@@ -1752,7 +1732,6 @@ button.market-instrument-group-title { font-family: inherit; }
   .market-chart-toolbar { align-items: stretch; flex-direction: column; }
   .market-chart-toolbar .seg-toggle { overflow-x: auto; }
   .chart-settings-modal { width: calc(100vw - var(--space-3) * 2); max-height: calc(100dvh - var(--space-3) * 2); }
-  .market-chart-profile-values { flex-basis: 100%; margin-left: 0; }
 }
 
 /* ---------- Chart toolbar overflow + Instrument search popup ---------- */
@@ -2798,11 +2777,9 @@ button.market-instrument-group-title { font-family: inherit; }
    minima. */
 .rail-card { display: flex; flex-direction: column; overflow: hidden; min-width: 260px; }
 .rail-card > :not(h3):not(.flex) { min-height: 0; }
-.window-selector-btn.active { background: var(--accent-dim); color: var(--accent); }
 
 /* Recent terminal decisions — separate from the Human Approval action queue */
 .rail-card > p.text-muted { flex-shrink: 0; margin-bottom: var(--space-2); }
-.decisions-head .ts { margin-left: auto; color: var(--faint); }
 
 
 /* Trace drawer — timeline event list */
@@ -2922,9 +2899,7 @@ button.market-instrument-group-title { font-family: inherit; }
   margin-bottom: var(--space-3);
   flex-wrap: wrap;
 }
-.desk-panel .approval-list,
-.risk-panel .risk-violations,
-.system-panel .status-board { overflow-y: auto; min-height: 0; }
+.risk-panel .risk-violations, .system-panel .status-board { overflow-y: auto; min-height: 0; }
 
 /* ---------- Agent feed ---------- */
 .agent-feed { margin-bottom: 0; }
@@ -3045,7 +3020,6 @@ button.market-instrument-group-title { font-family: inherit; }
 .conviction-label { font-size: 0.72rem; font-weight: 600; }
 .conviction-debate { font-size: 0.68rem; color: var(--muted); }
 .decision-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; margin: 0; }
-.decision-signal-list.opposing li { color: var(--red); }
 
 
 
@@ -3059,55 +3033,6 @@ button.market-instrument-group-title { font-family: inherit; }
 
 /* Middle band — 7/12 candidates + 5/12 sign-off. Collapses to single column
    under 1100 px so both panels retain readable width on the operator's laptop. */
-@media (max-width: 1023px) {
-}
-@media (max-width: 639px) {
-}
-
-.bl-mid-candidates,
-
-/* Panel container — same visual weight as .rail-card but flush to the mid-band grid. */
-/* Ledger sits full-width above the middle band; needs its own bottom breathing
-   room since it isn't a grid cell of .bl-mid-band. */
-
-/* Placeholder cards for batch-1 stubs. Removed as each batch replaces them. */
-
-
-/* Diagnosis strip — one-line, not a banner sentence. */
-
-/* Candidates table — Bloomberg-density row height, mono numerics. */
-
-/* Side column — cell centered so the chip sits mid-line, not top-left. */
-
-/* Side chip — L (green) / S (red) / — (muted). Wrapped in a <span> inside the
-   cell so table-cell layout is preserved (see Blotter.tsx comment). */
-
-/* Candidate status chip. */
-.bl-cand-status-ranker_backpressure,
-.bl-cand-status-ranker_batch_limit,
-.bl-cand-status-ranker_filter_wait,
-
-/* Gate cell — inline element with hover popover for the full pre-trade trace.
-   PASS gets a compact green badge (short, glanceable). Block state is rendered
-   as red body text with no badge chrome — reason strings can be long and clumsy
-   inside a badge (user feedback 2026-07-18). */
-.bl-gate-ok .bl-gate-label {
-  display: inline-block;
-  padding: 1px 8px;
-  border-radius: 3px;
-  font-family: var(--mono);
-  font-size: 0.7rem;
-  font-weight: 600;
-  color: var(--green);
-  background: rgba(46,230,168,0.08);
-  border: 1px solid rgba(46,230,168,0.25);
-}
-.bl-gate-block .bl-gate-label {
-  display: inline;
-  color: var(--red);
-  font-size: 0.78rem;
-  line-height: 1.4;
-}
 /* ---------- Overview → Blotter shortcut strip (Batch 5) ---------- */
 .ov-blotter-strip {
   display: flex;
@@ -3162,26 +3087,8 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 
 /* ---------- Order History toolbar (Batch 3) ---------- */
-.bl-toolbar-facets,
-.bl-toolbar-side,
-
-/* Faceted outcome chip. All six outcomes visible; count comes from the full
-   window response, not the filtered set, so a filter can't lie about totals. */
-.bl-facet.active .bl-facet-count { background: rgba(255,255,255,0.08); color: inherit; }
-.bl-facet-green.active  { color: var(--green);  background: rgba(46,230,168,0.10);  border-color: rgba(46,230,168,0.35); }
-.bl-facet-yellow.active { color: var(--yellow); background: rgba(255,193,7,0.10);   border-color: rgba(255,193,7,0.35); }
-.bl-facet-red.active    { color: var(--red);    background: rgba(255,93,108,0.10);  border-color: rgba(255,93,108,0.35); }
-.bl-facet-muted.active  { color: var(--text);   background: var(--surface-2);       border-color: var(--muted); }
 
 /* Compact segmented toggles for Side (All / L / S) and Time window (1h / 6h / 24h / 7D). */
-.bl-side-btn,
-.bl-side-btn:hover,
-.bl-side-btn.active,
-.bl-time-btn.active {
-  color: var(--accent);
-  background: rgba(34,211,238,0.08);
-  border-color: rgba(34,211,238,0.35);
-}
 
 
 /* Outcome cell chip inside the DataTable — same tone palette as the facet
@@ -3311,7 +3218,7 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 .lco-summary-fact > strong { font-family: var(--mono); font-size: 0.92rem; overflow-wrap: anywhere; }
 .lco-summary-fact > small { color: var(--faint); font-size: 0.68rem; line-height: 1.35; }
-.lco-reason, .lco-note, .lco-footnote {
+.lco-note {
   margin: var(--space-3) 0 0; color: var(--muted); font-size: 0.75rem;
   line-height: 1.5;
 }
@@ -3349,9 +3256,6 @@ button.market-instrument-group-title { font-family: inherit; }
 }
 
 /* ---------- Drawer shared bits (lists/tables/thesis) ---------- */
-.drawer-list { padding-left: 1rem; font-size: 0.8rem; }
-.drawer-list-error { color: var(--red); }
-.drawer-table { font-size: 0.78rem; width: 100%; }
 /* Learning Funnel (lf-* prefix avoids collision with Overview funnel-bar-* rules) */
 .lf-meta-row { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-3); }
 .lf-meta-pill { font-size: 0.75rem; background: var(--surface-2); border-radius: 4px; padding: 3px 8px; color: var(--muted); }
@@ -3363,10 +3267,8 @@ button.market-instrument-group-title { font-family: inherit; }
 .lf-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
 .lf-bar-count { font-size: 0.72rem; text-align: right; }
 /* SerenityLens filter bar */
-.lens-filter-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--space-3); }
 .lens-filter-btn { padding: 4px 12px; font-size: 0.78rem; border-radius: 20px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; }
 .lens-filter-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
-.opp-thesis { font-size: 0.82rem; line-height: 1.6; white-space: pre-wrap; }
 /* ThesisText structured rendering */
 .thesis-text { font-size: 0.82rem; line-height: 1.6; }
 .thesis-main { margin: 0 0 0.5em; white-space: pre-wrap; }
@@ -3717,35 +3619,13 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 }
 
 /* ---------- Usage workspace ---------- */
-.usage-page, .usage-section { min-width: 0; }
-.usage-section { margin-bottom: var(--space-5); }
-.usage-header-actions, .usage-section-head { display: flex; align-items: center; }
-.usage-header-actions { gap: var(--space-3); }
-.usage-updated { color: var(--muted); font: 0.68rem var(--mono); white-space: nowrap; }
-.usage-section-head {
-  justify-content: space-between; gap: var(--space-3);
-  padding-bottom: var(--space-2); margin-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border-2);
-}
 .usage-section-head h2 { margin: 0; font: 600 0.9rem var(--display); letter-spacing: 0.02em; }
-.usage-primary-metrics, .usage-composition-grid, .usage-reliability-metrics {
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2);
-}
 .usage-composition-grid > div { padding: var(--space-2); background: var(--bg-2); border-radius: var(--r-sm); }
 .usage-composition-grid span { display: block; color: var(--muted); font-size: 0.68rem; }
 .usage-composition-grid strong { display: block; margin-top: var(--space-1); font-family: var(--mono); }
-.usage-trend-empty { height: 280px; display: grid; place-items: center; color: var(--muted); font-family: var(--mono); }
-.usage-errors, .usage-cooldowns { margin-top: var(--space-3); }
 .usage-errors > div:not(.card-header) { display: flex; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; }
 .usage-errors strong { font-family: var(--mono); }
 .usage-cooldowns p { margin: var(--space-1) 0; color: var(--muted); }
-@media (max-width: 1023px) {
-  .usage-primary-metrics, .usage-composition-grid, .usage-reliability-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-}
-@media (max-width: 639px) {
-  .usage-header-actions { align-items: flex-end; flex-direction: column; }
-  .usage-primary-metrics, .usage-composition-grid, .usage-reliability-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 /* Inline skeleton (single-line, e.g. next to a label while loading) */
 .skeleton-bar-inline {
   display: inline-block; width: 60px; height: 12px; border-radius: var(--r-sm);
@@ -3895,35 +3775,6 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
 ::-webkit-scrollbar-thumb:hover { background: var(--faint); }
 
 /* --- Serenity Research Workbench --- */
-.lens-engine-status {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.lens-status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--space-3);
-}
-.lens-status-item { display: flex; flex-direction: column; gap: 0.25rem; }
-.lens-status-label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.lens-status-value { font-size: 0.9rem; display: flex; align-items: center; gap: var(--space-1); }
-.lens-status-warning {
-  margin-top: var(--space-2);
-  padding: var(--space-2);
-  background: rgba(255, 200, 50, 0.08);
-  border: 1px solid var(--yellow);
-  border-radius: var(--r);
-  font-size: 0.85rem;
-  color: var(--yellow);
-}
-.lens-brief-input {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
 .lens-brief-input textarea {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -3935,28 +3786,11 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   resize: vertical;
   min-height: 72px;
 }
-.lens-brief-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  justify-content: space-between;
-}
-.lens-theme-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-3);
-}
 .lens-theme-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--r);
   padding: var(--space-3);
-}
-.lens-theme-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
 }
 .lens-theme-header h4 { margin: 0; }
 .lens-theme-open {
@@ -3969,91 +3803,15 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
   cursor: pointer;
 }
 .lens-theme-open:hover { color: var(--accent); text-decoration: underline; }
-.lens-theme-actions {
-  display: flex;
-  gap: 0.5rem;
-  margin-top: var(--space-2);
-  flex-wrap: wrap;
-}
 .lens-theme-actions button { font-size: 0.78rem; padding: var(--space-1) var(--space-3); }
-.lens-events-log {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  max-height: 300px;
-  overflow-y: auto;
-  font-size: 0.82rem;
-}
-.lens-event-row {
-  display: flex;
-  gap: var(--space-2);
-  padding: 0.3rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.lens-event-time { color: var(--muted); min-width: 120px; }
-.lens-event-type { color: var(--accent); min-width: 120px; font-weight: 500; }
-.lens-event-msg { color: var(--text); }
-.lens-parse-result {
-  margin-top: var(--space-2);
-  padding: var(--space-2);
-  background: var(--bg);
-  border-radius: var(--r);
-  border: 1px solid var(--border);
-}
 /* NOTE: the canonical .badge-red lives in the badge section (~line 380). The duplicate
    that used to sit here redefined it with a different red and dropped the border — removed.
    .badge-purple is kept as a class name but re-pointed to the in-palette blue token
    (no off-palette purple); "promoted" status now reads as informational blue. */
 .badge-purple { background: rgba(74,163,255,0.20); color: var(--blue); border-color: rgba(74,163,255,0.35); }
-.lens-empty-state {
-  text-align: center;
-  padding: var(--space-4) var(--space-3);
-  color: var(--muted);
-}
 .lens-empty-state p:first-child { font-size: 1rem; color: var(--text); }
-.lens-disclaimer { font-size: 0.78rem; margin-top: var(--space-2); }
-.card-head-space {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
 .card-head-space h3 { margin: 0; flex: 1; }
-.lens-run-actions { display: flex; gap: 0.5rem; }
 .lens-theme-thesis { font-style: italic; margin: 0.5rem 0; color: var(--muted); }
-.lens-theme-scores {
-  display: flex;
-  gap: var(--space-2);
-  margin: 0.5rem 0;
-  flex-wrap: wrap;
-}
-.lens-score {
-  font-size: 0.78rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 0.2rem 0.5rem;
-}
-.lens-claims-list { display: flex; flex-direction: column; gap: var(--space-1); }
-.lens-claim-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0.4rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
-}
-.lens-claim-text { flex: 1; }
-.lens-claim-meta { display: flex; gap: var(--space-1); align-items: center; }
-.lens-artifacts-summary {
-  margin-top: var(--space-3);
-  padding: var(--space-2);
-  background: var(--bg);
-  border-radius: var(--r);
-  border: 1px solid var(--border);
-}
-.lens-run-themes { margin-top: var(--space-2); display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .btn-sm { font-size: 0.78rem; padding: var(--space-1) var(--space-3); }
 /* Promote = a positive forward action → accent cyan, not off-palette purple. */
 .btn-promote { background: rgba(34,211,238,0.15); color: var(--accent); border-color: rgba(34,211,238,0.35); }
@@ -4063,25 +3821,7 @@ button.danger:hover:not(:disabled), .btn.danger:hover:not(:disabled) {
    token has been removed here to avoid a conflicting (darker) hover. */
 
 /* --- Prediction Market Lens --- */
-.pred-obs-banner {
-  background: rgba(74, 163, 255, 0.08);
-  border: 1px solid rgba(74, 163, 255, 0.2);
-  border-radius: var(--r);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-4);
-  font-size: 0.82rem;
-  color: var(--blue);
-}
 .pred-status-card { margin-bottom: var(--space-4); }
-.pred-status-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: var(--space-4);
-}
-.pred-status-item { display: flex; flex-direction: column; gap: 0.2rem; }
-.pred-status-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.pred-status-value { font-size: 0.9rem; }
-.pred-sort-bar { display: flex; gap: 0.5rem; margin-bottom: var(--space-4); }
 .pred-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
@@ -4101,19 +3841,6 @@ button.pred-market-card {
 }
 button.pred-market-card:hover { border-color: var(--accent-dim); filter: none; }
 button.pred-market-card:active:not(:disabled) { transform: none; }
-.pred-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-.pred-card-title {
-  font-size: 0.88rem;
-  font-weight: 500;
-  line-height: 1.35;
-  margin: 0;
-}
 .pred-card-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
@@ -4121,51 +3848,16 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
   margin-bottom: var(--space-3);
 }
 .pred-stat { display: flex; flex-direction: column; gap: 0.15rem; }
-.pred-stat-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; }
 .pred-stat-value { font-size: 0.85rem; font-family: var(--mono); }
-.pred-yes-value { color: var(--accent); font-weight: 600; }
-.pred-card-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-.pred-event-cell { max-width: 300px; }
-.pred-empty {
-  text-align: center;
-  padding: var(--space-8);
-  color: var(--muted);
-}
 .pred-empty p:first-child { font-size: 1rem; color: var(--text); margin-bottom: var(--space-2); }
 @media (max-width: 767px) {
   .pred-grid { grid-template-columns: 1fr; }
   .pred-card-stats { grid-template-columns: repeat(2, 1fr); }
 }
-.pred-page-wrapper { position: relative; }
-.pred-state-notice {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-}
 .pred-state-notice strong { color: var(--text); }
 .pred-state-notice span { color: var(--muted); }
-.pred-state-disabled { border-color: var(--border-2); }
-.pred-status-mode {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
 
 /* Model ping test */
-.model-ping-result.ok { color: var(--green); }
-.model-ping-result.fail { color: var(--red); }
 
 /* ── Trade Analytics Panel ──────────────────────────────────────────────── */
 .analytics-grid {
@@ -4277,8 +3969,6 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: var(--space-3);
-}
-@media (max-width: 1023px) {
 }
 .insights-pf-grid {
   display: grid;
@@ -4546,10 +4236,6 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
 
 /* Serenity Lens — bear case expandable row (P3 rule: no inline styles). Mirrors the
    former inline style on SerenityLens.tsx; var() fallbacks match the originals. */
-.serenity-bearcase-cell {
-  padding-top: 0.25rem;
-  padding-bottom: 0.5rem;
-}
 .serenity-bearcase-toggle {
   display: inline-flex;
   align-items: center;
@@ -4562,21 +4248,6 @@ button.pred-market-card:active:not(:disabled) { transform: none; }
   cursor: pointer;
 }
 .serenity-bearcase-toggle:hover { color: var(--accent); text-decoration: underline; }
-.serenity-bearcase-box {
-  background: var(--surface-2);
-  border-radius: 4px;
-  padding: 0.5rem 0.75rem;
-}
-.serenity-bearcase-label {
-  font-weight: 600;
-  font-size: 0.75rem;
-  color: var(--red);
-  margin-right: 0.5rem;
-}
-.serenity-bearcase-text {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
 
 /* Manual close panel (TradesPositions drawer) */
 .close-limit-row {

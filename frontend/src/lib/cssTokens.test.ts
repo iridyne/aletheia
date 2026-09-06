@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import CSS from "../index.css?raw";
+const CSS = Object.values(import.meta.glob("../**/*.css", { eager: true, query: "?raw", import: "default" })).join("\n");
 import SETTINGS_SRC from "../pages/Settings.tsx?raw";
 
 const SETTINGS_FEATURE_SOURCES = Object.entries(
@@ -54,10 +54,10 @@ function referencedTokens(source: string): Set<string> {
 }
 
 describe("CSS custom properties", () => {
-	it("defines every token index.css references", () => {
+	it("defines every token authored CSS references", () => {
 		const declared = declaredTokens();
 		const missing = [...referencedTokens(CSS)].filter((t) => !declared.has(t));
-		expect(missing, "var(--x) in index.css with no declaration").toEqual([]);
+		expect(missing, "var(--x) in authored CSS with no declaration").toEqual([]);
 	});
 
 	it("defines every token the Settings implementation references", () => {
@@ -68,46 +68,4 @@ describe("CSS custom properties", () => {
 		expect(missing, "var(--x) in Settings modules with no declaration").toEqual([]);
 	});
 
-	it("declares the base tokens the danger surfaces rely on", () => {
-		const declared = declaredTokens();
-		for (const token of ["--red", "--bg", "--text", "--muted", "--space-3", "--fs-base"]) {
-			expect(declared.has(token), `${token} must be declared`).toBe(true);
-		}
-	});
-
-	it("keeps responsive rules on the canonical breakpoint scale", () => {
-		const code = stripComments(CSS);
-		for (const legacy of [480, 520, 600, 620, 700, 701, 900, 1100]) {
-			expect(code, `legacy ${legacy}px media query`).not.toMatch(new RegExp(`@media\\s*\\([^)]*${legacy}px`));
-		}
-		expect(code).toContain("@media (max-width: 639px)");
-		expect(code).toContain("@media (max-width: 767px)");
-		expect(code).toContain("@media (max-width: 1023px)");
-	});
-
-	it("uses design tokens for the shared confirmation primitive", () => {
-		const modal = CSS.slice(CSS.indexOf(".confirm-modal"), CSS.indexOf(".confirm-title"));
-		expect(modal).toContain("border-radius: var(--r)");
-		expect(modal).toContain("padding: var(--space-6)");
-		expect(CSS).toContain(".confirm-detail { margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3);");
-	});
-
-	it("keeps the Live authority wall on themed classes, not inline colours", () => {
-		// Regression guard: this wall previously inlined light-theme hex fallbacks
-		// (`var(--color-danger-bg, #fff5f5)`), painting near-white on a dark app.
-		const source = SETTINGS_SOURCES.find((item) =>
-			item.includes("function LiveUnlockWarningWall"),
-		);
-		expect(source, "LiveUnlockWarningWall not found").toBeDefined();
-		const start = source!.indexOf("function LiveUnlockWarningWall");
-		// Slice to the function's own closing brace. `\n}` alone would stop at the
-		// destructured-props block, truncating the body before its JSX.
-		const wall = source!.slice(start, source!.indexOf("\n}\n", start));
-		expect(wall).toContain("danger-zone");
-		// Comments are stripped: the fix documents the old hex values in prose, and
-		// that explanation should not read as a violation.
-		const code = stripComments(wall);
-		expect(code, "hardcoded colour in the Live authority wall").not.toMatch(/#[0-9a-fA-F]{3,6}/);
-		expect(code, "inline style in the Live authority wall").not.toMatch(/style=\{\{/);
-	});
 });

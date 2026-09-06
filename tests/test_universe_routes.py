@@ -398,3 +398,121 @@ def test_workbench_supports_plan_status_filter(client, enabled_cfg):
     assert len(plans) == 1
     assert plans[0]["id"] == "expired-plan-1"
     assert plans[0]["status"] == "expired"
+
+
+def test_universe_openapi_preserves_repository_projection_json(client, monkeypatch):
+    """Read schemas must retain SQLite nulls, numeric flags and nested ledger facts."""
+    from pydantic import TypeAdapter
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.server.routes import universe
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseAsset, UniverseFeatureSnapshot, UniversePolicy
+    from tests.test_entry_planner import _candidate, _plan
+    from tests.test_universe_calibration import _settled
+    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
+
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    save_config(cfg)
+    instant = datetime.now(timezone.utc)
+
+    class FrozenClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return instant
+
+    monkeypatch.setattr(universe, "datetime", FrozenClock)
+    candidate = _candidate()
+    repo.insert_universe_asset(UniverseAsset(
+        id=candidate.asset_id, venue="bitget", market_type="perp", symbol=candidate.symbol,
+    ))
+    repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(asset_id=candidate.asset_id))
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("schema-proof")
+    plan = _plan(generation)
+    assert repo.complete_candidate_planning_with_plan(generation["id"], "schema-proof", plan)[0] == "planned"
+    repo.insert_forward_outcomes_batch([
+        _settled("BTC/USDT", "long", 1.0, member_id=candidate.id, cost_model_version=COST_MODEL_VERSION),
+    ])
+
+    calls = [
+        ("/current", universe.get_current_universe, {}, universe.UniverseCurrentResponse),
+        ("/snapshots", universe.list_snapshots, {}, list[universe.UniverseSnapshot]),
+        (f"/snapshots/{candidate.snapshot_id}", universe.get_snapshot, {"snapshot_id": candidate.snapshot_id}, universe.UniverseSnapshotResponse),
+        (f"/candidates/{candidate.id}", universe.get_candidate, {"candidate_id": candidate.id}, universe.CandidateDetail),
+        (f"/entry-plans/{plan.plan_id}", universe.get_entry_plan_detail, {"plan_id": plan.plan_id}, universe.EntryPlanProjection),
+        ("/workbench", universe.get_entry_workbench, {"limit": 100, "plan_status": "active"}, universe.EntryWorkbenchResponse),
+        ("/planning-history", universe.get_planning_history, {"limit": 50}, universe.PlanningHistoryResponse),
+        ("/policy", universe.get_current_policy, {}, universe.UniverseStoredPolicy | universe.UniverseDefaultPolicy),
+        ("/registry/stats", universe.registry_stats, {}, universe.UniverseRegistryStats),
+        ("/calibration", universe.get_calibration, {}, universe.CalibrationResponse),
+    ]
+    for path, endpoint, kwargs, schema in calls:
+        original = endpoint(**kwargs)
+        response = client.get(f"/api/universe{path}")
+        assert response.status_code == 200, path
+        assert response.json() == original, path
+        adapter = TypeAdapter(schema)
+        validated = adapter.validate_json(response.content, strict=True)
+        assert adapter.dump_python(validated, mode="json", exclude_unset=True) == original, path
+
+    policy = UniversePolicy(active=True)
+    repo.insert_universe_policy(policy)
+    stored = client.get("/api/universe/policy").json()
+    assert TypeAdapter(universe.UniverseStoredPolicy).validate_python(stored, strict=True) == stored
+    cfg.universe.enabled = False
+    monkeypatch.setattr(universe, "load_config", lambda: cfg)
+    monkeypatch.setattr("aletheia.universe.service.load_config", lambda: cfg)
+    fallback = client.get("/api/universe/current").json()
+    assert fallback["members"][0]["id"] is None
+    assert "opportunity_score" not in fallback["members"][0]
+    assert TypeAdapter(universe.UniverseCurrentResponse).validate_python(fallback, strict=True) == fallback
+
+    assert client.get("/api/universe/calibration").json()["by_cohort_horizon"][0]["source_outcome_fingerprint"]
+    with patch.object(universe.repo, "get_active_universe_snapshot", side_effect=RuntimeError("read unavailable")):
+        partial = client.get("/api/universe/workbench").json()
+    assert partial["universe"]["enabled"] is None
+    assert partial["current_candidates"] is None
+    assert partial["availability"]["current_candidates"]["available"] is False
+    adapter = TypeAdapter(universe.EntryWorkbenchResponse)
+    parsed = adapter.validate_json(json.dumps(partial), strict=True)
+    assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == partial
+    assert client.get("/api/universe/snapshots/missing").status_code == 404
+    assert client.get("/api/universe/entry-plans/missing").status_code == 404
+    with patch.object(universe.repo, "get_entry_plan", return_value={"plan_json": "{}", "plan_hash": "bad"}):
+        assert client.get("/api/universe/entry-plans/corrupt").status_code == 409
+
+    import hashlib
+    legacy_payload = {**plan.model_dump(mode="json"), "version": "entry-plan/v1",
+                      "trigger_spec_version": "v2", "historical_note": {"reason": None}}
+    legacy_payload.pop("evidence_refs")
+    legacy_json = json.dumps(legacy_payload)
+    historical = {**repo.get_entry_plan(plan.plan_id), "plan_json": legacy_json,
+                  "plan_hash": hashlib.sha256(legacy_json.encode()).hexdigest()}
+    with patch.object(universe.repo, "get_entry_plan", return_value=historical):
+        response = client.get(f"/api/universe/entry-plans/{plan.plan_id}")
+        assert response.status_code == 200
+        legacy = response.json()
+    adapter = TypeAdapter(universe.EntryPlanProjection)
+    parsed = adapter.validate_json(json.dumps(legacy), strict=True)
+    assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == legacy
+    assert legacy["plan"] == legacy_payload
+
+    from aletheia.server.routes.settings import CandidateSelectionStatusResponse
+    selection = client.get("/api/settings/universe/candidate-selection").json()
+    assert TypeAdapter(CandidateSelectionStatusResponse).validate_json(json.dumps(selection), strict=True) == selection
+    with patch("aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy", side_effect=RuntimeError("unavailable")):
+        unavailable = client.get("/api/settings/universe/candidate-selection").json()
+    assert unavailable["evaluation_available"] is False
+    assert unavailable["qualification"]["policy_epoch_id"] is None
+    assert TypeAdapter(CandidateSelectionStatusResponse).validate_json(json.dumps(unavailable), strict=True) == unavailable
+    cfg.universe.enabled = True
+    with patch("aletheia.universe.service.UniverseService.refresh", new_callable=AsyncMock, return_value=None):
+        assert client.post("/api/universe/refresh").status_code == 500
+    with patch("aletheia.universe.service.UniverseService.refresh", new_callable=AsyncMock, return_value="snapshot-proof"):
+        refreshed = client.post("/api/universe/refresh")
+    assert refreshed.status_code == 200
+    assert TypeAdapter(universe.UniverseRefreshResponse).validate_json(refreshed.content, strict=True) == refreshed.json()
+
+
+

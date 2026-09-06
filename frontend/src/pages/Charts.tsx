@@ -201,7 +201,7 @@ function StructureTab({
           <div className="flex flex-col gap-1 text-sm">
             {candidateDetail ? (
               <>
-                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? attention?.rank ?? '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? '—'}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Family</span><span>{humanize(attention?.candidate_family ?? member?.scanner_family ?? '—')}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Selection Utility</span><span className="mono">{member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '—'}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Spread</span><span className="mono">{member?.spread_bps != null ? `${member.spread_bps} bps` : '—'}</span></div>
@@ -678,7 +678,7 @@ export default function Charts() {
   }, [active, candidateId, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
   const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 500), refetchInterval: 30_000 })
-  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions, refetchInterval: 30_000 })
+  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions(), refetchInterval: 30_000 })
   const { data: opportunityInstruments = [] } = useQuery({
     queryKey: ['market-opportunity-instruments'], queryFn: api.getMarketOpportunityInstruments, refetchInterval: 60_000,
   })
@@ -686,7 +686,7 @@ export default function Charts() {
     queryKey: ['market-opportunities', active.symbol, active.marketType],
     queryFn: () => api.getMarketOpportunities(active.symbol, active.marketType), refetchInterval: 60_000,
   })
-  const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades, refetchInterval: 30_000 })
+  const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: () => api.getTrades(), refetchInterval: 30_000 })
   const { data: microstructure } = useQuery({
     queryKey: ['market-microstructure', active.symbol, active.exchange, active.marketType],
     queryFn: () => api.getMarketMicrostructure(active.symbol, active.exchange, active.marketType),

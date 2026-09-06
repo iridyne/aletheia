@@ -589,6 +589,11 @@ async def test_universe_settings_are_visible_and_persisted(client):
     )
     assert resp.status_code == 200
     body = resp.json()
+    from pydantic import TypeAdapter
+    from aletheia.server.routes.settings import UniverseConfigUpdateResponse
+    adapter = TypeAdapter(UniverseConfigUpdateResponse)
+    parsed = adapter.validate_json(resp.content, strict=True)
+    assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == body
     assert body["universe"]["enabled"] is False
     assert body["universe"]["max_candidates"] == 20
     assert body["universe"]["entry_ttl_sec"] == 600
@@ -777,6 +782,12 @@ async def test_candidate_selection_authority_requires_exact_positive_epoch_and_r
     assert rolled_back.json()["audit_mirror_status"] == "mirrored"
     assert load_config().universe.candidate_selection_policy_epoch is None
     assert repo.candidate_selection_epoch_is_admitted(epoch) is False
+    from pydantic import TypeAdapter
+    from aletheia.server.routes.settings import CandidateSelectionTransitionResponse
+    adapter = TypeAdapter(CandidateSelectionTransitionResponse)
+    for response in (admitted, rolled_back):
+        parsed = adapter.validate_json(response.content, strict=True)
+        assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == response.json()
 
 
 @pytest.mark.anyio

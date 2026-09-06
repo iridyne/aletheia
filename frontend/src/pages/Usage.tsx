@@ -1,3 +1,4 @@
+import "./Usage.css"
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'

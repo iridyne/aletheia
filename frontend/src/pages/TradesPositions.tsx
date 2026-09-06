@@ -453,7 +453,7 @@ export default function TradesPositions() {
 	});
 	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
 		queryKey: entryPlanId ? ["trades", entryPlanId] : ["trades"],
-		queryFn: () => api.getTrades(entryPlanId),
+		queryFn: () => api.getTrades({ entry_plan_id: entryPlanId }),
 	});
 	const { data: reconciliation, isPending: reconPending, isError: reconError } = useQuery({
 		queryKey: positionKeys.reconciliation,

@@ -234,7 +234,7 @@ export default function Universe() {
   })
   const history = useQuery<PlanningHistoryResponse>({
     queryKey: ['planning-history', historyBefore],
-    queryFn: () => api.getPlanningHistory(50, historyBefore),
+    queryFn: () => api.getPlanningHistory({ limit: 50, before: historyBefore }),
     enabled: tab === 'history',
   })
 
@@ -260,8 +260,8 @@ export default function Universe() {
     if (candidateFilter === 'all_active') return rows.filter(row => row.attention_status === 'active')
     if (candidateFilter === 'plan_active') return rows.filter(row => Boolean(row.active_entry_plan_id))
     if (candidateFilter === 'expiring') return rows.filter(row => Math.min(
-      new Date(row.soft_expires_at).getTime(),
-      new Date(row.hard_expires_at).getTime(),
+      row.soft_expires_at ? new Date(row.soft_expires_at).getTime() : Infinity,
+      row.hard_expires_at ? new Date(row.hard_expires_at).getTime() : Infinity,
     ) - now <= 5 * 60_000)
     if (candidateFilter === 'flagged') return rows.filter(row => row.execution_eligible === 0 || evidenceLabel(row.risk_flags) !== 'Not recorded')
     if (candidateFilter === 'stale') return rows.filter(row => row.candidate_expires_at && new Date(row.candidate_expires_at).getTime() <= now)

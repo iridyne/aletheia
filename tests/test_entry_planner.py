@@ -754,6 +754,10 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
         "aletheia.agent_shell.entry_planner.build_entry_analysis_context",
         lambda *_args, **_kwargs: context,
     )
+    monkeypatch.setattr(
+        "aletheia.agent_shell.entry_planner.entry_orderbook_available",
+        lambda *_args, **_kwargs: True,
+    )
 
     async def planner(_context):
         raise PlanIntentError("PLANNER_SEMANTIC_INVALID:hypothesis_fact_ref_not_supplied")
@@ -1285,22 +1289,34 @@ def test_workbench_plan_active_filter_has_exact_candidate_handoff():
 
 
 def test_planning_history_uses_stable_bounded_cursor():
+    from fastapi.testclient import TestClient
+    from aletheia.server.app import app
+
     start = datetime(2026, 8, 28, 0, 0, tzinfo=timezone.utc)
     generations = []
     for index, symbol in enumerate(("BTC/USDT", "ETH/USDT", "SOL/USDT")):
         candidate = _candidate(asset_id=f"asset-{index}", symbol=symbol)
         generation, _ = repo.ensure_candidate_planning_generation(
-            candidate.id,
-            now=start + timedelta(seconds=index),
+            candidate.id, now=start + timedelta(seconds=index // 2),
         )
         generations.append(generation)
 
-    first_page = repo.list_planning_history(limit=2)
-    cursor = (first_page[-1]["updated_at"], first_page[-1]["id"])
-    second_page = repo.list_planning_history(limit=2, before=cursor)
-    assert len(first_page) == 2
-    assert len(second_page) == 1
-    assert {row["id"] for row in first_page}.isdisjoint({row["id"] for row in second_page})
+    client = TestClient(app)
+    first = client.get("/api/universe/planning-history", params={"limit": 2})
+    assert first.status_code == 200
+    first_page = first.json()
+    second = client.get("/api/universe/planning-history", params={
+        "limit": 2, "before": first_page["next_before"],
+    })
+    assert second.status_code == 200
+    second_page = second.json()
+    ids = [row["id"] for row in first_page["items"] + second_page["items"]]
+    assert len(first_page["items"]) == 2
+    assert len(ids) == len(set(ids)) == 3
+    assert set(ids) == {row["id"] for row in generations}
+    assert second_page["next_before"] is None
+    assert client.get("/api/universe/planning-history", params={"before": "invalid"}).status_code == 422
+    assert client.get("/api/universe/workbench", params={"limit": 0}).status_code == 422
 
 
 def test_expired_attention_projects_consistently_without_sweep_or_mutation():
