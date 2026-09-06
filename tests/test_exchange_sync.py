@@ -479,6 +479,14 @@ def test_unified_cache_generation_mismatch_revokes_authority(monkeypatch):
 
             return (UTAAccountIdentity.model_validate(identity),)
 
+        def config(self, _execution_mode):
+            from aletheia.uta.models import UTAAccountIdentity
+            from aletheia.uta.registry import UTAAdapterConfig
+
+            return UTAAdapterConfig(
+                UTAAccountIdentity.model_validate(identity), boundary="legacy"
+            )
+
     monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
     state = {
         "execution_modes": ["okx_demo"],
@@ -513,6 +521,11 @@ def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
     class Registry:
         def configured_identities(self):
             return (uta_identity,)
+
+        def config(self, _execution_mode):
+            from aletheia.uta.registry import UTAAdapterConfig
+
+            return UTAAdapterConfig(uta_identity, boundary="legacy")
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(es, "load_config", lambda: cfg)
@@ -566,6 +579,12 @@ def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
     class Registry:
         def configured_identities(self):
             return (demo, live)
+
+        def config(self, execution_mode):
+            from aletheia.uta.registry import UTAAdapterConfig
+
+            identity = demo if execution_mode == "okx_demo" else live
+            return UTAAdapterConfig(identity, boundary="uta_v1")
 
     cfg = AletheiaConfig()
     cfg.exchange.uta_read_boundaries = {

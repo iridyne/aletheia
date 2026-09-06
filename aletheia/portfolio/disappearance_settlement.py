@@ -35,10 +35,10 @@ async def _query_uta_verified_exit(
     execution_mode: str, request: VerifiedExitRequest
 ):
     from aletheia.uta.compat import instrument_from_local
-    from aletheia.uta.manager import create_uta_adapter, query_uta
+    from aletheia.uta.manager import query_uta, select_account_port
     from aletheia.uta.models import VerifiedExitQuery, VerifiedExitState
 
-    identity = create_uta_adapter(execution_mode).identity
+    identity = select_account_port(execution_mode).identity
     if (
         request.execution_mode != identity.execution_mode
         or request.broker_id != identity.execution_mode

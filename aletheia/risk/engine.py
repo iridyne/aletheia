@@ -783,9 +783,12 @@ def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | Non
             get_unified_cached_state,
         )
 
-        use_legacy_bitget = execution_mode.startswith("bitget_") and (
-            _is_live(execution_mode)
-            or cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        from aletheia.uta.manager import select_account_port
+
+        selected_account = select_account_port(execution_mode, cfg)
+        use_legacy_bitget = (
+            execution_mode.startswith("bitget_")
+            and selected_account.authoritative_read_owner == "legacy"
         )
         if use_legacy_bitget:
             state = get_cached_state("live" if _is_live(execution_mode) else "demo")
@@ -2772,8 +2775,13 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
                     return equity
             return None
 
-        if execution_mode.startswith("bitget_") and (
-            cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        from aletheia.uta.manager import select_account_port
+
+        if (
+            execution_mode.startswith("bitget_")
+            and select_account_port(
+                execution_mode, cfg
+            ).authoritative_read_owner == "legacy"
         ):
             cached = get_cached_state("demo") or {}
             if not _external_account_cache_is_healthy(cached):

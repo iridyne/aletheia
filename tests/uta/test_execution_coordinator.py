@@ -32,8 +32,8 @@ def _setup_db(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        lambda _mode, **_kwargs: None,
+        "aletheia.execution.coordinator.require_selected_uta_mutation",
+        lambda _mode: None,
     )
     return conn
 
@@ -173,7 +173,7 @@ def test_coordinator_commits_pending_before_uta_and_calls_once(tmp_path, monkeyp
 
     adapter = _Adapter(submit)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
 
     result = _execute(proposal_id, risk_id)
@@ -206,7 +206,7 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
 
     adapter.capabilities = SimpleNamespace(native_tpsl=CapabilitySupport.SUPPORTED)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
     from aletheia.execution.coordinator import execute_order
 
@@ -283,7 +283,7 @@ def test_coordinator_rolls_back_order_when_plan_link_conflicts(tmp_path, monkeyp
     assert repo.list_orders(limit=10) == []
 
 
-def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):
+def test_stale_entry_qualification_creates_no_order(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
     from aletheia.trust.uta_qualification import UTAQualificationError
@@ -291,15 +291,9 @@ def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeyp
     proposal_id, risk_id = "proposal-stale", "risk-stale"
     _authority(proposal_id, risk_id)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
+        "aletheia.execution.coordinator.require_selected_uta_mutation",
         lambda _mode: (_ for _ in ()).throw(
             UTAQualificationError("qualification_code_mismatch")
-        ),
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: (_ for _ in ()).throw(
-            AssertionError("UTA adapter must not be created")
         ),
     )
 
@@ -310,18 +304,16 @@ def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeyp
     assert repo.list_orders(limit=10) == []
 
 
-def test_entry_sends_through_the_adapter_that_was_qualified(tmp_path, monkeypatch):
+def test_entry_sends_through_the_selected_qualified_adapter(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     proposal_id, risk_id = "proposal-qualified-adapter", "risk-qualified-adapter"
     _authority(proposal_id, risk_id)
-    qualified = []
     sent = []
 
     async def submit(command):
         sent.append(command.expected_account)
         return _ack(command)
 
-    qualified_adapter = _Adapter(submit)
     sending_adapter = _Adapter(submit)
     sending_adapter.identity = UTAAccountIdentity(
         **{
@@ -330,21 +322,14 @@ def test_entry_sends_through_the_adapter_that_was_qualified(tmp_path, monkeypatc
         }
     )
 
-    def require_qualification(_mode, adapter=None):
-        qualified.append((adapter or qualified_adapter).identity)
-
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        require_qualification,
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter",
         lambda _mode: sending_adapter,
     )
 
     _execute(proposal_id, risk_id)
 
-    assert sent == qualified[-1:]
+    assert sent == [sending_adapter.identity]
 
 
 def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
@@ -364,7 +349,7 @@ def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
 
     adapter = _Adapter(submit)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
 
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -423,7 +408,7 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
 
     adapter = _Adapter(submit)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
     from aletheia.execution.coordinator import close_position
 
@@ -481,7 +466,7 @@ def test_venue_rejected_close_stays_claimed_and_is_not_resubmitted(
 
     adapter = _Adapter(reject)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
 
     with pytest.raises(RuntimeError, match="invalid_position_mode"):
@@ -534,7 +519,7 @@ def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatc
 
     adapter = _Adapter(reject)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
 
     with pytest.raises(RuntimeError, match="invalid_position_mode"):
@@ -763,7 +748,7 @@ def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypa
 
     adapter = _Adapter(submit)
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter", lambda _mode: adapter
     )
 
     stored_position = repo.get_position(position.id)
@@ -810,7 +795,7 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
         return _ack(command, "new-sl")
 
     monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
+        "aletheia.execution.coordinator.create_selected_uta_mutation_adapter",
         lambda _mode: Adapter(submit),
     )
 

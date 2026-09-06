@@ -18,6 +18,18 @@ class UTAAdapterConfig:
         if self.boundary not in {"legacy", "uta_v1", "shadow_read"}:
             raise ValueError(f"unsupported UTA boundary selector: {self.boundary}")
 
+    @property
+    def authoritative_read_owner(self) -> str:
+        return "uta" if self.boundary == "uta_v1" else "legacy"
+
+    @property
+    def mutation_owner(self) -> str:
+        return "uta" if self.boundary == "uta_v1" else "legacy"
+
+    @property
+    def shadow_read_enabled(self) -> bool:
+        return self.boundary == "shadow_read"
+
 
 UTAAdapterFactory = Callable[[UTAAdapterConfig], UTAAdapter]
 
@@ -36,6 +48,12 @@ class UTARegistry:
 
     def configured_identities(self) -> tuple[UTAAccountIdentity, ...]:
         return tuple(config.identity for config, _factory in self._entries.values())
+
+    def config(self, account_id: str) -> UTAAdapterConfig:
+        try:
+            return self._entries[account_id][0]
+        except KeyError as exc:
+            raise KeyError(f"UTA account is not registered: {account_id}") from exc
 
     def create(self, account_id: str) -> UTAAdapter:
         try:

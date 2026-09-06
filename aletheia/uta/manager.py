@@ -129,7 +129,10 @@ def funding_history_retention_contract(
 
 def _account_generation(cfg, execution_mode: str, scope: str, profile: str) -> int:
     secret_generation = get_credential_generation(scope)
-    config_generation = cfg.exchange.uta_account_config_generation_for(execution_mode)
+    generation_for = getattr(
+        cfg.exchange, "uta_account_config_generation_for", lambda _mode: 0
+    )
+    config_generation = generation_for(execution_mode)
     profile_generation = {"classic_v2": 1, "uta_v3": 2}.get(profile, 0)
     secret_and_config = (
         (secret_generation + config_generation)
@@ -145,6 +148,40 @@ def _account_generation(cfg, execution_mode: str, scope: str, profile: str) -> i
     )
 
 
+def _adapter_config(cfg, execution_mode: str) -> tuple[
+    UTAAdapterConfig, str, tuple[str, ...], type
+]:
+    scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
+        cfg, execution_mode
+    )
+    generation = _account_generation(cfg, execution_mode, scope, profile_name)
+    identity = UTAAccountIdentity(
+        account_id=execution_mode,
+        execution_mode=execution_mode,
+        venue=venue,
+        environment=environment,
+        profile=profile_name,
+        account_fingerprint=logical_account_fingerprint(
+            broker_id=execution_mode,
+            account_environment=environment,
+            execution_mode=execution_mode,
+        ),
+        credential_generation=generation,
+        adapter_implementation="CCXTUTAAdapter",
+        adapter_version="1",
+        ccxt_version=version("ccxt"),
+    )
+    return (
+        UTAAdapterConfig(
+            identity=identity,
+            boundary=cfg.exchange.uta_read_boundary_for(execution_mode),
+        ),
+        scope,
+        fields,
+        profile_type,
+    )
+
+
 def build_uta_registry(cfg=None) -> UTARegistry:
     """Build immutable factories from current config; no client/session is created."""
     cfg = cfg or load_config()
@@ -157,33 +194,10 @@ def build_uta_registry(cfg=None) -> UTARegistry:
         "okx_live_limited",
         "bitget_live_limited",
     ):
-        scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
-            cfg, execution_mode
-        )
+        config, scope, fields, profile_type = _adapter_config(cfg, execution_mode)
         credentials = {field: get_secret(f"{scope}.{field}") for field in fields}
         if not all(credentials.values()):
             continue
-        generation = _account_generation(cfg, execution_mode, scope, profile_name)
-        identity = UTAAccountIdentity(
-            account_id=execution_mode,
-            execution_mode=execution_mode,
-            venue=venue,
-            environment=environment,
-            profile=profile_name,
-            account_fingerprint=logical_account_fingerprint(
-                broker_id=execution_mode,
-                account_environment=environment,
-                execution_mode=execution_mode,
-            ),
-            credential_generation=generation,
-            adapter_implementation="CCXTUTAAdapter",
-            adapter_version="1",
-            ccxt_version=version("ccxt"),
-        )
-        config = UTAAdapterConfig(
-            identity=identity,
-            boundary=cfg.exchange.uta_read_boundary_for(execution_mode),
-        )
 
         def factory(adapter_config, profile_type=profile_type, credentials=credentials):
             profile_kwargs = {
@@ -206,6 +220,64 @@ def create_uta_adapter(execution_mode: str, cfg=None):
     return build_uta_registry(cfg).create(execution_mode)
 
 
+def select_account_port(execution_mode: str, cfg=None) -> UTAAdapterConfig:
+    """Resolve one exact configured account and all rollout ownership from it."""
+    cfg = cfg or load_config()
+    selected, _scope, _fields, _profile_type = _adapter_config(cfg, execution_mode)
+    current_boundary = cfg.exchange.uta_read_boundary_for(execution_mode)
+    if selected.boundary != current_boundary:
+        raise RuntimeError("uta_account_boundary_changed")
+    return selected
+
+
+def create_selected_uta_mutation_adapter(
+    execution_mode: str,
+    cfg=None,
+    *,
+    expected_generation: int | None = None,
+):
+    """Create the selected UTA mutator; shadow and stale generations fail closed."""
+    cfg = cfg or load_config()
+    selected = select_account_port(execution_mode, cfg)
+    if selected.mutation_owner != "uta":
+        from aletheia.trust.uta_qualification import UTAQualificationError
+
+        raise UTAQualificationError("uta_mutation_boundary_inactive")
+    if (
+        expected_generation is not None
+        and selected.identity.credential_generation != expected_generation
+    ):
+        from aletheia.trust.uta_qualification import UTAQualificationError
+
+        raise UTAQualificationError("uta_account_generation_changed")
+    registry = build_uta_registry(cfg)
+    adapter = registry.create(execution_mode)
+    if adapter.identity != selected.identity:
+        raise RuntimeError("uta_account_generation_changed")
+    from aletheia.trust.uta_qualification import require_uta_mutation_qualification
+
+    require_uta_mutation_qualification(
+        execution_mode, cfg, adapter=adapter, selected=selected
+    )
+    return adapter
+
+
+def require_selected_uta_mutation(execution_mode: str, cfg=None) -> UTAAdapterConfig:
+    """Preflight the exact selected mutation owner before durable intent is written."""
+    cfg = cfg or load_config()
+    selected = select_account_port(execution_mode, cfg)
+    if selected.mutation_owner != "uta":
+        from aletheia.trust.uta_qualification import UTAQualificationError
+
+        raise UTAQualificationError("uta_mutation_boundary_inactive")
+    from aletheia.trust.uta_qualification import require_uta_mutation_qualification
+
+    require_uta_mutation_qualification(
+        execution_mode, cfg, selected=selected
+    )
+    return selected
+
+
 async def query_uta(
     execution_mode: str,
     method: str,
@@ -213,8 +285,14 @@ async def query_uta(
     *,
     cfg=None,
 ):
-    """Run one bounded UTA read with deterministic loop-local teardown."""
+    """Run one authoritative selected-account read with deterministic teardown."""
+    cfg = cfg or load_config()
+    selected = select_account_port(execution_mode, cfg)
+    if selected.authoritative_read_owner != "uta":
+        raise RuntimeError("uta_authoritative_read_not_selected")
     adapter = create_uta_adapter(execution_mode, cfg)
+    if adapter.identity != selected.identity:
+        raise RuntimeError("uta_account_generation_changed")
     try:
         await adapter.connect()
         operation = getattr(adapter, method)
@@ -475,7 +553,8 @@ def _shadow_differences(legacy_account, legacy_positions, uta_account, uta_posit
 
 
 async def _read_selected_account(cfg, registry, legacy, identity):
-    boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
+    selected = select_account_port(identity.execution_mode, cfg)
+    boundary = selected.boundary
     broker = legacy.get(identity.execution_mode)
     errors = []
     shadow_errors = []
@@ -569,8 +648,9 @@ async def get_unified_state(
             if configured_identities
             else requested_modes
         )
-        if cfg.exchange.uta_read_boundary_for(execution_mode)
-        in {"legacy", "shadow_read"}
+        if select_account_port(
+            execution_mode, cfg
+        ).authoritative_read_owner == "legacy"
     )
     legacy = _legacy_brokers(legacy_modes)
     for execution_mode, broker in legacy.items():

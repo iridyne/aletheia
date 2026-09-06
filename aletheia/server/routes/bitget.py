@@ -416,9 +416,13 @@ async def uta_state():
     # Fallback is valid only for the Bitget demo account that owns this legacy
     # cache.  Never present it as the selected OKX/Binance account.
     cfg = load_config()
+    from aletheia.uta.manager import select_account_port
+
     if (
         cfg.exchange.paper_execution_mode != "bitget_demo"
-        or cfg.exchange.uta_read_boundary_for("bitget_demo") == "uta_v1"
+        or select_account_port(
+            "bitget_demo", cfg
+        ).authoritative_read_owner == "uta"
     ):
         return {
             "total_equity_usdt": None,

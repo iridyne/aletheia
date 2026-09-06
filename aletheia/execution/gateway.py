@@ -898,12 +898,15 @@ def rebind_open_paper_orders_to_monitoring(instrument, monitoring: dict) -> int:
 
 
 def _qualified_uta_mutation_selected(cfg, execution_mode: str) -> bool:
-    exchange = getattr(cfg, "exchange", None)
-    if exchange is None or exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
+    if getattr(cfg, "exchange", None) is None:
         return False
     from aletheia.trust.uta_qualification import require_uta_mutation_qualification
+    from aletheia.uta.manager import select_account_port
 
-    require_uta_mutation_qualification(execution_mode, cfg)
+    selected = select_account_port(execution_mode, cfg)
+    if selected.mutation_owner != "uta":
+        return False
+    require_uta_mutation_qualification(execution_mode, cfg, selected=selected)
     return True
 
 

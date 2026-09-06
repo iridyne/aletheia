@@ -102,8 +102,17 @@ def test_selected_reads_use_canonical_manager_and_unmigrated_mutations_stay_disa
     assert "legacy_modes" in manager
     assert 'if boundary in {"legacy", "shadow_read"}' in manager
     assert "registry.create(identity.account_id)" in manager
-    assert "from aletheia.uta.manager import get_unified_state_sync" in exchange_sync
-    assert 'uta_read_boundary_for("bitget_demo") != "uta_v1"' in exchange_sync
+    assert "get_unified_state_sync" in exchange_sync
+    assert "select_account_port" in exchange_sync
+    boundary_readers = {
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "aletheia").rglob("*.py")
+        if "uta_read_boundary_for(" in path.read_text(encoding="utf-8")
+    }
+    assert boundary_readers == {
+        "aletheia/config/schema.py",
+        "aletheia/uta/manager.py",
+    }
     assert "from aletheia.uta.manager import" in compatibility
 
 
@@ -146,7 +155,7 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
     assert "def place_protection(" in coordinator
     assert "def replace_protective_stop(" in coordinator
     assert "finalize_exchange_acknowledgement" in coordinator
-    assert "create_uta_adapter" in coordinator
+    assert "create_selected_uta_mutation_adapter" in coordinator
     assert "aletheia.exchanges" not in coordinator
     assert "binance_broker" not in coordinator
 

@@ -68,9 +68,19 @@ def uta_profile_qualified(execution_mode: str, cfg, *, adapter=None) -> tuple[bo
     return True, "qualified"
 
 
-def require_uta_mutation_qualification(execution_mode: str, cfg=None, *, adapter=None) -> None:
+def require_uta_mutation_qualification(
+    execution_mode: str,
+    cfg=None,
+    *,
+    adapter=None,
+    selected=None,
+) -> None:
     cfg = cfg or load_config()
-    if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
+    if selected is None:
+        from aletheia.uta.manager import select_account_port
+
+        selected = select_account_port(execution_mode, cfg)
+    if selected.mutation_owner != "uta":
         raise UTAQualificationError("uta_mutation_boundary_inactive")
     if adapter is None:
         qualified, reason = uta_profile_qualified(execution_mode, cfg)

@@ -26,9 +26,11 @@ from aletheia.storage.repositories import (
     transition_order,
 )
 from aletheia.storage.sqlite import get_db
-from aletheia.trust.uta_qualification import require_uta_mutation_qualification
 from aletheia.uta.compat import instrument_from_local
-from aletheia.uta.manager import create_uta_adapter
+from aletheia.uta.manager import (
+    create_selected_uta_mutation_adapter,
+    require_selected_uta_mutation,
+)
 from aletheia.uta.models import (
     CancelOrderCommand,
     CommandEvidence,
@@ -58,25 +60,34 @@ def _run(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def _close_adapter(adapter) -> None:
-    try:
-        _run(adapter.close())
-    except Exception:
-        pass
+def _create_qualified_adapter(
+    execution_mode: str,
+    *,
+    expected_account=None,
+    expected_generation: int | None = None,
+):
+    if expected_account is not None:
+        adapter = create_selected_uta_mutation_adapter(
+            execution_mode,
+            expected_generation=expected_account.credential_generation,
+        )
+    elif expected_generation is not None:
+        adapter = create_selected_uta_mutation_adapter(
+            execution_mode, expected_generation=expected_generation
+        )
+    else:
+        adapter = create_selected_uta_mutation_adapter(execution_mode)
+    if expected_account is not None and adapter.identity != expected_account:
+        from aletheia.trust.uta_qualification import UTAQualificationError
 
-
-def _create_qualified_adapter(execution_mode: str):
-    adapter = create_uta_adapter(execution_mode)
-    try:
-        require_uta_mutation_qualification(execution_mode, adapter=adapter)
-    except Exception:
-        _close_adapter(adapter)
-        raise
+        raise UTAQualificationError("uta_account_generation_changed")
     return adapter
 
 
 async def _command(execution_mode: str, method: str, command):
-    adapter = _create_qualified_adapter(execution_mode)
+    adapter = _create_qualified_adapter(
+        execution_mode, expected_account=command.expected_account
+    )
     try:
         return await getattr(adapter, method)(command)
     finally:
@@ -193,7 +204,7 @@ def execute_order(
     _guard_unresolved_submission(proposal_id, execution_mode)
     if market_type != "spot" and leverage is None:
         raise ValueError("futures UTA order requires leverage")
-    require_uta_mutation_qualification(execution_mode)
+    selected = require_selected_uta_mutation(execution_mode)
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
@@ -229,7 +240,12 @@ def execute_order(
             raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
-        adapter = _create_qualified_adapter(execution_mode)
+        adapter = _create_qualified_adapter(
+            execution_mode,
+            expected_generation=(
+                selected.identity.credential_generation if selected else None
+            ),
+        )
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -349,8 +365,6 @@ def close_position(
         raise ValueError(f"position not found: {position_id}")
     if current.get("status") != "open":
         raise ValueError(f"position {position_id} is not open")
-    if not has_unresolved_close_claim(current):
-        require_uta_mutation_qualification(current["execution_mode"])
     row, order = _claim_close(position_id, reason, close_reasoning)
     if order is None:
         existing = repo.get_order(row["pending_close_order_id"])
@@ -459,7 +473,6 @@ def place_protection(position_id: str) -> dict[str, str]:
     position = repo.get_position(position_id)
     if position is None or position.get("status") != "open":
         raise ValueError(f"open position not found: {position_id}")
-    require_uta_mutation_qualification(position["execution_mode"])
     requested = (
         ("sl", "protective_stop", position.get("stop_price")),
         ("tp", "take_profit", position.get("take_profit_price")),
@@ -487,7 +500,6 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     position = repo.get_position(position_id)
     if position is None or position.get("status") != "open":
         return False
-    require_uta_mutation_qualification(position["execution_mode"])
     try:
         identifiers = json.loads(position.get("exchange_tpsl_order_id") or "{}")
     except (TypeError, ValueError):

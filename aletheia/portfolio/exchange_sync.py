@@ -180,13 +180,17 @@ def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
         mode = cfg.exchange.mode
         # Default path + active paper broker is non-Bitget → use unified cache,
         # which carries the true total equity across all brokers.
-        active_boundary = cfg.exchange.uta_read_boundary_for(
-            cfg.exchange.paper_execution_mode or ""
-        )
         active_mode = cfg.exchange.paper_execution_mode or ""
+        active_owner = None
+        if active_mode not in {"", "paper_internal"}:
+            from aletheia.uta.manager import select_account_port
+
+            active_owner = select_account_port(
+                active_mode, cfg
+            ).authoritative_read_owner
         if not explicit_mode and active_mode not in {"", "paper_internal"} and (
             not (cfg.exchange.paper_execution_mode or "").startswith("bitget")
-            or active_boundary == "uta_v1"
+            or active_owner == "uta"
         ):
             return get_unified_cached_state()
     raw = _read_raw(mode)
@@ -299,7 +303,7 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         for identity in registry.configured_identities():
             if identity.execution_mode not in execution_modes:
                 continue
-            boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
+            boundary = registry.config(identity.execution_mode).boundary
             expected[identity.execution_mode] = expected_cache_identity(
                 cfg, identity, boundary
             ).model_dump(mode="json")
@@ -318,7 +322,7 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         account = observed[execution_mode]
         if account.get("identity") != expected_identity:
             return False, "uta_account_generation_mismatch"
-        if account.get("boundary") != cfg.exchange.uta_read_boundary_for(execution_mode):
+        if account.get("boundary") != registry.config(execution_mode).boundary:
             return False, "uta_boundary_mismatch"
     return True, "current"
 
@@ -578,7 +582,11 @@ def sync_all_exchanges() -> Optional[dict]:
     )
 
     cfg = load_config()
-    if cfg.exchange.uta_read_boundary_for("bitget_demo") != "uta_v1":
+    from aletheia.uta.manager import select_account_port
+
+    if select_account_port(
+        "bitget_demo", cfg
+    ).authoritative_read_owner == "legacy":
         try:
             sync_exchange_account()
         except Exception as e:
