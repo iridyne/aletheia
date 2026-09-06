@@ -2286,7 +2286,7 @@ export const api = {
 		fetchJson<import("../types").PositionsReconciliation>(
 			"/positions/reconciliation",
 		),
-	getPortfolio: () => fetchJson<Record<string, any>>("/portfolio"),
+	getPortfolio: () => fetchJson<import("../types").PortfolioAccount>("/portfolio"),
 	getUtaState: () => fetchJson<Record<string, any>>("/uta/state"),
 	getStrategies: () => fetchJson<any[]>("/strategies"),
 	// #95: removed dead setStrategyVenue() — it PATCHed /strategies/{id}/venue, a route

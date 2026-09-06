@@ -342,6 +342,43 @@ export interface PortfolioSummary {
   exposure_by_symbol: Record<string, number> | null
 }
 
+export interface AssetItem {
+  coin: string
+  usdt_value: number
+  pct: number
+}
+
+export interface UTAAccount {
+  broker_id: string
+  display_name: string
+  equity_usdt: number
+  available_usdt?: number | null
+  unrealized_pnl?: number | null
+  positions_count?: number
+}
+
+export interface PortfolioAccount extends Partial<PortfolioSummary> {
+  execution_mode?: string | null
+  execution_mode_status?: string | null
+  positions_count?: number | null
+  exchange_sync_status?: string | null
+  exchange_equity_usdt?: number | null
+  exchange_mode?: string | null
+  exchange_asset_breakdown?: AssetItem[] | null
+  all_realized_pnl_complete?: boolean | null
+  all_realized_pnl_unavailable_count?: number | null
+  all_historical_reconciled_pnl?: number | null
+  all_historical_reconciled_count?: number | null
+  all_historical_reconciliation_unavailable_count?: number | null
+  today_pnl_by_symbol?: Record<string, number> | null
+  uta_state?: {
+    sync_status?: string | null
+    total_equity_usdt?: number | null
+    accounts?: UTAAccount[]
+  } | null
+  unrealized_by_symbol?: Record<string, number> | null
+}
+
 // One exchange position as reported by the live account view.
 export interface ExchangePosition {
   symbol: string
