@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
@@ -919,7 +921,7 @@ def test_local_close_rejects_invalid_persisted_entry_fee(bad_fee):
         entry_fee=0.0,
     )
     repo.insert_position(position)
-    repo.update_position(position.id, entry_fee=bad_fee)
+    force_update_position(position.id, entry_fee=bad_fee)
 
     with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
         close_position(position.id, exit_price=110.0)
@@ -936,7 +938,7 @@ def test_verified_close_rejects_invalid_persisted_entry_fee(bad_fee):
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    repo.update_position(position.id, entry_fee=bad_fee)
+    force_update_position(position.id, entry_fee=bad_fee)
 
     with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
         close_position_verified(position.id, _verified_result(position))

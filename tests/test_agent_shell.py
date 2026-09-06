@@ -13,6 +13,7 @@ from aletheia.agent_shell.permissions import check_permission, allowed_commands
 from aletheia.agent_shell.intent import _classify_keyword, CommandIntent
 from aletheia.agent_shell.context import build_app_context, context_summary_text, sections_for_profile
 from aletheia.agent_shell.synthesis import _format_fallback
+from tests.position_fixture import force_update_position
 
 
 def test_reflection_module_imports_cleanly():
@@ -208,7 +209,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position, update_position
+    from aletheia.storage.repositories import _select_one, insert_position
 
     target = Position(
         id="wake-review-target",
@@ -622,7 +623,7 @@ async def test_portfolio_review_persists_intent_before_close_submission(
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import _select_one, insert_position, update_position
+    from aletheia.storage.repositories import _select_one, insert_position
 
     target = Position(
         id="review-close-intent-target",
@@ -660,7 +661,7 @@ async def test_portfolio_review_persists_intent_before_close_submission(
         assert json.loads(row["evidence_manifest_json"])["position_review"][
             "effect"
         ] == {"status": "pending"}
-        update_position(
+        force_update_position(
             position_id,
             pending_close_order_id="pending-close-order",
             pending_close_status="submitted",
@@ -858,7 +859,6 @@ async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
     from aletheia.storage.repositories import (
         _select_one,
         insert_position,
-        update_position,
     )
 
     target = Position(
@@ -886,8 +886,8 @@ async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
     insert_position(target)
     insert_position(sibling)
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
-    update_position(target.id, expected_horizon_hours=10.0, opened_at=opened)
-    update_position(sibling.id, expected_horizon_hours=10.0, opened_at=opened)
+    force_update_position(target.id, expected_horizon_hours=10.0, opened_at=opened)
+    force_update_position(sibling.id, expected_horizon_hours=10.0, opened_at=opened)
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
         lambda sections=None: {
@@ -936,7 +936,6 @@ async def test_horizon_hold_disabled_stays_incomplete(tmp_path, monkeypatch):
     from aletheia.storage.repositories import (
         _select_one,
         insert_position,
-        update_position,
     )
 
     monkeypatch.setattr(shell_commands, "_horizon_due_allow_hold", lambda _mode: False)
@@ -950,7 +949,7 @@ async def test_horizon_hold_disabled_stays_incomplete(tmp_path, monkeypatch):
         execution_mode="paper_internal",
     )
     insert_position(target)
-    update_position(target.id, expected_horizon_hours=10.0)
+    force_update_position(target.id, expected_horizon_hours=10.0)
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
         lambda sections=None: {

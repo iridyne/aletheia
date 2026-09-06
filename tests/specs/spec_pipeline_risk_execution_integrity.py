@@ -6,6 +6,8 @@ exchange network.
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 import sqlite3
 import threading
@@ -1921,7 +1923,7 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
         status="overfilled",
     )
     repo.insert_order(close_order)
-    repo.update_position(
+    force_update_position(
         position.id,
         pending_close_order_id=close_order.id,
         pending_close_status="overfilled",
@@ -2022,7 +2024,7 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         error_reason="close_position_absence_unverified",
     )
     repo.insert_order(close_order)
-    repo.update_position(
+    force_update_position(
         position.id,
         pending_close_order_id=close_order.id,
         pending_close_status="position_absence_unverified",

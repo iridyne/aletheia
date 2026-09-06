@@ -393,7 +393,7 @@ def test_try_place_tpsl_stores_ids_on_success(tmp_path):
     with patch(
         "aletheia.execution.bitget_broker._run_coro",
         side_effect=closing_coro_runner("sl-id-1", "tp-id-1"),
-    ), patch("aletheia.execution.bitget_broker.update_position") as mock_update:
+    ), patch("aletheia.execution.bitget_broker.update_open_position_exit_plan") as mock_update:
         _try_place_tpsl(
             client=mock_client,
             position_id="pos-1",
@@ -422,7 +422,7 @@ def test_try_place_tpsl_non_fatal_on_failure():
         "aletheia.execution.bitget_broker._run_coro",
         side_effect=closing_coro_runner(RuntimeError("API down"), RuntimeError("API down")),
     ), \
-         patch("aletheia.execution.bitget_broker.update_position") as mock_update:
+         patch("aletheia.execution.bitget_broker.update_open_position_exit_plan") as mock_update:
         _try_place_tpsl(
             client=mock_client, position_id="pos-2", exchange_symbol="BTCUSDT",
             hold_side="long", size=0.01, stop_price=95000.0,
@@ -495,7 +495,7 @@ def test_replace_exchange_stop_cancel_and_replace(
          patch("aletheia.execution.bitget_broker.BitgetClient") as mock_cls, \
          patch("aletheia.execution.bitget_broker.to_bitget", return_value="BTCUSDT"), \
          patch("aletheia.storage.repositories._select_one", return_value=mock_row), \
-         patch("aletheia.execution.bitget_broker.update_position") as mock_update:
+         patch("aletheia.execution.bitget_broker.update_open_position_exit_plan") as mock_update:
         mock_cls.return_value = MagicMock()
 
         replace_exchange_stop("pos-3", 94000.0)

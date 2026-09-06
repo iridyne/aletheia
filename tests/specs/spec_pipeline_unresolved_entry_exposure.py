@@ -6,6 +6,8 @@ exchange and never read or write the operator's runtime database.
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import sqlite3
 
 import pytest
@@ -1013,7 +1015,7 @@ def test_partial_averaging_leg_uses_all_position_entry_fills(
         fee=0.0,
         fee_source="reconciled",
     ))
-    repo.update_position(position.id, quantity=6.0)
+    force_update_position(position.id, quantity=6.0)
 
     reservations = engine._unresolved_entry_reservations()
     assert len(reservations) == 1
@@ -1200,7 +1202,7 @@ def test_unresolved_close_order_does_not_add_entry_exposure(tmp_path, monkeypatc
         status="materialization_missing",
     )
     repo.insert_order(close_order)
-    repo.update_position(
+    force_update_position(
         position.id,
         pending_close_order_id=close_order.id,
         pending_close_status="materialization_missing",

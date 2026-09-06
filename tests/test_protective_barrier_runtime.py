@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 import math
 from datetime import datetime, timezone
@@ -298,7 +300,7 @@ def test_net_balance_trailing_fails_closed_when_entry_cost_is_unavailable(
     )
     record_position_opened(position.id)
     activate_new_paper_position(position.id)
-    repo.update_position(position.id, entry_fee=None)
+    force_update_position(position.id, entry_fee=None)
     _bar(cursor, high=102.0, low=99.0)
 
     summary = evaluate_due_position_protection()
@@ -373,7 +375,7 @@ def test_forward_adoption_starts_after_current_bar_without_historical_replay(
 def test_non_barrier_close_supersedes_untriggered_protection(tmp_path, monkeypatch):
     position, _cursor = _protected_position(tmp_path, monkeypatch)
     closed_at = datetime.now(timezone.utc).isoformat()
-    repo.update_position(
+    force_update_position(
         position.id,
         status="closed",
         closed_at=closed_at,

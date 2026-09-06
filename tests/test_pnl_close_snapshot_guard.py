@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from concurrent.futures import ThreadPoolExecutor
 import sqlite3
 import threading
@@ -85,7 +87,7 @@ def test_close_rejects_averaging_change_then_succeeds_with_fresh_snapshot(
             reason="take_profit",
         )
         assert stale_snapshot_read.wait(timeout=10)
-        repo.update_position(
+        force_update_position(
             position.id,
             quantity=2.0,
             entry_price=105.0,

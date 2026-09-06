@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import aletheia.portfolio.position_manager as pm
 from aletheia.agent_runtime.wake_events import HORIZON_DUE
+from tests.position_fixture import force_update_position
 
 
 def _cfg(mult=3.0, max_hold_hours=72.0, max_hold_days=90, stop=2.0, tp=4.0):
@@ -79,7 +80,6 @@ def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
     from aletheia.storage.repositories import (
         _select_one,
         list_audit_events,
-        update_position,
     )
     import aletheia.agent_runtime.pi_daemon as pd
 
@@ -108,7 +108,7 @@ def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
 
     # A completed review extends the horizon into the future and owns the
     # durable acknowledgement for the horizon that was just reviewed.
-    update_position("h1", expected_horizon_hours=24.0)
+    force_update_position("h1", expected_horizon_hours=24.0)
     assert pm.acknowledge_horizon_review(["h1"]) == ["h1"]
     assert _select_one("positions", "h1")["horizon_wake_sent_at"] is not None
 
@@ -118,7 +118,7 @@ def test_extended_horizon_ack_waits_until_new_due_time_then_rearms(monkeypatch):
 
     # Once the extended horizon itself becomes due, its older acknowledgement
     # cannot permanently suppress the next mandatory review.
-    update_position(
+    force_update_position(
         "h1",
         opened_at=(datetime.now(timezone.utc) - timedelta(hours=25)).isoformat(),
     )
@@ -209,7 +209,7 @@ def test_due_ack_with_durable_pending_close_claim_is_not_rearmed(monkeypatch):
 
 def test_concurrent_future_extension_wins_before_legacy_ack_rearm(monkeypatch):
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import _select_one, update_position
+    from aletheia.storage.repositories import _select_one
     import aletheia.agent_runtime.pi_daemon as pd
 
     opened = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
@@ -221,7 +221,7 @@ def test_concurrent_future_extension_wins_before_legacy_ack_rearm(monkeypatch):
         (opened, acknowledged),
     )
     stale_due_row = _select_one("positions", "h-race")
-    update_position("h-race", expected_horizon_hours=24.0)
+    force_update_position("h-race", expected_horizon_hours=24.0)
     delivered = []
     monkeypatch.setattr(
         pd,

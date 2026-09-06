@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 from types import SimpleNamespace
 
@@ -704,7 +706,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         "4h",
     ) == []
 
-    repo.update_position(
+    force_update_position(
         "causal-loss-position-0",
         closed_at="2026-08-16T01:00:00+00:00",
     )

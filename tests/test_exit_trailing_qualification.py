@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -61,7 +63,7 @@ def _close(
     eligible: bool,
     closed_at: str | None = None,
 ) -> None:
-    repo.update_position(
+    force_update_position(
         position_id,
         status="closed",
         closed_at=closed_at or datetime.now(timezone.utc).isoformat(),

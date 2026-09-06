@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 
@@ -280,7 +282,7 @@ def test_funding_materialization_restores_daily_loss_availability():
     # Funding materializes: gross=-0.2, fees=0.002, funding_cost=0.05 → net=-0.252
     # Must set positions.realized_pnl before writing the ledger entry so that
     # _paper_ledger_snapshot's validity check (p.realized_pnl IS NULL) passes.
-    repo.update_position("pending-settle", realized_pnl=-0.252)
+    force_update_position("pending-settle", realized_pnl=-0.252)
     settle_position_closed("pending-settle", -0.252)
 
     after = authoritative_account_realized_loss("paper_internal")
@@ -402,7 +404,7 @@ def test_delayed_previous_day_settlement_is_not_today_phantom():
 
     ensure_paper_account()
     _orphaned_paper_close("delayed-settlement", -6.0)
-    repo.update_position(
+    force_update_position(
         "delayed-settlement",
         closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
     )
@@ -427,7 +429,7 @@ def test_delayed_previous_day_settlement_with_wrong_amount_remains_unavailable()
 
     ensure_paper_account()
     _orphaned_paper_close("delayed-corrupt-settlement", -6.0)
-    repo.update_position(
+    force_update_position(
         "delayed-corrupt-settlement",
         closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
     )
@@ -464,7 +466,7 @@ def test_unreconciled_invalid_exit_price_evidence_blocks_account_economics():
     from aletheia.storage import repositories as repo
 
     _closed_position("invalid-exit", 4326.3885071)
-    repo.update_position(
+    force_update_position(
         "invalid-exit",
         realized_pnl=None,
         outcome_eligible=False,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -367,7 +369,7 @@ def test_absent_recovery_refuses_changed_local_claim_after_evidence(monkeypatch)
     monkeypatch.setattr(pcr, "_exchange_open_order_ids", lambda order: set())
 
     def mutate_claim(_order):
-        repo.update_position(
+        force_update_position(
             "pos-claim-changed", pending_close_status="replaced_by_owner"
         )
         return []

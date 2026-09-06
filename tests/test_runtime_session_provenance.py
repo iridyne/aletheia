@@ -24,6 +24,8 @@ import sqlite3
 
 import pytest
 
+from tests.position_fixture import force_update_position
+
 from aletheia.config.schema import AletheiaConfig
 from aletheia.config.loader import save_config, _invalidate_config_cache
 
@@ -291,7 +293,7 @@ def test_position_open_and_close_carry_different_sessions(tmp_path, monkeypatch)
     b = rs.start_runtime_session()
     assert a["session_id"] != b["session_id"]
     prov = rs.current_close_provenance()
-    repo.update_position("pos-restart", status="closed", **prov)
+    force_update_position("pos-restart", status="closed", **prov)
 
     row = repo._select_one("positions", "pos-restart")
     assert row["runtime_session_id"] == a["session_id"]          # created by A
@@ -431,7 +433,7 @@ def test_close_provenance_null_when_non_durable(tmp_path, monkeypatch):
 
     prov = rs.current_close_provenance()
     assert prov["closed_runtime_session_id"] is None
-    repo.update_position("pos-close-nondurable", status="closed", **prov)
+    force_update_position("pos-close-nondurable", status="closed", **prov)
 
     row = repo._select_one("positions", "pos-close-nondurable")
     assert row["runtime_session_id"] == a["session_id"]     # open provenance intact

@@ -9,6 +9,8 @@ import sqlite3
 
 import pytest
 
+from tests.position_fixture import force_update_position
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
@@ -292,7 +294,7 @@ def test_close_direct_position_identity_requires_terminal_position(
     assert first["inconclusive"] == 1
     assert repo.get_order(order.id)["status"] == "materialization_missing"
 
-    repo.update_position(position.id, status="closed")
+    force_update_position(position.id, status="closed")
     second = reconcile()
 
     assert second["filled"] == 1
