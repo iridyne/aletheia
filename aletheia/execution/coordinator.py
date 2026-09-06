@@ -24,7 +24,6 @@ from aletheia.storage.repositories import (
     transaction,
     transition_entry_plan,
     transition_order,
-    update_position,
 )
 from aletheia.storage.sqlite import get_db
 from aletheia.trust.uta_qualification import require_uta_mutation_qualification
@@ -474,7 +473,7 @@ def place_protection(position_id: str) -> dict[str, str]:
         except Exception:
             continue
     if placed:
-        repo.update_position(
+        repo.update_open_position_exit_plan(
             position_id,
             exchange_tpsl_order_id=json.dumps(placed, sort_keys=True),
         )
@@ -517,7 +516,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     except Exception:
         return False
     identifiers["sl"] = new_stop
-    repo.update_position(
+    repo.update_open_position_exit_plan(
         position_id,
         exchange_tpsl_order_id=json.dumps(identifiers, sort_keys=True),
     )

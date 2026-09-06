@@ -38,7 +38,7 @@ from aletheia.storage.repositories import (
     claim_position_close,
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
-    insert_order, insert_fill, insert_position, update_position,
+    insert_order, insert_fill, insert_position,
     update_position_close_claim,
     transition_order, transaction,
 )

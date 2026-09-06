@@ -51,7 +51,7 @@ from aletheia.storage.repositories import (
     transition_order,
     update_order_metadata,
     update_position_close_claim,
-    update_position,
+    update_open_position_exit_plan,
 )
 from aletheia.storage.sqlite import get_db
 
@@ -874,7 +874,7 @@ def _try_place_tpsl(
             logger.warning("TPSL TP placement failed for %s: %s", position_id, type(e).__name__)
 
     if tpsl_ids:
-        update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+        update_open_position_exit_plan(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
 
 
 def _try_cancel_tpsl(client: BitgetClient, exchange_symbol: str, tpsl_json: str) -> None:
@@ -936,6 +936,6 @@ def replace_exchange_stop(position_id: str, new_stop_price: float) -> None:
             )
         )
         tpsl_ids["sl"] = new_sl_id
-        update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+        update_open_position_exit_plan(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
     except Exception as e:
         logger.warning("replace SL for %s failed: %s", position_id, type(e).__name__)

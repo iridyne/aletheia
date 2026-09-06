@@ -205,7 +205,7 @@ def _activate_paper_position(
     )
     with repo.transaction(immediate=True):
         repo.append_position_exit_plan_version(plan, expected_effective_at=None)
-        repo.update_position(
+        repo.update_open_position_exit_plan(
             position_id,
             stop_price=resolved.stop_price,
             take_profit_price=resolved.target_price,
@@ -305,7 +305,7 @@ def persist_position_exit_plan(
         with repo.transaction(immediate=True):
             save_exit_plan(position_id, plan)
             if updates:
-                repo.update_position(position_id, **updates)
+                repo.update_open_position_exit_plan(position_id, **updates)
         return plan
     if state["status"] not in {"active", "gap"}:
         raise ValueError(f"ExitPlan cannot change after protection {state['status']}")
@@ -366,14 +366,14 @@ def persist_position_exit_plan(
             immutable,
             expected_effective_at=position.get("exit_plan_effective_at"),
         )
-        repo.update_position(position_id, **stored_plan.to_columns())
+        repo.update_open_position_exit_plan(position_id, **stored_plan.to_columns())
         updates = dict(extra_position_updates or {})
         if exit_limit_price is not _UNSET:
             updates["exit_limit_price"] = resolved_limit
         if exit_limit_source is not _UNSET:
             updates["exit_limit_source"] = resolved_source
         if updates:
-            repo.update_position(position_id, **updates)
+            repo.update_open_position_exit_plan(position_id, **updates)
     return stored_plan
 
 

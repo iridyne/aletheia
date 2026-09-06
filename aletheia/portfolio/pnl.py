@@ -13,7 +13,9 @@ logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
     list_all_open_positions,
     insert_portfolio_snapshot,
-    update_position,
+    update_closed_position_settlement,
+    update_open_position_materialization,
+    update_open_position_observation,
     list_market_snapshots,
 )
 
@@ -501,7 +503,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             _persist_fields: dict = {"unrealized_pnl": upnl, "unrealized_pnl_source": upnl_source}
             if exact_mark is not None:
                 _persist_fields["current_price"] = exact_mark
-            update_position(p["id"], **_persist_fields)
+            update_open_position_observation(p["id"], **_persist_fields)
         rec = dict(p)
         rec["current_price"] = price
         rec["unrealized_pnl"] = upnl
@@ -614,7 +616,9 @@ def persist_exit_reasoning(
         is_ai_judgment=is_ai_judgment,
         trigger=trigger,
     )
-    update_position(position_id, exit_reasoning=json.dumps(payload, sort_keys=True))
+    update_closed_position_settlement(
+        position_id, exit_reasoning=json.dumps(payload, sort_keys=True)
+    )
     return True
 
 
@@ -1174,7 +1178,9 @@ def reduce_position(
     # position stays OPEN. Both writes in one transaction so a crash cannot leave the
     # position shrunk with no close event (or a close event with a stale quantity).
     with repo.transaction():
-        update_position(position_id, quantity=new_qty, entry_fee=remaining_entry_fee)
+        update_open_position_materialization(
+            position_id, quantity=new_qty, entry_fee=remaining_entry_fee
+        )
         repo.insert_position_close_event(
             {
                 "id": new_id(),

@@ -555,7 +555,7 @@ def _materialize_partial_close_accounting(
             )
 
     new_quantity = round(old_quantity - quantity, 12)
-    repo.update_position(
+    repo.update_open_position_materialization(
         position["id"],
         quantity=new_quantity,
         entry_fee=remaining_entry_fee,
@@ -903,7 +903,7 @@ def materialize_bitget_entry(
                 _exit_intent["stop_source"] = proposal["stop_source"]
             if _exit_intent:
                 _exit_intent["exit_plan_version"] = 1
-                repo.update_position(position_id, **_exit_intent)
+                repo.update_open_position_exit_plan(position_id, **_exit_intent)
         else:
             if position.get("status") != "open":
                 raise MaterializationIntegrityError("entry fill maps to a non-open Position")
@@ -990,7 +990,17 @@ def materialize_bitget_entry(
                         int(position_leverage),
                         order["symbol"],
                     )
-                repo.update_position(position_id, **update_fields)
+                exit_fields = {
+                    name: update_fields.pop(name)
+                    for name in tuple(update_fields)
+                    if name in {
+                        "stop_price", "expected_horizon_hours", "stop_source",
+                        "exit_plan_version",
+                    }
+                }
+                repo.update_open_position_materialization(position_id, **update_fields)
+                if exit_fields:
+                    repo.update_open_position_exit_plan(position_id, **exit_fields)
 
         requested_quantity = float(order["quantity"])
         if abs(exchange_quantity - requested_quantity) <= tolerance:

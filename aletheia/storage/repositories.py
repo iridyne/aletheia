@@ -3919,12 +3919,99 @@ def insert_position(p: Position) -> None:
     _insert("positions", _stamp_provenance(p.model_dump()))
 
 
-def update_position(pid: str, **kwargs) -> None:
-    _update("positions", pid, kwargs)
-
-
 class PositionClaimConflict(RuntimeError):
     pass
+
+
+def _update_owned_position_fields(
+    position_id: str,
+    fields: Mapping[str, object],
+    *,
+    allowed: frozenset[str],
+    owner: str,
+    required_status: str,
+) -> None:
+    unknown = set(fields) - allowed
+    if unknown or not fields:
+        detail = ",".join(sorted(unknown)) if unknown else "empty"
+        raise ValueError(f"invalid_{owner}_position_fields:{detail}")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status=?",
+        (*fields.values(), position_id, required_status),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"{owner}_position_conflict:{position_id}")
+
+
+_POSITION_MATERIALIZATION_FIELDS = frozenset({
+    "quantity", "entry_price", "current_price", "entry_fee", "slippage_cost",
+    "liquidation_price", "entry_fill_verified", "entry_price_source", "leverage",
+    "trade_school", "reconciliation_identity", "reconciliation_evidence",
+})
+
+
+def update_open_position_materialization(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_MATERIALIZATION_FIELDS,
+        owner="materialization",
+        required_status="open",
+    )
+
+
+_POSITION_EXIT_PLAN_FIELDS = frozenset({
+    "stop_price", "take_profit_price", "expected_horizon_hours", "trailing_json",
+    "thesis_invalidation_json", "stop_source", "exit_plan_version",
+    "exit_plan_effective_at", "exit_limit_price", "exit_limit_source",
+    "exchange_tpsl_order_id", "trail_high_water", "exit_reasoning",
+})
+
+
+def update_open_position_exit_plan(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_EXIT_PLAN_FIELDS,
+        owner="exit_plan",
+        required_status="open",
+    )
+
+
+_POSITION_OBSERVATION_FIELDS = frozenset({
+    "current_price", "unrealized_pnl", "unrealized_pnl_source",
+    "horizon_wake_sent_at", "last_market_signal_action",
+    "last_market_signal_reason", "last_market_signal_at",
+    "last_market_signal_evidence",
+})
+
+
+def update_open_position_observation(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_OBSERVATION_FIELDS,
+        owner="observation",
+        required_status="open",
+    )
+
+
+_POSITION_SETTLEMENT_FIELDS = frozenset({
+    "realized_pnl", "funding_cost", "funding_source", "exit_reasoning",
+    "exit_price_source", "exit_fill_verified", "outcome_eligible",
+    "outcome_exclusion_reason", "reconciliation_evidence",
+})
+
+
+def update_closed_position_settlement(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_SETTLEMENT_FIELDS,
+        owner="settlement",
+        required_status="closed",
+    )
 
 
 _POSITION_CLOSE_FIELDS = frozenset({

@@ -15,7 +15,8 @@ from aletheia.storage.repositories import (
     update_order_metadata,
     insert_fill,
     insert_position,
-    update_position,
+    update_open_position_exit_plan,
+    update_open_position_materialization,
 )
 from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
@@ -520,7 +521,14 @@ def _materialize_paper_entry(
                     extra_position_updates=update_kwargs,
                 )
             else:
-                update_position(existing["id"], **update_kwargs)
+                exit_fields = {
+                    name: update_kwargs.pop(name)
+                    for name in tuple(update_kwargs)
+                    if name == "stop_price"
+                }
+                update_open_position_materialization(existing["id"], **update_kwargs)
+                if exit_fields:
+                    update_open_position_exit_plan(existing["id"], **exit_fields)
             position_id = existing["id"]
         else:
             # Protection belongs to the immutable Proposal/Risk authority. The

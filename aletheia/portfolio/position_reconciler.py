@@ -987,7 +987,7 @@ def _reconcile_managed_leverage(
             },
             "projection_source": "exact_managed_exchange_view",
         }
-        repo.update_position(
+        repo.update_open_position_materialization(
             position_id,
             leverage=leverage,
             reconciliation_identity=_merged_json(
@@ -1094,7 +1094,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     """
     from aletheia.storage.models import TradeProposal, Order, Position
     from aletheia.storage.repositories import (
-        transaction, insert_trade_proposal, insert_order, insert_position, update_position,
+        transaction, insert_trade_proposal, insert_order, insert_position,
+        update_open_position_exit_plan,
     )
     from aletheia.files.jsonl import write_audit
 
@@ -1300,7 +1301,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         insert_trade_proposal(proposal)
         insert_order(order)
         insert_position(position)
-        update_position(
+        update_open_position_exit_plan(
             position.id,
             stop_source="adopted_default_pct",
             exit_plan_version=1,

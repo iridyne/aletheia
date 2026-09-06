@@ -42,7 +42,7 @@ from aletheia.storage.repositories import (
     claim_position_close,
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
-    insert_order, insert_fill, insert_position, update_position,
+    insert_order, insert_fill, insert_position, update_open_position_exit_plan,
     update_position_close_claim,
     transition_order, transaction,
 )
@@ -521,7 +521,7 @@ def place_okx_protective_orders(
     caller's job (execution.stops.place_exchange_protective_orders).
     """
     import json as _json
-    from aletheia.storage.repositories import update_position
+    from aletheia.storage.repositories import update_open_position_exit_plan
 
     close_side = "sell" if direction in ("long", "buy") else "buy"
     mode = "demo" if execution_mode == "okx_demo" else "live"
@@ -546,7 +546,7 @@ def place_okx_protective_orders(
         return {}
 
     if ids:
-        update_position(position_id, exchange_tpsl_order_id=_json.dumps(ids))
+        update_open_position_exit_plan(position_id, exchange_tpsl_order_id=_json.dumps(ids))
         logger.info("OKX protective orders placed for %s %s: %s", symbol, direction, ids)
     return ids
 
@@ -599,7 +599,9 @@ def replace_okx_exchange_stop(position_id: str, new_stop_price: float) -> None:
             )) or {}
             if new_ids.get("sl"):
                 tpsl_ids["sl"] = new_ids["sl"]
-                update_position(position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids))
+                update_open_position_exit_plan(
+                    position_id, exchange_tpsl_order_id=_json.dumps(tpsl_ids)
+                )
         finally:
             try:
                 _run_coro(client.close())
