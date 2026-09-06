@@ -294,6 +294,22 @@ export interface AgentRun {
   cost_estimate: number | null
 }
 
+export interface AgentRunToolCall {
+  id?: string | number
+  tool_name?: string
+  tool_class?: string
+  permitted?: boolean
+  created_at?: string
+}
+
+export interface AgentRunStep {
+  id?: string | number
+  step_number?: number
+  action?: string
+  input_data?: unknown
+  output_data?: unknown
+}
+
 export interface MarketSnapshot {
   id: string
   symbol: string

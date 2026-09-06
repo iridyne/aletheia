@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { createColumnHelper } from '@tanstack/react-table'
 import { ApiError, api } from '../api/client'
-import type { AgentRun, Opportunity } from '../types'
+import type { AgentRun, AgentRunStep, AgentRunToolCall, Opportunity } from '../types'
 import { DataTable, StatusBadge } from '../components/DataTable'
 import { DataStateMessage, type DataState } from '../components/DataState'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
@@ -382,8 +382,8 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
     enabled: !!runId,
   })
 
-  const toolCalls = (toolCallsQuery.data ?? []) as any[]
-  const steps = (stepsQuery.data ?? []) as any[]
+  const toolCalls: AgentRunToolCall[] = toolCallsQuery.data ?? []
+  const steps: AgentRunStep[] = stepsQuery.data ?? []
   const toolCallsState = resolveArrayReadState(
     toolCallsQuery.data,
     toolCallsQuery.isPending,
@@ -422,7 +422,7 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
                 <tr><th>Tool</th><th>Class</th><th>Permitted</th><th>Time</th></tr>
               </thead>
               <tbody>
-                {toolCalls.map((tc: any, i: number) => (
+                {toolCalls.map((tc, i) => (
                   <tr key={tc.id || i}>
                     <td className="mono">{tc.tool_name}</td>
                     <td>{humanize(tc.tool_class)}</td>
@@ -458,7 +458,7 @@ function ReasoningStepsSection({ runId, fallback }: { runId: string; fallback: s
                 <tr><th>Step / Action</th><th>Input</th><th>Output</th></tr>
               </thead>
               <tbody>
-                {steps.map((s: any, i: number) => (
+                {steps.map((s, i) => (
                   <tr key={s.id || i}>
                     <td className="mono">{s.step_number ?? i + 1}. {s.action || '—'}</td>
                     <td className="mono text-muted">{s.input_data ? String(s.input_data).slice(0, 80) : '—'}</td>

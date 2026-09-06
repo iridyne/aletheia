@@ -76,6 +76,36 @@ type CompactEntryPlan = {
   thesis: string | null
 }
 
+interface ActivityRecord {
+  id?: string | number
+  kind?: 'run' | 'entry_plan' | 'opportunity' | 'proposal' | string
+  timestamp?: string
+  agent?: string
+  agent_name?: string
+  trigger_type?: string
+  status?: string
+  headline?: string
+  started_at?: string
+  ended_at?: string
+  model_provider?: string
+  outputs_created?: string
+  errors?: string
+  plan_id?: string
+  candidate_id?: string
+  symbol?: string
+  market_type?: string
+  market?: string
+  direction?: string
+  direction_bias?: string
+  execution_mode?: string
+  thesis?: string
+  excerpt?: string
+  confidence?: string
+  confidence_score?: number | null
+  source_agent?: string
+  agent_rationale?: string
+}
+
 type FeedItem = {
   key: string
   ts: string
@@ -205,11 +235,12 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
   }, [])
 
   const items: FeedItem[] = []
-  const activity = (bootstrap?.activity || []) as Array<Record<string, any>>
+  const activity = (bootstrap?.activity || []) as ActivityRecord[]
 
   // ----- ops/both track: agent runs -----
   if (mode === 'ops' || mode === 'both') {
-    for (const r of activity.filter(item => item.kind === 'run') as any[]) {
+    for (const r of activity) {
+      if (r.kind !== 'run') continue
       items.push({
         key: `run-${r.id}`,
         ts: String(r.timestamp || ''),
@@ -234,72 +265,72 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
 
   // ----- narrative/both track: outputs -----
   if (mode === 'narrative' || mode === 'both') {
-    for (const p of activity.filter(item => item.kind === 'entry_plan') as any[]) {
-      items.push({
-        key: `entry-plan-${p.plan_id}`,
-        ts: String(p.timestamp || ''),
-        kind: 'entry_plan',
-        agent: 'system_operator',
-        icon: '📐',
-        status: p.status,
-        headline: p.headline || `Entry Plan: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)}`,
-        detail: p.thesis || p.excerpt || undefined,
-        entryPlan: {
-          id: p.plan_id,
-          candidate_id: p.candidate_id,
-          symbol: p.symbol || null,
-          market_type: p.market_type || null,
-          direction: p.direction || null,
-          execution_mode: p.execution_mode || null,
-          status: p.status || null,
-          thesis: p.thesis || p.excerpt || null,
-        },
-      })
-    }
-    for (const o of activity.filter(item => item.kind === 'opportunity') as any[]) {
-      const score = o.confidence_score != null
-        ? ` (${fmtOpportunityScore(o.agent, o.confidence_score, null)})`
-        : ''
-      items.push({
-        key: `opp-${o.id}`,
-        ts: String(o.timestamp || ''),
-        kind: 'opportunity',
-        agent: o.agent || 'agent',
-        icon: agentIcon(o.agent || ''),
-        headline: o.headline || `${o.agent || 'Agent'} found ${o.direction_bias || 'unknown'} opportunity on ${fmtSymbol(o.symbol, o.market)}${score}`,
-        detail: o.excerpt || undefined,
-        opportunity: {
-          symbol: o.symbol || null,
-          market: o.market || null,
-          direction_bias: o.direction_bias || null,
-          thesis: o.thesis || o.excerpt || null,
-          excerpt: o.excerpt || null,
-          confidence: o.confidence || null,
-          confidence_score: typeof o.confidence_score === 'number' ? o.confidence_score : null,
-          source_agent: o.source_agent || o.agent || null,
-        },
-      })
-    }
-    for (const p of activity.filter(item => item.kind === 'proposal') as any[]) {
-      if (p.status === 'pending') continue
-      items.push({
-        key: `prop-${p.id}`,
-        ts: String(p.timestamp || ''),
-        kind: 'proposal',
-        agent: 'strategy',
-        icon: '📐',
-        status: p.status,
-        headline: p.headline || `Proposal: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode || 'unknown'})`,
-        detail: p.excerpt || undefined,
-        proposal: {
-          symbol: p.symbol || null,
-          market_type: p.market_type || null,
-          direction: p.direction || null,
-          execution_mode: p.execution_mode || null,
-          agent_rationale: p.agent_rationale || p.excerpt || null,
-          status: p.status || null,
-        },
-      })
+    for (const p of activity) {
+      if (p.kind === 'entry_plan') {
+        items.push({
+          key: `entry-plan-${p.plan_id}`,
+          ts: String(p.timestamp || ''),
+          kind: 'entry_plan',
+          agent: 'system_operator',
+          icon: '📐',
+          status: p.status,
+          headline: p.headline || `Entry Plan: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)}`,
+          detail: p.thesis || p.excerpt || undefined,
+          entryPlan: {
+            id: String(p.plan_id || ''),
+            candidate_id: String(p.candidate_id || ''),
+            symbol: p.symbol || null,
+            market_type: p.market_type || null,
+            direction: p.direction || null,
+            execution_mode: p.execution_mode || null,
+            status: p.status || null,
+            thesis: p.thesis || p.excerpt || null,
+          },
+        })
+      } else if (p.kind === 'opportunity') {
+        const score = p.confidence_score != null
+          ? ` (${fmtOpportunityScore(p.agent, p.confidence_score, null)})`
+          : ''
+        items.push({
+          key: `opp-${p.id}`,
+          ts: String(p.timestamp || ''),
+          kind: 'opportunity',
+          agent: p.agent || 'agent',
+          icon: agentIcon(p.agent || ''),
+          headline: p.headline || `${p.agent || 'Agent'} found ${p.direction_bias || 'unknown'} opportunity on ${fmtSymbol(p.symbol, p.market)}${score}`,
+          detail: p.excerpt || undefined,
+          opportunity: {
+            symbol: p.symbol || null,
+            market: p.market || null,
+            direction_bias: p.direction_bias || null,
+            thesis: p.thesis || p.excerpt || null,
+            excerpt: p.excerpt || null,
+            confidence: p.confidence || null,
+            confidence_score: typeof p.confidence_score === 'number' ? p.confidence_score : null,
+            source_agent: p.source_agent || p.agent || null,
+          },
+        })
+      } else if (p.kind === 'proposal') {
+        if (p.status === 'pending') continue
+        items.push({
+          key: `prop-${p.id}`,
+          ts: String(p.timestamp || ''),
+          kind: 'proposal',
+          agent: 'strategy',
+          icon: '📐',
+          status: p.status,
+          headline: p.headline || `Proposal: ${p.direction || 'unknown'} ${fmtSymbol(p.symbol, p.market_type)} (${p.execution_mode || 'unknown'})`,
+          detail: p.excerpt || undefined,
+          proposal: {
+            symbol: p.symbol || null,
+            market_type: p.market_type || null,
+            direction: p.direction || null,
+            execution_mode: p.execution_mode || null,
+            agent_rationale: p.agent_rationale || p.excerpt || null,
+            status: p.status || null,
+          },
+        })
+      }
     }
   }
 
