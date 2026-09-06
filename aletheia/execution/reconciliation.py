@@ -28,7 +28,7 @@ from aletheia.execution.exchange_materialization import (
 )
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
-from aletheia.storage.repositories import update_order
+from aletheia.storage.repositories import transition_order, update_order_metadata
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 from aletheia.uta.compat import instrument_from_local, scope_from_local
@@ -1180,7 +1180,7 @@ def reconcile() -> dict:
                 type(exc).__name__,
             )
             try:
-                update_order(
+                transition_order(
                     order["id"],
                     status="materialization_missing",
                     error_reason="exchange_fill_local_materialization_missing",
@@ -1423,7 +1423,7 @@ def reconcile() -> dict:
                 }
                 if len(remote_ids) == 1:
                     recovered_id = next(iter(remote_ids))
-                    update_order(order["id"], exchange_order_id=recovered_id)
+                    update_order_metadata(order["id"], exchange_order_id=recovered_id)
                     order["exchange_order_id"] = recovered_id
                 elif len(remote_ids) > 1:
                     inconclusive += 1
@@ -1454,7 +1454,7 @@ def reconcile() -> dict:
                     if detail and str(detail.get("clientOid") or "") == str(order["client_order_id"]):
                         recovered_id = str(detail.get("orderId") or "").strip()
                         if recovered_id:
-                            update_order(order["id"], exchange_order_id=recovered_id)
+                            update_order_metadata(order["id"], exchange_order_id=recovered_id)
                             order["exchange_order_id"] = recovered_id
 
             is_close_order = _is_close_order(order)
@@ -1637,7 +1637,7 @@ def reconcile() -> dict:
                         type(exc).__name__,
                     )
                     try:
-                        update_order(
+                        transition_order(
                             order["id"],
                             status="materialization_missing",
                             error_reason="exchange_fill_local_materialization_missing",
@@ -1670,7 +1670,7 @@ def reconcile() -> dict:
                     continue
                 if result.state == "partially_filled":
                     if ioc_terminal:
-                        update_order(
+                        transition_order(
                             order["id"],
                             status="cancelled",
                             error_reason="ioc_remainder_terminal",
@@ -1689,7 +1689,7 @@ def reconcile() -> dict:
                     )
                     continue
                 if result.state == "evidence_missing" and ioc_terminal:
-                    update_order(
+                    transition_order(
                         order["id"],
                         status="cancelled",
                         error_reason="ioc_zero_fill_terminal",
@@ -1722,7 +1722,7 @@ def reconcile() -> dict:
                 and abs(reported_quantity - requested_quantity) <= tolerance
             )
             if complete and _local_fill_chain_materialized(order):
-                update_order(order["id"], status="filled")
+                transition_order(order["id"], status="filled")
                 filled += 1
                 _write_reconcile_event(
                     order, state="filled", reason="legacy_local_chain_verified"

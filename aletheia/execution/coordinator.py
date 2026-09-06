@@ -22,7 +22,7 @@ from aletheia.storage.repositories import (
     insert_order,
     transaction,
     transition_entry_plan,
-    update_order,
+    transition_order,
     update_position,
 )
 from aletheia.storage.sqlite import get_db
@@ -442,7 +442,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
         report = _run(_call_and_close(adapter, "submit_order", command))
     except Exception:
         if adapter is None or command is None:
-            update_order(order.id, status="error", error_reason="protection_not_sent")
+            transition_order(order.id, status="error", error_reason="protection_not_sent")
             raise
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
     acknowledgement = _apply_report(order, report)

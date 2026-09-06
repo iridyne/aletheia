@@ -532,7 +532,7 @@ def _seed_closed_pending(*, suffix: str):
         opened_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_position(position)
-    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_order_metadata(entry_order.id, position_id=position.id)
     close_order = Order(
         id=f"close-closed-pending-{suffix}",
         proposal_id=proposal.id,
@@ -751,9 +751,9 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
 
     position, close_order = _seed_closed_pending(suffix=defect)
     if defect == "missing_backlink":
-        repo.update_order(close_order.id, position_id=None)
+        repo.update_order_metadata(close_order.id, position_id=None)
     elif defect == "quantity_mismatch":
-        repo.update_order(close_order.id, quantity=0.5)
+        repo.update_order_metadata(close_order.id, quantity=0.5)
     elif defect == "unverified":
         repo.update_position(position.id, exit_fill_verified=False)
     elif defect == "wrong_price_source":

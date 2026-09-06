@@ -179,7 +179,7 @@ def _materialize_observed_close_chain(
                 filled_at=filled_at,
             ))
 
-        repo.update_order(
+        repo.transition_order(
             local_order_id,
             position_id=str(position["id"]),
             status="filled",

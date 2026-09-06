@@ -1115,7 +1115,7 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
     repo.insert_position(position)
     monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
-    repo.update_order(str(position.order_id), position_id=None)
+    repo.update_order_metadata(str(position.order_id), position_id=None)
 
     hook_calls = []
     monkeypatch.setattr(

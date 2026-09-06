@@ -254,11 +254,7 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
         # The network verification for a plain cancel already happened in _decide
         # (outside any lock); we deliberately do not re-query the venue while
         # holding the writer slot. The local guards re-checked above are enough.
-        db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
-            (reason_code, oid, fresh["status"]),
-        )
+        repo.transition_order(oid, status="cancelled", error_reason=reason_code)
         before = {"status": fresh["status"]}
         if cleared_position_id:
             before["pending_close_position_id"] = cleared_position_id

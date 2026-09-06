@@ -38,7 +38,7 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
     insert_order, insert_fill, insert_position, update_position,
-    update_order, transaction,
+    transition_order, transaction,
 )
 from aletheia.storage.sqlite import get_db
 
@@ -564,7 +564,7 @@ def close_testnet_position(
         # The durable claim exists, but no exchange method has run. Record a
         # known pre-submission failure so a later close is not suppressed.
         with transaction():
-            update_order(
+            transition_order(
                 close_order.id,
                 status="error",
                 error_reason="close_client_initialization_failed_before_submission",

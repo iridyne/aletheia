@@ -370,7 +370,7 @@ def test_exchange_ack_cas_accepts_pending_and_rejects_conflicting_identity(
     assert applied["order_status"] == "submitted"
     assert applied["exchange_order_id"] == "EX-NORMAL-ACK"
 
-    repo.update_order(pending.id, status="filled")
+    repo.transition_order(pending.id, status="filled")
     with pytest.raises(ValueError, match="identity conflicts"):
         repo.finalize_exchange_acknowledgement(
             pending.id,

@@ -47,7 +47,8 @@ from aletheia.storage.repositories import (
     get_trade_proposal,
     insert_order,
     transaction,
-    update_order,
+    transition_order,
+    update_order_metadata,
     update_position,
 )
 from aletheia.storage.sqlite import get_db
@@ -335,7 +336,7 @@ def execute_live_order(
         # No exchange method has run yet, so this is a known pre-submission
         # failure.  Do not strand a retry-suppressing ``pending`` Order merely
         # because credentials/client setup could not be loaded.
-        update_order(
+        transition_order(
             order.id,
             status="error",
             error_reason="order_client_initialization_failed_before_submission",
@@ -351,7 +352,7 @@ def execute_live_order(
         except Exception:
             # This happens before submission, so the outcome is known: no
             # exchange order exists.  Persist a stable, non-sensitive reason.
-            update_order(
+            transition_order(
                 order.id,
                 status="error",
                 error_reason="margin_preparation_failed_before_submission",
@@ -576,7 +577,7 @@ def close_demo_position(
         # The close claim was persisted before client construction. Since no
         # exchange call began, release its retry suppression as a known error.
         with transaction():
-            update_order(
+            transition_order(
                 close_order.id,
                 status="error",
                 error_reason="close_client_initialization_failed_before_submission",
@@ -651,7 +652,7 @@ def close_demo_position(
         )
         if quantity < remaining_quantity:
             with transaction():
-                update_order(close_order.id, quantity=quantity)
+                update_order_metadata(close_order.id, quantity=quantity)
             logger.info(
                 "clipped Bitget close for %s: submitting %s of %s remaining (venue match-cap cancel history)",
                 position_id,

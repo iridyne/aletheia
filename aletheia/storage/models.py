@@ -576,6 +576,22 @@ class RiskDecision(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
 
 
+OrderStatus = Literal[
+    "pending",
+    "open",
+    "submitted",
+    "submission_unknown",
+    "submission_rejected",
+    "materialization_missing",
+    "partial",
+    "partially_filled",
+    "filled",
+    "overfilled",
+    "cancelled",
+    "error",
+]
+
+
 class Order(_Provenanced):
     id: str = Field(default_factory=new_id)
     proposal_id: str | None = None
@@ -617,7 +633,7 @@ class Order(_Provenanced):
     # Optional trade_decision_rationale.v1 JSON captured with a pending exchange
     # close claim. The Position publishes it only after verified settlement.
     close_reasoning: str | None = None
-    status: str = "pending"
+    status: OrderStatus = "pending"
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None

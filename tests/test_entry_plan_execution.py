@@ -1176,6 +1176,17 @@ def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     return plan, order
 
 
+def test_order_and_entry_plan_transition_roll_back_together(monkeypatch):
+    plan, order = _persist_ordered_plan()
+    monkeypatch.setattr(repo, "transition_entry_plan", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(repo.OrderTransitionConflict):
+        repo.transition_order(order.id, status="filled")
+
+    assert repo.get_order(order.id)["status"] == "submitted"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+
+
 def test_paper_broker_rejects_forged_entry_plan_limit_authority():
     from aletheia.execution.paper_broker import execute_paper_order
 
@@ -2133,7 +2144,7 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
 
     def fill_during_cancel(**_kwargs):
         repo.insert_fill(Fill(order_id=order.id, fill_price=100, fill_quantity=1, fee_source="reconciled"))
-        repo.update_order(order.id, status="filled")
+        repo.transition_order(order.id, status="filled")
         return {"cancelled": True, "order_id": "exchange-1"}
 
     monkeypatch.setattr(bitget_broker, "cancel_entry_order", fill_during_cancel)
@@ -2180,7 +2191,7 @@ def test_gateway_cancel_recovers_exact_entry_order_relation():
             fee_source="reconciled",
         )
     )
-    repo.update_order(order.id, status="filled")
+    repo.transition_order(order.id, status="filled")
 
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
 
@@ -2220,7 +2231,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         assert repo.get_order(order_id)["status"] == "submitted"
         materialized.extend(rows)
         repo.insert_fill(Fill(order_id=order_id, fill_price=100, fill_quantity=0.5, fee_source="reconciled"))
-        repo.update_order(order_id, status="partially_filled")
+        repo.transition_order(order_id, status="partially_filled")
 
     monkeypatch.setattr(manager, "query_uta", exact_order)
     monkeypatch.setattr(
@@ -2321,13 +2332,13 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     from aletheia.uta.models import OrderLifecycle
 
     plan, order = _persist_ordered_plan()
-    repo.update_order(
+    repo.update_order_metadata(
         order.id,
-        source="native",
         order_tactic="OPPOSING_BBO_IOC",
         time_in_force="ioc",
-        status=starting_status,
     )
+    repo.execute_write("UPDATE orders SET source='native' WHERE id=?", (order.id,))
+    repo.transition_order(order.id, status=starting_status)
 
     async def no_rows(self, **_kwargs):
         return []
@@ -2378,12 +2389,12 @@ def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
     from aletheia.uta.models import OrderLifecycle
 
     plan, order = _persist_ordered_plan()
-    repo.update_order(
+    repo.update_order_metadata(
         order.id,
-        source="native",
         order_tactic="OPPOSING_BBO_IOC",
         time_in_force="ioc",
     )
+    repo.execute_write("UPDATE orders SET source='native' WHERE id=?", (order.id,))
 
     async def no_rows(self, **_kwargs):
         return []

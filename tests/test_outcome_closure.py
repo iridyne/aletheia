@@ -510,7 +510,7 @@ def _insert_closed_position_via_producer(
         opened_at=opened_iso,
     )
     repo.insert_position(position)
-    repo.update_order(order_id, position_id=position_id)
+    repo.update_order_metadata(order_id, position_id=position_id)
     if local_paper:
         from aletheia.portfolio.paper_account import record_position_opened
 

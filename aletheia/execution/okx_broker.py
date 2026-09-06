@@ -42,7 +42,7 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     find_compatible_open_position,
     insert_order, insert_fill, insert_position, update_position,
-    update_order, transaction,
+    transition_order, transaction,
 )
 from aletheia.storage.sqlite import get_db
 
@@ -713,7 +713,7 @@ def close_okx_position(
         # The durable claim exists, but no exchange method has run. Record a
         # known pre-submission failure so a later close is not suppressed.
         with transaction():
-            update_order(
+            transition_order(
                 close_order.id,
                 status="error",
                 error_reason="close_client_initialization_failed_before_submission",
@@ -911,7 +911,7 @@ def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "oper
             client_oid=f"reduce-{reduce_order.id}",
         )))
     except Exception as e:
-        update_order(reduce_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
+        transition_order(reduce_order.id, status="error", error_reason=clean_error_message(str(e))[:500])
         raise
     finally:
         try:
@@ -921,7 +921,7 @@ def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "oper
 
     exchange_order_id = order_resp.order_id or ""
     if order_resp.status not in ("filled", "partially_filled"):
-        update_order(reduce_order.id, exchange_order_id=exchange_order_id, status="submitted")
+        transition_order(reduce_order.id, exchange_order_id=exchange_order_id, status="submitted")
         return {"order_id": reduce_order.id, "exchange_order_id": exchange_order_id,
                 "status": "submitted", "reduced": False}
 
@@ -929,7 +929,7 @@ def reduce_okx_position(position_id: str, reduce_qty: float, reason: str = "oper
     fill_qty = order_resp.filled_quantity if order_resp.filled_quantity else reduce_qty
     insert_fill(Fill(order_id=reduce_order.id, fill_price=fill_price, fill_quantity=fill_qty,
                      fee=fill_qty * fill_price * _OKX_FEE_RATE))
-    update_order(reduce_order.id, exchange_order_id=exchange_order_id, status="filled",
+    transition_order(reduce_order.id, exchange_order_id=exchange_order_id, status="filled",
                  filled_at=datetime.now(timezone.utc).isoformat())
 
     # Record the reduce-in-place accounting (realize PnL + partial close event + shrink).
