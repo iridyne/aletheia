@@ -105,6 +105,19 @@ class AuditEvent(BaseModel):
     message: str | None = None
 
 
+AgentRunStatus = Literal[
+    "queued",
+    "running",
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "timed_out",
+    "stale",
+    "cancelled",
+    "rejected_queue_full",
+]
+
+
 class AgentRun(BaseModel):
     id: str = Field(default_factory=new_id)
     agent_name: str
@@ -112,7 +125,7 @@ class AgentRun(BaseModel):
     permission_mode: str = "Observe"
     started_at: str = Field(default_factory=_utcnow)
     ended_at: str | None = None
-    status: str = "running"
+    status: AgentRunStatus = "running"
     model_provider: str | None = None
     model_name: str | None = None
     tools_called: str = "[]"

@@ -423,9 +423,8 @@ def get_agents_catalog():
 
 class StartAgentRequest(BaseModel):
     agent_name: str = "market_observer"
-    # Optional caller-supplied key for duplicate-click prevention.  Two requests
-    # with the same idempotency_key and agent_name while the first is still
-    # queued/running will return 409 with the in-flight run_id.
+    # Retained for API compatibility. Admission is stricter: any queued/running
+    # run for this agent returns 409 with the authoritative in-flight run_id.
     idempotency_key: str | None = None
 
 

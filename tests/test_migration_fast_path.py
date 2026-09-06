@@ -284,9 +284,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 71)
+        f"aletheia-sqlite-v{version}" for version in range(2, 72)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v70"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v71"
     connection.close()
 
 
@@ -298,7 +298,9 @@ def test_entry_version_collapse_preserves_historical_rows_and_schema_objects():
 
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    for step in migrations._MIGRATIONS[:-1]:
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v70":
+            break
         step.apply(connection)
     now = "2026-09-04T00:00:00+00:00"
     payload = json.dumps(
@@ -403,8 +405,10 @@ def test_entry_version_collapse_survives_real_order_fk_reference():
     connection = sqlite3.connect(":memory:", isolation_level=None)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
-    # Apply all migrations except v70 to reach v69 schema
-    for step in migrations._MIGRATIONS[:-1]:
+    # Apply all migrations before v70 to reach v69 schema.
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v70":
+            break
         step.apply(connection)
 
     now = "2026-09-04T00:00:00+00:00"
@@ -443,6 +447,51 @@ def test_entry_version_collapse_survives_real_order_fk_reference():
     assert plan["version"] == "entry-plan/v2"
     assert plan["order_id"] == "ord1"
     assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    connection.close()
+
+
+def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v71":
+            break
+        step.apply(connection)
+
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+        "VALUES ('run-1','research_agent','manual','Observe',datetime('now'),'running')"
+    )
+    connection.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) "
+        "VALUES ('run-1','knowledge_item','item-1')"
+    )
+
+    migrations._apply_agent_run_lifecycle_v71(connection)
+
+    assert connection.execute(
+        "SELECT status FROM agent_runs WHERE id='run-1'"
+    ).fetchone()[0] == "stale"
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE agent_runs SET status='invented' WHERE id='run-1'"
+        )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+        "VALUES ('run-2','research_agent','manual','Observe',datetime('now'),'queued')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO agent_runs "
+            "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+            "VALUES ('run-3','research_agent','scheduled','Observe',datetime('now'),'running')"
+        )
     connection.close()
 
 
@@ -827,7 +876,21 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         );
         CREATE TABLE orders (id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
-        CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+            permission_mode TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            model_provider TEXT,
+            model_name TEXT,
+            tools_called TEXT DEFAULT '[]',
+            outputs_created TEXT DEFAULT '[]',
+            errors TEXT DEFAULT '[]',
+            cost_estimate REAL
+        );
         CREATE TABLE agent_run_artifacts (
             run_id TEXT NOT NULL,
             artifact_type TEXT NOT NULL,
@@ -927,8 +990,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260904_0069_entry_version_collapse_v70",
-        "aletheia-sqlite-v70",
+        "20260906_0070_agent_run_lifecycle_v71",
+        "aletheia-sqlite-v71",
     )
     audit_columns = {row[1] for row in connection.execute("PRAGMA table_info(audit_events)")}
     assert {

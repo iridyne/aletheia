@@ -20,6 +20,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
     AgentRun,
     AgentRunArtifact,
+    AgentRunStatus,
     AuditEvent,
     ConditionalEntryAuthorization,
     ExitBreakevenShadowAssignment,
@@ -630,7 +631,57 @@ def latest_mirrored_webhook_delivery_event() -> dict | None:
 # --- Agent Runs ---
 
 
+_AGENT_RUN_ACTIVE_STATUSES = ("queued", "running")
+_AGENT_RUN_TERMINAL_STATUSES = frozenset({
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "timed_out",
+    "stale",
+    "cancelled",
+    "rejected_queue_full",
+})
+_AGENT_RUN_TERMINAL_TRANSITIONS = {
+    "queued": frozenset({"failed", "stale", "cancelled", "rejected_queue_full"}),
+    "running": frozenset({
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "timed_out",
+        "stale",
+        "cancelled",
+    }),
+}
+
+
+def claim_agent_run(run: AgentRun) -> str | None:
+    """Insert one active run or return the exact conflicting run identity."""
+
+    with transaction(immediate=True):
+        existing = get_db().execute(
+            "SELECT id FROM agent_runs WHERE agent_name=? "
+            "AND status IN ('queued','running') LIMIT 1",
+            (run.agent_name,),
+        ).fetchone()
+        if existing is not None:
+            return str(existing["id"])
+        try:
+            _insert("agent_runs", run.model_dump())
+        except sqlite3.IntegrityError:
+            winner = get_db().execute(
+                "SELECT id FROM agent_runs WHERE agent_name=? "
+                "AND status IN ('queued','running') LIMIT 1",
+                (run.agent_name,),
+            ).fetchone()
+            if winner is None:
+                raise
+            return str(winner["id"])
+    return None
+
+
 def insert_agent_run(run: AgentRun) -> None:
+    """Insert historical/test evidence; active Runtime admission uses claim_agent_run."""
+
     _insert("agent_runs", run.model_dump())
 
 
@@ -706,8 +757,62 @@ def rebind_agent_run_pi_decision_artifacts(pending_id: str, final_id: str) -> in
     ).rowcount
 
 
-def update_agent_run(run_id: str, **kwargs) -> None:
-    _update("agent_runs", run_id, kwargs)
+def begin_agent_run(
+    run_id: str,
+    *,
+    permission_mode: str,
+    model_provider: str | None,
+) -> bool:
+    result = execute_write(
+        "UPDATE agent_runs SET status='running', permission_mode=?, model_provider=? "
+        "WHERE id=? AND status='queued'",
+        (permission_mode, model_provider, run_id),
+    )
+    return result.rowcount == 1
+
+
+def finish_agent_run(
+    run_id: str,
+    *,
+    expected_status: AgentRunStatus,
+    status: AgentRunStatus,
+    ended_at: str,
+    outputs_created: str,
+    errors: str,
+    tools_called: str,
+    cost_estimate: float | None,
+    model_name: str | None = None,
+) -> bool:
+    if status not in _AGENT_RUN_TERMINAL_STATUSES:
+        raise ValueError("invalid_agent_run_terminal_status")
+    if status not in _AGENT_RUN_TERMINAL_TRANSITIONS.get(expected_status, ()):
+        raise ValueError("invalid_agent_run_transition")
+    result = execute_write(
+        "UPDATE agent_runs SET status=?, ended_at=?, outputs_created=?, errors=?, "
+        "tools_called=?, cost_estimate=?, model_name=COALESCE(?, model_name) "
+        "WHERE id=? AND status=?",
+        (
+            status,
+            ended_at,
+            outputs_created,
+            errors,
+            tools_called,
+            cost_estimate,
+            model_name,
+            run_id,
+            expected_status,
+        ),
+    )
+    return result.rowcount == 1
+
+
+def mark_agent_run_stale(run_id: str, *, ended_at: str, errors: str) -> bool:
+    result = execute_write(
+        "UPDATE agent_runs SET status='stale', ended_at=?, errors=? "
+        "WHERE id=? AND status IN ('queued','running')",
+        (ended_at, errors, run_id),
+    )
+    return result.rowcount == 1
 
 
 def list_agent_runs(limit: int = 50, *, days: int | None = None) -> list[dict]:
