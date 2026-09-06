@@ -150,22 +150,6 @@ def test_paper_trader_ranker_no_llm():
 
 @spec_claim(
     SpecClaim(
-        "AC-S08", "agent_contracts", "§1 job count", "L2a",
-        "Scheduler registers >= 28 jobs (matching SYSTEM_MAP)",
-    ),
-)
-def test_scheduler_minimum_job_count():
-    import re
-    from pathlib import Path
-
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
-    source = src.read_text(encoding="utf-8")
-    job_count = len(re.findall(r'_scheduler\.add_job\(', source))
-    assert job_count >= 28, f"Expected >= 28 registered jobs, found {job_count}"
-
-
-@spec_claim(
-    SpecClaim(
         "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
         "scheduler.py defines exactly the executor pools "
         "{default, io, audit, fast_io, protective, learning_measurement, "

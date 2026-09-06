@@ -205,7 +205,7 @@ def test_replay_uses_exact_ids_cutoff_reconciled_economics_and_deterministic_has
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
     before = db.total_changes
 
@@ -260,7 +260,7 @@ def test_replay_does_not_backfill_post_cutoff_economics(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay(
@@ -281,7 +281,7 @@ def test_replay_does_not_admit_post_cutoff_ohlcv_mutation(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: candles)
 
     replay = position_replay.build_position_replay(
@@ -323,7 +323,7 @@ def test_replay_exposes_exact_frozen_mandate_pair_without_current_config(monkeyp
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay(
@@ -350,7 +350,7 @@ def test_replay_fails_closed_when_a_producer_session_is_unresolved(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
@@ -367,7 +367,7 @@ def test_replay_fails_closed_when_a_producer_row_has_no_identity(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
@@ -384,7 +384,7 @@ def test_replay_rejects_direct_identity_that_disagrees_with_session(monkeypatch)
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T00:10:00+00:00", db=db)
@@ -400,7 +400,7 @@ def test_replay_fails_closed_instead_of_joining_ambiguous_pi_retry(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *args, **kwargs: _candles())
 
     replay = position_replay.build_position_replay("position-1", as_of_at="2026-08-13T02:00:00+00:00", db=db)
@@ -508,7 +508,7 @@ def test_replay_protection_state_activated_before_updated_after_cutoff(monkeypat
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
 
     replay = position_replay.build_position_replay(
@@ -537,7 +537,7 @@ def test_replay_protection_state_activated_after_cutoff_omitted(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
 
     replay = position_replay.build_position_replay(
@@ -556,7 +556,7 @@ def test_replay_missing_entry_fills_adds_causal_error(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
 
     replay = position_replay.build_position_replay(
@@ -585,7 +585,7 @@ def test_replay_scale_in_order_included_in_entry_legs(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
 
     replay = position_replay.build_position_replay(
@@ -605,7 +605,7 @@ def test_replay_ohlcv_gap_returns_unavailable(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     # Return only 1 of the 2 expected candles (gap)
     monkeypatch.setattr(
         position_replay.repo,
@@ -630,7 +630,7 @@ def test_replay_ohlcv_contiguous_returns_available(monkeypatch):
         "build_position_trade_path",
         lambda position_id, *, db: _path(),
     )
-    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row: _assessment())
+    monkeypatch.setattr(position_replay, "assess_reportable_outcome", lambda _row, *, db=None: _assessment())
     monkeypatch.setattr(position_replay.repo, "get_ohlcv_candles", lambda *a, **kw: _candles())
 
     # Use a cutoff that spans exactly the 2-bar window from _path()/_candles()

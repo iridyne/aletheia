@@ -91,21 +91,8 @@ function SettingsNavIcon({ tab }: { tab: Tab }) {
   }
 }
 
-/**
- * Inline-search index — fuzzy-find a Section across all 6 tabs.
- *
- * Settings is 3500+ lines and split into 6 tabs, so the operator has no fast way
- * to jump to e.g. "Risk Limits → Margin warning ratio". This index lets a search
- * box at the top of the page match any Section by title, returning the tab it
- * lives on; clicking a result switches tabs (and the existing ?section= deep-link
- * mechanism takes care of scrolling).
- *
- * MAINTAIN INVARIANT: every local `<Section>` and extracted feature section must
- * render metadata listed below. Local `Section` resolves its anchor id from this
- * registry; extracted features use the same descriptor for their wrapper and
- * registry row. The invariant is enforced by a test rather than this comment,
- * which had already drifted three times (#632).
- */
+// Search results select a tab and scroll to its section descriptor's anchor.
+// DOM tests cover rendered-section search, historical deep links, and conditional sections.
 const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; alt?: string[] }[] = [
   // Agent & Models
   { title: PERMISSION_SECTION.title,          tab: PERMISSION_SECTION.tab, slug: PERMISSION_SECTION.id, alt: [...PERMISSION_SECTION.searchTerms] },

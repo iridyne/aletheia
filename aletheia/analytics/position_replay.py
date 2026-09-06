@@ -430,14 +430,7 @@ def _frozen_mandate_provenance(
 
 
 def _economics(position: dict[str, Any], *, db: Any = None) -> dict[str, Any]:
-    try:
-        assessment = assess_reportable_outcome(position, db=db)
-    except TypeError as exc:
-        # Keep lightweight test doubles and older optional consumers compatible;
-        # production's shared evaluator accepts the read context.
-        if "unexpected keyword argument 'db'" not in str(exc):
-            raise
-        assessment = assess_reportable_outcome(position)
+    assessment = assess_reportable_outcome(position, db=db)
     entry = _finite(position.get("entry_price"))
     exit_price = _finite(
         position.get("current_price") if position.get("current_price") is not None else position.get("exit_price")

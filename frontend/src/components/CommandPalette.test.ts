@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 import { runCommandAction, executeKillSwitch } from './CommandPalette'
-import SRC from './CommandPalette.tsx?raw'
 
 describe('Command Palette mutation truthfulness', () => {
   it('turns a rejected command promise into an operator-facing error result', async () => {
@@ -26,26 +25,6 @@ describe('Command Palette mutation truthfulness', () => {
     await expect(resultPromise).resolves.toEqual({ ok: true })
   })
 
-  it('awaits trust commands, refreshes their facts, and renders sticky inline failure', () => {
-    expect(SRC).toContain('const result = await runCommandAction(command.action)')
-    expect(SRC).toContain('setCommandError(`${command.label}: ${result.error}`)')
-    expect(SRC).toContain('await (paused ? api.pause() : api.resume())')
-    expect(SRC).not.toContain('useMutation')
-    expect(SRC).toContain('executeKillSwitch(active, api.setKillSwitch')
-    expect(SRC).not.toContain("qc.setQueryData(['kill-switch']")
-    expect(SRC).toContain("if (active && confirmed.active !== true) throw new Error('Kill switch engage was not confirmed by backend')")
-    expect(SRC).toContain("if (!active && confirmed.active !== false) throw new Error('Kill switch release was not confirmed by backend')")
-    expect(SRC).toContain("refetch({ queryKey: ['kill-switch'] }, { throwOnError: true })")
-    expect(SRC).toContain("refetch({ queryKey: ['risk-status'] }, { throwOnError: true })")
-    expect(SRC).toContain("queryKey: ['ui-shell-bootstrap']")
-    expect(SRC).toContain('initialOpen = false')
-    expect(SRC).toContain('await api.startAgentRun')
-    expect(SRC).toContain("queryKey: ['agent-runs']")
-    expect(SRC).toContain('if (executingRef.current) return')
-    expect(SRC).toContain('disabled={executingCommand !== null}')
-    expect(SRC).toContain('className="lever-err"')
-    expect(SRC).toContain('role="alert"')
-  })
 })
 
 describe('Kill-switch mutation authority contract (regression proof for #1190)', () => {

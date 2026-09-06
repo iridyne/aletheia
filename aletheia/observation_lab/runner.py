@@ -174,20 +174,11 @@ def _pass_checkpoint() -> dict[str, Any]:
                 "observation_lab.runner: joint checkpoint mismatch: %s",
                 verdict.reason,
             )
-        current_fingerprint = getattr(verdict, "current_fingerprint", None)
-        if current_fingerprint is None:
-            # Compatibility with older test doubles/callers that only exposed
-            # ``ok``, ``reason`` and ``last``.
-            from aletheia.observation_lab.checkpoint import compute_joint_checkpoint
-
-            current_fingerprint = compute_joint_checkpoint().joint_fingerprint
         return {
             "ok": bool(verdict.ok),
             "reason": verdict.reason,
-            "mismatch_components": list(
-                getattr(verdict, "mismatch_components", ())
-            ),
-            "current_fingerprint": current_fingerprint,
+            "mismatch_components": list(verdict.mismatch_components),
+            "current_fingerprint": verdict.current_fingerprint,
             "last_fingerprint": (
                 verdict.last.joint_fingerprint if verdict.last is not None else None
             ),

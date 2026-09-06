@@ -606,15 +606,36 @@ def test_prune_agent_shell_heartbeats_keeps_recent_deletes_old(tmp_path, monkeyp
     assert remaining == {"hb_new"}, "prune must keep the latest heartbeat and drop only old ones"
 
 
-def test_prune_session_logs_keeps_main_and_recent_deletes_old(tmp_path, monkeypatch):
-    """Per-session JSONL transcripts (data/agent_shell/sessions/*.jsonl) are
-    Axis-1 junk: high file COUNT, low bytes, never read by the learning/PI
-    chain. They had no cleanup path (2.6k+ files accumulated). Prune is
-    mtime-based and exempts the persistent operator-main session by stem, so it
-    can never reap a live or pinned transcript. Guards the DB-SIZE-2 retention."""
+def test_session_log_cleanup_preserves_window_after_db_failure(tmp_path, monkeypatch):
     import os
     import time
-    from aletheia.agent_shell.file_artifacts import prune_session_logs
+    from unittest.mock import Mock
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+    import aletheia.storage.sqlite as sq
+
+    conn = setup_env(tmp_path, monkeypatch)
+    sessions = tmp_path / "agent_shell" / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    transcript = sessions / "twenty-days-old.jsonl"
+    transcript.write_text("{}\n", encoding="utf-8")
+    old = time.time() - 20 * 86400
+    os.utime(transcript, (old, old))
+    cfg = AletheiaConfig()
+    cfg.retention.agent_shell_session_logs_days = 30
+    monkeypatch.setattr(sq, "get_db", Mock(side_effect=[sqlite3.OperationalError("database unavailable"), conn]))
+
+    result = scheduler._prune_session_logs(cfg)
+
+    assert transcript.exists()
+    assert result == {"deleted": 0, "error": "database unavailable"}
+
+
+def test_prune_session_logs_keeps_main_and_recent_deletes_old(tmp_path, monkeypatch):
+    """The DB-join orphan sweep keeps recent and exempt transcripts."""
+    import os
+    import time
+    from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
 
     setup_env(tmp_path, monkeypatch)
     sessions = tmp_path / "agent_shell" / "sessions"
@@ -630,7 +651,7 @@ def test_prune_session_logs_keeps_main_and_recent_deletes_old(tmp_path, monkeypa
     os.utime(main, (stale_mtime, stale_mtime))       # old mtime, but exempt by name
     os.utime(old, (stale_mtime, stale_mtime))        # genuinely stale → reaped
 
-    deleted = prune_session_logs(14, ("operator-main",))
+    deleted = prune_session_logs_db_join(14, extra_exempt_stems=("operator-main",))
     assert deleted == 1, f"expected only the stale ephemeral file deleted, got {deleted}"
     survivors = {p.name for p in sessions.glob("*.jsonl")}
     assert survivors == {"operator-main.jsonl", "task-abc.jsonl"}, (

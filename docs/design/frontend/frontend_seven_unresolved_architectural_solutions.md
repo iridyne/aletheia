@@ -1,4 +1,4 @@
-# Aletheia 前端七大未决深水区议题：极简架构解决方案（已全面实施验收）
+# Aletheia 前端七大议题：架构方案与实施状态
 
 > **设计哲学与核心原则**：
 > 1. **第一性原理（First Principles）**：紧扣金融系统的本质问题，直面物理世界与交易事实，不被既定框架约束。
@@ -28,54 +28,11 @@
   1. 每个 Tab 各自申请 Ticket 并独立建立 WebSocket，造成网关连接数与资源倍增；
   2. Tab 1 在 Settings 修改了参数并保存，Tab 2 内存中是旧草稿。Tab 2 一旦点击保存，会发生“静默覆盖写入”，导致状态脑裂。
 
-### 2. 奥卡姆剃刀方案：原生 `BroadcastChannel` 单连接主从模型
-* **拒绝方案**：引入复杂的 SharedWorker、分布式 Paxos 选举库或 Service Worker 复杂路由。
-* **极简方案**：
-  利用现代浏览器纯原生的 **`BroadcastChannel('aletheia-tab-sync')`**（0 外部依赖，全平台原生支持），建立**“单 WebSocket 主连接 + 跨标签页失效广播”**。
+### 2. 当前实现与边界
 
-```
-[Tab 1 (Active Leader)]  ──(唯一 /api/ws 长连接)──> [Fedora Gateway]
-         │
-         ├── BroadcastChannel ('aletheia-tab-sync')
-         │
-         ├──> [Tab 2 (Follower)] ──> queryClient.invalidateQueries(changed)
-         └──> [Tab 3 (Follower)] ──> queryClient.invalidateQueries(changed)
-```
+每个标签页独立使用 WebSocket 实时更新和查询轮询。没有单连接主从选举、跨标签页失效广播或设置编辑互斥。
 
-### 3. 具体落地实现（约 35 行代码）
-```typescript
-// frontend/src/lib/tabSync.ts
-const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('aletheia-tab-sync') : null
-
-export interface TabMessage {
-  type: 'REALTIME_INVALIDATE' | 'SETTINGS_DIRTY' | 'SETTINGS_SAVED'
-  payload?: any
-}
-
-export function broadcastTabMessage(msg: TabMessage) {
-  channel?.postMessage(msg)
-}
-
-export function useTabSync(onInvalidate: (categories: string[]) => void) {
-  useEffect(() => {
-    if (!channel) return
-    const handler = (e: MessageEvent<TabMessage>) => {
-      if (e.data.type === 'REALTIME_INVALIDATE') {
-        onInvalidate(e.data.payload)
-      } else if (e.data.type === 'SETTINGS_SAVED') {
-        // 其他标签页保存了配置，本标签页自动刷新只读缓存
-        queryClient.invalidateQueries({ queryKey: ['settings'] })
-      }
-    }
-    channel.addEventListener('message', handler)
-    return () => channel.removeEventListener('message', handler)
-  }, [onInvalidate])
-}
-```
-
-* **配置防踩拦截（Settings Mutex）**：
-  当 Tab 1 触发编辑被 `dirtyGuard` 捕获时，广播 `{ type: 'SETTINGS_DIRTY' }`；Tab 2 收到后在表单顶部浮出轻量非阻塞提示：
-  `"Settings are currently being edited in another tab."`，并禁用保存按钮，防止相互踩踏。
+原有 BroadcastChannel 订阅没有生产者，已删除；不据此宣称跨标签页同步或防止草稿覆盖。只有实际需要跨标签页协调时再设计对应协议。
 
 ---
 
@@ -281,11 +238,11 @@ export function dumpIncidentSnapshot(queryClient: QueryClient) {
 
 ---
 
-## 七、 总结与全量实施验收对照表（100% 已落地）
+## 七、实施状态对照表
 
 | 议题 | 选定方案 | 核心技术载体 | 落地文件 | 实施状态 |
 |---|---|---|---|---|
-| **1. 多标签页并发** | 原生 `BroadcastChannel` 单连接主从模型 | Web Broadcast API | `frontend/src/lib/tabSync.ts` | ✅ **已实现** (失效广播与跨 Tab 同步) |
+| **1. 多标签页并发** | 每个标签页独立 WebSocket + 查询轮询 | WebSocket / TanStack Query | `frontend/src/lib/useRealtimeUpdates.ts`、`frontend/src/App.tsx` | 未实现跨标签页同步、主从选举或设置互斥 |
 | **2. 休眠唤醒雷暴** | 单兵探活苏醒闸门 (`WakeupGate`) | 原生时间差检测 + `/api/ready` | `frontend/src/lib/wakeupGate.ts` | ✅ **已实现** (时间差 $>8\text{s}$ 阻断雷暴) |
 | **3. 双时钟与时区** | 显式 UTC 窗口注脚 | 窗口文本标注；相对时间使用浏览器时钟 | `frontend/src/components/PnLZone.tsx` | UTC 窗口注脚已实现；未提供时钟同步 |
 | **4. 大数据量天花板** | 列表轻量标量投影 + 详情按需拉取 | 后端标量裁剪 + 游标分页 | `aletheia/server/routes/persistence.py`<br>`frontend/src/pages/TradesPositions.tsx` | ✅ **已实现** (13标量投影 + Keyset游标翻页) |
@@ -293,8 +250,7 @@ export function dumpIncidentSnapshot(queryClient: QueryClient) {
 | **6. 移动端真实值守** | 纯 CSS 响应式“表格自动变卡片” | 媒体查询 + `data-label` | `frontend/src/index.css`<br>`frontend/src/components/DataTable.tsx` | ✅ **已实现** ($\le 640\text{px}$ 自动翻转卡片流) |
 | **7. AI 假设复盘** | K 线画布轻量“计划信封框（Envelope）” | Canvas 价格时间包络多边形 | `frontend/src/charts/priceChartModel.ts`<br>`frontend/src/charts/PriceChart.tsx` | ✅ **已实现** (TP/SL 虚线带与时间包络入图) |
 
-$$\textbf{总计：以原生、高内聚且完全零外部依赖的代码，彻底终结这 7 个长线深水区隐患。}$$
 
 ---
 
-*（本文档已通过全量实施验收，作为 Aletheia 前端抗崩溃与多端鲁棒性设计的核心架构参考）*
+*本文区分当前实现与未实现方案；不代表七项议题已全面验收。*

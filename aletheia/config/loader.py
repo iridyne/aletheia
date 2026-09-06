@@ -83,7 +83,7 @@ def read_only_config():
 
 
 def _load_dotenv() -> None:
-    """Load .env from project root if present. Idempotent, never raises."""
+    """Load .env from the runtime data directory once, preserving existing variables."""
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
         return
@@ -91,20 +91,8 @@ def _load_dotenv() -> None:
     env_file = DATA_DIR / ".env"
     if not env_file.exists():
         return
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(env_file, override=False)
-    except ImportError:
-        import os
-        for line in env_file.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            key, value = key.strip(), value.strip()
-            if value and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            os.environ.setdefault(key, value)
+    from dotenv import load_dotenv
+    load_dotenv(env_file, override=False)
 
 
 def get_data_dir() -> Path:

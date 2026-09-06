@@ -906,7 +906,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     # can still commit while outcome_write_eligibility degrades gracefully.
     real_attribution = _oi_module.attribution_chain_complete
 
-    def _raise_attribution_error(row):
+    def _raise_attribution_error(row, *, db=None):
         raise AttributionReadError("temporary close-time attribution read failure")
 
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
@@ -992,7 +992,7 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
 
     real_attribution = _oi_module.attribution_chain_complete
 
-    def _raise_attribution_error(row):
+    def _raise_attribution_error(row, *, db=None):
         raise AttributionReadError("temporary local attribution read failure")
 
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)

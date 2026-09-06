@@ -1,7 +1,7 @@
 # Scheduler Contract
 
 **Contract path**: `docs/design/contracts/scheduler_contract.md`
-**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01, AC-S08), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
+**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
 **Impl**: `aletheia/agent_runtime/scheduler.py`
 **Related**: `docs/design/contracts/agent_contracts.md` (§8 区别)
 
@@ -130,7 +130,7 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 达到配置预算 80% 后最多 64 MiB。它必须持有 SQLite process/cross-process writer permit，
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
-**注**：`ohlcv_nightly_backfill`（#27）仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册（`scheduler.py:456`）。无论该开关状态，总 `add_job` 调用数为 30，其中条件分支使实际运行时 job 数为 29 或 30，均满足 AC-S08 ≥28 的下限。
+**注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。任务总数随配置和实际职责变化，不设源码调用数量下限。
 
 ### 3.1 Learning contribution scheduling (A1 alignment)
 
@@ -377,7 +377,6 @@ sync worker 同样是 daemon，非协作调用不会产生第二条替代线程�
 | ID | 不变量 | 来源 | Spec |
 |---|---|---|---|
 | INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 2 条相互隔离的 sync lane（ordinary + Universe audit），每条 outstanding ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
-| INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `init_scheduler()` 内 `_scheduler.add_job()` 注册 | AC-S08 |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
 | INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |
 | INV-SCH-5 | 任务抛异常或显式报告失败时，连续失败 ≥ 3 次必须触发 infra_event；外层不得在同轮清零 | `_run_job_guarded()` + `_record_job_failure()` | — |

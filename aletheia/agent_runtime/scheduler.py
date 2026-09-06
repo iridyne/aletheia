@@ -2378,12 +2378,7 @@ def status_snapshot() -> dict:
     does not show "active" when init failed or the scheduler is paused.
     """
     try:
-        try:
-            cfg = load_config(persist_migrations=False)
-        except TypeError:
-            # Keep lightweight test doubles/older adapters compatible while the
-            # production loader remains explicitly non-mutating.
-            cfg = load_config()
+        cfg = load_config(persist_migrations=False)
         enabled = bool(cfg.runtime.scheduler_enabled)
     except Exception:
         enabled = None
@@ -3583,26 +3578,16 @@ def _prune_news(cfg) -> dict[str, int | str | None]:
 
 
 def _prune_session_logs(cfg) -> dict[str, int | str | None]:
-    """DB-JOIN-based session-log prune (Agent 4). Falls back to the legacy
-    file-only pruner if the DB-join variant is not yet importable. The
-    operator's persistent main session id is threaded through as an extra
-    exempt stem so it is never reaped even when its DB row falls outside
-    the retention window."""
+    """Prune by the configured DB age, preserving the persistent main session."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
-        days = int(getattr(cfg.retention, "agent_shell_session_logs_days", 14))
-        main_stem = str(getattr(getattr(cfg, "operator", None), "main_session_id", "") or "")
-        extra = (main_stem,) if main_stem else ()
-        deleted = prune_session_logs_db_join(days, extra_exempt_stems=extra)
+        deleted = prune_session_logs_db_join(
+            cfg.retention.agent_shell_session_logs_days,
+            extra_exempt_stems=(cfg.operator.main_session_id,),
+        )
         return {"deleted": deleted, "error": None}
-    except Exception as e1:
-        try:
-            from aletheia.agent_shell.file_artifacts import prune_session_logs
-            keep = (cfg.operator.main_session_id,)
-            deleted = prune_session_logs(14, keep)
-            return {"deleted": deleted, "error": None}
-        except Exception as e2:
-            return {"deleted": 0, "error": str(e2)}
+    except Exception as exc:
+        return {"deleted": 0, "error": str(exc)}
 
 def _prune_task_notes(cfg) -> dict[str, int | str | None]:
     """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to

@@ -8,6 +8,7 @@ their own independent versions.
 
 ### Changed
 
+* **maintenance:** remove obsolete internal/test-double fallbacks and the unused cross-tab listener; preserve configured log retention and read-only scheduler failures, and replace implementation-bound UI checks with rendered behavior coverage.
 * **entry:** persist Discovery closed candles for exact-instrument planning; establish missing legacy candle provenance only on a real refetch, preserving existing timestamps on unchanged observations.
 * **candidate:** persist each runtime selection evidence bundle and its outcome labels atomically with publication so subsequent economic estimation can load the produced evidence.
 * **maintenance:** retire the superseded stock observer manual entry; remove unused UI, shell, host and CI layers, use standard-library JSON/file hashing, and drop the unused multipart dependency. Historical equity evidence and legacy equity configuration remain readable.

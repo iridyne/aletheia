@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MemoryRouter } from 'react-router-dom'
+import { BrowserRouter, MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../api/client'
 import type { EntryWorkbenchResponse } from '../types'
@@ -134,6 +134,23 @@ describe('Entry Workbench', () => {
     expect(html).toContain('trade: Channel Event Stale')
     expect(html).toContain('funding Exact Schedule Missing')
     expect(html).not.toContain('Manual Review')
+  })
+
+  it('opens the Universe settings deep link when scanning is disabled', async () => {
+    window.history.replaceState(null, '', '/universe')
+    const client = new QueryClient({ defaultOptions: { queries: { enabled: false } } })
+    client.setQueryData(['entry-workbench'], { ...workbench, universe: { ...workbench.universe, enabled: false, status: 'disabled' } })
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root?.render(<BrowserRouter><QueryClientProvider client={client}><Universe /></QueryClientProvider></BrowserRouter>)
+    })
+    expect(host.textContent).toContain('Universe disabled')
+    const settings = Array.from(host.querySelectorAll('button')).find(button => button.textContent === 'Settings')!
+    await act(async () => { settings.click() })
+    expect(window.location.pathname + window.location.search).toBe('/settings?tab=risk&section=universe')
+    client.clear()
   })
 
   it('projects repeated expiry and replanning cycles without collapsing history', () => {
