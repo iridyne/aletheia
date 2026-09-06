@@ -284,9 +284,9 @@ def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch)
     assert "idx_alpha_control_layer_created" in indexes
     assert reindexed == [(connection, True)]
     assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 73)
+        f"aletheia-sqlite-v{version}" for version in range(2, 74)
     ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v72"
+    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v73"
     connection.close()
 
 
@@ -523,6 +523,35 @@ def test_order_lifecycle_migration_preserves_fill_fk_and_rejects_unknown_state()
     assert not connection.execute("PRAGMA foreign_key_check").fetchall()
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute("UPDATE orders SET status='invented' WHERE id='order-1'")
+    connection.close()
+
+
+def test_position_lifecycle_migration_preserves_rows_and_rejects_unknown_state():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v73":
+            break
+        step.apply(connection)
+    connection.execute(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,status,source) "
+        "VALUES ('position-1','BTC/USDT','spot','long',1,100,'paper_internal','open','adopted')"
+    )
+
+    migrations._apply_position_lifecycle_v73(connection)
+
+    assert connection.execute(
+        "SELECT status FROM positions WHERE id='position-1'"
+    ).fetchone()[0] == "open"
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE positions SET status='invented' WHERE id='position-1'"
+        )
     connection.close()
 
 
@@ -952,7 +981,28 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE agent_shell_commands (id TEXT PRIMARY KEY);
         CREATE TABLE runtime_sessions (session_id TEXT PRIMARY KEY);
         CREATE TABLE ps_event_log (event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL);
-        CREATE TABLE positions (id TEXT PRIMARY KEY, status TEXT);
+        CREATE TABLE positions (
+            id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            entry_price REAL NOT NULL,
+            current_price REAL,
+            unrealized_pnl REAL DEFAULT 0,
+            realized_pnl REAL DEFAULT 0,
+            execution_mode TEXT NOT NULL,
+            strategy_id TEXT,
+            proposal_id TEXT REFERENCES trade_proposals(id),
+            order_id TEXT REFERENCES orders(id),
+            status TEXT NOT NULL DEFAULT 'open',
+            stop_price REAL,
+            take_profit_price REAL,
+            close_reason TEXT,
+            source TEXT NOT NULL DEFAULT 'native',
+            opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+            closed_at TEXT
+        );
         CREATE TABLE paper_account_events (
             id TEXT PRIMARY KEY,
             action TEXT NOT NULL CHECK (action IN (
@@ -1040,8 +1090,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
     assert tuple(rows[-1]) == (
-        "20260906_0071_order_lifecycle_v72",
-        "aletheia-sqlite-v72",
+        "20260906_0072_position_lifecycle_v73",
+        "aletheia-sqlite-v73",
     )
     audit_columns = {row[1] for row in connection.execute("PRAGMA table_info(audit_events)")}
     assert {

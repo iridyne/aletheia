@@ -665,6 +665,9 @@ class Fill(_Provenanced):
     filled_at: str = Field(default_factory=_utcnow)
 
 
+PositionStatus = Literal["open", "closed"]
+
+
 class Position(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
@@ -700,7 +703,7 @@ class Position(_Provenanced):
     # sector-concentration check (#16), which resolves scanner_family per open
     # position via its opportunity_id — without it that check is silenced.
     opportunity_id: str | None = None
-    status: str = "open"
+    status: PositionStatus = "open"
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
