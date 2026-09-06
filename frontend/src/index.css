@@ -1218,7 +1218,7 @@ button.news-card:active:not(:disabled) { transform: none; }
 /* ---------- Tables ---------- */
 /* Utility for explicit scroll containers (H9). Cards use overflow: hidden by
    default; pages with wide tables should wrap them in .table-wrap. */
-.table-wrap { overflow-x: auto; min-width: 0; }
+.table-wrap { overflow: auto; min-width: 0; }
 table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
 th, td { padding: 5px var(--space-3); text-align: left; border-bottom: 1px solid var(--border); }
 th {

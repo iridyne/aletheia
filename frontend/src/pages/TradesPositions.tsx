@@ -710,6 +710,7 @@ export default function TradesPositions() {
 													onRowClick={(o) => setSel({ kind: "order", id: o.id })}
 													state={ordersState}
 													emptyMessage="No orders yet."
+													maxHeight="min(60vh, 560px)"
 												/>
 											</Card>
 									</div>
@@ -729,6 +730,7 @@ export default function TradesPositions() {
 												onRowClick={(p) =>
 													setSel({ kind: "position", id: p.id })
 												}
+												maxHeight="min(60vh, 560px)"
 											/>
 										</Card>
 										{!closedExhausted && (closed.length >= 200 || closedExtra.length > 0) && (
