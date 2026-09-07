@@ -217,7 +217,6 @@ def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
 ):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -241,7 +240,6 @@ def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
 
     from aletheia.cli.inspect_cmd import inspect_app
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"

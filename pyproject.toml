@@ -113,8 +113,19 @@ line-length = 120
 # E/F: pycodestyle + pyflakes (core correctness rules).
 # Ignoring: E501 (line length — long lines are pervasive), E402 (module-level
 # import-not-at-top — legitimate lazy/conditional imports exist), E702/E731/E741
-# (style preferences), F401 (unused import — trust-boundary files use intentional
-# re-exports), F841 (unused variable — protective assignments), F402 (import
+# (style preferences), F841 (unused variable — protective assignments), F402 (import
 # shadowed by loop var — one legitimate instance).
+#
+# F401 is ENFORCED as of 2026-09-08. It was ignored project-wide with the rationale
+# "trust-boundary files use intentional re-exports", but of the 95 violations that had
+# accumulated in aletheia/, ZERO were in an __init__.py and none appeared in any
+# __all__ — the exemption covered a case that did not exist while 357 real dead
+# imports piled up unmanaged across aletheia/ and tests/.
+#
+# The two genuine exceptions carry a per-line `# noqa: F401` naming the reason: both
+# are module-level bindings that exist so a test can inject a double via
+# `monkeypatch.setattr(module, name, ...)`, which F401 cannot see. That is the shape
+# any future exemption should take — a per-line noqa with a stated reason, not a
+# project-wide ignore that hides everything it was never meant to cover.
 select = ["E", "F"]
-ignore = ["E501", "E402", "E702", "E731", "E741", "F401", "F841", "F402"]
+ignore = ["E501", "E402", "E702", "E731", "E741", "F841", "F402"]
