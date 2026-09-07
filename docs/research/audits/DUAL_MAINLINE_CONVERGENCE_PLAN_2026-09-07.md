@@ -33,7 +33,25 @@ Worktree disposition:
 | `fix/entry-convergence-2886` | Removed; PR #2889 closed — content already verbatim on master (verified 3 ways) |
 | `debt-clear` (branch) | Deleted — it was #2945's pre-squash source branch |
 | `fix/pr2945-regressions` | Salvaged into #2951/#2952/#2956; remainder kept as local `archive/pr2945-regressions-uncommitted` |
-| `audit/backend-state-authority-parity-20260906` | Replayed as #2953/#2954/#2955; the UTA commit withdrawn (see Phase C) |
+| `audit/backend-state-authority-parity-20260906` | Replayed as #2953/#2954/#2955; two commits withdrawn (see below) |
+
+**Two of the thirteen commits were withdrawn rather than replayed**, for the same
+reason in opposite directions:
+
+- **`a4649bb9b` (UTA `SelectedAccountPort`) — withdrawn as redundant.** It centralizes a
+  resolver for `uta_read_boundary_for`, and #2945 deleted that concept outright,
+  together with the `ExchangeConfig.uta_read_boundaries` switch and the duplicate
+  `portfolio/uta/` package. #2945 solved the same dual mainline more thoroughly. This
+  is the pattern to copy: **a capability with two paths and a config flag choosing
+  between them is not converged until the flag is gone too.**
+- **`1d3911577` (observation `experiment_owner`) — withdrawn as premature**, kept on
+  `archive/observation-experiment-owner`. Landing it now would create a *third*
+  mechanism: #2945 added `_require_lab_authority` (`filter_experiments.py:76`) covering
+  2 files, while `get_authority_source` is still called directly from 15. Adding a
+  202-line owner on top of a partial helper, without migrating the other 13 consumers
+  in the same move, is how a dual mainline becomes a triple one. It belongs in Phase D
+  as one decision — pick the surviving mechanism, then migrate all 15 consumers at
+  once.
 
 ### Two findings that changed the plan as written
 
