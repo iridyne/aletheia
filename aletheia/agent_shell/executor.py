@@ -35,7 +35,13 @@ def _params_confirm(params: dict[str, Any] | None) -> bool:
     return False
 
 
-def _build_action(command: str, result: dict[str, Any]) -> dict[str, Any] | None:
+def build_action(command: str) -> dict[str, Any] | None:
+    """Frontend action hint for the two commands that flip durable agent state.
+
+    Shared by the typed executor and AgentShellRuntime so one command cannot
+    produce two different hints. The command result is deliberately not an input:
+    the hint describes the requested state change, not the outcome.
+    """
     if command == "pause_agents":
         return {"type": "state_change", "key": "paused", "value": True}
     if command == "resume_agents":
@@ -214,7 +220,7 @@ async def execute_typed_command(
         risk_level=cmd_def.risk_level,
         response=response,
         result=result,
-        action=_build_action(command_name, result),
+        action=build_action(command_name),
         needs_confirmation=cmd_def.requires_confirmation,
         session_id=session_id,
     )

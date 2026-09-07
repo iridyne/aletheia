@@ -45,7 +45,7 @@ Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角
 
 4. **信息真空封顶**: 可研究性 C 级(投机/稀薄证据)把最终分数封顶 ≤40,低于 `research_priority` 阈值 52,阻止信息真空通过自动晋升评分门 (§4.2)。
 
-5. **加密-only 符号过滤**: LLM 幻觉出的非加密品种(股票/forex/聚合体)在持久化前被 `_is_tradeable_crypto_symbol()` 拒绝,不得据此取得 Candidate 入场权限 (§10)。历史事故: LLM 曾生成 MSTR/SPY/GBP/USD 写入 serenity_opps。
+5. **加密-only 符号过滤**: LLM 幻觉出的非加密品种(股票/forex/聚合体)在持久化前被 `_is_allowed_serenity_symbol()` 拒绝,不得据此取得 Candidate 入场权限 (§10)。历史事故: LLM 曾生成 MSTR/SPY/GBP/USD 写入 serenity_opps。
 
 6. **学习/持有判别不得触碰信任边界**: `trade_school` 判别器穿透执行层(§8),但**对实盘解锁 surface 和风控 guard 完全不可见**(§9)——`live.py` 与 `risk/engine.py` 的实盘门控代码里不得出现 `trade_school`。这是 Serenity 长周期特性与 trust boundary 的隔离墙。
 
@@ -244,7 +244,7 @@ Proposal→Gateway→Position/reconciliation 必须保留 school 与 source，�
 Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equity_tradeable`,与 equity_observer 的观察专用 `equity` 互不干扰:
 - research_worker 的 stock-token 研究分类不是执行批准；只有已登记的 exact venue/symbol/market_type 与受支持 instrument context、真实 PA/eligibility 门可发布 Candidate。纯股票 ticker 或预测问题文本不能伪造成 instrument。
 - `equity_observer` 不含 `equity_tradeable`,保持观察-only,OBS-S04 不被破坏(SX-S03)。
-- 加密-only 过滤(§2 不变量 #5,SE-S07/I07): `_is_tradeable_crypto_symbol`(= research_worker 的 `_is_allowed_serenity_symbol` 别名) + `_ALLOWED_QUOTE_CURRENCIES` 在持久化前拒绝 MSTR/USD、SPY、GBP/USD、USDT/INR,放行 BTC/USDT、ETH/BTC 等。
+- 加密-only 过滤(§2 不变量 #5,SE-S07/I07): research_worker 的 `_is_allowed_serenity_symbol` + `_ALLOWED_QUOTE_CURRENCIES` 在持久化前拒绝 MSTR/USD、SPY、GBP/USD、USDT/INR,放行 BTC/USDT、ETH/BTC 等。
 
 ---
 
