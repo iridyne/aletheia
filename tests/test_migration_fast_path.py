@@ -449,6 +449,37 @@ def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
     connection.close()
 
 
+def test_order_lifecycle_migration_preserves_fill_fk_and_rejects_unknown_state():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v72":
+            break
+        step.apply(connection)
+    connection.execute(
+        "INSERT INTO orders "
+        "(id,symbol,market_type,direction,order_type,quantity,price,execution_mode,status,source) "
+        "VALUES ('order-1','BTC/USDT','spot','long','market',1,100,'paper_internal','filled','adopted')"
+    )
+    connection.execute(
+        "INSERT INTO fills (id,order_id,fill_price,fill_quantity) "
+        "VALUES ('fill-1','order-1',100,1)"
+    )
+
+    migrations._apply_order_lifecycle_v76(connection)
+
+    assert connection.execute(
+        "SELECT status FROM orders WHERE id='order-1'"
+    ).fetchone()[0] == "filled"
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute("UPDATE orders SET status='invented' WHERE id='order-1'")
+    connection.close()
+
+
 def test_candidate_mechanism_handoff_v65_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
@@ -830,7 +861,26 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             retry_count INTEGER NOT NULL DEFAULT 0,
             idempotency_key TEXT
         );
-        CREATE TABLE orders (id TEXT PRIMARY KEY, proposal_id TEXT);
+        CREATE TABLE orders (
+            id TEXT PRIMARY KEY,
+            proposal_id TEXT REFERENCES trade_proposals(id),
+            risk_decision_id TEXT,
+            symbol TEXT NOT NULL,
+            market_type TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            order_type TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            price REAL,
+            execution_mode TEXT NOT NULL,
+            exchange_order_id TEXT,
+            client_order_id TEXT,
+            position_id TEXT,
+            close_reason TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            source TEXT NOT NULL DEFAULT 'native',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            filled_at TEXT
+        );
         CREATE TABLE proposal_execution_claims (proposal_id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
         CREATE TABLE agent_runs (

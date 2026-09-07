@@ -132,7 +132,7 @@ def _verified_paper_position(
         order_id=order.id,
     )
     repo.insert_position(position)
-    repo.update_order(order.id, position_id=position.id)
+    repo.update_order_metadata(order.id, position_id=position.id)
     return position
 
 

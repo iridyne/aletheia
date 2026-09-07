@@ -1027,7 +1027,7 @@ def _seed_pending_close(
         opened_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_position(position)
-    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_order_metadata(entry_order.id, position_id=position.id)
     close_order = Order(
         proposal_id=proposal.id,
         symbol=proposal.symbol,
@@ -1282,7 +1282,7 @@ def test_private_derived_economic_overflow_never_mutates_position(
             entry_fill_verified=True,
         )
         repo.insert_position(position)
-        repo.update_order(first_order.id, position_id=position.id)
+        repo.update_order_metadata(first_order.id, position_id=position.id)
         _, proposal, _, order = _seed_native_chain(
             exchange_order_id=exchange_order_id,
             quantity=1.0,
@@ -1724,9 +1724,15 @@ def test_close_order_authority_change_blocks_verified_materialization(
 
     def _mutate_order_before_close(*args, **kwargs):
         if mutation == "close_reasoning":
-            repo.update_order(close_order.id, close_reasoning=changed_reasoning)
+            repo.execute_write(
+                "UPDATE orders SET close_reasoning=? WHERE id=?",
+                (changed_reasoning, close_order.id),
+            )
         else:
-            repo.update_order(close_order.id, source="adopted")
+            repo.execute_write(
+                "UPDATE orders SET source='adopted' WHERE id=?",
+                (close_order.id,),
+            )
         return real_close_position(*args, **kwargs)
 
     monkeypatch.setattr(pnl, "close_position", _mutate_order_before_close)
@@ -1835,7 +1841,7 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(
         execution_mode="okx_demo",
     )
     repo.insert_position(wrong_position)
-    repo.update_order(order.id, position_id=wrong_position.id)
+    repo.update_order_metadata(order.id, position_id=wrong_position.id)
     fill_rows = [
         _private_fill(
             "EX-XM-WRONG-BACKLINK",
@@ -1961,7 +1967,7 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
         opened_at="2026-07-20T00:00:00+00:00",
     )
     repo.insert_position(short_term_position)
-    repo.update_order(first_order.id, position_id=short_term_position.id)
+    repo.update_order_metadata(first_order.id, position_id=short_term_position.id)
     repo.update_trade_proposal(first_proposal.id, status="executed")
 
     # Second leg — same symbol/direction/mode but serenity school.
