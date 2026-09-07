@@ -815,11 +815,33 @@ def rollback_if_in_transaction() -> bool:
 
 
 def reset_db() -> None:
-    """Reset connection for this thread (for testing)."""
+    """Reset connection for this thread (for testing).
+
+    ``shutdown_writer`` drains the writer lane, which is enough for production
+    writes. An injected connection is different: ``run_write`` keeps those
+    writes inline on the calling thread, serialised only by the write lock, and
+    the connection object itself is shared across threads. Closing it while
+    another thread is mid-``execute`` frees the handle under that thread and
+    segfaults the interpreter. Taking the in-process writer permit across the
+    close makes the two mutually exclusive.
+
+    Only ``_WRITE_LOCK`` is taken, not the full ``acquire_write_lock`` — the race
+    is between threads of one process, and the cross-process file lock would
+    create a ``.write.lock`` beside the database, which callers that assert an
+    absent database creates no state would see.
+    """
     global _connection_generation, _injected_db_path, _injected_db_active, _injected_db_connection
 
     shutdown_writer()
-    close_db()
+    # depth > 0 means this thread already owns the permit; re-acquiring a plain
+    # threading.Lock would deadlock against itself.
+    held = getattr(_write_lock_state, "depth", 0) > 0
+    acquired = held or _WRITE_LOCK.acquire(timeout=_WRITE_LOCK_TIMEOUT_S)
+    try:
+        close_db()
+    finally:
+        if acquired and not held:
+            _WRITE_LOCK.release()
     _connection_generation += 1
     _injected_db_path = None
     _injected_db_active = False
