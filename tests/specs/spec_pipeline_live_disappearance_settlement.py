@@ -68,49 +68,30 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
     queried_entry_ids: list[tuple[str, ...]] = []
     exit_fill_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000
 
-    class _ReadOnlyClient:
-        async def get_verified_position_exit(self, request):
-            queried_entry_ids.append(request.known_entry_order_ids)
-            fill = VerifiedExitFill(
-                fill_id="REMOTE-EXIT-FILL-1",
-                order_id="REMOTE-EXIT-ORDER-1",
-                price=59_000.0,
-                quantity=0.01,
-                fee=0.2,
-                fee_currency="USDT",
-                realized_pnl=-10.0,
-                filled_at_ms=exit_fill_ms,
-            )
-            return classify_verified_exit(
-                request,
-                position_absent=True,
-                history_complete=True,
-                close_fills=(fill,),
-                ambiguous_activity=False,
-                pages=1,
-                source_endpoint="private-fill-history",
-            )
+    def fake_run_query(execution_mode, request):
+        queried_entry_ids.append(request.known_entry_order_ids)
+        fill = VerifiedExitFill(
+            fill_id="REMOTE-EXIT-FILL-1",
+            order_id="REMOTE-EXIT-ORDER-1",
+            price=59_000.0,
+            quantity=0.01,
+            fee=0.2,
+            fee_currency="USDT",
+            realized_pnl=-10.0,
+            filled_at_ms=exit_fill_ms,
+        )
+        return classify_verified_exit(
+            request,
+            position_absent=True,
+            history_complete=True,
+            close_fills=(fill,),
+            ambiguous_activity=False,
+            pages=1,
+            source_endpoint="private-fill-history",
+        )
 
-        async def place_order(self, *args, **kwargs):
-            raise AssertionError("disappearance settlement must never place an order")
-
-        async def place_tpsl_order(self, *args, **kwargs):
-            raise AssertionError("disappearance settlement must never place TPSL")
-
-        async def cancel_order(self, *args, **kwargs):
-            raise AssertionError("disappearance settlement must never cancel an order")
-
-        async def cancel_plan_order(self, *args, **kwargs):
-            raise AssertionError("disappearance settlement must never cancel TPSL")
-
-        async def close(self):
-            return None
-
-    monkeypatch.setattr(
-        disappearance_settlement,
-        "_client_for_mode",
-        lambda mode: _ReadOnlyClient(),
-    )
+    monkeypatch.setattr(disappearance_settlement, "_run_query", fake_run_query)
+    monkeypatch.setattr(disappearance_settlement, "_direct_positions_present", lambda *a: False)
     monkeypatch.setattr(
         outcome_closure,
         "_run_outcome_hooks",
@@ -201,35 +182,28 @@ def test_live_disappearance_rolls_back_close_chain_when_candidate_write_fails(
     repo.insert_position_disappearance_candidate(candidate)
     exit_fill_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000
 
-    class _ReadOnlyClient:
-        async def get_verified_position_exit(self, request):
-            return classify_verified_exit(
-                request,
-                position_absent=True,
-                history_complete=True,
-                close_fills=(VerifiedExitFill(
-                    fill_id="REMOTE-ATOMIC-FILL",
-                    order_id="REMOTE-ATOMIC-ORDER",
-                    price=59_000.0,
-                    quantity=0.01,
-                    fee=0.2,
-                    fee_currency="USDT",
-                    realized_pnl=-10.0,
-                    filled_at_ms=exit_fill_ms,
-                ),),
-                ambiguous_activity=False,
-                pages=1,
-                source_endpoint="private-fill-history",
-            )
+    def fake_run_query(execution_mode, request):
+        return classify_verified_exit(
+            request,
+            position_absent=True,
+            history_complete=True,
+            close_fills=(VerifiedExitFill(
+                fill_id="REMOTE-ATOMIC-FILL",
+                order_id="REMOTE-ATOMIC-ORDER",
+                price=59_000.0,
+                quantity=0.01,
+                fee=0.2,
+                fee_currency="USDT",
+                realized_pnl=-10.0,
+                filled_at_ms=exit_fill_ms,
+            ),),
+            ambiguous_activity=False,
+            pages=1,
+            source_endpoint="private-fill-history",
+        )
 
-        async def close(self):
-            return None
-
-    monkeypatch.setattr(
-        disappearance_settlement,
-        "_client_for_mode",
-        lambda mode: _ReadOnlyClient(),
-    )
+    monkeypatch.setattr(disappearance_settlement, "_run_query", fake_run_query)
+    monkeypatch.setattr(disappearance_settlement, "_direct_positions_present", lambda *a: False)
     original_update_candidate = repo.update_position_disappearance_candidate
 
     def fail_candidate_write(candidate_id: str, **kwargs):

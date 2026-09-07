@@ -193,16 +193,22 @@ def test_causal_tables_in_schema():
 @spec_claim(
     SpecClaim(
         "DM-S06", "data_model", "§2 runtime tables", "L2a",
-        "Runtime infrastructure tables exist (runtime_registry, runtime_checkpoints, runtime_events)",
+        "Retired runtime tables are absent from SCHEMA_SQL; runtime_sessions is present. "
+        "runtime_registry/checkpoints/events/exclusive_lock/ownership were removed when the "
+        "multi-process runtime supervisor was retired (data_model.md §Runtime Continuity).",
     ),
 )
 def test_runtime_tables_in_schema():
     from aletheia.storage.migrations import SCHEMA_SQL
 
-    for table in ("runtime_registry", "runtime_checkpoints", "runtime_events"):
-        assert f"CREATE TABLE IF NOT EXISTS {table}" in SCHEMA_SQL, (
-            f"Runtime table '{table}' missing from SCHEMA_SQL"
+    for table in ("runtime_registry", "runtime_checkpoints", "runtime_events",
+                  "runtime_exclusive_lock", "runtime_ownership"):
+        assert f"CREATE TABLE IF NOT EXISTS {table}" not in SCHEMA_SQL, (
+            f"Retired runtime table '{table}' must NOT be in SCHEMA_SQL"
         )
+    assert "CREATE TABLE IF NOT EXISTS runtime_sessions" in SCHEMA_SQL, (
+        "runtime_sessions must remain in SCHEMA_SQL (active continuity table)"
+    )
 
 
 @spec_claim(
