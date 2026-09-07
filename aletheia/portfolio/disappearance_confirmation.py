@@ -41,14 +41,6 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def parse_utc(value: str) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def logical_account_fingerprint(

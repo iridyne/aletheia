@@ -1637,16 +1637,6 @@ def _parse_json(raw: Any) -> Any:
     return {}
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def _utcnow() -> datetime:

@@ -237,16 +237,6 @@ def daily_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
     return get_learning_job_health(job_id).input_watermark != current_daily_window(job_id, now=now)
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
 
 
 def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:

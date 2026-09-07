@@ -267,14 +267,6 @@ def build_system_viability(
     return _persist(report) if persist else report
 
 
-def parse_utc(value: Any) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _same_close_event(left: Any, right: Any, tolerance_sec: float = 1.0) -> bool:

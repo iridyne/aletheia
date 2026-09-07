@@ -362,16 +362,6 @@ def check_live_limited_gates(strategy_id: str) -> dict:
     }
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except ValueError:
-        return None
 
 
 def _first_order_age_days(orders: list[dict]) -> int | None:

@@ -1046,14 +1046,6 @@ def _local_observation(plan: _ObservationPlan) -> tuple[dict | None, str]:
     }, "hit"
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:

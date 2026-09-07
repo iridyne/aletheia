@@ -5,6 +5,7 @@ selection, ranking, risk approval, or order execution.
 """
 
 from __future__ import annotations
+from aletheia.utils.dt import parse_utc
 
 import hashlib
 import json
@@ -406,14 +407,6 @@ def _due_at(entry_ts: str, horizon: str) -> str | None:
     return (dt + _HORIZON_DELTA[horizon]).isoformat()
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _utcnow() -> str:

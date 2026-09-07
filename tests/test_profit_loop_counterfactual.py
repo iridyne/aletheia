@@ -124,7 +124,7 @@ def _registered_test_cohort(tmp_path, monkeypatch):
     monkeypatch.setattr(
         counterfactual,
         "_now_utc",
-        lambda: counterfactual.parse_utc("2026-09-12T05:34:28+00:00"),
+        lambda: counterfactual.parse_utc_strict("2026-09-12T05:34:28+00:00"),
     )
     yield
     import aletheia.storage.sqlite as sqlite_mod
@@ -580,7 +580,7 @@ def test_future_as_of_cannot_bypass_registered_cutoff(monkeypatch):
     monkeypatch.setattr(
         counterfactual,
         "_now_utc",
-        lambda: counterfactual.parse_utc("2026-09-12T05:34:27+00:00"),
+        lambda: counterfactual.parse_utc_strict("2026-09-12T05:34:27+00:00"),
     )
     fact = _fact()
     fact["as_of_at"] = "2026-09-13T05:34:28+00:00"

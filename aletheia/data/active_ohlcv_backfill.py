@@ -80,16 +80,6 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _active_instruments(member_limit: int = 50) -> list[tuple[InstrumentId, int]]:

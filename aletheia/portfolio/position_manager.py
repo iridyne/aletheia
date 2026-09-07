@@ -20,7 +20,6 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 
-from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import load_config
 from aletheia.data.price_feed import (
     get_fresh_mark_for_protective_close,
@@ -394,7 +393,7 @@ def reduce_position_routed(position_id: str, reduce_qty: float, reason: str = "o
     }
 
 
-def parse_utc(value: str | None) -> datetime | None:
+def parse_utc_strict(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -479,7 +478,7 @@ def _get_atr_observation(
     protection_venue: str | None = None,
 ) -> dict | None:
     """Return one exact, completed 1h ATR observation available at decision time."""
-    observed = parse_utc(observed_at) if observed_at is not None else datetime.now(timezone.utc)
+    observed = parse_utc_strict(observed_at) if observed_at is not None else datetime.now(timezone.utc)
     if observed is None:
         return None
     venue = str(protection_venue).lower() if protection_venue else protective_price_venue(
@@ -922,7 +921,7 @@ def _decide_exit(position: dict, price: float, cfg) -> tuple[str, float] | None:
     else:
         hard_hold = school_max
     if hard_hold and hard_hold > 0:
-        opened = parse_utc(position.get("opened_at"))
+        opened = parse_utc_strict(position.get("opened_at"))
         if opened is not None:
             age_hours = (datetime.now(timezone.utc) - opened).total_seconds() / 3600.0
             if age_hours >= hard_hold:
@@ -1088,7 +1087,7 @@ def _rearm_due_horizon_review(
             horizon = float(horizon) if horizon is not None else None
         except (TypeError, ValueError):
             horizon = None
-        opened = parse_utc(current.get("opened_at"))
+        opened = parse_utc_strict(current.get("opened_at"))
         if not horizon or not math.isfinite(horizon) or horizon <= 0 or opened is None:
             return None
         age_hours = (evaluated_at - opened).total_seconds() / 3600.0
@@ -1152,7 +1151,7 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = None
     if not horizon or not math.isfinite(horizon) or horizon <= 0:
         return False
-    opened = parse_utc(position.get("opened_at"))
+    opened = parse_utc_strict(position.get("opened_at"))
     if opened is None:
         return False
     evaluated_at = datetime.now(timezone.utc)
@@ -1169,7 +1168,7 @@ def _maybe_wake_on_horizon(position: dict) -> bool:
         horizon = float(position["expected_horizon_hours"])
         if not math.isfinite(horizon) or horizon <= 0:
             return False
-        opened = parse_utc(position.get("opened_at"))
+        opened = parse_utc_strict(position.get("opened_at"))
         if opened is None:
             return False
         age_hours = (evaluated_at - opened).total_seconds() / 3600.0
@@ -1806,7 +1805,7 @@ def apply_operator_adjustment(
         if validated_horizon is None:
             return {"error": "invalid_new_horizon", "position_id": position_id}
         new_horizon = validated_horizon
-        opened_at = parse_utc(pos.get("opened_at"))
+        opened_at = parse_utc_strict(pos.get("opened_at"))
         if opened_at is None:
             return {
                 "error": "position_age_unavailable",

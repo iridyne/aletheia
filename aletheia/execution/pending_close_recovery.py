@@ -131,19 +131,6 @@ def _run_coro(coro):
     return run_coro_from_sync(coro)
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def _age_hours(*timestamps: str | None) -> float | None:

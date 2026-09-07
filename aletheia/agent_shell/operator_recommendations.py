@@ -40,23 +40,6 @@ def _truthy_flag(value) -> bool:
     return bool(value)
 
 
-def parse_utc(value) -> datetime | None:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    elif " " in text and "T" not in text:
-        text = text.replace(" ", "T", 1)
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _parse_json_list(value) -> list[str]:

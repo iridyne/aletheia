@@ -128,16 +128,6 @@ def _at_or_after_floor(value: Any) -> bool:
     return bool(dt and floor and dt >= floor)
 
 
-def parse_utc(value: Any) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
 
 
 def _to_float(value: Any) -> float | None:

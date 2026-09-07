@@ -300,16 +300,6 @@ def _gateway_api_ready(cfg) -> bool:
         return False
 
 
-def parse_utc(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return ts.astimezone(timezone.utc)
 
 
 def _latest_operator_heartbeat_age_sec() -> float | None:
