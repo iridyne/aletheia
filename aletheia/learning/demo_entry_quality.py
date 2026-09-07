@@ -12,7 +12,6 @@ _EFFECTIVE_VALUES = {
     "paper_internal_unchanged": True,
     "live_family_gate_unchanged": True,
     "open_positions_unchanged": True,
-    "committee_remains_advisory": True,
     "min_regime_confidence_to_enter": 0.60,
     "sideways_standdown": True,
     "mean_reversion_sideways_standdown": True,
