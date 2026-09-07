@@ -7,6 +7,8 @@ operator-facing responses; it never places an order or changes portfolio state.
 
 from __future__ import annotations
 
+from aletheia.utils.dt import parse_utc
+
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
@@ -60,16 +62,6 @@ _IMMEDIATE_RECONCILIATION_STATES = frozenset({
 IMMEDIATE_RECONCILIATION_STATES = _IMMEDIATE_RECONCILIATION_STATES
 
 
-def _parse_timestamp(value: object) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def pending_close_age_hours(
@@ -78,7 +70,7 @@ def pending_close_age_hours(
     now: datetime | None = None,
 ) -> float | None:
     """Return a finite age, or ``None`` when the timestamp is not trustworthy."""
-    requested = _parse_timestamp(requested_at)
+    requested = parse_utc(requested_at)
     if requested is None:
         return None
     current = now or datetime.now(timezone.utc)

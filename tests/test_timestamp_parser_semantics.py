@@ -59,22 +59,21 @@ REJECT_NAIVE = [
 ]
 
 # A naive timestamp is read as UTC; these parsers accept it.
+# The canonical helper the seven converged parsers now share. Its behaviour signature
+# was matched cell-for-cell against those seven before the substitution.
+CANONICAL = [
+    ("aletheia.utils.dt", "parse_utc"),
+]
+
 ASSUME_UTC = [
-    ("aletheia.agent_shell.operator_recommendations", "_parse_utc_timestamp"),
     ("aletheia.analytics.alpha_attribution", "_parse_dt"),
     ("aletheia.analytics.causal_controls", "_parse_dt"),
     ("aletheia.analytics.filter_evidence", "_parse_dt"),
     ("aletheia.data.active_ohlcv_backfill", "_parse_utc"),
-    ("aletheia.economics.viability", "_parse_dt"),
-    ("aletheia.execution.close_convergence", "_parse_timestamp"),
     ("aletheia.execution.pending_close_recovery", "_parse_dt"),
     ("aletheia.gateway.operator_shell", "_parse_utc_ts"),
     ("aletheia.learning.control", "_parse_timestamp"),
-    ("aletheia.learning.hypothesis_research", "_parse_timestamp"),
-    ("aletheia.learning.outcomes", "_parse_dt"),
-    ("aletheia.portfolio.disappearance_confirmation", "_parse_timestamp"),
     ("aletheia.portfolio.position_manager", "_parse_dt"),
-    ("aletheia.server.routes.data", "_parse_utc_timestamp"),
     ("aletheia.trading.strategy_lifecycle", "_parse_dt"),
     ("aletheia.universe.outcome_recorder", "_parse_dt"),
 ]
@@ -113,7 +112,9 @@ def test_rejecting_parsers_refuse_a_naive_timestamp(module_path: str, name: str)
     )
 
 
-@pytest.mark.parametrize(("module_path", "name"), ASSUME_UTC, ids=_ids(ASSUME_UTC))
+@pytest.mark.parametrize(
+    ("module_path", "name"), ASSUME_UTC + CANONICAL, ids=_ids(ASSUME_UTC + CANONICAL)
+)
 def test_assuming_parsers_read_a_naive_timestamp_as_utc(module_path: str, name: str):
     parse = _load(module_path, name)
     parsed = parse(_NAIVE)
@@ -134,7 +135,8 @@ def test_raising_parsers_raise_on_malformed_input(module_path: str, name: str):
 
 
 @pytest.mark.parametrize(
-    ("module_path", "name"), REJECT_NAIVE + ASSUME_UTC, ids=_ids(REJECT_NAIVE + ASSUME_UTC)
+    ("module_path", "name"), REJECT_NAIVE + ASSUME_UTC + CANONICAL,
+    ids=_ids(REJECT_NAIVE + ASSUME_UTC + CANONICAL),
 )
 def test_every_optional_parser_agrees_on_the_easy_cases(module_path: str, name: str):
     """Whatever they do with naive input, all 27 agree here.
@@ -174,7 +176,7 @@ def test_the_inventory_is_exhaustive():
     root = pathlib.Path(__file__).resolve().parents[1]
     declared = {
         (module_path.replace("aletheia.", "aletheia/").replace(".", "/") + ".py", name)
-        for module_path, name in REJECT_NAIVE + ASSUME_UTC + RAISES + PATTERNED
+        for module_path, name in REJECT_NAIVE + ASSUME_UTC + RAISES + PATTERNED + CANONICAL
     }
     found = set()
     for path in sorted((root / "aletheia").rglob("*.py")):
