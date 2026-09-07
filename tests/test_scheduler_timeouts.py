@@ -1060,7 +1060,11 @@ def _patch_scheduler_result(
     elif job_id == "exchange_sync":
         from aletheia.portfolio import exchange_sync
 
-        monkeypatch.setattr(exchange_sync, "sync_all_exchanges", lambda: result)
+        # Production calls sync_all_exchanges(execution_modes=scope); the fake
+        # must accept it or the job fails on a TypeError instead of the result.
+        monkeypatch.setattr(
+            exchange_sync, "sync_all_exchanges", lambda **_kwargs: result
+        )
         monkeypatch.setattr(
             scheduler, "_run_sync_with_timeout", lambda _job, fn: fn()
         )
@@ -1134,7 +1138,9 @@ def _patch_scheduler_result(
          "market_data_reported_errors"),
         ("price_feed", {"refreshed": 1, "symbols": ["BTC/USDT"], "errors": ["SOL down"]},
          "price_feed_reported_errors"),
-        ("exchange_sync", None, "exchange_sync_total_failure"),
+        # scheduler.py records one reason for both a None result and a result
+        # carrying errors; exchange_sync_total_failure has no producer left.
+        ("exchange_sync", None, "exchange_sync_reported_errors"),
         ("exchange_sync", {"accounts": [{"broker_id": "bitget"}], "errors": ["okx down"]},
          "exchange_sync_reported_errors"),
         ("reconciliation", {"checked": 1, "errors": ["private history down"]},

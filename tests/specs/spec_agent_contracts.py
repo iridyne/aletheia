@@ -91,7 +91,7 @@ def test_equity_observer_exists():
     SpecClaim(
         "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
         "scheduler.py defines exactly the executor pools "
-        "{default, io, audit, fast_io, protective, learning_measurement, "
+        "{default, io, audit, fast_io, protective, maintenance_io, "
         "observer, agents} — no extras, no missing",
     ),
 )
@@ -111,7 +111,6 @@ def test_scheduler_executor_pool_names():
         "audit",
         "fast_io",
         "protective",
-        "learning_measurement",
         "observer",
         "agents",
     }
