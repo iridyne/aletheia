@@ -202,13 +202,13 @@ def test_risk_gate_eval_lock_serialization(tmp_path, monkeypatch):
 
     original_locked = eng._evaluate_proposal_locked
 
-    def _instrumented(proposal):
+    def _instrumented(proposal, **kwargs):
         with inside_lock:
             inside_count[0] += 1
             if inside_count[0] > 1:
                 concurrent_overlap_detected.set()
         try:
-            return original_locked(proposal)
+            return original_locked(proposal, **kwargs)
         finally:
             with inside_lock:
                 inside_count[0] -= 1

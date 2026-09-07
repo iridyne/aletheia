@@ -226,14 +226,26 @@ def test_event_store_reconciles_failed_jsonl_mirror(tmp_path, monkeypatch):
     )
     get_db().commit()
     monkeypatch.setattr(store, "_write_jsonl", write_jsonl)
-    path = tmp_path / "events" / "event_log_2026-08.jsonl"
+    # The mirror file is derived from the event's own created_at
+    # (`event_store._jsonl_path`), so the corrupt lines must be seeded into THAT
+    # month's file. A hardcoded month silently stopped exercising the claim once
+    # the real clock moved past it: the corrupt bytes went to one file while
+    # reconcile appended to another, and the glob then read whichever came first.
+    from aletheia.storage.event_store import _jsonl_path
+
+    path = _jsonl_path(event.created_at)
+    assert path.parent == tmp_path / "events"
     path.parent.mkdir(parents=True, exist_ok=True)
+    # An unparseable line must not defeat dedup on the following reconcile pass.
     path.write_bytes(b"null\n\xff\n")
 
     assert store.reconcile_jsonl() == {"attempted": 1, "mirrored": 1, "failed": 0}
     assert store.reconcile_jsonl() == {"attempted": 0, "mirrored": 0, "failed": 0}
-    payload = list((tmp_path / "events").glob("event_log_*.jsonl"))[0].read_bytes()
-    assert payload.count(event.event_id.encode()) == 1
+    assert path.read_bytes().count(event.event_id.encode()) == 1
+    # No sibling month file may also carry the event.
+    assert [
+        item.name for item in (tmp_path / "events").glob("event_log_*.jsonl")
+    ] == [path.name]
 
 
 def test_event_store_jsonl_file_lock_prevents_cross_process_duplicate(
