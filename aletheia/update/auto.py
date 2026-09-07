@@ -432,6 +432,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             raise AutoUpdateError("preflight_restore_failed", "; ".join(restored.errors))
         env = _safe_env()
         env["ALETHEIA_DATA_DIR"] = str(data_copy)
+        env["PYTHONPATH"] = f"{worktree}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
         check = (
             "def _require(value, detail):\n"
             "    if value is not True:\n"
@@ -447,7 +448,8 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             "smoke=run_smoke_check()\n"
             "_require(smoke.get('ok'), f\"smoke_stage={smoke.get('stage')}; smoke_detail={smoke.get('detail')}\")\n"
         )
-        result = _run([_uv(), "run", "--directory", str(worktree), "python", "-c", check], cwd=worktree, env=env, timeout=120)
+        # ponytail: reuse active venv Python with PYTHONPATH instead of spawning uv to build a fresh venv
+        result = _run([sys.executable, "-c", check], cwd=worktree, env=env, timeout=120)
         if result.returncode:
             raise AutoUpdateError("candidate_preflight_failed", (result.stderr or result.stdout)[-1000:])
         return worktree
