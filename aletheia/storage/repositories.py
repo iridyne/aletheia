@@ -12289,8 +12289,9 @@ def insert_funding_rate_snapshot(data: dict) -> None:
     exchange = data.get("exchange")
     if symbol and exchange is not None:
         # Settlement guard: always write when settlement is imminent so that
-        # local_funding._verify_funding_settlements can find a snapshot within
-        # its _MAX_OBSERVATION_GAP window.
+        # local_funding.local_funding_schedule_readiness can find a snapshot
+        # within its _MAX_OBSERVATION_GAP window instead of reporting
+        # schedule_stale.
         settlement_imminent = False
         nft_raw = data.get("next_funding_time")
         if nft_raw:
