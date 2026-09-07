@@ -3123,3 +3123,44 @@ def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
     assert any(
         "exceeds_demo_position_margin" in v for v in result.violations
     ), result.violations
+
+
+@spec_claim(
+    SpecClaim(
+        "RE-S99", "risk_engine", "§17 account leverage monitor parity", "L2a",
+        "The monitor's reported cap tracks a nested-only policy write, so the dashboard "
+        "cannot show a different account-leverage limit than the gate enforces.",
+    ),
+)
+def test_monitor_cap_tracks_a_nested_only_policy_write(monkeypatch):
+    """A nested-only write used to leave the flat alias — and the monitor — stale.
+
+    Every other account-leverage spec writes the FLAT key, which `__setattr__` syncs
+    down into nested, so all of them passed while `check_account_leverage` reported a
+    stale cap to `GET /api/risk/account-leverage`. The autonomous operator loop
+    (`operator_loop.py:590`) and the risk-policy copy/replace/reset routes write
+    nested directly, so this is the shape the divergence actually took.
+    """
+    from types import SimpleNamespace
+
+    import aletheia.risk.engine as eng
+    from aletheia.config.schema import RiskConfig
+
+    risk = RiskConfig.model_validate({
+        "schema_version": 4,
+        "max_account_leverage_demo": 10.0,
+        "demo": {"leverage": {"account_cap": 7.0}},
+    })
+    # Survive the save -> load round trip the config writer performs.
+    risk = RiskConfig.model_validate(risk.model_dump(mode="python"))
+    assert risk.demo.leverage.account_cap == 7.0
+    assert risk.max_account_leverage_demo == 7.0, "flat alias must mirror nested"
+
+    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
+    monkeypatch.setattr(eng, "_unresolved_entry_reservations", lambda: [])
+    monkeypatch.setattr(eng, "_pre_order_entry_reservations", lambda **_: [])
+    monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
+
+    cfg = SimpleNamespace(risk=risk)
+    monitor = eng.check_account_leverage(cfg, execution_mode="okx_demo")
+    assert monitor["cap"] == 7.0
