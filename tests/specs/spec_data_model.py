@@ -193,16 +193,32 @@ def test_causal_tables_in_schema():
 @spec_claim(
     SpecClaim(
         "DM-S06", "data_model", "§2 runtime tables", "L2a",
-        "Runtime infrastructure tables exist (runtime_registry, runtime_checkpoints, runtime_events)",
+        "The retired Runtime Continuity control plane is not installed on a fresh DB, "
+        "while runtime_sessions — the surviving operator provenance table — is.",
     ),
 )
-def test_runtime_tables_in_schema():
+def test_retired_runtime_control_plane_is_not_installed():
+    """#2945 retired the Runtime Continuity control plane deliberately.
+
+    `migrations.py:7745` rebinds SCHEMA_SQL to slice the `-- Runtime Continuity`
+    block out of the imported baseline, commented "never install its retired
+    control plane", and `retire_runtime_continuity_tables` (:7767) is the
+    first-class operation that drops it from existing databases.
+
+    So DM-S06's original assertion — that the three tables exist — asserted the
+    opposite of the intended state. Inverted rather than deleted, because the
+    valuable half is stopping the control plane from being reinstalled: a textual
+    grep still finds `CREATE TABLE IF NOT EXISTS runtime_registry` at
+    migrations.py:568, so the DDL is present in the source and only the runtime
+    constant excludes it.
+    """
     from aletheia.storage.migrations import SCHEMA_SQL
 
     for table in ("runtime_registry", "runtime_checkpoints", "runtime_events"):
-        assert f"CREATE TABLE IF NOT EXISTS {table}" in SCHEMA_SQL, (
-            f"Runtime table '{table}' missing from SCHEMA_SQL"
+        assert f"CREATE TABLE IF NOT EXISTS {table}" not in SCHEMA_SQL, (
+            f"retired Runtime Continuity table '{table}' is back in SCHEMA_SQL"
         )
+    assert "CREATE TABLE IF NOT EXISTS runtime_sessions" in SCHEMA_SQL
 
 
 @spec_claim(
