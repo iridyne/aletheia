@@ -26,42 +26,25 @@ _LEGACY_TABLES = frozenset({
 # shrink it, but new entries require explicit contract review.
 _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
-    "aletheia/analytics/alpha_attribution.py",
     "aletheia/analytics/profit_gradient_evidence.py",
     # Backup verification must inspect legacy rows so an unproven cutover
     # cannot be presented as an authoritative recovery checkpoint.
     "aletheia/backup/verify.py",
-    "aletheia/cli/data_cmd.py",
-    "aletheia/cli/learning_cmd.py",
     "aletheia/cli/observe_cmd.py",
     "aletheia/config/schema.py",
     "aletheia/counterfactual/__init__.py",
-    "aletheia/counterfactual/filter_experiments.py",
-    "aletheia/learning/authority.py",
-    "aletheia/learning/cohorts.py",
-    "aletheia/learning/contribution_runner.py",
-    "aletheia/learning/economic_knowledge.py",
     "aletheia/learning/experiments.py",
-    "aletheia/learning/fixed_look.py",
-    "aletheia/learning/hypothesis_compiler.py",
-    "aletheia/learning/knowledge_yield.py",
     "aletheia/learning/ledger.py",
-    "aletheia/learning/lifecycle.py",
-    "aletheia/learning/maintenance.py",
     "aletheia/learning/policy_epochs.py",
-    "aletheia/learning/read_models.py",
     "aletheia/maintenance/data_retention_backfill.py",
     "aletheia/observation_lab/checkpoint.py",
     "aletheia/observation_lab/db.py",
     "aletheia/observation_lab/exposure.py",
-    "aletheia/observation_lab/runner.py",
     "aletheia/observation_lab/migration.py",
-    "aletheia/server/routes/analytics.py",
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
-    "aletheia/universe/service.py",
     "aletheia/update/continuity.py",
 })
 
@@ -70,19 +53,9 @@ _REFERENCE_ALLOWLIST = frozenset({
 # operations or tables.
 _WRITER_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
-    "aletheia/cli/observe_cmd.py",
-    "aletheia/counterfactual/filter_experiments.py",
-    "aletheia/learning/contribution_runner.py",
-    "aletheia/learning/experiments.py",
-    "aletheia/learning/fixed_look.py",
-    "aletheia/learning/hypothesis_compiler.py",
-    "aletheia/learning/ledger.py",
-    "aletheia/learning/lifecycle.py",
-    "aletheia/learning/maintenance.py",
     "aletheia/maintenance/data_retention_backfill.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
-    "aletheia/universe/service.py",
 })
 
 
