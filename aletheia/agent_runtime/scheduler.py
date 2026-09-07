@@ -2572,7 +2572,17 @@ def _claim_observed_tpsl_close(
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
 
+        # Same account proof the manual close-claim writer uses
+        # (coordinator._claim_close). Without it reconcile() scans this order every
+        # 2 minutes — `materialization_missing` is in _OPEN_LOCAL_STATES — fails to
+        # parse the empty identity, and appends `uta_account_identity_unavailable`
+        # to `errors`, which _run_reconciliation turns into a job failure. Deriving
+        # the identity from execution_mode instead would defeat the column: the
+        # point is that the identity is *proven* from the entry Order.
+        from aletheia.execution.coordinator import _position_account
+
         close_order = Order(
+            uta_account_identity_json=_position_account(position).model_dump_json(),
             proposal_id=position.get("proposal_id"),
             client_order_id=f"close-{position_id}",
             position_id=position_id,
