@@ -268,17 +268,6 @@ def _learning_gate_reason() -> str | None:
     return learning_influence_gate_reason()
 
 
-def _code_fingerprint() -> str | None:
-    """Commit the running process booted on (cached module global — no per-call
-    subprocess, safe in the per-candidate scoring loop). None in tests / CLI where
-    the boot commit was never captured."""
-    try:
-        from aletheia.agent_runtime.build_info import get_boot_commit
-        return get_boot_commit()
-    except Exception:
-        return None
-
-
 def _policy_epoch_definition(
     path_id: str, *, persist_config_migrations: bool = True,
 ) -> PolicyEpoch:
@@ -310,8 +299,8 @@ def _policy_epoch_definition(
             # into the epoch hash — a rebuild with an unchanged effective
             # policy must not rotate the epoch (retention: it churned
             # learning_policy_epochs every restart with zero policy delta).
-            # The commit is still attributed on each ``learning_exposures``
-            # row (see ``code_commit=_code_fingerprint()`` below) so build
+            # The commit still reaches each Lab delivery receipt as
+            # ``producer_commit`` (taken from the manifest), so build
             # provenance survives without inflating the epoch table.
             # Lifecycle and paper-influence settings change the effective
             # consumer policy, so a successor cannot inherit authority across
