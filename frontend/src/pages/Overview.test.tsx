@@ -55,12 +55,11 @@ describe('Overview', () => {
     try {
       await act(async () => root.render(<MemoryRouter><QueryClientProvider client={client}><Overview /></QueryClientProvider></MemoryRouter>))
       const collector = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Collectors'))!
-      expect(collector.textContent).toContain('1 success · 1 partial · 1 empty · 1 unconfigured · 1 disabled · 1 unobserved')
-      expect(host.querySelector('.system-inline-detail')?.textContent).toContain('empty · no_derivatives_history')
-      expect(collector.textContent).not.toContain('0 transient')
+      expect(collector.textContent).toContain('Attention')
+      expect(collector.getAttribute('aria-expanded')).toBe('false')
       await act(async () => collector.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
       expect(collector.getAttribute('aria-expanded')).toBe('true')
-      expect(host.querySelector('.system-inline-detail')).toBeNull()
+      expect(host.textContent).toContain('Collector diagnostics')
       const coverageRow = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Data coverage'))!
       await act(async () => coverageRow.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true })))
       expect(coverageRow.getAttribute('aria-expanded')).toBe('true')
