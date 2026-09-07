@@ -264,10 +264,21 @@ def test_exchange_take_profit_closes_through_the_broker(e2e_db, monkeypatch):
 def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
     """The autonomous loop must refuse a live position even when the stop is breached.
 
-    `close_position_routed` is the chokepoint for this guard (`allow_live=False`
-    by default), so the auto-exit loop can never place a REAL order. Locking it
-    here because the exchange-mode close path above is the code that would
-    otherwise carry the live close through.
+    TWO independent defences, asserted separately, because the first one hides the
+    second and an earlier version of this test only proved the hiding:
+
+    1. `evaluate_open_positions` filters on `_PAPER_MODES`
+       (`{paper_internal, bitget_demo, binance_testnet, okx_demo}`), so a
+       `*_live_limited` position is never even *checked* — `checked == 0`.
+       Asserting only "no command reached the venue" therefore passes trivially
+       and would keep passing with the second defence removed.
+    2. `close_position_routed` raises for a `*_live_limited` mode unless an
+       explicit human caller passes `allow_live=True`. This is the real
+       chokepoint, and it is reached only by direct invocation — which is what
+       the second half of this test does.
+
+    Verified by mutation: flipping `allow_live`'s default to True must make this
+    test fail. It did not, before defence 2 was asserted directly.
     """
     from aletheia.storage.models import Order
     from tests.uta.test_execution_coordinator import _identity
@@ -299,10 +310,25 @@ def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
 
     monkeypatch.setattr(coordinator, "create_uta_adapter", forbidden)
 
-    from aletheia.portfolio.position_manager import evaluate_open_positions
+    from aletheia.portfolio.position_manager import (
+        close_position_routed,
+        evaluate_open_positions,
+    )
 
+    # Defence 1: the loop does not even consider a live position.
     result = evaluate_open_positions()
-
+    assert result["checked"] == 0, (
+        "a live position entered the auto-exit working set; _PAPER_MODES should "
+        f"have excluded it. result={result}"
+    )
     assert submitted == [], "a live close command reached the venue"
     assert repo.get_position(position.id)["status"] == "open"
-    assert result["closed"] == 0
+
+    # Defence 2: the router itself refuses, so any future caller that reaches it
+    # without explicit human intent still cannot place a REAL order. Asserted by
+    # direct invocation because defence 1 makes this unreachable from the loop.
+    with pytest.raises(RuntimeError, match="live closes are human-only"):
+        close_position_routed(position.id, "stop_loss")
+
+    assert submitted == [], "the refused live close still reached the venue"
+    assert repo.get_position(position.id)["status"] == "open"
