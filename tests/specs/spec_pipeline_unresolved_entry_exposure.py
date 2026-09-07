@@ -148,7 +148,7 @@ def _seed_entry_order(
             status="open",
         )
         repo.insert_position(position)
-        repo.update_order(order.id, position_id=position.id)
+        repo.update_order_metadata(order.id, position_id=position.id)
     return proposal, order, position
 
 

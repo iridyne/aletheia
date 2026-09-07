@@ -751,7 +751,7 @@ def materialize_bitget_entry(
         if exchange_order_id is None or not evidence:
             return MaterializationResult(state="evidence_missing")
         if not order.get("exchange_order_id"):
-            repo.update_order(order_id, exchange_order_id=exchange_order_id)
+            repo.update_order_metadata(order_id, exchange_order_id=exchange_order_id)
             order["exchange_order_id"] = exchange_order_id
 
         db = repo.get_db()
@@ -1008,7 +1008,7 @@ def materialize_bitget_entry(
             proposal_state = "error"
             error_reason = "exchange_quantity_exceeds_authoritative_order"
             filled_at = max(item.filled_at for item in evidence)
-        repo.update_order(
+        repo.transition_order(
             order_id,
             exchange_order_id=exchange_order_id,
             position_id=position_id,
@@ -1291,7 +1291,7 @@ def _materialize_complete_private_close(
                 )
             )
         inserted_count = len(unseen)
-        repo.update_order(
+        repo.transition_order(
             order_id,
             exchange_order_id=exchange_order_id,
             position_id=position["id"],
@@ -1400,7 +1400,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
             if exchange_order_id is None or not evidence:
                 return MaterializationResult(state="evidence_missing")
             if not order.get("exchange_order_id"):
-                repo.update_order(order_id, exchange_order_id=exchange_order_id)
+                repo.update_order_metadata(order_id, exchange_order_id=exchange_order_id)
                 order["exchange_order_id"] = exchange_order_id
 
             db = repo.get_db()
@@ -1458,7 +1458,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                     )
                 )
 
-            repo.update_order(
+            repo.update_order_metadata(
                 order_id,
                 exchange_order_id=exchange_order_id,
                 position_id=position["id"],
@@ -1484,7 +1484,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                         # quantity was aligned with the venue-booked clip):
                         # converge the Order and release the claim without
                         # touching quantities — every fill is already applied.
-                        repo.update_order(
+                        repo.transition_order(
                             order_id,
                             status="filled",
                             error_reason=None,
@@ -1514,7 +1514,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                 # order (multi-batch partials); only the delta may reduce it.
                 closed_at_ms = max(item.filled_at_ms for item in delta_evidence)
                 if order_fully_filled:
-                    repo.update_order(
+                    repo.transition_order(
                         order_id,
                         status="filled",
                         error_reason=None,
@@ -1526,7 +1526,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                         pending_close_status=None,
                     )
                 else:
-                    repo.update_order(
+                    repo.transition_order(
                         order_id,
                         status="partially_filled",
                         error_reason=None,
@@ -1550,7 +1550,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                     exchange_order_id=exchange_order_id,
                 )
             if exchange_quantity > requested_quantity + tolerance:
-                repo.update_order(
+                repo.transition_order(
                     order_id,
                     status="overfilled",
                     error_reason="exchange_close_quantity_exceeds_position",
@@ -1583,7 +1583,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                     close_reason=order.get("close_reason") or "clipped_partial",
                     closed_at=max(i.filled_at for i in delta_evidence),
                 )
-            repo.update_order(
+            repo.transition_order(
                 order_id,
                 status="filled",
                 error_reason=None,
@@ -1611,7 +1611,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
             with repo.transaction(immediate=True):
                 order = repo.get_order(order_id)
                 if order is not None:
-                    repo.update_order(
+                    repo.transition_order(
                         order_id,
                         status="materialization_missing",
                         error_reason="exchange_fill_local_materialization_missing",

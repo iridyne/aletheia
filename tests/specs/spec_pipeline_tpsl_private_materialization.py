@@ -97,7 +97,7 @@ def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
         opened_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_position(position)
-    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_order_metadata(entry_order.id, position_id=position.id)
     repo.update_trade_proposal(proposal.id, status="executed")
     return position
 

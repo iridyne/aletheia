@@ -510,7 +510,7 @@ def _insert_closed_position_via_producer(
         opened_at=opened_iso,
     )
     repo.insert_position(position)
-    repo.update_order(order_id, position_id=position_id)
+    repo.update_order_metadata(order_id, position_id=position_id)
     if local_paper:
         from aletheia.portfolio.paper_account import record_position_opened
 
@@ -1120,7 +1120,7 @@ def test_ready_candidate_uses_independent_account_presence(monkeypatch, presence
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": "account-scope-1"})
-    repo.update_order(position.order_id, uta_account_identity_json=identity.model_dump_json())
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
     candidate = PositionDisappearanceCandidate(
         id="candidate-ready", position_id=position.id, identity_key="identity-ready",
         broker_id="bitget_demo", account_environment="demo",
@@ -1191,7 +1191,7 @@ def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monk
     from tests.uta.test_execution_coordinator import _identity
     from aletheia.uta.models import VerifiedExitReport, VerifiedExitState, ReadCompleteness, QueryScope
     identity = _identity("bitget_live_limited").model_copy(update={"account_fingerprint": "account-scope-live"})
-    repo.update_order(position.order_id, uta_account_identity_json=identity.model_dump_json())
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
 
     async def query_account(mode, method, query, *, expected_account):
         assert expected_account == identity

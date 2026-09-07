@@ -416,11 +416,7 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
         if reason_code == TRADE_RATE_LIMIT_CANCEL_REASON:
             raise RuntimeError("pending_close_recovery: rate-limited close must be parked, not released")
 
-        db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
-            (reason_code, order_id, order_row["status"]),
-        )
+        repo.transition_order(order_id, status="cancelled", error_reason=reason_code)
         cursor = db.execute(
             """
             UPDATE positions
@@ -507,10 +503,10 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
         ):
             return False
 
-        db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
-            (TRADE_RATE_LIMIT_CANCEL_REASON, order_id, order_row["status"]),
+        repo.transition_order(
+            order_id,
+            status="cancelled",
+            error_reason=TRADE_RATE_LIMIT_CANCEL_REASON,
         )
         cursor = db.execute(
             """
