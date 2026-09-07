@@ -19,6 +19,36 @@ EXECUTION_MODE_TO_VENUE: dict[str, str] = {
     "binance_live_limited": "binance",
 }
 
+def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
+    """Resolve the durable execution mode for a venue under the configured mode.
+
+    Looks the answer up in UTA's authoritative mode list rather than composing
+    `f"{venue}_demo"`. Two reasons string composition is wrong here:
+
+    * the non-live suffix is NOT uniform — Binance's is `binance_testnet`, not
+      `binance_demo` — so composition yields a mode no registry, profile, or Risk
+      pool recognizes;
+    * `EXECUTION_MODE_TO_VENUE` above is not the list of valid modes. It names only
+      the modes whose symbol availability is checked against `universe_registry`,
+      and `okx_demo` is intentionally absent because it uses the dedicated CCXT
+      sandbox capability seam (see `gateway._symbol_unavailable_reason`).
+    """
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
+    live = configured_exchange_mode == "live"
+    candidates = sorted(
+        mode for mode in UTA_EXECUTION_MODES
+        if mode.startswith(f"{venue}_") and (mode.endswith("_live_limited") is live)
+    )
+    if not candidates:
+        raise ValueError(
+            f"no {'live' if live else 'non-live'} execution mode registered for venue {venue!r}"
+        )
+    if len(candidates) > 1:
+        raise ValueError(f"ambiguous execution modes for venue {venue!r}: {candidates}")
+    return candidates[0]
+
+
 # Entry execution currently has one proven exchange-Demo handoff. Extend this
 # registry only with matching Planner, Risk/Gateway, and execution tests.
 ENTRY_EXECUTION_MINIMUM_PERMISSION: dict[str, str] = {

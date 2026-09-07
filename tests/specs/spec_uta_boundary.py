@@ -244,10 +244,14 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
     #   names, which is a configuration fact (`config.schema.KNOWN_BITGET_PROFILES`,
     #   the same constant `ExchangeConfig` validates against). Asking "is this a
     #   known profile?" no longer requires importing a concrete venue client.
+    # * `cli/bitget_cmd.py` and `cli/secrets_cmd.py` — their `test` commands each
+    #   called `BitgetClient.test_connection()`, one hand-signed account read.
+    #   Replaced by `uta.manager.probe_account_reachable`, which runs the probe
+    #   through the same adapter, identity validation and teardown as every other
+    #   UTA read — so a probe can no longer succeed against an account the rest of
+    #   the system would reject.
     allowed = {
         "aletheia/agent_runtime/scheduler.py",
-        "aletheia/cli/bitget_cmd.py",
-        "aletheia/cli/secrets_cmd.py",
         "aletheia/execution/venue_capabilities.py",
         "aletheia/server/routes/bitget.py",
     }
