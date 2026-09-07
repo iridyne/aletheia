@@ -202,7 +202,7 @@ def _bitget_verified_fill(raw: dict):
     )
 
 
-_KNOWN_PROFILES = frozenset({"classic_v2", "uta_v3"})
+from aletheia.exchanges.bitget.profile_config import _KNOWN_PROFILES  # noqa: E402
 
 # Error codes that mean "no open position" — profile-specific where they differ.
 # classic_v2: 22002, 25227. uta_v3: uses the same codes per Bitget migration guide.

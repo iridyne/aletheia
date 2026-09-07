@@ -311,7 +311,7 @@ def _restart_gateway() -> dict:
                 sys.executable,
                 "-c",
                 "from aletheia.gateway.lifecycle import do_start, do_stop; "
-                "do_stop(); do_start(no_browser=True)",
+                "do_stop(); raise SystemExit(0 if do_start(no_browser=True) is not False else 2)",
             ],
             cwd=str(_PROJECT_ROOT),
             capture_output=True,

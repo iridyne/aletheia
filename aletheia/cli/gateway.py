@@ -149,14 +149,17 @@ def restart(
     started_at = time.monotonic()
     do_stop(preserve_recovery=True)
     stopped_at = time.monotonic()
-    do_start(no_browser=not browser, foreground=False)
+    ready = do_start(no_browser=not browser, foreground=False)
     finished_at = time.monotonic()
     elapsed = (
         f"{finished_at - started_at:.1f}s "
         f"(stop {stopped_at - started_at:.1f}s; "
         f"start/readiness {finished_at - stopped_at:.1f}s)."
     )
-    typer.echo(f"Gateway restart completed in {elapsed}")
+    if ready is False:
+        typer.echo(f"Gateway restart command returned in {elapsed} Readiness is still pending.")
+    else:
+        typer.echo(f"Gateway restart completed in {elapsed}")
 
 
 @gateway_app.command()

@@ -403,7 +403,7 @@ def _age_minutes(iso_ts: str | None) -> float | None:
         return None
 
 
-def parse_utc(iso_ts: str | None) -> datetime | None:
+def _parse_iso_datetime(iso_ts: str | None) -> datetime | None:
     if not iso_ts:
         return None
     try:
@@ -690,7 +690,7 @@ def _probe_gateway_restart_history(report: Report) -> None:
         event_type = str(event.get("event_type") or "")
         if event_type not in _GATEWAY_RESTART_EVENT_TYPES:
             continue
-        ts = parse_utc(event.get("timestamp"))
+        ts = _parse_iso_datetime(event.get("timestamp"))
         if ts is not None and ts < cutoff:
             continue
         bucket = _restart_event_bucket(event)
@@ -3291,7 +3291,7 @@ def _probe_audit_chain(report: Report) -> None:
         # the cross-process lock, so only breaks after this timestamp indicate
         # an active write-path or tamper problem.
         EFFECTIVE_CHAIN_FIX_TS = "2026-07-03T08:00:00+00:00"
-        effective_ts = parse_utc(EFFECTIVE_CHAIN_FIX_TS)
+        effective_ts = _parse_iso_datetime(EFFECTIVE_CHAIN_FIX_TS)
         ts_padded = list(error_timestamps) + [""] * len(errors)
         # #179 fix: undateable breaks (no parseable timestamp on the surrounding
         # audit event) used to be silently excluded from `post_fix`; when every
@@ -3303,7 +3303,7 @@ def _probe_audit_chain(report: Report) -> None:
         undateable: list[str] = []
         pre_fix_count = 0
         for e, t in zip(errors, ts_padded):
-            parsed = parse_utc(t)
+            parsed = _parse_iso_datetime(t)
             if parsed is None:
                 undateable.append(e)
             elif effective_ts is not None and parsed > effective_ts:
@@ -4214,11 +4214,11 @@ def apply_fixes() -> list[dict[str, object]]:
     stderr = io.StringIO()
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            do_start(no_browser=True, foreground=False)
+            started = do_start(no_browser=True, foreground=False)
         actions.append({
             "action": "gateway_start",
-            "status": "ok",
-            "reason": "started",
+            "status": "ok" if started is not False else "pending",
+            "reason": "started" if started is not False else "start_requested_readiness_unconfirmed",
         })
     except typer.Exit as exc:
         exit_code = int(getattr(exc, "exit_code", 1) or 0)

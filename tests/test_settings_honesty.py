@@ -8,8 +8,10 @@ DELETED, so the tests that asserted the shell's honest-but-inert behavior are
 gone with it; two of them actively guarded the dead code's survival
 (`assert sf_fields, "must still exist for config-file backward compat"`).
 
-Config files that still carry a `strategy_factory:` key load cleanly — Pydantic
-ignores unknown top-level sections — so no migration is needed.
+`AletheiaConfig` is `extra="forbid"`, so a config.yaml still carrying a
+`strategy_factory:` section would fail to LOAD once the field is gone. Removing a
+config section therefore requires a drop migration, which `config/loader.py` now
+performs alongside the other removed-key migrations.
 
 What remains here is the Event Triggers half of the same honesty rule: a removed
 field must be REJECTED, not silently accepted.
@@ -114,6 +116,37 @@ def test_strategy_factory_shell_is_gone():
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
     }
     assert "/strategy_factory" not in routes
+
+
+def test_removed_strategy_factory_section_still_loads(tmp_path, monkeypatch):
+    """An existing config.yaml with the removed section must LOAD, not explode.
+
+    `AletheiaConfig` is `extra="forbid"`, so deleting the field without a drop
+    migration turns every pre-existing config file into a hard startup failure.
+    This is the regression that caught it: 28 test modules failed collection with
+    `strategy_factory: Extra inputs are not permitted` because they read a real
+    config file carrying the old section.
+    """
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "strategy_factory": {"backtest_gate_enabled": True, "sweep_top_k": 10},
+            "trading": {"default_stop_loss_pct": 2.0},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    assert cfg.trading.default_stop_loss_pct == 2.0
+    assert not hasattr(cfg, "strategy_factory")
 
 
 def test_unimplemented_system_tools_are_not_registered():

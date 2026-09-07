@@ -460,6 +460,14 @@ def load_config(
         removed_serenity_stop = isinstance(serenity, dict) and "stop_loss_pct" in serenity
         if removed_serenity_stop:
             del serenity["stop_loss_pct"]
+        # The Strategy Factory subsystem was removed with Position C (2026-07-02);
+        # its config class and API surface are now deleted too. `AletheiaConfig` is
+        # extra="forbid", so an existing config.yaml carrying this section would
+        # fail to LOAD without this migration — a removed section needs a drop, not
+        # an assumption that unknown keys are ignored.
+        removed_strategy_factory = "strategy_factory" in raw
+        if removed_strategy_factory:
+            del raw["strategy_factory"]
         exchange = raw.get("exchange")
         removed_uta_boundary = isinstance(exchange, dict) and "uta_read_boundaries" in exchange
         if removed_uta_boundary:
@@ -514,7 +522,8 @@ def load_config(
             raise
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
         changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
-                   or removed_serenity_stop or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
+                   or removed_serenity_stop or removed_strategy_factory
+                   or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))
