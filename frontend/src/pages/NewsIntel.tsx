@@ -6,6 +6,7 @@ import PageHeader from '../components/PageHeader'
 import { Badge, Button, Card, ListRowButton, SymbolLink, useToast } from '../components/ui'
 import { DataStateMessage } from '../components/DataState'
 import { humanize, fmtTimestamp, stripHtml } from '../lib/format'
+import "./NewsIntel.css"
 
 type NewsItem = {
   id: string

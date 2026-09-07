@@ -16,13 +16,12 @@ import { fmtNum, humanize, humanizeBool } from '../../../lib/format'
 import { listToCsv, parseCsvList } from '../csvList'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import {
-  RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO,
-  RISK_FUTURES_LIVE, RISK_LIVE, RISK_MARGIN, RISK_POLICY_BOOLS,
-  RISK_POLICY_LIVE_FIELDS, RISK_POLICY_NUM_FIELDS, RISK_POLICY_PATHS, RISK_SHARED,
-  type RiskPolicyPath,
+  RISK_BOOLS, RISK_CORR, RISK_DEMO, RISK_FAMILY_GATE, RISK_FUTURES_DEMO, RISK_FUTURES_LIVE,
+  RISK_LIVE, RISK_MARGIN, RISK_POLICY_BOOLS, RISK_POLICY_LIVE_FIELDS, RISK_POLICY_NUM_FIELDS,
+  RISK_POLICY_PATHS, RISK_SHARED, type RiskPolicyPath,
 } from '../risk/riskFields'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
-import type { DeepPartial, SettingsRiskConfig, SettingsRiskPolicy } from '../../../api/settings'
+import type { DeepPartial, SettingsRiskConfig, SettingsRiskPolicy, components } from '../../../api/settings'
 import type { SettingsDirtyProps, SettingsProps } from '../types'
 
 export const UNIVERSE_SECTION = {
@@ -52,7 +51,7 @@ export const RISK_LIMITS_SECTION = {
 // ─── Event Triggers config ───
 
 function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const et = settings?.event_triggers as any
+  const et = settings?.event_triggers
   const [vals, setVals] = useState<Record<string, unknown>>({})
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -72,7 +71,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   })
 
   const { mutate: save } = useMutation({
-    mutationFn: () => api.updateEventTriggerConfig(vals as any),
+    mutationFn: () => api.updateEventTriggerConfig(vals as components['schemas']['EventTriggerConfig']),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setMsg({ ok: true, text: 'Saved' }) },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   })
@@ -104,7 +103,7 @@ function EventTriggerCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // ─── Universe config ───
 
 function UniverseConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const universe = settings?.universe as any
+  const universe = settings?.universe
   const snapshotTtlLabelId = useId()
   const [enabled, setEnabled] = useState(false)
   const [refreshMin, setRefreshMin] = useState('10')
@@ -316,7 +315,7 @@ function CandidateSelectionAuthorityCard() {
 }
 
 function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const server = settings?.fast_trigger as any
+  const server = settings?.fast_trigger
   const [mode, setMode] = useState<'off' | 'shadow' | 'execute'>('shadow')
   const [maxSetups, setMaxSetups] = useState('10')
   const [ttlMinutes, setTtlMinutes] = useState('60')
@@ -394,30 +393,39 @@ function FastTriggerConfigCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // RISK & SYMBOLS TAB — allowed symbols, risk limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function RiskTab({ settings, qc, onDirty }: SettingsDirtyProps) {
+export function RiskTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
   // onDirty is forwarded to UniverseConfigCard below; its own dirty reporting
   // now adopts or preserves local state through useSettingsDraftLifecycle.
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
-        <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
-        <CandidateSelectionAuthorityCard />
-        <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(UNIVERSE_SECTION.id) && (
+        <SettingsFeatureSection descriptor={UNIVERSE_SECTION}>
+          <UniverseConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+          <CandidateSelectionAuthorityCard />
+          <FastTriggerConfigCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
-        <Collapsible title="Trigger Thresholds">
-          <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </SettingsFeatureSection>
+      {isVisible(EVENT_TRIGGERS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EVENT_TRIGGERS_SECTION}>
+          <Collapsible title="Trigger Thresholds">
+            <EventTriggerCard settings={settings} qc={qc} onDirty={onDirty} />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
-        <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(TRADABLE_SYMBOLS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={TRADABLE_SYMBOLS_SECTION}>
+          <SymbolsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
-        <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(RISK_LIMITS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={RISK_LIMITS_SECTION}>
+          <RiskCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }
@@ -429,7 +437,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const serverMode: string = settings?.risk?.symbol_filter_mode ?? 'blacklist'
   const serverSymbols: string[] = settings?.risk?.symbol_list ?? []
 
-  const [mode, setMode] = useState<'whitelist' | 'blacklist'>(serverMode as any)
+  const [mode, setMode] = useState<'whitelist' | 'blacklist'>(serverMode === 'whitelist' ? 'whitelist' : 'blacklist')
   const [draft, setDraft] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -456,7 +464,7 @@ function SymbolsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     onDirty,
     serverKey: settings,
     adoptServer: () => {
-      setMode(serverMode as any)
+      setMode(serverMode === 'whitelist' ? 'whitelist' : 'blacklist')
       setDraft(serverSymbols)
     },
   })
@@ -828,7 +836,6 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         </span>
         <span className="text-xs text-muted">
           require_risk_check: <span className={`badge ${risk.require_risk_check_for_all_orders ? 'badge-green' : 'badge-red'}`}>{humanizeBool(risk.require_risk_check_for_all_orders)}</span>
-          <span className="text-xs" style={{ marginLeft: 'var(--space-1)' }}>locked</span>
         </span>
       </div>
 
@@ -856,7 +863,7 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       <ToggleGrid fields={RISK_BOOLS} vals={vals} set={set} persistence="staged" />
 
       {/* Correlation guard thresholds — only shown when guard is enabled */}
-      {vals.correlation_guard_enabled && (
+      {Boolean(vals.correlation_guard_enabled) && (
         <>
           <div className="section-label mt-4">Correlation guard thresholds</div>
           <NumGrid fields={RISK_CORR} vals={vals} set={set} errors={errors} />
@@ -864,7 +871,7 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       )}
 
       {/* Futures / leverage tier limits — shown when usdt_futures is enabled */}
-      {(settings?.exchange as any)?.enabled_markets?.usdt_futures && (
+      {settings?.exchange?.enabled_markets?.usdt_futures && (
         <Collapsible title="Futures leverage & margin">
           <div className="section-label">Futures leverage — Live (per-tier)</div>
           <NumGrid fields={RISK_FUTURES_LIVE} vals={vals} set={set} errors={errors} />

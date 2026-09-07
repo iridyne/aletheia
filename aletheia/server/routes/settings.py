@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
+from typing_extensions import TypedDict
 
 from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
 from aletheia.config.execution_costs import (
@@ -2657,6 +2658,24 @@ class UniverseConfigUpdate(SettingsRequest):
     market_type: Optional[str] = None
 
 
+
+class CandidateSelectionStatusResponse(TypedDict):
+    configured_policy: str
+    configured_policy_epoch: str | None
+    authority_enabled: bool
+    authority_block_reason: str | None
+    selection_bases: list[str]
+
+
+
+
+class UniverseConfigUpdateResponse(TypedDict):
+    updated: UniverseConfigUpdate
+    rescheduled: bool
+    universe: UniverseConfig
+
+
+
 def _candidate_selection_status(cfg: AppConfig) -> dict[str, Any]:
     from aletheia.universe.candidate_selection_authority import candidate_selection_authority_block_reason
     reason = candidate_selection_authority_block_reason(cfg)
@@ -2683,7 +2702,7 @@ _UNIVERSE_BOUNDS: dict[str, tuple[float, float]] = {
 }
 
 
-@router.post("/universe")
+@router.post("/universe", responses={200: {"model": UniverseConfigUpdateResponse}})
 def update_universe_config(req: UniverseConfigUpdate):
     """Update universe generator parameters."""
     cfg = load_config()
@@ -2761,9 +2780,9 @@ def update_universe_config(req: UniverseConfigUpdate):
     return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 
-@router.get("/universe/candidate-selection")
+@router.get("/universe/candidate-selection", responses={200: {"model": CandidateSelectionStatusResponse}})
 def get_candidate_selection_status():
-    """Read the configured authority and its exact prospective qualification."""
+    """Read the configured Candidate selection authority."""
 
     from aletheia.universe.candidate_selection_authority import (
         recover_candidate_selection_authority_transition,
@@ -2771,6 +2790,7 @@ def get_candidate_selection_status():
 
     recover_candidate_selection_authority_transition()
     return _candidate_selection_status(load_config())
+
 
 
 

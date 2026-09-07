@@ -1,4 +1,5 @@
 import type { components } from './generated/settings'
+export type { components } from './generated/settings'
 
 /** The exact redacted payload returned by GET /api/settings. */
 export type SettingsResponse = components['schemas']['SettingsResponse']

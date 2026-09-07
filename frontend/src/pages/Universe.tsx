@@ -122,7 +122,14 @@ const planColumns = [
     const spec = trigger !== '—' && trigger !== tactic ? ` · ${trigger}` : ''
     return `${mode} · ${tactic}${spec}`
   }, { id: 'execution', header: 'Execution / Tactic' }),
-  planCol.accessor('status', { header: 'Status', cell: info => <Badge tone="green">{humanize(info.getValue())}</Badge> }),
+  planCol.accessor('status', {
+    header: 'Status',
+    cell: info => {
+      const s = String(info.getValue() || '')
+      const tone = s === 'expired' ? 'muted' : s === 'rejected' || s === 'cancelled' ? 'red' : ['triggered', 'ordered', 'partially_filled'].includes(s) ? 'green' : 'yellow'
+      return <Badge tone={tone}>{humanize(s)}</Badge>
+    },
+  }),
   planCol.accessor(row => expiryLabel(row.plan?.expires_at), { id: 'expires_at', header: 'Expiry / countdown' }),
 ]
 
@@ -210,12 +217,13 @@ export default function Universe() {
   const [search, setSearch] = useSearchParams()
   const [historyBefore, setHistoryBefore] = useState<string | null>(null)
   const [candidateFilter, setCandidateFilter] = useState('needs_planning')
+  const [planStatus, setPlanStatus] = useState<'active' | 'expired' | 'all'>('active')
   const tab = search.get('tab') || 'current'
   const selectedPlanId = search.get('plan_id')
   const selectedCandidateId = search.get('candidate_id')
   const workbench = useQuery<EntryWorkbenchResponse>({
-    queryKey: ['entry-workbench'],
-    queryFn: api.getEntryWorkbench,
+    queryKey: planStatus === 'active' ? ['entry-workbench'] : ['entry-workbench', planStatus],
+    queryFn: () => api.getEntryWorkbench(planStatus === 'active' ? {} : { plan_status: planStatus }),
     refetchInterval: 30_000,
   })
   const operatorStatus = useQuery<OperatorStatus>({
@@ -230,7 +238,7 @@ export default function Universe() {
   })
   const history = useQuery<PlanningHistoryResponse>({
     queryKey: ['planning-history', historyBefore],
-    queryFn: () => api.getPlanningHistory(50, historyBefore),
+    queryFn: () => api.getPlanningHistory({ limit: 50, before: historyBefore }),
     enabled: tab === 'history',
   })
 
@@ -256,8 +264,8 @@ export default function Universe() {
     if (candidateFilter === 'all_active') return rows.filter(row => row.attention_status === 'active')
     if (candidateFilter === 'plan_active') return rows.filter(row => Boolean(row.active_entry_plan_id))
     if (candidateFilter === 'expiring') return rows.filter(row => Math.min(
-      new Date(row.soft_expires_at).getTime(),
-      new Date(row.hard_expires_at).getTime(),
+      row.soft_expires_at ? new Date(row.soft_expires_at).getTime() : Infinity,
+      row.hard_expires_at ? new Date(row.hard_expires_at).getTime() : Infinity,
     ) - now <= 5 * 60_000)
     if (candidateFilter === 'flagged') return rows.filter(row => row.execution_eligible === 0 || evidenceLabel(row.risk_flags) !== 'Not recorded')
     if (candidateFilter === 'stale') return rows.filter(row => row.candidate_expires_at && new Date(row.candidate_expires_at).getTime() <= now)
@@ -320,7 +328,21 @@ export default function Universe() {
       label: 'Entry Plans',
       badge: plans?.length,
       render: () => <ReadSection available={workbenchUnavailable ? false : data?.availability.entry_plans?.available} loading={workbench.isPending} label="Entry Plans">
-        <DataTable columns={planColumns} data={plans ?? []} onRowClick={openPlan} emptyMessage="No active Entry Plans." tableId="entry-workbench-plans" />
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-muted text-xs font-mono">Plan status:</span>
+          {(['active', 'expired', 'all'] as const).map(s => (
+            <Button
+              key={s}
+              variant={planStatus === s ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setPlanStatus(s)}
+              className={planStatus === s ? 'font-semibold' : ''}
+            >
+              {s === 'active' ? '🟢 Active' : s === 'expired' ? '🟡 Expired' : 'All'}
+            </Button>
+          ))}
+        </div>
+        <DataTable columns={planColumns} data={plans ?? []} onRowClick={openPlan} emptyMessage={planStatus === 'expired' ? 'No expired Entry Plans.' : planStatus === 'all' ? 'No Entry Plans found.' : 'No active Entry Plans.'} tableId="entry-workbench-plans" />
       </ReadSection>,
     },
     {

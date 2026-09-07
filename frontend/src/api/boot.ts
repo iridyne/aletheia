@@ -1,4 +1,5 @@
 import { fetchJson } from './client'
+import type { components } from './generated/api'
 
 export type BootstrapAvailability = 'available' | 'unavailable'
 

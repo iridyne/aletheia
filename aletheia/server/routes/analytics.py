@@ -7,11 +7,431 @@ import time
 from datetime import datetime, timedelta, timezone
 import json
 from threading import RLock
+from typing import Any
 
 from fastapi import APIRouter, Response
+from pydantic import BaseModel, JsonValue
+
+
+
+class ExecutionModeIdentity(BaseModel):
+    execution_mode: str | None
+    execution_mode_status: str
+
+
+class OutcomeWindow(BaseModel):
+    clean_window_anchor_id: str
+    clean_window_anchor_iso: str
+    outcome_semantics_version: str
+
+
+class OutcomeCohort(OutcomeWindow):
+    raw_event_count: int | None
+    eligible_outcome_count: int | None
+    excluded_outcome_count: int | None
+    outcome_exclusion_reasons: dict[str, int]
+    cohort_state: str
+    raw_recorded_realized_pnl: float | None
+    raw_economics_unavailable_count: int | None
+    eligible_realized_pnl: float | None
+
+
+class AnalyticsUnavailable(ExecutionModeIdentity):
+    outcome_status: str
+    unavailable_reason: str
+
+
+class TradeStatsSource(BaseModel):
+    source_type: str
+    trade_count: int
+    win_rate: float | None
+    avg_hold_hours: float | None
+    hold_time_available_count: int
+    hold_time_unavailable_count: int
+    expectancy_pct: float | None
+    total_pnl: float | None
+
+
+class TradeStatsFamily(ExecutionModeIdentity, OutcomeWindow):
+    family: str
+    trade_count: int
+    win_rate: float | None
+    expectancy_pct: float | None
+    avg_hold_hours: float | None
+    hold_time_available_count: int
+    hold_time_unavailable_count: int
+    shadow_count: int | None
+    alpha_vs_btc_pct: float | None
+    outcome_status: str
+
+
+class HoldBucket(BaseModel):
+    bucket: str
+    count: int
+    pct: float
+
+
+class TradeStatsTotals(BaseModel):
+    trade_count: int
+    win_rate: float | None
+    avg_hold_hours: float | None
+    median_hold_hours: float | None
+    hold_time_available_count: int
+    hold_time_unavailable_count: int
+    total_pnl: float | None
+
+
+class TradeStatsResponse(OutcomeCohort, ExecutionModeIdentity):
+    by_source: list[TradeStatsSource]
+    by_family: list[TradeStatsFamily]
+    hold_distribution: list[HoldBucket]
+    totals: TradeStatsTotals
+    outcome_status: str
+
+
+class InsightEquityPoint(BaseModel):
+    time: str
+    pnl: float
+    cumulative_pnl: float
+
+
+class InsightDrawdownPoint(BaseModel):
+    time: str
+    drawdown: float
+
+
+class DirectionStats(BaseModel):
+    trade_count: int
+    win_rate: float
+    total_pnl: float
+    avg_pnl_pct: float
+    avg_hold_hours: float | None
+    hold_time_available_count: int
+    hold_time_unavailable_count: int
+
+
+class ProfitFactorStats(BaseModel):
+    gross_profit: float
+    gross_loss: float
+    profit_factor: float | None
+    profit_factor_state: str
+    avg_win: float
+    avg_loss: float
+    largest_win: float
+    largest_loss: float
+    win_count: int
+    loss_count: int
+
+
+class DayOfWeekStats(BaseModel):
+    day: str
+    trade_count: int
+    win_rate: float
+    avg_pnl_pct: float
+
+
+class HourStats(BaseModel):
+    hour: int
+    trade_count: int
+    win_rate: float
+    avg_pnl_pct: float
+
+
+class DistributionBin(BaseModel):
+    bin: str
+    count: int
+
+
+class RegimeStats(BaseModel):
+    regime: str
+    trade_count: int
+    win_rate: float
+    avg_pnl_pct: float
+
+
+class StreakStats(BaseModel):
+    max_consecutive_wins: int
+    max_consecutive_losses: int
+    current_streak: int
+    current_streak_type: str
+    total_wins: int
+    total_losses: int
+    total_flats: int
+
+
+class HoldPnlPoint(BaseModel):
+    hold_hours: float
+    pnl_pct: float
+    direction: str
+    symbol: str
+    market_type: str
+
+
+class HeatmapCell(BaseModel):
+    day: int
+    hour: int
+    avg_pnl_pct: float
+    trade_count: int
+
+
+class FrequencyTrade(BaseModel):
+    pnl_pct: float
+    direction: str
+
+
+class TradeFrequencyDay(BaseModel):
+    date: str
+    trades: list[FrequencyTrade]
+
+
+class SymbolDirectionStats(BaseModel):
+    symbol: str
+    market_type: str
+    direction: str
+    win_rate: float
+    avg_pnl_pct: float
+    trade_count: int
+
+
+class HoldDurationStats(BaseModel):
+    bucket: str
+    trade_count: int
+    win_rate: float
+    avg_pnl_pct: float
+    avg_win_pct: float
+    avg_loss_pct: float
+
+
+class RMultipleMetadata(BaseModel):
+    eligible_r_multiple_count: int
+    unavailable_r_multiple_count: int
+    unavailability_reasons: dict[str, int]
+
+
+class ExitReasonStats(BaseModel):
+    reason: str
+    trade_count: int
+    win_rate: float
+    avg_pnl_pct: float
+    total_pnl: float
+    pnl_contribution_pct: float
+
+
+class TradeInsightsResponse(OutcomeCohort, ExecutionModeIdentity):
+    since: str
+    trade_count: int
+    source_raw_count: int
+    loaded_raw_count: int
+    loaded_count: int
+    omitted_count: int
+    cohort_complete: bool
+    loaded_from: str | None
+    loaded_through: str | None
+    equity_curve: list[InsightEquityPoint]
+    drawdown_curve: list[InsightDrawdownPoint]
+    by_direction: dict[str, DirectionStats]
+    profit_factor: ProfitFactorStats
+    by_day_of_week: list[DayOfWeekStats]
+    by_hour: list[HourStats]
+    pnl_distribution: list[DistributionBin]
+    by_regime: list[RegimeStats]
+    streaks: StreakStats
+    hold_vs_pnl: list[HoldPnlPoint]
+    hour_day_heatmap: list[HeatmapCell]
+    trade_frequency: list[TradeFrequencyDay]
+    temporal_unbucketed_count: int
+    heatmap_unbucketed_count: int
+    symbol_direction_matrix: list[SymbolDirectionStats]
+    hold_duration_buckets: list[HoldDurationStats]
+    r_multiple_distribution: list[DistributionBin]
+    r_multiple_distribution_meta: RMultipleMetadata
+    by_exit_reason: list[ExitReasonStats]
+
+
+class StrategyKpi(ExecutionModeIdentity, OutcomeWindow):
+    trade_count: int
+    win_rate: float
+    total_pnl: float
+
+
+class StrategyKpisResponse(OutcomeCohort, ExecutionModeIdentity):
+    strategies: dict[str, StrategyKpi]
+
+
+class StrategyKpisUnavailable(AnalyticsUnavailable):
+    strategies: dict[str, StrategyKpi]
+
+
+class StrategyPerformanceResponse(StrategyKpisResponse):
+    latest_backtest: dict[str, JsonValue]
+
+
+class StrategyPerformanceUnavailable(StrategyKpisUnavailable):
+    latest_backtest: dict[str, JsonValue]
+
+
+class CostComponents(BaseModel):
+    total_entry_fees: float | None
+    total_exit_fees: float | None
+    total_funding_cost: float | None
+    total_fees: float | None
+    total_slippage: float | None
+    total_costs: float | None
+    total_economic_costs: float | None
+    total_execution_drag: float | None
+    missing_cost_counts: dict[str, int]
+
+
+class CostSummaryResponse(CostComponents, OutcomeCohort, ExecutionModeIdentity):
+    raw_recorded_costs: CostComponents
+
+
+class PipelineCohort(BaseModel):
+    unit: str
+    signal_stage_evidence: str
+    window_start: str
+    downstream_observed_through: str
+    right_censored: bool
+
+
+class PipelineDecisions(BaseModel):
+    trade: int
+    skip: int
+
+
+class RejectionReasonCount(BaseModel):
+    message: str
+    count: int
+
+
+class PipelineRiskDecisions(BaseModel):
+    approved: int
+    rejected: int
+    approve_rate_pct: float | None
+    top_rejection_reasons: list[RejectionReasonCount]
+
+
+class PipelineConversion(BaseModel):
+    opp_to_signal_pct: float | None
+    signal_to_pi_trade_pct: float | None
+    pi_trade_to_risk_pct: float | None
+    risk_approved_to_fill_pct: float | None
+    pi_trade_to_fill_pct: float | None
+
+
+class PipelineIntegrity(BaseModel):
+    trade_without_signal_evidence: int
+    trade_without_proposal: int
+    entry_fill_without_approved_risk: int
+    signal_without_terminal: int
+    source_terminal_without_pi_terminal: int
+    source_terminal_breakdown: dict[str, int]
+    close_fills_excluded: int
+    retained_signal_pending_rows: int
+
+
+class PipelineFunnelResponse(BaseModel):
+    window_hours: int
+    cohort: PipelineCohort
+    opportunities: int
+    signal_pending: int
+    signal_carrier_generations: int
+    pi_decisions: PipelineDecisions
+    risk_decisions: PipelineRiskDecisions
+    fills: int
+    conversion: PipelineConversion
+    integrity: PipelineIntegrity
+
+
+class DecisionAttribution(BaseModel):
+    policy_epoch_id: str | None
+    policy_basis: str
+    policy_relation: str
+    runtime_session_id: str | None
+    runtime_id: str | None
+    producer_commit: str | None
+    runtime_relation: str
+
+
+class OperatorDecisionItem(BaseModel):
+    opportunity_id: str | None
+    proposal_id: str | None
+    decision_id: str | None
+    symbol: str | None
+    direction: str | None
+    market_type: str | None
+    decided_at: str
+    outcome: str
+    action: str
+    conviction: float | None
+    one_line_reason: str | None
+    attribution: DecisionAttribution
+    guard_filter: str | None = None
+    guard_block_reason: str | None = None
+    rejected_actor: str | None = None
+    rejected_source: str | None = None
+    time_basis: str | None = None
+
+
+class DecisionCounts(BaseModel):
+    trade: int
+    operator_skip: int
+    operator_watch: int
+    portfolio_guard_reject: int
+    user_reject: int
+    auto_reject: int
+    reject_unknown: int
+
+
+class DecisionCurrentContext(BaseModel):
+    policy_epoch_id: str | None
+    runtime_session_id: str | None
+    runtime_id: str | None
+    producer_commit: str | None
+
+
+class OperatorDecisionsResponse(BaseModel):
+    window_hours: int
+    limit: int
+    total_count: int
+    matched_count: int
+    counts: DecisionCounts
+    current_context: DecisionCurrentContext
+    current_policy_counts: DecisionCounts
+    historical_policy_counts: DecisionCounts
+    items: list[OperatorDecisionItem]
+
+
+class EquityPoint(BaseModel):
+    time: str
+    cumulative_pnl: float
+    pnl: float
+    raw_pnl: float | None = None
+    outcome: str | None = None
+    execution_mode: str | None = None
+
+
+class EquityMarkPoint(BaseModel):
+    time: str
+    closed_raw_pnl: float
+    current_unrealized: float
+    cumulative_pnl: float
+
+
+class EquityCurveResponse(OutcomeCohort):
+    default_curve: str = "genuine_verified"
+    raw_curve_label: str = "raw_recorded_account_events"
+    genuine_curve_label: str = "verified_strategy_outcomes"
+    raw_recorded_points: list[EquityPoint] = []
+    genuine_points: list[EquityPoint] = []
+    points: list[EquityPoint] = []
+    current_unrealized: float = 0.0
+    current_mark_point: EquityMarkPoint | None = None
+    total_realized: float | None = None
+    raw_total_recorded_realized: float | None = None
+
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
-
 _DECISION_COUNT_KEYS = (
     "trade",
     "operator_skip",
@@ -161,7 +581,7 @@ def get_trade_paths():
     return build_trade_path_rows(limit=200)
 
 
-@router.get("/trade-stats")  # TODO: add response_model for OpenAPI schema (#1187)
+@router.get("/trade-stats", responses={200: {"model": TradeStatsResponse | AnalyticsUnavailable}})
 def get_trade_stats(execution_mode: str | None = None):
     """Trade analytics: by-source and by-family aggregation for the Analytics panel.
 
@@ -184,7 +604,7 @@ def get_trade_stats(execution_mode: str | None = None):
     return build_trade_stats(execution_mode=mode)
 
 
-@router.get("/strategy-kpis")
+@router.get("/strategy-kpis", responses={200: {"model": StrategyKpisResponse | StrategyKpisUnavailable}})
 def get_strategy_kpis(execution_mode: str | None = None):
     """Per-strategy KPI summary: trade_count, win_rate, total_pnl."""
     from aletheia.analytics.execution_mode import (
@@ -208,7 +628,7 @@ def get_strategy_kpis(execution_mode: str | None = None):
     }
 
 
-@router.get("/equity-curve")
+@router.get("/equity-curve", response_model=EquityCurveResponse)
 def get_equity_curve(
     execution_mode: str | None = None,
     days: int | None = None,
@@ -350,7 +770,7 @@ def get_equity_curve(
     }
 
 
-@router.get("/trade-insights")  # TODO: add response_model for OpenAPI schema (#1187)
+@router.get("/trade-insights", responses={200: {"model": TradeInsightsResponse | AnalyticsUnavailable}})
 def get_trade_insights(execution_mode: str | None = None):
     """Comprehensive trade insights for charts: equity curve, drawdown, direction split, etc.
 
@@ -371,7 +791,7 @@ def get_trade_insights(execution_mode: str | None = None):
     return build_trade_insights(execution_mode=mode)
 
 
-@router.get("/strategy-performance")
+@router.get("/strategy-performance", responses={200: {"model": StrategyPerformanceResponse | StrategyPerformanceUnavailable}})
 def get_strategy_performance(execution_mode: str | None = None):
     """Per-strategy detailed performance KPIs. Backtest run summary removed with
     the rules engine (Position C 2026-07-02); latest_backtest kept as an empty
@@ -406,7 +826,7 @@ def get_go_live_scorecard():
     return compute_scorecard()
 
 
-@router.get("/cost-summary")
+@router.get("/cost-summary", responses={200: {"model": CostSummaryResponse | AnalyticsUnavailable}})
 def get_cost_summary(execution_mode: str | None = None):
     """Verified outcome costs plus separately labelled raw recorded costs.
 
@@ -774,7 +1194,7 @@ def get_round1_progress():
     }
 
 
-@router.get("/pipeline-funnel")
+@router.get("/pipeline-funnel", responses={200: {"model": PipelineFunnelResponse}})
 def get_pipeline_funnel(hours: int = 24):
     """Profit-loop funnel for one linked Opportunity cohort.
 
@@ -1499,7 +1919,7 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
 _VALID_OUTCOMES: frozenset[str] = frozenset(_DECISION_COUNT_KEYS)
 
 
-@router.get("/operator-decisions")
+@router.get("/operator-decisions", responses={200: {"model": OperatorDecisionsResponse}})
 def get_operator_decisions(
     hours: int = 24,
     limit: int = 50,

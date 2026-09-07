@@ -13,6 +13,7 @@ import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsDirtyProps, SettingsProps } from '../types'
+import type { components, DeepPartial } from '../../../api/settings'
 
 export const MARKET_DATA_SECTION = {
   id: 'market-data-sources', title: 'Market Data Sources', tab: 'signals',
@@ -378,17 +379,17 @@ function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // ─── News Feeds config ───
 
 function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const news = settings?.news as any
+  const news = settings?.news
   const [enabled, setEnabled] = useState(true)
   const [interval, setInterval_] = useState(15)
-  const [feeds, setFeeds] = useState<any[]>([])
+  const [feeds, setFeeds] = useState<DeepPartial<components['schemas']['NewsFeedEntry']>[]>([])
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   const mut = useMutation({
     mutationFn: () => api.updateNewsConfig({
       enabled,
       fetch_interval_minutes: interval,
-      feeds: feeds.map((f: any) => ({ name: f.name, url: f.url, source: f.source, enabled: f.enabled })),
+      feeds: feeds.map(f => ({ name: String(f.name || ''), url: String(f.url || ''), source: String(f.source || ''), enabled: f.enabled !== false })),
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
     onError: (e: any) => setMsg({ ok: false, text: `✗ ${e.message}` }),
@@ -455,30 +456,41 @@ function NewsFeedsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 // SIGNALS TAB — market data, news, macro signals, prediction markets, equities
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function SignalsTab({ settings, qc, onDirty }: SettingsDirtyProps) {
+export function SignalsTab({ settings, qc, onDirty, sectionId }: SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>
-        <Collapsible title="Data Source Overrides">
-          <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
-        </Collapsible>
-      </SettingsFeatureSection>
+      {isVisible(MARKET_DATA_SECTION.id) && (
+        <SettingsFeatureSection descriptor={MARKET_DATA_SECTION}>
+          <Collapsible title="Data Source Overrides">
+            <MarketDataCard settings={settings} qc={qc} onDirty={onDirty} />
+          </Collapsible>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={MACRO_SIGNALS_SECTION}>
-        <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(MACRO_SIGNALS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={MACRO_SIGNALS_SECTION}>
+          <MacroSignalsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
-        <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(NEWS_FEEDS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={NEWS_FEEDS_SECTION}>
+          <NewsFeedsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
-        <PredictionToggleCard qc={qc} />
-      </SettingsFeatureSection>
+      {isVisible(PREDICTION_MARKETS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={PREDICTION_MARKETS_SECTION}>
+          <PredictionToggleCard qc={qc} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
-        <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(EQUITIES_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EQUITIES_SECTION}>
+          <EquitiesCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { Command } from 'cmdk'
 import { api } from '../api/client'
 import { useConfirm } from './ui'
 import { useDialogFocus } from './ui/useDialogFocus'
+import { dumpIncidentSnapshot } from '../lib/incidentDump'
 
 interface CmdAction {
   id: string
@@ -162,6 +163,7 @@ export default function CommandPalette({
     { id: 'sys-resume', label: 'Resume Gateway', group: 'System', keywords: 'start continue', action: () => setGatewayPaused(false) },
     { id: 'sys-kill', label: 'Engage Kill Switch', group: 'System', dangerous: true, action: async () => { if (await confirm({ title: 'Engage kill switch?', description: 'All trading will halt.', confirmLabel: 'Engage', variant: 'danger' })) await setKillSwitch(true) } },
     { id: 'sys-unkill', label: 'Release Kill Switch', group: 'System', action: async () => { if (await confirm({ title: 'Release kill switch?', description: 'Trading will resume immediately.', confirmLabel: 'Release', variant: 'warning' })) await setKillSwitch(false) } },
+    { id: 'sys-dump-incident', label: 'Dump Incident Snapshot (JSON)', group: 'System', keywords: 'debug diagnostic memory blackbox state export snapshot incident', action: () => dumpIncidentSnapshot(qc) },
 
     { id: 'agent-observer', label: 'Run Market Observer', group: 'Agents', keywords: 'trigger start market', action: () => startAgent('market_observer') },
     { id: 'agent-research', label: 'Run Research Agent', group: 'Agents', keywords: 'trigger start research', action: () => startAgent('research_agent') },

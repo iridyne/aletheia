@@ -10,6 +10,7 @@ import {
 } from '../../../components/ui'
 import { DataStateMessage } from '../../../components/DataState'
 import { ModelProvidersSection } from '../model-providers/ModelProvidersSection'
+import { MODEL_PROVIDERS_SECTION } from '../model-providers/modelProviderState'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsData, SettingsProvider } from '../../../api/settings'
@@ -79,10 +80,11 @@ export const LLM_COST_SECTION = {
   searchTerms: ['tokenomics', 'spend', 'budget', 'economics', 'cooldown', 'broker', 'inference'],
 } satisfies SettingsFeatureDescriptor
 
-export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
+export function AgentModelsTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   const confirm = useConfirm()
-  const agent = settings?.agent as any || {}
-  const runtime = settings?.runtime as any || {}
+  const agent = settings?.agent || {}
+  const runtime = settings?.runtime || {}
   // #164 fix: previously these mutations had onSuccess only — a rejected save
   // (validation, permission, backend error) failed silently. Toggle appears to
   // work, config never persists. Route every failure through a shared local
@@ -143,9 +145,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const bypassDistressGate = !!agent.bypass_distress_gate
   const schedulerEnabled = runtime.scheduler_enabled !== false
   const operatorLoopEnabled = settings?.operator?.loop_enabled !== false
-  const piDaemon = (settings?.pi_daemon ?? {}) as any
+  const piDaemon = settings?.pi_daemon ?? {}
   const piDaemonEnabled = piDaemon.enabled !== false
-  const piDaemonRuntime = (settings?.pi_daemon_runtime ?? {}) as any
+  const piDaemonRuntime = settings?.pi_daemon_runtime ?? {}
   const piDaemonRuntimeAvailable = typeof piDaemonRuntime.running === 'boolean'
   const piDaemonRunning = piDaemonRuntime.running === true
   const piDaemonActiveParams = piDaemonRuntime.active_params as Record<string, number> | null | undefined
@@ -156,16 +158,16 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
       Number(piDaemonActiveParams?.heartbeat_sec) !== Number(piDaemon.heartbeat_sec ?? 60)
     )
   ))
-  const serenity = (settings?.serenity ?? {}) as any
+  const serenity = settings?.serenity ?? {}
   const serenityEnabled = !!serenity.enabled
   const serenityAutoPromote = !!serenity.auto_promote
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
   const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
-  const controllerCfg = (settings?.controller ?? {}) as any
+  const controllerCfg = settings?.controller ?? {}
   const controllerShadowEnabled = controllerCfg.shadow_enabled !== false
   const controllerObserveHours = Number(controllerCfg.observe_interval_hours ?? 6)
   const controllerMinSamples = Number(controllerCfg.min_samples_gate ?? 20)
-  const learningCfg = (settings?.learning ?? {}) as any
+  const learningCfg = settings?.learning ?? {}
   const contributionEvaluationEnabled = learningCfg.contribution_evaluation_enabled !== false
   const lifecycleAutomationEnabled = !!learningCfg.lifecycle_automation_enabled
   const paperInfluenceEnabled = !!learningCfg.paper_influence_enabled
@@ -183,7 +185,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const autoRefreeze = learningCfg.auto_refreeze !== false
   const evaluationInterval = Number(learningCfg.evaluation_interval_minutes ?? 60)
   const paperActiveAllocation = Number(learningCfg.paper_active_allocation_pct ?? 0.80)
-  const guardCfg = (settings?.guard ?? {}) as any
+  const guardCfg = settings?.guard ?? {}
   const legacyGuardAutoPromote = !!guardCfg.auto_promote_enabled
 
   const guardMut = useMutation({
@@ -192,7 +194,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
     onError: onSaveError('Guard promotion'),
   })
 
-  const regimeCfg = (settings?.regime ?? {}) as any
+  const regimeCfg = settings?.regime ?? {}
   const regimeMut = useMutation({
     mutationFn: (body: any) => api.updateRegimeConfig(body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['settings'] }); setSaveErr(null) },
@@ -206,6 +208,7 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           Save failed — {saveErr}
         </div>
       )}
+{isVisible(PERMISSION_SECTION.id) && (
       <SettingsFeatureSection descriptor={PERMISSION_SECTION}>
         <Row label="Permission mode" hint="Observe → Paper → Full. Increasing autonomy at each step.">
           <select value={perm} onChange={async e => {
@@ -222,7 +225,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </select>
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(LEARNING_SECTION.id) && (
       <SettingsFeatureSection descriptor={LEARNING_SECTION}>
         <Row label="Autonomous learning" hint="When ON, agents run dreaming/research cycles unprompted. When OFF, only human-triggered runs execute.">
           <Toggle checked={autoLearn} persistence="immediate" onChange={v => autoLearnMut.mutate(v)} disabled={autoLearnMut.isPending} />
@@ -395,7 +400,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </Row>
         </Collapsible>
       </SettingsFeatureSection>
+)}
 
+{isVisible(REGIME_SECTION.id) && (
       <SettingsFeatureSection descriptor={REGIME_SECTION}>
         <Row label="Regime detection enabled" hint="When ON, regime detector classifies market conditions and injects bias into System Operator context.">
           <Toggle checked={regimeCfg.enabled !== false} persistence="immediate" onChange={v => regimeMut.mutate({ enabled: v })} disabled={regimeMut.isPending} />
@@ -420,7 +427,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           />
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(SERENITY_SECTION.id) && (
       <SettingsFeatureSection descriptor={SERENITY_SECTION}>
         <Row
           label="Serenity Lens enabled"
@@ -488,7 +497,9 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           />
         </Row>
       </SettingsFeatureSection>
+)}
 
+{isVisible(SCHEDULER_SECTION.id) && (
       <SettingsFeatureSection descriptor={SCHEDULER_SECTION}>
         <Row
           label="Scheduler enabled"
@@ -585,16 +596,21 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
           </>
         )}
       </SettingsFeatureSection>
+)}
 
-      <ModelProvidersSection qc={qc} onDirty={onDirty} />
+      {isVisible(MODEL_PROVIDERS_SECTION.id) && <ModelProvidersSection qc={qc} onDirty={onDirty} />}
 
-      <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
-        <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(INFERENCE_ADMISSION_SECTION.id) && (
+        <SettingsFeatureSection descriptor={INFERENCE_ADMISSION_SECTION}>
+          <InferenceAdmissionCard qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
-        <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
-      </SettingsFeatureSection>
+      {isVisible(LLM_COST_SECTION.id) && (
+        <SettingsFeatureSection descriptor={LLM_COST_SECTION}>
+          <EconomicsSnapshotCard economics={settings?.economics} qc={qc} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }
@@ -690,13 +706,13 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   if (modelError && !data) return <DataStateMessage state="unavailable" message="Provider list unavailable. The read failed; retry when the backend is reachable." />
   if (!data) return <DataStateMessage state="unavailable" message="Provider list unavailable." />
 
-  const providers = Object.entries((data as any).providers ?? {}) as Array<[string, any]>
+  const providers = Object.entries(data.providers ?? {})
   const enabled = providers.filter(([, cfg]) => cfg?.enabled === true)
 
   if (enabled.length === 0) {
     return (
       <p className="hint">
-        No providers enabled. Enable a provider under "AI Model Providers" above
+        No providers enabled. Enable a provider under "AI Model Providers"
         to configure its inference admission.
       </p>
     )
@@ -837,7 +853,7 @@ function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
         <span className="hint">0 RPM/TPM means unlimited. Priority slots are reserved for interactive/trading work.</span>
       </div>
       {save.isSuccess && <div className="settings-save-msg ok">Inference limits saved.</div>}
-      {save.isError && <div className="settings-save-msg err">{(save.error as any)?.message || 'Save failed'}</div>}
+      {save.isError && <div className="settings-save-msg err">{save.error?.message || 'Save failed'}</div>}
     </div>
   )
 }

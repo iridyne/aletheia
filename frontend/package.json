@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build && node scripts/compress-assets.mjs && node scripts/check-performance.mjs",
     "generate:settings-types": "node scripts/generate-settings-types.mjs",
     "check:settings-types": "node scripts/generate-settings-types.mjs --check",
+    "generate:api-types": "node scripts/generate-api-types.mjs",
+    "check:api-types": "node scripts/generate-api-types.mjs --check",
     "build:watch": "vite build --watch",
     "preview": "vite preview",
     "lint": "eslint src/",

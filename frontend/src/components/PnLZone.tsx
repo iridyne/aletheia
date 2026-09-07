@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import MetricTile from './MetricTile'
 import { SymbolLink } from './ui'
 import type { OverviewBootstrap } from '../api/boot'
+import type { AssetItem, PortfolioAccount, UTAAccount } from '../types'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 import { useCellFlash } from '../lib/useCellFlash'
 
@@ -45,7 +46,6 @@ const SLICE_COLORS = ['#00e5ff', '#7c3aed', '#f59e0b', '#10b981', '#f43f5e', '#3
 // The backend refreshes local mark prices on this cadence. Keep the Overview
 // money panel aligned so an open page never freezes at its initial value.
 
-interface AssetItem { coin: string; usdt_value: number; pct: number }
 
 function AssetPie({ items }: { items: AssetItem[] }) {
   if (!items.length) return null
@@ -92,13 +92,6 @@ function AssetTooltip({ items }: { items: AssetItem[] }) {
   )
 }
 
-interface UTAAccount {
-  broker_id: string
-  display_name: string
-  equity_usdt: number
-  available_usdt: number
-  unrealized_pnl: number
-}
 
 function BrokerBreakdown({ accounts, open }: { accounts: UTAAccount[]; open: boolean }) {
   if (!open || accounts.length <= 1) return null
@@ -234,14 +227,14 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
   const [rangeDays, setRangeDays] = useState<number | undefined>(30)
   const [curveKind, setCurveKind] = useState<'equity' | 'pnl'>('equity')
 
-  const portfolio = bootstrap?.account
-  const exchangeMode = String((portfolio as any)?.exchange_mode || 'demo')
-  const isLocalPaper = String((portfolio as any)?.execution_mode || '') === 'paper_internal'
+  const portfolio = bootstrap?.account as PortfolioAccount | undefined
+  const exchangeMode = String(portfolio?.exchange_mode || 'demo')
+  const isLocalPaper = String(portfolio?.execution_mode || '') === 'paper_internal'
 
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
-  const p = portfolio as any
-  const uta = p?.uta_state as any
+  const p = portfolio
+  const uta = p?.uta_state
 
   // UTA unified equity takes priority when available and has multiple accounts
   const utaEquity = uta?.sync_status === 'ok' && uta?.total_equity_usdt != null ? uta.total_equity_usdt : null
@@ -420,7 +413,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
             ))}
           </div>
         </div>
-        <DeferredCurve days={rangeDays} kind={curveKind} executionMode={String((portfolio as any)?.execution_mode || '') || undefined} />
+        <DeferredCurve days={rangeDays} kind={curveKind} executionMode={String(portfolio?.execution_mode || '') || undefined} />
       </div>
     </div>
   )

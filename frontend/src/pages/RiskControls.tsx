@@ -510,7 +510,7 @@ export default function RiskControls() {
 
       {/* Zone 3 — Configured limits (read-only reference) */}
       <Card>
-        <CardHeader title="Configured Limits" meta={<>Read-only — <Link to="/settings?tab=risk" className="text-accent">Edit in Settings ↗</Link></>} />
+        <CardHeader title="Configured Limits" meta={<>Read-only — <Link to="/settings?tab=risk&section=risk-limits" className="text-accent">Edit in Settings ↗</Link></>} />
         {boundariesPending && !boundaries ? (
           <div className="skeleton"><div className="skeleton-bar" /><div className="skeleton-bar" /><div className="skeleton-bar" /></div>
         ) : boundariesError ? (

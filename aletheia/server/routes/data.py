@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.config.prediction import prediction_observer_blocked_reason
@@ -1164,11 +1164,84 @@ def reject_proposal(proposal_id: str, request: Request):
     return {"proposal_id": proposal_id, "status": "rejected"}
 
 
-@router.get("/trades")
+class OrderView(BaseModel):
+    """Typed read model for /api/trades order presentation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    symbol: str
+    direction: str
+    order_type: str = "limit"
+    quantity: float = 0.0
+    price: float | None = None
+    status: str = "pending"
+    filled_quantity: float = 0.0
+    filled_price: float | None = None
+    execution_mode: str = "live"
+    market_type: str | None = None
+    reduce_only: bool | int | None = False
+    strategy_id: str | None = None
+    proposal_id: str | None = None
+    risk_decision_id: str | None = None
+    exchange_order_id: str | None = None
+    created_at: str | None = None
+    error_reason: str | None = None
+    stop_price: float | None = None
+    take_profit_price: float | None = None
+    entry_plan_id: str | None = None
+    opened_at: str | None = None
+    filled_at: str | None = None
+
+
+class PositionView(BaseModel):
+    """Typed read model for /api/positions owner-facing presentation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    symbol: str
+    market_type: str = "spot"
+    direction: str = "long"
+    quantity: float = 0.0
+    entry_price: float = 0.0
+    current_price: float | None = None
+    unrealized_pnl: float | None = None
+    unrealized_pnl_source: str | None = None
+    realized_pnl: float | None = None
+    realized_pnl_complete: bool | None = None
+    realized_pnl_unavailable_reason: str | None = None
+    execution_mode: str = "paper"
+    strategy_id: str | None = None
+    proposal_id: str | None = None
+    order_id: str | None = None
+    status: str = "open"
+    stop_price: float | None = None
+    take_profit_price: float | None = None
+    close_reason: str | None = None
+    exit_reasoning: str | None = None
+    source: str | None = None
+    opened_at: str | None = None
+    closed_at: str | None = None
+    decision_reasoning: str | None = None
+    leverage: int | None = None
+    liquidation_price: float | None = None
+    entry_fee: float | None = None
+    exit_fee: float | None = None
+    funding_cost: float | None = None
+    funding_source: str | None = None
+    funding_status: str | None = None
+    slippage_cost: float | None = None
+    historical_accounting_status: str | None = None
+    historical_accounting_pnl: float | None = None
+    historical_accounting_reason: str | None = None
+    historical_accounting_method: str | None = None
+
+
+@router.get("/trades", response_model=list[OrderView])
 def get_trades(entry_plan_id: str | None = None):
     _ensure_db()
     return repo.list_orders(entry_plan_id=entry_plan_id)
-
 
 @router.get("/trades/export")
 def export_trades(
@@ -1296,12 +1369,22 @@ def export_trades(
     )
 
 
-@router.get("/positions")
-def get_positions():
+@router.get("/positions", response_model=list[PositionView])
+def get_positions(
+    status: Annotated[str | None, Query(pattern="^(open|closed)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=1_000)] = 200,
+):
+    """Owner-facing position read.
+
+    `status` and `limit` are honored server-side. The route previously declared
+    no parameters, so `?limit=`/`?status=` sent by the dashboard were dropped by
+    FastAPI and every response fell back to the repository default of 50 rows.
+    """
     _ensure_db()
     from aletheia.portfolio.pnl import position_realized_pnl_view
 
-    return [position_realized_pnl_view(row) for row in repo.list_positions()]
+    rows = repo.list_positions(status=status, limit=limit)
+    return [position_realized_pnl_view(row) for row in rows]
 
 
 @router.get("/portfolio")

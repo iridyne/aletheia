@@ -29,6 +29,8 @@ interface DataTableProps<T> {
   state?: DataState
   /** State-specific copy supplied by the caller when the default is not precise enough. */
   stateMessage?: string
+  /** Maximum height for vertical scrolling container with sticky header. */
+  maxHeight?: string | number
 }
 
 function loadVisibility(tableId?: string): VisibilityState {
@@ -43,7 +45,7 @@ function loadVisibility(tableId?: string): VisibilityState {
 
 export function DataTable<T>({
   data, columns, onRowClick, pageSize = 25, emptyMessage = 'No data.',
-  columnToggle = false, tableId, noWrap = true, state, stateMessage,
+  columnToggle = false, tableId, noWrap = true, state, stateMessage, maxHeight,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([])
   const [globalFilter, setGlobalFilter] = useState('')
@@ -137,7 +139,7 @@ export function DataTable<T>({
           )}
         </div>
       )}
-      <div className={noWrap ? 'table-wrap table-wrap-nowrap' : 'table-wrap'}>
+      <div className={noWrap ? 'table-wrap table-wrap-nowrap' : 'table-wrap'} style={maxHeight ? { maxHeight } : undefined}>
       <table>
         <thead>
           <tr>

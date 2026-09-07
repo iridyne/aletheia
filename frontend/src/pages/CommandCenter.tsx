@@ -256,15 +256,15 @@ function HeartbeatZone({
   })
   const { data: positions = [] } = useQuery<any[]>({
     queryKey: positionKeys.all,
-    queryFn: api.getPositions,
+    queryFn: () => api.getPositions(),
     ...positionFreshness,
     refetchInterval: 10000,
     staleTime: 8000,
   })
 
-  const p = portfolio as any
+  const p = portfolio
   const unrealNum: number | null = p?.unrealized_pnl == null ? null : Number(p.unrealized_pnl)
-  const unrealBySymbol = (p?.unrealized_by_symbol || {}) as Record<string, number>
+  const unrealBySymbol = p?.unrealized_by_symbol || {}
   const topSymbols = Object.entries(unrealBySymbol)
     .sort((a, b) => Math.abs(Number(b[1])) - Math.abs(Number(a[1])))
     .slice(0, 5)

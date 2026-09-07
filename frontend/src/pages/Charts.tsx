@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import {
   api, type MarketNewsItem, type MarketOpportunityInstrument, type MarketTrade, type OhlcvResult,
@@ -201,7 +201,7 @@ function StructureTab({
           <div className="flex flex-col gap-1 text-sm">
             {candidateDetail ? (
               <>
-                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? attention?.rank ?? '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted">Rank</span><span className="mono font-bold">#{member?.rank ?? '—'}</span></div>
                 <div className="flex justify-between"><span className="text-muted">Family</span><span>{humanize(attention?.candidate_family ?? member?.scanner_family ?? '—')}</span></div>
                 <div className="flex justify-between"><span className="text-muted">{member?.admission_basis === 'startup' ? '冷启动：信号强度' : '收益排序：预期净收益'}</span><span className="mono">{member?.admission_basis === 'startup' ? (member.pessimistic_strength == null ? '未知' : fmtNum(member.pessimistic_strength)) : member?.candidate_selection_utility_pct != null ? `${fmtNum(member.candidate_selection_utility_pct)}%` : '未知'}</span></div>
                 {member?.admission_basis === 'startup' && <p className="hint">预期净收益未知 · {({ no_history: '暂无历史样本', parent_sample_insufficient: '父组样本不足', child_sample_insufficient: '子组样本不足' } as Record<string, string>)[member.startup_reason ?? ''] ?? member.startup_reason ?? '原因未知'}</p>}
@@ -254,17 +254,27 @@ export function NewsTab() {
   if (isLoading && !data) return <DataStateMessage state="loading" message="Loading news…" />
   if (isError && !data) return <DataStateMessage state="unavailable" message="News data unavailable. The read failed; this is not an unconfigured source." />
   if (isError && data && !news.length) return <DataStateMessage state="stale" message="News data is stale. The failed latest read cannot confirm source configuration." />
-  return <>
-    {isError && data && <DataStateMessage state="stale" message="News data is stale. Retained rows may not reflect the latest read." />}
-    {!news.length ? <p className="hint">News ingestion not configured — add news sources in Settings or create items manually.</p> : <div className="news-feed">{news.map((item: MarketNewsItem) => {
-    const sentiment = item.sentiment || 'neutral'
-    return <div key={item.id} className="news-item">
-      <div className="news-item-head"><span className="news-item-title">{item.title}</span><Badge tone={sentiment === 'positive' ? 'green' : sentiment === 'negative' ? 'red' : 'blue'}>{sentiment}</Badge></div>
-      <div className="news-item-meta">{item.source && <span className="news-item-source">{item.source}</span>}{item.published_at && <span className="mono news-item-ts">{fmtTimestamp(item.published_at)}</span>}</div>
-      {item.summary && <p className="news-item-summary">{item.summary}</p>}
-    </div>
-  })}</div>}
-  </>
+  return (
+    <>
+      {isError && data && <DataStateMessage state="stale" message="News data is stale. Retained rows may not reflect the latest read." />}
+      {!news.length ? (
+        <p className="hint">News ingestion not configured — add news sources in <Link to="/settings?tab=signals&section=news-feeds" className="text-accent">Settings ↗</Link> or create items manually.</p>
+      ) : (
+        <div className="news-feed">
+          {news.map((item: MarketNewsItem) => {
+            const sentiment = item.sentiment || 'neutral'
+            return (
+              <div key={item.id} className="news-item">
+                <div className="news-item-head"><span className="news-item-title">{item.title}</span><Badge tone={sentiment === 'positive' ? 'green' : sentiment === 'negative' ? 'red' : 'blue'}>{sentiment}</Badge></div>
+                <div className="news-item-meta">{item.source && <span className="news-item-source">{item.source}</span>}{item.published_at && <span className="mono news-item-ts">{fmtTimestamp(item.published_at)}</span>}</div>
+                {item.summary && <p className="news-item-summary">{item.summary}</p>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
+  )
 }
 
 function PredictionsTab() {
@@ -604,6 +614,7 @@ function ChartSettings({ open, scope, settings, onChange, onReset, onClose }: {
 
 
 export default function Charts() {
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const entryPlanId = searchParams.get('entry_plan_id')
   const candidateId = searchParams.get('candidate_id')
@@ -657,8 +668,8 @@ export default function Charts() {
     if (m?.symbol) {
       setActive({
         symbol: m.symbol,
-        exchange: (m as any).venue || defaultExchange,
-        marketType: (m as any).market_type || 'spot',
+        exchange: ('venue' in m && typeof m.venue === 'string' && m.venue) || defaultExchange,
+        marketType: ('market_type' in m && typeof m.market_type === 'string' && m.market_type) || 'spot',
       })
     }
   }, [candidateDetail, candidateId, defaultExchange])
@@ -679,7 +690,7 @@ export default function Charts() {
   }, [active, candidateId, entryPlanId, setSearchParams])
   const { data: universe } = useQuery({ queryKey: ['universe-current'], queryFn: api.getUniverseCurrent, refetchInterval: 120_000 })
   const { data: snapshots = [] } = useQuery({ queryKey: ['market-snapshots'], queryFn: () => api.getMarketSnapshots(undefined, 500), refetchInterval: 30_000 })
-  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: api.getPositions, refetchInterval: 30_000 })
+  const { data: positions = [] } = useQuery({ queryKey: ['positions'], queryFn: () => api.getPositions(), refetchInterval: 30_000 })
   const { data: opportunityInstruments = [] } = useQuery({
     queryKey: ['market-opportunity-instruments'], queryFn: api.getMarketOpportunityInstruments, refetchInterval: 60_000,
   })
@@ -687,7 +698,7 @@ export default function Charts() {
     queryKey: ['market-opportunities', active.symbol, active.marketType],
     queryFn: () => api.getMarketOpportunities(active.symbol, active.marketType), refetchInterval: 60_000,
   })
-  const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: api.getTrades, refetchInterval: 30_000 })
+  const { data: trades = [] } = useQuery({ queryKey: ['trades'], queryFn: () => api.getTrades(), refetchInterval: 30_000 })
   const { data: microstructure } = useQuery({
     queryKey: ['market-microstructure', active.symbol, active.exchange, active.marketType],
     queryFn: () => api.getMarketMicrostructure(active.symbol, active.exchange, active.marketType),
@@ -778,6 +789,79 @@ export default function Charts() {
     return [...tradeMarkers, ...opportunityMarkers].filter(marker => Number.isFinite(marker.time))
   }, [active, opportunities, trades])
 
+  const quickSymbols = useMemo(() => {
+    const list: Array<{
+      symbol: string
+      exchange: string
+      marketType: string
+      label: string
+      badge?: string
+      tone?: 'green' | 'red' | 'blue'
+    }> = []
+    const seen = new Set<string>()
+
+    for (const pos of positions) {
+      if (pos.status !== 'open' || seen.has(pos.symbol)) continue
+      seen.add(pos.symbol)
+      const pnl = pos.unrealized_pnl ?? 0
+      list.push({
+        symbol: pos.symbol,
+        exchange: active.exchange || defaultExchange,
+        marketType: pos.market_type || 'perp',
+        label: fmtSymbol(pos.symbol, pos.market_type),
+        badge: pnl !== 0 ? fmtSigned(pnl) : pos.direction,
+        tone: pnl > 0 ? 'green' : pnl < 0 ? 'red' : 'blue',
+      })
+    }
+
+    for (const member of (universe?.members || []).slice(0, 6)) {
+      if (seen.has(member.symbol)) continue
+      seen.add(member.symbol)
+      const mType = universe?.snapshot?.market_type || 'spot'
+      list.push({
+        symbol: member.symbol,
+        exchange: defaultExchange,
+        marketType: mType,
+        label: fmtSymbol(member.symbol, mType),
+        badge: `#${member.rank}`,
+      })
+    }
+
+    const defaults = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'DOGE/USDT']
+    for (const sym of defaults) {
+      if (seen.has(sym)) continue
+      seen.add(sym)
+      list.push({
+        symbol: sym,
+        exchange: defaultExchange,
+        marketType: 'perp',
+        label: fmtSymbol(sym, 'perp'),
+      })
+      if (list.length >= 8) break
+    }
+
+    return list.slice(0, 8)
+  }, [positions, universe, defaultExchange, active.exchange])
+
+  const toggleQuickIndicator = useCallback((kind: 'ma' | 'boll') => {
+    setChartSettings(prev => {
+      const current = prev.indicators.main
+      let next: MainIndicatorId[]
+      if (kind === 'ma') {
+        const hasMa = current.includes('ema20') || current.includes('ema50')
+        next = hasMa
+          ? current.filter(id => id !== 'ema20' && id !== 'ema50')
+          : [...current.filter(id => id !== 'ema20' && id !== 'ema50'), 'ema20', 'ema50'].slice(0, 3) as MainIndicatorId[]
+      } else {
+        const hasBoll = current.includes('bollinger')
+        next = hasBoll
+          ? current.filter(id => id !== 'bollinger')
+          : [...current, 'bollinger'].slice(0, 3) as MainIndicatorId[]
+      }
+      return { ...prev, indicators: { ...prev.indicators, main: next } }
+    })
+  }, [])
+
   const currentSnapshot = snapshotFor(active)
   const selectInstrument = useCallback((instrument: MarketInstrument) => {
     if (entryPlanId && (!entryPlan
@@ -862,6 +946,25 @@ export default function Charts() {
         <span className="mono text-muted market-context-age">{metaAge}</span>
       )}
     </div>
+    <div className="market-quick-pills-bar" aria-label="Quick instrument switcher">
+      <span className="text-2xs text-muted mono uppercase font-semibold mr-1">Watch:</span>
+      <div className="flex items-center gap-1 overflow-x-auto py-0.5">
+        {quickSymbols.map(item => {
+          const isSelected = active.symbol === item.symbol && active.marketType === item.marketType
+          return (
+            <button
+              key={`${item.symbol}-${item.marketType}`}
+              type="button"
+              className={`market-quick-pill${isSelected ? ' active' : ''}`}
+              onClick={() => selectInstrument({ symbol: item.symbol, exchange: item.exchange, marketType: item.marketType })}
+            >
+              <span className="mono font-semibold">{item.label}</span>
+              {item.badge && <span className={`market-quick-pill-badge ${item.tone ?? 'neutral'}`}>{item.badge}</span>}
+            </button>
+          )
+        })}
+      </div>
+    </div>
     {entryPlanId && <Card className="entry-workbench-notice">
       {entryPlanUnavailable ? 'Exact Entry Plan overlay is unavailable.' : entryPlan ? `Entry Plan ${entryPlan.id.slice(0, 8)} · ${humanize(entryPlan.status)} · immutable geometry overlay` : 'Loading exact Entry Plan overlay…'}
     </Card>}
@@ -872,20 +975,75 @@ export default function Charts() {
       <aside className="market-instrument-rail">{navigator}</aside>
       <Card className="market-workbench-chart-card">
         <div id="market-chart-toolbar" className="market-chart-toolbar">
-          <div className="seg-toggle" aria-label="Timeframe">
-            {PINNED_TIMEFRAMES.map(value => <Button key={value} variant="ghost" className={`seg-btn${timeframe === value ? ' active' : ''}`} aria-pressed={timeframe === value} onClick={() => setTimeframe(value)}>{value}</Button>)}
-            <Button
-              ref={timeframeOverflowRef}
-              type="button"
-              variant="ghost"
-              className={`seg-btn market-tf-overflow${!PINNED_TIMEFRAMES.includes(timeframe) ? ' active' : ''}`}
-              aria-haspopup="menu"
-              aria-expanded={timeframeMenuOpen}
-              aria-label="More timeframes"
-              onClick={() => setTimeframeMenuOpen(open => !open)}
-            >{PINNED_TIMEFRAMES.includes(timeframe) ? '⋯' : timeframe}</Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="seg-toggle" aria-label="Timeframe">
+              {PINNED_TIMEFRAMES.map(value => <Button key={value} variant="ghost" className={`seg-btn${timeframe === value ? ' active' : ''}`} aria-pressed={timeframe === value} onClick={() => setTimeframe(value)}>{value}</Button>)}
+              <Button
+                ref={timeframeOverflowRef}
+                type="button"
+                variant="ghost"
+                className={`seg-btn market-tf-overflow${!PINNED_TIMEFRAMES.includes(timeframe) ? ' active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={timeframeMenuOpen}
+                aria-label="More timeframes"
+                onClick={() => setTimeframeMenuOpen(open => !open)}
+              >{PINNED_TIMEFRAMES.includes(timeframe) ? '⋯' : timeframe}</Button>
+            </div>
+
+            <div className="seg-toggle" aria-label="Indicators">
+              <Button
+                type="button"
+                variant="ghost"
+                className={`seg-btn${chartSettings.indicators.main.includes('ema20') ? ' active' : ''}`}
+                onClick={() => toggleQuickIndicator('ma')}
+                title="Toggle Moving Averages (EMA 20/50)"
+              >
+                MA
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={`seg-btn${chartSettings.indicators.main.includes('bollinger') ? ' active' : ''}`}
+                onClick={() => toggleQuickIndicator('boll')}
+                title="Toggle Bollinger Bands (20/2)"
+              >
+                BOLL
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className={`seg-btn${chartSettings.overlays.volume ? ' active' : ''}`}
+                onClick={() => setChartSettings(prev => ({ ...prev, overlays: { ...prev.overlays, volume: !prev.overlays.volume } }))}
+                title="Toggle Volume Overlay"
+              >
+                VOL
+              </Button>
+            </div>
           </div>
-          <Button variant="ghost" className="market-chart-settings-button" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>Chart settings</Button>
+
+          <div className="flex items-center gap-1.5">
+            {matchingPositions.length > 0 && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="btn-xs"
+                onClick={() => navigate(`/trades?symbol=${encodeURIComponent(active.symbol)}`)}
+                title="View in Blotter"
+              >
+                Blotter ↗
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              className="btn-xs"
+              onClick={() => navigate(`/universe?tab=candidates&symbol=${encodeURIComponent(active.symbol)}`)}
+              title="Open in Entry Workbench"
+            >
+              + Plan ↗
+            </Button>
+            <Button variant="ghost" className="market-chart-settings-button" aria-haspopup="dialog" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(true)}>Chart settings</Button>
+          </div>
         </div>
         <PriceChart
           symbol={active.symbol}

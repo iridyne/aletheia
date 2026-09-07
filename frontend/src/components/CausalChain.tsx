@@ -165,44 +165,47 @@ function CloseReasoningFacts({ reasoning }: { reasoning: JsonRecord }) {
 
 export default function CausalChain({ anchor }: { anchor: Anchor }) {
   const navigate = useNavigate()
-  const proposalsQuery = useQuery({ queryKey: ['proposals'], queryFn: api.getProposals })
-  const ordersQuery = useQuery({ queryKey: ['trades'], queryFn: api.getTrades })
-  // Needed for an order anchor to find the resulting position. React Query shares
-  // this request with TradesPositions, so this is normally a cache read.
-  const positionsQuery = useQuery({ queryKey: positionKeys.all, queryFn: api.getPositions, ...positionFreshness })
-  const proposals = proposalsQuery.data ?? []
-  const orders = ordersQuery.data ?? []
-  const positions = positionsQuery.data ?? []
-  const ordersReadState = resolveReadState(ordersQuery.data, ordersQuery.isPending, ordersQuery.isError)
-  const positionsReadState = resolveReadState(positionsQuery.data, positionsQuery.isPending, positionsQuery.isError)
-
   const proposalId = anchor.kind === 'order'
     ? anchor.order.proposal_id
     : anchor.position.proposal_id ?? null
-  const proposalFromList = proposalId
-    ? (proposals as TradeProposal[]).find(p => p.id === proposalId) || null
-    : null
 
   const proposalQuery = useQuery({
     queryKey: ['proposal', proposalId],
     queryFn: () => api.getProposal(proposalId as string),
-    enabled: !!proposalId && !proposalFromList,
+    enabled: Boolean(proposalId),
+    staleTime: 30_000,
   })
-  const proposalById = proposalQuery.data
-  const proposal = (proposalFromList ?? proposalById ?? null) as TradeProposal | null
+  const proposal = (proposalQuery.data ?? null) as TradeProposal | null
   const proposalState: NodeState = !proposalId
     ? 'empty'
-    : proposalFromList
-      ? resolveReadState(proposalsQuery.data, proposalsQuery.isPending, proposalsQuery.isError)
-      : proposalById
-        ? resolveReadState(proposalQuery.data, proposalQuery.isPending, proposalQuery.isError)
-        : isNotFound(proposalQuery.error)
-          ? 'missing'
-          : proposalQuery.isError
-            ? 'unavailable'
-            : proposalQuery.isPending
-              ? 'loading'
-              : 'missing'
+    : proposal
+      ? resolveReadState(proposal, proposalQuery.isPending, proposalQuery.isError)
+      : isNotFound(proposalQuery.error)
+        ? 'missing'
+        : proposalQuery.isError
+          ? 'unavailable'
+          : proposalQuery.isPending
+            ? 'loading'
+            : 'missing'
+
+  const ordersQuery = useQuery({
+    queryKey: ['trades'],
+    queryFn: () => api.getTrades(),
+    enabled: anchor.kind === 'position' && Boolean(anchor.position.order_id),
+    staleTime: 10_000,
+  })
+  // Needed for an order anchor to find the resulting position. React Query shares
+  // this request with TradesPositions, so this is normally a cache read.
+  const positionsQuery = useQuery({
+    queryKey: positionKeys.all,
+    queryFn: () => api.getPositions(),
+    enabled: anchor.kind === 'order',
+    ...positionFreshness,
+  })
+  const orders = ordersQuery.data ?? []
+  const positions = positionsQuery.data ?? []
+  const ordersReadState = resolveReadState(ordersQuery.data, ordersQuery.isPending, ordersQuery.isError)
+  const positionsReadState = resolveReadState(positionsQuery.data, positionsQuery.isPending, positionsQuery.isError)
 
   const anchorOrderIntent = anchor.kind === 'order' ? orderIntent(anchor.order) : null
   const resolvedOrder: Order | null = anchor.kind === 'position' && anchor.position.order_id

@@ -1,3 +1,5 @@
+import type { components } from './api/generated/api'
+
 export interface TradeProposal {
   id: string
   strategy_id: string | null
@@ -70,42 +72,7 @@ export interface Fill {
   filled_at: string
 }
 
-export interface Position {
-  id: string
-  symbol: string
-  market_type: string
-  direction: string
-  quantity: number
-  entry_price: number
-  current_price: number | null
-  unrealized_pnl: number | null
-  unrealized_pnl_source?: 'exchange_exact' | 'local_estimate' | 'ambiguous' | 'unavailable' | string
-  realized_pnl: number | null
-  realized_pnl_complete?: boolean
-  realized_pnl_unavailable_reason?: string | null
-  execution_mode: string
-  strategy_id: string | null
-  proposal_id?: string | null
-  order_id?: string | null
-  status: string
-  stop_price: number | null
-  take_profit_price: number | null
-  close_reason: string | null
-  exit_reasoning?: string | null
-  source?: string  // "native" | "adopted"
-  opened_at: string
-  closed_at: string | null
-  decision_reasoning?: string | null
-  leverage?: number | null
-  liquidation_price?: number | null
-  entry_fee?: number | null
-  exit_fee?: number | null
-  /** Signed quote-currency funding: positive is a debit, negative a credit. */
-  funding_cost?: number | null
-  funding_source?: string | null
-  funding_status?: 'complete' | 'not_applicable' | 'unavailable' | string
-  slippage_cost?: number | null
-}
+export type Position = components['schemas']['PositionView']
 
 export interface ThesisLineageRecord {
   lineage_id: string
@@ -327,6 +294,22 @@ export interface AgentRun {
   cost_estimate: number | null
 }
 
+export interface AgentRunToolCall {
+  id?: string | number
+  tool_name?: string
+  tool_class?: string
+  permitted?: boolean
+  created_at?: string
+}
+
+export interface AgentRunStep {
+  id?: string | number
+  step_number?: number
+  action?: string
+  input_data?: unknown
+  output_data?: unknown
+}
+
 export interface MarketSnapshot {
   id: string
   symbol: string
@@ -375,6 +358,43 @@ export interface PortfolioSummary {
   exposure_by_symbol: Record<string, number> | null
 }
 
+export interface AssetItem {
+  coin: string
+  usdt_value: number
+  pct: number
+}
+
+export interface UTAAccount {
+  broker_id: string
+  display_name: string
+  equity_usdt: number
+  available_usdt?: number | null
+  unrealized_pnl?: number | null
+  positions_count?: number
+}
+
+export interface PortfolioAccount extends Partial<PortfolioSummary> {
+  execution_mode?: string | null
+  execution_mode_status?: string | null
+  positions_count?: number | null
+  exchange_sync_status?: string | null
+  exchange_equity_usdt?: number | null
+  exchange_mode?: string | null
+  exchange_asset_breakdown?: AssetItem[] | null
+  all_realized_pnl_complete?: boolean | null
+  all_realized_pnl_unavailable_count?: number | null
+  all_historical_reconciled_pnl?: number | null
+  all_historical_reconciled_count?: number | null
+  all_historical_reconciliation_unavailable_count?: number | null
+  today_pnl_by_symbol?: Record<string, number> | null
+  uta_state?: {
+    sync_status?: string | null
+    total_equity_usdt?: number | null
+    accounts?: UTAAccount[]
+  } | null
+  unrealized_by_symbol?: Record<string, number> | null
+}
+
 // One exchange position as reported by the live account view.
 export interface ExchangePosition {
   symbol: string
@@ -405,14 +425,7 @@ export interface PositionsReconciliation {
   orphaned: ReconcileItem[]
 }
 
-export interface RiskStatus {
-  kill_switch_active: boolean
-  live_state: string
-  permission_mode: string
-  latest_risk_decision: RiskDecision | null
-  status: string
-  violations: string[]
-}
+export type RiskStatus = components['schemas']['RiskStatusResponse']
 
 export interface SystemStatus {
   gateway_running: boolean
@@ -818,6 +831,10 @@ export interface EntryPlan {
   updated_at: string
   terminal_at: string | null
   terminal_reason: string | null
+  plan_json?: string | null
+  runtime_session_id?: string | null
+  producer_commit?: string | null
+  behavior_fingerprint?: string | null
   monitoring_state?: 'queued' | 'warming' | 'ready' | 'degraded' | 'unavailable' | null
   monitoring_evidence_json?: string | null
   monitoring_evidence_hash?: string | null
@@ -871,6 +888,7 @@ export interface EntryPlan {
     execution_account_mode?: string
     risk_policy_id?: string
     risk_policy_revision?: number
+    [key: string]: unknown
   } | null
 }
 
@@ -1032,12 +1050,16 @@ export interface CandidateWorkbenchRow {
   state_changed_at: string | null
   next_action: string
   cycles: EntryLifecycleCycle[]
+  all_scores?: string | Record<string, number> | null
+  atr_pct?: number | null
+  candidate_opportunity_context_hash?: string | null
+  [key: string]: unknown
 }
 
 export interface CandidatePathProgress {
   generated_at: string | null
   availability: { available: boolean; reason: string | null }
-  age_seconds: number | null
+  age_seconds?: number | null
   ttl_seconds: number
   last_attempt_at: string | null
   last_success_at: string | null

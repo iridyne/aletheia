@@ -8,6 +8,40 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypatch):
+    from fastapi.testclient import TestClient
+    from pydantic import TypeAdapter
+    from aletheia.server.app import app
+    from aletheia.server.routes.analytics import router
+
+    paths = {
+        "/trade-stats", "/trade-insights", "/strategy-kpis",
+        "/strategy-performance", "/cost-summary", "/equity-curve",
+        "/pipeline-funnel", "/operator-decisions",
+    }
+    routes = [route for route in router.routes if route.path.removeprefix(router.prefix) in paths]
+    with TestClient(app) as client:
+        for populated in (False, True):
+            if populated:
+                _insert_mixed_cohort()
+            for route in routes:
+                response = client.get(route.path, params={"execution_mode": "paper_internal"})
+                assert response.status_code == 200, response.text
+                schema = route.response_model or route.responses[200]["model"]
+                adapter = TypeAdapter(schema)
+                parsed = adapter.validate_json(response.content, strict=True)
+                assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == response.json(), route.path
+        monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: None)
+        for path in ("/trade-stats", "/trade-insights", "/strategy-kpis", "/strategy-performance", "/cost-summary"):
+            route = next(route for route in routes if route.path == router.prefix + path)
+            response = client.get(route.path)
+            assert response.status_code == 200
+            assert response.json()["unavailable_reason"] == "execution_mode_unresolved"
+            adapter = TypeAdapter(route.responses[200]["model"])
+            parsed = adapter.validate_json(response.content, strict=True)
+            assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == response.json()
+
+
 
 def _insert_mixed_cohort() -> None:
     from aletheia.storage import repositories as repo

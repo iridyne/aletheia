@@ -5,6 +5,18 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+it("preserves opaque cursors and zero limits in query strings", async () => {
+  const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response("{}")))
+  vi.stubGlobal("fetch", fetchMock)
+  const before = "2026-08-28T00:00:00+00:00|generation&next=1"
+  await api.getPlanningHistory({ limit: 2, before })
+  await api.getEntryWorkbench({ limit: 0 })
+  const history = new URL(fetchMock.mock.calls[0][0], "http://fixture.invalid")
+  expect(history.searchParams.get("before")).toBe(before)
+  expect(history.searchParams.get("limit")).toBe("2")
+  expect(new URL(fetchMock.mock.calls[1][0], "http://fixture.invalid").searchParams.get("limit")).toBe("0")
+})
+
 describe('Remote Control Token browser storage', () => {
   it('reports a successful write without returning the token', () => {
     const setItem = vi.fn()

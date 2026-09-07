@@ -588,6 +588,11 @@ async def test_universe_settings_are_visible_and_persisted(client):
     )
     assert resp.status_code == 200
     body = resp.json()
+    from pydantic import TypeAdapter
+    from aletheia.server.routes.settings import UniverseConfigUpdateResponse
+    adapter = TypeAdapter(UniverseConfigUpdateResponse)
+    parsed = adapter.validate_json(resp.content, strict=True)
+    assert adapter.dump_python(parsed, mode="json", exclude_unset=True) == body
     assert body["universe"]["enabled"] is False
     assert body["universe"]["max_candidates"] == 20
     assert body["universe"]["entry_ttl_sec"] == 600
@@ -596,6 +601,7 @@ async def test_universe_settings_are_visible_and_persisted(client):
     resp = await client.get("/api/settings")
     assert resp.json()["universe"]["enabled"] is False
     assert resp.json()["universe"]["max_candidates"] == 20
+
 
 
 

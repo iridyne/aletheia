@@ -182,6 +182,9 @@ describe('Settings load-state availability (issue #1185)', () => {
     )
     await act(async () => root.render(settingsPage))
     await act(async () => {
+      container.querySelector<HTMLButtonElement>('.settings-hub-card')?.click()
+    })
+    await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="mark-dirty"]')?.click()
     })
     const link = document.createElement('a')

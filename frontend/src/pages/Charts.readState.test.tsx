@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 const state = vi.hoisted(() => ({
@@ -43,6 +44,8 @@ vi.mock('../charts/PriceChart', async () => {
 import { NewsTab, SignalsTab } from './Charts'
 import MacroBar from '../components/MacroBar'
 
+const renderNews = () => renderToStaticMarkup(<MemoryRouter><NewsTab /></MemoryRouter>)
+
 const opportunity = {
   id: 'opp-1', symbol: 'BTC/USDT', market: 'spot', asset_class: 'crypto',
   direction_bias: 'long', confidence_score: 90, confidence: 'high', source_agent: 'observer', thesis: 'Demand is improving.',
@@ -76,17 +79,17 @@ describe('Charts read-state contract', () => {
   it('distinguishes news failures from a successful empty news feed', () => {
     state.news = undefined
     state.newsError = true
-    expect(renderToStaticMarkup(<NewsTab />)).toContain('News data unavailable')
+    expect(renderNews()).toContain('News data unavailable')
 
     state.news = []
     state.newsError = false
-    expect(renderToStaticMarkup(<NewsTab />)).toContain('News ingestion not configured')
+    expect(renderNews()).toContain('News ingestion not configured')
   })
 
   it('does not describe a stale empty news cache as unconfigured', () => {
     state.news = []
     state.newsError = true
-    const html = renderToStaticMarkup(<NewsTab />)
+    const html = renderNews()
     expect(html).toContain('News data is stale')
     expect(html).not.toContain('News ingestion not configured')
   })
@@ -116,7 +119,7 @@ describe('Charts read-state contract', () => {
 
     state.news = [{ id: 'news-1', title: 'Current item' }]
     state.newsError = false
-    expect(renderToStaticMarkup(<NewsTab />)).not.toContain('News data is stale')
+    expect(renderNews()).not.toContain('News data is stale')
 
     state.macro = { available: false, data: null }
     state.macroError = false

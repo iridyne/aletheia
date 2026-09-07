@@ -205,7 +205,7 @@ export default function TradeAnalyticsPanel({ executionMode }: { executionMode?:
     return <Card><p className="text-muted text-sm">Loading analytics…</p></Card>
   }
 
-  if (error || !data) {
+  if (error || !data || !("totals" in data)) {
     return <Card><p className="text-muted text-sm">Analytics unavailable.</p></Card>
   }
 

@@ -11,7 +11,7 @@ export default function AccountSnapshot() {
     isError: portfolioError,
     dataUpdatedAt: portfolioUpdatedAt,
   } = useQuery({ queryKey: ['portfolio'], queryFn: api.getPortfolio })
-  const p = portfolio as any
+  const p = portfolio
   const portfolioAvailable = p != null
   const positionScopeAvailable = p?.execution_mode_status === 'resolved'
     && typeof p?.execution_mode === 'string'
@@ -31,7 +31,7 @@ export default function AccountSnapshot() {
 
   // total_value_usdt already prefers UTA unified > exchange_equity > local notional
   const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
-  const utaStatus: string | undefined = p?.uta_state?.sync_status
+  const utaStatus: string | undefined = p?.uta_state?.sync_status ?? undefined
   const displayValue = fmtNum(p?.total_value_usdt)
   const syncCaveat =
     portfolioReadFailureCaveat ??
@@ -50,8 +50,8 @@ export default function AccountSnapshot() {
   // open position's total drift shows up under "Today". Prefer the
   // pure-today value `today_realized_pnl` when present, fall back to
   // legacy `today_pnl`, then to unrealized (with caveat) as before.
-  const todayRealizedRaw = (p as any)?.today_realized_pnl
-  const todayRealizedComplete = (p as any)?.today_realized_pnl_complete !== false
+  const todayRealizedRaw = p?.today_realized_pnl
+  const todayRealizedComplete = p?.today_realized_pnl_complete !== false
   const legacyTodayPnl = p?.today_pnl
   const usingUnrealizedFallback = todayRealizedComplete && todayRealizedRaw == null && legacyTodayPnl == null && p?.unrealized_pnl != null
   const usingLegacyTodayFallback = todayRealizedComplete && todayRealizedRaw == null && legacyTodayPnl != null

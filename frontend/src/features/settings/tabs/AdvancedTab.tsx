@@ -141,12 +141,15 @@ function ConfigCoverageCard({ settings }: { settings: unknown }) {
   )
 }
 
-export function AdvancedTab({ settings }: { settings: unknown }) {
+export function AdvancedTab({ settings, sectionId }: { settings: unknown; sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
   return (
     <div>
-      <SettingsFeatureSection descriptor={ADVANCED_SECTION}>
-        <ConfigCoverageCard settings={settings} />
-      </SettingsFeatureSection>
+      {isVisible(ADVANCED_SECTION.id) && (
+        <SettingsFeatureSection descriptor={ADVANCED_SECTION}>
+          <ConfigCoverageCard settings={settings} />
+        </SettingsFeatureSection>
+      )}
     </div>
   )
 }

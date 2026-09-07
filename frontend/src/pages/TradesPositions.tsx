@@ -156,7 +156,7 @@ const marketBadge = (v: string) => (
 	</Badge>
 );
 
-const pnlSourceBadge = (source: string | undefined) => {
+const pnlSourceBadge = (source: string | null | undefined) => {
 	const value = source || "unavailable";
 	const tone = value === "exchange_exact"
 		? "green"
@@ -448,12 +448,12 @@ export default function TradesPositions() {
 	const [closedExtra, setClosedExtra] = useState<Position[]>([]);
 	const { data: positions, isPending: positionsPending, isError: positionsError } = useQuery({
 		queryKey: positionKeys.all,
-		queryFn: api.getPositions,
+		queryFn: () => api.getPositions(),
 		...positionFreshness,
 	});
 	const { data: orders, isPending: ordersPending, isError: ordersError } = useQuery({
 		queryKey: entryPlanId ? ["trades", entryPlanId] : ["trades"],
-		queryFn: () => api.getTrades(entryPlanId),
+		queryFn: () => api.getTrades({ entry_plan_id: entryPlanId }),
 	});
 	const { data: reconciliation, isPending: reconPending, isError: reconError } = useQuery({
 		queryKey: positionKeys.reconciliation,
@@ -475,9 +475,17 @@ export default function TradesPositions() {
 		if (!last) return;
 		setClosedLoadingMore(true);
 		try {
-			const next = await api.getPositionsPaged({ limit: 100, cursor_id: last.id, status: 'closed' });
+			const next = await api.getPositions({ limit: 100, status: "closed" });
 			if (next.length) {
-				setClosedExtra(prev => [...prev, ...next]);
+				setClosedExtra(prev => {
+					const existing = new Set([...currentClosed, ...prev].map(p => p.id));
+					const fresh = next.filter(p => !existing.has(p.id));
+					if (fresh.length === 0) {
+						setClosedExhausted(true);
+						return prev;
+					}
+					return [...prev, ...fresh];
+				});
 			} else {
 				setClosedExhausted(true);
 			}
@@ -702,6 +710,7 @@ export default function TradesPositions() {
 													onRowClick={(o) => setSel({ kind: "order", id: o.id })}
 													state={ordersState}
 													emptyMessage="No orders yet."
+													maxHeight="min(60vh, 560px)"
 												/>
 											</Card>
 									</div>
@@ -721,6 +730,7 @@ export default function TradesPositions() {
 												onRowClick={(p) =>
 													setSel({ kind: "position", id: p.id })
 												}
+												maxHeight="min(60vh, 560px)"
 											/>
 										</Card>
 										{!closedExhausted && (closed.length >= 200 || closedExtra.length > 0) && (
@@ -1026,10 +1036,9 @@ function OrderDetail({
 					<Button
 						variant="secondary"
 						onClick={() =>
-							navigate({
-								pathname: "/charts",
-								search: `?symbol=${encodeURIComponent(order.symbol)}&market_type=${encodeURIComponent(order.market_type || "spot")}`,
-							} as any)
+							navigate(
+								`/charts?symbol=${encodeURIComponent(order.symbol)}&market_type=${encodeURIComponent(order.market_type || "spot")}`,
+							)
 						}
 					>
 						View on Chart

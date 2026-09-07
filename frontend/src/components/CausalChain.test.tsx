@@ -104,7 +104,7 @@ function stageNode(container: HTMLElement, stage: string): HTMLElement {
 function renderChain(order: Order) {
   const proposal = proposalFor(order)
   const client = createClient()
-  client.setQueryData(['proposals'], [proposal])
+  client.setQueryData(['proposal', proposal.id], proposal)
   client.setQueryData(['trades'], [order])
   client.setQueryData(['positions'], [] as Position[])
   vi.spyOn(api, 'getOrderRiskDecision').mockResolvedValue({
@@ -169,7 +169,7 @@ describe('CausalChain risk authority', () => {
 describe('CausalChain read states', () => {
   it('renders pending linked reads as loading instead of absence', () => {
     const pending = new Promise<never>(() => undefined)
-    vi.spyOn(api, 'getProposals').mockReturnValue(pending)
+    vi.spyOn(api, 'getProposal').mockReturnValue(pending)
     vi.spyOn(api, 'getTrades').mockReturnValue(pending)
     vi.spyOn(api, 'getPositions').mockReturnValue(pending)
     vi.spyOn(api, 'getProposal').mockReturnValue(pending)
@@ -186,7 +186,7 @@ describe('CausalChain read states', () => {
 
   it('renders failed linked reads as unavailable without inventing empty records', async () => {
     const failure = new Error('read failed')
-    vi.spyOn(api, 'getProposals').mockRejectedValue(failure)
+    vi.spyOn(api, 'getProposal').mockRejectedValue(failure)
     vi.spyOn(api, 'getTrades').mockRejectedValue(failure)
     vi.spyOn(api, 'getPositions').mockRejectedValue(failure)
     vi.spyOn(api, 'getProposal').mockRejectedValue(failure)
@@ -235,10 +235,10 @@ describe('CausalChain read states', () => {
     const proposal = proposalFor(order)
     const position = positionFor(order)
     const client = createClient(0)
-    client.setQueryData(['proposals'], [proposal], { updatedAt: 1 })
+    client.setQueryData(['proposal', proposal.id], proposal, { updatedAt: 1 })
     client.setQueryData(['trades'], [order], { updatedAt: 1 })
     client.setQueryData(['positions'], [position], { updatedAt: 1 })
-    vi.spyOn(api, 'getProposals').mockRejectedValue(new Error('refresh failed'))
+    vi.spyOn(api, 'getProposal').mockRejectedValue(new Error('refresh failed'))
     vi.spyOn(api, 'getTrades').mockRejectedValue(new Error('refresh failed'))
     vi.spyOn(api, 'getPositions').mockRejectedValue(new Error('refresh failed'))
     vi.spyOn(api, 'getOrderRiskDecision').mockResolvedValue({
@@ -263,7 +263,7 @@ describe('CausalChain read states', () => {
   it('treats an exact Entry Plan 404 as missing while retaining its identity', async () => {
     const planOrder = { ...order, entry_plan_id: 'plan-404' }
     const client = createClient()
-    client.setQueryData(['proposals'], [proposalFor(planOrder)])
+    client.setQueryData(['proposal', planOrder.proposal_id], proposalFor(planOrder))
     client.setQueryData(['trades'], [planOrder])
     client.setQueryData(['positions'], [] as Position[])
     vi.spyOn(api, 'getEntryPlan').mockRejectedValue(new ApiError(404, 'not found'))
@@ -314,10 +314,10 @@ describe('CausalChain read states', () => {
   it('marks retained empty Order linkage stale instead of missing', async () => {
     const position = positionFor(order)
     const client = createClient(0)
-    client.setQueryData(['proposals'], [proposalFor(order)], { updatedAt: 1 })
+    client.setQueryData(['proposal', order.proposal_id], proposalFor(order), { updatedAt: 1 })
     client.setQueryData(['trades'], [] as Order[], { updatedAt: 1 })
     client.setQueryData(['positions'], [position], { updatedAt: 1 })
-    vi.spyOn(api, 'getProposals').mockResolvedValue([proposalFor(order)])
+    vi.spyOn(api, 'getProposal').mockResolvedValue(proposalFor(order))
     vi.spyOn(api, 'getTrades').mockRejectedValue(new Error('refresh failed'))
     vi.spyOn(api, 'getPositions').mockResolvedValue([position])
     vi.spyOn(api, 'getProposalRiskDecision').mockResolvedValue({

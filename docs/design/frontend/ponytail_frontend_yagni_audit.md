@@ -21,11 +21,13 @@
 | **09** | `delete: Settings 各 Tab 中 35 处 as any 强转` | 消除类型逃逸，全面绑定后端生成的 `settings.d.ts` 严格类型 | ✅ **已彻底消除** | `frontend/src/features/settings/tabs/*` |
 | **10** | `shrink: TradesPositions.tsx 存量持仓 12 列` | 12 列收敛为 6 组紧凑复合列（Instrument, Side/Qty, Price pair, SL/TP, uPnL, Actions） | ✅ **已合并收敛** | `frontend/src/pages/TradesPositions.tsx` |
 | **11** | `shrink: PredictionLens & SerenityLens 双时间列` | Started 与 Completed/Finished 合并为单一复合时间列 `Execution (Started · Duration)` | ✅ **已合并收敛** | `frontend/src/pages/PredictionLens.tsx`<br>`frontend/src/pages/SerenityLens.tsx` |
+| **12** | `delete: index.css 796 行死规则块` | 经过动态前缀白名单保护扫描，彻底物理删除 275 个零引用的历史废弃样式块，单文件由 5,384 行降至 4,588 行 | ✅ **已彻底清除** | `frontend/src/index.css` |
+| **13** | `eliminate: types.ts 和 client.ts 手工镜像 DTO` | 废除手写 `Position`、`MarketTrade`、`RiskStatus`、`ShellBootstrap`、`OverviewBootstrap`，直接绑定自动生成的 `api.d.ts` 契约 | ✅ **已全面绑定** | `frontend/src/types.ts`<br>`frontend/src/api/client.ts`<br>`frontend/src/api/boot.ts` |
 
 ---
 
 ## 削减实际净收益
 
-* **净削减与内联代码**：净清理与消除 **-500+ 行冗余/死代码**；
+* **净削减与内联代码**：净清理与消除 **-1,300+ 行冗余/死代码**（含 index.css -796 行死样式与手工冗余 DTO）；
 * **物理清除多余文件**：彻底消灭 `SetupBanner.tsx`、`ObjectDetail.tsx`、`deferred.ts`；
 * **测试与构建状态**：84 个测试套件 / 465 项测试 100% 保持绿灯，Brotli 打包零超标。

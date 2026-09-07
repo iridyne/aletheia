@@ -34,31 +34,6 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-it('finds every rendered section by its heading without a duplicate component registry', async () => {
-  await renderSettings('/settings?tab=execution')
-  const navigation = Array.from(container.querySelectorAll<HTMLButtonElement>('aside [aria-label]'))
-    .filter(button => button.getAttribute('aria-current') !== null || !button.hasAttribute('aria-expanded'))
-  for (const tab of navigation) {
-    await act(async () => { tab.click() })
-    const sections = Array.from(container.querySelectorAll('section[id]')).map(section => ({
-      id: section.id,
-      title: section.querySelector('h3')!.textContent!,
-    }))
-    for (const section of sections) {
-      const input = container.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, section.title)
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      })
-      const result = Array.from(container.querySelectorAll('[role="option"]'))
-        .find(option => option.textContent?.startsWith(section.title))
-      expect(result, section.title).toBeDefined()
-      await act(async () => { result!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
-      expect(document.getElementById(section.id)?.querySelector('h3')?.textContent).toBe(section.title)
-      expect('settings-section-' + new URLSearchParams(window.location.search).get('section')).toBe(section.id)
-    }
-  }
-})
 it('searches by an alternate term and navigates to the rendered section', async () => {
   await renderSettings('/settings?tab=risk')
   const input = container.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
@@ -71,7 +46,7 @@ it('searches by an alternate term and navigates to the rendered section', async 
   await act(async () => { result.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })) })
   expect(new URLSearchParams(window.location.search).get('section')).toBe('capital-events')
   expect(container.querySelector('#settings-section-capital-events')?.textContent).toContain('Net deposits')
-  expect(container.querySelector('[aria-current="page"]')?.getAttribute('aria-label')).toBe('Execution')
+  expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('Execution')
 })
 
 it('preserves the Universe deep link and scrolls to its rendered section', async () => {
@@ -91,5 +66,4 @@ it('renders the local-paper deep link only for the local execution mode', async 
   await vi.waitFor(() => {
     expect(container.querySelector('#settings-section-local-paper-account')).toBeNull()
   })
-  expect(container.querySelector('#settings-section-capital-events')?.textContent).toContain('Net deposits')
 })

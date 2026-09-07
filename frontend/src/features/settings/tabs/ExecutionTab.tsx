@@ -46,45 +46,55 @@ export const PAPER_ACCOUNT_SECTION = {
   searchTerms: ['no exchange', 'paper cash', 'available balance', 'close positions'],
 } satisfies SettingsFeatureDescriptor
 
-export function ExecutionTab({ status, settings, qc, onDirty }: SettingsStatusProps & SettingsDirtyProps) {
-  const currentPaperMode = String((settings?.exchange as any)?.paper_execution_mode || '')
+export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
+  const isVisible = (id: string) => !sectionId || sectionId === id
+  const currentPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
-    currentPaperMode, String((settings?.exchange as any)?.name || ''),
+    currentPaperMode, String(settings?.exchange?.name || ''),
   )
-  const currentDataExchange = String((settings?.market_data as any)?.ccxt_exchange || '')
+  const currentDataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const currentDiverged = currentExecutionExchange !== null
     && currentExecutionExchange !== currentDataExchange
+  const showDivergedWarning = currentDiverged && (isVisible(EXCHANGE_CONNECTION_SECTION.id) || isVisible(TRADING_MODE_SECTION.id))
   return (
     <div>
-      {currentDiverged && (
+      {showDivergedWarning && (
         <div className="settings-save-msg err mb-3">
           Exchange split active: orders execute on <strong>{currentExecutionExchange}</strong>,
           while market analysis uses <strong>{currentDataExchange}</strong>. Keep this only if intentional.
         </div>
       )}
-      <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
-        <PrimaryExchangeCard settings={settings} qc={qc} />
-        <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(EXCHANGE_CONNECTION_SECTION.id) && (
+        <SettingsFeatureSection descriptor={EXCHANGE_CONNECTION_SECTION}>
+          <PrimaryExchangeCard settings={settings} qc={qc} />
+          <ExchangeConnectionCard qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
-        <ExchangeModeRow status={status} qc={qc} settings={settings} />
-        <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
-        <div className="danger-zone">
-          <div className="danger-zone-header">Danger Zone</div>
-          <LiveStateRow status={status} settings={settings} qc={qc} />
-        </div>
-      </SettingsFeatureSection>
+      {isVisible(TRADING_MODE_SECTION.id) && (
+        <SettingsFeatureSection descriptor={TRADING_MODE_SECTION}>
+          <ExchangeModeRow status={status} qc={qc} settings={settings} />
+          <ExchangeMarketsRow settings={settings} qc={qc} onDirty={onDirty} />
+          <div className="danger-zone">
+            <div className="danger-zone-header">Danger Zone</div>
+            <LiveStateRow status={status} settings={settings} qc={qc} />
+          </div>
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={PAPER_PARAMETERS_SECTION}>
-        <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(PAPER_PARAMETERS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={PAPER_PARAMETERS_SECTION}>
+          <TradingParamsCard settings={settings} qc={qc} onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      <SettingsFeatureSection descriptor={CAPITAL_EVENTS_SECTION}>
-        <CapitalEventsCard onDirty={onDirty} />
-      </SettingsFeatureSection>
+      {isVisible(CAPITAL_EVENTS_SECTION.id) && (
+        <SettingsFeatureSection descriptor={CAPITAL_EVENTS_SECTION}>
+          <CapitalEventsCard onDirty={onDirty} />
+        </SettingsFeatureSection>
+      )}
 
-      {String((settings?.exchange as any)?.paper_execution_mode) === 'paper_internal' && (
+      {String(settings?.exchange?.paper_execution_mode) === 'paper_internal' && isVisible(PAPER_ACCOUNT_SECTION.id) && (
         <SettingsFeatureSection descriptor={PAPER_ACCOUNT_SECTION}>
           <PaperAccountCard qc={qc} onDirty={onDirty} />
         </SettingsFeatureSection>
@@ -103,8 +113,8 @@ const PRIMARY_EXCHANGES = [
 
 function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   const confirm = useConfirm()
-  const exchangeName = String((settings?.exchange as any)?.name || 'bitget')
-  const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const exchangeName = String(settings?.exchange?.name || 'bitget')
+  const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
   const effective = paperMode === 'paper_internal' ? 'paper_internal' : exchangeName
 
   const [err, setErr] = useState<string | null>(null)
@@ -149,7 +159,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
 
 export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   const confirm = useConfirm()
-  const paperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
   const modeLabel: Record<string, string> = {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
     binance_testnet: 'Binance Testnet', paper_internal: 'Paper (internal)',
@@ -186,17 +196,17 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
 }
 
 function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const markets = (settings?.exchange as any)?.enabled_markets || { spot: true, usdt_futures: true }
-  const serverPaperMode = String((settings?.exchange as any)?.paper_execution_mode || 'bitget_demo')
+  const markets = settings?.exchange?.enabled_markets || { spot: true, usdt_futures: true }
+  const serverPaperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
   const [paperMode, setPaperMode] = useState(serverPaperMode)
   const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
-  const dataExchange = String((settings?.market_data as any)?.ccxt_exchange || '')
+  const dataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const executionExchange = executionExchangeFromPaperMode(
-    paperMode, String((settings?.exchange as any)?.name || ''),
+    paperMode, String(settings?.exchange?.name || ''),
   )
   const createsDivergence = paperMode !== serverPaperMode
     && executionExchange !== null
@@ -321,7 +331,7 @@ function LiveStateRow({ status, settings, qc }: SettingsStatusProps) {
   const [showWall, setShowWall] = useState(false)
   const [credError, setCredError] = useState<string | undefined>(undefined)
   const [preflight, setPreflight] = useState<any | null>(null)
-  const broker = String((settings?.exchange as any)?.name || status.exchange || 'not available')
+  const broker = String(settings?.exchange?.name || status.exchange || 'not available')
   const refreshLiveState = () => {
     qc.invalidateQueries({ queryKey: ['status'] })
     qc.invalidateQueries({ queryKey: ['settings'] })
@@ -408,7 +418,7 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
   // Ensure profile is valid for the selected exchange
   useEffect(() => {
     const cfg = EXCHANGE_CONFIG.find(e => e.id === exchange)!
-    if (!cfg.profiles.includes(profile as any)) {
+    if (!(cfg.profiles as readonly string[]).includes(profile)) {
       setProfile(cfg.profiles[0])
     }
   }, [exchange, profile])
@@ -425,7 +435,7 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
   }
 
   const credData = getCredData()
-  const cur = credData?.[profile as keyof typeof credData] as any
+  const cur = credData && profile in credData ? (credData as Record<string, { api_key?: { configured?: boolean; last4?: string | null }; api_secret?: { configured?: boolean }; passphrase?: { configured?: boolean } }>)[profile] : undefined
 
   // Connection test queries for all profiles of current exchange
   const bitgetDemoTest = useQuery({
@@ -476,7 +486,7 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
 
   const getConnStatus = (exId: string, prof: string): { state: ConnState; text: string } => {
     const cData = exId === 'bitget' ? bitgetCreds.data : exId === 'binance' ? binanceCreds.data : okxCreds.data
-    const profData = cData?.[prof as keyof typeof cData] as any
+    const profData = cData && prof in cData ? (cData as Record<string, { api_key?: { configured?: boolean } }>)[prof] : undefined
     const configured = !!profData?.api_key?.configured
     if (!configured) return { state: 'muted', text: 'not configured' }
     const testQ = getTestResult(exId, prof)

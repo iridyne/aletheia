@@ -12,6 +12,7 @@ import {
 import { SettingsFeatureSection } from "../SettingsFeatureSection";
 import { HEALTH_MONITORING_SECTION, WEBHOOK_SECTION } from "../health/healthState";
 import { TelegramSection } from "../telegram/TelegramSection";
+import { TELEGRAM_SECTION } from "../telegram/telegramState";
 import { useSettingsDraftLifecycle } from "../draftLifecycle";
 
 function errorMessage(error: unknown): string {
@@ -274,22 +275,31 @@ export function HealthNotificationsTab({
 	settings,
 	qc,
 	onDirty,
+	sectionId,
 }: {
 	settings?: Record<string, unknown>;
 	qc: QueryClient;
 	onDirty?: (id: string, isDirty: boolean) => void;
+	sectionId?: string;
 }) {
+	const isVisible = (id: string) => !sectionId || sectionId === id;
 	return (
 		<div>
-			<SettingsFeatureSection descriptor={HEALTH_MONITORING_SECTION}>
-				<HealthCard settings={settings} qc={qc} onDirty={onDirty} />
-			</SettingsFeatureSection>
+			{isVisible(HEALTH_MONITORING_SECTION.id) && (
+				<SettingsFeatureSection descriptor={HEALTH_MONITORING_SECTION}>
+					<HealthCard settings={settings} qc={qc} onDirty={onDirty} />
+				</SettingsFeatureSection>
+			)}
 
-			<TelegramSection settings={settings} qc={qc} onDirty={onDirty} />
+			{isVisible(TELEGRAM_SECTION.id) && (
+				<TelegramSection settings={settings} qc={qc} onDirty={onDirty} />
+			)}
 
-			<SettingsFeatureSection descriptor={WEBHOOK_SECTION}>
-				<WebhookCard settings={settings} qc={qc} onDirty={onDirty} />
-			</SettingsFeatureSection>
+			{isVisible(WEBHOOK_SECTION.id) && (
+				<SettingsFeatureSection descriptor={WEBHOOK_SECTION}>
+					<WebhookCard settings={settings} qc={qc} onDirty={onDirty} />
+				</SettingsFeatureSection>
+			)}
 		</div>
 	);
 }

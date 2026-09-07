@@ -155,7 +155,10 @@ export default function StatusCluster({
     operatorBlockedDetail: operatorTradingBlocked ? operatorCurrentIntent : undefined,
     healthIssues,
   })
-  const opDisplay = getOperatorDisplayStatus(operator as any)
+  const opDisplay = getOperatorDisplayStatus({
+    status: typeof operator?.status === 'string' ? operator.status : null,
+    mode: typeof operator?.mode === 'string' ? operator.mode : null,
+  })
   const realtimeTone = realtime.state === 'connected'
     ? 'green'
     : realtime.state === 'polling_only' || realtime.state === 'reconnecting'

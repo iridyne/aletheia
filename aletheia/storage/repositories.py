@@ -9885,6 +9885,24 @@ def list_active_entry_plans(limit: int = 100) -> list[dict]:
         )
         .fetchall()
     ]
+def list_entry_plans(status: str | None = None, limit: int = 100) -> list[dict]:
+    """List entry plans filtered by status ('active', 'expired', other, or all)."""
+    norm_status = (status or "active").strip().lower()
+    lim = max(1, min(int(limit), 200))
+    if norm_status == "active":
+        placeholders = ",".join("?" for _ in _ACTIVE_ENTRY_PLAN_STATUSES)
+        query = f"SELECT * FROM entry_plans WHERE status IN ({placeholders}) ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params = (*_ACTIVE_ENTRY_PLAN_STATUSES, lim)
+    elif norm_status == "expired":
+        query = "SELECT * FROM entry_plans WHERE status = 'expired' ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params = (lim,)
+    elif norm_status == "all":
+        query = "SELECT * FROM entry_plans ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params = (lim,)
+    else:
+        query = "SELECT * FROM entry_plans WHERE status = ? ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params = (norm_status, lim)
+    return [dict(row) for row in get_db().execute(query, params).fetchall()]
 
 
 def list_active_candidate_attention(limit: int = 100) -> list[dict]:
