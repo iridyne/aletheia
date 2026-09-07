@@ -118,67 +118,6 @@ def operator_learning_candidate_key(ctx: dict[str, Any]) -> str:
     return f"operator_queue:{_fingerprint(identity)}"
 
 
-def authorize_operator_learning_context(ctx: dict[str, Any]) -> dict[str, Any]:
-    """Return an Operator context with Learning present only for its treatment arm."""
-    proposed_manifest = build_operator_learning_manifest(ctx)
-    candidate_key = operator_learning_candidate_key(ctx)
-    pending = (ctx.get("layer2") or {}).get("pending_signals") or []
-    opportunity_ids = {
-        str(row.get("opportunity_id")) for row in pending if row.get("opportunity_id")
-    }
-    opportunity_id = next(iter(opportunity_ids)) if len(opportunity_ids) == 1 else None
-    market_observer_sources = {
-        str(row.get("signal_source") or "market_observer") for row in pending
-    }
-    exact_market_candidate = (
-        len(pending) == 1
-        and len(opportunity_ids) == 1
-        and market_observer_sources == {"market_observer"}
-    )
-    if not exact_market_candidate:
-        gated = gate_operator_learning_context(ctx, enabled=False)
-        manifest = build_operator_learning_manifest(gated)
-        manifest["proposed_bundle_id"] = proposed_manifest["bundle_id"]
-        manifest["authority"] = _unavailable_authority(
-            "operator_learning_bundle",
-            candidate_key,
-            reason="exact_candidate_scope_required",
-        )
-        gated["learning_manifest"] = manifest
-        return gated
-    outcome_candidate_key = (
-        f"opportunity:{opportunity_id}:4h"
-        if opportunity_id and market_observer_sources == {"market_observer"}
-        else None
-    )
-    try:
-        from aletheia.learning.experiments import apply_boolean_treatment
-        decision = apply_boolean_treatment(
-            path_id="operator_learning_bundle",
-            scope={"consumer": "system_operator", "bundle_version": "v1"},
-            action={"type": "prompt_bundle", "enabled": True, "bundle_version": "v1"},
-            source_cohort="operator_learning_bundle:v1",
-            target_horizon="4h",
-            candidate_key=candidate_key,
-            consumer="system_operator",
-            consumer_stage="prompt_context",
-            outcome_candidate_key=outcome_candidate_key,
-            opportunity_id=opportunity_id,
-            manifest={"proposed_bundle_id": proposed_manifest["bundle_id"]},
-        )
-        authority = _authority_manifest("operator_learning_bundle", candidate_key, decision)
-        enabled = bool(decision.applied and decision.value >= 1.0)
-    except Exception:
-        authority = _unavailable_authority("operator_learning_bundle", candidate_key)
-        enabled = False
-    gated = gate_operator_learning_context(ctx, enabled=enabled)
-    manifest = build_operator_learning_manifest(gated)
-    manifest["proposed_bundle_id"] = proposed_manifest["bundle_id"]
-    manifest["authority"] = authority
-    gated["learning_manifest"] = manifest
-    return gated
-
-
 def authorize_observer_learning_bundle(
     memory_block: str,
     guard_advisory: str = "",
