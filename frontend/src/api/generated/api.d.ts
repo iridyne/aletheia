@@ -5846,31 +5846,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/strategy_factory": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update Strategy Factory Config
-         * @description Strategy Factory subsystem was removed with Position C (2026-07-02).
-         *
-         *     This endpoint is kept for backward compatibility but performs no mutation and
-         *     writes no audit event. The response explicitly signals that no runtime behavior
-         *     changed. The current authority chain is scanner-family opportunities → ranker /
-         *     System Operator → Proposal → Risk/Execution.
-         */
-        post: operations["update_strategy_factory_config_api_settings_strategy_factory_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/symbols": {
         parameters: {
             query?: never;
@@ -12632,7 +12607,6 @@ export interface components {
             risk: components["schemas"]["RiskConfig"];
             runtime: components["schemas"]["RuntimeConfig"];
             serenity: components["schemas"]["SerenityConfig"];
-            strategy_factory: components["schemas"]["SettingsStrategyFactoryResponse"];
             telegram: components["schemas"]["TelegramConfig"];
             trading: components["schemas"]["TradingConfig"];
             trading_mandate?: components["schemas"]["SettingsTradingMandateResponse"] | null;
@@ -12640,89 +12614,6 @@ export interface components {
             universe: components["schemas"]["UniverseConfig"];
             update: components["schemas"]["UpdateConfig"];
             webhook: components["schemas"]["SettingsWebhookResponse"];
-        };
-        /**
-         * SettingsStrategyFactoryResponse
-         * @description Deprecated config projection with its explicit UI deprecation marker.
-         */
-        SettingsStrategyFactoryResponse: {
-            /**
-             * Deprecated
-             * @default true
-             */
-            _deprecated: boolean;
-            /**
-             * Reason
-             * @default
-             */
-            _reason: string;
-            /**
-             * Backtest Gate Enabled
-             * @default true
-             */
-            backtest_gate_enabled: boolean;
-            /**
-             * Event Cooldown Minutes
-             * @default 30
-             */
-            event_cooldown_minutes: number;
-            /**
-             * Event Driven Enabled
-             * @default true
-             */
-            event_driven_enabled: boolean;
-            /**
-             * Event Min Score
-             * @default 60
-             */
-            event_min_score: number;
-            /**
-             * High Trade Count Threshold
-             * @default 30
-             */
-            high_trade_count_threshold: number;
-            /**
-             * Min Runtime Days Relaxed
-             * @default 3
-             */
-            min_runtime_days_relaxed: number;
-            /**
-             * Sweep Enabled
-             * @default true
-             */
-            sweep_enabled: boolean;
-            /**
-             * Sweep Max Variants
-             * @default 100
-             */
-            sweep_max_variants: number;
-            /**
-             * Sweep N Trials
-             * @default 60
-             */
-            sweep_n_trials: number;
-            /**
-             * Sweep Top K
-             * @default 10
-             */
-            sweep_top_k: number;
-            /**
-             * Walk Forward Enabled
-             * @default true
-             */
-            walk_forward_enabled: boolean;
-            /**
-             * Walk Forward Folds
-             * @default 3
-             */
-            walk_forward_folds: number;
-            /**
-             * Walk Forward Min Bars
-             * @default 150
-             */
-            walk_forward_min_bars: number;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * SettingsTradingMandateResponse
@@ -12902,35 +12793,6 @@ export interface components {
             agent_name: string;
             /** Idempotency Key */
             idempotency_key?: string | null;
-        };
-        /** StrategyFactoryConfigUpdate */
-        StrategyFactoryConfigUpdate: {
-            /** Backtest Gate Enabled */
-            backtest_gate_enabled?: boolean | null;
-            /** Event Cooldown Minutes */
-            event_cooldown_minutes?: number | null;
-            /** Event Driven Enabled */
-            event_driven_enabled?: boolean | null;
-            /** Event Min Score */
-            event_min_score?: number | null;
-            /** High Trade Count Threshold */
-            high_trade_count_threshold?: number | null;
-            /** Min Runtime Days Relaxed */
-            min_runtime_days_relaxed?: number | null;
-            /** Sweep Enabled */
-            sweep_enabled?: boolean | null;
-            /** Sweep Max Variants */
-            sweep_max_variants?: number | null;
-            /** Sweep N Trials */
-            sweep_n_trials?: number | null;
-            /** Sweep Top K */
-            sweep_top_k?: number | null;
-            /** Walk Forward Enabled */
-            walk_forward_enabled?: boolean | null;
-            /** Walk Forward Folds */
-            walk_forward_folds?: number | null;
-            /** Walk Forward Min Bars */
-            walk_forward_min_bars?: number | null;
         };
         /** StrategyKpi */
         StrategyKpi: {
@@ -23088,39 +22950,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SerenityConfigUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_strategy_factory_config_api_settings_strategy_factory_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["StrategyFactoryConfigUpdate"];
             };
         };
         responses: {
