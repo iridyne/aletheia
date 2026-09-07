@@ -97,7 +97,7 @@ function RiskCard({ shell, shellError }: { shell?: ShellBootstrap; shellError?: 
   )
 }
 
-type SystemDetail = 'collectors' | 'coverage' | 'mode' | null
+type SystemDetail = 'exchange' | 'collectors' | 'coverage' | 'mode' | null
 
 function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap; coverage?: MarketDataCoverageReport; coverageError?: boolean }) {
   const navigate = useNavigate()
@@ -106,10 +106,10 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const exchangeDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
   const exchangeAligned = exchange?.status === 'aligned'
   const exchangeLabel = exchange?.status === 'local_paper'
-    ? 'Local paper · no exchange'
+    ? 'Local Paper'
     : exchangeDiverged
-      ? `${exchange?.execution_exchange || 'unknown'} exec · ${exchange?.data_exchange || 'unknown'} data`
-      : exchange?.execution_exchange || exchange?.data_exchange || 'not available'
+      ? `${exchange?.execution_exchange || 'unknown'} / ${exchange?.data_exchange || 'unknown'}`
+      : exchange?.execution_exchange || exchange?.data_exchange || 'Unavailable'
   const collectorHealthQuery = useQuery<CollectorHealthReport>({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
@@ -120,34 +120,34 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const collectorHealth = collectorHealthQuery.data
   const coverageReport = coverage
   const collectorIncident = collectorHealth?.infrastructure_incident
-  const collectorCounts = new Map<string, number>()
-  for (const domain of collectorHealth?.domains ?? []) {
-    const status = domain.overdue ? 'overdue' : domain.degraded ? 'degraded' : domain.last_status
-    const label = status === 'not_configured' ? 'unconfigured' : status === 'never_run' ? 'unobserved' : status.replace(/_/g, ' ')
-    collectorCounts.set(label, (collectorCounts.get(label) ?? 0) + 1)
-  }
-  const collectorSummary = [...collectorCounts].map(([status, count]) => `${count} ${status}`).join(' · ')
+  const problemCount = (collectorHealth?.domains ?? []).filter(d => d.degraded || d.overdue || d.last_status === 'failed' || d.last_status === 'timed_out').length
   const collectorState: SemanticState = !collectorHealth
     ? collectorHealthQuery.isPending ? 'loading' : 'unknown'
     : collectorIncident?.status === 'active' || collectorIncident?.status === 'recovering'
       ? 'degraded'
-      : collectorHealth.status === 'healthy' ? collectorCounts.has('success') ? 'active' : 'disabled'
+      : collectorHealth.status === 'healthy' ? 'active'
         : collectorHealth.status === 'degraded' || collectorHealth.status === 'attention' ? 'degraded' : 'unknown'
   const collectorLight = semanticTone(collectorState)
   const collectorValue = !collectorHealth
-    ? collectorHealthQuery.isPending ? 'loading' : 'not available'
+    ? collectorHealthQuery.isPending ? 'Loading…' : 'Unavailable'
     : collectorIncident?.status === 'active'
-      ? `${collectorIncident.affected_domains.length} blocked by connectivity`
+      ? `${collectorIncident.affected_domains.length} Blocked`
       : collectorIncident?.status === 'recovering'
-        ? `${collectorIncident.affected_domains.length} retrying after recovery`
-        : collectorHealth.status === 'initializing' ? `initializing · ${collectorSummary}` : collectorSummary
+        ? 'Recovering'
+        : collectorHealth.status === 'initializing'
+          ? 'Initializing'
+          : problemCount > 0
+            ? `${problemCount} Degraded`
+            : collectorHealth.status === 'healthy'
+              ? 'Operational'
+              : 'Attention'
   const coverageHealthy = coverage?.status === 'healthy'
   const coverageLight = coverageReport
     ? coverage?.status === 'empty' ? 'muted' : coverageReport.critical_problem_count > 0 ? 'yellow' : coverageHealthy ? 'green' : 'yellow'
     : 'muted'
   const coverageValue = coverageReport
-    ? `${coverageReport.fresh_count}/${coverageReport.domain_count} current`
-    : coverageError ? 'not available' : 'deferred'
+    ? `${coverageReport.fresh_count}/${coverageReport.domain_count} Fresh`
+    : coverageError ? 'Unavailable' : 'Loading…'
   const healthIssues = sortedIssues(parseAllIssues(shell?.health?.issues || []))
   const toggle = (detail: Exclude<SystemDetail, null>) => setExpanded(value => value === detail ? null : detail)
   const pipelineTone: Light = coverageError || !collectorHealth
@@ -173,12 +173,14 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
         <StatusText tone={pipelineTone}>{pipelineLabel}</StatusText>
       </div>
       <table className="status-board"><tbody>
-        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
+        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => toggle('exchange')} expanded={expanded === 'exchange'} title={exchangeDiverged ? 'Execution and market-data exchanges are split.' : exchangeLabel} />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
-        {collectorHealth && collectorHealth.status !== 'healthy' && expanded !== 'collectors' && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
         <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
-        <StatusRow label="Execution" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'KILL SWITCH' : shell?.live?.enabled ? `Live: ${humanize(shell?.live?.state || 'active')}` : humanize(shell?.permission?.mode || 'Paper')} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />
+        <StatusRow label="Execution" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'Kill Switch' : shell?.live?.enabled ? `Live (${humanize(shell?.live?.state || 'active')})` : `Paper (${humanize(shell?.permission?.mode || 'Full')})`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />
       </tbody></table>
+      <AnimatedSection open={expanded === 'exchange'}>
+        <ExchangeDetail exchange={exchange} exchangeLabel={exchangeLabel} navigate={navigate} />
+      </AnimatedSection>
       <AnimatedSection open={expanded === 'collectors'}>
         {collectorHealth?.domains?.length ? <CollectorHealthDetails health={collectorHealth} mode="full" /> : <p className="text-muted text-sm" role="status">Collector diagnostics not available.</p>}
       </AnimatedSection>
@@ -273,6 +275,23 @@ function DataCoverageDetail({ coverage }: { coverage: MarketDataCoverageReport }
           </div>
         )
       })}
+    </div>
+  )
+}
+function ExchangeDetail({ exchange, exchangeLabel, navigate }: { exchange?: ShellBootstrap['exchange']; exchangeLabel: string; navigate: (path: string) => void }) {
+  const isDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
+  return (
+    <div className="chd-panel">
+      <div className="chd-title">Exchange &amp; Market Routing</div>
+      <div className="sp-row"><span className="sp-label">Profile</span><span className="sp-value">{exchangeLabel}</span></div>
+      <div className="sp-row"><span className="sp-label">Status</span><span className="sp-value">{isDiverged ? 'Diverged execution/data' : (exchange?.status || 'Aligned')}</span></div>
+      {exchange?.execution_exchange && <div className="sp-row"><span className="sp-label">Execution</span><span className="sp-value">{exchange.execution_exchange}</span></div>}
+      {exchange?.data_exchange && <div className="sp-row"><span className="sp-label">Market Data</span><span className="sp-value">{exchange.data_exchange}</span></div>}
+      <div className="pt-2">
+        <button type="button" className="btn btn-sm secondary w-full" onClick={() => navigate('/settings?tab=execution')}>
+          Configure Exchange Settings →
+        </button>
+      </div>
     </div>
   )
 }

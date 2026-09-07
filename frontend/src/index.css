@@ -486,17 +486,36 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
   margin-bottom: var(--space-1); padding: 0;
 }
 .sp-row {
-  display: flex; align-items: baseline; gap: 6px;
-  padding: 2px 0; font-size: 0.74rem; min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 0.74rem;
+  min-height: 22px;
 }
 .sp-row .dot { flex-shrink: 0; align-self: center; }
 .sp-label {
-  width: 95px; flex-shrink: 0;
-  color: var(--muted); font-size: 0.7rem; font-weight: 500;
+  width: 95px;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.2;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
 }
 .sp-value {
-  font-family: var(--mono); font-size: 0.72rem; color: var(--text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--text);
+  line-height: 1.2;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   min-width: 0;
 }
 .sp-value-wrap { white-space: normal; line-height: 1.4; overflow-wrap: anywhere; }
@@ -2615,22 +2634,47 @@ button.market-instrument-group-title { font-family: inherit; }
 
 
 /* System status board — tabular, old-school console feel with status lights */
-.status-board { width: 100%; border-collapse: separate; border-spacing: 0 2px; }
+.status-board { width: 100%; border-collapse: separate; border-spacing: 0 3px; }
 .status-board th {
   font-weight: 500; color: var(--muted); font-size: 0.76rem; text-align: left;
-  padding: var(--space-1) var(--space-2) var(--space-1) 4px; white-space: nowrap; width: 1%;
+  padding: 5px var(--space-2) 5px 4px; white-space: nowrap; width: 1%;
+  vertical-align: middle;
 }
-.status-board td { padding: var(--space-1) 4px var(--space-1) 0; }
-.status-cell { display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
+.status-board td {
+  padding: 5px 4px 5px 0;
+  vertical-align: middle;
+}
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  height: 100%;
+}
 .status-board .status-cell { padding-left: 2px; }
 .status-value {
-  font-family: var(--mono); font-size: 0.78rem; color: var(--text);
-  min-width: 0; flex: 1 1 0; white-space: normal; overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text);
+  line-height: 1.2;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .status-light {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--faint);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--faint);
+  align-self: center;
+  margin: 0;
 }
-.light-green  { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .light-red    { background: var(--red);   box-shadow: 0 0 6px var(--red); }
 .light-yellow { background: var(--yellow); box-shadow: 0 0 6px var(--yellow); }
 .light-blue   { background: var(--blue);  box-shadow: 0 0 6px rgba(74,163,255,0.6); }
