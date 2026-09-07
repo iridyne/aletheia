@@ -427,28 +427,3 @@ def list_recent_would_block_events(
         entry["would_block"] = observations
         results.append(entry)
     return results
-
-
-def budgets_applicable_to(
-    *,
-    run_id: str | None = None,
-    logical_agent: str | None = None,
-    provider: str | None = None,
-) -> Iterable[dict[str, Any]]:
-    """Convenience view: which enabled budgets currently target this identity.
-
-    Not consulted by the observation calculator; exposed for UI listing so
-    the Settings tile can show "budgets that apply to this run" without
-    duplicating the scope-matching logic.
-    """
-    for budget in list_budgets(enabled_only=True):
-        scope = budget["scope"]
-        subject = budget["subject"]
-        if scope == "system":
-            yield budget
-        elif scope == "agent_run" and run_id and subject == run_id:
-            yield budget
-        elif scope == "logical_agent" and logical_agent and subject == logical_agent:
-            yield budget
-        elif scope == "provider" and provider and subject == provider:
-            yield budget

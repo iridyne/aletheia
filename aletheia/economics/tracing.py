@@ -496,53 +496,6 @@ def record_llm_attempt(
         return None
 
 
-def record_fixed_cost_event(
-    *,
-    event_type: str,
-    name: str,
-    cost_usd: float | None,
-    started_at: str,
-    finished_at: str | None = None,
-    cost_status: str = "known",
-    metadata: dict[str, Any] | None = None,
-) -> str:
-    if event_type not in {"data", "infrastructure", "other"}:
-        raise ValueError("fixed cost event_type must be data, infrastructure, or other")
-    parsed = _float(cost_usd)
-    if parsed is not None and parsed < 0:
-        raise ValueError("cost_usd must be non-negative")
-    resolved_status = cost_status if parsed is not None and cost_status in {"known", "estimated"} else "unknown"
-    event_id = "cost_" + uuid4().hex[:16]
-    call_id = (
-        "fixed_" + hashlib.sha256(f"{event_type}:{name}:{started_at}:{finished_at or ''}".encode()).hexdigest()[:16]
-    )
-    db = ensure_economics_schema()
-    db.execute(
-        """INSERT OR IGNORE INTO runtime_cost_events (
-            id,event_type,call_id,provider,model_or_tool,attempt_index,status,started_at,
-            finished_at,usage_json,estimated_cost_usd,currency,cost_status,metadata_json,created_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            event_id,
-            event_type,
-            call_id,
-            event_type,
-            name,
-            0,
-            "allocated",
-            started_at,
-            finished_at or started_at,
-            "{}",
-            parsed,
-            "USD",
-            resolved_status,
-            _json(metadata or {}),
-            _utcnow(),
-        ),
-    )
-    return event_id
-
-
 def aggregate_agent_run_cost(run_id: str) -> dict[str, Any]:
     db = ensure_economics_schema()
     rows = [

@@ -84,34 +84,6 @@ def current_cost_model_complete_outcome_sql(table_alias: str = "") -> str:
     )
 
 
-@contextmanager
-def atomic_opportunity_evidence():
-    """Own a rollback boundary for one Opportunity and its producer fact.
-
-    Repository transactions intentionally join a caller-owned transaction.  A
-    producer needs a stricter guarantee: its new lifecycle row must never survive
-    without the exact evidence that says it was emitted.  Use an IMMEDIATE outer
-    transaction when possible and a unique SAVEPOINT when already nested.
-    """
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    if not db.in_transaction:
-        with repo.transaction(immediate=True):
-            yield
-        return
-
-    savepoint = f"opportunity_evidence_{uuid4().hex}"
-    db.execute(f"SAVEPOINT {savepoint}")
-    try:
-        yield
-        db.execute(f"RELEASE SAVEPOINT {savepoint}")
-    except Exception:
-        db.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-        db.execute(f"RELEASE SAVEPOINT {savepoint}")
-        raise
-
-
 def record_filter_decision(
     *,
     candidate_key: str,

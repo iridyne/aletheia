@@ -67,47 +67,6 @@ def _stop_reference(feature: dict, cfg) -> tuple[float, float]:
     return atr_pct, vol_target_pct
 
 
-def _require_trigger(
-    intent: "PlanIntent",
-    candidate_family: str,
-    entry_zone: tuple[float, float],
-    stop_price: float,
-    entry_price: float,
-    *,
-    geometry: MomentumEntryGeometry | None = None,
-):
-    spec_id = str(intent.trigger_spec_id)
-    if spec_id == _MOMENTUM_GEOMETRY_TRIGGER:
-        if geometry is None:
-            raise _intent_error("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
-        try:
-            return require_registered_trigger_spec(spec_id, geometry.trigger_params())
-        except ValueError as exc:
-            raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
-
-    try:
-        contract = require_compatible_trigger_spec(candidate_family, spec_id)
-    except ValueError as exc:
-        code = (
-            "NO_COMPATIBLE_TRIGGER_SPEC"
-            if str(exc) == "trigger_spec_candidate_family_unsupported"
-            else "UNSUPPORTED_TRIGGER_SPEC"
-        )
-        raise _intent_error(code) from exc
-    raw_params = {
-        "breakout_level": entry_price,
-        "pullback_low": entry_zone[0],
-        "pullback_high": entry_zone[1],
-        "entry_low": entry_zone[0],
-        "entry_high": entry_zone[1],
-        "invalidation_price": stop_price,
-    }
-    try:
-        return contract, contract.validate_params(raw_params)
-    except ValueError as exc:
-        raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
-
-
 def _compile_bounded_risk_envelope(
     generation: dict,
     candidate: dict,

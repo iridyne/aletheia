@@ -37,17 +37,6 @@ _AFFECTED_PATHS = (
 )
 
 
-def ensure_leverage_policy_epoch() -> str:
-    """Return the durable v1 leverage policy epoch, rotating only if policy changes."""
-    epoch = build_policy_epoch(
-        _EPOCH_KIND,
-        _EFFECTIVE_VALUES,
-        affected_path_ids=_AFFECTED_PATHS,
-        safety_required=False,
-    )
-    return persist_policy_epoch(epoch)
-
-
 def leverage_policy_context() -> dict:
     """Return the non-secret effective values for the current leverage policy."""
     return dict(_EFFECTIVE_VALUES)
