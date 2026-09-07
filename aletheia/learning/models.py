@@ -127,43 +127,6 @@ class LearningContributionVerdict(BaseModel):
     inference_cutoff_fingerprint: str | None = None
 
 
-class LearningInferenceDecision(BaseModel):
-    experiment_id: str
-    inference_family_id: str
-    inference_contract_version: str
-    plan_json: str
-    plan_hash: str
-    status: str = "collecting"
-    cutoff_json: str | None = None
-    cutoff_fingerprint: str | None = None
-    cutoff_frozen_at: str | None = None
-    consumed_verdict_id: str | None = None
-    consumed_at: str | None = None
-    authority_alpha: float
-    created_at: str = Field(default_factory=_now)
-    updated_at: str = Field(default_factory=_now)
-
-
-class LearningLifecycleEvent(BaseModel):
-    event_id: str = Field(default_factory=_id)
-    dedup_key: str
-    hypothesis_id: str
-    experiment_id: str
-    successor_experiment_id: str | None = None
-    verdict_id: str | None = None
-    from_stage: str
-    to_stage: str | None = None
-    action: str
-    reason: str
-    policy_epoch: str | None = None
-    audit_actor: str = "learning_lifecycle_controller"
-    audit_source: str = "learning_lifecycle"
-    audit_mirror_status: str = "pending"
-    audit_mirrored_at: str | None = None
-    audit_failure_reason: str | None = None
-    created_at: str = Field(default_factory=_now)
-
-
 class LearningJobHealth(BaseModel):
     job_id: str
     schedule_key: str

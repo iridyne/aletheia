@@ -144,57 +144,6 @@ def list_nominations(*, limit: int = 100) -> list[dict]:
     return list_records("learning_hypothesis_nominations", limit=limit)
 
 
-def get_open_experiment(hypothesis_id: str) -> dict | None:
-
-    row = get_db().execute(
-        "SELECT * FROM learning_experiments WHERE hypothesis_id=? AND ended_at IS NULL "
-        "ORDER BY created_at DESC LIMIT 1",
-        (hypothesis_id,),
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def get_latest_verdict(experiment_id: str, *, authority_only: bool = False) -> dict | None:
-    """Return the newest verdict, optionally restricted to authority decisions.
-
-    Measurement verdicts intentionally use a separate vocabulary
-    (``positive``/``neutral``/``negative``/``insufficient_data``/``invalid``).
-    They are durable evidence, never a signal to change a consumer's authority.
-    """
-
-    clauses = ["experiment_id=?"]
-    params: list[str] = [experiment_id]
-    if authority_only:
-        clauses.append("verdict IN ('promote', 'refreeze')")
-    row = get_db().execute(
-        "SELECT * FROM learning_contribution_verdicts WHERE " + " AND ".join(clauses) + " "
-        "ORDER BY created_at DESC LIMIT 1",
-        tuple(params),
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def get_latest_verdict_for_cohort(
-    experiment_id: str, *, policy_epoch: str, stage: str,
-) -> dict | None:
-    """Latest verdict computed under the EXACT current cohort (P0-4).
-
-    A verdict only grants authority if it was produced for this experiment under the
-    same policy epoch and stage. A verdict stamped with a different (or NULL) epoch or
-    stage is invisible here — so a stale positive verdict cannot authorize a treatment
-    after config/code (epoch) or lifecycle stage changed.
-    """
-
-    row = get_db().execute(
-        "SELECT * FROM learning_contribution_verdicts "
-        "WHERE experiment_id=? AND policy_epoch=? AND stage=? "
-        "AND verdict IN ('promote', 'refreeze') "
-        "ORDER BY created_at DESC LIMIT 1",
-        (experiment_id, policy_epoch, stage),
-    ).fetchone()
-    return dict(row) if row else None
-
-
 def get_latest_measurement_verdict(
     experiment_id: str,
     *,
@@ -277,37 +226,6 @@ def get_lifecycle_event_by_dedup_key(dedup_key: str) -> dict | None:
     return dict(row) if row else None
 
 
-def list_lifecycle_events(experiment_id: str, *, limit: int = 100) -> list[dict]:
-
-    rows = get_db().execute(
-        "SELECT * FROM learning_lifecycle_events WHERE experiment_id=? OR successor_experiment_id=? "
-        "ORDER BY created_at DESC, event_id DESC LIMIT ?",
-        (experiment_id, experiment_id, max(1, int(limit))),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def list_unmirrored_lifecycle_events(
-    *, limit: int = 100, event_ids: list[str] | None = None,
-) -> list[dict]:
-
-    clauses = ["audit_mirror_status IN ('pending', 'failed')"]
-    params: list[object] = []
-    if event_ids is not None:
-        if not event_ids:
-            return []
-        clauses.append(f"event_id IN ({','.join('?' for _ in event_ids)})")
-        params.extend(event_ids)
-    params.append(min(max(int(limit), 1), 500))
-    rows = get_db().execute(
-        "SELECT * FROM learning_lifecycle_events "
-        f"WHERE {' AND '.join(clauses)} "
-        "ORDER BY created_at, event_id LIMIT ?",
-        tuple(params),
-    ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def count_unmirrored_lifecycle_events() -> int:
 
     row = get_db().execute(
@@ -315,17 +233,6 @@ def count_unmirrored_lifecycle_events() -> int:
         "WHERE audit_mirror_status IN ('pending', 'failed')"
     ).fetchone()
     return int(row[0] or 0)
-
-
-def get_trial_admission_event(successor_experiment_id: str) -> dict | None:
-
-    row = get_db().execute(
-        "SELECT * FROM learning_lifecycle_events "
-        "WHERE successor_experiment_id=? AND action='admit_trial' "
-        "ORDER BY created_at DESC, event_id DESC LIMIT 1",
-        (successor_experiment_id,),
-    ).fetchone()
-    return dict(row) if row else None
 
 
 def get_exposure(exposure_id: str) -> dict | None:
@@ -423,14 +330,3 @@ def get_open_policy_epoch(epoch_kind: str) -> dict | None:
         (epoch_kind,),
     ).fetchone()
     return dict(row) if row else None
-
-
-def close_policy_epoch(epoch_id: str, ended_at: str) -> None:
-    db = get_db()
-    was_in_tx = db.in_transaction
-    db.execute(
-        "UPDATE learning_policy_epochs SET ended_at=? WHERE epoch_id=? AND ended_at IS NULL",
-        (ended_at, epoch_id),
-    )
-    if not was_in_tx:
-        db.commit()
