@@ -1504,23 +1504,3 @@ class BitgetClient:
         if data.get("code") != "00000":
             raise RuntimeError(f"Bitget API error: {data.get('msg')}")
         return data.get("data", {}).get("entrustedList", []) or []
-
-    async def get_plan_order_history(self, symbol: str | None = None, order_id: str | None = None) -> list[dict]:
-        """Query triggered/filled TPSL order history for USDT-FUTURES.
-
-        Returns list of historical plan orders (triggered, filled, cancelled).
-        Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
-        prices are trigger metadata, not private Fill economics.
-        """
-        path = "/api/v2/mix/order/orders-plan-history?productType=USDT-FUTURES&planType=profit_loss"
-        if symbol:
-            path += f"&symbol={symbol}"
-        if order_id:
-            path += f"&orderId={order_id}"
-        headers = self._headers("GET", path)
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(f"{self._base}{path}", headers=headers)
-            data = resp.json()
-        if data.get("code") != "00000":
-            raise RuntimeError(f"Bitget API error: {data.get('msg')}")
-        return data.get("data", {}).get("entrustedList", []) or []

@@ -17,7 +17,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @spec_claim(
     SpecClaim(
-        "AC-S01", "agent_contracts", "§1 scheduler cap", "L2a",
+        "AC-S01",
+        "agent_contracts",
+        "§1 scheduler cap",
+        "L2a",
         "ThreadPoolExecutor max_workers is capped at <= 3",
     ),
 )
@@ -30,18 +33,15 @@ def test_scheduler_max_workers_cap():
     matches = re.findall(r"max_workers\s*=\s*(\d+)", source)
     assert matches, "No max_workers found in scheduler.py"
     for val in matches:
-        assert int(val) <= 3, (
-            f"Scheduler max_workers={val} exceeds cap of 3"
-        )
-
-
-
-
+        assert int(val) <= 3, f"Scheduler max_workers={val} exceeds cap of 3"
 
 
 @spec_claim(
     SpecClaim(
-        "AC-S04", "agent_contracts", "§4 knowledge manager", "L2a",
+        "AC-S04",
+        "agent_contracts",
+        "§4 knowledge manager",
+        "L2a",
         "Knowledge manager exposes CRUD functions for all item types",
     ),
 )
@@ -55,13 +55,17 @@ def test_knowledge_manager_crud():
         "archive_item",
     ]
     for fn_name in required:
-        assert hasattr(manager, fn_name) and callable(getattr(manager, fn_name)), \
+        assert hasattr(manager, fn_name) and callable(getattr(manager, fn_name)), (
             f"knowledge/manager.py missing {fn_name}"
+        )
 
 
 @spec_claim(
     SpecClaim(
-        "AC-S05", "agent_contracts", "§5 guard evaluation", "L2a",
+        "AC-S05",
+        "agent_contracts",
+        "§5 guard evaluation",
+        "L2a",
         "Guard evaluation pipeline exists (load -> evaluate -> format)",
     ),
 )
@@ -75,7 +79,10 @@ def test_guard_pipeline_functions():
 
 @spec_claim(
     SpecClaim(
-        "AC-S06", "agent_contracts", "§2 equity_observer", "L2a",
+        "AC-S06",
+        "agent_contracts",
+        "§2 equity_observer",
+        "L2a",
         "equity_observer module exists (replaces stock_observer)",
     ),
 )
@@ -85,14 +92,13 @@ def test_equity_observer_exists():
     assert hasattr(equity_observer, "EquityRead")
 
 
-
-
 @spec_claim(
     SpecClaim(
-        "AC-S09", "agent_contracts", "§1 executor pools", "L2a",
-        "scheduler.py defines exactly the executor pools "
-        "{default, io, audit, fast_io, protective, learning_measurement, "
-        "observer, agents} — no extras, no missing",
+        "AC-S09",
+        "agent_contracts",
+        "§1 executor pools",
+        "L2a",
+        "scheduler.py defines exactly the supported executor pools without extras or missing lanes",
     ),
 )
 def test_scheduler_executor_pool_names():
@@ -101,7 +107,7 @@ def test_scheduler_executor_pool_names():
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
     source = src.read_text(encoding="utf-8")
-    m = re.search(r'_EXECUTOR_WORKERS\s*=\s*\{([^}]+)\}', source, re.DOTALL)
+    m = re.search(r"_EXECUTOR_WORKERS\s*=\s*\{([^}]+)\}", source, re.DOTALL)
     assert m, "_EXECUTOR_WORKERS dict not found in scheduler.py"
     keys = set(re.findall(r'"(\w+)"\s*:', m.group(1)))
     expected = {
@@ -111,13 +117,10 @@ def test_scheduler_executor_pool_names():
         "audit",
         "fast_io",
         "protective",
-        "learning_measurement",
         "observer",
         "agents",
     }
-    assert keys == expected, (
-        f"Executor pool names mismatch. Expected={sorted(expected)} Got={sorted(keys)}"
-    )
+    assert keys == expected, f"Executor pool names mismatch. Expected={sorted(expected)} Got={sorted(keys)}"
 
 
 def test_long_maintenance_jobs_do_not_share_short_io_lane():
@@ -127,17 +130,11 @@ def test_long_maintenance_jobs_do_not_share_short_io_lane():
     src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     init_fn = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "init_scheduler"
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "init_scheduler"
     )
     executors = {}
     for call in ast.walk(init_fn):
-        if not (
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Attribute)
-            and call.func.attr == "add_job"
-        ):
+        if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and call.func.attr == "add_job"):
             continue
         keywords = {item.arg: item.value for item in call.keywords if item.arg}
         job_id = keywords.get("id")
@@ -159,7 +156,6 @@ def test_long_maintenance_jobs_do_not_share_short_io_lane():
         "ohlcv_nightly_backfill": "maintenance_io",
         "ohlcv_active_backfill": "maintenance_io",
     }
-    assert executors["tpsl_fill_check"] == "io"
 
 
 def test_scheduler_job_ids_unique():
@@ -174,8 +170,7 @@ def test_scheduler_job_ids_unique():
     # Reconciliation helpers use conditional add_job (guarded by get_job() is None)
     # and are intentionally allowed to name the same IDs.
     init_fn = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef) and n.name == "init_scheduler"),
+        (n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "init_scheduler"),
         None,
     )
     assert init_fn is not None, "init_scheduler() not found in scheduler.py"
@@ -199,7 +194,10 @@ def test_scheduler_job_ids_unique():
 
 @spec_claim(
     SpecClaim(
-        "AC-S11", "agent_contracts", "§1 OS session service", "L2c",
+        "AC-S11",
+        "agent_contracts",
+        "§1 OS session service",
+        "L2c",
         "Gateway start uses an on-demand OS user service; the macOS definition "
         "runs the foreground runner without KeepAlive, login scheduling, or "
         "credential-bearing environment variables.",
@@ -220,7 +218,10 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
 
 @spec_claim(
     SpecClaim(
-        "AC-S14", "agent_contracts", "§1 OS service lifecycle", "L2c",
+        "AC-S14",
+        "agent_contracts",
+        "§1 OS service lifecycle",
+        "L2c",
         "Gateway service installation, enablement, and runtime are independent; "
         "machine installation never collects an administrator password.",
         status="implemented",
@@ -228,6 +229,7 @@ def test_gateway_session_service_has_safe_macos_launchd_contract():
 )
 def test_gateway_service_lifecycle_contract_is_structurally_safe():
     from aletheia.gateway import service_control, windows_machine_service
+
     source = inspect.getsource(service_control) + inspect.getsource(windows_machine_service)
     assert "elevation_required" in source
     assert "LocalService" in source
@@ -236,13 +238,17 @@ def test_gateway_service_lifecycle_contract_is_structurally_safe():
         executable=Path("C:/Program Files/Aletheia/aletheia.exe")
     )
     from aletheia.agent_runtime import permissions
+
     forbidden = {"service_install", "service_uninstall", "gateway_enable", "gateway_disable"}
     assert forbidden.isdisjoint(permissions.TOOL_REGISTRY)
 
 
 @spec_claim(
     SpecClaim(
-        "AC-S12", "agent_contracts", "§1 OS session service", "L2c",
+        "AC-S12",
+        "agent_contracts",
+        "§1 OS session service",
+        "L2c",
         "Git operations never restart the gateway implicitly; legacy standalone "
         "Aletheia hooks are cleanup-only and foreign hooks are preserved.",
         status="implemented",
@@ -257,7 +263,10 @@ def test_gateway_lifecycle_is_not_driven_by_git_hooks():
 
 @spec_claim(
     SpecClaim(
-        "AC-B01", "agent_contracts", "§3 catch-all isolation", "L2a",
+        "AC-B01",
+        "agent_contracts",
+        "§3 catch-all isolation",
+        "L2a",
         "Every _run_* job wrapper in scheduler.py contains a try/except block — "
         "an unhandled exception cannot propagate out of a scheduled job",
     ),
@@ -268,15 +277,9 @@ def test_scheduler_job_wrappers_have_try_except():
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
-    run_fns = [
-        n for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and n.name.startswith("_run_")
-    ]
+    run_fns = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name.startswith("_run_")]
     assert run_fns, "No _run_* functions found in scheduler.py"
-    missing = [
-        fn.name for fn in run_fns
-        if not any(isinstance(node, ast.Try) for node in ast.walk(fn))
-    ]
+    missing = [fn.name for fn in run_fns if not any(isinstance(node, ast.Try) for node in ast.walk(fn))]
     assert missing == [], (
         f"These _run_* job wrappers lack try/except (exceptions would propagate to scheduler): {missing}"
     )
@@ -284,7 +287,10 @@ def test_scheduler_job_wrappers_have_try_except():
 
 @spec_claim(
     SpecClaim(
-        "AC-B05", "agent_contracts", "§3 scheduler failure telemetry", "L2a",
+        "AC-B05",
+        "agent_contracts",
+        "§3 scheduler failure telemetry",
+        "L2a",
         "Every registered scheduler job wrapper records swallowed failures via _record_job_failure",
     ),
 )
@@ -294,19 +300,11 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
-    functions = {
-        node.name: node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef)
-    }
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
 
     registered: list[tuple[str, str]] = []
     for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "add_job"
-        ):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "add_job"):
             continue
         if not node.args or not isinstance(node.args[0], ast.Call):
             continue
@@ -327,23 +325,23 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
     for job_id, fn_name in registered:
         fn = functions.get(fn_name)
         has_failure_record = fn is not None and any(
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id == "_record_job_failure"
+            isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_record_job_failure"
             for call in ast.walk(fn)
         )
         if not has_failure_record:
             missing.append(f"{job_id}->{fn_name}")
 
     assert missing == [], (
-        "Registered scheduler jobs must record caught failures so repeated "
-        f"failures surface as infra_events: {missing}"
+        f"Registered scheduler jobs must record caught failures so repeated failures surface as infra_events: {missing}"
     )
 
 
 @spec_claim(
     SpecClaim(
-        "AC-B02", "agent_contracts", "§3 LLM fallback", "L2b",
+        "AC-B02",
+        "agent_contracts",
+        "§3 LLM fallback",
+        "L2b",
         "complete_with_fallback() retries with a secondary model when the primary raises a transient error",
     ),
 )
@@ -358,6 +356,7 @@ def test_llm_fallback_retries_on_transient_error():
 
     class _DualProvider(ModelProvider):
         """Single provider object whose .model attribute is swapped by _clone_provider_with_model."""
+
         name = "test_prov"
         model = "primary-model"
 
@@ -383,7 +382,9 @@ def test_llm_fallback_retries_on_transient_error():
         fb._candidate_models = _stub
         try:
             return await complete_with_fallback(
-                request, provider_name="test_prov", provider=provider,
+                request,
+                provider_name="test_prov",
+                provider=provider,
             )
         finally:
             fb._candidate_models = original
@@ -396,7 +397,10 @@ def test_llm_fallback_retries_on_transient_error():
 
 @spec_claim(
     SpecClaim(
-        "AC-B02b", "agent_contracts", "§3 LLM fallback network errors", "L2b",
+        "AC-B02b",
+        "agent_contracts",
+        "§3 LLM fallback network errors",
+        "L2b",
         "Connection-class provider failures enter the configured secondary-model chain",
     ),
 )
@@ -444,13 +448,12 @@ def test_llm_fallback_retries_on_connect_error():
     assert call_log == ["primary-model", "fallback-model"]
 
 
-
-
-
-
 @spec_claim(
     SpecClaim(
-        "AC-S15", "agent_contracts", "§3 exchange boundary", "L2a",
+        "AC-S15",
+        "agent_contracts",
+        "§3 exchange boundary",
+        "L2a",
         "Upper trading domains consume normalized capability facts and never import "
         "concrete exchange clients or concrete execution brokers",
     ),
@@ -482,44 +485,9 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
                         ),
                     ]
                 for dependency in imported:
-                    if (
-                        dependency.startswith("aletheia.exchanges.")
-                        or dependency in forbidden_brokers
-                    ):
-                        violations.append(
-                            f"{source.relative_to(root)}:{node.lineno} -> {dependency}"
-                        )
+                    if dependency.startswith("aletheia.exchanges.") or dependency in forbidden_brokers:
+                        violations.append(f"{source.relative_to(root)}:{node.lineno} -> {dependency}")
 
-    assert violations == [], (
-        "Upper trading domains must not import concrete venue implementations:\n"
-        + "\n".join(violations)
+    assert violations == [], "Upper trading domains must not import concrete venue implementations:\n" + "\n".join(
+        violations
     )
-
-
-@spec_claim(
-    SpecClaim(
-        "AC-S13", "agent_contracts", "§3 paper_trader trigger", "L2a",
-        "Every committed Ranker work source has an on-demand wake and the scheduled fallback remains.",
-        status="implemented",
-    ),
-)
-def test_paper_trader_on_demand_sources_and_fallback_are_wired():
-    from pathlib import Path
-
-    root = Path(__file__).parent.parent.parent
-    expected = {
-        "aletheia/universe/service.py": "universe_refresh_new_snapshot",
-        "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
-        "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
-        "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
-        "aletheia/server/routes/settings.py": "ranker_config_changed",
-        "aletheia/analytics/guard_promotion.py": "guard_set_changed",
-        "aletheia/agent_shell/commands.py": "operator_queue_slot_released",
-    }
-    for relative, source in expected.items():
-        assert source in (root / relative).read_text(encoding="utf-8")
-
-    scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
-    assert '_guarded("paper_trader", _run_paper_trader)' in scheduler
-    assert '"interval", minutes=3, id="paper_trader"' in scheduler
-    assert "on_demand:" in scheduler

@@ -27,18 +27,26 @@ def test_directional_decision_registers_one_shared_outcome_per_horizon():
         funding_rate_at_entry=0.0005,
     )
     record_filter_decision(
-        filter_name="direction_present", decision="passed",
-        reason_code="direction_available", **common,
+        filter_name="direction_present",
+        decision="passed",
+        reason_code="direction_available",
+        **common,
     )
     record_filter_decision(
-        filter_name="ranker_confidence_gate", decision="rejected",
-        reason_code="confidence_below", **common,
+        filter_name="ranker_confidence_gate",
+        decision="rejected",
+        reason_code="confidence_below",
+        **common,
     )
 
-    rows = get_db().execute(
-        "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
-        (key,),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM filter_candidate_outcomes WHERE outcome_candidate_key=?",
+            (key,),
+        )
+        .fetchall()
+    )
     assert {row["horizon"] for row in rows} == {"15m", "1h", "4h", "24h"}
     assert {row["market_type"] for row in rows} == {"perp"}
     assert {row["direction"] for row in rows} == {"short"}
@@ -62,15 +70,24 @@ def test_blank_venue_keeps_filter_decision_report_only():
         entry_price_usd=100.0,
     )
 
-    row = get_db().execute(
-        "SELECT venue, outcome_candidate_key FROM filter_decisions WHERE id=?",
-        (decision_id,),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT venue, outcome_candidate_key FROM filter_decisions WHERE id=?",
+            (decision_id,),
+        )
+        .fetchone()
+    )
     assert dict(row) == {"venue": None, "outcome_candidate_key": None}
-    assert get_db().execute(
-        "SELECT COUNT(*) FROM filter_candidate_outcomes "
-        "WHERE outcome_candidate_key='opportunity:blank-filter-venue'"
-    ).fetchone()[0] == 0
+    assert (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM filter_candidate_outcomes "
+            "WHERE outcome_candidate_key='opportunity:blank-filter-venue'"
+        )
+        .fetchone()[0]
+        == 0
+    )
 
 
 def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
@@ -115,12 +132,15 @@ def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
         price=100.0,
     )
 
-    assert filter_evidence.record_risk_filter_decision(
-        proposal,
-        risk_decision_id="risk-exact",
-        approved=True,
-        violations=[],
-    ) == "risk-evidence"
+    assert (
+        filter_evidence.record_risk_filter_decision(
+            proposal,
+            risk_decision_id="risk-exact",
+            approved=True,
+            violations=[],
+        )
+        == "risk-evidence"
+    )
     assert captured["venue"] == "okx"
 
 
@@ -177,17 +197,13 @@ def test_filter_outcome_settlement_uses_net_economics(monkeypatch):
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 1
-    row = get_db().execute(
-        "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)).fetchone()
     assert row["status"] == "settled"
     assert row["gross_return_pct"] == pytest.approx(2.0)
     assert row["net_return_pct"] == pytest.approx(1.68)
     assert row["mfe_pct"] == pytest.approx(3.0)
     assert row["mae_pct"] == pytest.approx(-1.0)
-    shadow_row = get_db().execute(
-        "SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)
-    ).fetchone()
+    shadow_row = get_db().execute("SELECT * FROM shadow_trades WHERE id=?", (shadow.id,)).fetchone()
     assert shadow_row["pnl_pct"] == pytest.approx(2.0)
     assert shadow_row["net_pnl_pct"] == pytest.approx(1.68)
     assert shadow_row["resolved_at"]
@@ -203,8 +219,10 @@ def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(mo
     get_lab_db()
     repo.get_db().execute("DROP TABLE IF EXISTS learning_exposures")
     if lab_unavailable:
+
         def unavailable(**kwargs):
             raise FileNotFoundError("lab priority unavailable")
+
         monkeypatch.setattr(repo, "list_observation_filter_outcome_priority_keys", unavailable)
     outcome = _due_filter_outcome("candidate-selection-utility:v1:frozen-costs:long")
     outcome.scanner_family = "candidate_selection_utility"
@@ -224,10 +242,14 @@ def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(mo
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 1
-    row = repo.get_db().execute(
-        "SELECT net_return_pct FROM filter_candidate_outcomes WHERE id=?",
-        (outcome.id,),
-    ).fetchone()
+    row = (
+        repo.get_db()
+        .execute(
+            "SELECT net_return_pct FROM filter_candidate_outcomes WHERE id=?",
+            (outcome.id,),
+        )
+        .fetchone()
+    )
     # Entry spread is observed (10 bps), so fallback is irrelevant: 2% gross,
     # 0.20% round-trip fee, and 0.10% spread cost.
     assert row["net_return_pct"] == pytest.approx(1.70)
@@ -294,9 +316,7 @@ def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
         time.sleep(0.45)  # > 0.30 * 1.0s slice, < the 1.0s cycle budget
         return [], True
 
-    monkeypatch.setattr(
-        fr.repo, "list_pending_filter_candidate_outcomes_for_keys", slow_priority
-    )
+    monkeypatch.setattr(fr.repo, "list_pending_filter_candidate_outcomes_for_keys", slow_priority)
     monkeypatch.setattr(
         "aletheia.universe.outcome_recorder._batch_fetch_market_observations",
         _settling_observations(),
@@ -306,9 +326,7 @@ def test_slow_priority_prologue_still_settles_due_rows(monkeypatch):
 
     assert settled == 1, "an overrunning prologue must not zero out settlement"
     assert deadlines and deadlines[0] is not None, "prologue must be time-boxed"
-    row = get_db().execute(
-        "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
-    ).fetchone()
+    row = get_db().execute("SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)).fetchone()
     assert row["status"] == "settled"
 
 
@@ -319,16 +337,10 @@ def test_zero_throughput_cycle_with_work_outstanding_is_logged(caplog):
     from aletheia.storage import repositories as repo
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
 
-    repo.insert_filter_candidate_outcomes_batch(
-        [_due_filter_outcome("opportunity:zero-throughput")]
-    )
+    repo.insert_filter_candidate_outcomes_batch([_due_filter_outcome("opportunity:zero-throughput")])
 
-    with caplog.at_level(
-        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
-    ):
-        assert asyncio.run(
-            settle_due_filter_outcomes(max_rows=500, time_budget_sec=0.0)
-        ) == 0
+    with caplog.at_level(logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"):
+        assert asyncio.run(settle_due_filter_outcomes(max_rows=500, time_budget_sec=0.0)) == 0
 
     assert any("not draining" in r.getMessage() for r in caplog.records)
 
@@ -348,12 +360,8 @@ def test_caught_up_queue_does_not_warn(monkeypatch, caplog):
         _settling_observations(),
     )
 
-    with caplog.at_level(
-        logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"
-    ):
-        assert asyncio.run(
-            settle_due_filter_outcomes(max_rows=500, time_budget_sec=5.0)
-        ) == 0
+    with caplog.at_level(logging.WARNING, logger="aletheia.universe.filter_outcome_recorder"):
+        assert asyncio.run(settle_due_filter_outcomes(max_rows=500, time_budget_sec=5.0)) == 0
 
     assert not [r for r in caplog.records if "not draining" in r.getMessage()]
 
@@ -388,13 +396,9 @@ def _seed_local_1m_spot(entry_ms, count=60, *, exchange="okx"):
     from aletheia.data.providers import Candle
     from aletheia.storage.repositories import upsert_ohlcv_candles
 
-    candles = [
-        Candle(entry_ms + i * 60_000, 100, 101, 99, 100.5, 10) for i in range(count)
-    ]
+    candles = [Candle(entry_ms + i * 60_000, 100, 101, 99, 100.5, 10) for i in range(count)]
     candles[-1] = Candle(entry_ms + (count - 1) * 60_000, 100.5, 103, 100, 102, 12)
-    upsert_ohlcv_candles(
-        "BTC/USDT", "1m", candles, exchange=exchange, market_type="spot"
-    )
+    upsert_ohlcv_candles("BTC/USDT", "1m", candles, exchange=exchange, market_type="spot")
 
 
 def test_locally_answerable_rows_settle_without_any_exchange_request(monkeypatch):
@@ -421,14 +425,10 @@ def test_locally_answerable_rows_settle_without_any_exchange_request(monkeypatch
     async def refuse(rows, *, now):
         raise AssertionError("a complete local window must not reach the exchange")
 
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._batch_fetch_market_observations", refuse
-    )
+    monkeypatch.setattr("aletheia.universe.outcome_recorder._batch_fetch_market_observations", refuse)
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=0)) == 1
-    row = get_db().execute(
-        "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
-    ).fetchone()
+    row = get_db().execute("SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)).fetchone()
     assert row["status"] == "settled"
     assert row["settlement_price_source"] == "horizon_ohlcv_local"
     assert row["gross_return_pct"] == pytest.approx(2.0)
@@ -467,12 +467,8 @@ def test_rows_past_the_fetch_ceiling_stay_pending_and_are_never_failed(monkeypat
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=0)) == 0
     assert not calls, "a zero fetch ceiling must issue no exchange request at all"
-    row = get_db().execute(
-        "SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
-    ).fetchone()
-    assert row["status"] == "pending", (
-        "a row deferred for lack of budget must be retried, not written off"
-    )
+    row = get_db().execute("SELECT status FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)).fetchone()
+    assert row["status"] == "pending", "a row deferred for lack of budget must be retried, not written off"
 
 
 class _PersistingProvider:
@@ -488,9 +484,7 @@ class _PersistingProvider:
         from aletheia.data.providers import Candle
 
         self.calls = []
-        self._candles = [
-            Candle(entry_ms + i * 60_000, 100, 103, 99, 102, 10) for i in range(bars)
-        ]
+        self._candles = [Candle(entry_ms + i * 60_000, 100, 103, 99, 102, 10) for i in range(bars)]
 
     async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
         from aletheia.storage.repositories import upsert_ohlcv_candles
@@ -533,10 +527,12 @@ def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
     entry_ms, due_ms = _aligned_1h_window(hours_ago=4)
     sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
     assert sib_due <= entry_ms + 300 * 60_000, "sibling must fall inside the span"
-    repo.insert_filter_candidate_outcomes_batch([
-        _hourly_filter_outcome("opportunity:group-oldest", entry_ms, due_ms),
-        _hourly_filter_outcome("opportunity:group-sibling", sib_entry, sib_due),
-    ])
+    repo.insert_filter_candidate_outcomes_batch(
+        [
+            _hourly_filter_outcome("opportunity:group-oldest", entry_ms, due_ms),
+            _hourly_filter_outcome("opportunity:group-sibling", sib_entry, sib_due),
+        ]
+    )
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
@@ -548,10 +544,9 @@ def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
     assert provider.calls[0][3] is not None, "the oldest member drives the fetch"
     sources = {
         row["outcome_candidate_key"]: row["settlement_price_source"]
-        for row in get_db().execute(
-            "SELECT outcome_candidate_key, settlement_price_source, status "
-            "FROM filter_candidate_outcomes"
-        ).fetchall()
+        for row in get_db()
+        .execute("SELECT outcome_candidate_key, settlement_price_source, status FROM filter_candidate_outcomes")
+        .fetchall()
     }
     assert sources["opportunity:group-oldest"] == "horizon_ohlcv"
     assert sources["opportunity:group-sibling"] == "horizon_ohlcv_local", (
@@ -580,9 +575,7 @@ class _SinceHonouringProvider:
         now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
         start = int(since)
         candles = [
-            Candle(start + i * 60_000, 100, 103, 99, 102, 10)
-            for i in range(self._span)
-            if start + i * 60_000 < now_ms
+            Candle(start + i * 60_000, 100, 103, 99, 102, 10) for i in range(self._span) if start + i * 60_000 < now_ms
         ]
         upsert_ohlcv_candles(
             instrument.symbol,
@@ -617,10 +610,12 @@ def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
     rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
     sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
     assert sib_due > rep_entry + 300 * 60_000, "sibling must fall OUTSIDE the span"
-    repo.insert_filter_candidate_outcomes_batch([
-        _hourly_filter_outcome("opportunity:span-oldest", rep_entry, rep_due),
-        _hourly_filter_outcome("opportunity:span-beyond", sib_entry, sib_due),
-    ])
+    repo.insert_filter_candidate_outcomes_batch(
+        [
+            _hourly_filter_outcome("opportunity:span-oldest", rep_entry, rep_due),
+            _hourly_filter_outcome("opportunity:span-beyond", sib_entry, sib_due),
+        ]
+    )
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
@@ -628,15 +623,12 @@ def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
     )
 
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8)) == 2
-    assert len(provider.calls) == 2, (
-        "the uncovered sibling must cost its own request rather than wait a cycle"
-    )
+    assert len(provider.calls) == 2, "the uncovered sibling must cost its own request rather than wait a cycle"
     rows = {
         row["outcome_candidate_key"]: (row["status"], row["settlement_price_source"])
-        for row in get_db().execute(
-            "SELECT outcome_candidate_key, status, settlement_price_source "
-            "FROM filter_candidate_outcomes"
-        ).fetchall()
+        for row in get_db()
+        .execute("SELECT outcome_candidate_key, status, settlement_price_source FROM filter_candidate_outcomes")
+        .fetchall()
     }
     assert rows["opportunity:span-oldest"] == ("settled", "horizon_ohlcv")
     assert rows["opportunity:span-beyond"] == ("settled", "horizon_ohlcv")
@@ -655,10 +647,12 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
 
     rep_entry, rep_due = _aligned_1h_window(hours_ago=10)
     sib_entry, sib_due = _aligned_1h_window(hours_ago=1)
-    repo.insert_filter_candidate_outcomes_batch([
-        _hourly_filter_outcome("opportunity:capped-oldest", rep_entry, rep_due),
-        _hourly_filter_outcome("opportunity:capped-beyond", sib_entry, sib_due),
-    ])
+    repo.insert_filter_candidate_outcomes_batch(
+        [
+            _hourly_filter_outcome("opportunity:capped-oldest", rep_entry, rep_due),
+            _hourly_filter_outcome("opportunity:capped-beyond", sib_entry, sib_due),
+        ]
+    )
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
@@ -669,9 +663,7 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
     assert len(provider.calls) == 1
     statuses = {
         row["outcome_candidate_key"]: row["status"]
-        for row in get_db().execute(
-            "SELECT outcome_candidate_key, status FROM filter_candidate_outcomes"
-        ).fetchall()
+        for row in get_db().execute("SELECT outcome_candidate_key, status FROM filter_candidate_outcomes").fetchall()
     }
     assert statuses["opportunity:capped-oldest"] == "settled"
     assert statuses["opportunity:capped-beyond"] == "pending"
@@ -698,14 +690,8 @@ def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
     assert sib_due > rep_entry + 300 * 60_000, "the harvest must not be able to help"
     rows = []
     for n in range(6):
-        rows.append(
-            _hourly_filter_outcome(f"opportunity:cap-{n}-old", rep_entry, rep_due,
-                                   venue=f"venue{n}")
-        )
-        rows.append(
-            _hourly_filter_outcome(f"opportunity:cap-{n}-new", sib_entry, sib_due,
-                                   venue=f"venue{n}")
-        )
+        rows.append(_hourly_filter_outcome(f"opportunity:cap-{n}-old", rep_entry, rep_due, venue=f"venue{n}"))
+        rows.append(_hourly_filter_outcome(f"opportunity:cap-{n}-new", sib_entry, sib_due, venue=f"venue{n}"))
     repo.insert_filter_candidate_outcomes_batch(rows)
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
@@ -714,14 +700,11 @@ def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
     )
 
     settled = asyncio.run(settle_due_filter_outcomes(max_rows=64, max_fetches=5))
-    assert len(provider.calls) == 5, (
-        f"the ceiling must bound total requests across rounds, got "
-        f"{len(provider.calls)}"
-    )
+    assert len(provider.calls) == 5, f"the ceiling must bound total requests across rounds, got {len(provider.calls)}"
     assert settled == 5
-    pending = get_db().execute(
-        "SELECT COUNT(*) AS n FROM filter_candidate_outcomes WHERE status='pending'"
-    ).fetchone()["n"]
+    pending = (
+        get_db().execute("SELECT COUNT(*) AS n FROM filter_candidate_outcomes WHERE status='pending'").fetchone()["n"]
+    )
     assert pending == 7, "the seven unaffordable rows must be deferred, not failed"
 
 
@@ -737,12 +720,12 @@ def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch
     from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
 
     entry_ms, due_ms = _aligned_1h_window()
-    repo.insert_filter_candidate_outcomes_batch([
-        _hourly_filter_outcome("opportunity:venue-a", entry_ms, due_ms, venue="okx"),
-        _hourly_filter_outcome(
-            "opportunity:venue-b", entry_ms, due_ms, venue="binance"
-        ),
-    ])
+    repo.insert_filter_candidate_outcomes_batch(
+        [
+            _hourly_filter_outcome("opportunity:venue-a", entry_ms, due_ms, venue="okx"),
+            _hourly_filter_outcome("opportunity:venue-b", entry_ms, due_ms, venue="binance"),
+        ]
+    )
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider",
@@ -752,10 +735,7 @@ def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch
     assert asyncio.run(settle_due_filter_outcomes(max_rows=8, max_fetches=1)) == 1
     assert len(provider.calls) == 1
     statuses = sorted(
-        row["status"]
-        for row in get_db().execute(
-            "SELECT status FROM filter_candidate_outcomes"
-        ).fetchall()
+        row["status"] for row in get_db().execute("SELECT status FROM filter_candidate_outcomes").fetchall()
     )
     assert statuses == ["pending", "settled"]
 
@@ -776,7 +756,9 @@ def test_pending_for_keys_is_bounded_by_limit_and_deadline():
 
     now_iso = datetime.now(timezone.utc).isoformat()
     selected, truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
-        now_iso, learning_keys, limit=2,
+        now_iso,
+        learning_keys,
+        limit=2,
     )
     assert truncated is False
     # Later i means an earlier entry_ts, hence an earlier due_at: bounded-4 is the
@@ -787,7 +769,10 @@ def test_pending_for_keys_is_bounded_by_limit_and_deadline():
     ]
 
     expired, expired_truncated = repo.list_pending_filter_candidate_outcomes_for_keys(
-        now_iso, learning_keys, limit=5, deadline=time.monotonic() - 1.0,
+        now_iso,
+        learning_keys,
+        limit=5,
+        deadline=time.monotonic() - 1.0,
     )
     assert expired == []
     assert expired_truncated is True
@@ -831,8 +816,11 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
             (net + 0.2, 100.0 + net + 0.2, net, key),
         )
     for suffix, edge in (
-        ("missing", None), ("negative", -0.01), ("infinite", float("inf")),
-        ("malformed", "malformed"), ("blob", b"0.05"),
+        ("missing", None),
+        ("negative", -0.01),
+        ("infinite", float("inf")),
+        ("malformed", "malformed"),
+        ("blob", b"0.05"),
     ):
         key = f"opportunity:confidence-{suffix}"
         record_filter_decision(candidate_key=key, decision="rejected", **common)
@@ -859,7 +847,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
         (float.fromhex("0x1.fffffffffffffp+1023"), max_edge_key),
     )
     for suffix, cost_model in (
-        ("missing-cost-model", None), ("blank-cost-model", " "),
+        ("missing-cost-model", None),
+        ("blank-cost-model", " "),
         ("tab-cost-model", "\t"),
         ("unicode-space-cost-model", "\N{NO-BREAK SPACE}"),
         ("blob-cost-model", b"v1"),
@@ -892,9 +881,8 @@ def test_rejected_filter_stats_count_avoided_losses_and_missed_alpha():
     get_db().commit()
 
     rejected = next(
-        row for row in filter_feedback_stats(
-            as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
-        )
+        row
+        for row in filter_feedback_stats(as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat())
         if row["filter_name"] == "ranker_confidence_gate"
         and row["decision"] == "rejected"
         and row["horizon"] == "4h"
@@ -927,9 +915,7 @@ def test_filter_snapshot_drops_sensitive_keys_and_truncates_text():
             "note": "x" * 700,
         },
     )
-    row = get_db().execute(
-        "SELECT input_snapshot FROM filter_decisions WHERE id=?", (decision_id,)
-    ).fetchone()
+    row = get_db().execute("SELECT input_snapshot FROM filter_decisions WHERE id=?", (decision_id,)).fetchone()
     payload = json.loads(row["input_snapshot"])
     assert payload["confidence"] == "speculative"
     assert "api_key" not in payload
@@ -953,10 +939,13 @@ def test_same_named_filter_gates_remain_distinct_across_stages():
     first_id = record_filter_decision(stage="system_operator", **common)
     second_id = record_filter_decision(stage="proposal_submission", **common)
 
-    rows = get_db().execute(
-        "SELECT id, stage FROM filter_decisions "
-        "WHERE candidate_key='pi_decision:stage-identity' ORDER BY stage"
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT id, stage FROM filter_decisions WHERE candidate_key='pi_decision:stage-identity' ORDER BY stage"
+        )
+        .fetchall()
+    )
     assert first_id != second_id
     assert [row["stage"] for row in rows] == [
         "proposal_submission",
@@ -1005,10 +994,14 @@ def test_filter_decision_batch_is_complete_counted_and_idempotent():
 
     first = record_filter_decision_batch(**kwargs)
     second = record_filter_decision_batch(**kwargs)
-    rows = get_db().execute(
-        "SELECT * FROM filter_decision_batches WHERE run_id=?",
-        (kwargs["run_id"],),
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            "SELECT * FROM filter_decision_batches WHERE run_id=?",
+            (kwargs["run_id"],),
+        )
+        .fetchall()
+    )
 
     assert first == second
     assert len(rows) == 1
@@ -1019,14 +1012,17 @@ def test_filter_decision_batch_is_complete_counted_and_idempotent():
     assert rows[0]["error_count"] == 0
     assert decode_filter_decision_batch(rows[0]["candidate_facts"]) == facts
 
-    other_stage = record_filter_decision_batch(
-        **{**kwargs, "stage": "secondary_ticker_prefilter"}
-    )
+    other_stage = record_filter_decision_batch(**{**kwargs, "stage": "secondary_ticker_prefilter"})
     assert other_stage != first
-    assert get_db().execute(
-        "SELECT COUNT(*) FROM filter_decision_batches WHERE run_id=?",
-        (kwargs["run_id"],),
-    ).fetchone()[0] == 2
+    assert (
+        get_db()
+        .execute(
+            "SELECT COUNT(*) FROM filter_decision_batches WHERE run_id=?",
+            (kwargs["run_id"],),
+        )
+        .fetchone()[0]
+        == 2
+    )
 
 
 def test_filter_decision_batch_cadence_bounds_unchanged_heavy_snapshots():
@@ -1068,10 +1064,12 @@ def test_filter_decision_batch_cadence_bounds_unchanged_heavy_snapshots():
     assert suppressed == first
     assert changed != first
     assert next_hour != first
-    assert get_db().execute(
-        "SELECT COUNT(*) FROM filter_decision_batches "
-        "WHERE filter_name='ticker_availability'"
-    ).fetchone()[0] == 3
+    assert (
+        get_db()
+        .execute("SELECT COUNT(*) FROM filter_decision_batches WHERE filter_name='ticker_availability'")
+        .fetchone()[0]
+        == 3
+    )
 
 
 def test_candidate_outcomes_can_select_one_declared_learning_horizon():
@@ -1124,10 +1122,14 @@ def test_filter_decision_batch_compacts_repeated_candidate_keys():
         stage="ticker_prefilter",
         candidate_facts=facts,
     )
-    row = get_db().execute(
-        "SELECT candidate_facts FROM filter_decision_batches WHERE run_id=?",
-        ("scanner-run-compact",),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT candidate_facts FROM filter_decision_batches WHERE run_id=?",
+            ("scanner-run-compact",),
+        )
+        .fetchone()
+    )
     naive = json.dumps(facts, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
     assert decode_filter_decision_batch(row["candidate_facts"]) == facts
@@ -1152,58 +1154,56 @@ def test_batch_controller_reads_only_referenced_outcome_keys():
         candidate_kind="universe_asset",
         filter_name="scanner_weights_quota",
         stage="universe_allocation",
-        candidate_facts=[{
-            "candidate_key": "asset:relevant",
-            "outcome_candidate_key": relevant_key,
-            "decision": "passed",
-            "scanner_family": "momentum",
-            "direction": "long",
-            "market_type": "spot",
-        }],
+        candidate_facts=[
+            {
+                "candidate_key": "asset:relevant",
+                "outcome_candidate_key": relevant_key,
+                "decision": "passed",
+                "scanner_family": "momentum",
+                "direction": "long",
+                "market_type": "spot",
+            }
+        ],
     )
     outcomes = []
     for key in (relevant_key, "universe:controller-unrelated"):
-        outcomes.append(FilterCandidateOutcome(
-            outcome_candidate_key=key,
-            venue="okx",
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            scanner_family="momentum",
-            horizon="1h",
-            entry_price_usd=100.0,
-            exit_price_usd=100.45,
-            entry_ts=now.isoformat(),
-            due_at=(now + timedelta(hours=1)).isoformat(),
-            settled_at=(now + timedelta(hours=1)).isoformat(),
-            status="settled",
-            directional_return_pct=0.45,
-            estimated_fee_pct=0.1,
-            estimated_spread_slippage_pct=0.1,
-            estimated_funding_pct=0.0,
-            net_return_pct=0.25,
-            min_tradable_edge_pct=0.05,
-            settlement_price_source="horizon_ohlcv",
-            settlement_lag_sec=0,
-            cost_model_version=COST_MODEL_VERSION,
-        ))
+        outcomes.append(
+            FilterCandidateOutcome(
+                outcome_candidate_key=key,
+                venue="okx",
+                symbol="BTC/USDT",
+                market_type="spot",
+                direction="long",
+                scanner_family="momentum",
+                horizon="1h",
+                entry_price_usd=100.0,
+                exit_price_usd=100.45,
+                entry_ts=now.isoformat(),
+                due_at=(now + timedelta(hours=1)).isoformat(),
+                settled_at=(now + timedelta(hours=1)).isoformat(),
+                status="settled",
+                directional_return_pct=0.45,
+                estimated_fee_pct=0.1,
+                estimated_spread_slippage_pct=0.1,
+                estimated_funding_pct=0.0,
+                net_return_pct=0.25,
+                min_tradable_edge_pct=0.05,
+                settlement_price_source="horizon_ohlcv",
+                settlement_lag_sec=0,
+                cost_model_version=COST_MODEL_VERSION,
+            )
+        )
     repo.insert_filter_candidate_outcomes_batch(outcomes)
 
     statements: list[str] = []
     db = get_db()
     db.set_trace_callback(statements.append)
     try:
-        rows = _batch_scanner_weights_quota_stats(
-            as_of_at=(now + timedelta(days=2)).isoformat()
-        )
+        rows = _batch_scanner_weights_quota_stats(as_of_at=(now + timedelta(days=2)).isoformat())
     finally:
         db.set_trace_callback(None)
 
-    outcome_selects = [
-        statement
-        for statement in statements
-        if "FROM filter_candidate_outcomes" in statement
-    ]
+    outcome_selects = [statement for statement in statements if "FROM filter_candidate_outcomes" in statement]
     assert outcome_selects
     assert all("outcome_candidate_key IN" in sql for sql in outcome_selects)
     scoped = [row for row in rows if row["horizon"] == "1h"]
@@ -1252,9 +1252,8 @@ def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
         )
 
     rows = [
-        row for row in filter_feedback_stats(
-            as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
-        )
+        row
+        for row in filter_feedback_stats(as_of_at=(datetime.now(timezone.utc) + timedelta(days=2)).isoformat())
         if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "4h"
     ]
 
@@ -1263,45 +1262,6 @@ def test_filter_feedback_stats_ignores_legacy_cost_model_outcomes():
     assert by_decision["passed"]["n_net"] == 1
     assert by_decision["rejected"]["cost_model_version"] == "legacy-cost-v0"
     assert by_decision["rejected"]["n_net"] == 0
-
-
-
-
-def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
-    from aletheia.analytics import filter_controller
-
-    common = {
-        "filter_name": "ranker_confidence_gate",
-        "stage": "ranker_excluded",
-        "filter_version": "v1-test",
-        "parameter_snapshot": '{"minimum_confidence":"medium"}',
-        "scanner_family": "momentum",
-        "direction": "long",
-        "market_type": "perp",
-        "horizon": "4h",
-        "n_total": 25,
-        "n_net": 20,
-        "n": 20,
-        "outcome_coverage": 0.8,
-    }
-    monkeypatch.setattr(
-        "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda **kwargs: [
-            {**common, "decision": "passed", "shrunk_avg_net": -0.10},
-            {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
-        ],
-    )
-
-    rec = next(
-        row for row in filter_controller.compute_filter_feedback()
-        if row.filter_name == "ranker_confidence_gate"
-    )
-    assert rec.verdict == "overrestrictive_suspect"
-    assert rec.suggested_direction == "review_loosen"
-    assert rec.passed_n == 20
-    assert rec.rejected_n == 20
-    assert rec.stage == "ranker_excluded"
-    assert rec.current_value == '{"minimum_confidence":"medium"}'
 
 
 def test_filter_feedback_stats_respects_decision_time_window():
@@ -1341,221 +1301,11 @@ def test_filter_feedback_stats_respects_decision_time_window():
         "WHERE horizon='1h'"
     )
 
-    rows = filter_feedback_stats(
-        evaluated_since=(now - timedelta(days=7)).isoformat()
-    )
-    scoped = [
-        row for row in rows
-        if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "1h"
-    ]
+    rows = filter_feedback_stats(evaluated_since=(now - timedelta(days=7)).isoformat())
+    scoped = [row for row in rows if row["filter_name"] == "ranker_confidence_gate" and row["horizon"] == "1h"]
 
     assert {row["decision"] for row in scoped} == {"passed", "rejected"}
     assert all(row["n_total"] == 1 for row in scoped)
-
-
-def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
-    from aletheia.analytics.filter_controller import compute_filter_feedback
-    from aletheia.analytics.filter_evidence import (
-        filter_feedback_stats,
-        record_filter_decision,
-    )
-    from aletheia.storage.sqlite import get_db
-    from aletheia.universe.outcome_economics import COST_MODEL_VERSION
-
-    as_of = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
-    common = dict(
-        candidate_kind="opportunity",
-        filter_name="ranker_confidence_gate",
-        stage="paper_ranker",
-        reason_code="test",
-        symbol="BTC/USDT",
-        venue="okx",
-        market_type="perp",
-        direction="long",
-        scanner_family="momentum",
-        entry_price_usd=100.0,
-        parameters={"minimum": "medium"},
-    )
-    for suffix, decision in (("passed", "passed"), ("rejected", "rejected")):
-        key = f"opportunity:temporal-cutoff:{suffix}"
-        record_filter_decision(candidate_key=key, decision=decision, **common)
-        get_db().execute(
-            "UPDATE filter_candidate_outcomes SET status='settled', "
-            "entry_ts=?, due_at=?, settled_at=?, directional_return_pct=1.2, "
-            "exit_price_usd=101.2, estimated_fee_pct=0.1, "
-            "estimated_spread_slippage_pct=0.1, estimated_funding_pct=0, "
-            "net_return_pct=0.8, min_tradable_edge_pct=0.05, "
-            "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0, "
-            "cost_model_version=? WHERE outcome_candidate_key=? AND horizon='4h'",
-            (
-                (as_of - timedelta(hours=4)).isoformat(),
-                (as_of - timedelta(hours=1)).isoformat(),
-                (as_of + timedelta(minutes=1)).isoformat(),
-                COST_MODEL_VERSION,
-                key,
-            ),
-        )
-    get_db().commit()
-
-    rows = [
-        row for row in filter_feedback_stats(as_of_at=as_of)
-        if row["filter_name"] == "ranker_confidence_gate"
-        and row["horizon"] == "4h"
-    ]
-    assert {row["decision"] for row in rows} == {"passed", "rejected"}
-    assert all(row["n_total"] == 1 for row in rows)
-    assert all(row["n_net"] == 0 for row in rows)
-    assert all(row["avg_net"] is None for row in rows)
-    assert all(row["shrunk_avg_net"] is None for row in rows)
-    assert all(row["outcome_coverage"] == 0.0 for row in rows)
-
-    recommendation = next(
-        row for row in compute_filter_feedback(min_samples=1, as_of_at=as_of)
-        if row.filter_name == "ranker_confidence_gate"
-        and row.horizon == "4h"
-    )
-    assert recommendation.verdict == "insufficient_data"
-
-
-def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
-    from aletheia.analytics.filter_evidence import (
-        filter_feedback_stats,
-        filter_feedback_trajectory_summary,
-        record_filter_decision,
-    )
-    from aletheia.storage.sqlite import get_db
-
-    now = datetime.now(timezone.utc)
-    common = dict(
-        candidate_kind="opportunity",
-        filter_name="family_ttl",
-        stage="paper_ranker",
-        reason_code="test",
-        symbol="BTC/USDT",
-        venue="okx",
-        market_type="perp",
-        direction="long",
-        scanner_family="momentum",
-        entry_price_usd=100.0,
-        parameters={"ttl_sec": 1800},
-    )
-    record_filter_decision(
-        candidate_key="opportunity:repeated",
-        decision="passed",
-        evaluated_at=(now - timedelta(hours=2)).isoformat(),
-        **common,
-    )
-    record_filter_decision(
-        candidate_key="opportunity:repeated",
-        decision="rejected",
-        evaluated_at=(now - timedelta(hours=1)).isoformat(),
-        **common,
-    )
-    record_filter_decision(
-        candidate_key="opportunity:rejected-only",
-        decision="rejected",
-        evaluated_at=(now - timedelta(hours=1)).isoformat(),
-        **common,
-    )
-    db = get_db()
-    db.execute(
-        "UPDATE filter_candidate_outcomes SET status='settled', settled_at=due_at, net_return_pct=0.2, "
-        "settlement_price_source='horizon_ohlcv', settlement_lag_sec=0 "
-        "WHERE horizon='1h'"
-    )
-
-    rows = filter_feedback_stats()
-    scoped = {
-        row["decision"]: row for row in rows
-        if row["filter_name"] == "family_ttl" and row["horizon"] == "1h"
-    }
-    trajectory = filter_feedback_trajectory_summary()
-
-    assert scoped["passed"]["n_total"] == 1
-    assert scoped["rejected"]["n_total"] == 1
-    assert trajectory["excluded_later_rows"] == 1
-    assert trajectory["decision_transition_candidates"] == 1
-
-
-def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
-    from aletheia.analytics import filter_controller
-
-    common = {
-        "filter_name": "direction_bias_brake",
-        "stage": "proposal_submission",
-        "filter_version": "v1-proposal-brake",
-        "parameter_snapshot": '{"max_share":0.95,"min_sample":15}',
-        "scanner_family": "momentum",
-        "direction": "long",
-        "market_type": "perp",
-        "horizon": "15m",
-        "n_total": 25,
-        "n_net": 20,
-        "n": 20,
-        "outcome_coverage": 0.8,
-    }
-    monkeypatch.setattr(
-        "aletheia.analytics.filter_evidence.filter_feedback_stats",
-        lambda **kwargs: [
-            {**common, "decision": "passed", "shrunk_avg_net": -0.10},
-            {**common, "decision": "rejected", "shrunk_avg_net": 0.20},
-        ],
-    )
-
-    rec = next(
-        row for row in filter_controller.compute_filter_feedback()
-        if row.filter_name == "direction_bias_brake"
-    )
-    assert rec.stage == "proposal_submission"
-    assert rec.current_value == common["parameter_snapshot"]
-
-
-def test_controller_persists_new_observational_verdict_through_legacy_schema(monkeypatch):
-    from aletheia.analytics import filter_controller
-    from aletheia.analytics.filter_controller import FilterRecommendation
-    from aletheia.storage.sqlite import get_db
-
-    recommendation = FilterRecommendation(
-        filter_name="family_ttl",
-        scanner_family="momentum",
-        stage="ttl_expired",
-        current_value="1800s",
-        verdict="overrestrictive_suspect",
-        suggested_direction="review_loosen",
-        error_signal=0.2,
-        n_samples=25,
-        reasoning="observational only",
-        direction="long",
-        market_type="perp",
-        horizon="4h",
-        filter_version="v1-test",
-        passed_n=25,
-        rejected_n=25,
-        passed_shrunk_avg_net=-0.1,
-        rejected_shrunk_avg_net=0.1,
-        outcome_coverage=0.8,
-    )
-    monkeypatch.setattr(
-        filter_controller,
-        "compute_filter_feedback",
-        lambda min_samples=20, **_kwargs: [recommendation],
-    )
-
-    result = filter_controller.run_controller_observe()
-    row = get_db().execute(
-        "SELECT * FROM controller_recommendations WHERE run_id=?",
-        (result["run_id"],),
-    ).fetchone()
-
-    assert result["recommendations_written"] == 1
-    assert row["verdict"] == "insufficient_data"
-    assert row["suggested_direction"] == "n/a"
-    assert row["evidence_verdict"] == "overrestrictive_suspect"
-    assert row["evidence_direction"] == "review_loosen"
-    assert row["filter_version"] == "v1-test"
-    assert row["direction"] == "long"
-    assert row["market_type"] == "perp"
-    assert row["horizon"] == "4h"
 
 
 def test_shadow_batch_includes_actual_selection_beyond_top_n(monkeypatch):

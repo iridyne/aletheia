@@ -26,10 +26,11 @@ def patch_private_history(
     calls=None,
     unscoped_fill_rows=None,
 ):
-    async def _query_uta(execution_mode, method, query):
+    async def _query_uta(execution_mode, method, query, *, expected_account=None):
         if calls is not None:
             calls.append((method, execution_mode, query))
         identity = _identity(execution_mode)
+        assert expected_account == identity
         now = datetime.now(timezone.utc)
         if method == "get_open_orders":
             return OrderListReport(
@@ -51,8 +52,10 @@ def patch_private_history(
                 found=_order_from_row(identity, query.scope, rows[0], now) if rows else None,
             )
         if method == "get_fills":
-            source_rows = fill_rows if query.scope.instrument is not None else (
-                fill_rows if unscoped_fill_rows is None else unscoped_fill_rows
+            source_rows = (
+                fill_rows
+                if query.scope.instrument is not None
+                else (fill_rows if unscoped_fill_rows is None else unscoped_fill_rows)
             )
             return FillListReport(
                 identity=identity,

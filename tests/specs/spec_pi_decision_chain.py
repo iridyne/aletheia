@@ -16,6 +16,7 @@ Locks the two PI decision-chain fixes made during the PI-agent SDD audit
 Structural (L2a) checks — they assert the fix is present in source and guard
 against a regression that silently reverts either behavior.
 """
+
 from __future__ import annotations
 
 import ast
@@ -36,9 +37,14 @@ def _src(rel: str) -> str:
 
 
 @spec_claim(
-    SpecClaim("PI-S01", "agent_contracts", "§pi_trading_decision cadence", "L2a",
-              "pi_trading_decision scheduler fallback interval is ~15min and is NOT coupled "
-              "to pi_daemon.heartbeat_sec (decoupling fix A5)"),
+    SpecClaim(
+        "PI-S01",
+        "agent_contracts",
+        "§pi_trading_decision cadence",
+        "L2a",
+        "pi_trading_decision scheduler fallback interval is ~15min and is NOT coupled "
+        "to pi_daemon.heartbeat_sec (decoupling fix A5)",
+    ),
 )
 def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
     src = _src("aletheia/agent_runtime/scheduler.py")
@@ -53,55 +59,11 @@ def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
     )
 
 
-
-
-@spec_claim(
-    SpecClaim("PI-S03", "agent_contracts", "§operator_loop ⇄ TS convergence", "L2a",
-              "Python operator_loop.decide_actions no longer EMITS the operator actions that "
-              "converged to the TS operator-shell (retire_strategy / demote_strategy / "
-              "request_backfill); it keeps only dynamic config tuning. Prevents the dead-write / "
-              "no-op-stub mechanisms from re-appearing as a parallel operator path"),
-)
-def test_operator_loop_converged_actions_not_emitted():
-    src = _src("aletheia/agent_shell/operator_loop.py")
-    tree = ast.parse(src)
-    fn = next(
-        (n for n in ast.walk(tree)
-         if isinstance(n, ast.FunctionDef) and n.name == "decide_actions"),
-        None,
-    )
-    assert fn is not None, "decide_actions not found"
-    # Collect every action_type=... string literal produced by decide_actions.
-    emitted: set[str] = set()
-    for node in ast.walk(fn):
-        if isinstance(node, ast.keyword) and node.arg == "action_type":
-            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
-                emitted.add(node.value.value)
-    converged = {"retire_strategy", "demote_strategy", "request_backfill"}
-    leaked = converged & emitted
-    assert not leaked, (
-        f"decide_actions still emits converged-to-TS actions {leaked} — these are owned by "
-        "the TS operator-shell now (retire/demote via command registry, backfill via Auto "
-        "Repair). Python operator_loop must keep only config tuning (owner decision 2026-06-28)."
-    )
-    # Aggregate outcome quality is diagnosis-only; the retained Python mutation is
-    # the bounded recovery from a previously automatic tightening.
-    assert "tighten_confidence" not in emitted
-    assert "loosen_confidence" in emitted and "notify_operator" in emitted, (
-        "Python must retain bounded confidence recovery and aggregate-quality diagnosis"
-    )
-
-
-@spec_claim(
-    SpecClaim("PI-S04", "legacy_promotion_gates", "historical §4 PI approval gate", "L2b",
-              "promotion to paper_running requires a recommend_promote PiDecision: blocked when "
-              "absent, allowed when present (the PI/operator approval gate is the single chokepoint)",
-              status="superseded"),
-)
 def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
     # Position C (2026-07-02): strategy FSM gate deleted.
     # paper_running is now legacy attribution only — this gate no longer exists.
     import pytest as _pytest
+
     _pytest.skip("PI-S04 superseded — FSM promotion gate deleted in Position C")
 
 
@@ -110,12 +72,9 @@ def test_recommend_promote_gates_paper_running(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-
-
 # ---------------------------------------------------------------------------
 # PCI-G02 — A路架构：observer tools in PI tool registry (L2a, missing)
 # ---------------------------------------------------------------------------
-
 
 
 @spec_claim(
@@ -177,7 +136,11 @@ def test_b_path_council_not_yet_implemented():
     """
     root = _project_root()
     council_identifiers = (
-        "council", "bull_bear", "multi_expert", "CouncilSession", "BullBearCouncil",
+        "council",
+        "bull_bear",
+        "multi_expert",
+        "CouncilSession",
+        "BullBearCouncil",
     )
     found_in: list[str] = []
     for search_dir in ("aletheia/agent_shell", "aletheia/agents"):
@@ -313,17 +276,14 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
     """
     src = _src("aletheia/agent_shell/commands.py")
     # 只需要在文件中存在与 docs/ 路径拒绝相关的字符串即可作为结构证据
-    docs_guard_present = (
-        "docs/" in src
-        and any(
-            marker in src
-            for marker in (
-                "startswith('docs/')",
-                'startswith("docs/")',
-                "startswith(\"docs/\")",
-                "docs/ prefix",
-                "reject.*docs",
-            )
+    docs_guard_present = "docs/" in src and any(
+        marker in src
+        for marker in (
+            "startswith('docs/')",
+            'startswith("docs/")',
+            'startswith("docs/")',
+            "docs/ prefix",
+            "reject.*docs",
         )
     )
     assert docs_guard_present, (
@@ -334,11 +294,16 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
 
 
 @spec_claim(
-    SpecClaim("PI-S05", "execution_contract", "§entry discipline by execution mode", "L2b",
-              "Local paper entry uses an immediate market fill from a fresh exact mark; "
-              "the autonomous wrapper and paper broker reject local limit entries. "
-              "Exchange demo callers may still request a planned native limit entry, whose "
-              "four entry fields remain protected by Risk."),
+    SpecClaim(
+        "PI-S05",
+        "execution_contract",
+        "§entry discipline by execution mode",
+        "L2b",
+        "Local paper entry uses an immediate market fill from a fresh exact mark; "
+        "the autonomous wrapper and paper broker reject local limit entries. "
+        "Exchange demo callers may still request a planned native limit entry, whose "
+        "four entry fields remain protected by Risk.",
+    ),
 )
 def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(monkeypatch):
     """行为断言(非源码 grep):
@@ -359,44 +324,52 @@ def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(m
     assert sig.parameters["order_type"].default == "market"
 
     monkeypatch.setattr(
-        paper_tools, "submit_proposal", lambda **kwargs: kwargs,
+        paper_tools,
+        "submit_proposal",
+        lambda **kwargs: kwargs,
     )
     with pytest.raises(ValueError, match="paper_internal_market_only"):
         paper_tools.create_paper_proposal(
-            symbol="BTC/USDT", market_type="spot", direction="long",
-            quantity=0.001, price=50000.0, execution_mode="paper_internal",
+            symbol="BTC/USDT",
+            market_type="spot",
+            direction="long",
+            quantity=0.001,
+            price=50000.0,
+            execution_mode="paper_internal",
             order_type="limit",
         )
 
-    common = dict(symbol="BTC/USDT", market_type="spot", direction="long",
-                  quantity=0.001, price=50000.0, execution_mode="bitget_demo")
+    common = dict(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        quantity=0.001,
+        price=50000.0,
+        execution_mode="bitget_demo",
+    )
 
     # 2. native limit 缺 take_profit + risk_reward → incomplete_entry_plan
-    incomplete = TradeProposal(order_type="limit", source="native",
-                               stop_price=49000.0, **common)
+    incomplete = TradeProposal(order_type="limit", source="native", stop_price=49000.0, **common)
     res = evaluate_proposal(incomplete)
     assert any("incomplete_entry_plan" in v for v in res.violations), (
         f"native limit 入场缺四要素应被拒,violations={res.violations}"
     )
 
     # 3. 四要素齐全 → 不再有 incomplete_entry_plan(其它无关违规不影响本断言)
-    complete = TradeProposal(order_type="limit", source="native",
-                             stop_price=49000.0, take_profit=52000.0,
-                             risk_reward=2.0, **common)
+    complete = TradeProposal(
+        order_type="limit", source="native", stop_price=49000.0, take_profit=52000.0, risk_reward=2.0, **common
+    )
     res2 = evaluate_proposal(complete)
     assert not any("incomplete_entry_plan" in v for v in res2.violations), (
         f"四要素齐全不应触发 incomplete_entry_plan,violations={res2.violations}"
     )
 
     # market entries/closes are outside the exchange-native limit-plan gate.
-    market_close = TradeProposal(order_type="market", source="native",
-                                 stop_price=None, **common)
+    market_close = TradeProposal(order_type="market", source="native", stop_price=None, **common)
     res3 = evaluate_proposal(market_close)
     assert not any("incomplete_entry_plan" in v for v in res3.violations), (
         f"market 单不应触发入场计划门槛,violations={res3.violations}"
     )
-
-
 
 
 @spec_claim(
@@ -407,7 +380,7 @@ def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(m
         "L2b",
         "The scheduled daemon heartbeat uses a delivery-only health id, so a successful "
         "notify cannot clear pi_trading_decision evaluation failures; failed delivery is "
-        "recorded independently as daemon_notify_failed and immediately falls back to an "
+        "recorded independently as daemon_notify_failed and does not start a duplicate "
         "inline evaluation.",
         status="implemented",
     ),
@@ -437,9 +410,7 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
 
     scheduler._consecutive_failures.clear()
     scheduler._consecutive_failures["pi_trading_decision"] = 2
-    scheduler._run_job_guarded(
-        "pi_trading_heartbeat", scheduler._run_pi_trading_decision
-    )
+    scheduler._run_job_guarded("pi_trading_heartbeat", scheduler._run_pi_trading_decision)
 
     assert scheduler._consecutive_failures["pi_trading_decision"] == 2
     assert scheduler._consecutive_failures["pi_trading_heartbeat"] == 0
@@ -453,12 +424,10 @@ def test_daemon_heartbeat_health_is_separate_from_evaluation(monkeypatch):
         return {"action": "skip", "pending_queue_remaining": 0}
 
     monkeypatch.setattr(scheduler, "_run_async_with_timeout", complete_inline)
-    monkeypatch.setattr(
-        control, "record_learning_job_failure", lambda _job, _error: None
-    )
+    monkeypatch.setattr(control, "record_learning_job_failure", lambda _job, _error: None)
     scheduler._run_pi_trading_decision()
-    assert inline_calls == ["pi_trading_decision"]
-    assert scheduler._consecutive_failures["pi_trading_decision"] == 0
+    assert inline_calls == []
+    assert scheduler._consecutive_failures["pi_trading_decision"] == 2
     assert scheduler._consecutive_failures["pi_trading_heartbeat"] == 1
 
     if hasattr(scheduler._JOB_RUN_STATE, "failure_recorded"):

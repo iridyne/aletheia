@@ -1,4 +1,5 @@
 """Native Bitget protocol and nonfatal qualified UTA protection failures."""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +21,7 @@ def _make_client():
     classic_v2 profile: exercises the /api/v2/ mix TPSL endpoints directly.
     """
     from aletheia.exchanges.bitget.client import BitgetClient
+
     c = BitgetClient.__new__(BitgetClient)
     c._base = "https://api.bitget.com"
     c._headers = lambda method, path, body="": {}
@@ -48,8 +50,11 @@ async def test_place_tpsl_order_sends_correct_body():
 
     with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.place_tpsl_order(
-            symbol="BTCUSDT", plan_type="pos_loss",
-            trigger_price=95000.0, hold_side="long", size=0.01,
+            symbol="BTCUSDT",
+            plan_type="pos_loss",
+            trigger_price=95000.0,
+            hold_side="long",
+            size=0.01,
         )
 
     assert result == "plan-123"
@@ -107,46 +112,6 @@ async def test_get_pending_plan_orders_returns_list():
 
     assert len(result) == 2
     assert result[0]["orderId"] == "p1"
-
-
-@pytest.mark.asyncio
-async def test_get_plan_order_history_requests_profit_loss_and_exact_plan_id():
-    """The history reader must query the TPSL family and exact plan identity."""
-    client = _make_client()
-    captured = {}
-
-    async def mock_get(url, headers):
-        captured["url"] = url
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {
-                "entrustedList": [
-                    {
-                        "orderId": "plan-123",
-                        "planStatus": "executed",
-                        "executeOrderId": "exec-456",
-                    }
-                ]
-            },
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_plan_order_history(order_id="plan-123")
-
-    query = parse_qs(urlparse(captured["url"]).query)
-    assert query == {
-        "productType": ["USDT-FUTURES"],
-        "planType": ["profit_loss"],
-        "orderId": ["plan-123"],
-    }
-    assert result[0]["planStatus"] == "executed"
-    assert result[0]["executeOrderId"] == "exec-456"
 
 
 @pytest.mark.asyncio
@@ -223,12 +188,7 @@ async def test_get_order_fills_rejects_full_page_without_next_cursor():
         resp = MagicMock()
         resp.json.return_value = {
             "code": "00000",
-            "data": {
-                "fillList": [
-                    {"orderId": "exec-456", "tradeId": f"trade-{index}"}
-                    for index in range(100)
-                ]
-            },
+            "data": {"fillList": [{"orderId": "exec-456", "tradeId": f"trade-{index}"} for index in range(100)]},
         }
         return resp
 
@@ -254,11 +214,7 @@ async def test_get_order_fills_rejects_rows_for_another_order():
         resp = MagicMock()
         resp.json.return_value = {
             "code": "00000",
-            "data": {
-                "fillList": [
-                    {"orderId": "another-order", "tradeId": "wrong-trade"}
-                ]
-            },
+            "data": {"fillList": [{"orderId": "another-order", "tradeId": "wrong-trade"}]},
         }
         return resp
 
@@ -376,11 +332,23 @@ def test_uta_protection_failure_preserves_position_without_fabricating_ids(tmp_p
     from aletheia.storage import repositories as repo
     from aletheia.uta.models import UTACapabilities, CapabilitySupport
     from aletheia.execution import gateway, coordinator
+
     _setup_db(tmp_path, monkeypatch)
-    position = Position(symbol="BTC/USDT", market_type="usdt_futures", direction="long", quantity=0.01, entry_price=100, execution_mode="bitget_demo", stop_price=95, take_profit_price=110)
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=0.01,
+        entry_price=100,
+        execution_mode="bitget_demo",
+        stop_price=95,
+        take_profit_price=110,
+    )
     _insert_bound_position(position)
+
     async def submit(command):
         raise RuntimeError("exchange unavailable")
+
     adapter = _Adapter(submit, "bitget_demo")
     adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
@@ -390,4 +358,7 @@ def test_uta_protection_failure_preserves_position_without_fabricating_ids(tmp_p
     assert stored["exchange_tpsl_order_id"] is None
     assert repo.list_fills() == []
     protection = [order for order in repo.list_orders() if order["position_id"] == position.id]
-    assert {order["close_reason"]: order["status"] for order in protection} == {"protective_stop": "submission_unknown", "take_profit": "submission_unknown"}
+    assert {order["close_reason"]: order["status"] for order in protection} == {
+        "protective_stop": "submission_unknown",
+        "take_profit": "submission_unknown",
+    }

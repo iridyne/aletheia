@@ -41,6 +41,7 @@ def _publish_scheduler(candidate: BackgroundScheduler) -> None:
     global _scheduler
     _scheduler = candidate
 
+
 # Jobs that continue running during a layered pause (no LLM dependency).
 # These are pure data-collection / infrastructure jobs whose output is valuable
 # even when AI-dependent decision-making is offline.
@@ -63,7 +64,6 @@ _ESSENTIAL_JOBS: set[str] = {
     "okx_demo_symbols",
     "reconciliation",
     "position_reconcile",
-    "tpsl_fill_check",
     "outcome_settler",
     "paper_funding_settler",
     "broker_funding_settler",
@@ -88,17 +88,13 @@ _EQUITY_MARKET_TZ = "America/New_York"
 
 def _equity_observer_trigger() -> OrTrigger:
     """Return only the valid half-hour fires in the Eastern session."""
-    return OrTrigger([
-        CronTrigger(
-            day_of_week="mon-fri", hour="9", minute="30", timezone=_EQUITY_MARKET_TZ
-        ),
-        CronTrigger(
-            day_of_week="mon-fri", hour="10-15", minute="0,30", timezone=_EQUITY_MARKET_TZ
-        ),
-        CronTrigger(
-            day_of_week="mon-fri", hour="16", minute="0", timezone=_EQUITY_MARKET_TZ
-        ),
-    ])
+    return OrTrigger(
+        [
+            CronTrigger(day_of_week="mon-fri", hour="9", minute="30", timezone=_EQUITY_MARKET_TZ),
+            CronTrigger(day_of_week="mon-fri", hour="10-15", minute="0,30", timezone=_EQUITY_MARKET_TZ),
+            CronTrigger(day_of_week="mon-fri", hour="16", minute="0", timezone=_EQUITY_MARKET_TZ),
+        ]
+    )
 
 
 # Track which jobs were selectively paused (for targeted resume).
@@ -148,11 +144,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "funding_audit_reconciler": 15.0,
     "universe_scanner_audit_reconciler": 15.0,
     "observation_lab_bridge": 30.0,
-    # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
-    # asyncio.run() internally. Without a bound, a stuck exchange session can
-    # block the scheduler pool for the full IOCP drain (~255s on Windows) and
-    # starve other io-executor jobs. 45s cap matches other network-bound polls.
-    "tpsl_fill_check": 45.0,
 }
 
 
@@ -360,9 +351,7 @@ class _PersistentAsyncTimeoutWorker:
 
 
 _async_timeout_worker = _PersistentAsyncTimeoutWorker()
-_news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
-    "aletheia-news-analyzer-async"
-)
+_news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker("aletheia-news-analyzer-async")
 
 
 def _ensure_timeout_workers_ready() -> None:
@@ -372,23 +361,12 @@ def _ensure_timeout_workers_ready() -> None:
     with _timeout_workers_lock:
         if _async_timeout_worker.closed:
             if _async_timeout_worker.stopping or _async_timeout_worker.thread_alive:
-                raise RuntimeError(
-                    "scheduler async timeout worker shutdown incomplete; "
-                    "refusing unsafe replacement"
-                )
+                raise RuntimeError("scheduler async timeout worker shutdown incomplete; refusing unsafe replacement")
             _async_timeout_worker = _PersistentAsyncTimeoutWorker()
         if _news_analyzer_timeout_worker.closed:
-            if (
-                _news_analyzer_timeout_worker.stopping
-                or _news_analyzer_timeout_worker.thread_alive
-            ):
-                raise RuntimeError(
-                    "news analyzer timeout worker shutdown incomplete; "
-                    "refusing unsafe replacement"
-                )
-            _news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker(
-                "aletheia-news-analyzer-async"
-            )
+            if _news_analyzer_timeout_worker.stopping or _news_analyzer_timeout_worker.thread_alive:
+                raise RuntimeError("news analyzer timeout worker shutdown incomplete; refusing unsafe replacement")
+            _news_analyzer_timeout_worker = _PersistentAsyncTimeoutWorker("aletheia-news-analyzer-async")
 
 
 class _PersistentSyncTimeoutWorker:
@@ -398,8 +376,8 @@ class _PersistentSyncTimeoutWorker:
         self,
         thread_name: str = "aletheia-scheduler-sync",
     ) -> None:
-        self._queue: queue.Queue[tuple[object, concurrent.futures.Future] | None] = (
-            queue.Queue(maxsize=_TIMEOUT_WORKER_CAPACITY)
+        self._queue: queue.Queue[tuple[object, concurrent.futures.Future] | None] = queue.Queue(
+            maxsize=_TIMEOUT_WORKER_CAPACITY
         )
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
@@ -460,13 +438,12 @@ class _PersistentSyncTimeoutWorker:
 
 
 _sync_timeout_worker = _PersistentSyncTimeoutWorker()
-_universe_audit_timeout_worker = _PersistentSyncTimeoutWorker(
-    "aletheia-universe-audit-sync"
-)
+_universe_audit_timeout_worker = _PersistentSyncTimeoutWorker("aletheia-universe-audit-sync")
 
 
 class _AsyncJobDeadline(TimeoutError):
     """The coroutine cooperatively reached its configured job deadline."""
+
 
 # Consecutive failure counter per IO job. Resets on success; emits infra_event
 # at threshold so failures surface in the dashboard status popover.
@@ -482,6 +459,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
     from aletheia.learning.control import record_learning_job_failure
+
     if job_id == "lesson_reviewer":
         record_learning_job_failure(
             job_id,
@@ -494,6 +472,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
         from aletheia.infra.events import emit_infra_event
+
         emit_infra_event(
             severity="warning",
             source="scheduler",
@@ -504,6 +483,7 @@ def _record_job_failure(job_id: str, error: str, error_class: str | None = None)
         )
         try:
             from aletheia.infra.errors import record_error
+
             record_error(
                 source="scheduler",
                 message=f"{job_id} failed {count} consecutive times: {error[:200]}",
@@ -524,6 +504,7 @@ def get_latest_volume_ranking() -> dict:
         return _latest_volume_ranking.copy()
     try:
         from aletheia.storage import repositories as _repo
+
         return _repo.get_volume_ranking_snapshot()
     except Exception:
         return {}
@@ -585,6 +566,7 @@ def _run_job_guarded(job_id: str, fn):
             record_learning_job_started,
             record_learning_job_success,
         )
+
         if is_autonomous_learning_job(job_id):
             gate_reason = learning_job_gate_reason(job_id)
             if gate_reason is not None:
@@ -664,9 +646,9 @@ def _run_sync_with_timeout(
         future.cancel()
         _bump_timeout_metric("sync_timed_out")
         logger.error(
-            "job %s: sync function hung after %.0fs — "
-            "fixed worker remains occupied; new work stays bounded",
-            job_id, thread_timeout,
+            "job %s: sync function hung after %.0fs — fixed worker remains occupied; new work stays bounded",
+            job_id,
+            thread_timeout,
         )
         raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
 
@@ -681,11 +663,11 @@ def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
     """
     try:
         from aletheia.storage.sqlite import get_db
+
         db = get_db()
         was_in_tx = db.in_transaction
         db.execute(
-            "UPDATE agent_runs SET status = ?, ended_at = datetime('now') "
-            "WHERE agent_name = ? AND status = 'running'",
+            "UPDATE agent_runs SET status = ?, ended_at = datetime('now') WHERE agent_name = ? AND status = 'running'",
             (target_status, job_id),
         )
         if not was_in_tx:
@@ -711,6 +693,7 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
 
     async def _guarded_coro():
         from aletheia.storage.sqlite import close_db, rollback_if_in_transaction
+
         try:
             try:
                 return await asyncio.wait_for(awaitable, timeout=timeout)
@@ -720,11 +703,7 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             rollback_if_in_transaction()
             close_db()
 
-    worker = (
-        _news_analyzer_timeout_worker
-        if job_id == "news_analyze"
-        else _async_timeout_worker
-    )
+    worker = _news_analyzer_timeout_worker if job_id == "news_analyze" else _async_timeout_worker
     try:
         future = worker.submit(_guarded_coro())
     except RuntimeError:
@@ -753,7 +732,8 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
         logger.error(
             "job %s: persistent async worker did not respond within %.0fs; "
             "future cancelled and worker capacity remains bounded",
-            job_id, timeout + 5.0,
+            job_id,
+            timeout + 5.0,
         )
         _ensure_agent_run_ended(job_id, "timed_out")
         raise TimeoutError(f"job {job_id} worker unresponsive after {timeout + 5.0}s")
@@ -801,12 +781,14 @@ def _recover_interrupted_serenity_run() -> list[str]:
                 if repo.acknowledge_serenity_research_run_cancel(run_id, now=now):
                     recovered.append(run_id)
                     try:
-                        repo.insert_serenity_run_event(SerenityRunEvent(
-                            run_id=run_id,
-                            event_type="run.cancelled",
-                            stage=run.get("stage"),
-                            message="Gateway restart confirmed cancellation after worker exit",
-                        ))
+                        repo.insert_serenity_run_event(
+                            SerenityRunEvent(
+                                run_id=run_id,
+                                event_type="run.cancelled",
+                                stage=run.get("stage"),
+                                message="Gateway restart confirmed cancellation after worker exit",
+                            )
+                        )
                     except Exception as event_exc:
                         logger.warning(
                             "Could not record cancellation event for Serenity run %s: %s",
@@ -824,12 +806,14 @@ def _recover_interrupted_serenity_run() -> list[str]:
                 updated_at=now,
             )
             try:
-                repo.insert_serenity_run_event(SerenityRunEvent(
-                    run_id=run_id,
-                    event_type="run.interrupted",
-                    stage=run.get("stage"),
-                    message="Gateway restart interrupted this research run",
-                ))
+                repo.insert_serenity_run_event(
+                    SerenityRunEvent(
+                        run_id=run_id,
+                        event_type="run.interrupted",
+                        stage=run.get("stage"),
+                        message="Gateway restart interrupted this research run",
+                    )
+                )
             except Exception as event_exc:
                 logger.warning(
                     "Could not record interruption event for Serenity run %s: %s",
@@ -848,7 +832,8 @@ def _recover_interrupted_serenity_run() -> list[str]:
 
 
 def _recover_interrupted_universe_scanner_runs(
-    *, started_before: str,
+    *,
+    started_before: str,
 ) -> list[str] | None:
     """Atomically fail scanner work that predates this Gateway process."""
     from aletheia.storage import repositories as repo
@@ -864,8 +849,7 @@ def _recover_interrupted_universe_scanner_runs(
 
     def reconcile(db) -> list[str]:
         rows = db.execute(
-            "SELECT id, started_at, errors FROM universe_scanner_runs "
-            "WHERE status = 'running' ORDER BY started_at, id"
+            "SELECT id, started_at, errors FROM universe_scanner_runs WHERE status = 'running' ORDER BY started_at, id"
         ).fetchall()
         recovered: list[str] = []
         for row in rows:
@@ -888,24 +872,27 @@ def _recover_interrupted_universe_scanner_runs(
             )
             if not result.rowcount:
                 continue
-            repo.insert_audit_event_once(AuditEvent(
-                id=f"universe-scanner-restart:{row['id']}",
-                timestamp=completed_at,
-                actor="system",
-                source="scheduler",
-                event_type="universe_scanner_run_interrupted",
-                entity_type="universe_scanner_run",
-                entity_id=row["id"],
-                before_state=json.dumps({"status": "running"}, sort_keys=True),
-                after_state=json.dumps({
-                    "status": "failed",
-                    "reason": recovery_reason,
-                    "completed_at": completed_at,
-                }, sort_keys=True),
-                message=(
-                    f"Gateway restart interrupted Universe scanner run {row['id']}"
-                ),
-            ))
+            repo.insert_audit_event_once(
+                AuditEvent(
+                    id=f"universe-scanner-restart:{row['id']}",
+                    timestamp=completed_at,
+                    actor="system",
+                    source="scheduler",
+                    event_type="universe_scanner_run_interrupted",
+                    entity_type="universe_scanner_run",
+                    entity_id=row["id"],
+                    before_state=json.dumps({"status": "running"}, sort_keys=True),
+                    after_state=json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": recovery_reason,
+                            "completed_at": completed_at,
+                        },
+                        sort_keys=True,
+                    ),
+                    message=(f"Gateway restart interrupted Universe scanner run {row['id']}"),
+                )
+            )
             recovered.append(row["id"])
         return recovered
 
@@ -929,26 +916,33 @@ def _mirror_universe_scanner_recovery_audits() -> bool:
         from aletheia.files.jsonl import write_audits_deduplicated
         from aletheia.storage.sqlite import get_db
 
-        rows = get_db().execute(
-            "SELECT id, timestamp, actor, source, event_type, entity_type, "
-            "entity_id, before_state, after_state, message FROM audit_events "
-            "WHERE source = 'scheduler' "
-            "AND event_type = 'universe_scanner_run_interrupted' "
-            "ORDER BY timestamp, id"
-        ).fetchall()
-        events = [{
-            "id": row["id"],
-            "timestamp": row["timestamp"],
-            "actor": row["actor"],
-            "source": row["source"],
-            "event_type": row["event_type"],
-            "entity_type": row["entity_type"],
-            "entity_id": row["entity_id"],
-            "reason": "gateway_restart_interrupted",
-            "before": json.loads(row["before_state"]),
-            "after": json.loads(row["after_state"]),
-            "message": row["message"],
-        } for row in rows]
+        rows = (
+            get_db()
+            .execute(
+                "SELECT id, timestamp, actor, source, event_type, entity_type, "
+                "entity_id, before_state, after_state, message FROM audit_events "
+                "WHERE source = 'scheduler' "
+                "AND event_type = 'universe_scanner_run_interrupted' "
+                "ORDER BY timestamp, id"
+            )
+            .fetchall()
+        )
+        events = [
+            {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "actor": row["actor"],
+                "source": row["source"],
+                "event_type": row["event_type"],
+                "entity_type": row["entity_type"],
+                "entity_id": row["entity_id"],
+                "reason": "gateway_restart_interrupted",
+                "before": json.loads(row["before_state"]),
+                "after": json.loads(row["after_state"]),
+                "message": row["message"],
+            }
+            for row in rows
+        ]
         mirrored = write_audits_deduplicated(events)
     except Exception as exc:
         logger.warning("Universe scanner audit mirror failed (non-fatal): %s", exc)
@@ -969,10 +963,7 @@ def _run_universe_scanner_audit_reconciler() -> bool:
     """Retry a pending recovery audit mirror once on each reconciler tick."""
     global _universe_scanner_audit_mirror_done
     try:
-        if (
-            not _universe_scanner_startup_recovery_done
-            or _universe_scanner_audit_mirror_done
-        ):
+        if not _universe_scanner_startup_recovery_done or _universe_scanner_audit_mirror_done:
             return _universe_scanner_audit_mirror_done
         _universe_scanner_audit_mirror_done = bool(
             _run_sync_with_timeout(
@@ -1008,20 +999,14 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
     batch_key = f"serenity:scheduled:{local_date}"
 
     latest = repo.get_latest_successful_serenity_research_run()
-    latest_at = _parse_scheduler_timestamp(
-        (latest or {}).get("finished_at") or (latest or {}).get("created_at")
-    )
+    latest_at = _parse_scheduler_timestamp((latest or {}).get("finished_at") or (latest or {}).get("created_at"))
     if latest_at is not None and boundary <= latest_at <= future_limit:
         return {"status": "fresh", "run_id": latest["id"], "batch_key": batch_key}
     latest_in_future = latest_at is not None and latest_at > future_limit
     if latest_in_future:
         logger.warning("Serenity latest successful run has a future timestamp: %s", latest_at)
-        latest = repo.get_latest_successful_serenity_research_run(
-            not_after=future_limit.isoformat()
-        )
-        latest_at = _parse_scheduler_timestamp(
-            (latest or {}).get("finished_at") or (latest or {}).get("created_at")
-        )
+        latest = repo.get_latest_successful_serenity_research_run(not_after=future_limit.isoformat())
+        latest_at = _parse_scheduler_timestamp((latest or {}).get("finished_at") or (latest or {}).get("created_at"))
         if latest_at is not None and boundary <= latest_at:
             return {"status": "fresh", "run_id": latest["id"], "batch_key": batch_key}
 
@@ -1042,12 +1027,12 @@ def _enqueue_serenity_research_if_due(now: datetime | None = None) -> dict:
         mode="standard",
         status="queued",
         idempotency_key=batch_key,
-        metadata=json.dumps({"schedule_reason": "invalid_future_success"})
-        if latest_in_future else "{}",
+        metadata=json.dumps({"schedule_reason": "invalid_future_success"}) if latest_in_future else "{}",
     )
     repo.insert_serenity_research_run(run)
     try:
         from aletheia.agents.research_worker import enqueue_research_run
+
         enqueue_research_run(run.id)
     except Exception as exc:
         failed_at = datetime.now(timezone.utc).isoformat()
@@ -1074,6 +1059,7 @@ def _run_serenity_startup_catchup() -> None:
         logger.warning("Serenity startup catch-up failed: %s", exc)
         try:
             from aletheia.infra.errors import record_error
+
             record_error(
                 source="serenity",
                 message=f"serenity startup catch-up failed: {exc}",
@@ -1148,10 +1134,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         )
         if recovered is not None:
             _universe_scanner_startup_recovery_done = True
-    if (
-        _universe_scanner_startup_recovery_done
-        and not _universe_scanner_audit_mirror_done
-    ):
+    if _universe_scanner_startup_recovery_done and not _universe_scanner_audit_mirror_done:
         # Audit chain scan and JSONL write acquire the cross-process .audit.lock
         # and may block for many seconds on large chains. Running this inline
         # during startup delays the Gateway readiness signal. Instead, launch a
@@ -1166,9 +1149,7 @@ def init_scheduler() -> BackgroundScheduler | None:
                 if result:
                     _universe_scanner_audit_mirror_done = True
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Startup audit mirror background thread failed (non-fatal): %s", exc
-                )
+                logger.warning("Startup audit mirror background thread failed (non-fatal): %s", exc)
 
         _t = threading.Thread(
             target=_startup_audit_mirror_async,
@@ -1199,10 +1180,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     # per-thread transactions and closes thread-local SQLite connections at job
     # end so one failed job cannot pin the writer lock for the next jobs.
     _scheduler = BackgroundScheduler(
-        executors={
-            name: APSchedulerThreadPoolExecutor(workers)
-            for name, workers in _EXECUTOR_WORKERS.items()
-        },
+        executors={name: APSchedulerThreadPoolExecutor(workers) for name, workers in _EXECUTOR_WORKERS.items()},
         job_defaults={"coalesce": True, "max_instances": 1},
     )
     _scheduler_last_tick = None
@@ -1212,18 +1190,31 @@ def init_scheduler() -> BackgroundScheduler | None:
     )
 
     _scheduler.add_job(
-        _guarded("market_data", _run_market_data), "interval",
-        minutes=MARKET_DATA_INTERVAL_MINUTES, id="market_data",
-        misfire_grace_time=60, executor="io",
+        _guarded("market_data", _run_market_data),
+        "interval",
+        minutes=MARKET_DATA_INTERVAL_MINUTES,
+        id="market_data",
+        misfire_grace_time=60,
+        executor="io",
     )
     _scheduler.add_job(
-        _guarded("market_observer", _run_market_observer), "interval", minutes=10, id="market_observer",
-        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=75),
+        _guarded("market_observer", _run_market_observer),
+        "interval",
+        minutes=10,
+        id="market_observer",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=75),
         executor="observer",
     )
     _scheduler.add_job(
-        _guarded("dreaming_daily", _run_dreaming_agent), "cron", hour=2, minute=0, id="dreaming_daily",
-        misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+        _guarded("dreaming_daily", _run_dreaming_agent),
+        "cron",
+        hour=2,
+        minute=0,
+        id="dreaming_daily",
+        misfire_grace_time=300,
+        executor="agents",
+        timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
         _guarded("serenity_startup_catchup", _run_serenity_startup_catchup),
@@ -1236,23 +1227,42 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Evidence-gated review of the lessons dreaming produced — runs after the 2am
     # consolidation so it sees the night's fresh proposed lessons.
     _scheduler.add_job(
-        _guarded("lesson_reviewer", _run_lesson_reviewer), "cron", hour=3, minute=0,
-        id="lesson_reviewer", misfire_grace_time=300, executor="agents", timezone="Asia/Shanghai",
+        _guarded("lesson_reviewer", _run_lesson_reviewer),
+        "cron",
+        hour=3,
+        minute=0,
+        id="lesson_reviewer",
+        misfire_grace_time=300,
+        executor="agents",
+        timezone="Asia/Shanghai",
     )
     _scheduler.add_job(
-        _guarded("insight_synthesizer", _run_insight_synthesizer), "cron", hour=2, minute=30,
-        id="insight_synthesizer", misfire_grace_time=600, executor="agents", timezone="Asia/Shanghai",
+        _guarded("insight_synthesizer", _run_insight_synthesizer),
+        "cron",
+        hour=2,
+        minute=30,
+        id="insight_synthesizer",
+        misfire_grace_time=600,
+        executor="agents",
+        timezone="Asia/Shanghai",
     )
     # Repair at most the latest missed daily Learning window. Successful window
     # keys live in learning_job_health, so ordinary restarts do not duplicate work.
     _scheduler.add_job(
         _guarded("learning_startup_catchup", _run_learning_startup_catchup),
-        "date", run_date=datetime.now() + timedelta(minutes=5),
-        id="learning_startup_catchup", misfire_grace_time=None, executor="agents",
+        "date",
+        run_date=datetime.now() + timedelta(minutes=5),
+        id="learning_startup_catchup",
+        misfire_grace_time=None,
+        executor="agents",
     )
     _scheduler.add_job(
-        _guarded("confidence_calibration", _run_confidence_calibration), "interval", hours=6,
-        id="confidence_calibration", misfire_grace_time=300, executor="io",
+        _guarded("confidence_calibration", _run_confidence_calibration),
+        "interval",
+        hours=6,
+        id="confidence_calibration",
+        misfire_grace_time=300,
+        executor="io",
     )
     _scheduler.add_job(
         _guarded(
@@ -1266,18 +1276,29 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
     )
     _scheduler.add_job(
-        _guarded("reconciliation", _run_reconciliation), "interval", minutes=2, id="reconciliation",
-        misfire_grace_time=60, executor="io",
+        _guarded("reconciliation", _run_reconciliation),
+        "interval",
+        minutes=2,
+        id="reconciliation",
+        misfire_grace_time=60,
+        executor="io",
     )
     _scheduler.add_job(
-        _guarded("portfolio_snapshot", _run_portfolio_snapshot), "interval",
-        minutes=PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES, id="portfolio_snapshot",
-        misfire_grace_time=120, executor="default",
+        _guarded("portfolio_snapshot", _run_portfolio_snapshot),
+        "interval",
+        minutes=PORTFOLIO_SNAPSHOT_INTERVAL_MINUTES,
+        id="portfolio_snapshot",
+        misfire_grace_time=120,
+        executor="default",
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
     _scheduler.add_job(
-        _guarded("exchange_sync", _run_exchange_sync), "interval", minutes=5, id="exchange_sync",
-        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=10),
+        _guarded("exchange_sync", _run_exchange_sync),
+        "interval",
+        minutes=5,
+        id="exchange_sync",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=10),
         executor="io",
     )
     _scheduler.add_job(
@@ -1296,18 +1317,29 @@ def init_scheduler() -> BackgroundScheduler | None:
     # this job fire every 1min, far more often than the contract's ~15min (A5 fix).
     _pi_fallback_min = 15
     _scheduler.add_job(
-        _guarded("pi_trading_heartbeat", _run_pi_trading_decision), "interval", minutes=_pi_fallback_min,
-        id="pi_trading_decision", misfire_grace_time=120,
-        next_run_time=datetime.now() + timedelta(minutes=7), executor="agents",
+        _guarded("pi_trading_heartbeat", _run_pi_trading_decision),
+        "interval",
+        minutes=_pi_fallback_min,
+        id="pi_trading_decision",
+        misfire_grace_time=120,
+        next_run_time=datetime.now() + timedelta(minutes=7),
+        executor="agents",
     )
     _scheduler.add_job(
-        _guarded("price_feed", _run_price_feed), "interval", seconds=30, id="price_feed",
-        misfire_grace_time=15, executor="fast_io",
+        _guarded("price_feed", _run_price_feed),
+        "interval",
+        seconds=30,
+        id="price_feed",
+        misfire_grace_time=15,
+        executor="fast_io",
     )
     _scheduler.add_job(
-        _guarded("connectivity_monitor", _run_connectivity_monitor), "interval",
-        seconds=cfg.health.exchange_probe_interval_sec, id="connectivity_monitor",
-        misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
+        _guarded("connectivity_monitor", _run_connectivity_monitor),
+        "interval",
+        seconds=cfg.health.exchange_probe_interval_sec,
+        id="connectivity_monitor",
+        misfire_grace_time=15,
+        next_run_time=datetime.now() + timedelta(seconds=10),
         executor="fast_io",
     )
     # Protective paper exits consume the exact-instrument cache refreshed above
@@ -1316,17 +1348,20 @@ def init_scheduler() -> BackgroundScheduler | None:
     # sampled mark.  Match the available mark cadence; this remains sampled-paper
     # semantics and does not claim exchange-native or tick-level triggering.
     _scheduler.add_job(
-        _guarded("position_manager", _run_position_manager), "interval", seconds=30,
-        id="position_manager", misfire_grace_time=60, executor="protective",
+        _guarded("position_manager", _run_position_manager),
+        "interval",
+        seconds=30,
+        id="position_manager",
+        misfire_grace_time=60,
+        executor="protective",
     )
     _scheduler.add_job(
-        _guarded("position_reconcile", _run_position_reconcile), "interval", minutes=5, id="position_reconcile",
-        misfire_grace_time=60, next_run_time=datetime.now() + timedelta(seconds=20),
-        executor="io",
-    )
-    _scheduler.add_job(
-        _guarded("tpsl_fill_check", _run_tpsl_fill_check), "interval", seconds=90, id="tpsl_fill_check",
-        misfire_grace_time=30, next_run_time=datetime.now() + timedelta(seconds=45),
+        _guarded("position_reconcile", _run_position_reconcile),
+        "interval",
+        minutes=5,
+        id="position_reconcile",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=20),
         executor="io",
     )
     cleanup_initial_run = None
@@ -1336,15 +1371,25 @@ def init_scheduler() -> BackgroundScheduler | None:
         # readiness, never inside Gateway cold start.
         cleanup_initial_run = datetime.now() + timedelta(minutes=5)
     _scheduler.add_job(
-        _guarded("cleanup", _run_cleanup), "cron", hour=3, minute=17, id="cleanup",
-        misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        _guarded("cleanup", _run_cleanup),
+        "cron",
+        hour=3,
+        minute=17,
+        id="cleanup",
+        misfire_grace_time=600,
+        executor="io",
+        timezone="Asia/Shanghai",
         **({"next_run_time": cleanup_initial_run} if cleanup_initial_run else {}),
     )
     # Forward catch-up for shadow trades that the event-driven resolver missed
     # (parent positions with no opportunity_id). DB-only; cheap; bounded per run.
     _scheduler.add_job(
-        _guarded("shadow_resolver", _run_shadow_resolver), "interval", hours=6,
-        id="shadow_resolver", misfire_grace_time=300, executor="io",
+        _guarded("shadow_resolver", _run_shadow_resolver),
+        "interval",
+        hours=6,
+        id="shadow_resolver",
+        misfire_grace_time=300,
+        executor="io",
     )
     _scheduler.add_job(
         _guarded("outcome_hook_replay", _run_outcome_hook_replay),
@@ -1357,14 +1402,22 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(seconds=15),
     )
     _scheduler.add_job(
-        _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
-        misfire_grace_time=120, executor="io",
+        _guarded("health_check", _run_health_check),
+        "interval",
+        minutes=10,
+        id="health_check",
+        misfire_grace_time=120,
+        executor="io",
     )
     # Persona rollout state machine: retained on the 8h schedule as a bounded
     # evidence recheck; it can only advance one exact step or refreeze.
     _scheduler.add_job(
-        _guarded("persona_rollout", _run_persona_rollout), "interval", hours=8,
-        id="persona_rollout", misfire_grace_time=600, executor="io",
+        _guarded("persona_rollout", _run_persona_rollout),
+        "interval",
+        hours=8,
+        id="persona_rollout",
+        misfire_grace_time=600,
+        executor="io",
     )
     # Filter feedback controller (Phase 1, SHADOW): every N hours, compute exact
     # filter-version pass/reject findings from cost-aware net outcomes and append
@@ -1377,12 +1430,16 @@ def init_scheduler() -> BackgroundScheduler | None:
     # timer + ``aletheia observe run``. Main Scheduler MUST NOT register the
     # job in that mode — the ownership contract is exclusive.
     from aletheia.observation_lab.execution_owner import is_main_owner as _obs_is_main_owner
+
     _observation_owned_by_main = _obs_is_main_owner()
     if _observation_owned_by_main:
         _scheduler.add_job(
-            _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
+            _guarded("filter_controller_observe", _run_filter_controller_observe),
+            "interval",
             hours=max(1, int(cfg.controller.observe_interval_hours)),
-            id="filter_controller_observe", misfire_grace_time=600, executor="io",
+            id="filter_controller_observe",
+            misfire_grace_time=600,
+            executor="io",
             next_run_time=datetime.now() + timedelta(minutes=2),
         )
     else:
@@ -1392,15 +1449,21 @@ def init_scheduler() -> BackgroundScheduler | None:
         )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
     _scheduler.add_job(
-        _guarded("news_fetch", _run_news_fetch), "interval",
-        minutes=cfg.news.fetch_interval_minutes, id="news_fetch",
-        misfire_grace_time=120, executor="io",
+        _guarded("news_fetch", _run_news_fetch),
+        "interval",
+        minutes=cfg.news.fetch_interval_minutes,
+        id="news_fetch",
+        misfire_grace_time=120,
+        executor="io",
         next_run_time=datetime.now() + timedelta(seconds=30),
     )
     _scheduler.add_job(
-        _guarded("news_analyze", _run_news_analyze), "interval",
-        minutes=5, id="news_analyze",
-        misfire_grace_time=120, executor="agents",
+        _guarded("news_analyze", _run_news_analyze),
+        "interval",
+        minutes=5,
+        id="news_analyze",
+        misfire_grace_time=120,
+        executor="agents",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
     # US equity observer — wakes only at valid Eastern half-hours in the
@@ -1408,32 +1471,51 @@ def init_scheduler() -> BackgroundScheduler | None:
     # delayed 16:00 fire can still run inside misfire_grace_time after the
     # single agents worker becomes available.
     _scheduler.add_job(
-        _guarded("equity_observer", _run_equity_observer), _equity_observer_trigger(),
-        id="equity_observer", misfire_grace_time=300, executor="agents",
+        _guarded("equity_observer", _run_equity_observer),
+        _equity_observer_trigger(),
+        id="equity_observer",
+        misfire_grace_time=300,
+        executor="agents",
     )
     # Prediction market observer — runs every 30 min around the clock.
     _scheduler.add_job(
-        _guarded("prediction_observer", _run_prediction_observer), "interval", minutes=30,
-        id="prediction_observer", misfire_grace_time=120, executor="agents",
+        _guarded("prediction_observer", _run_prediction_observer),
+        "interval",
+        minutes=30,
+        id="prediction_observer",
+        misfire_grace_time=120,
+        executor="agents",
     )
     # Post-trade reviewer — reviews closed positions every 4 hours.
     # Delay first run by 5 min so LLM-heavy jobs don't compete with market_data
     # at startup (ThreadPool=3, and LLM calls can block a slot for minutes).
     _scheduler.add_job(
-        _guarded("post_trade_reviewer", _run_post_trade_reviewer), "interval", hours=4,
-        id="post_trade_reviewer", misfire_grace_time=300,
-        next_run_time=datetime.now() + timedelta(minutes=5), executor="agents",
+        _guarded("post_trade_reviewer", _run_post_trade_reviewer),
+        "interval",
+        hours=4,
+        id="post_trade_reviewer",
+        misfire_grace_time=300,
+        next_run_time=datetime.now() + timedelta(minutes=5),
+        executor="agents",
     )
     # Risk critic — reviews risk decisions and writes lessons every 6 hours.
     _scheduler.add_job(
-        _guarded("risk_critic", _run_risk_critic), "interval", hours=6,
-        id="risk_critic", misfire_grace_time=300,
-        next_run_time=datetime.now() + timedelta(minutes=10), executor="agents",
+        _guarded("risk_critic", _run_risk_critic),
+        "interval",
+        hours=6,
+        id="risk_critic",
+        misfire_grace_time=300,
+        next_run_time=datetime.now() + timedelta(minutes=10),
+        executor="agents",
     )
     # Universe Generator — dynamic asset pool refresh.
     _scheduler.add_job(
-        _guarded("universe_refresh", _run_universe_refresh), "interval", minutes=10,
-        id="universe_refresh", misfire_grace_time=120, max_instances=1,
+        _guarded("universe_refresh", _run_universe_refresh),
+        "interval",
+        minutes=10,
+        id="universe_refresh",
+        misfire_grace_time=120,
+        max_instances=1,
         executor="maintenance_io",
         next_run_time=datetime.now() + timedelta(seconds=90),
     )
@@ -1442,43 +1524,67 @@ def init_scheduler() -> BackgroundScheduler | None:
             "universe_scanner_audit_reconciler",
             _run_universe_scanner_audit_reconciler,
         ),
-        "interval", minutes=5, id="universe_scanner_audit_reconciler",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
+        "interval",
+        minutes=5,
+        id="universe_scanner_audit_reconciler",
+        misfire_grace_time=120,
+        max_instances=1,
+        coalesce=True,
+        executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=5),
     )
     _scheduler.add_job(
         _guarded("observation_lab_bridge", _run_observation_lab_bridge),
-        "interval", minutes=1, id="observation_lab_bridge",
-        misfire_grace_time=120, max_instances=1, coalesce=True, executor="audit",
+        "interval",
+        minutes=1,
+        id="observation_lab_bridge",
+        misfire_grace_time=120,
+        max_instances=1,
+        coalesce=True,
+        executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=1),
     )
     # Independent outcome settler — settles overdue forward-outcome rows that feed
     # the learning pipeline.  Runs unconditionally (not gated on universe.enabled)
     # so the attribution chain keeps ticking even when the universe scan is off.
     _scheduler.add_job(
-        _guarded("outcome_settler", _run_outcome_settler), "interval", minutes=10,
-        id="outcome_settler", misfire_grace_time=120, max_instances=1,
+        _guarded("outcome_settler", _run_outcome_settler),
+        "interval",
+        minutes=10,
+        id="outcome_settler",
+        misfire_grace_time=120,
+        max_instances=1,
         executor="maintenance_io",
         next_run_time=datetime.now() + timedelta(seconds=120),
     )
     _scheduler.add_job(
         _guarded("funding_audit_reconciler", _run_funding_audit_reconciler),
-        "interval", minutes=5,
-        id="funding_audit_reconciler", misfire_grace_time=120,
-        max_instances=1, coalesce=True, executor="audit",
+        "interval",
+        minutes=5,
+        id="funding_audit_reconciler",
+        misfire_grace_time=120,
+        max_instances=1,
+        coalesce=True,
+        executor="audit",
         next_run_time=datetime.now() + timedelta(minutes=1),
     )
     _scheduler.add_job(
         _guarded("paper_funding_settler", _run_paper_funding_settler),
-        "interval", minutes=30,
-        id="paper_funding_settler", misfire_grace_time=120, max_instances=1,
+        "interval",
+        minutes=30,
+        id="paper_funding_settler",
+        misfire_grace_time=120,
+        max_instances=1,
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=3),
     )
     _scheduler.add_job(
         _guarded("broker_funding_settler", _run_broker_funding_settler),
-        "interval", minutes=30,
-        id="broker_funding_settler", misfire_grace_time=120, max_instances=1,
+        "interval",
+        minutes=30,
+        id="broker_funding_settler",
+        misfire_grace_time=120,
+        max_instances=1,
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
@@ -1487,40 +1593,55 @@ def init_scheduler() -> BackgroundScheduler | None:
     # Cross-venue and macro context has a separate job below so it cannot inherit
     # a consumed primary-venue deadline.
     _scheduler.add_job(
-        _guarded("data_collectors", _run_data_collectors), "interval", minutes=2,
-        id="data_collectors", misfire_grace_time=60,
-        next_run_time=datetime.now() + timedelta(seconds=30), executor="io",
+        _guarded("data_collectors", _run_data_collectors),
+        "interval",
+        minutes=2,
+        id="data_collectors",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=30),
+        executor="io",
     )
     _scheduler.add_job(
         _guarded("data_collector_context", _run_data_collector_context),
-        "interval", minutes=10, id="data_collector_context", misfire_grace_time=60,
-        next_run_time=datetime.now() + timedelta(seconds=75), executor="io",
+        "interval",
+        minutes=10,
+        id="data_collector_context",
+        misfire_grace_time=60,
+        next_run_time=datetime.now() + timedelta(seconds=75),
+        executor="io",
     )
     # Guard promotion — deterministic learning task (candidate guards → active).
     # Re-homed from the deleted backtest_orchestrator cycle (which used to drive it
     # via lifecycle_automation). Same daily 04:00 CST cadence, gated by runtime.paused.
     _scheduler.add_job(
-        _guarded("guard_promotion", _run_guard_promotion), "cron", hour=4, minute=0,
-        id="guard_promotion", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        _guarded("guard_promotion", _run_guard_promotion),
+        "cron",
+        hour=4,
+        minute=0,
+        id="guard_promotion",
+        misfire_grace_time=600,
+        executor="io",
+        timezone="Asia/Shanghai",
     )
     # Nightly OHLCV backfill — bulk-download history for universe + observed symbols.
     if cfg.historical_data.nightly_backfill_enabled:
         _scheduler.add_job(
             _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
-            "cron", hour=cfg.historical_data.nightly_backfill_hour_cst, minute=30,
-            id="ohlcv_nightly_backfill", misfire_grace_time=600,
-            executor="maintenance_io", timezone="Asia/Shanghai",
+            "cron",
+            hour=cfg.historical_data.nightly_backfill_hour_cst,
+            minute=30,
+            id="ohlcv_nightly_backfill",
+            misfire_grace_time=600,
+            executor="maintenance_io",
+            timezone="Asia/Shanghai",
         )
-    if (
-        getattr(cfg.historical_data, "enabled", True)
-        and getattr(cfg.historical_data, "active_universe_backfill_enabled", True)
+    if getattr(cfg.historical_data, "enabled", True) and getattr(
+        cfg.historical_data, "active_universe_backfill_enabled", True
     ):
         _scheduler.add_job(
             _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
             "interval",
-            minutes=getattr(
-                cfg.historical_data, "active_universe_backfill_interval_minutes", 10
-            ),
+            minutes=getattr(cfg.historical_data, "active_universe_backfill_interval_minutes", 10),
             id="ohlcv_active_backfill",
             misfire_grace_time=120,
             next_run_time=datetime.now() + timedelta(minutes=3),
@@ -1528,22 +1649,36 @@ def init_scheduler() -> BackgroundScheduler | None:
         )
     # OKX demo symbol list refresh — keeps the O(1) filter cache warm.
     _scheduler.add_job(
-        _guarded("okx_demo_symbols", _run_okx_demo_symbols), "interval", hours=4,
-        id="okx_demo_symbols", misfire_grace_time=600, executor="io",
+        _guarded("okx_demo_symbols", _run_okx_demo_symbols),
+        "interval",
+        hours=4,
+        id="okx_demo_symbols",
+        misfire_grace_time=600,
+        executor="io",
         next_run_time=datetime.now() + timedelta(seconds=45),
     )
     # Daily PnL summary pushed to Telegram (configurable hour, CST/UTC+8).
-    _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, 'daily_summary_hour_cst') else 8
+    _summary_hour = cfg.telegram.daily_summary_hour_cst if hasattr(cfg.telegram, "daily_summary_hour_cst") else 8
     _scheduler.add_job(
-        _guarded("daily_summary", _run_daily_summary), "cron", hour=_summary_hour, minute=0,
-        id="daily_summary", misfire_grace_time=600, executor="io", timezone="Asia/Shanghai",
+        _guarded("daily_summary", _run_daily_summary),
+        "cron",
+        hour=_summary_hour,
+        minute=0,
+        id="daily_summary",
+        misfire_grace_time=600,
+        executor="io",
+        timezone="Asia/Shanghai",
     )
 
     # System Operator governance loop — system assessment + auto-actions every 4h.
     _scheduler.add_job(
-        _guarded("pi_operator_loop", _run_operator_loop), "cron",
-        hour="0,4,8,12,16,20", minute=15,
-        id="pi_operator_loop", misfire_grace_time=3600, executor="agents",
+        _guarded("pi_operator_loop", _run_operator_loop),
+        "cron",
+        hour="0,4,8,12,16,20",
+        minute=15,
+        id="pi_operator_loop",
+        misfire_grace_time=3600,
+        executor="agents",
         next_run_time=datetime.now() + timedelta(minutes=2),
         timezone="Asia/Shanghai",
     )
@@ -1683,14 +1818,10 @@ def resume_scheduler() -> bool:
         if _scheduler is None:
             init_scheduler()
             if _scheduler is None:
-                logger.warning(
-                    "resume_scheduler: scheduler unavailable (disabled or init failed)"
-                )
+                logger.warning("resume_scheduler: scheduler unavailable (disabled or init failed)")
                 return not cfg.runtime.scheduler_enabled
         if _scheduler.state not in (STATE_PAUSED, STATE_RUNNING):
-            raise RuntimeError(
-                f"scheduler_not_resumable:state={_scheduler.state}"
-            )
+            raise RuntimeError(f"scheduler_not_resumable:state={_scheduler.state}")
         # If blanket-paused, resume the whole scheduler
         if _scheduler.state == STATE_PAUSED:
             _scheduler.resume()
@@ -1708,9 +1839,7 @@ def resume_scheduler() -> bool:
             )
             _selectively_paused_jobs.clear()
         if _scheduler.state != STATE_RUNNING:
-            raise RuntimeError(
-                f"scheduler_resume_incomplete:state={_scheduler.state}"
-            )
+            raise RuntimeError(f"scheduler_resume_incomplete:state={_scheduler.state}")
         return True
 
 
@@ -1725,9 +1854,7 @@ def get_pause_state() -> dict:
             "scheduler_active": True,
             "mode": "layered_paused",
             "paused_jobs": sorted(_selectively_paused_jobs),
-            "running_jobs": sorted(
-                j.id for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS
-            ),
+            "running_jobs": sorted(j.id for j in _scheduler.get_jobs() if j.id in _ESSENTIAL_JOBS),
         }
     return {"scheduler_active": True, "mode": "running"}
 
@@ -1749,7 +1876,9 @@ def reschedule_universe_refresh(interval_min: int) -> bool:
     try:
         with _SCHEDULER_JOB_LOCK:
             if not _reschedule_job_preserving_pause(
-                "universe_refresh", trigger="interval", minutes=interval_min,
+                "universe_refresh",
+                trigger="interval",
+                minutes=interval_min,
             ):
                 return False
         logger.info("Rescheduled universe_refresh to every %d min", interval_min)
@@ -1808,15 +1937,22 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
                 if nightly_job is None:
                     _scheduler.add_job(
                         _guarded("ohlcv_nightly_backfill", _run_ohlcv_nightly_backfill),
-                        "cron", hour=nightly_hour, minute=30,
-                        id="ohlcv_nightly_backfill", misfire_grace_time=600,
-                        executor="maintenance_io", timezone="Asia/Shanghai",
+                        "cron",
+                        hour=nightly_hour,
+                        minute=30,
+                        id="ohlcv_nightly_backfill",
+                        misfire_grace_time=600,
+                        executor="maintenance_io",
+                        timezone="Asia/Shanghai",
                     )
                     logger.info("Added ohlcv_nightly_backfill job at %02d:30 CST", nightly_hour)
                 else:
                     _scheduler.reschedule_job(
-                        "ohlcv_nightly_backfill", trigger="cron",
-                        hour=nightly_hour, minute=30, timezone="Asia/Shanghai",
+                        "ohlcv_nightly_backfill",
+                        trigger="cron",
+                        hour=nightly_hour,
+                        minute=30,
+                        timezone="Asia/Shanghai",
                     )
                     logger.info("Rescheduled ohlcv_nightly_backfill to %02d:30 CST", nightly_hour)
             else:
@@ -1833,14 +1969,18 @@ def reconcile_historical_data_jobs(historical_cfg) -> bool:
                 if active_job is None:
                     _scheduler.add_job(
                         _guarded("ohlcv_active_backfill", _run_active_ohlcv_backfill),
-                        "interval", minutes=active_interval,
-                        id="ohlcv_active_backfill", misfire_grace_time=120,
+                        "interval",
+                        minutes=active_interval,
+                        id="ohlcv_active_backfill",
+                        misfire_grace_time=120,
                         executor="maintenance_io",
                     )
                     logger.info("Added ohlcv_active_backfill job every %d min", active_interval)
                 else:
                     _scheduler.reschedule_job(
-                        "ohlcv_active_backfill", trigger="interval", minutes=active_interval,
+                        "ohlcv_active_backfill",
+                        trigger="interval",
+                        minutes=active_interval,
                     )
                     logger.info("Rescheduled ohlcv_active_backfill to every %d min", active_interval)
             else:
@@ -1891,23 +2031,24 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
         return False
     try:
         from aletheia.observation_lab.execution_owner import is_worker_owner as _obs_is_worker_owner
+
         with _SCHEDULER_JOB_LOCK:
             existing = _scheduler.get_job("filter_controller_observe")
             if _obs_is_worker_owner():
                 if existing is not None:
                     _scheduler.remove_job("filter_controller_observe")
                     _selectively_paused_jobs.discard("filter_controller_observe")
-                    logger.info(
-                        "Removed filter_controller_observe job "
-                        "(observation.execution_owner=worker)"
-                    )
+                    logger.info("Removed filter_controller_observe job (observation.execution_owner=worker)")
                 return True
             interval_h = max(1, int(observe_interval_hours))
             if existing is None:
                 _scheduler.add_job(
                     _guarded("filter_controller_observe", _run_filter_controller_observe),
-                    "interval", hours=interval_h,
-                    id="filter_controller_observe", misfire_grace_time=600, executor="io",
+                    "interval",
+                    hours=interval_h,
+                    id="filter_controller_observe",
+                    misfire_grace_time=600,
+                    executor="io",
                 )
                 if _selectively_paused_jobs:
                     _scheduler.pause_job("filter_controller_observe")
@@ -1915,7 +2056,9 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
                 logger.info("Added filter_controller_observe job every %dh", interval_h)
             else:
                 _reschedule_job_preserving_pause(
-                    "filter_controller_observe", trigger="interval", hours=interval_h,
+                    "filter_controller_observe",
+                    trigger="interval",
+                    hours=interval_h,
                 )
                 logger.info("Rescheduled filter_controller_observe to every %dh", interval_h)
         return True
@@ -1934,8 +2077,11 @@ def reschedule_telegram_summary(hour_cst: int) -> bool:
     try:
         with _SCHEDULER_JOB_LOCK:
             if not _reschedule_job_preserving_pause(
-                "daily_summary", trigger="cron",
-                hour=int(hour_cst), minute=0, timezone="Asia/Shanghai",
+                "daily_summary",
+                trigger="cron",
+                hour=int(hour_cst),
+                minute=0,
+                timezone="Asia/Shanghai",
             ):
                 return False
         logger.info("Rescheduled daily_summary to %02d:00 CST", hour_cst)
@@ -1992,27 +2138,15 @@ def scheduled_job_status(job_id: str) -> dict[str, object]:
         next_run_time = getattr(job, "next_run_time", None)
         if isinstance(next_run_time, datetime) and next_run_time.tzinfo is None:
             next_run_time = next_run_time.replace(tzinfo=timezone.utc)
-        paused = (
-            state == STATE_PAUSED
-            or job_id in _selectively_paused_jobs
-            or next_run_time is None
-        )
+        paused = state == STATE_PAUSED or job_id in _selectively_paused_jobs or next_run_time is None
         if not isinstance(next_run_time, datetime):
             paused = True
         return {
             "scheduler_state": state_label,
             "registered": True,
             "paused": paused,
-            "next_run_time": (
-                next_run_time.isoformat() if isinstance(next_run_time, datetime) else None
-            ),
-            "blocker": (
-                "scheduler_paused"
-                if state == STATE_PAUSED
-                else "job_paused"
-                if paused
-                else None
-            ),
+            "next_run_time": (next_run_time.isoformat() if isinstance(next_run_time, datetime) else None),
+            "blocker": ("scheduler_paused" if state == STATE_PAUSED else "job_paused" if paused else None),
         }
 
 
@@ -2066,6 +2200,7 @@ def status_snapshot() -> dict:
 def _run_price_feed():
     try:
         from aletheia.data.price_feed import refresh_watched_prices
+
         result = _run_async_with_timeout("price_feed", refresh_watched_prices())
         if isinstance(result, dict) and result.get("errors"):
             logger.warning(
@@ -2084,6 +2219,7 @@ def _run_price_feed():
 def _run_connectivity_monitor():
     try:
         from aletheia.agent_runtime.connectivity import run_connectivity_check
+
         _run_async_with_timeout("connectivity_monitor", run_connectivity_check())
     except TimeoutError:
         logger.debug("connectivity_monitor job timed out")
@@ -2096,6 +2232,7 @@ def _run_connectivity_monitor():
 def _run_daily_summary():
     try:
         from aletheia.notifications import notify_daily_summary
+
         notify_daily_summary()
     except Exception as e:
         logger.warning("daily_summary job failed: %s", e)
@@ -2106,6 +2243,7 @@ def _run_market_data():
     logger.info("market_data job started")
     try:
         from aletheia.trading.market_data import collect_market_snapshots
+
         result = _run_async_with_timeout("market_data", collect_market_snapshots())
         if isinstance(result, dict) and result.get("errors"):
             logger.warning(
@@ -2152,6 +2290,7 @@ def _run_market_observer():
         except Exception as e:
             if "database is locked" in str(e) and attempt == 0:
                 import time as _time
+
                 logger.warning("market_observer: database locked, retrying in 10s…")
                 _time.sleep(10)
                 continue
@@ -2184,6 +2323,7 @@ def _run_dreaming_agent():
     # (断口U6 fix: run it explicitly, independent of the serenity pipeline).
     try:
         from aletheia.agents.dreaming_agent import _extract_lessons
+
         outputs: list[str] = []
         errors: list[str] = []
         _run_async_with_timeout(
@@ -2229,11 +2369,14 @@ def _run_shadow_resolver():
     """
     try:
         from aletheia.counterfactual.trades import resolve_stale_shadows
+
         counts = resolve_stale_shadows()
         if counts.get("resolved"):
             logger.info(
                 "shadow_resolver: resolved=%d skipped_no_ohlcv=%d skipped_bad_entry=%d",
-                counts["resolved"], counts["skipped_no_ohlcv"], counts["skipped_bad_entry"],
+                counts["resolved"],
+                counts["skipped_no_ohlcv"],
+                counts["skipped_bad_entry"],
             )
     except Exception as e:
         logger.warning("shadow_resolver job failed: %s", e)
@@ -2265,6 +2408,7 @@ def _run_reconciliation():
     failure_reasons = []
     try:
         from aletheia.execution.reconciliation import reconcile
+
         summary = reconcile()
         if isinstance(summary, dict) and summary.get("errors"):
             logger.warning(
@@ -2299,9 +2443,7 @@ def _run_exchange_sync():
         ]
         failed = False
         for scope in scopes:
-            result = _run_sync_with_timeout(
-                "exchange_sync", lambda: sync_all_exchanges(execution_modes=scope)
-            )
+            result = _run_sync_with_timeout("exchange_sync", lambda: sync_all_exchanges(execution_modes=scope))
             if result is None or result.get("errors"):
                 failed = True
                 logger.warning("exchange_sync account scope unavailable: %s", scope)
@@ -2346,21 +2488,15 @@ def _run_position_path_observer():
             run_open_position_path_observer,
         )
 
-        summary = _run_sync_with_timeout(
-            "position_path_observer", run_open_position_path_observer
-        )
-        reported_errors = (
-            list(summary.get("errors") or []) if isinstance(summary, dict) else []
-        )
+        summary = _run_sync_with_timeout("position_path_observer", run_open_position_path_observer)
+        reported_errors = list(summary.get("errors") or []) if isinstance(summary, dict) else []
         if reported_errors:
             logger.warning(
                 "position_path_observer completed with %d reported errors: %s",
                 len(reported_errors),
                 reported_errors[:20],
             )
-            _record_job_failure(
-                "position_path_observer", "position_path_observer_reported_errors"
-            )
+            _record_job_failure("position_path_observer", "position_path_observer_reported_errors")
         else:
             _record_job_success("position_path_observer")
     except TimeoutError:
@@ -2392,21 +2528,28 @@ def _run_pi_trading_decision():
     # Daemon path: delegate to the event-driven loop
     try:
         from aletheia.agent_runtime.pi_daemon import is_daemon_running, notify_pi_daemon
+
         if cfg.pi_daemon.enabled and is_daemon_running():
             if notify_pi_daemon(source="heartbeat"):
                 return
             _record_job_failure("pi_trading_heartbeat", "daemon_notify_failed")
-    except Exception:
-        pass
+            return
+    except Exception as exc:
+        logger.warning("pi_trading_heartbeat failed: %s", exc)
+        _record_job_failure("pi_trading_heartbeat", str(exc))
+        return
 
     # The heartbeat and daemon use the same durable planner.
     try:
         from aletheia.agent_shell.entry_planner import run_entry_planner_batch
+
         result = _run_async_with_timeout("pi_trading_decision", run_entry_planner_batch())
         logger.debug("pi_trading_decision: %s", result.get("status"))
         _record_job_success("pi_trading_decision")
     except TimeoutError:
-        logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
+        logger.warning(
+            "pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300)
+        )
         _record_job_failure("pi_trading_decision", "timeout")
     except Exception as e:
         logger.warning("pi_trading_decision job failed: %s", e)
@@ -2427,6 +2570,7 @@ def _run_operator_loop():
         return
     try:
         from aletheia.agent_shell.operator_loop import run_operator_loop
+
         summary = _run_sync_with_timeout("pi_operator_loop", lambda: run_operator_loop(trigger="scheduled"))
         if not summary:
             logger.debug("pi_operator_loop: no summary returned")
@@ -2482,9 +2626,7 @@ def _run_position_manager():
                 len(reported_errors),
                 error_facts,
             )
-            _record_job_failure(
-                "position_manager", "position_manager_reported_errors"
-            )
+            _record_job_failure("position_manager", "position_manager_reported_errors")
     except Exception as e:
         logger.warning("position_manager job failed: %s", e)
         _record_job_failure("position_manager", str(e))
@@ -2516,251 +2658,13 @@ def _run_position_reconcile():
             _recon_status = "completed_with_errors" if summary.get("errors") else "completed"
             end_run(run, status=_recon_status, outputs=outputs, errors=summary.get("errors") or None)
             if summary.get("errors"):
-                _record_job_failure(
-                    "position_reconcile", "position_reconcile_reported_errors"
-                )
+                _record_job_failure("position_reconcile", "position_reconcile_reported_errors")
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
     except Exception as e:
         logger.warning("position_reconcile job failed: %s", e)
         _record_job_failure("position_reconcile", str(e))
-
-
-def _run_tpsl_fill_check():
-    """Bridge triggered Bitget TPSL plans into private-fill reconciliation.
-
-    #90 fix: the body is wrapped in `_run_sync_with_timeout` (45s cap; see
-    _ASYNC_JOB_TIMEOUT_SEC['tpsl_fill_check']) so a stuck Bitget session can't
-    hold the io executor slot indefinitely. The inner asyncio.run() blocks the
-    calling thread; the timeout wrapper is what enforces the wall-clock bound.
-    The outer try/except keeps job-wrapper contract intact (spec_agent_contracts
-    test_scheduler_job_wrappers_have_try_except).
-    """
-    try:
-        summary = _run_sync_with_timeout(
-            "tpsl_fill_check", _tpsl_fill_check_body
-        )
-        if isinstance(summary, dict) and summary.get("failed_count"):
-            _record_job_failure(
-                "tpsl_fill_check", "tpsl_private_reconciliation_failed"
-            )
-        return summary
-    except Exception as e:
-        logger.warning("tpsl_fill_check outer wrapper failed: %s", e)
-        _record_job_failure("tpsl_fill_check", str(e))
-        return None
-
-
-def _claim_observed_tpsl_close(
-    position_id: str,
-    *,
-    execute_order_id: str,
-    reason: str,
-):
-    """Atomically register an observed Bitget TPSL execution without placing it."""
-    from datetime import datetime, timezone
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Order
-
-    execute_order_id = str(execute_order_id or "").strip()
-    if not execute_order_id:
-        raise ValueError("TPSL execute order identity unavailable")
-    with repo.transaction(immediate=True):
-        position = repo._select_one("positions", position_id)
-        if position is None or position.get("status") != "open":
-            return None, False
-        execution_mode = position.get("execution_mode")
-        if execution_mode not in {"bitget_demo", "bitget_live_limited"}:
-            raise ValueError(
-                "automatic TPSL close registration requires a supported Bitget mode"
-            )
-        pending_id = position.get("pending_close_order_id")
-        if pending_id:
-            existing = repo.get_order(pending_id)
-            if (
-                existing is not None
-                and existing.get("exchange_order_id") == execute_order_id
-                and existing.get("position_id") == position_id
-            ):
-                return existing, False
-            raise RuntimeError("TPSL execute order conflicts with pending close claim")
-
-        close_order = Order(
-            proposal_id=position.get("proposal_id"),
-            client_order_id=f"close-{position_id}",
-            position_id=position_id,
-            close_reason=reason,
-            symbol=position["symbol"],
-            market_type=position["market_type"],
-            direction=position["direction"],
-            order_type="market",
-            quantity=float(position["quantity"]),
-            price=None,
-            execution_mode=execution_mode,
-            exchange_order_id=execute_order_id,
-            status="materialization_missing",
-            error_reason="private_fill_evidence_pending",
-        )
-        repo.insert_order(close_order)
-        repo.update_position(
-            position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="materialization_missing",
-            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
-        )
-        return repo.get_order(close_order.id), True
-
-
-def _tpsl_fill_check_body():
-    """Inner body of tpsl_fill_check — kept separate so _run_sync_with_timeout
-    can wrap it. The outer entry point (`_run_tpsl_fill_check`) is what the
-    scheduler dispatches; the body stays a plain sync function and returns an
-    honest partial-work summary for caller-thread health accounting."""
-    try:
-        import asyncio
-        import json as _json
-        from aletheia.storage.repositories import list_all_open_positions
-        from aletheia.data.symbols import to_bitget
-        from aletheia.execution.exchange_materialization import (
-            materialize_bitget_close,
-        )
-        from aletheia.exchanges.bitget.client import BitgetClient
-
-        positions = list_all_open_positions()
-        candidates = []
-        for p in positions:
-            tpsl_raw = p.get("exchange_tpsl_order_id")
-            if not tpsl_raw:
-                continue
-            try:
-                tpsl_ids = _json.loads(tpsl_raw) if isinstance(tpsl_raw, str) else tpsl_raw
-            except (ValueError, TypeError):
-                continue
-            if (
-                p.get("execution_mode") in {"bitget_demo", "bitget_live_limited"}
-                and isinstance(tpsl_ids, dict)
-                and (tpsl_ids.get("sl") or tpsl_ids.get("tp"))
-            ):
-                candidates.append((p, tpsl_ids))
-
-        if not candidates:
-            return {"materialized": [], "failed_count": 0, "errors": []}
-
-        grouped = {
-            "bitget_demo": [item for item in candidates if item[0]["execution_mode"] == "bitget_demo"],
-            "bitget_live_limited": [
-                item for item in candidates
-                if item[0]["execution_mode"] == "bitget_live_limited"
-            ],
-        }
-
-        async def _check_account(execution_mode, account_candidates):
-            if not account_candidates:
-                return {"materialized": [], "errors": []}
-            account_mode = "demo" if execution_mode == "bitget_demo" else "live"
-            from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-            client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
-            materialized = []
-            errors = []
-            try:
-                for pos, tpsl_ids in account_candidates:
-                    for plan_type, plan_order_id in (
-                        ("sl", tpsl_ids.get("sl")),
-                        ("tp", tpsl_ids.get("tp")),
-                    ):
-                        if not plan_order_id:
-                            continue
-                        try:
-                            history = await client.get_plan_order_history(
-                                order_id=plan_order_id
-                            )
-                            execute_ids = {
-                                str(row.get("executeOrderId") or "").strip()
-                                for row in history
-                                if isinstance(row, dict)
-                                and str(row.get("orderId") or "")
-                                == str(plan_order_id)
-                                and str(row.get("planStatus") or "").lower()
-                                == "executed"
-                                and str(row.get("executeOrderId") or "").strip()
-                            }
-                            if len(execute_ids) != 1:
-                                continue
-                            execute_order_id = next(iter(execute_ids))
-                            reason = (
-                                "stop_loss" if plan_type == "sl" else "take_profit"
-                            )
-                            close_order, _ = _claim_observed_tpsl_close(
-                                pos["id"],
-                                execute_order_id=execute_order_id,
-                                reason=reason,
-                            )
-                            if close_order is None:
-                                continue
-                            private_fills = await client.get_order_fills(
-                                order_id=execute_order_id,
-                                symbol=to_bitget(pos["symbol"]),
-                                market_type=pos["market_type"],
-                            )
-                            result = materialize_bitget_close(
-                                close_order["id"], private_fills
-                            )
-                            if result.state == "filled":
-                                materialized.append(result)
-                        except Exception as exc:
-                            errors.append({
-                                "execution_mode": execution_mode,
-                                "position_id": pos.get("id"),
-                                "plan_order_id": str(plan_order_id),
-                                "error_type": type(exc).__name__,
-                            })
-                            logger.warning(
-                                "TPSL private reconciliation failed for plan %s (%s)",
-                                plan_order_id,
-                                type(exc).__name__,
-                            )
-                return {"materialized": materialized, "errors": errors}
-            finally:
-                try:
-                    await client.close()
-                except Exception as exc:
-                    logger.warning(
-                        "TPSL account client close failed (%s)", type(exc).__name__
-                    )
-
-        async def _check_all():
-            materialized = []
-            errors = []
-            for execution_mode, account_candidates in grouped.items():
-                try:
-                    account_result = await _check_account(
-                        execution_mode, account_candidates
-                    )
-                    materialized.extend(account_result["materialized"])
-                    errors.extend(account_result["errors"])
-                except Exception as exc:
-                    errors.append({
-                        "execution_mode": execution_mode,
-                        "position_id": None,
-                        "plan_order_id": None,
-                        "error_type": type(exc).__name__,
-                    })
-                    logger.warning(
-                        "TPSL account reconciliation failed for %s (%s)",
-                        execution_mode,
-                        type(exc).__name__,
-                    )
-            return {
-                "materialized": materialized,
-                "failed_count": len(errors),
-                "errors": errors,
-            }
-
-        return asyncio.run(_check_all())
-    except Exception as e:
-        logger.warning("tpsl_fill_check job failed: %s", e)
-        raise
 
 
 def _run_equity_observer():
@@ -2824,10 +2728,13 @@ def _cleanup_catchup_due(*, now: datetime | None = None) -> bool:
     try:
         from aletheia.storage.sqlite import get_db
 
-        row = get_db().execute(
-            "SELECT timestamp FROM audit_events WHERE event_type='data_pruned' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
+        row = (
+            get_db()
+            .execute(
+                "SELECT timestamp FROM audit_events WHERE event_type='data_pruned' ORDER BY timestamp DESC LIMIT 1"
+            )
+            .fetchone()
+        )
         if not row or not row[0]:
             return True
         last = datetime.fromisoformat(str(row[0]).replace("Z", "+00:00"))
@@ -2850,6 +2757,7 @@ def _run_cleanup():
         from aletheia.storage.sqlite import get_db
         from aletheia.files.jsonl import write_audit
         from aletheia.execution.stale_order_cleanup import cleanup_stale_orphan_orders
+
         r = cfg.retention
         # ------------------------------------------------------------------
         # FK cascade ordering (Phase 3 retention) — the agent_shell hierarchy
@@ -2898,6 +2806,7 @@ def _run_cleanup():
             except repo.ExperimentStateReadError as e:
                 logger.warning("Cannot read experiment state for cleanup guard: %s", e)
                 from aletheia.infra.events import emit_infra_event
+
                 emit_infra_event(
                     severity="error",
                     source="scheduler",
@@ -2929,7 +2838,8 @@ def _run_cleanup():
             "ohlcv_backfill_state": repo.prune_ohlcv_backfill_state(90),
             "universe_forward_outcomes": (
                 repo.prune_universe_forward_outcomes(30, min_experiment_started_at=min_open_exp_at)
-                if experiment_floor_read_ok else 0
+                if experiment_floor_read_ok
+                else 0
             ),
             "serenity_claims": repo.prune_serenity_claims(90),
             "shadow_trades": repo.prune_shadow_trades(90),
@@ -2943,28 +2853,32 @@ def _run_cleanup():
                     r.filter_decisions_days,
                     min_experiment_started_at=min_open_exp_at,
                 )
-                if experiment_floor_read_ok else 0
+                if experiment_floor_read_ok
+                else 0
             ),
             "filter_candidate_outcomes": (
                 repo.prune_filter_candidate_outcomes(
                     r.filter_candidate_outcomes_days,
                     min_experiment_started_at=min_open_exp_at,
                 )
-                if experiment_floor_read_ok else 0
+                if experiment_floor_read_ok
+                else 0
             ),
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
             "system_actions": repo.prune_system_actions(7),
             # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
-            "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
-                "1m": r.market_ohlcv_1m_days,
-                "5m": r.market_ohlcv_5m_days,
-                "15m": r.market_ohlcv_15m_days,
-                "1h": r.market_ohlcv_1h_days,
-                "4h": r.market_ohlcv_4h_days,
-                "1d": r.market_ohlcv_1d_days,
-            }),
+            "market_ohlcv": repo.prune_market_ohlcv(
+                ttl_days={
+                    "1m": r.market_ohlcv_1m_days,
+                    "5m": r.market_ohlcv_5m_days,
+                    "15m": r.market_ohlcv_15m_days,
+                    "1h": r.market_ohlcv_1h_days,
+                    "4h": r.market_ohlcv_4h_days,
+                    "1d": r.market_ohlcv_1d_days,
+                }
+            ),
             "alpha_control_observations": repo.prune_alpha_control_observations(r.alpha_control_observations_days),
             "controller_recommendations": repo.prune_controller_recommendations(r.controller_recommendations_days),
             "market_regimes": repo.prune_market_regimes(r.market_regimes_days),
@@ -2987,7 +2901,8 @@ def _run_cleanup():
                     r.universe_snapshots_days,
                     min_experiment_started_at=min_open_exp_at,
                 )
-                if experiment_floor_read_ok else 0
+                if experiment_floor_read_ok
+                else 0
             ),
             # Operator-shell telemetry (DB-SIZE-1): heartbeats are the dominant
             # bloat — pure liveness, read latest-row-only, so a short window.
@@ -3046,14 +2961,11 @@ def _run_cleanup():
 
             database_file = db_path()
             wal_file = database_file.with_name(database_file.name + "-wal")
-            physical_bytes = (
-                (database_file.stat().st_size if database_file.exists() else 0)
-                + (wal_file.stat().st_size if wal_file.exists() else 0)
+            physical_bytes = (database_file.stat().st_size if database_file.exists() else 0) + (
+                wal_file.stat().st_size if wal_file.exists() else 0
             )
             budget_bytes = int(r.app_db_capacity_mb) * 1024 * 1024
-            reclaim_max_mb = (
-                64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
-            )
+            reclaim_max_mb = 64 if budget_bytes > 0 and physical_bytes >= 0.8 * budget_bytes else 16
             counts["incremental_vacuum"] = reclaim_incremental_freelist(
                 get_db(),
                 max_mb=reclaim_max_mb,
@@ -3086,10 +2998,7 @@ def _run_cleanup():
                     severity="warning",
                     source="scheduler",
                     code="sqlite_wal_checkpoint_backlog",
-                    message=(
-                        f"SQLite PASSIVE checkpoint left {remaining_mb:.1f} MiB "
-                        "in the WAL after nightly cleanup"
-                    ),
+                    message=(f"SQLite PASSIVE checkpoint left {remaining_mb:.1f} MiB in the WAL after nightly cleanup"),
                     action=(
                         "Inspect `logs/database_capacity.jsonl` for repeated remaining_frames; "
                         "a long-lived reader or external process may be pinning an old snapshot"
@@ -3101,11 +3010,7 @@ def _run_cleanup():
 
                 used_mb = float(capacity.get("physical_bytes", 0)) / (1024 * 1024)
                 emit_infra_event(
-                    severity=(
-                        "warning"
-                        if capacity.get("capacity_status") == "over_budget"
-                        else "info"
-                    ),
+                    severity=("warning" if capacity.get("capacity_status") == "over_budget" else "info"),
                     source="scheduler",
                     code="sqlite_capacity_budget",
                     message=(
@@ -3122,11 +3027,15 @@ def _run_cleanup():
                 )
         except Exception as capacity_err:  # noqa: BLE001 — observation only
             logger.debug("database capacity snapshot skipped: %s", capacity_err)
-        write_audit({
-            "actor": "system", "source": "scheduler",
-            "event_type": "data_pruned", "entity_type": "telemetry",
-            "message": f"Pruned old telemetry: {counts}",
-        })
+        write_audit(
+            {
+                "actor": "system",
+                "source": "scheduler",
+                "event_type": "data_pruned",
+                "entity_type": "telemetry",
+                "message": f"Pruned old telemetry: {counts}",
+            }
+        )
     except Exception as e:
         logger.warning("cleanup job failed: %s", e)
         _record_job_failure("cleanup", str(e))
@@ -3135,6 +3044,7 @@ def _run_cleanup():
 def _prune_news(cfg) -> dict[str, int | str | None]:
     try:
         from aletheia.data.news_collector import prune_old_news
+
         deleted = prune_old_news(cfg.news.retention_days)
         return {"deleted": deleted, "error": None}
     except Exception as e:
@@ -3145,6 +3055,7 @@ def _prune_session_logs(cfg) -> dict[str, int | str | None]:
     """Prune by the configured DB age, preserving the persistent main session."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
+
         deleted = prune_session_logs_db_join(
             cfg.retention.agent_shell_session_logs_days,
             extra_exempt_stems=(cfg.operator.main_session_id,),
@@ -3153,11 +3064,13 @@ def _prune_session_logs(cfg) -> dict[str, int | str | None]:
     except Exception as exc:
         return {"deleted": 0, "error": str(exc)}
 
+
 def _prune_task_notes(cfg) -> dict[str, int | str | None]:
     """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to
     unlink `.md` notes for finished tasks + orphan-sweeps stale files."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
+
         deleted = prune_task_notes_db_join(
             days_completed=int(getattr(cfg.retention, "agent_shell_task_notes_completed_days", 7)),
             days_failed=int(getattr(cfg.retention, "agent_shell_task_notes_failed_days", 30)),
@@ -3170,6 +3083,7 @@ def _prune_task_notes(cfg) -> dict[str, int | str | None]:
 def _prune_backups(keep_recent: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_backups
+
         return prune_backups(keep_recent=keep_recent)
     except Exception:
         return 0
@@ -3178,6 +3092,7 @@ def _prune_backups(keep_recent: int) -> int:
 def _prune_diagnostics(days: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_diagnostics_dir
+
         return prune_diagnostics_dir(days=days)
     except Exception:
         return 0
@@ -3186,6 +3101,7 @@ def _prune_diagnostics(days: int) -> int:
 def _prune_pre_migration_backup(days: int) -> int:
     try:
         from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
+
         return prune_pre_migration_backup(days=days)
     except Exception:
         return 0
@@ -3202,6 +3118,7 @@ def _prune_agent_task_claims_tasks_db() -> int:
     try:
         import sqlite3
         from aletheia.config.loader import get_data_dir
+
         db_file = get_data_dir() / "tasks.db"
         if not db_file.exists():
             return 0
@@ -3209,8 +3126,7 @@ def _prune_agent_task_claims_tasks_db() -> int:
         conn = sqlite3.connect(str(db_file), timeout=30, isolation_level=None)
         try:
             cur = conn.execute(
-                "DELETE FROM agent_task_claims "
-                "WHERE expires_at IS NOT NULL AND expires_at < ?",
+                "DELETE FROM agent_task_claims WHERE expires_at IS NOT NULL AND expires_at < ?",
                 (now,),
             )
             return cur.rowcount or 0
@@ -3227,11 +3143,7 @@ def _run_news_fetch():
     try:
         result = _run_async_with_timeout("news_fetch", _async_news_fetch())
         if isinstance(result, dict) and result.get("failed", 0):
-            status = (
-                "all_feeds_failed"
-                if result.get("succeeded", 0) == 0
-                else "partial_feed_failure"
-            )
+            status = "all_feeds_failed" if result.get("succeeded", 0) == 0 else "partial_feed_failure"
             _record_job_failure("news_fetch", status)
     except TimeoutError:
         logger.warning("news_fetch timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["news_fetch"])
@@ -3243,6 +3155,7 @@ def _run_news_fetch():
 
 async def _async_news_fetch():
     from aletheia.data.news_collector import fetch_news_feeds
+
     return await fetch_news_feeds()
 
 
@@ -3253,15 +3166,13 @@ def _run_news_analyze():
     try:
         result = _run_async_with_timeout("news_analyze", _async_news_analyze())
         if isinstance(result, dict):
-            failures = int(result.get("retryable_failed", 0)) + int(
-                result.get("terminal_failed", 0)
-            ) + int(result.get("unresolved_failed", 0))
+            failures = (
+                int(result.get("retryable_failed", 0))
+                + int(result.get("terminal_failed", 0))
+                + int(result.get("unresolved_failed", 0))
+            )
             if result.get("attempted", 0) and failures:
-                status = (
-                    "all_items_failed"
-                    if result.get("analyzed", 0) == 0
-                    else "partial_item_failure"
-                )
+                status = "all_items_failed" if result.get("analyzed", 0) == 0 else "partial_item_failure"
                 _record_job_failure("news_analyze", status)
     except TimeoutError:
         logger.warning(
@@ -3284,6 +3195,7 @@ def _run_persona_rollout():
     """Every 8h: recheck the durable Persona rollout state machine."""
     try:
         from aletheia.trading.persona_rollout import advance_persona_rollout
+
         result = advance_persona_rollout()
         if result.get("action") == "hold":
             logger.debug("persona_rollout: hold → %s", result.get("reason"))
@@ -3308,21 +3220,22 @@ def _run_filter_controller_observe():
             ObservationOwnerError,
             require_main_or_absent,
         )
+
         try:
             require_main_or_absent(action="filter_controller_observe scheduler job")
         except ObservationOwnerError as owner_exc:
             logger.warning("%s", owner_exc)
-            _record_job_failure(
-                "filter_controller_observe", f"worker_owns_cycle: {owner_exc}"
-            )
+            _record_job_failure("filter_controller_observe", f"worker_owns_cycle: {owner_exc}")
             return
         from aletheia.config.loader import load_config
+
         cfg = load_config()
         ctrl = getattr(cfg, "controller", None)
         from aletheia.observation_lab.worker_lock import (
             WorkerCycleLockError,
             worker_cycle_exclusion,
         )
+
         try:
             with worker_cycle_exclusion():
                 if ctrl and ctrl.shadow_enabled:
@@ -3339,9 +3252,7 @@ def _run_filter_controller_observe():
                     }
         except WorkerCycleLockError as lock_exc:
             logger.info("filter_controller_observe deferred: %s", lock_exc)
-            _record_job_failure(
-                "filter_controller_observe", f"cycle_lock_contended: {lock_exc}"
-            )
+            _record_job_failure("filter_controller_observe", f"cycle_lock_contended: {lock_exc}")
             return
         # Issue #1240: record failure for partial/failed evidence passes so that
         # systemd/health monitoring can distinguish a clean pass from one with
@@ -3351,7 +3262,9 @@ def _run_filter_controller_observe():
         if pass_status != "success":
             logger.warning(
                 "filter_controller_observe: pass_status=%s reason=%s written=%d",
-                pass_status, pass_reason, summary.get("recommendations_written", 0),
+                pass_status,
+                pass_reason,
+                summary.get("recommendations_written", 0),
             )
             _record_job_failure(
                 "filter_controller_observe",
@@ -3360,7 +3273,8 @@ def _run_filter_controller_observe():
         else:
             logger.info(
                 "filter_controller_observe: wrote %d recs (verdicts=%s)",
-                summary.get("recommendations_written", 0), summary.get("verdict_counts"),
+                summary.get("recommendations_written", 0),
+                summary.get("verdict_counts"),
             )
     except Exception as e:
         logger.warning("filter_controller_observe job failed: %s", e)
@@ -3390,7 +3304,8 @@ def _run_observation_lab_bridge() -> None:
         mirrored = settled["audit_mirror"]
         logger.info(
             "observation_lab_bridge: imported=%s mirrored=%s pending=%s",
-            imported.get("processed", 0), mirrored.get("processed", 0),
+            imported.get("processed", 0),
+            mirrored.get("processed", 0),
             imported.get("backlog_count", 0),
         )
     except Exception as e:
@@ -3409,6 +3324,7 @@ def _run_health_check():
         return
     try:
         from aletheia.agent_runtime.health import run_health_check
+
         run_health_check()
     except Exception as e:
         logger.warning("health_check job failed: %s", e)
@@ -3472,10 +3388,14 @@ def _run_insight_synthesizer():
     # Piggyback: reasoning feedback aggregation (no LLM, cheap)
     try:
         from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
+
         fb = build_reasoning_feedback()
         if fb:
-            logger.info("reasoning_feedback built: %d proposals, %d executed",
-                        fb.get("sample_proposals", 0), fb.get("sample_executed", 0))
+            logger.info(
+                "reasoning_feedback built: %d proposals, %d executed",
+                fb.get("sample_proposals", 0),
+                fb.get("sample_executed", 0),
+            )
     except Exception as e:
         logger.debug("reasoning_feedback piggyback failed: %s", e)
 
@@ -3483,11 +3403,16 @@ def _run_insight_synthesizer():
 def _run_confidence_calibration():
     try:
         from aletheia.analytics.confidence_calibration import build_calibration_report
+
         report = build_calibration_report()
         if report:
             _record_job_success("confidence_calibration")
-            logger.info("confidence_calibration: ECE=%.3f (%s), %d trades",
-                        report.get("ece", 0), report.get("ece_grade", "?"), report.get("total_executed", 0))
+            logger.info(
+                "confidence_calibration: ECE=%.3f (%s), %d trades",
+                report.get("ece", 0),
+                report.get("ece_grade", "?"),
+                report.get("total_executed", 0),
+            )
         else:
             _record_job_success("confidence_calibration")
     except Exception as e:
@@ -3611,6 +3536,7 @@ def _cleanup_stale_scanner_runs():
     """
     try:
         from aletheia.storage.sqlite import get_db
+
         db = get_db()
         was_in_tx = db.in_transaction
         result = db.execute(
@@ -3638,6 +3564,7 @@ def _cleanup_stale_agent_runs():
     """
     try:
         from aletheia.storage.sqlite import get_db
+
         db = get_db()
         was_in_tx = db.in_transaction
         result = db.execute(
@@ -3682,6 +3609,7 @@ def _run_universe_refresh():
 
 async def _async_settle_outcomes():
     from aletheia.universe.outcome_recorder import settle_due
+
     # settle_due() drains within a 240s time budget (safe under the 300s job
     # timeout) and yields if universe_refresh is already draining the same queues.
     # It logs internally per batch; the total is returned.
@@ -3714,11 +3642,14 @@ def _run_outcome_settler():
 
 async def _async_paper_funding_settler():
     from aletheia.portfolio.paper_account import settle_unsettled_paper_closes
+
     result = await settle_unsettled_paper_closes()
     logger.debug(
         "paper_funding_settler: settled=%d revived=%d still_pending=%d errors=%d",
-        result["settled"], result.get("revived", 0),
-        result["still_pending"], len(result["errors"]),
+        result["settled"],
+        result.get("revived", 0),
+        result["still_pending"],
+        len(result["errors"]),
     )
     return result
 
@@ -3732,13 +3663,9 @@ def _run_paper_funding_settler():
     paper account health must not depend on the runtime being unpaused.
     """
     try:
-        result = _run_async_with_timeout(
-            "paper_funding_settler", _async_paper_funding_settler()
-        )
+        result = _run_async_with_timeout("paper_funding_settler", _async_paper_funding_settler())
         if result.get("errors"):
-            _record_job_failure(
-                "paper_funding_settler", "paper_funding_settler_reported_errors"
-            )
+            _record_job_failure("paper_funding_settler", "paper_funding_settler_reported_errors")
         elif result.get("audit_pending"):
             _record_job_failure(
                 "paper_funding_settler",
@@ -3779,13 +3706,9 @@ async def _async_broker_funding_settler():
 def _run_broker_funding_settler():
     """Retry private broker funding bills for exchange-backed futures closes."""
     try:
-        result = _run_async_with_timeout(
-            "broker_funding_settler", _async_broker_funding_settler()
-        )
+        result = _run_async_with_timeout("broker_funding_settler", _async_broker_funding_settler())
         if result.get("errors"):
-            _record_job_failure(
-                "broker_funding_settler", "broker_funding_settler_reported_errors"
-            )
+            _record_job_failure("broker_funding_settler", "broker_funding_settler_reported_errors")
         elif result.get("terminal_total"):
             _record_job_failure(
                 "broker_funding_settler",
@@ -3826,6 +3749,7 @@ def _run_guard_promotion():
         return
     try:
         from aletheia.analytics.guard_promotion import run_promotion_check
+
         result = run_promotion_check()
         logger.info("guard_promotion: %s", result)
     except Exception as e:
@@ -3838,8 +3762,7 @@ def _run_ohlcv_nightly_backfill():
     try:
         _run_sync_with_timeout("ohlcv_nightly_backfill", _ohlcv_backfill_body)
     except TimeoutError:
-        logger.warning("ohlcv_nightly_backfill timed out after %.0fs",
-                       _ASYNC_JOB_TIMEOUT_SEC["ohlcv_nightly_backfill"])
+        logger.warning("ohlcv_nightly_backfill timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC["ohlcv_nightly_backfill"])
         _record_job_failure("ohlcv_nightly_backfill", "timeout")
     except Exception as e:
         logger.warning("ohlcv_nightly_backfill failed: %s", e)
@@ -3849,20 +3772,14 @@ def _run_ohlcv_nightly_backfill():
 def _run_active_ohlcv_backfill():
     """Repair a bounded number of active-Universe OHLCV gaps."""
     cfg = load_config()
-    if (
-        not cfg.historical_data.enabled
-        or not cfg.historical_data.active_universe_backfill_enabled
-    ):
+    if not cfg.historical_data.enabled or not cfg.historical_data.active_universe_backfill_enabled:
         return
     try:
-        result = _run_sync_with_timeout(
-            "ohlcv_active_backfill", _active_ohlcv_backfill_body
-        )
+        result = _run_sync_with_timeout("ohlcv_active_backfill", _active_ohlcv_backfill_body)
         if result.attempted and result.failed == result.attempted:
             _record_job_failure("ohlcv_active_backfill", "all attempted pairs failed")
         logger.info(
-            "ohlcv_active_backfill: planned=%d attempted=%d ready=%d partial=%d "
-            "failed=%d fetched=%d",
+            "ohlcv_active_backfill: planned=%d attempted=%d ready=%d partial=%d failed=%d fetched=%d",
             result.planned,
             result.attempted,
             result.ready,
@@ -3887,11 +3804,13 @@ def _active_ohlcv_backfill_body():
     from aletheia.data.active_ohlcv_backfill import run_active_ohlcv_backfill
 
     cfg = load_config()
-    return _asyncio.run(run_active_ohlcv_backfill(
-        min_bars=cfg.historical_data.min_bars_for_backtest,
-        max_pairs=cfg.historical_data.active_universe_backfill_max_pairs_per_run,
-        months=cfg.historical_data.default_months,
-    ))
+    return _asyncio.run(
+        run_active_ohlcv_backfill(
+            min_bars=cfg.historical_data.min_bars_for_backtest,
+            max_pairs=cfg.historical_data.active_universe_backfill_max_pairs_per_run,
+            months=cfg.historical_data.default_months,
+        )
+    )
 
 
 def _ohlcv_backfill_body():
@@ -3906,20 +3825,25 @@ def _ohlcv_backfill_body():
     for instrument in sorted(instruments, key=str):
         for tf in ("1h", "4h"):
             try:
-                result = _asyncio.run(download_symbol_history(
-                    instrument.symbol, tf, months=months,
-                    exchange=instrument.exchange, market_type=instrument.market_type,
-                ))
+                result = _asyncio.run(
+                    download_symbol_history(
+                        instrument.symbol,
+                        tf,
+                        months=months,
+                        exchange=instrument.exchange,
+                        market_type=instrument.market_type,
+                    )
+                )
                 total_bars += result.bars_fetched
             except Exception as e:
                 logger.debug("nightly_backfill skip %s/%s: %s", instrument, tf, e)
-    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched",
-                len(instruments), total_bars)
+    logger.info("ohlcv_nightly_backfill: %d symbols, %d total bars fetched", len(instruments), total_bars)
 
 
 def _run_okx_demo_symbols():
     try:
         from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
+
         count = refresh_okx_demo_symbols()
         logger.info("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:
@@ -3931,6 +3855,7 @@ async def _async_universe_refresh():
     from aletheia.universe.service import UniverseService
     from aletheia.files.jsonl import write_agent_run_log
     from aletheia.storage.models import _utcnow
+
     started = _utcnow()
     svc = UniverseService()
     try:
@@ -3940,29 +3865,37 @@ async def _async_universe_refresh():
             # run. Treat that sentinel as a failed scheduled attempt instead of
             # fabricating a completed_no_snapshot run.
             raise RuntimeError("universe_refresh_no_snapshot")
-        write_agent_run_log({
-            "agent_name": "universe_refresh", "trigger_type": "scheduled",
-            "started_at": started, "ended_at": _utcnow(),
-            "status": "completed",
-            "outputs_created": [snap_id],
-            "errors": [],
-        })
+        write_agent_run_log(
+            {
+                "agent_name": "universe_refresh",
+                "trigger_type": "scheduled",
+                "started_at": started,
+                "ended_at": _utcnow(),
+                "status": "completed",
+                "outputs_created": [snap_id],
+                "errors": [],
+            }
+        )
     except Exception as e:
-        write_agent_run_log({
-            "agent_name": "universe_refresh", "trigger_type": "scheduled",
-            "started_at": started, "ended_at": _utcnow(),
-            "status": "failed", "outputs_created": [], "errors": [str(e)],
-        })
+        write_agent_run_log(
+            {
+                "agent_name": "universe_refresh",
+                "trigger_type": "scheduled",
+                "started_at": started,
+                "ended_at": _utcnow(),
+                "status": "failed",
+                "outputs_created": [],
+                "errors": [str(e)],
+            }
+        )
         raise
 
 
 async def _async_run(agent_name: str, *, trigger_type: str = "scheduled"):
     from aletheia.agent_runtime.orchestrator import run_agent
+
     result = await run_agent(agent_name, trigger_type=trigger_type)
-    if isinstance(result, dict) and (
-        result.get("status") == "completed_with_errors"
-        or bool(result.get("errors"))
-    ):
+    if isinstance(result, dict) and (result.get("status") == "completed_with_errors" or bool(result.get("errors"))):
         # The agent already persisted its detailed errors. Raise only a stable,
         # non-provider-specific code so the scheduler failure counter cannot
         # reset on an internally degraded run.
@@ -4025,6 +3958,7 @@ def _record_collector_health(
 def _run_data_collectors():
     """Collect primary-venue orderbook, funding, and OI on a two-minute tick."""
     import os as _os
+
     if _os.environ.get("ALETHEIA_COLLECTOR_PROCESS"):
         return  # managed by the standalone collector subprocess spawned by _gateway_runner
     global _DC_TICK
@@ -4033,14 +3967,8 @@ def _run_data_collectors():
     # decisions and execution; it must not stop public-data accumulation.
     _DC_TICK += 1
     try:
-        result = _run_async_with_timeout(
-            "data_collectors", _async_data_collectors(cfg, _DC_TICK)
-        )
-        error_codes = (
-            list(result.get("error_codes") or [])
-            if isinstance(result, dict)
-            else []
-        )
+        result = _run_async_with_timeout("data_collectors", _async_data_collectors(cfg, _DC_TICK))
+        error_codes = list(result.get("error_codes") or []) if isinstance(result, dict) else []
         if error_codes:
             _record_job_failure("data_collectors", ",".join(error_codes))
         else:
@@ -4060,6 +3988,7 @@ def _run_data_collectors():
 def _run_data_collector_context():
     """Collect cross-venue and macro context on its own bounded ten-minute lane."""
     import os as _os
+
     if _os.environ.get("ALETHEIA_COLLECTOR_PROCESS"):
         return  # managed by the standalone collector subprocess spawned by _gateway_runner
     global _DC_CONTEXT_TICK
@@ -4070,11 +3999,7 @@ def _run_data_collector_context():
             "data_collector_context",
             _async_data_collector_context(cfg, _DC_CONTEXT_TICK),
         )
-        error_codes = (
-            list(result.get("error_codes") or [])
-            if isinstance(result, dict)
-            else []
-        )
+        error_codes = list(result.get("error_codes") or []) if isinstance(result, dict) else []
         if error_codes:
             _record_job_failure("data_collector_context", ",".join(error_codes))
         else:
@@ -4144,11 +4069,11 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
     caller-visible timeout.
     """
     import time as _time
+
     started = _time.monotonic()
     remaining = deadline - started
     if remaining <= 2.0:
-        logger.warning("data_collectors: skipped %s — lane wall-clock budget exhausted",
-                       label)
+        logger.warning("data_collectors: skipped %s — lane wall-clock budget exhausted", label)
         coro.close()  # avoid 'coroutine was never awaited' warning
         _record_collector_health(label, "skipped_budget", duration_ms=0)
         return None
@@ -4166,8 +4091,7 @@ async def _bounded(coro, label: str, cap: float, deadline: float):
         return result
     except asyncio.TimeoutError:
         elapsed_ms = int((_time.monotonic() - started) * 1000)
-        logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick",
-                       label, min(cap, remaining))
+        logger.warning("data_collectors: %s timed out (%.0fs cap) — skipped this tick", label, min(cap, remaining))
         _record_collector_health(
             label,
             "timed_out",
@@ -4222,15 +4146,18 @@ def get_collector_targets(cfg):
     derivative_symbols = _get_derivative_symbols(instruments)
     funding_venue = str(getattr(cfg.market_data, "ccxt_exchange", "") or "").strip().lower()
     try:
-        derivative_symbols = list(dict.fromkeys([
-            *derivative_symbols,
-            *(
-                str(row["symbol"])
-                for row in repo.list_watchable_entry_plans(None)
-                if row.get("venue") == funding_venue
-                and row.get("market_type") == "perp"
-            ),
-        ]))
+        derivative_symbols = list(
+            dict.fromkeys(
+                [
+                    *derivative_symbols,
+                    *(
+                        str(row["symbol"])
+                        for row in repo.list_watchable_entry_plans(None)
+                        if row.get("venue") == funding_venue and row.get("market_type") == "perp"
+                    ),
+                ]
+            )
+        )
     except Exception:
         logger.debug("Watchable Entry Plan funding targets unavailable", exc_info=True)
     return instruments, derivative_symbols
@@ -4259,9 +4186,7 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     if instruments:
         micro = MicrostructureCollector()
         micro_started = _time.monotonic()
-        raw_micro_result = await _bounded(
-            micro.collect(instruments), "microstructure", 18.0, _deadline
-        )
+        raw_micro_result = await _bounded(micro.collect(instruments), "microstructure", 18.0, _deadline)
         micro_duration_ms = int((_time.monotonic() - micro_started) * 1000)
         micro_result = raw_micro_result or {}
     else:
@@ -4270,9 +4195,7 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     if derivative_symbols:
         deriv = DerivativesCollector()
         deriv_started = _time.monotonic()
-        raw_deriv_result = await _bounded(
-            deriv.collect(derivative_symbols), "derivatives", 25.0, _deadline
-        )
+        raw_deriv_result = await _bounded(deriv.collect(derivative_symbols), "derivatives", 25.0, _deadline)
         deriv_duration_ms = int((_time.monotonic() - deriv_started) * 1000)
         deriv_result = raw_deriv_result or {}
     else:
@@ -4282,15 +4205,9 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     deriv_persist_error: str | None = None
     try:
         repo.insert_collector_snapshot_batch(
-            orderbooks=[
-                snap.model_dump() for snap in micro_result.get("snapshots", [])
-            ],
-            funding=[
-                snap.model_dump() for snap in deriv_result.get("funding", [])
-            ],
-            open_interest=[
-                snap.model_dump() for snap in deriv_result.get("open_interest", [])
-            ],
+            orderbooks=[snap.model_dump() for snap in micro_result.get("snapshots", [])],
+            funding=[snap.model_dump() for snap in deriv_result.get("funding", [])],
+            open_interest=[snap.model_dump() for snap in deriv_result.get("open_interest", [])],
         )
     except Exception as e:
         logger.debug("collector batch persist failed: %s", e)
@@ -4332,17 +4249,16 @@ async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
                 duration_ms=deriv_duration_ms,
             )
     if not instruments and not derivative_symbols:
-        logger.debug(
-            "data_collectors: no observed instruments; "
-            "running symbol-independent domains only"
-        )
+        logger.debug("data_collectors: no observed instruments; running symbol-independent domains only")
 
     # Log summary
     micro_count = len(micro_result.get("snapshots", []))
     funding_count = len(deriv_result.get("funding", []))
     logger.debug(
         "data_collectors tick=%d: orderbook=%d funding=%d",
-        tick, micro_count, funding_count,
+        tick,
+        micro_count,
+        funding_count,
     )
     unique_job_errors = list(dict.fromkeys(job_error_codes))
     return {
@@ -4386,38 +4302,48 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     wave_one: dict[str, object] = {}
     tasks: list[tuple[str, object]] = []
     _schedule_collector(
-        tasks, "volume_scanner",
+        tasks,
+        "volume_scanner",
         enabled=True,
         configured=bool(instruments),
         make_coro=lambda: VolumeScannerCollector(top_n=30).collect(instruments[:200]),
-        cap=20.0, deadline=deadline,
+        cap=20.0,
+        deadline=deadline,
     )
     _schedule_collector(
-        tasks, "hyperliquid",
+        tasks,
+        "hyperliquid",
         enabled=getattr(cfg.market_data, "enable_hyperliquid", True),
         configured=bool(symbols),
         make_coro=lambda: HyperliquidCollector().collect(symbols),
-        cap=12.0, deadline=deadline,
+        cap=12.0,
+        deadline=deadline,
     )
     _schedule_collector(
-        tasks, "defillama",
+        tasks,
+        "defillama",
         enabled=getattr(cfg.market_data, "enable_defillama", True),
         configured=True,
         make_coro=lambda: DefiLlamaCollector().collect(),
-        cap=12.0, deadline=deadline,
+        cap=12.0,
+        deadline=deadline,
     )
     if tasks:
-        wave_one = dict(zip(
-            (label for label, _ in tasks),
-            await asyncio.gather(*(coro for _, coro in tasks)),
-        ))
+        wave_one = dict(
+            zip(
+                (label for label, _ in tasks),
+                await asyncio.gather(*(coro for _, coro in tasks)),
+            )
+        )
 
     volume_result = wave_one.get("volume_scanner") or {}
     if volume_result.get("top_symbols"):
-        _latest_volume_ranking.update({
-            "symbols": volume_result["top_symbols"],
-            "observed_at": volume_result["observed_at"],
-        })
+        _latest_volume_ranking.update(
+            {
+                "symbols": volume_result["top_symbols"],
+                "observed_at": volume_result["observed_at"],
+            }
+        )
     for domain in ("hyperliquid", "defillama"):
         result = wave_one.get(domain) or {}
         if result.get("errors"):
@@ -4428,39 +4354,47 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     wave_two: dict[str, object] = {}
     tasks = []
     _schedule_collector(
-        tasks, "coingecko_top",
+        tasks,
+        "coingecko_top",
         enabled=getattr(cfg.market_data, "enable_coingecko_top", True),
         configured=True,
-        make_coro=lambda: CoinGeckoTopCollector().collect(
-            top_n=getattr(cfg.market_data, "coingecko_top_n", 100)
-        ),
-        cap=15.0, deadline=deadline,
+        make_coro=lambda: CoinGeckoTopCollector().collect(top_n=getattr(cfg.market_data, "coingecko_top_n", 100)),
+        cap=15.0,
+        deadline=deadline,
     )
     _schedule_collector(
-        tasks, "macro",
+        tasks,
+        "macro",
         enabled=True,
         configured=True,
         make_coro=lambda: MacroCollector().collect(symbols),
-        cap=25.0, deadline=deadline,
+        cap=25.0,
+        deadline=deadline,
     )
     _schedule_collector(
-        tasks, "coinalyze",
+        tasks,
+        "coinalyze",
         enabled=getattr(cfg.market_data, "enable_coinalyze", True),
         configured=bool(symbols),
         make_coro=lambda: CoinalyzeCollector().collect(symbols),
-        cap=12.0, deadline=deadline,
+        cap=12.0,
+        deadline=deadline,
     )
     _schedule_collector(
-        tasks, "options_structure",
+        tasks,
+        "options_structure",
         enabled=getattr(cfg.market_data, "enable_options_structure", True),
         configured=True,
         make_coro=lambda: OptionsStructureCollector().collect(),
-        cap=20.0, deadline=deadline,
+        cap=20.0,
+        deadline=deadline,
     )
-    wave_two = dict(zip(
-        (label for label, _ in tasks),
-        await asyncio.gather(*(coro for _, coro in tasks)),
-    ))
+    wave_two = dict(
+        zip(
+            (label for label, _ in tasks),
+            await asyncio.gather(*(coro for _, coro in tasks)),
+        )
+    )
 
     cg_result = wave_two.get("coingecko_top") or {}
     macro_result = wave_two.get("macro") or {}
@@ -4479,24 +4413,12 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     # Build all persistence payloads before opening SQLite's single writer slot.
     hyperliquid_result = wave_one.get("hyperliquid") or {}
     defillama_result = wave_one.get("defillama") or {}
-    hyperliquid_funding = [
-        row.model_dump() for row in hyperliquid_result.get("funding", [])
-    ]
-    hyperliquid_oi = [
-        row.model_dump() for row in hyperliquid_result.get("open_interest", [])
-    ]
-    onchain_rows = [
-        row.model_dump() for row in defillama_result.get("snapshots", [])
-    ]
-    coinalyze_oi = [
-        row.model_dump() for row in coinalyze_result.get("open_interest", [])
-    ]
-    coinalyze_liquidations = [
-        row.model_dump() for row in coinalyze_result.get("liquidations", [])
-    ]
-    options_snapshots = [
-        snap.model_dump() for snap in options_result.get("snapshots", [])
-    ]
+    hyperliquid_funding = [row.model_dump() for row in hyperliquid_result.get("funding", [])]
+    hyperliquid_oi = [row.model_dump() for row in hyperliquid_result.get("open_interest", [])]
+    onchain_rows = [row.model_dump() for row in defillama_result.get("snapshots", [])]
+    coinalyze_oi = [row.model_dump() for row in coinalyze_result.get("open_interest", [])]
+    coinalyze_liquidations = [row.model_dump() for row in coinalyze_result.get("liquidations", [])]
+    options_snapshots = [snap.model_dump() for snap in options_result.get("snapshots", [])]
     macro_row = macro_snapshot.model_dump() if macro_snapshot else None
     context_error_codes: list[str] = []
 
@@ -4515,9 +4437,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         if volume_result.get("top_symbols"):
             _persist_domain(
                 "volume_scanner",
-                lambda: repo.save_volume_ranking_snapshot(
-                    volume_result["top_symbols"], volume_result["observed_at"]
-                ),
+                lambda: repo.save_volume_ranking_snapshot(volume_result["top_symbols"], volume_result["observed_at"]),
             )
         if hyperliquid_funding or hyperliquid_oi:
             _persist_domain(
@@ -4551,10 +4471,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             _options_snapshots = options_snapshots
             _persist_domain(
                 "options_structure",
-                lambda: [
-                    repo.insert_options_structure_snapshot(row)
-                    for row in _options_snapshots
-                ],
+                lambda: [repo.insert_options_structure_snapshot(row) for row in _options_snapshots],
             )
 
     from aletheia.data.collector_health import classify_collector_result
@@ -4602,6 +4519,7 @@ def _get_observed_instruments(cfg):
     # Primary: active universe members
     try:
         from aletheia.storage import repositories as repo
+
         members = repo.get_active_universe_members(limit=cfg.universe.max_candidates)
         if members:
             result = []
@@ -4614,9 +4532,7 @@ def _get_observed_instruments(cfg):
                 if market_type == "usdt_futures":
                     market_type = MARKET_PERP
                 try:
-                    result.append(
-                        InstrumentId.from_parts(venue, member["symbol"], market_type)
-                    )
+                    result.append(InstrumentId.from_parts(venue, member["symbol"], market_type))
                 except ValueError:
                     continue
             if result:

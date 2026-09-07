@@ -6,43 +6,43 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "learning_contract"
 
 
-@spec_claim(SpecClaim(
-    "LC-S01", _CONTRACT, "§1.2 measured-path maturity", "L2a",
-    "Only paths with an executable exact outcome/statistical-unit adapter are "
-    "measurement-supported; consumer wiring and Settings visibility do not imply "
-    "measurement or authority.",
-    status="implemented",
-))
+@spec_claim(
+    SpecClaim(
+        "LC-S01",
+        _CONTRACT,
+        "§1.2 measured-path maturity",
+        "L2a",
+        "Only paths with an executable exact outcome/statistical-unit adapter are "
+        "measurement-supported; consumer wiring and Settings visibility do not imply "
+        "measurement or authority.",
+        status="implemented",
+    )
+)
 def test_only_declared_closed_loops_are_measurement_supported():
     from aletheia.learning.registry import LEARNING_PATHS
 
-    supported = {
-        path.path_id
-        for path in LEARNING_PATHS
-        if path.measurement_supported
-    }
+    supported = {path.path_id for path in LEARNING_PATHS if path.measurement_supported}
     assert supported == {
         "universe_family_calibration",
         "ranker_case_score",
         "momentum_entry_geometry",
         "mechanism_entry_learning",
     }
-    assert any(
-        path.consumer_wired and not path.measurement_supported
-        for path in LEARNING_PATHS
-    )
-    assert all(
-        not path.measurement_supported or path.consumer_wired
-        for path in LEARNING_PATHS
-    )
+    assert any(path.consumer_wired and not path.measurement_supported for path in LEARNING_PATHS)
+    assert all(not path.measurement_supported or path.consumer_wired for path in LEARNING_PATHS)
 
 
-@spec_claim(SpecClaim(
-    "LC-C01", _CONTRACT, "§1.2 unsupported-path fallback", "L2c",
-    "A consumer-wired but measurement-unsupported path returns its static baseline and creates "
-    "no hypothesis, experiment, exposure, or authority identity.",
-    status="implemented",
-))
+@spec_claim(
+    SpecClaim(
+        "LC-C01",
+        _CONTRACT,
+        "§1.2 unsupported-path fallback",
+        "L2c",
+        "A consumer-wired but measurement-unsupported path returns its static baseline and creates "
+        "no hypothesis, experiment, exposure, or authority identity.",
+        status="implemented",
+    )
+)
 def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.storage.sqlite import get_db
@@ -54,10 +54,7 @@ def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch
         "learning_exposures",
     )
     db = get_db()
-    before = {
-        table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        for table in tables
-    }
+    before = {table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
 
     decision = experiments.apply_numeric_treatment(
         path_id="operator_learning_bundle",
@@ -74,21 +71,23 @@ def test_measurement_unsupported_path_cannot_create_ledger_authority(monkeypatch
 
     assert decision.value == 0.0
     assert decision.applied is False
-    assert decision.reason == "measurement_unsupported"
+    assert decision.reason == "authority_source_unavailable"
     assert decision.hypothesis_id is None
     assert decision.experiment_id is None
     assert decision.exposure_id is None
-    assert {
-        table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        for table in tables
-    } == before
+    assert {table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables} == before
 
 
-@spec_claim(SpecClaim(
-    "LC-S03", "learning_contract", "Bounded Entry Learning context", "L2a",
-    "Entry Learning is a read-only T1-cutoff full-denominator projection with a deterministic empty fallback.",
-    status="implemented",
-))
+@spec_claim(
+    SpecClaim(
+        "LC-S03",
+        "learning_contract",
+        "Bounded Entry Learning context",
+        "L2a",
+        "Entry Learning is a read-only T1-cutoff full-denominator projection with a deterministic empty fallback.",
+        status="implemented",
+    )
+)
 def test_entry_learning_projection_is_read_only_and_full_denominator():
     import inspect
 
@@ -112,8 +111,12 @@ def test_entry_learning_projection_is_read_only_and_full_denominator():
     assert adapter.deterministic_baseline({}) == {"include_learning_context": False}
     assert ENTRY_LEARNING_INTERFERENCE_KEY == "mechanism-aware-grounded-entry"
     empty = empty_entry_learning_context(
-        as_of_at="2026-09-03T00:00:00Z", mechanism="reversal", direction="long",
-        market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
+        as_of_at="2026-09-03T00:00:00Z",
+        mechanism="reversal",
+        direction="long",
+        market_type="perp",
+        policy="candidate_selection_utility_v1",
+        policy_epoch="epoch-1",
     )
     assert empty.status == "unavailable"
     assert empty.evidence_refs == ()

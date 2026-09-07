@@ -39,7 +39,11 @@ logger = logging.getLogger("aletheia.stale_order_cleanup")
 # unresolved Order can sit in.  A local copy avoids importing a private name from
 # the trust-boundary module.
 _OPEN_LOCAL_STATES = (
-    "submitted", "pending", "partial", "partially_filled", "submission_unknown",
+    "submitted",
+    "pending",
+    "partial",
+    "partially_filled",
+    "submission_unknown",
     "materialization_missing",
 )
 
@@ -48,10 +52,16 @@ _OPEN_LOCAL_STATES = (
 # incomplete or unavailable evidence remains unresolved regardless of age.
 _STALE_ORDER_SOFT_HOURS = 48
 
-_UTA_ACCOUNT_MODES = frozenset({
-    "bitget_live_limited", "bitget_demo", "okx_live_limited", "okx_demo",
-    "binance_live_limited", "binance_testnet",
-})
+_UTA_ACCOUNT_MODES = frozenset(
+    {
+        "bitget_live_limited",
+        "bitget_demo",
+        "okx_live_limited",
+        "okx_demo",
+        "binance_live_limited",
+        "binance_testnet",
+    }
+)
 
 
 def _run_coro(coro):
@@ -96,23 +106,19 @@ def _has_real_economics(order: dict) -> bool:
     if float(filled["q"] or 0.0) > 0:
         return True
 
-    entry_pos = db.execute(
-        "SELECT status FROM positions WHERE order_id=? LIMIT 1", (oid,)
-    ).fetchone()
+    entry_pos = db.execute("SELECT status FROM positions WHERE order_id=? LIMIT 1", (oid,)).fetchone()
     if entry_pos is not None and entry_pos["status"] == "open":
         return True
 
     position_id = order.get("position_id")
     if position_id:
-        linked = db.execute(
-            "SELECT status FROM positions WHERE id=? LIMIT 1", (position_id,)
-        ).fetchone()
+        linked = db.execute("SELECT status FROM positions WHERE id=? LIMIT 1", (position_id,)).fetchone()
         if linked is not None and linked["status"] == "open":
             return True
 
-    # An in-flight close for a still-open Position belongs to reconciliation /
-    # tpsl_fill_check, never here.  A close marker on an ALREADY-closed Position is
-    # the stale-pending case handled explicitly below, so it is not "economics".
+    # An in-flight close for a still-open Position belongs to reconciliation,
+    # never stale cleanup. A close marker on an already-closed Position is the
+    # stale-pending case handled explicitly below, so it is not "economics".
     pending_close = db.execute(
         "SELECT status FROM positions WHERE pending_close_order_id=? LIMIT 1",
         (oid,),
@@ -129,11 +135,14 @@ def _stale_pending_close_position_id(order: dict) -> str | None:
     okx_demo (or any non-bitget) close Order that finished after its Position was
     already closed leaves pending_close_* set forever.
     """
-    row = get_db().execute(
-        "SELECT id FROM positions "
-        "WHERE pending_close_order_id=? AND status='closed' LIMIT 1",
-        (order["id"],),
-    ).fetchone()
+    row = (
+        get_db()
+        .execute(
+            "SELECT id FROM positions WHERE pending_close_order_id=? AND status='closed' LIMIT 1",
+            (order["id"],),
+        )
+        .fetchone()
+    )
     return str(row["id"]) if row is not None else None
 
 
@@ -149,24 +158,27 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
-        report = _run_coro(query_uta(
-            execution_mode,
-            "get_mass_status",
-            ReconciliationQuery(
-                scope=scope_from_local(
-                    str(order["symbol"]),
-                    str(order.get("market_type") or "spot"),
-                    start_at=order.get("created_at"),
+        report = _run_coro(
+            query_uta(
+                execution_mode,
+                "get_mass_status",
+                ReconciliationQuery(
+                    scope=scope_from_local(
+                        str(order["symbol"]),
+                        str(order.get("market_type") or "spot"),
+                        start_at=order.get("created_at"),
+                    ),
+                    client_order_ids=(client_id,) if client_id else (),
+                    venue_order_ids=(venue_id,) if venue_id else (),
                 ),
-                client_order_ids=(client_id,) if client_id else (),
-                venue_order_ids=(venue_id,) if venue_id else (),
-            ),
-            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
-        ))
+                expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
+            )
+        )
     except Exception as exc:
         logger.warning(
             "stale_order_cleanup: exact UTA evidence unavailable for %s (%s)",
-            execution_mode, type(exc).__name__,
+            execution_mode,
+            type(exc).__name__,
         )
         return None
     if report.completeness is not ReadCompleteness.COMPLETE:
@@ -227,9 +239,7 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
     changed = False
     with repo.transaction(immediate=True):
         db = get_db()
-        row = db.execute(
-            "SELECT * FROM orders WHERE id=? LIMIT 1", (oid,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM orders WHERE id=? LIMIT 1", (oid,)).fetchone()
         if row is None:
             return None
         fresh = dict(row)
@@ -256,32 +266,33 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
         # (outside any lock); we deliberately do not re-query the venue while
         # holding the writer slot. The local guards re-checked above are enough.
         db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
+            "UPDATE orders SET status='cancelled', error_reason=? WHERE id=? AND status=?",
             (reason_code, oid, fresh["status"]),
         )
         before = {"status": fresh["status"]}
         if cleared_position_id:
             before["pending_close_position_id"] = cleared_position_id
         after = {"status": "cancelled", "error_reason": reason_code}
-        repo.insert_audit_event(AuditEvent(
-            actor="system",
-            source="stale_order_cleanup",
-            event_type="order_stale_cancelled",
-            entity_type="order",
-            entity_id=oid,
-            before_state=json.dumps(before, sort_keys=True),
-            after_state=json.dumps(after, sort_keys=True),
-            message=(
-                f"Cancelled unresolved {fresh.get('execution_mode')} order after "
-                f"{reason_code}; no local Fill or open Position depended on it."
-                + (
-                    f" Cleared stale pending-close marker on closed position "
-                    f"{cleared_position_id}."
-                    if cleared_position_id else ""
-                )
-            ),
-        ))
+        repo.insert_audit_event(
+            AuditEvent(
+                actor="system",
+                source="stale_order_cleanup",
+                event_type="order_stale_cancelled",
+                entity_type="order",
+                entity_id=oid,
+                before_state=json.dumps(before, sort_keys=True),
+                after_state=json.dumps(after, sort_keys=True),
+                message=(
+                    f"Cancelled unresolved {fresh.get('execution_mode')} order after "
+                    f"{reason_code}; no local Fill or open Position depended on it."
+                    + (
+                        f" Cleared stale pending-close marker on closed position {cleared_position_id}."
+                        if cleared_position_id
+                        else ""
+                    )
+                ),
+            )
+        )
         changed = True
 
     if not changed:
@@ -292,25 +303,29 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
     # audit_events row already exists from insert_audit_event inside the tx, so
     # this only appends the hash-chained JSONL record (no duplicate DB row).
     try:
-        write_audit({
-            "actor": "system",
-            "source": "stale_order_cleanup",
-            "event_type": "order_stale_cancelled",
-            "entity_type": "order",
-            "entity_id": oid,
-            "reason": reason_code,
-            "before": {"status": order.get("status")},
-            "after": {"status": "cancelled", "error_reason": reason_code},
-            "cleared_pending_close_position_id": cleared_position_id,
-            "message": (
-                "Stale unresolved order cancelled by bookkeeping cleanup; no "
-                "local Fill or open Position depended on it."
-            ),
-        }, mirror_db=False)
+        write_audit(
+            {
+                "actor": "system",
+                "source": "stale_order_cleanup",
+                "event_type": "order_stale_cancelled",
+                "entity_type": "order",
+                "entity_id": oid,
+                "reason": reason_code,
+                "before": {"status": order.get("status")},
+                "after": {"status": "cancelled", "error_reason": reason_code},
+                "cleared_pending_close_position_id": cleared_position_id,
+                "message": (
+                    "Stale unresolved order cancelled by bookkeeping cleanup; no "
+                    "local Fill or open Position depended on it."
+                ),
+            },
+            mirror_db=False,
+        )
     except Exception as exc:
         logger.error(
             "stale_order_cleanup JSONL audit failed for %s (%s)",
-            oid, type(exc).__name__,
+            oid,
+            type(exc).__name__,
         )
     return reason_code
 
@@ -322,11 +337,14 @@ def cleanup_stale_orphan_orders() -> dict:
     the age thresholds, and re-verifies every guard under the writer slot).
     """
     placeholders = ",".join("?" for _ in _OPEN_LOCAL_STATES)
-    rows = get_db().execute(
-        f"SELECT * FROM orders WHERE status IN ({placeholders}) "
-        f"ORDER BY created_at ASC, rowid ASC",
-        _OPEN_LOCAL_STATES,
-    ).fetchall()
+    rows = (
+        get_db()
+        .execute(
+            f"SELECT * FROM orders WHERE status IN ({placeholders}) ORDER BY created_at ASC, rowid ASC",
+            _OPEN_LOCAL_STATES,
+        )
+        .fetchall()
+    )
 
     cancelled: list[str] = []
     cleared_pending: list[str] = []
@@ -341,7 +359,8 @@ def cleanup_stale_orphan_orders() -> dict:
             errors.append(f"decide_failed:{order.get('id')}")
             logger.warning(
                 "stale_order_cleanup: decide failed for order %s (%s)",
-                order.get("id"), type(exc).__name__,
+                order.get("id"),
+                type(exc).__name__,
             )
             continue
         if decision is None:
@@ -354,7 +373,8 @@ def cleanup_stale_orphan_orders() -> dict:
             errors.append(f"apply_failed:{order.get('id')}")
             logger.warning(
                 "stale_order_cleanup: apply failed for order %s (%s)",
-                order.get("id"), type(exc).__name__,
+                order.get("id"),
+                type(exc).__name__,
             )
             continue
         if applied is None:
@@ -367,7 +387,10 @@ def cleanup_stale_orphan_orders() -> dict:
     if cancelled:
         logger.info(
             "stale_order_cleanup: cancelled=%d (cleared_pending=%d) skipped=%d errors=%d",
-            len(cancelled), len(cleared_pending), skipped, len(errors),
+            len(cancelled),
+            len(cleared_pending),
+            skipped,
+            len(errors),
         )
     return {
         "cancelled": len(cancelled),

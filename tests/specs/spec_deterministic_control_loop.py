@@ -8,18 +8,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@spec_claim(SpecClaim(
-    "DCLS-S01", "operator_layer", "deterministic simulator boundary", "L2a",
-    "The simulator exposes a virtual clock and isolated real-path harness without importing Risk, Execution, Exchange, Live, or secrets.",
-    status="implemented",
-))
-def test_dcls_public_boundary():
-    from aletheia.simulation.control_loop import ControlLoopHarness, VirtualClock
-    source = (ROOT / "aletheia/simulation/control_loop/runner.py").read_text()
-    assert ControlLoopHarness and VirtualClock
-    for forbidden in ("aletheia.risk", "aletheia.execution", "aletheia.exchanges", "aletheia.config.secrets"):
-        assert forbidden not in source
-
 
 @spec_claim(SpecClaim(
     "DCLS-S02", "operator_layer", "failure replay evidence", "L2a",

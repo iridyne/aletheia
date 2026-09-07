@@ -15,8 +15,7 @@ def test_stale_scanner_cleanup_parses_iso_timestamps():
     now = datetime.now(timezone.utc)
     db = get_db()
     db.executemany(
-        "INSERT INTO universe_scanner_runs (id, started_at, status) "
-        "VALUES (?, ?, 'running')",
+        "INSERT INTO universe_scanner_runs (id, started_at, status) VALUES (?, ?, 'running')",
         (
             ("old-run", (now - timedelta(minutes=30)).isoformat()),
             ("fresh-run", (now - timedelta(minutes=1)).isoformat()),
@@ -28,14 +27,11 @@ def test_stale_scanner_cleanup_parses_iso_timestamps():
 
     rows = {
         row["id"]: dict(row)
-        for row in db.execute(
-            "SELECT id, status, completed_at FROM universe_scanner_runs"
-        ).fetchall()
+        for row in db.execute("SELECT id, status, completed_at FROM universe_scanner_runs").fetchall()
     }
     assert rows["old-run"]["status"] == "timed_out"
     assert rows["old-run"]["completed_at"]
     assert rows["fresh-run"]["status"] == "running"
-
 
 
 def test_gateway_startup_reconciles_interrupted_scanner_runs():
@@ -44,8 +40,7 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
 
     db = get_db()
     db.executemany(
-        "INSERT INTO universe_scanner_runs "
-        "(id, started_at, completed_at, status, errors) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO universe_scanner_runs (id, started_at, completed_at, status, errors) VALUES (?, ?, ?, ?, ?)",
         (
             ("interrupted-run", "2026-08-11T11:17:45+00:00", None, "running", "[]"),
             (
@@ -76,17 +71,13 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
 
     rows = {
         row["id"]: dict(row)
-        for row in db.execute(
-            "SELECT id, status, completed_at, errors FROM universe_scanner_runs"
-        ).fetchall()
+        for row in db.execute("SELECT id, status, completed_at, errors FROM universe_scanner_runs").fetchall()
     }
     assert recovered == ["interrupted-run", "subsecond-run"]
     assert rows["interrupted-run"]["status"] == "failed"
     assert rows["subsecond-run"]["status"] == "failed"
     assert rows["interrupted-run"]["completed_at"]
-    assert json.loads(rows["interrupted-run"]["errors"]) == [
-        "gateway_restart_interrupted"
-    ]
+    assert json.loads(rows["interrupted-run"]["errors"]) == ["gateway_restart_interrupted"]
     assert rows["current-run"]["status"] == "running"
     assert rows["same-second-current"]["status"] == "running"
     assert rows["completed-run"] == {
@@ -117,16 +108,13 @@ def test_gateway_startup_reconciles_interrupted_scanner_runs():
     from aletheia.files.jsonl import read_jsonl
 
     mirrored = [
-        event for event in read_jsonl("audit.jsonl")
-        if event.get("event_type") == "universe_scanner_run_interrupted"
+        event for event in read_jsonl("audit.jsonl") if event.get("event_type") == "universe_scanner_run_interrupted"
     ]
     assert {event["id"] for event in mirrored} == {
         "universe-scanner-restart:interrupted-run",
         "universe-scanner-restart:subsecond-run",
     }
-    assert all(
-        event["reason"] == "gateway_restart_interrupted" for event in mirrored
-    )
+    assert all(event["reason"] == "gateway_restart_interrupted" for event in mirrored)
 
 
 def test_scheduler_startup_recovery_is_not_repeated_for_current_process(monkeypatch):
@@ -158,10 +146,13 @@ def test_scheduler_startup_recovery_is_not_repeated_for_current_process(monkeypa
     db.commit()
 
     assert scheduler.init_scheduler() is None
-    assert db.execute(
-        "SELECT status FROM universe_scanner_runs WHERE id = ?",
-        ("current-process-run",),
-    ).fetchone()["status"] == "running"
+    assert (
+        db.execute(
+            "SELECT status FROM universe_scanner_runs WHERE id = ?",
+            ("current-process-run",),
+        ).fetchone()["status"]
+        == "running"
+    )
 
 
 def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypatch):
@@ -210,8 +201,7 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
 
     db = get_db()
     db.execute(
-        "INSERT INTO universe_scanner_runs (id, started_at, status, errors) "
-        "VALUES (?, ?, 'running', '[]')",
+        "INSERT INTO universe_scanner_runs (id, started_at, status, errors) VALUES (?, ?, 'running', '[]')",
         ("periodic-audit-retry", "2026-08-11T11:17:45+00:00"),
     )
     db.commit()
@@ -232,9 +222,7 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
     monkeypatch.setattr(scheduler, "_universe_scanner_startup_recovery_done", True)
     monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", False)
 
-    scheduler._universe_scanner_audit_mirror_done = (
-        scheduler._mirror_universe_scanner_recovery_audits()
-    )
+    scheduler._universe_scanner_audit_mirror_done = scheduler._mirror_universe_scanner_recovery_audits()
     assert scheduler._universe_scanner_audit_mirror_done is False
     monkeypatch.setattr(
         scheduler,
@@ -252,7 +240,8 @@ def test_scheduler_retries_failed_universe_recovery_audit_mirror(monkeypatch):
     assert len(append_attempts) == 2
 
     mirrored = [
-        event for event in jsonl.read_jsonl("audit.jsonl")
+        event
+        for event in jsonl.read_jsonl("audit.jsonl")
         if event.get("id") == "universe-scanner-restart:periodic-audit-retry"
     ]
     assert len(mirrored) == 1
@@ -273,15 +262,20 @@ def test_universe_audit_timeout_preserves_failure_telemetry(monkeypatch):
     monkeypatch.setattr(scheduler, "_universe_scanner_audit_mirror_done", False)
     monkeypatch.setitem(scheduler._consecutive_failures, job_id, 0)
 
-    assert scheduler._run_job_guarded(
-        job_id,
-        scheduler._run_universe_scanner_audit_reconciler,
-    ) is False
-    assert timeout_calls == [(
-        job_id,
-        scheduler._mirror_universe_scanner_recovery_audits,
-        scheduler._universe_audit_timeout_worker,
-    )]
+    assert (
+        scheduler._run_job_guarded(
+            job_id,
+            scheduler._run_universe_scanner_audit_reconciler,
+        )
+        is False
+    )
+    assert timeout_calls == [
+        (
+            job_id,
+            scheduler._mirror_universe_scanner_recovery_audits,
+            scheduler._universe_audit_timeout_worker,
+        )
+    ]
     assert scheduler._universe_scanner_audit_mirror_done is False
     assert scheduler._consecutive_failures[job_id] == 1
 
@@ -307,15 +301,19 @@ def test_funding_audit_reconciler_uses_audit_worker_and_records_backlog(
     )
 
     assert scheduler._run_funding_audit_reconciler() == {"pending": 2}
-    assert timeout_calls == [(
-        "funding_audit_reconciler",
-        reconcile_funding_audits,
-        scheduler._universe_audit_timeout_worker,
-    )]
-    assert failures == [(
-        "funding_audit_reconciler",
-        "audit_mirror_pending:2",
-    )]
+    assert timeout_calls == [
+        (
+            "funding_audit_reconciler",
+            reconcile_funding_audits,
+            scheduler._universe_audit_timeout_worker,
+        )
+    ]
+    assert failures == [
+        (
+            "funding_audit_reconciler",
+            "audit_mirror_pending:2",
+        )
+    ]
 
     def unavailable(*_args, **_kwargs):
         raise OSError("sink unavailable")
@@ -590,9 +588,7 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
         "_get_observed_instruments",
         lambda _cfg: [SimpleNamespace(symbol="BTC/USDT")],
     )
-    monkeypatch.setattr(
-        scheduler, "_get_derivative_symbols", lambda _instruments: ["BTC/USDT"]
-    )
+    monkeypatch.setattr(scheduler, "_get_derivative_symbols", lambda _instruments: ["BTC/USDT"])
     monkeypatch.setattr(
         scheduler,
         "_record_collector_health",
@@ -644,11 +640,7 @@ def test_async_timeout_worker_reuses_one_thread(monkeypatch):
             with pytest.raises(TimeoutError):
                 scheduler._run_async_with_timeout("market_data", slow())
 
-        workers = [
-            thread
-            for thread in threading.enumerate()
-            if thread.name == "aletheia-scheduler-async"
-        ]
+        workers = [thread for thread in threading.enumerate() if thread.name == "aletheia-scheduler-async"]
         metrics = scheduler.scheduler_timeout_metrics_snapshot()
         assert len(workers) == 1
         assert metrics["async_pending"] == 0
@@ -714,9 +706,7 @@ def test_async_timeout_worker_bounds_noncooperative_executor_shutdown(monkeypatc
         assert executor_threads and any(thread.is_alive() for thread in executor_threads)
     finally:
         release.set()
-        shutdown_threads = [
-            thread for thread in threading.enumerate() if "_do_shutdown" in thread.name
-        ]
+        shutdown_threads = [thread for thread in threading.enumerate() if "_do_shutdown" in thread.name]
         for thread in executor_threads + shutdown_threads:
             thread.join(timeout=1)
 
@@ -888,11 +878,7 @@ def test_sync_timeout_worker_reuses_one_daemon_thread():
     for _ in range(5):
         assert scheduler._run_sync_with_timeout("portfolio_snapshot", lambda: "ok") == "ok"
 
-    workers = [
-        thread
-        for thread in threading.enumerate()
-        if thread.name == "aletheia-scheduler-sync"
-    ]
+    workers = [thread for thread in threading.enumerate() if thread.name == "aletheia-scheduler-sync"]
     metrics = scheduler.scheduler_timeout_metrics_snapshot()
     assert len(workers) == 1
     assert workers[0].daemon is True
@@ -933,17 +919,17 @@ def test_blocked_universe_audit_worker_does_not_starve_shared_sync_jobs():
     blocked = scheduler._universe_audit_timeout_worker.submit(blocked_audit)
     try:
         assert started.wait(timeout=1)
-        assert scheduler._run_sync_with_timeout(
-            "portfolio_snapshot",
-            lambda: "shared-io-completed",
-        ) == "shared-io-completed"
+        assert (
+            scheduler._run_sync_with_timeout(
+                "portfolio_snapshot",
+                lambda: "shared-io-completed",
+            )
+            == "shared-io-completed"
+        )
         metrics = scheduler.scheduler_timeout_metrics_snapshot()
         assert metrics["universe_audit_sync_pending"] == 1
         assert metrics["sync_pending"] == 0
-        audit_workers = [
-            thread for thread in threading.enumerate()
-            if thread.name == "aletheia-universe-audit-sync"
-        ]
+        audit_workers = [thread for thread in threading.enumerate() if thread.name == "aletheia-universe-audit-sync"]
         assert len(audit_workers) == 1
         assert audit_workers[0].daemon is True
     finally:
@@ -1060,10 +1046,8 @@ def _patch_scheduler_result(
     elif job_id == "exchange_sync":
         from aletheia.portfolio import exchange_sync
 
-        monkeypatch.setattr(exchange_sync, "sync_all_exchanges", lambda: result)
-        monkeypatch.setattr(
-            scheduler, "_run_sync_with_timeout", lambda _job, fn: fn()
-        )
+        monkeypatch.setattr(exchange_sync, "sync_all_exchanges", lambda **_kwargs: result)
+        monkeypatch.setattr(scheduler, "_run_sync_with_timeout", lambda _job, fn: fn())
     elif job_id == "reconciliation":
         from aletheia.execution import reconciliation
 
@@ -1082,19 +1066,16 @@ def _patch_scheduler_result(
     elif job_id == "position_manager":
         from aletheia.portfolio import position_manager
 
-        monkeypatch.setattr(
-            position_manager, "evaluate_open_positions", lambda: result
-        )
+        monkeypatch.setattr(position_manager, "evaluate_open_positions", lambda: result)
     elif job_id in {"paper_funding_settler", "broker_funding_settler"}:
+
         async def produce():
             return result
 
         if job_id == "paper_funding_settler":
             from aletheia.portfolio import paper_account
 
-            monkeypatch.setattr(
-                paper_account, "settle_unsettled_paper_closes", produce
-            )
+            monkeypatch.setattr(paper_account, "settle_unsettled_paper_closes", produce)
         else:
             from aletheia.portfolio import broker_funding_settlement
 
@@ -1108,20 +1089,6 @@ def _patch_scheduler_result(
             "_run_async_with_timeout",
             lambda _job, awaitable: asyncio.run(awaitable),
         )
-    elif job_id == "tpsl_fill_check":
-        from aletheia.storage import repositories
-
-        def list_positions():
-            if isinstance(result, Exception):
-                raise result
-            return result
-
-        monkeypatch.setattr(
-            repositories, "list_all_open_positions", list_positions
-        )
-        monkeypatch.setattr(
-            scheduler, "_run_sync_with_timeout", lambda _job, fn: fn()
-        )
     else:  # pragma: no cover - test table is intentionally closed
         raise AssertionError(f"unsupported scheduler result job: {job_id}")
     return end_runs
@@ -1130,38 +1097,62 @@ def _patch_scheduler_result(
 @pytest.mark.parametrize(
     ("job_id", "result", "stable_error"),
     [
-        ("market_data", {"collected": ["BTC/USDT"], "errors": ["SOL down"]},
-         "market_data_reported_errors"),
-        ("price_feed", {"refreshed": 1, "symbols": ["BTC/USDT"], "errors": ["SOL down"]},
-         "price_feed_reported_errors"),
-        ("exchange_sync", None, "exchange_sync_total_failure"),
-        ("exchange_sync", {"accounts": [{"broker_id": "bitget"}], "errors": ["okx down"]},
-         "exchange_sync_reported_errors"),
-        ("reconciliation", {"checked": 1, "errors": ["private history down"]},
-         "reconciliation_reported_errors"),
-        ("position_manager", {"checked": 2, "closed": 1, "errors": [{"code": "close_failed"}]},
-         "position_manager_reported_errors"),
-        ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": ["adopt failed"]},
-         "position_reconcile_reported_errors"),
-        ("paper_funding_settler", {"settled": 1, "revived": 0, "still_pending": 1,
-                                    "errors": ["position-1: provider down"]},
-         "paper_funding_settler_reported_errors"),
-        ("broker_funding_settler", {"checked": 2, "settled": 1, "still_pending": 1,
-                                     "errors": ["position-2: TimeoutError"]},
-         "broker_funding_settler_reported_errors"),
-        ("broker_funding_settler",
-         {"checked": 0, "settled": 0, "still_pending": 0, "errors": [],
-          "terminal_total": 2, "retry_pending_total": 0},
-         "broker_funding_history_expired"),
-        ("broker_funding_settler",
-         {"checked": 0, "settled": 0, "still_pending": 1, "errors": [],
-          "terminal_total": 0, "retry_pending_total": 1},
-         "broker_funding_recovery_pending"),
+        ("market_data", {"collected": ["BTC/USDT"], "errors": ["SOL down"]}, "market_data_reported_errors"),
+        ("price_feed", {"refreshed": 1, "symbols": ["BTC/USDT"], "errors": ["SOL down"]}, "price_feed_reported_errors"),
+        ("exchange_sync", None, "exchange_sync_reported_errors"),
+        (
+            "exchange_sync",
+            {"accounts": [{"broker_id": "bitget"}], "errors": ["okx down"]},
+            "exchange_sync_reported_errors",
+        ),
+        ("reconciliation", {"checked": 1, "errors": ["private history down"]}, "reconciliation_reported_errors"),
+        (
+            "position_manager",
+            {"checked": 2, "closed": 1, "errors": [{"code": "close_failed"}]},
+            "position_manager_reported_errors",
+        ),
+        (
+            "position_reconcile",
+            {"adopted": [], "closed_orphans": [], "errors": ["adopt failed"]},
+            "position_reconcile_reported_errors",
+        ),
+        (
+            "paper_funding_settler",
+            {"settled": 1, "revived": 0, "still_pending": 1, "errors": ["position-1: provider down"]},
+            "paper_funding_settler_reported_errors",
+        ),
+        (
+            "broker_funding_settler",
+            {"checked": 2, "settled": 1, "still_pending": 1, "errors": ["position-2: TimeoutError"]},
+            "broker_funding_settler_reported_errors",
+        ),
+        (
+            "broker_funding_settler",
+            {
+                "checked": 0,
+                "settled": 0,
+                "still_pending": 0,
+                "errors": [],
+                "terminal_total": 2,
+                "retry_pending_total": 0,
+            },
+            "broker_funding_history_expired",
+        ),
+        (
+            "broker_funding_settler",
+            {
+                "checked": 0,
+                "settled": 0,
+                "still_pending": 1,
+                "errors": [],
+                "terminal_total": 0,
+                "retry_pending_total": 1,
+            },
+            "broker_funding_recovery_pending",
+        ),
     ],
 )
-def test_scheduler_result_failures_survive_outer_wrapper(
-    monkeypatch, job_id, result, stable_error
-):
+def test_scheduler_result_failures_survive_outer_wrapper(monkeypatch, job_id, result, stable_error):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
     from aletheia.storage import sqlite
@@ -1184,11 +1175,13 @@ def test_scheduler_result_failures_survive_outer_wrapper(
     assert scheduler._consecutive_failures[job_id] == 1
     assert failures == [(job_id, stable_error)]
     if job_id == "position_reconcile":
-        assert end_runs == [{
-            "status": "completed_with_errors",
-            "outputs": ["no action needed"],
-            "errors": ["adopt failed"],
-        }]
+        assert end_runs == [
+            {
+                "status": "completed_with_errors",
+                "outputs": ["no action needed"],
+                "errors": ["adopt failed"],
+            }
+        ]
 
 
 @pytest.mark.parametrize(
@@ -1200,15 +1193,11 @@ def test_scheduler_result_failures_survive_outer_wrapper(
         ("reconciliation", {"checked": 0, "errors": []}),
         ("position_manager", {"checked": 0, "closed": 0, "errors": []}),
         ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": []}),
-        ("paper_funding_settler", {"settled": 0, "revived": 0, "still_pending": 1,
-                                    "errors": []}),
-        ("broker_funding_settler", {"checked": 0, "settled": 0, "still_pending": 1,
-                                     "errors": []}),
+        ("paper_funding_settler", {"settled": 0, "revived": 0, "still_pending": 1, "errors": []}),
+        ("broker_funding_settler", {"checked": 0, "settled": 0, "still_pending": 1, "errors": []}),
     ],
 )
-def test_scheduler_clean_or_empty_result_resets_failure_health(
-    monkeypatch, job_id, result
-):
+def test_scheduler_clean_or_empty_result_resets_failure_health(monkeypatch, job_id, result):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
     from aletheia.storage import sqlite
@@ -1225,11 +1214,13 @@ def test_scheduler_clean_or_empty_result_resets_failure_health(
 
     assert scheduler._consecutive_failures[job_id] == 0
     if job_id == "position_reconcile":
-        assert end_runs == [{
-            "status": "completed",
-            "outputs": ["no action needed"],
-            "errors": None,
-        }]
+        assert end_runs == [
+            {
+                "status": "completed",
+                "outputs": ["no action needed"],
+                "errors": None,
+            }
+        ]
 
 
 @pytest.mark.parametrize(
@@ -1238,12 +1229,9 @@ def test_scheduler_clean_or_empty_result_resets_failure_health(
         ("price_feed", {"refreshed": 0, "symbols": [], "errors": ["feed down"]}),
         ("exchange_sync", None),
         ("reconciliation", {"checked": 1, "errors": ["history down"]}),
-        ("tpsl_fill_check", RuntimeError("private plan history down")),
     ],
 )
-def test_protective_essential_jobs_run_and_report_failure_while_paused(
-    monkeypatch, job_id, result
-):
+def test_protective_essential_jobs_run_and_report_failure_while_paused(monkeypatch, job_id, result):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
     from aletheia.storage import sqlite
@@ -1253,9 +1241,7 @@ def test_protective_essential_jobs_run_and_report_failure_while_paused(
     monkeypatch.setattr(control, "record_learning_job_failure", lambda *_args: None)
     monkeypatch.setattr(sqlite, "rollback_if_in_transaction", lambda: False)
     monkeypatch.setattr(sqlite, "close_db", lambda: None)
-    _patch_scheduler_result(
-        monkeypatch, scheduler, job_id, result, paused=True
-    )
+    _patch_scheduler_result(monkeypatch, scheduler, job_id, result, paused=True)
 
     scheduler._consecutive_failures.clear()
     scheduler._run_job_guarded(job_id, getattr(scheduler, f"_run_{job_id}"))
@@ -1324,9 +1310,7 @@ def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):
     async def _run():
         import time as _t
 
-        return await scheduler._bounded(
-            slow_to_cancel(), "test_slow_ccxt", 0.05, _t.monotonic() + 60.0
-        )
+        return await scheduler._bounded(slow_to_cancel(), "test_slow_ccxt", 0.05, _t.monotonic() + 60.0)
 
     start = time.monotonic()
     result = asyncio.run(_run())

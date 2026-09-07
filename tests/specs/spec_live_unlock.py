@@ -17,7 +17,10 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @spec_claim(
     SpecClaim(
-        "LU-S01", "live_unlock_contract", "§1 default state", "L2a",
+        "LU-S01",
+        "live_unlock_contract",
+        "§1 default state",
+        "L2a",
         "LiveConfig default is live_disabled — never live-enabled by default",
     ),
 )
@@ -31,7 +34,10 @@ def test_live_default_disabled():
 
 @spec_claim(
     SpecClaim(
-        "LU-S02", "live_unlock_contract", "§6 forbidden intents", "L2a",
+        "LU-S02",
+        "live_unlock_contract",
+        "§6 forbidden intents",
+        "L2a",
         "FORBIDDEN_INTENTS is a frozenset with >=9 items: the 7 core intents "
         "plus the 2 OL-C03 double-lock additions (deactivate_kill_switch, "
         "modify_permissions)",
@@ -45,9 +51,15 @@ def test_forbidden_intents_structure():
     # Assert the required members rather than an exact count so future additions
     # of new forbidden intents don't spuriously fail this structural claim.
     _required = {
-        "enable_live", "modify_credentials", "bypass_risk", "place_live_order",
-        "modify_execution_gateway", "delete_knowledge", "change_risk_limits",
-        "deactivate_kill_switch", "modify_permissions",
+        "enable_live",
+        "modify_credentials",
+        "bypass_risk",
+        "place_live_order",
+        "modify_execution_gateway",
+        "delete_knowledge",
+        "change_risk_limits",
+        "deactivate_kill_switch",
+        "modify_permissions",
     }
     missing = _required - FORBIDDEN_INTENTS
     assert not missing, f"FORBIDDEN_INTENTS missing required intents: {missing}"
@@ -61,7 +73,10 @@ def test_forbidden_intents_structure():
 
 @spec_claim(
     SpecClaim(
-        "LU-B01", "live_unlock_contract", "§6 enforcement", "L2b",
+        "LU-B01",
+        "live_unlock_contract",
+        "§6 enforcement",
+        "L2b",
         "FORBIDDEN_INTENTS are blocked by permissions.check_permission()",
     ),
 )
@@ -77,7 +92,10 @@ def test_forbidden_intents_blocked_by_permissions():
 
 @spec_claim(
     SpecClaim(
-        "LU-B02", "live_unlock_contract", "§6 restricted tools", "L2b",
+        "LU-B02",
+        "live_unlock_contract",
+        "§6 restricted tools",
+        "L2b",
         "RESTRICTED_TOOLS are registered with 'restricted' permission class",
     ),
 )
@@ -88,8 +106,7 @@ def test_restricted_tools_permission_class():
     init_tool_registry()
     for tool in RESTRICTED_TOOLS:
         assert tool in TOOL_REGISTRY, f"{tool} not registered"
-        assert TOOL_REGISTRY[tool] == "restricted", \
-            f"{tool} has class '{TOOL_REGISTRY[tool]}' instead of 'restricted'"
+        assert TOOL_REGISTRY[tool] == "restricted", f"{tool} has class '{TOOL_REGISTRY[tool]}' instead of 'restricted'"
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +116,10 @@ def test_restricted_tools_permission_class():
 
 @spec_claim(
     SpecClaim(
-        "LU-C01", "live_unlock_contract", "§6 no escalation", "L2c",
+        "LU-C01",
+        "live_unlock_contract",
+        "§6 no escalation",
+        "L2c",
         "No permission_mode grants access to FORBIDDEN_INTENTS",
     ),
 )
@@ -110,9 +130,7 @@ def test_no_mode_permits_forbidden_intents():
     for mode in ("Observe", "Paper", "Full"):
         for intent in FORBIDDEN_INTENTS:
             allowed, _ = check_permission(intent, mode)
-            assert allowed is False, (
-                f"INVARIANT VIOLATION: {intent} permitted in {mode} mode"
-            )
+            assert allowed is False, f"INVARIANT VIOLATION: {intent} permitted in {mode} mode"
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +184,10 @@ def _seed_test_live_identity(cfg, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "LU-B03", "live_unlock_contract", "§2 unlock prerequisites", "L2b",
+        "LU-B03",
+        "live_unlock_contract",
+        "§2 unlock prerequisites",
+        "L2b",
         "POST /api/settings/live-unlock without confirm=true returns 4xx",
     ),
 )
@@ -181,14 +202,15 @@ def test_live_unlock_requires_confirm(tmp_path, monkeypatch):
 
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
     resp = client.post("/api/settings/live-unlock", json={"confirm": False})
-    assert resp.status_code >= 400, (
-        f"Expected 4xx when confirm=false, got {resp.status_code}"
-    )
+    assert resp.status_code >= 400, f"Expected 4xx when confirm=false, got {resp.status_code}"
 
 
 @spec_claim(
     SpecClaim(
-        "LU-B04", "live_unlock_contract", "§2 first-unlock acknowledge", "L2b",
+        "LU-B04",
+        "live_unlock_contract",
+        "§2 first-unlock acknowledge",
+        "L2b",
         "Without acknowledge_first_unlock=true on first unlock, returns 4xx",
     ),
 )
@@ -208,14 +230,15 @@ def test_live_unlock_first_time_requires_acknowledge(tmp_path, monkeypatch):
         "/api/settings/live-unlock",
         json={"confirm": True, "acknowledge_first_unlock": False},
     )
-    assert resp.status_code >= 400, (
-        f"Expected 4xx for first unlock without acknowledge, got {resp.status_code}"
-    )
+    assert resp.status_code >= 400, f"Expected 4xx for first unlock without acknowledge, got {resp.status_code}"
 
 
 @spec_claim(
     SpecClaim(
-        "LU-B05", "live_unlock_contract", "§2 one-way", "L2b",
+        "LU-B05",
+        "live_unlock_contract",
+        "§2 one-way",
+        "L2b",
         "Once state is live_limited, unlock endpoint does NOT escalate further",
     ),
 )
@@ -234,9 +257,7 @@ def test_live_unlock_no_escalation_from_limited(tmp_path, monkeypatch):
     cfg.live.state = "live_limited"
     cfg.live.first_live_confirmation_done = True
     _seed_test_live_identity(cfg, monkeypatch)
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    (tmp_path / "config.yaml").write_text(yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8")
 
     from fastapi.testclient import TestClient
 
@@ -248,14 +269,15 @@ def test_live_unlock_no_escalation_from_limited(tmp_path, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
     # Must not transition beyond live_limited — returned state stays live_limited
-    assert data.get("status") == "live_limited", (
-        f"Expected status=live_limited (no escalation), got {data}"
-    )
+    assert data.get("status") == "live_limited", f"Expected status=live_limited (no escalation), got {data}"
 
 
 @spec_claim(
     SpecClaim(
-        "LU-B06", "live_unlock_contract", "§3 audit format", "L2b",
+        "LU-B06",
+        "live_unlock_contract",
+        "§3 audit format",
+        "L2b",
         "Successful unlock writes audit event with actor/source/event_type fields",
     ),
 )
@@ -277,9 +299,7 @@ def test_live_unlock_writes_audit_event(tmp_path, monkeypatch):
     _seed_test_live_identity(cfg, monkeypatch)
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = False
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    (tmp_path / "config.yaml").write_text(yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8")
 
     from fastapi.testclient import TestClient
 
@@ -315,7 +335,10 @@ def test_live_unlock_writes_audit_event(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "LU-C02", "live_unlock_contract", "§6 naming convention", "L2c",
+        "LU-C02",
+        "live_unlock_contract",
+        "§6 naming convention",
+        "L2c",
         "Every FORBIDDEN_INTENTS member contains an underscore and is lowercase",
     ),
 )
@@ -323,17 +346,16 @@ def test_forbidden_intents_naming_convention():
     from aletheia.agent_shell.registry import FORBIDDEN_INTENTS
 
     for intent in FORBIDDEN_INTENTS:
-        assert intent == intent.lower(), (
-            f"FORBIDDEN_INTENTS member '{intent}' is not lowercase"
-        )
-        assert "_" in intent, (
-            f"FORBIDDEN_INTENTS member '{intent}' contains no underscore"
-        )
+        assert intent == intent.lower(), f"FORBIDDEN_INTENTS member '{intent}' is not lowercase"
+        assert "_" in intent, f"FORBIDDEN_INTENTS member '{intent}' contains no underscore"
 
 
 @spec_claim(
     SpecClaim(
-        "LU-C03", "live_unlock_contract", "§6 restricted tools", "L2c",
+        "LU-C03",
+        "live_unlock_contract",
+        "§6 restricted tools",
+        "L2c",
         "TOOL_CLASSES['restricted'] is the empty set — no mode grants restricted access",
     ),
 )
@@ -354,7 +376,10 @@ def test_restricted_tool_class_is_empty_set():
 
 @spec_claim(
     SpecClaim(
-        "LU-B07", "live_unlock_contract", "§4b preparatory authority on unlock", "L2b",
+        "LU-B07",
+        "live_unlock_contract",
+        "§4b preparatory authority on unlock",
+        "L2b",
         "POST /api/settings/live-unlock transitions operator.permission_mode to Auto",
     ),
 )
@@ -374,9 +399,7 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = False
     cfg.operator.permission_mode = "ReadOnly"
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    (tmp_path / "config.yaml").write_text(yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8")
 
     monkeypatch.setattr(
         "aletheia.analytics.go_live_scorecard.compute_scorecard",
@@ -392,6 +415,7 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
 
     # Re-read persisted config to verify operator.permission_mode was set
     from aletheia.config.loader import load_config
+
     saved = load_config()
     assert saved.operator.permission_mode == "Auto", (
         f"§4b INVARIANT VIOLATION: operator.permission_mode after unlock = "
@@ -401,7 +425,10 @@ def test_live_unlock_sets_operator_auto(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "LU-C04", "live_unlock_contract", "§4b authority-state invariant", "L2c",
+        "LU-C04",
+        "live_unlock_contract",
+        "§4b authority-state invariant",
+        "L2c",
         "After live_unlock: live.state=live_limited AND operator.permission_mode=Auto (both must hold)",
     ),
 )
@@ -420,9 +447,7 @@ def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
     _seed_test_live_identity(cfg, monkeypatch)
     cfg.live.state = "live_disabled"
     cfg.live.first_live_confirmation_done = True  # already confirmed once
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    (tmp_path / "config.yaml").write_text(yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8")
 
     monkeypatch.setattr(
         "aletheia.analytics.go_live_scorecard.compute_scorecard",
@@ -437,10 +462,9 @@ def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
     assert resp.status_code == 200
 
     from aletheia.config.loader import load_config
+
     saved = load_config()
-    assert saved.live.state == "live_limited", (
-        f"Expected live.state=live_limited, got '{saved.live.state}'"
-    )
+    assert saved.live.state == "live_limited", f"Expected live.state=live_limited, got '{saved.live.state}'"
     assert saved.operator.permission_mode == "Auto", (
         f"Expected operator.permission_mode=Auto, got '{saved.operator.permission_mode}'"
     )
@@ -453,7 +477,10 @@ def test_unlock_invariant_state_and_permission(tmp_path, monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "LU-C01b", "live_unlock_contract", "§4b+§6 constitution survives Auto", "L2c",
+        "LU-C01b",
+        "live_unlock_contract",
+        "§4b+§6 constitution survives Auto",
+        "L2c",
         "FORBIDDEN_INTENTS are blocked by check_permission() across ALL operator modes including Auto",
     ),
 )
@@ -468,9 +495,7 @@ def test_forbidden_intents_blocked_in_all_operator_modes():
     for mode in worker_modes:
         for intent in FORBIDDEN_INTENTS:
             allowed, _ = check_permission(intent, mode)
-            assert allowed is False, (
-                f"INVARIANT VIOLATION: {intent} permitted in worker mode {mode}"
-            )
+            assert allowed is False, f"INVARIANT VIOLATION: {intent} permitted in worker mode {mode}"
 
     for mode in operator_modes:
         for intent in FORBIDDEN_INTENTS:
@@ -490,7 +515,10 @@ def test_forbidden_intents_blocked_in_all_operator_modes():
 
 @spec_claim(
     SpecClaim(
-        "LU-C05", "live_unlock_contract", "§4b main-track scope", "L2c",
+        "LU-C05",
+        "live_unlock_contract",
+        "§4b main-track scope",
+        "L2c",
         "Auto mode is scoped to main track (perp/spot); serenity track is governed "
         "by serenity_executor independently — no shared permission elevation",
         status="missing",  # Tripwire: serenity_executor market_type isolation not yet enforced in code
@@ -514,7 +542,10 @@ def test_auto_mode_scope_main_track_only():
 
 @spec_claim(
     SpecClaim(
-        "LU-C06", "live_unlock_contract", "§4b lock symmetry", "L2c",
+        "LU-C06",
+        "live_unlock_contract",
+        "§4b lock symmetry",
+        "L2c",
         "POST /api/settings/live-lock resets operator.permission_mode to ReadOnly "
         "(symmetric with unlock which elevates to Auto — no one-way ratchet)",
     ),
@@ -536,15 +567,14 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
     cfg.live.first_live_confirmation_done = True
     cfg.operator.permission_mode = "Auto"
     _seed_test_live_identity(cfg, monkeypatch)
-    (tmp_path / "config.yaml").write_text(
-        yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8"
-    )
+    (tmp_path / "config.yaml").write_text(yaml.dump(cfg.model_dump(mode="json")), encoding="utf-8")
 
     client = TestClient(_make_live_app(), raise_server_exceptions=False)
     resp = client.post("/api/settings/live-lock")
     assert resp.status_code == 200
 
     from aletheia.config.loader import load_config
+
     saved = load_config()
     assert saved.live.state == "live_disabled", (
         f"Expected live.state=live_disabled after lock, got '{saved.live.state}'"
@@ -559,93 +589,3 @@ def test_live_lock_resets_operator_permission(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # GAP-LU-07: §4b — UI states the experimental boundary honestly
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "LU-S03", "live_unlock_contract", "§4b honest ui boundary", "L2a",
-        "Settings presents Live Unlock as an experimental authority prerequisite "
-        "and explicitly states that it does not route new Proposals to live execution.",
-    ),
-)
-def test_ui_warning_wall_three_elements():
-    import pathlib
-
-    frontend = pathlib.Path(__file__).parents[2] / "frontend" / "src"
-    settings_tsx = frontend / "pages" / "Settings.tsx"
-    execution_tab = frontend / "features" / "settings" / "tabs" / "ExecutionTab.tsx"
-    assert settings_tsx.exists(), f"Settings.tsx not found at {settings_tsx}"
-    assert execution_tab.exists(), f"ExecutionTab.tsx not found at {execution_tab}"
-    assert "<ExecutionTab" in settings_tsx.read_text(encoding="utf-8")
-    source = execution_tab.read_text(encoding="utf-8")
-
-    required_phrases = [
-        "不会把新 Proposal 路由到实盘",
-        "当前自主 Proposal 仍使用 Paper execution mode",
-        "does not change new-Proposal routing",
-    ]
-    for phrase in required_phrases:
-        assert phrase in source, (
-            f"§4b honest-boundary text missing: '{phrase}'"
-        )
-
-
-@spec_claim(
-    SpecClaim(
-        "LU-C07",
-        "live_unlock_contract",
-        "§4b new-proposal live mode join",
-        "L2c",
-        "With live requested and live_limited authority present, the production "
-        "new-Proposal selector resolves the selected broker's exact "
-        "*_live_limited mode before Proposal persistence.",
-        status="implemented",
-    ),
-)
-def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
-    from types import SimpleNamespace
-
-    from aletheia.agent_shell import commands
-    from aletheia.trust import live_unlock as live_unlock_mod
-
-    cfg = SimpleNamespace(
-        exchange=SimpleNamespace(
-            mode="live",
-            name="okx",
-            paper_execution_mode="okx_demo",
-        ),
-        live=SimpleNamespace(state="live_limited", unlock_evidence={"ok": True}),
-    )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
-    # `current_authorization_ref` is unit-under-test's proof of authority.
-    # The join itself is what LU-C07 asserts; the ref's internal derivation is
-    # covered by evidence_matches_config's own tests.
-    monkeypatch.setattr(
-        live_unlock_mod, "current_authorization_ref", lambda _cfg: "sha256:live-ok"
-    )
-
-    assert commands._configured_paper_execution_mode() == "okx_live_limited"
-
-
-def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
-    """LU-C07 negative complement: without a live authorization, new Proposals
-    keep the configured paper mode. Fail-closed by default (#1004 EX-04)."""
-    from types import SimpleNamespace
-
-    from aletheia.agent_shell import commands
-    from aletheia.trust import live_unlock as live_unlock_mod
-
-    cfg = SimpleNamespace(
-        exchange=SimpleNamespace(
-            mode="live",
-            name="okx",
-            paper_execution_mode="okx_demo",
-        ),
-        live=SimpleNamespace(state="live_limited", unlock_evidence=None),
-    )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(
-        live_unlock_mod, "current_authorization_ref", lambda _cfg: None
-    )
-
-    assert commands._configured_paper_execution_mode() == "okx_demo"

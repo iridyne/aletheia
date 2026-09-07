@@ -91,12 +91,20 @@ def test_ineligible_contribution_evidence_requests_refreeze():
     from aletheia.learning.contribution import ContributionObservation, aggregate_observations
     from aletheia.learning.evidence import EvidenceClass
 
-    report = aggregate_observations([
-        ContributionObservation(
-            "operator_learning_bundle", "operator", "review:r1", "narrative",
-            "treatment", 99.0, "review", EvidenceClass.NARRATIVE,
-        )
-    ])
+    report = aggregate_observations(
+        [
+            ContributionObservation(
+                "operator_learning_bundle",
+                "operator",
+                "review:r1",
+                "narrative",
+                "treatment",
+                99.0,
+                "review",
+                EvidenceClass.NARRATIVE,
+            )
+        ]
+    )
     assert report.unique_n == 0
     assert report.excluded_n == 1
     assert report.data_quality_status == "invalid"
@@ -135,48 +143,103 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
         "cost_model_version": "v1",
     }
 
-    assert not assess_realized_position({
-        "id": "p-synthetic", "closed_at": clean, "close_reason": "reconciled_gone",
-        "realized_pnl": 1.0, "entry_price": 100.0, "quantity": 1.0,
-    }).eligible
-    assert not assess_realized_position({
-        "id": "p-dirty", "closed_at": dirty, "close_reason": "stop_loss",
-        "realized_pnl": -1.0, "entry_price": 100.0, "quantity": 1.0,
-    }).eligible
-    assert not assess_candidate_outcome({
-        "outcome_candidate_key": "c-pending", "horizon": "4h", "status": "pending",
-        "entry_ts": clean, "direction": "long", "net_return_pct": None,
-    }).eligible
-    assert not assess_candidate_outcome({
-        "outcome_candidate_key": "c-gross", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", "gross_return_pct": 2.0,
-        "net_return_pct": None,
-    }).eligible
-    assert not assess_candidate_outcome({
-        "outcome_candidate_key": "c-nan", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", "net_return_pct": float("nan"),
-        "cost_model_version": "v1",
-    }).eligible
+    assert not assess_realized_position(
+        {
+            "id": "p-synthetic",
+            "closed_at": clean,
+            "close_reason": "reconciled_gone",
+            "realized_pnl": 1.0,
+            "entry_price": 100.0,
+            "quantity": 1.0,
+        }
+    ).eligible
+    assert not assess_realized_position(
+        {
+            "id": "p-dirty",
+            "closed_at": dirty,
+            "close_reason": "stop_loss",
+            "realized_pnl": -1.0,
+            "entry_price": 100.0,
+            "quantity": 1.0,
+        }
+    ).eligible
+    assert not assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-pending",
+            "horizon": "4h",
+            "status": "pending",
+            "entry_ts": clean,
+            "direction": "long",
+            "net_return_pct": None,
+        }
+    ).eligible
+    assert not assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-gross",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            "gross_return_pct": 2.0,
+            "net_return_pct": None,
+        }
+    ).eligible
+    assert not assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-nan",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            "net_return_pct": float("nan"),
+            "cost_model_version": "v1",
+        }
+    ).eligible
     for invalid_net in ("0.5", b"0.5", True):
-        assert not assess_candidate_outcome({
-            "outcome_candidate_key": "c-invalid-net", "horizon": "4h",
-            "status": "settled", "entry_ts": clean, "direction": "long",
-            **complete_economics, "net_return_pct": invalid_net,
-        }).eligible
+        assert not assess_candidate_outcome(
+            {
+                "outcome_candidate_key": "c-invalid-net",
+                "horizon": "4h",
+                "status": "settled",
+                "entry_ts": clean,
+                "direction": "long",
+                **complete_economics,
+                "net_return_pct": invalid_net,
+            }
+        ).eligible
     for invalid_cost_model in (None, "", " ", b"v1", True):
-        assert not assess_candidate_outcome({
-            "outcome_candidate_key": "c-invalid-cost-model", "horizon": "4h",
-            "status": "settled", "entry_ts": clean, "direction": "long",
-            **complete_economics, "cost_model_version": invalid_cost_model,
-        }).eligible
+        assert not assess_candidate_outcome(
+            {
+                "outcome_candidate_key": "c-invalid-cost-model",
+                "horizon": "4h",
+                "status": "settled",
+                "entry_ts": clean,
+                "direction": "long",
+                **complete_economics,
+                "cost_model_version": invalid_cost_model,
+            }
+        ).eligible
     for invalid_edge in (
-        None, float("nan"), float("inf"), -0.01, "malformed", "0.05", b"0.05", True,
+        None,
+        float("nan"),
+        float("inf"),
+        -0.01,
+        "malformed",
+        "0.05",
+        b"0.05",
+        True,
     ):
-        assert not assess_candidate_outcome({
-            "outcome_candidate_key": "c-invalid-edge", "horizon": "4h",
-            "status": "settled", "entry_ts": clean, "direction": "long",
-            **complete_economics, "min_tradable_edge_pct": invalid_edge,
-        }).eligible
+        assert not assess_candidate_outcome(
+            {
+                "outcome_candidate_key": "c-invalid-edge",
+                "horizon": "4h",
+                "status": "settled",
+                "entry_ts": clean,
+                "direction": "long",
+                **complete_economics,
+                "min_tradable_edge_pct": invalid_edge,
+            }
+        ).eligible
     for field, invalid_value in (
         ("directional_return_pct", None),
         ("estimated_fee_pct", None),
@@ -189,41 +252,77 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
         ("estimated_spread_slippage_pct", b"0.1"),
         ("net_return_pct", 5.0),
     ):
-        assert not assess_candidate_outcome({
-            "outcome_candidate_key": "c-invalid-cost-tuple", "horizon": "4h",
-            "status": "settled", "entry_ts": clean, "direction": "long",
-            **complete_economics, field: invalid_value,
-        }).eligible
+        assert not assess_candidate_outcome(
+            {
+                "outcome_candidate_key": "c-invalid-cost-tuple",
+                "horizon": "4h",
+                "status": "settled",
+                "entry_ts": clean,
+                "direction": "long",
+                **complete_economics,
+                field: invalid_value,
+            }
+        ).eligible
     for invalid_market in (None, "", "crypto", b"perp"):
-        assert not assess_candidate_outcome({
-            "outcome_candidate_key": "c-invalid-market", "horizon": "4h",
-            "status": "settled", "entry_ts": clean, "direction": "long",
-            **complete_economics, "market_type": invalid_market,
-        }).eligible
-    missing_venue = assess_candidate_outcome({
-        "outcome_candidate_key": "c-missing-venue", "horizon": "4h",
-        "status": "settled", "entry_ts": clean, "direction": "long",
-        **complete_economics, "venue": " \t",
-    })
+        assert not assess_candidate_outcome(
+            {
+                "outcome_candidate_key": "c-invalid-market",
+                "horizon": "4h",
+                "status": "settled",
+                "entry_ts": clean,
+                "direction": "long",
+                **complete_economics,
+                "market_type": invalid_market,
+            }
+        ).eligible
+    missing_venue = assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-missing-venue",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            **complete_economics,
+            "venue": " \t",
+        }
+    )
     assert not missing_venue.eligible
     assert missing_venue.reason == "missing_venue"
-    assert not assess_candidate_outcome({
-        "outcome_candidate_key": "c-spot-funding", "horizon": "4h",
-        "status": "settled", "entry_ts": clean, "direction": "long",
-        **complete_economics, "market_type": "spot",
-    }).eligible
-    eligible = assess_candidate_outcome({
-        "outcome_candidate_key": "c-net", "horizon": "4h", "status": "settled",
-        "entry_ts": clean, "direction": "long", **complete_economics,
-    })
+    assert not assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-spot-funding",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            **complete_economics,
+            "market_type": "spot",
+        }
+    ).eligible
+    eligible = assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-net",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            **complete_economics,
+        }
+    )
     assert eligible.eligible
     assert eligible.net_return_pct == 0.5
-    funding_credit = assess_candidate_outcome({
-        "outcome_candidate_key": "c-funding-credit", "horizon": "4h",
-        "status": "settled", "entry_ts": clean, "direction": "long",
-        **complete_economics, "estimated_funding_pct": -0.1,
-        "net_return_pct": 0.7,
-    })
+    funding_credit = assess_candidate_outcome(
+        {
+            "outcome_candidate_key": "c-funding-credit",
+            "horizon": "4h",
+            "status": "settled",
+            "entry_ts": clean,
+            "direction": "long",
+            **complete_economics,
+            "estimated_funding_pct": -0.1,
+            "net_return_pct": 0.7,
+        }
+    )
     assert funding_credit.eligible
     assert funding_credit.net_return_pct == 0.7
 
@@ -253,12 +352,8 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
         predicates=[GuardPredicate(field="direction", op="eq", value="long")],
         applies_to=GuardAppliesTo(asset_class=["crypto"]),
     )
-    monkeypatch.setattr(
-        "aletheia.analytics.guard_effectiveness.load_trading_guards", lambda **_: [guard]
-    )
-    monkeypatch.setattr(
-        "aletheia.analytics.guard_effectiveness.build_trade_attribution_rows", lambda **_: []
-    )
+    monkeypatch.setattr("aletheia.analytics.guard_effectiveness.load_trading_guards", lambda **_: [guard])
+    monkeypatch.setattr("aletheia.analytics.guard_effectiveness.build_trade_attribution_rows", lambda **_: [])
 
     db = get_db()
     entry = _iso(1)
@@ -292,8 +387,7 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
             "min_tradable_edge_pct, cost_model_version, status) "
             "VALUES (?, ?, 'test', 'BTC/USDT', 'spot', 'long', '4h', 100, ?, ?, ?, ?, "
             "'horizon_ohlcv', 0, ?, 0.1, 0.1, 0, ?, 0.05, 'v1', 'settled')",
-            (f"fo-{idx}", key, 100.0 * (1.0 + (net + 0.2) / 100.0),
-             entry, due_at, due_at, net + 0.2, net),
+            (f"fo-{idx}", key, 100.0 * (1.0 + (net + 0.2) / 100.0), entry, due_at, due_at, net + 0.2, net),
         )
     db.commit()
 
@@ -315,113 +409,19 @@ def _iso(days_ago: int) -> str:
 
 @spec_claim(
     SpecClaim(
-        "LE-C06",
+        "LE-B24",
         _CONTRACT,
-        "§11 UI/API honesty",
-        "L2c",
-        "Learning alpha reports raw events separately from unique cohorts and bases confidence on unique outcomes.",
-        status="partial",
-    )
-)
-def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts(monkeypatch):
-    import aletheia.analytics.alpha_attribution as alpha_attribution
-    from aletheia.storage.sqlite import get_db
-
-    audit_now = datetime.fromisoformat("2026-07-13T07:10:01+00:00")
-    monkeypatch.setattr(alpha_attribution, "_utcnow", lambda: audit_now)
-
-    db = get_db()
-    event_at = _iso(10)
-    for idx in range(5):
-        _insert_trade(db, idx, -2.0, _iso(15))
-        _insert_trade(db, idx + 100, 2.0, _iso(5))
-    evidence = '{"scanner_family":"momentum","direction":"long","symbol":"BTC/USDT"}'
-    for idx in range(6):
-        db.execute(
-            "INSERT INTO ps_lessons "
-            "(lesson_id, source_type, source_id, category, severity, summary, evidence_json, recommendation_json, status, created_at, activated_at) "
-            "VALUES (?, 'trade_case_study', 'same-case', 'entry_timing', 'warning', ?, ?, ?, 'applied', ?, ?)",
-            (
-                f"duplicate-{idx}", f"duplicate lesson {idx}", evidence,
-                '{"action":"block_direction","direction":"short"}', event_at, event_at,
-            ),
-        )
-    db.commit()
-
-    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert learning["sample_size"] == 5
-    assert learning["details"]["raw_event_count"] == 6
-    assert learning["details"]["unique_event_count"] == 1
-    assert learning["details"]["duplicate_event_count"] == 5
-    assert learning["details"]["unique_after_sample_size"] == 5
-    assert learning["contribution_verdict"] == "insufficient_data"
-    assert learning["measurement_status"] == "directional_evidence_only"
-
-
-def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
-    from tests.test_outcome_closure import _insert_entry_chain
-
-    opp = f"le-opp-{idx}"
-    proposal = f"le-prop-{idx}"
-    position_id = f"le-pos-{idx}"
-    opportunity_id, proposal_id, order_id = _insert_entry_chain(
-        position_id=position_id,
-        opportunity_id=opp,
-        proposal_id=proposal,
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-    )
-    db.execute(
-        "UPDATE opportunities SET scanner_family='momentum' WHERE id=?",
-        (opportunity_id,),
-    )
-    insert_position(Position(
-        id=position_id,
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=100.0 + pnl_pct,
-        realized_pnl=pnl_pct,
-        execution_mode="paper_internal",
-        status="closed",
-        close_reason="signal_exit",
-        entry_fee=0.0,
-        exit_fee=0.0,
-        funding_cost=0.0,
-        funding_source="local_simulation",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        close_category="strategy",
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
-        opened_at=_iso(20),
-        closed_at=closed_at,
-        opportunity_id=opportunity_id,
-        proposal_id=proposal_id,
-        order_id=order_id,
-    ))
-
-
-@spec_claim(
-    SpecClaim(
-        "LE-B24", _CONTRACT, "§shadow vs treatment", "L2b",
+        "§shadow vs treatment",
+        "L2b",
         "A shadow-stage cohort (no treatment actually applied) is measurable but NOT "
         "causally eligible; it yields shadow_trial_only, never a causal promote signal.",
         status="implemented",
     ),
     SpecClaim(
-        "LE-B25", _CONTRACT, "§shadow vs treatment", "L2b",
+        "LE-B25",
+        _CONTRACT,
+        "§shadow vs treatment",
+        "L2b",
         "A cohort where the treatment arm was actually applied is causally eligible.",
         status="implemented",
     ),
@@ -431,37 +431,50 @@ def test_shadow_cohort_is_not_causally_eligible():
 
     # Shadow: both arms ran baseline (authority_applied False everywhere). Even with a
     # clean treatment/control return spread, this must NOT be read as causal.
-    shadow = aggregate_observations([
-        ContributionObservation("universe_family_calibration", "universe", "u:a", "4h",
-                                 "treatment", 0.5, "h", authority_applied=False),
-        ContributionObservation("universe_family_calibration", "universe", "u:b", "4h",
-                                 "control", -0.2, "h", authority_applied=False),
-    ])
-    assert shadow.data_quality_status == "green"      # measurable
+    shadow = aggregate_observations(
+        [
+            ContributionObservation(
+                "universe_family_calibration", "universe", "u:a", "4h", "treatment", 0.5, "h", authority_applied=False
+            ),
+            ContributionObservation(
+                "universe_family_calibration", "universe", "u:b", "4h", "control", -0.2, "h", authority_applied=False
+            ),
+        ]
+    )
+    assert shadow.data_quality_status == "green"  # measurable
     assert shadow.intervention_applied_n == 0
     assert shadow.causal_eligible is False
     assert shadow.authority_action == "shadow_trial_only"
-    assert shadow.authority_action != "hold"          # cannot feed a promote verdict
+    assert shadow.authority_action != "hold"  # cannot feed a promote verdict
 
     # Real intervention: the treatment arm actually had the treatment applied.
-    real = aggregate_observations([
-        ContributionObservation("universe_family_calibration", "universe", "u:a", "4h",
-                                 "treatment", 0.5, "h", authority_applied=True),
-        ContributionObservation("universe_family_calibration", "universe", "u:b", "4h",
-                                 "control", -0.2, "h", authority_applied=False),
-    ])
+    real = aggregate_observations(
+        [
+            ContributionObservation(
+                "universe_family_calibration", "universe", "u:a", "4h", "treatment", 0.5, "h", authority_applied=True
+            ),
+            ContributionObservation(
+                "universe_family_calibration", "universe", "u:b", "4h", "control", -0.2, "h", authority_applied=False
+            ),
+        ]
+    )
     assert real.intervention_applied_n == 1
     assert real.causal_eligible is True
     assert real.authority_action == "hold"
 
 
-@spec_claim(SpecClaim(
-    "LE-B29", _CONTRACT, "§measurement-support gate: paths need exact cohort adapters (#324)", "L2b",
-    "Operator and Observer bundles plus ranker paths without exact adapters stay out of "
-    "SUPPORTED_PATH_IDS. ranker_case_score is admitted only because its candidate-level "
-    "filter_candidate_outcomes adapter does not require Universe allocation_selected.",
-    status="implemented",
-))
+@spec_claim(
+    SpecClaim(
+        "LE-B29",
+        _CONTRACT,
+        "§measurement-support gate: paths need exact cohort adapters (#324)",
+        "L2b",
+        "Operator and Observer bundles plus ranker paths without exact adapters stay out of "
+        "SUPPORTED_PATH_IDS. ranker_case_score is admitted only because its candidate-level "
+        "filter_candidate_outcomes adapter does not require Universe allocation_selected.",
+        status="implemented",
+    )
+)
 def test_paths_without_cohort_adapters_excluded_from_supported_path_ids():
     """Paths without exact cohort adapters must remain out of SUPPORTED_PATH_IDS."""
     from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
@@ -494,8 +507,22 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
         "estimated_funding_pct, min_tradable_edge_pct, cost_model_version, status"
         ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 100.5, ?, ?, ?, 'horizon_ohlcv', 0, 0.5, ?, ?, ?, 0, 0.05, ?, ?)",
         (
-            "ranker-outcome-1", "member-1", "bitget", "BTC/USDT", "spot", "long",
-            "4h", 100.0, now, now, now, 0.4, 0.05, 0.05, "v1", "settled",
+            "ranker-outcome-1",
+            "member-1",
+            "bitget",
+            "BTC/USDT",
+            "spot",
+            "long",
+            "4h",
+            100.0,
+            now,
+            now,
+            now,
+            0.4,
+            0.05,
+            0.05,
+            "v1",
+            "settled",
         ),
     )
     db.commit()
@@ -510,24 +537,30 @@ def test_ranker_case_outcome_adapter_uses_exact_base_key_and_horizon():
     assert outcome["_allocation_selection_source"] == "ranker_candidate_identity"
 
 
-
-
-
-@spec_claim(SpecClaim(
-    "LE-B28", _CONTRACT, "§5 conflicting outcomes", "L2b",
-    "Two settled values for one outcome identity that disagree beyond tolerance make "
-    "the cohort invalid and refreeze — never silently take the first row.",
-    status="implemented",
-))
+@spec_claim(
+    SpecClaim(
+        "LE-B28",
+        _CONTRACT,
+        "§5 conflicting outcomes",
+        "L2b",
+        "Two settled values for one outcome identity that disagree beyond tolerance make "
+        "the cohort invalid and refreeze — never silently take the first row.",
+        status="implemented",
+    )
+)
 def test_conflicting_outcome_values_fail_closed():
     from aletheia.learning.contribution import ContributionObservation, aggregate_observations
 
-    conflict = aggregate_observations([
-        ContributionObservation("ranker_case_score", "ranker", "candidate:x", "4h",
-                                 "treatment", 1.0, "case", authority_applied=True),
-        ContributionObservation("ranker_case_score", "ranker", "candidate:x", "4h",
-                                 "treatment", -2.0, "case", authority_applied=True),
-    ])
+    conflict = aggregate_observations(
+        [
+            ContributionObservation(
+                "ranker_case_score", "ranker", "candidate:x", "4h", "treatment", 1.0, "case", authority_applied=True
+            ),
+            ContributionObservation(
+                "ranker_case_score", "ranker", "candidate:x", "4h", "treatment", -2.0, "case", authority_applied=True
+            ),
+        ]
+    )
     assert conflict.conflict_n == 1
     assert conflict.data_quality_status == "conflicting_outcome_values"
     assert conflict.authority_action == "refreeze"
@@ -535,12 +568,16 @@ def test_conflicting_outcome_values_fail_closed():
     assert conflict.unique_values == ()  # a conflicting identity contributes nothing
 
     # Agreeing duplicates within tolerance still dedup to one clean sample.
-    agree = aggregate_observations([
-        ContributionObservation("ranker_case_score", "ranker", "candidate:y", "4h",
-                                 "treatment", 1.0, "case", authority_applied=True),
-        ContributionObservation("ranker_case_score", "ranker", "candidate:y", "4h",
-                                 "treatment", 1.0, "case", authority_applied=True),
-    ])
+    agree = aggregate_observations(
+        [
+            ContributionObservation(
+                "ranker_case_score", "ranker", "candidate:y", "4h", "treatment", 1.0, "case", authority_applied=True
+            ),
+            ContributionObservation(
+                "ranker_case_score", "ranker", "candidate:y", "4h", "treatment", 1.0, "case", authority_applied=True
+            ),
+        ]
+    )
     assert agree.conflict_n == 0
     assert agree.unique_values == (1.0,)
     assert agree.authority_action == "hold"

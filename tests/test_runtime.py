@@ -15,16 +15,22 @@ from aletheia.agent_runtime.orchestrator import run_agent
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
+
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     for sub in (
-        "logs", "knowledge/research_notes", "knowledge/daily_reviews",
-        "knowledge/dreaming_logs", "knowledge/post_trade_reviews", "knowledge/strategies",
+        "logs",
+        "knowledge/research_notes",
+        "knowledge/daily_reviews",
+        "knowledge/dreaming_logs",
+        "knowledge/post_trade_reviews",
+        "knowledge/strategies",
     ):
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
     reset_db()
     sq._db_conn = None
     import sqlite3
+
     conn = sqlite3.connect(str(tmp_path / "test.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
@@ -47,13 +53,16 @@ def setup_real_db_env(tmp_path, monkeypatch):
 
 # --- Scheduler ---
 
+
 def test_scheduler_disabled_returns_none(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
+
     cfg = load_config()
     cfg.runtime.scheduler_enabled = False
     save_config(cfg)
     import aletheia.agent_runtime.scheduler as sched
+
     sched._scheduler = None
     result = sched.init_scheduler()
     assert result is None
@@ -64,6 +73,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from datetime import datetime, timedelta
     import aletheia.agent_runtime.scheduler as sched
+
     sched._scheduler = None
     started_at = datetime.now()
     s = sched.init_scheduler()
@@ -77,12 +87,24 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # historical_data.nightly_backfill_enabled — excluded from the required set.)
     job_ids = {j.id for j in s.get_jobs()}
     required = {
-        "market_data", "market_observer", "paper_trader", "pi_trading_decision",
-        "position_manager", "reconciliation", "position_reconcile",
-        "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
-        "price_feed", "tpsl_fill_check", "connectivity_monitor",
-        "guard_promotion", "post_trade_reviewer", "risk_critic",
-        "universe_refresh", "pi_operator_loop", "filter_controller_observe",
+        "market_data",
+        "market_observer",
+        "pi_trading_decision",
+        "position_manager",
+        "reconciliation",
+        "position_reconcile",
+        "portfolio_snapshot",
+        "exchange_sync",
+        "health_check",
+        "cleanup",
+        "price_feed",
+        "connectivity_monitor",
+        "guard_promotion",
+        "post_trade_reviewer",
+        "risk_critic",
+        "universe_refresh",
+        "pi_operator_loop",
+        "filter_controller_observe",
     }
     missing = required - job_ids
     assert not missing, f"critical scheduler jobs missing: {missing}"
@@ -90,7 +112,9 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     assert len(job_ids) >= len(required)
     market_observer_job = s.get_job("market_observer")
     assert market_observer_job is not None
-    assert market_observer_job.next_run_time <= started_at.astimezone(market_observer_job.next_run_time.tzinfo) + timedelta(seconds=120)
+    assert market_observer_job.next_run_time <= started_at.astimezone(
+        market_observer_job.next_run_time.tzinfo
+    ) + timedelta(seconds=120)
     assert market_observer_job.executor == "observer"
     assert market_observer_job.max_instances == 1
     assert market_observer_job.coalesce is True
@@ -108,12 +132,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     reset_db()
 
 
-@pytest.mark.parametrize(
-    "failure_phase", ["registration", "workers", "start", "pause"]
-)
-def test_scheduler_initialization_failure_is_retryable(
-    tmp_path, monkeypatch, failure_phase
-):
+@pytest.mark.parametrize("failure_phase", ["registration", "workers", "start", "pause"])
+def test_scheduler_initialization_failure_is_retryable(tmp_path, monkeypatch, failure_phase):
     setup_env(tmp_path, monkeypatch)
     from types import SimpleNamespace
 
@@ -213,9 +233,7 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
 
     other = sqlite3.connect(str(db_path()), timeout=1)
     try:
-        leaked_count = other.execute(
-            "SELECT COUNT(*) FROM audit_events WHERE id = 'leaked'"
-        ).fetchone()[0]
+        leaked_count = other.execute("SELECT COUNT(*) FROM audit_events WHERE id = 'leaked'").fetchone()[0]
         assert leaked_count == 0
         other.execute(
             "INSERT INTO audit_events (id, actor, source, event_type, message, timestamp) "
@@ -229,6 +247,7 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
 
 # --- Market data ---
 
+
 @pytest.mark.anyio
 async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
@@ -237,10 +256,11 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
 
     class _FakeCCXT:
         async def get_ticker(self, symbol):
-            return Ticker(symbol=symbol, last_price=60000.0, volume_24h=123.0,
-                          change_pct_24h=1.5, provider="binance")
+            return Ticker(symbol=symbol, last_price=60000.0, volume_24h=123.0, change_pct_24h=1.5, provider="binance")
+
         async def get_ohlcv(self, symbol, timeframe, limit):
             return []
+
         async def close(self):
             pass
 
@@ -251,12 +271,14 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     # legacy alias — the new field has a non-empty default that would add
     # r-series instruments to the collect run.
     from aletheia.config.loader import load_config, save_config
+
     cfg = load_config()
     cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
     from aletheia.trading.market_data import collect_market_snapshots
+
     result = await collect_market_snapshots()
     # 3 observed symbols (BTC/USDT, ETH/USDT, SOL/USDT) × 1 spot each.
     assert len(result["collected"]) == 3
@@ -267,9 +289,7 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_market_data_rejects_cross_venue_fallback_snapshot(
-    tmp_path, monkeypatch
-):
+async def test_market_data_rejects_cross_venue_fallback_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.data.providers import Ticker
     from aletheia.data import ccxt_provider
@@ -293,11 +313,10 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
         calls.append(kwargs)
         return _CrossVenueProvider()
 
-    monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", _provider_factory
-    )
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", _provider_factory)
 
     from aletheia.config.loader import load_config, save_config
+
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "binance"
     cfg.market_data.observed_xstocks = []
@@ -305,19 +324,19 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
     save_config(cfg)
 
     from aletheia.trading.market_data import collect_market_snapshots
+
     result = await collect_market_snapshots()
 
-    assert calls == [{
-        "exchange": "binance",
-        "native_ccxt": True,
-        "fallback_exchange": "binance",
-    }]
+    assert calls == [
+        {
+            "exchange": "binance",
+            "native_ccxt": True,
+            "fallback_exchange": "binance",
+        }
+    ]
     assert result["collected"] == []
     assert len(result["errors"]) == 3
-    assert all(
-        "ticker provider bybit does not match venue binance" in error
-        for error in result["errors"]
-    )
+    assert all("ticker provider bybit does not match venue binance" in error for error in result["errors"])
     assert repo.list_market_snapshots() == []
     reset_db()
 
@@ -367,6 +386,7 @@ async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, m
 
 # --- Agents: graceful degradation when LLM unreachable ---
 
+
 @pytest.mark.anyio
 async def test_research_agent_degrades_without_llm(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
@@ -384,8 +404,11 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
 
     async def fake_complete(system, user, max_tokens=800, **_kwargs):
-        return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
-                "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
+        return (
+            "LLM-generated research content: BTC consolidating near 200MA with declining volume; "
+            "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.",
+            None,
+        )
 
     monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", fake_complete)
     result = await run_agent("research_agent", trigger_type="manual")
@@ -396,6 +419,7 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
 
 
 # --- Tool-call logging ---
+
 
 @pytest.mark.anyio
 async def test_tool_calls_logged(tmp_path, monkeypatch):
@@ -409,10 +433,12 @@ async def test_tool_calls_logged(tmp_path, monkeypatch):
 
 # --- New agents exist and run ---
 
+
 @pytest.mark.anyio
 async def test_portfolio_agent_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
+
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "paper_internal"
     save_config(cfg)

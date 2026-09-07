@@ -232,7 +232,6 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
 )
 def test_unqualified_legacy_private_io_is_explicitly_contained():
     allowed = {
-        "aletheia/agent_runtime/scheduler.py",
         "aletheia/agent_runtime/startup_behavior_gate.py",
         "aletheia/cli/bitget_cmd.py",
         "aletheia/cli/secrets_cmd.py",

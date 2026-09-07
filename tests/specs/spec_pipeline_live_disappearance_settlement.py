@@ -7,10 +7,73 @@ from datetime import datetime, timezone
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-from tests.specs.spec_pipeline_tpsl_private_materialization import (
-    _seed_position,
-    _setup_db,
-)
+from tests.specs.spec_pipeline_exchange_materialization import _setup_db
+
+
+def _seed_position(execution_mode: str, *, suffix: str):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Fill, Order, Position
+    from tests.execution_authority import seed_order_authority
+
+    proposal, decision = seed_order_authority(
+        proposal_id=f"proposal-disappearance-{suffix}",
+        risk_decision_id=f"risk-disappearance-{suffix}",
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=60_000.0,
+        execution_mode=execution_mode,
+        leverage=5,
+    )
+    entry_order = Order(
+        proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=execution_mode,
+        exchange_order_id=f"ENTRY-DISAPPEARANCE-{suffix}",
+        status="filled",
+        filled_at="2026-07-13T00:00:00+00:00",
+    )
+    repo.insert_order(entry_order)
+    repo.insert_fill(
+        Fill(
+            id=f"ENTRY-FILL-DISAPPEARANCE-{suffix}",
+            order_id=entry_order.id,
+            fill_price=60_000.0,
+            fill_quantity=0.01,
+            fee=0.1,
+            fee_source="reconciled",
+            filled_at="2026-07-13T00:00:00+00:00",
+        )
+    )
+    position = Position(
+        proposal_id=proposal.id,
+        order_id=entry_order.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        quantity=0.01,
+        entry_price=60_000.0,
+        current_price=60_000.0,
+        entry_fee=0.1,
+        execution_mode=execution_mode,
+        leverage=5,
+        entry_fill_verified=True,
+        entry_price_source="broker_fill",
+        opened_at="2026-07-13T00:00:00+00:00",
+    )
+    repo.insert_position(position)
+    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_trade_proposal(proposal.id, status="executed")
+    return position
 
 
 def _ready_candidate(position):
@@ -47,9 +110,7 @@ def _ready_candidate(position):
         status="implemented",
     )
 )
-def test_live_disappearance_materializes_observed_order_fill_and_position(
-    tmp_path, monkeypatch
-):
+def test_live_disappearance_materializes_observed_order_fill_and_position(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.verified_exit import (
         VerifiedExitFill,
@@ -58,11 +119,7 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
     from aletheia.portfolio import disappearance_settlement, outcome_closure
     from aletheia.storage import repositories as repo
 
-    position = _seed_position(
-        "bitget_live_limited",
-        suffix="external-close",
-        plan_ids={},
-    )
+    position = _seed_position("bitget_live_limited", suffix="external-close")
     candidate = _ready_candidate(position)
     repo.insert_position_disappearance_candidate(candidate)
     queried_entry_ids: list[tuple[str, ...]] = []
@@ -119,9 +176,7 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
         ),
     )
 
-    result = disappearance_settlement.settle_ready_disappearance_candidate(
-        candidate.id
-    )
+    result = disappearance_settlement.settle_ready_disappearance_candidate(candidate.id)
 
     assert result["closed"] is True, (result, queried_entry_ids)
     assert result["closure_type"] == "verified_external"
@@ -145,31 +200,24 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
     assert close_order["source"] == "adopted"
     assert close_order["exchange_order_id"] == "REMOTE-EXIT-ORDER-1"
     assert close_order["status"] == "filled"
-    close_fill = db.execute(
-        "SELECT * FROM fills WHERE order_id=?", (close_order["id"],)
-    ).fetchone()
-    assert close_fill["id"] == (
-        "private-fill:bitget_live_limited:REMOTE-EXIT-FILL-1"
-    )
+    close_fill = db.execute("SELECT * FROM fills WHERE order_id=?", (close_order["id"],)).fetchone()
+    assert close_fill["id"] == ("private-fill:bitget_live_limited:REMOTE-EXIT-FILL-1")
     assert close_fill["fill_price"] == pytest.approx(59_000.0)
     assert close_fill["fill_quantity"] == pytest.approx(0.01)
     assert close_fill["fee"] == pytest.approx(0.2)
     assert close_fill["fee_source"] == "reconciled"
-    assert close_fill["filled_at"] == datetime.fromtimestamp(
-        exit_fill_ms / 1000, tz=timezone.utc
-    ).isoformat()
+    assert close_fill["filled_at"] == datetime.fromtimestamp(exit_fill_ms / 1000, tz=timezone.utc).isoformat()
 
-    repeated = disappearance_settlement.settle_ready_disappearance_candidate(
-        candidate.id
-    )
+    repeated = disappearance_settlement.settle_ready_disappearance_candidate(candidate.id)
     assert repeated["reason"] == "already_resolved"
-    assert db.execute(
-        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason=?",
-        (position.id, "verified_external"),
-    ).fetchone()[0] == 1
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
-    ).fetchone()[0] == 1
+    assert (
+        db.execute(
+            "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason=?",
+            (position.id, "verified_external"),
+        ).fetchone()[0]
+        == 1
+    )
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)).fetchone()[0] == 1
 
 
 @spec_claim(
@@ -184,19 +232,13 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
         status="implemented",
     )
 )
-def test_live_disappearance_rolls_back_close_chain_when_candidate_write_fails(
-    tmp_path, monkeypatch
-):
+def test_live_disappearance_rolls_back_close_chain_when_candidate_write_fails(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.verified_exit import VerifiedExitFill, classify_verified_exit
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage import repositories as repo
 
-    position = _seed_position(
-        "bitget_live_limited",
-        suffix="atomic-rollback",
-        plan_ids={},
-    )
+    position = _seed_position("bitget_live_limited", suffix="atomic-rollback")
     candidate = _ready_candidate(position)
     repo.insert_position_disappearance_candidate(candidate)
     exit_fill_ms = int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000
@@ -207,16 +249,18 @@ def test_live_disappearance_rolls_back_close_chain_when_candidate_write_fails(
                 request,
                 position_absent=True,
                 history_complete=True,
-                close_fills=(VerifiedExitFill(
-                    fill_id="REMOTE-ATOMIC-FILL",
-                    order_id="REMOTE-ATOMIC-ORDER",
-                    price=59_000.0,
-                    quantity=0.01,
-                    fee=0.2,
-                    fee_currency="USDT",
-                    realized_pnl=-10.0,
-                    filled_at_ms=exit_fill_ms,
-                ),),
+                close_fills=(
+                    VerifiedExitFill(
+                        fill_id="REMOTE-ATOMIC-FILL",
+                        order_id="REMOTE-ATOMIC-ORDER",
+                        price=59_000.0,
+                        quantity=0.01,
+                        fee=0.2,
+                        fee_currency="USDT",
+                        realized_pnl=-10.0,
+                        filled_at_ms=exit_fill_ms,
+                    ),
+                ),
                 ambiguous_activity=False,
                 pages=1,
                 source_endpoint="private-fill-history",
@@ -250,15 +294,9 @@ def test_live_disappearance_rolls_back_close_chain_when_candidate_write_fails(
         original_update_candidate,
     )
     assert repo._select_one("positions", position.id)["status"] == "open"
-    assert repo._select_one(
-        "position_disappearance_candidates", candidate.id
-    )["status"] == "pending"
-    assert db.execute(
-        "SELECT COUNT(*) FROM orders WHERE exchange_order_id='REMOTE-ATOMIC-ORDER'"
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE id LIKE '%REMOTE-ATOMIC-FILL'"
-    ).fetchone()[0] == 0
+    assert repo._select_one("position_disappearance_candidates", candidate.id)["status"] == "pending"
+    assert db.execute("SELECT COUNT(*) FROM orders WHERE exchange_order_id='REMOTE-ATOMIC-ORDER'").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE id LIKE '%REMOTE-ATOMIC-FILL'").fetchone()[0] == 0
 
 
 @spec_claim(
@@ -297,16 +335,18 @@ def test_verified_exit_without_remote_order_id_is_inconclusive():
         request,
         position_absent=True,
         history_complete=True,
-        close_fills=(VerifiedExitFill(
-            fill_id="fill-without-order",
-            order_id=None,
-            price=59_000.0,
-            quantity=0.01,
-            fee=0.2,
-            fee_currency="USDT",
-            realized_pnl=-10.0,
-            filled_at_ms=now_ms - 1_000,
-        ),),
+        close_fills=(
+            VerifiedExitFill(
+                fill_id="fill-without-order",
+                order_id=None,
+                price=59_000.0,
+                quantity=0.01,
+                fee=0.2,
+                fee_currency="USDT",
+                realized_pnl=-10.0,
+                filled_at_ms=now_ms - 1_000,
+            ),
+        ),
         ambiguous_activity=False,
         pages=1,
         source_endpoint="private-fill-history",
@@ -353,16 +393,18 @@ def test_verified_exit_rejects_non_finite_or_negative_fee(invalid_fee):
         request,
         position_absent=True,
         history_complete=True,
-        close_fills=(VerifiedExitFill(
-            fill_id="fill-invalid-fee",
-            order_id="order-invalid-fee",
-            price=59_000.0,
-            quantity=0.01,
-            fee=invalid_fee,
-            fee_currency="USDT",
-            realized_pnl=-10.0,
-            filled_at_ms=now_ms - 1_000,
-        ),),
+        close_fills=(
+            VerifiedExitFill(
+                fill_id="fill-invalid-fee",
+                order_id="order-invalid-fee",
+                price=59_000.0,
+                quantity=0.01,
+                fee=invalid_fee,
+                fee_currency="USDT",
+                realized_pnl=-10.0,
+                filled_at_ms=now_ms - 1_000,
+            ),
+        ),
         ambiguous_activity=False,
         pages=1,
         source_endpoint="private-fill-history",
@@ -384,9 +426,7 @@ def test_verified_exit_rejects_non_finite_or_negative_fee(invalid_fee):
         status="implemented",
     )
 )
-def test_live_reconciler_routes_ready_candidate_to_verified_settlement(
-    tmp_path, monkeypatch
-):
+def test_live_reconciler_routes_ready_candidate_to_verified_settlement(tmp_path, monkeypatch):
     import yaml
 
     from tests.test_position_reconciler import _stub_cache, setup_env
@@ -401,10 +441,12 @@ def test_live_reconciler_routes_ready_candidate_to_verified_settlement(
 
     setup_env(tmp_path, monkeypatch)
     loader.CONFIG_PATH.write_text(
-        yaml.safe_dump({
-            "exchange": {"mode": "live"},
-            "trading": {"auto_adopt_enabled": True},
-        }),
+        yaml.safe_dump(
+            {
+                "exchange": {"mode": "live"},
+                "trading": {"auto_adopt_enabled": True},
+            }
+        ),
         encoding="utf-8",
     )
     loader._invalidate_config_cache()
@@ -425,28 +467,29 @@ def test_live_reconciler_routes_ready_candidate_to_verified_settlement(
         "process_disappearance_evidence",
         lambda **kwargs: {
             "created": 0,
-            "observations": [{
-                "position_id": position.id,
-                "candidate_id": "candidate-live-ready-routing",
-                "ready_for_verified_exit": True,
-            }],
+            "observations": [
+                {
+                    "position_id": position.id,
+                    "candidate_id": "candidate-live-ready-routing",
+                    "ready_for_verified_exit": True,
+                }
+            ],
         },
     )
     settled: list[list[str]] = []
     monkeypatch.setattr(
         disappearance_settlement,
         "settle_ready_disappearance_candidates",
-        lambda candidate_ids: (
-            settled.append(candidate_ids)
-            or [{"candidate_id": candidate_ids[0], "closed": False}]
-        ),
+        lambda candidate_ids: settled.append(candidate_ids) or [{"candidate_id": candidate_ids[0], "closed": False}],
     )
 
     summary = position_reconciler.run_reconcile()
 
     assert settled == [["candidate-live-ready-routing"]]
-    assert summary["settlement"] == [{
-        "candidate_id": "candidate-live-ready-routing",
-        "closed": False,
-    }]
+    assert summary["settlement"] == [
+        {
+            "candidate_id": "candidate-live-ready-routing",
+            "closed": False,
+        }
+    ]
     assert summary["adopted"] == []
