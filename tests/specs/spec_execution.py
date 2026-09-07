@@ -848,7 +848,7 @@ def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
     SpecClaim(
         "EX-S07", "execution_contract", "§3.2 symbol filter", "L2a",
         "_check_symbol_availability and _load_registry_symbols are callable in gateway; "
-        "_EXECUTION_MODE_TO_VENUE maps all real exchange modes (okx_live, bitget, binance)",
+        "_EXECUTION_MODE_TO_VENUE maps all real exchange modes (okx_live_limited, bitget, binance)",
     ),
 )
 def test_symbol_availability_check_structure():
