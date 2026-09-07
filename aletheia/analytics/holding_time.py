@@ -12,8 +12,8 @@ def holding_hours(opened_at: Any, closed_at: Any) -> float | None:
     if not opened_at or not closed_at:
         return None
     try:
-        opened = _parse_timestamp(opened_at)
-        closed = _parse_timestamp(closed_at)
+        opened = parse_utc(opened_at)
+        closed = parse_utc(closed_at)
     except (TypeError, ValueError, OverflowError):
         return None
     seconds = (closed - opened).total_seconds()
@@ -22,7 +22,7 @@ def holding_hours(opened_at: Any, closed_at: Any) -> float | None:
     return seconds / 3600.0
 
 
-def _parse_timestamp(value: Any) -> datetime:
+def parse_utc(value: Any) -> datetime:
     parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
         str(value).replace("Z", "+00:00")
     )

@@ -14,6 +14,7 @@ from typing import Callable
 import urllib.request
 from datetime import datetime, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import get_data_dir
 from aletheia.gateway.network import local_frontdoor_host
 from aletheia.operator_service_identity import (
@@ -299,7 +300,7 @@ def _gateway_api_ready(cfg) -> bool:
         return False
 
 
-def _parse_utc_ts(value: str | None) -> datetime | None:
+def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -320,7 +321,7 @@ def _latest_operator_heartbeat_age_sec() -> float | None:
         return None
     if not heartbeat:
         return None
-    ts = _parse_utc_ts(heartbeat.get("last_seen_at") or heartbeat.get("created_at"))
+    ts = parse_utc(heartbeat.get("last_seen_at") or heartbeat.get("created_at"))
     if ts is None:
         return None
     return (datetime.now(timezone.utc) - ts).total_seconds()

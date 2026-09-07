@@ -32,6 +32,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from aletheia import __version__
 from aletheia.gateway.frontdoor_route import read_frontdoor_route, resolve_backend_base_url
 from aletheia.infra.events import emit_infra_event, list_infra_events
+from aletheia.operator_service_identity import OWNER_AUTH_HEADER
 
 _boot_time = time.time()
 _last_backend_ready_at: str | None = None
@@ -88,7 +89,7 @@ def _remote_auth_check(request: Request) -> JSONResponse | None:
             {"detail": "Remote Control is enabled but no API token is configured."},
             status_code=401,
         )
-    if not _hmac.compare_digest(request.headers.get("x-aletheia-token", ""), expected):
+    if not _hmac.compare_digest(request.headers.get(OWNER_AUTH_HEADER, ""), expected):
         return JSONResponse(
             {"detail": "Unauthorized: X-Aletheia-Token required when Remote Control is active"},
             status_code=401,
@@ -180,7 +181,7 @@ def _connect_backend_websocket(url: str, headers: dict[str, str]):
 
 def _websocket_forward_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
     """Forward application identity only; the client library owns WS handshake headers."""
-    allowed = {"authorization", "cookie", "x-aletheia-token", "user-agent"}
+    allowed = {"authorization", "cookie", OWNER_AUTH_HEADER, "user-agent"}
     return {
         key: value
         for key, value in headers

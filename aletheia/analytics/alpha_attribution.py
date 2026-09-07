@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics.learning_window import outcome_window_metadata
 from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage.repositories import (
@@ -323,9 +324,9 @@ def _universe_twin_evidence(db, cutoff: str) -> dict:
         }
     window_start = bounds["window_start"] if bounds else None
     window_end = bounds["window_end"] if bounds else None
-    start_at = _parse_dt(window_start)
-    end_at = _parse_dt(window_end)
-    cutoff_at = _parse_dt(cutoff)
+    start_at = parse_utc(window_start)
+    end_at = parse_utc(window_end)
+    cutoff_at = parse_utc(cutoff)
     if (
         start_at is None
         or end_at is None
@@ -431,9 +432,9 @@ def _universe_relative_rank_evidence(db, cutoff: str) -> dict:
     ).fetchone()
     window_start = bounds["window_start"] if bounds else None
     window_end = bounds["window_end"] if bounds else None
-    start_at = _parse_dt(window_start)
-    end_at = _parse_dt(window_end)
-    cutoff_at = _parse_dt(cutoff)
+    start_at = parse_utc(window_start)
+    end_at = parse_utc(window_end)
+    cutoff_at = parse_utc(cutoff)
     if (
         start_at is None
         or end_at is None
@@ -928,8 +929,8 @@ def _ranker_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
             outcome_exclusions[assessment.reason] += 1
             continue
         candidate["net_return_pct"] = assessment.net_return_pct
-        ranked_at = _parse_dt(candidate.get("ranked_at"))
-        entry_at = _parse_dt(candidate.get("entry_ts"))
+        ranked_at = parse_utc(candidate.get("ranked_at"))
+        entry_at = parse_utc(candidate.get("entry_ts"))
         if ranked_at is None or entry_at is None:
             temporally_misaligned_candidates += 1
             temporally_misaligned_batch_ids.add(str(row["batch_id"]))
@@ -950,7 +951,7 @@ def _ranker_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
     usable_batches = 0
     temporally_mixed_batches = 0
     for batch_rows in batches.values():
-        entry_times = [_parse_dt(r.get("entry_ts")) for r in batch_rows]
+        entry_times = [parse_utc(r.get("entry_ts")) for r in batch_rows]
         if any(ts is None for ts in entry_times):
             temporally_mixed_batches += 1
             continue
@@ -1185,12 +1186,12 @@ def _learning_alpha(cutoff: str) -> dict:
     from aletheia.learning.read_models import build_learning_contribution_projection
 
     projection = build_learning_contribution_projection(limit=100)
-    cutoff_at = _parse_dt(cutoff)
+    cutoff_at = parse_utc(cutoff)
     measurements = []
     for item in projection["items"]:
         measurement = item["measurement"]
-        window_start = _parse_dt(measurement["window_start"])
-        window_end = _parse_dt(measurement["window_end"])
+        window_start = parse_utc(measurement["window_start"])
+        window_end = parse_utc(measurement["window_end"])
         measurements.append({
             "path_id": item["path_id"],
             "experiment_id": item["experiment_id"],
@@ -1422,7 +1423,7 @@ def _control_observation_return(db, row, as_of_at: str) -> float | None:
 
 
 def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:
-    due_dt = _parse_dt(due_at)
+    due_dt = parse_utc(due_at)
     if due_dt is None:
         return None
     target_ms = int(due_dt.timestamp() * 1000)
@@ -1451,7 +1452,7 @@ def _baseline_symbols(db, *, exclude_symbol: str, equity_like: bool) -> list[str
 
 
 def _forward_return_from_ohlcv(db, symbol: str, entry_at: str, horizon: str, direction: str) -> float | None:
-    entry_dt = _parse_dt(entry_at)
+    entry_dt = parse_utc(entry_at)
     seconds = _HORIZON_SECONDS.get(horizon)
     if entry_dt is None or seconds is None:
         return None
@@ -1636,7 +1637,7 @@ def _parse_json(raw: Any) -> Any:
     return {}
 
 
-def _parse_dt(value: str | None) -> datetime | None:
+def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:

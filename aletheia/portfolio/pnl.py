@@ -6,6 +6,7 @@ import math
 from collections.abc import Callable
 from datetime import datetime, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics.outcome_integrity import validated_fee, validated_funding_economics
 from aletheia.storage.models import PortfolioSnapshot
 
@@ -42,7 +43,7 @@ def _same_snapshot_value(left: object, right: object) -> bool:
     return isinstance(left, float) and isinstance(right, float) and math.isnan(left) and math.isnan(right)
 
 
-def _parse_utc_instant(value: object) -> datetime | None:
+def parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -64,10 +65,10 @@ def _validate_complete_funding_evidence(
     evidence: dict,
 ) -> None:
     """Reject a claimed-complete funding handoff that cannot be replayed."""
-    opened = _parse_utc_instant(row.get("opened_at"))
-    closed = _parse_utc_instant(closed_at)
-    evidence_opened = _parse_utc_instant(evidence.get("opened_at"))
-    evidence_closed = _parse_utc_instant(evidence.get("closed_at"))
+    opened = parse_utc(row.get("opened_at"))
+    closed = parse_utc(closed_at)
+    evidence_opened = parse_utc(evidence.get("opened_at"))
+    evidence_closed = parse_utc(evidence.get("closed_at"))
     if (
         evidence.get("status") != "complete"
         or evidence.get("source") != funding_source
@@ -88,7 +89,7 @@ def _validate_complete_funding_evidence(
     for event in events:
         if not isinstance(event, dict):
             raise ValueError("funding evidence event must be a mapping")
-        scheduled = _parse_utc_instant(event.get("scheduled_at"))
+        scheduled = parse_utc(event.get("scheduled_at"))
         try:
             event_cost = float(event.get("funding_cost"))
         except (TypeError, ValueError):

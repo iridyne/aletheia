@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from aletheia.utils.dt import parse_utc
 from aletheia.data.symbols import (
     instrument_analysis_context,
     instrument_analysis_context_from_metadata,
@@ -378,11 +379,11 @@ def record_filter_decision_batch(
                 (candidate_kind, filter_name, stage, filter_version),
             ).fetchone()
             previous_at = (
-                _parse_dt(previous["evaluated_at"] if hasattr(previous, "keys") else previous[1])
+                parse_utc(previous["evaluated_at"] if hasattr(previous, "keys") else previous[1])
                 if previous
                 else None
             )
-            current_at = _parse_dt(effective_evaluated_at)
+            current_at = parse_utc(effective_evaluated_at)
             if (
                 previous_at is not None
                 and current_at is not None
@@ -1237,7 +1238,7 @@ def _queued_candidate_outcome_seed(
     exact_venue = _normalize_venue(venue)
     if (exact_venue is None or seed_symbol != symbol or seed_market != market_type
             or seed_direction != direction or entry_price is None
-            or _parse_dt(str(entry_ts or "")) is None):
+            or parse_utc(str(entry_ts or "")) is None):
         return None
     first = normalized_rows[0]
     return {
@@ -1378,7 +1379,7 @@ def build_candidate_outcomes(
     """
 
     exact_venue = _normalize_venue(venue)
-    entry_dt = _parse_dt(entry_ts)
+    entry_dt = parse_utc(entry_ts)
     if exact_venue is None or entry_dt is None:
         return []
     outcomes: list[FilterCandidateOutcome] = []
@@ -1486,7 +1487,7 @@ def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
-def _parse_dt(value: str | None) -> datetime | None:
+def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -1528,7 +1529,7 @@ def _exact_snapshot(
         if snapshot is None or _positive_float(snapshot.get("price")) is None:
             return None
         if max_age_seconds is not None:
-            snapshot_at = _parse_dt(str(snapshot.get("snapshot_at") or ""))
+            snapshot_at = parse_utc(str(snapshot.get("snapshot_at") or ""))
             now = datetime.now(timezone.utc)
             if (
                 snapshot_at is None

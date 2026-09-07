@@ -12,6 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.data.history_downloader import download_symbol_history
 from aletheia.data.symbols import (
     InstrumentId,
@@ -79,7 +80,7 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _parse_utc(value: str | None) -> datetime | None:
+def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
@@ -202,7 +203,7 @@ def plan_active_ohlcv_backfill(
                 continue
 
             if state:
-                retry_at = _parse_utc(state.get("next_attempt_at"))
+                retry_at = parse_utc(state.get("next_attempt_at"))
                 if retry_at and retry_at > current:
                     continue
             targets.append(CoverageTarget(

@@ -11,6 +11,7 @@ import math
 from statistics import mean
 from typing import Any
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics.trade_path import build_post_exit_path_observation
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.portfolio.protective_barrier import (
@@ -43,7 +44,7 @@ _QUALIFICATION_SELECT = (
 )
 
 
-def _parse_utc(value: object) -> datetime | None:
+def parse_utc(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -226,7 +227,7 @@ def _refresh_recovery_window(
     frozen_symbol = str(row.get("protection_symbol") or "").strip()
     if to_canonical(str(row.get("symbol") or "")) != frozen_symbol:
         raise RuntimeError("trailing recovery instrument identity mismatch")
-    closed = _parse_utc(row.get("closed_at"))
+    closed = parse_utc(row.get("closed_at"))
     if closed is None:
         raise RuntimeError("trailing recovery close timestamp is unavailable")
     start_ms = ((int(closed.timestamp() * 1000) + 59_999) // 60_000) * 60_000
@@ -438,7 +439,7 @@ def build_exit_trailing_qualification_report(
 
     if limit < 1 or limit > 10_000:
         raise ValueError("limit must be between 1 and 10000")
-    cutoff = _parse_utc(opened_after) if opened_after is not None else None
+    cutoff = parse_utc(opened_after) if opened_after is not None else None
     if opened_after is not None and cutoff is None:
         raise ValueError("opened_after must be an ISO-8601 timestamp with timezone")
     rows = repo.get_db().execute(
@@ -453,7 +454,7 @@ def build_exit_trailing_qualification_report(
     invalid_reasons: Counter[str] = Counter()
     for raw in rows:
         row = dict(raw)
-        opened = _parse_utc(row.get("opened_at"))
+        opened = parse_utc(row.get("opened_at"))
         if cutoff is not None and (opened is None or opened < cutoff):
             continue
         item, invalid = _qualified_item(row)

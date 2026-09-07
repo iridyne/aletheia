@@ -493,17 +493,13 @@ def _build_candidate_frontend(worktree: Path, *, old: str, target: str) -> None:
 def _gateway_command(action: str) -> dict[str, Any]:
     code = (
         "from aletheia.gateway.lifecycle import do_start, do_stop; "
-        "result = do_stop() if 'stop' == '" + action + "' else do_start(no_browser=True); "
-        "raise SystemExit(0 if result is not False else 2)"
+        "do_stop() if 'stop' == '" + action + "' else do_start(no_browser=True)"
     )
     try:
         result = _run([sys.executable, "-c", code], cwd=_PROJECT_ROOT, env=_safe_env(), timeout=120)
     except Exception as exc:
         return {"ok": False, "reason": type(exc).__name__}
-    # For 'start': exit 2 means do_start returned False (slow start — alive but not yet
-    # confirmed ready within the 15s window). Gateway is up; not a failure.
-    # For 'stop': do_stop never returns False, so exit 2 cannot occur there.
-    ok = result.returncode == 0 or (action == "start" and result.returncode == 2)
+    ok = result.returncode == 0
     return {"ok": ok, "reason": "gateway_" + action + "_failed" if not ok else None,
             "detail": (result.stderr or result.stdout)[-1000:]}
 

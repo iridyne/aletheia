@@ -48,6 +48,7 @@ from aletheia.server.routes.export import router as export_router
 from aletheia.server.routes.ws import router as ws_router
 from aletheia.server.routes.ui import router as ui_router
 from aletheia.server.compression import JsonCompressionMiddleware
+from aletheia.operator_service_identity import OWNER_AUTH_HEADER
 
 logger = logging.getLogger("aletheia")
 
@@ -1026,7 +1027,7 @@ async def _tunnel_auth_guard(request, call_next):
                 )
             import hmac as _hmac
 
-            token = request.headers.get("x-aletheia-token", "")
+            token = request.headers.get(OWNER_AUTH_HEADER, "")
             if not _hmac.compare_digest(token, expected):
                 return JSONResponse(
                     {"detail": "Unauthorized: X-Aletheia-Token required when Remote Control is active"},

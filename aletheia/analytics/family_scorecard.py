@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics import outcome_integrity
 from aletheia.analytics.execution_mode import execution_mode_identity
 from aletheia.analytics.holding_time import holding_hours
@@ -180,7 +181,7 @@ def _empty_family(name: str) -> dict:
     }
 
 
-def _parse_iso(value) -> datetime | None:
+def parse_utc(value) -> datetime | None:
     if not value:
         return None
     try:

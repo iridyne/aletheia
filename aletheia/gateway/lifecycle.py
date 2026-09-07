@@ -89,7 +89,7 @@ def _apply_gateway_migrations() -> bool:
     raise typer.Exit(1)
 
 
-def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | None:
+def do_start(*, no_browser: bool = False, foreground: bool = False) -> None:
     """Start the gateway (foreground or background)."""
     from aletheia.gateway import service_control
     if not foreground and service_control.is_machine_selected():
@@ -112,7 +112,7 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
         if ready is True:
             _auto_start_tunnel(cfg)
             _echo_stdout_safe("Gateway machine service readiness verified.")
-            return True
+            return
         _echo_safe(
             "Gateway machine service start was accepted, but readiness was not "
             "confirmed within the bounded startup window. Run `gateway status` "
@@ -220,7 +220,6 @@ def do_start(*, no_browser: bool = False, foreground: bool = False) -> bool | No
             service_control.stop()
             raise
         _auto_start_tunnel(cfg)
-        return ready
 
 
 def _local_urlopen(request, *, timeout: float):

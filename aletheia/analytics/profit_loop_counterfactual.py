@@ -120,7 +120,7 @@ class CostModel:
             self.slippage_bps_per_side,
             self.funding_bps_per_hour,
         )
-        verified = _parse_utc(self.verified_at) is not None
+        verified = parse_utc(self.verified_at) is not None
         hash_valid = len(self.source_evidence_hash) == 64 and all(
             char in "0123456789abcdef" for char in self.source_evidence_hash.lower()
         )
@@ -132,7 +132,7 @@ class CostModel:
         )
 
 
-def _parse_utc(value: Any) -> datetime | None:
+def parse_utc(value: Any) -> datetime | None:
     if not value:
         return None
     try:
@@ -235,14 +235,14 @@ def resolve_profit_loop_registration(fact: Mapping[str, Any]) -> dict[str, Any] 
     if not matches:
         return {"status": "not_evaluable", "reason": "registered_registry_hash_mismatch"}
     row, values = matches[0]
-    registration_at = _parse_utc(row["started_at"])
+    registration_at = parse_utc(row["started_at"])
     if registration_at is None:
         return {"status": "not_evaluable", "reason": "verified_deployment_registration_required"}
     cutoff_at = _fixed_cutoff(registration_at)
     if cutoff_at is None:
         return {"status": "not_evaluable", "reason": "registered_epoch_malformed"}
     raw_ended_at = row["ended_at"]
-    ended_at = _parse_utc(raw_ended_at)
+    ended_at = parse_utc(raw_ended_at)
     if raw_ended_at is not None and ended_at is None:
         return {"status": "not_evaluable", "reason": "registered_epoch_end_malformed"}
     if ended_at is not None and ended_at < cutoff_at:
@@ -281,7 +281,7 @@ def profit_loop_registration_cutoffs() -> list[str]:
     return [
         cutoff.isoformat()
         for row in rows
-        if (started := _parse_utc(row["started_at"])) is not None
+        if (started := parse_utc(row["started_at"])) is not None
         if (cutoff := _fixed_cutoff(started)) is not None
     ]
 
@@ -451,11 +451,11 @@ def evaluate_counterfactual_registry(
             "reason": (registration.get("reason") if registration else "verified_deployment_registration_required"),
             "results": [],
         }
-    cutoff_at = _parse_utc(registered["cutoff_at"])
+    cutoff_at = parse_utc(registered["cutoff_at"])
     if cutoff_at is None or _now_utc() < cutoff_at:
         return {**base, "status": "not_evaluable", "reason": "registered_cutoff_not_reached", "results": []}
-    evaluation_at = _parse_utc(fact.get("as_of_at"))
-    requested_as_of = _parse_utc(as_of_at)
+    evaluation_at = parse_utc(fact.get("as_of_at"))
+    requested_as_of = parse_utc(as_of_at)
     if evaluation_at is None:
         return {**base, "status": "not_evaluable", "reason": "evaluation_as_of_unavailable", "results": []}
     if requested_as_of is not None and requested_as_of != evaluation_at:
@@ -472,9 +472,9 @@ def evaluate_counterfactual_registry(
             "reason": "registered_evidence_cutoff_mismatch",
             "results": [],
         }
-    opened_at = _parse_utc(_nested(fact, "stages", "exit", "position", "opened_at"))
-    closed_at = _parse_utc(_nested(fact, "stages", "exit", "position", "closed_at"))
-    registration_at = _parse_utc(registered["registration_at"])
+    opened_at = parse_utc(_nested(fact, "stages", "exit", "position", "opened_at"))
+    closed_at = parse_utc(_nested(fact, "stages", "exit", "position", "closed_at"))
+    registration_at = parse_utc(registered["registration_at"])
     if (
         opened_at is None
         or closed_at is None

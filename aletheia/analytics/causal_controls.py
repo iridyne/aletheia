@@ -374,7 +374,7 @@ def _latest_ohlcv_price(symbol: str, entry_ts: str) -> float | None:
     try:
         from aletheia.storage.sqlite import get_db
 
-        dt = _parse_dt(entry_ts)
+        dt = parse_utc(entry_ts)
         if dt is None:
             return None
         ts = int(dt.timestamp() * 1000)
@@ -400,13 +400,13 @@ def _latest_ohlcv_price(symbol: str, entry_ts: str) -> float | None:
 
 
 def _due_at(entry_ts: str, horizon: str) -> str | None:
-    dt = _parse_dt(entry_ts)
+    dt = parse_utc(entry_ts)
     if dt is None:
         return None
     return (dt + _HORIZON_DELTA[horizon]).isoformat()
 
 
-def _parse_dt(value: str | None) -> datetime | None:
+def parse_utc(value: str | None) -> datetime | None:
     if not value:
         return None
     try:

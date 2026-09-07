@@ -10,6 +10,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
 from aletheia.analytics.outcome_integrity import (
     OutcomeAssessment,
@@ -36,25 +37,25 @@ def candidate_outcome_temporal_reason(
     *,
     as_of_at: str | datetime,
 ) -> str | None:
-    cutoff = _parse_dt(as_of_at)
+    cutoff = parse_utc(as_of_at)
     if cutoff is None:
         raise ValueError("as_of_at must be a valid timestamp")
     if str(row.get("status") or "").lower() != "settled":
         return "unsettled"
-    entry_at = _parse_dt(row.get("entry_ts"))
-    floor = _parse_dt(LEARNING_DATA_FLOOR_ISO)
+    entry_at = parse_utc(row.get("entry_ts"))
+    floor = parse_utc(LEARNING_DATA_FLOOR_ISO)
     if entry_at is None or floor is None or entry_at < floor:
         return "dirty_or_missing_entry_time"
     due_value = row.get("due_at")
     if not due_value:
         return "missing_due_at"
-    due_at = _parse_dt(due_value)
+    due_at = parse_utc(due_value)
     if due_at is None:
         return "malformed_due_at"
     settled_value = row.get("settled_at")
     if not settled_value:
         return "missing_settled_at"
-    settled_at = _parse_dt(settled_value)
+    settled_at = parse_utc(settled_value)
     if settled_at is None:
         return "malformed_settled_at"
     if due_at < entry_at:
@@ -122,12 +123,12 @@ def assess_candidate_outcome(
 
 
 def _at_or_after_floor(value: Any) -> bool:
-    dt = _parse_dt(value)
-    floor = _parse_dt(LEARNING_DATA_FLOOR_ISO)
+    dt = parse_utc(value)
+    floor = parse_utc(LEARNING_DATA_FLOOR_ISO)
     return bool(dt and floor and dt >= floor)
 
 
-def _parse_dt(value: Any) -> datetime | None:
+def parse_utc(value: Any) -> datetime | None:
     if not value:
         return None
     try:

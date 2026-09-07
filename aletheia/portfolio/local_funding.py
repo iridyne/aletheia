@@ -70,7 +70,7 @@ class _EntryFill:
     filled_at: datetime
 
 
-def _parse_utc(value: Any) -> datetime | None:
+def parse_utc(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -105,8 +105,8 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
         exchange = str(row.get("exchange") or "").strip().lower()
         if not exchange or exchange in _CROSS_VENUE_EXCHANGES:
             continue
-        observed_at = _parse_utc(row.get("observed_at"))
-        scheduled_at = _parse_utc(row.get("next_funding_time"))
+        observed_at = parse_utc(row.get("observed_at"))
+        scheduled_at = parse_utc(row.get("next_funding_time"))
         try:
             rate = float(row.get("funding_rate"))
         except (TypeError, ValueError):
@@ -125,8 +125,8 @@ def _load_scheduled_snapshots(symbol: str, *, through: datetime) -> list[_Schedu
             funding_rate=rate,
             scheduled_at=scheduled_at,
             observed_at=observed_at,
-            source_observed_at=_parse_utc(row.get("source_observed_at")),
-            acquired_at=_parse_utc(row.get("acquired_at")),
+            source_observed_at=parse_utc(row.get("source_observed_at")),
+            acquired_at=parse_utc(row.get("acquired_at")),
             source_time_status=str(row.get("source_time_status") or "") or None,
         ))
     return result
@@ -310,7 +310,7 @@ def _load_exact_entry_fills(
             return None, "entry_identity_mismatch"
 
         fill_id = str(row.get("fill_id") or "")
-        filled_at = _parse_utc(row.get("fill_filled_at"))
+        filled_at = parse_utc(row.get("fill_filled_at"))
         try:
             fill_price = float(row.get("fill_price"))
             fill_quantity = float(row.get("fill_quantity"))
@@ -381,7 +381,7 @@ def _load_exact_entry_fills(
         return None, "entry_price_mismatch"
 
     fills.sort(key=lambda fill: (fill.filled_at, fill.order_id, fill.fill_id))
-    opened_at = _parse_utc(position.get("opened_at"))
+    opened_at = parse_utc(position.get("opened_at"))
     if opened_at is None:
         return None, "missing_entry_identity"
     if any(
@@ -476,7 +476,7 @@ def local_funding_schedule_readiness(
     elif isinstance(as_of, datetime):
         instant = as_of.astimezone(timezone.utc) if as_of.tzinfo else None
     else:
-        instant = _parse_utc(as_of)
+        instant = parse_utc(as_of)
     if instant is None:
         return {"ready": False, "reason": "as_of_invalid"}
     exact_venue = str(venue or "").strip().lower()
@@ -971,10 +971,10 @@ def compute_local_funding_from_entry_fills(
     ):
         return _incomplete(position=position, opened_at=None, closed_at=None,
                            reason="unsupported_position")
-    opened = _parse_utc(position.get("opened_at"))
+    opened = parse_utc(position.get("opened_at"))
     closed = (
         closed_at.astimezone(timezone.utc) if isinstance(closed_at, datetime) and closed_at.tzinfo
-        else _parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
+        else parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
     )
     if opened is None or closed is None or closed < opened:
         return _incomplete(position=position, opened_at=opened, closed_at=closed,
@@ -1002,10 +1002,10 @@ def compute_local_funding(
     ):
         return _incomplete(position=position, opened_at=None, closed_at=None,
                            reason="unsupported_position")
-    opened = _parse_utc(position.get("opened_at"))
+    opened = parse_utc(position.get("opened_at"))
     closed = (
         closed_at.astimezone(timezone.utc) if isinstance(closed_at, datetime) and closed_at.tzinfo
-        else _parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
+        else parse_utc(closed_at) if not isinstance(closed_at, datetime) else None
     )
     if opened is None or closed is None or closed < opened:
         return _incomplete(position=position, opened_at=opened, closed_at=closed,
@@ -1024,7 +1024,7 @@ def compute_local_funding(
     elif isinstance(as_of, datetime):
         through = as_of.astimezone(timezone.utc) if as_of.tzinfo else None
     else:
-        through = _parse_utc(as_of)
+        through = parse_utc(as_of)
     if through is None or through < closed:
         return _incomplete(
             position=position, opened_at=opened, closed_at=closed,
@@ -1065,7 +1065,7 @@ def _close_anchor_already_covered(symbol: str, closed_at: str) -> bool:
     the periodic collector has already written a snapshot inside the 15-min
     window and there's no reason to hit the exchange at close time.
     """
-    parsed = _parse_utc(closed_at)
+    parsed = parse_utc(closed_at)
     if parsed is None:
         return False
     window_start = (parsed - _MAX_OBSERVATION_GAP).isoformat()

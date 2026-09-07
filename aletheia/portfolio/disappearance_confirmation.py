@@ -14,6 +14,7 @@ import json
 import sqlite3
 from typing import Any
 
+from aletheia.utils.dt import parse_utc
 from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 from aletheia.data.symbols import to_canonical
 from aletheia.storage import repositories as repo
@@ -40,7 +41,7 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _parse_timestamp(value: str) -> datetime | None:
+def parse_utc(value: str) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -153,8 +154,8 @@ def record_disappearance_observation(
     created_at = _utcnow()
     candidate = repo.get_active_position_disappearance_candidate(identity_key)
     if candidate is not None and direct_query_state != DIRECT_CONFIRMED_ABSENT:
-        current_ts = _parse_timestamp(observed_at)
-        previous_ts = _parse_timestamp(str(candidate.get("last_observed_at") or ""))
+        current_ts = parse_utc(observed_at)
+        previous_ts = parse_utc(str(candidate.get("last_observed_at") or ""))
         if current_ts is None or previous_ts is None or current_ts <= previous_ts:
             # A replayed or time-regressed cache is not independent evidence.
             return candidate, False
