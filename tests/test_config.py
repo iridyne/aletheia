@@ -1,9 +1,7 @@
 """Tests for config loading, schema defaults, and bootstrap."""
 
-import tempfile
 import os
 import stat
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +9,7 @@ from pydantic import ValidationError
 import yaml
 
 from aletheia.config.schema import AletheiaConfig, GuardConfig, RiskConfig
-from aletheia.config.loader import load_config, save_config, bootstrap, ensure_data_dirs
+from aletheia.config.loader import load_config, save_config, bootstrap
 
 
 def test_default_config_has_correct_values():

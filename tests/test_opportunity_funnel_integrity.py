@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import sqlite3
-import uuid
 
 import pytest
 

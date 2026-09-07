@@ -12,7 +12,6 @@ feature-keying invariants against regression.
 
 import asyncio
 import inspect
-import json
 
 import pytest
 

@@ -10,7 +10,6 @@ NOTE: operator_loop is NOT frozen. pi_operator_loop scheduler job and trading_co
 Tests call operator_loop's public decision functions directly.
 """
 
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -211,7 +210,7 @@ def test_operator_loop_level3_forbidden(tmp_path, monkeypatch):
     import aletheia.agent_shell.operator_loop as ol_mod
     ol_mod._action_log.clear()
 
-    from aletheia.agent_shell.operator_loop import OperatorAction, classify_action, run_operator_loop
+    from aletheia.agent_shell.operator_loop import OperatorAction, classify_action
 
     # Verify the action is classified as Level 3
     level = classify_action("deactivate_kill_switch")
@@ -225,7 +224,6 @@ def test_operator_loop_level3_forbidden(tmp_path, monkeypatch):
     ).fetchone()["n"]
 
     # Directly test the level classification and rejection path
-    from aletheia.agent_shell.operator_loop import _execute_level1_action
 
     # Confirm _execute_level1_action on an unknown-level-3 action returns skipped
     action = OperatorAction(

@@ -14,7 +14,6 @@ Covers two orthogonal recovery paths:
   a deliberate choice, not a coverage silent-failure.
 """
 
-from pathlib import Path
 
 from tests.test_experience_loop import setup_env
 

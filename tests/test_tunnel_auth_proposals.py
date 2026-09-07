@@ -32,7 +32,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 
@@ -242,7 +241,6 @@ async def test_reject_actor_source_is_owner_for_tunnel_authenticated_calls(clien
     proposal = _make_pending_proposal()
 
     audit_events: list[dict] = []
-    import aletheia.server.routes.data as data_routes
     _real_write_audit = None
 
     def _capture_audit(event):

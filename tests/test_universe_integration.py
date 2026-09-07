@@ -2,14 +2,13 @@
 
 import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from aletheia.config.schema import UniverseConfig, AletheiaConfig
+from aletheia.config.schema import UniverseConfig
 from aletheia.universe.service import UniverseService
 from aletheia.universe.registry import sync_registry
-from aletheia.universe.features import collect_features
 from aletheia.universe.filters import apply_tradability_filters
 from aletheia.universe.scanners import run_all_scanners
 from aletheia.universe.allocator import allocate_universe, compute_total_score

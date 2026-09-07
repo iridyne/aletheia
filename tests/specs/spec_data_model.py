@@ -34,7 +34,6 @@ def test_per_thread_connection_model():
     ),
 )
 def test_wal_mode_in_source():
-    import ast
     from pathlib import Path
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"
@@ -49,7 +48,6 @@ def test_wal_mode_in_source():
     ),
 )
 def test_autocommit_isolation_level():
-    import ast
     from pathlib import Path
 
     src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"

@@ -21,7 +21,10 @@ from aletheia.model_provider.base import (
     portable_json_schema_payload,
 )
 from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
-from aletheia.model_provider.router import get_provider_async, get_provider
+# `get_provider` is bound here so tests can inject a provider double with
+# monkeypatch.setattr(helpers, "get_provider", ...). NOT unused: ruff F401
+# cannot see attribute-level patch targets.
+from aletheia.model_provider.router import get_provider_async, get_provider  # noqa: F401
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
 
 logger = logging.getLogger("aletheia.agents")

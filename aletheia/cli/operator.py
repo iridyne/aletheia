@@ -13,7 +13,7 @@ from aletheia.agent_shell.operator_store import (
     list_messages,
     list_sessions,
 )
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config
 agent_app = typer.Typer(no_args_is_help=True)
 session_app = typer.Typer(no_args_is_help=True)
 

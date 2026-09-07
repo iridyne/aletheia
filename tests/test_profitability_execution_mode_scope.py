@@ -12,7 +12,6 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
 
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:

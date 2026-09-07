@@ -19,7 +19,7 @@ would be handled by the ``backfill-content`` path, not by recovering markdown.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from aletheia.config.loader import get_data_dir

@@ -7,7 +7,6 @@ universe layer and translates them into a structured AgentOpinion.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from aletheia.agents.committee.base import AgentOpinion, EvidenceItem

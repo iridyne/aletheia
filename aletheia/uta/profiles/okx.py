@@ -5,7 +5,6 @@ from decimal import Decimal
 
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import CommandEvidence
-from aletheia.uta.models import AccountBalance
 from aletheia.uta.profiles.base import CCXTProfile, decimal_value
 
 

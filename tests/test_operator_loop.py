@@ -2,7 +2,6 @@
 import json
 import sqlite3
 
-import pytest
 
 
 def _init_test_db(tmp_path, monkeypatch):
@@ -61,7 +60,6 @@ class TestBuildSystemAssessment:
             "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
-        import aletheia.config.loader as loader
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
 
         from aletheia.agent_shell.operator_loop import build_system_assessment
@@ -402,7 +400,6 @@ class TestRunOperatorLoop:
             "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
-        import aletheia.config.loader as loader
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
 
         from aletheia.agent_shell.operator_loop import run_operator_loop, _action_log
@@ -445,7 +442,7 @@ class TestRunOperatorLoop:
         _init_test_db(tmp_path, monkeypatch)
         _make_config(tmp_path)
         from aletheia.agent_shell.operator_loop import (
-            OperatorAction, classify_action, _LEVEL_3_ACTIONS,
+            classify_action, _LEVEL_3_ACTIONS,
         )
         for action_type in _LEVEL_3_ACTIONS:
             assert classify_action(action_type) == 3
@@ -713,7 +710,6 @@ class TestLoosenHandlers:
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
         from aletheia.agent_shell.operator_loop import OperatorAction, _action_increase_sizing, _action_log
-        from aletheia.config.loader import load_config
 
         _action_log.clear()
         action = OperatorAction(action_type="increase_sizing", level=2,
@@ -736,7 +732,6 @@ class TestLoosenHandlers:
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
         from aletheia.agent_shell.operator_loop import OperatorAction, _action_widen_stop_loss, _action_log
-        from aletheia.config.loader import load_config
 
         _action_log.clear()
         # Request +1.5 delta, should cap at neutral=2.0

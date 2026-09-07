@@ -156,7 +156,6 @@ def test_execution_rejects_scope_mismatch_after_reunlock(tmp_path, monkeypatch):
     even when Risk approves — this is the "wrong scope / Proposal predates
     authorization" defense line."""
     cfg, trust = _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
-    from aletheia.config.loader import load_config, save_config
     from aletheia.execution.gateway import execute_existing_proposal
     from aletheia.storage.models import TradeProposal
     from aletheia.storage.repositories import insert_trade_proposal

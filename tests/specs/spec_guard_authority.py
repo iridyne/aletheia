@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

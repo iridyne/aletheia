@@ -14,11 +14,8 @@ Four断点场景:
 
 from __future__ import annotations
 
-import pytest
 
 from aletheia.config.loader import load_config, save_config
-from aletheia.storage import repositories as repo
-from aletheia.storage.models import Opportunity
 
 
 # ─── 1. Zero eligible candidates ─────────────────────────────────────────────

@@ -4,12 +4,10 @@ from aletheia.knowledge.guards import (
     TradingGuard,
     GuardPredicate,
     GuardAppliesTo,
-    GuardEvaluation,
     evaluate_guards,
     _applies_to_from_meta,
     _predicates_match,
     _eval_predicate,
-    ALLOWED_GUARD_FIELDS,
 )
 
 

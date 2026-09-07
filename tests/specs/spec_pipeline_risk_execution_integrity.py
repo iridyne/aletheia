@@ -1709,7 +1709,6 @@ def test_overfilled_close_claim_never_reaches_exchange_again(tmp_path, monkeypat
     from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 
@@ -1784,7 +1783,6 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(tmp_
     from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 
@@ -1937,9 +1935,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(tmp_path,
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config import loader
-    from aletheia.execution.verified_exit import classify_verified_exit
-    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
-    from aletheia.portfolio import disappearance_settlement, position_reconciler
+    from aletheia.portfolio import position_reconciler
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 

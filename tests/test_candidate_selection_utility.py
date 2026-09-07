@@ -860,7 +860,6 @@ def test_candidate_selection_authority_projects_without_qualification():
     )
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
-        candidate_selection_frozen_family_spread_control,
         candidate_selection_training_cutoff,
         target_candidates_from_bundle,
     )

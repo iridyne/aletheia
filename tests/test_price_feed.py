@@ -636,7 +636,7 @@ class TestRefreshWatchedPrices:
                 mock_events.assert_called_once()
 
     def test_universe_events_survive_slow_scheduler_tick_gate(self, monkeypatch):
-        from aletheia.data import ccxt_provider, price_feed
+        from aletheia.data import ccxt_provider
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 

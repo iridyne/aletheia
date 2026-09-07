@@ -1,10 +1,7 @@
 """Tests for layered pause: essential jobs continue during AI-driven pause."""
 
-import ast
-import inspect
-import textwrap
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 

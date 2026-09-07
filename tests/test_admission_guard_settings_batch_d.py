@@ -4,7 +4,6 @@ Tests issues #1215, #1216, #1218, #1219, #1221 (validation/fail-closed).
 Does NOT test #1244, #1245, #1239 which require deeper runtime/guard integration.
 """
 
-import math
 import pytest
 from pydantic import ValidationError
 
@@ -88,7 +87,6 @@ def test_1221_min_hold_periods_bounds():
 
 def test_1215_allocator_validates_quota():
     """#1215: allocator.resolve_family_quota raises on invalid quota map."""
-    from aletheia.config.schema import UniverseConfig
     from aletheia.universe.allocator import resolve_family_quota
     
     # Bypass schema validation by directly constructing dict

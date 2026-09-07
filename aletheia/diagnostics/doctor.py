@@ -2762,7 +2762,6 @@ def _probe_content_memo_quality(report: Report) -> None:
     """Trading memo (the regime playbook injected into PI context): absent vs
     expired vs (when memo_effectiveness has scored it) empirically overturned."""
     try:
-        from aletheia.analytics.insight_synthesizer import get_latest_memo
         from aletheia.storage.repositories import list_knowledge_items
     except Exception as e:
         report.add("content.memo_quality", "info", f"probe error: {e}")

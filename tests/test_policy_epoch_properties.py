@@ -33,7 +33,6 @@ from hypothesis import given, settings, strategies as st
 
 from aletheia.config.secrets import is_secret_key, normalize_secret_key
 from aletheia.learning.policy_epochs import (
-    PolicyEpoch,
     _SECRET_FRAGMENTS,
     build_policy_epoch,
     compare_policy_epochs,

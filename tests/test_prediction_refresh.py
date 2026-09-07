@@ -12,7 +12,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
 from httpx import ASGITransport, AsyncClient
 
 from aletheia.agent_runtime.job_queue import AgentJobManager, AgentJobQueueFull

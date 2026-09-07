@@ -17,7 +17,6 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
-from statistics import mean, stdev
 from typing import Any, Iterable
 
 from aletheia.trading.indicators import (

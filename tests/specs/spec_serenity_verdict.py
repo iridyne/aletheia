@@ -83,7 +83,7 @@ def test_research_worker_prompt_includes_verdict():
 def test_pipeline_persists_verdict():
     """Mock-LLM pipeline run should produce verdict_json with required keys."""
     import json
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     from aletheia.agents.research_worker import _run_pipeline_inner
     from aletheia.storage import repositories as repo

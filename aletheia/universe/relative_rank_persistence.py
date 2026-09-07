@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 from aletheia.analytics.filter_evidence import build_candidate_outcomes
 from aletheia.storage.models import (

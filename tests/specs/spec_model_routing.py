@@ -17,7 +17,6 @@ from __future__ import annotations
 import inspect
 from pathlib import Path
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -99,7 +98,7 @@ def test_get_provider_for_tier_exists_and_resolves():
 
     # When deep_provider / fast_provider are not set, resolves to default_provider
     from unittest.mock import patch
-    from aletheia.config.schema import ModelsConfig, ProviderConfig
+    from aletheia.config.schema import ModelsConfig
 
     mock_cfg_obj = type("MockCfg", (), {
         "models": ModelsConfig(

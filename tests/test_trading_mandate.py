@@ -11,7 +11,6 @@ from aletheia.config.schema import AletheiaConfig
 from aletheia.trading.trading_mandate import (
     TRADING_MANDATE_FIT_VERSION,
     TRADING_MANDATE_VERSION,
-    EdgeScope,
     TradingMandate,
     assess_trading_mandate_fit,
     build_trading_mandate_provenance,

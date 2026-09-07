@@ -343,7 +343,6 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
     from aletheia.storage.models import MarketSnapshot
     from aletheia.storage.repositories import insert_market_snapshot
 

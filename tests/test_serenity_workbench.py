@@ -2,7 +2,7 @@
 
 import json
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 from httpx import AsyncClient, ASGITransport
 
 from aletheia.server.app import app
@@ -10,8 +10,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
-    SerenityResearchRun, SerenityRunEvent, SerenityUserProfile,
-    SerenityProfileSnapshot, SerenityFeedbackEvent, SerenityTheme, SerenityOpportunity,
+    SerenityResearchRun, SerenityRunEvent, SerenityTheme, SerenityOpportunity,
 )
 
 
@@ -1223,7 +1222,6 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
     assert len(stage_events) >= 8  # started+completed for 4 stages
 
     # Check claims created
-    from aletheia.storage.models import SerenityClaim
     claims = repo.list_serenity_claims(run_id=run.id)
     assert len(claims) >= 1
 

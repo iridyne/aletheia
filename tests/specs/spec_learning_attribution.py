@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

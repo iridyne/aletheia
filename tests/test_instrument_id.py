@@ -3,9 +3,9 @@
 import pytest
 from aletheia.data.symbols import (
     InstrumentId,
-    to_canonical, to_bitget, to_ccxt, to_ccxt_perp, to_yfinance,
+    to_canonical, to_bitget, to_ccxt_perp, to_yfinance,
     canonical_of,
-    MARKET_SPOT, MARKET_PERP, MARKET_FUTURES,
+    MARKET_SPOT,
 )
 
 

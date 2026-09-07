@@ -4,7 +4,6 @@ Executable claims for futures/leverage configuration, asset tier classification,
 risk engine leverage checks, and paper_tools leverage passthrough.
 """
 
-import pytest
 
 from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim

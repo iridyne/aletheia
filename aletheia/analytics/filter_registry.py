@@ -6,7 +6,7 @@ the current control registry. Recommendations never mutate trading or config.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 # Direction a parameter moves to LOOSEN the filter (let more opportunities pass).

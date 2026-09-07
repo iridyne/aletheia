@@ -2976,7 +2976,6 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
     """Regression: unsettled funding economics must not zero available_balance_usdt."""
     _setup_db(tmp_path, monkeypatch)
 
-    import math
 
     from aletheia.portfolio.paper_account import (
         ensure_paper_account,
@@ -2985,7 +2984,6 @@ def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position, TradeProposal
-    from aletheia.storage.sqlite import get_db
 
     ensure_paper_account()
 

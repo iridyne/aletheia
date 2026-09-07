@@ -32,7 +32,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 

@@ -5,7 +5,6 @@ Scheduler job structure, agent IO shapes, max_workers cap.
 
 import inspect
 from pathlib import Path
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

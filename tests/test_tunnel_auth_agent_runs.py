@@ -33,7 +33,6 @@ async def client(tmp_path, monkeypatch):
     import aletheia.storage.sqlite as sq
 
     def _clear_portfolio_cache():
-        import threading
         with data_routes._portfolio_cache_lock:
             data_routes._portfolio_cache = None
 
@@ -256,7 +255,6 @@ async def test_all_allowlisted_agents_accepted_locally(client, tmp_path, monkeyp
     """Every agent in _MANUAL_AGENT_ALLOWLIST passes the allowlist check."""
     from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.storage.models import AgentRun
-    from aletheia.agent_runtime.job_queue import AgentJobAlreadyQueued
 
     monkeypatch.setattr("aletheia.server.routes.data._ensure_db", lambda: None)
 

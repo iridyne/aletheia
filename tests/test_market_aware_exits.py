@@ -1,12 +1,9 @@
 """Tests for market-aware exit intelligence (exit_rules + market_signal_reader)."""
 
-import pytest
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch
 
 from aletheia.portfolio.exit_rules import (
     evaluate_market_exit_rules,
-    MarketExitAction,
 )
 from aletheia.portfolio.market_signal_reader import MarketSignalContext
 

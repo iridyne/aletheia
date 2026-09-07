@@ -2,12 +2,12 @@
 
 import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 import pytest
 
 from aletheia.universe.service import UniverseService
-from aletheia.config.schema import UniverseConfig, AletheiaConfig
+from aletheia.config.schema import UniverseConfig
 
 
 @pytest.fixture
@@ -537,8 +537,6 @@ async def test_refresh_returns_none_on_failure(svc):
 def test_venue_mismatch_sets_execution_ineligible_with_risk_flag():
     """Allocated candidates whose venue cannot be monitored are marked ineligible."""
     from unittest.mock import MagicMock
-    from aletheia.universe.service import _member_fingerprint
-    from aletheia.universe import service as svc_mod
 
     cfg = MagicMock()
     cfg.exchange.paper_execution_mode = "bitget_demo"

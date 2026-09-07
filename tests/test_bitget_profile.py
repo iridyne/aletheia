@@ -130,7 +130,7 @@ def test_exchange_config_default_profile_is_classic_v2():
 
 
 def _make_cfg(profile="classic_v2", mode="paper_internal"):
-    from aletheia.config.schema import ExchangeConfig, AppConfig
+    from aletheia.config.schema import ExchangeConfig
 
     class _FakeCfg:
         exchange = ExchangeConfig(bitget_profile=profile, paper_execution_mode=mode)

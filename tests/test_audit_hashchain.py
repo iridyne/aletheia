@@ -1,6 +1,5 @@
 """Tests for audit JSONL hash chain integrity."""
 
-import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
 import threading

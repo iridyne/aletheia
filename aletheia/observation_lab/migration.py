@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from aletheia.observation_lab.db import get_lab_db, lab_transaction, readonly_lab_db
+from aletheia.observation_lab.db import lab_transaction, readonly_lab_db
 
 LEGACY_TABLES = (
     "learning_hypotheses",

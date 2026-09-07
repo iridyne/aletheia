@@ -787,7 +787,6 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
     _stub_audit(monkeypatch, tmp_path)
 
     from aletheia.storage.models import Position
-    from aletheia.storage import repositories as repo
     from aletheia.execution import coordinator
     from tests.uta.test_execution_coordinator import _Adapter, _insert_bound_position, _ack
     from aletheia.uta.models import UTACapabilities, CapabilitySupport

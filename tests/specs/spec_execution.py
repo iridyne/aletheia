@@ -5,12 +5,10 @@ is the most critical invariant in the entire system.
 """
 
 import ast
-import textwrap
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-from tests.async_test_utils import closing_coro_runner
 
 
 # ---------------------------------------------------------------------------
@@ -592,7 +590,6 @@ def test_expired_exchange_execution_lease_never_resubmits(tmp_path, monkeypatch)
 )
 def test_reconciliation_never_imports_place_order():
     """AST-scan reconciliation.py imports — no 'place_order' name must appear."""
-    import importlib.util
     from pathlib import Path
 
     src = Path(__file__).parents[2] / "aletheia" / "execution" / "reconciliation.py"
@@ -721,7 +718,6 @@ def test_order_proposal_foreign_key_integrity(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
     from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
     result = submit_proposal(

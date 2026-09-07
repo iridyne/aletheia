@@ -4,7 +4,6 @@ import hmac
 import hashlib
 import base64
 import time
-from datetime import datetime, timezone
 
 
 def get_timestamp() -> str:

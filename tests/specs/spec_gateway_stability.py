@@ -105,7 +105,7 @@ def test_market_observer_has_module_logger():
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from aletheia.agents.round_robin import rotate_from_next
 
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")

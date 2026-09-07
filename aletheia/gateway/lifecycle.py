@@ -3,20 +3,18 @@
 import logging
 import platform
 import sys
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 import typer
 
-from aletheia.config.loader import bootstrap, load_config, save_config, get_data_dir
+from aletheia.config.loader import bootstrap, load_config, get_data_dir
 from aletheia.gateway.pidfile import (
-    is_running, read_pid, write_pid, clear_pid, pid_path,
-    kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
+    is_running, read_pid, write_pid, clear_pid, kill_pid_tree, port_in_use, wait_port_free, find_gateway_orphans,
     find_port_holders,
 )
 from aletheia.gateway.network import local_frontdoor_host
-from aletheia.gateway.logs import tail_all_logs, log_path
+from aletheia.gateway.logs import tail_all_logs
 
 
 _GATEWAY_STARTUP_TIMEOUT_SEC = 15.0
@@ -525,7 +523,6 @@ def _check_spawn_circuit_breaker() -> None:
     _CIRCUIT_BREAKER_WINDOW_SEC = 1800  # 30 minutes
 
     try:
-        import time
         from aletheia.files.jsonl import read_jsonl
         events = list(read_jsonl("audit.jsonl"))
         spawn_failures = [

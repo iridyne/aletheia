@@ -9,7 +9,6 @@ manual PR + owner admission work outside the CLI.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
@@ -934,7 +933,6 @@ def publish_manifest_cmd(
     from aletheia.observation_lab.manifest import (
         ManifestGenerationConflict,
         build_manifest,
-        publish_manifest,
     )
 
     try:

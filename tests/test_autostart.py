@@ -590,7 +590,6 @@ def test_verify_after_prime_success(monkeypatch):
     monkeypatch.setattr("aletheia.gateway.pidfile.is_running", lambda: True)
     monkeypatch.setattr("aletheia.gateway.pidfile.port_in_use", lambda p, h: True)
 
-    from aletheia.config.loader import load_config
     monkeypatch.setattr(autostart, "_verify_after_prime", lambda **kw: {"verified": True})
     result = autostart._verify_after_prime(timeout=1.0)
     assert result["verified"] is True

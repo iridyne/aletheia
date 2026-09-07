@@ -23,7 +23,7 @@ async def _make_async_provider(provider):
     return provider
 
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 

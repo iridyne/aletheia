@@ -128,7 +128,6 @@ def test_supervisor_stops_cleanly_on_zero_exit(tmp_path, monkeypatch):
 def test_supervisor_writes_pid_once(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia import _gateway_runner as runner
-    from aletheia.gateway import pidfile
 
     written = {"n": 0}
     monkeypatch.setattr(runner, "write_pid", lambda: written.__setitem__("n", written["n"] + 1))

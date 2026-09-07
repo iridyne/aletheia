@@ -1,6 +1,6 @@
 """Tests for the knowledge reference router."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from aletheia.knowledge.router import (
     build_advisory_context,

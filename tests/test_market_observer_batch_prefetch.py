@@ -4,7 +4,6 @@ Each test verifies that batch_* returns results semantically equivalent to
 calling the individual repository function N times.
 """
 
-import pytest
 
 
 def _prepare_db(tmp_path, monkeypatch):

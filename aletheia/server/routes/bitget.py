@@ -4,9 +4,12 @@ Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
 """
 
+# Bound at module level so tests can inject a transport double with
+# monkeypatch.setattr(bitget_routes.httpx, "AsyncClient", ...). NOT unused:
+# ruff F401 cannot see attribute-level patch targets.
+import httpx  # noqa: F401
 import asyncio
 
-import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 

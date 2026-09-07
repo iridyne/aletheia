@@ -1,9 +1,7 @@
 """Focused duration instrumentation regressions for agent audit records."""
 
-import ast
 import sqlite3
 import time
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

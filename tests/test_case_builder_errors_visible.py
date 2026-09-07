@@ -1,6 +1,6 @@
 """Regression test for issue #1246: case-builder failures must surface to AgentRun health."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 

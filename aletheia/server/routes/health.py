@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from aletheia import __version__
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config
 from aletheia.infra.events import list_infra_events
 from aletheia.server.startup_policy import startup_policy_snapshot
 

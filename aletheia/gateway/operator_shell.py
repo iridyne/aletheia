@@ -20,7 +20,6 @@ from aletheia.operator_service_identity import (
     OPERATOR_SERVICE_ENV,
     OPERATOR_SERVICE_HEADER,
     current_operator_service_token,
-    ensure_operator_service_token,
     issue_session_token,
     revoke_session_token,
     rotate_operator_service_token,

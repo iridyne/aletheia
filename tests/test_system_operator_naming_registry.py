@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
 
 
 def test_pi_daemon_config_has_naming_registry_docstring():

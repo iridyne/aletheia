@@ -16,7 +16,7 @@ rows) and asserts the verdict emitted for a representative family.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass

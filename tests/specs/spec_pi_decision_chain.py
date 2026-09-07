@@ -19,7 +19,6 @@ against a regression that silently reverts either behavior.
 from __future__ import annotations
 
 import ast
-import json
 import pathlib
 
 import pytest

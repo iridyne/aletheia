@@ -4,14 +4,12 @@ Every state mutation writes to both the DB tables and the EventStore, ensuring
 no order or position is lost on process restart.
 """
 
-import json
 from datetime import datetime, timezone
 
 from aletheia.storage.event_store import get_event_store, make_event
 from aletheia.storage.models import (
-    PSExecutionIntent, PSFill, PSOrder, PSOrderIntent, PSPosition, new_id,
+    PSExecutionIntent, PSFill, PSOrder, PSOrderIntent, PSPosition,
 )
-from aletheia.storage.repositories import transaction
 from aletheia.storage.sqlite import get_db
 
 

@@ -11,7 +11,6 @@ predicates / reasoning_feedback scanner all went 'unknown').
 Behavioral (DB-backed real functions, no mock-call-verify) — complements the
 structural AST guard in spec_learning_pipeline::LP-S05.
 """
-import pytest
 
 from tests.test_entry_logic import setup_env
 

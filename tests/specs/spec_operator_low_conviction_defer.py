@@ -27,11 +27,8 @@ this consumed the pending signal as a terminal skip; after Phase C it
 becomes an ``evaluation_deferred`` with a persisted event.
 """
 
-import asyncio
-import dataclasses
 from datetime import datetime, timezone
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

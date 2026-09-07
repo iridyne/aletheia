@@ -89,7 +89,7 @@ class AgentShellRuntime:
         )
         from aletheia.agent_shell.permissions import check_permission
         from aletheia.agent_shell.commands import HANDLERS
-        from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
+        from aletheia.agent_shell.registry import COMMANDS
         from aletheia.agent_shell.synthesis import synthesize_answer
         from aletheia.agent_shell.sessions import create_session, close_session
         from aletheia.agent_shell.audit import record_command

@@ -1,19 +1,16 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
-import json
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import pytest
 from unittest.mock import patch
-from pathlib import Path
 
 from aletheia.storage.sqlite import get_db, reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     AuditEvent, AgentRun, Opportunity, TradeProposal,
-    RiskDecision, Order, Fill, Position, StrategyRecord, KnowledgeItem,
-    SerenityTheme, SerenityEvidence, SerenityOpportunity,
+    RiskDecision, Order, Fill, Position, SerenityTheme, SerenityEvidence, SerenityOpportunity,
     SerenityRiskGate, SerenityReplaySnapshot, SerenityPostMortem,
 )
 from aletheia.storage import repositories as repo

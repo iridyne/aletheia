@@ -187,7 +187,6 @@ def test_ws_ticket_issuance_and_single_use():
 
 
 def test_ws_ticket_expiry(monkeypatch):
-    import time as _time
     from aletheia.server.routes import ws as ws_routes
 
     monkeypatch.setattr(ws_routes, "_WS_TICKET_TTL", -1)  # already expired

@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-import math
 
 import pytest
 

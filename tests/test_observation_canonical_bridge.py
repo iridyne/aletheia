@@ -159,7 +159,6 @@ def test_lab_authority_resolves_and_imports_one_receipt(tmp_path):
         import_delivery_receipts,
         prune_observation_delivery_outbox,
         register_treatment_adapter,
-        register_observation_spec,
         resolve_observation_treatment,
         set_authority_source,
     )
@@ -889,7 +888,7 @@ def test_observe_only_and_deny_tombstone_never_change_baseline():
         resolve_observation_treatment,
         set_authority_source,
     )
-    from aletheia.observation_lab.db import get_lab_db, lab_transaction
+    from aletheia.observation_lab.db import lab_transaction
     from aletheia.observation_lab.manifest import publish_manifest
 
     register_treatment_adapter(_Adapter(), replace=True)

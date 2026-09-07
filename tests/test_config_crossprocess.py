@@ -1,8 +1,6 @@
 """Cross-process config concurrency regression tests — #1074."""
 
 import multiprocessing
-import os
-import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +11,6 @@ from aletheia.config.schema import AletheiaConfig
 from aletheia.config.loader import (
     ConfigConflictError,
     config_file_hash,
-    mutate_config,
     save_config,
     _acquire_config_file_lock,
     _release_config_file_lock,
@@ -151,7 +148,6 @@ def test_cache_warm_targeted_mutation_preserves_other_writer(tmp_path):
 
 def test_save_config_cas_rejects_stale_snapshot(tmp_path):
     """save_config with a wrong expected_hash raises ConfigConflictError."""
-    import aletheia.config.loader as cl
 
     config_file = tmp_path / "config.yaml"
     _seed(config_file)

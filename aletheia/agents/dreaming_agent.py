@@ -1,6 +1,5 @@
 """Dreaming Agent — consolidates daily activity into learning summaries."""
 
-import json
 import logging
 import math
 import time

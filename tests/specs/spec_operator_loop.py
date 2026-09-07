@@ -11,7 +11,6 @@ Contract authority:
 import ast
 from pathlib import Path
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -703,7 +702,7 @@ def test_l2_proposal_artifact_carries_human_confirm_required():
 )
 def test_scanner_weight_persistence():
     """Verify scanner_weight adjustments persist to config (CR-PI-01 fix)."""
-    from aletheia.config.schema import UniverseConfig, AletheiaConfig
+    from aletheia.config.schema import UniverseConfig
 
     # Schema: UniverseConfig must have scanner_weights field
     u = UniverseConfig()

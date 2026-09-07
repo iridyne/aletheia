@@ -16,7 +16,6 @@ from aletheia.storage.repositories import (
     update_closed_position_settlement,
     update_open_position_materialization,
     update_open_position_observation,
-    list_market_snapshots,
 )
 
 

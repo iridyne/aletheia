@@ -2,14 +2,13 @@
 
 import asyncio
 import json
-from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
 from typing_extensions import TypedDict
 
-from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
+from aletheia.config.loader import load_config, save_config, mutate_config
 from aletheia.config.execution_costs import (
     EXECUTION_FEE_PCT_BOUNDS,
     FALLBACK_SPREAD_BPS_BOUNDS,
@@ -45,7 +44,6 @@ from aletheia.config.schema import (
     NotificationHour,
     TelegramConfig,
     TradingConfig,
-    TunnelConfig,
     UniverseConfig,
     UpdateConfig,
     WebhookConfig,

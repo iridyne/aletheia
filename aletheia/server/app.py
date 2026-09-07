@@ -3,7 +3,6 @@
 import logging
 import asyncio
 import os
-import sys
 import time
 
 # Windows: enforce SelectorEventLoop process-wide BEFORE uvicorn imports this

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

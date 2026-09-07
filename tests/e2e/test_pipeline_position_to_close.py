@@ -9,7 +9,6 @@ from datetime import datetime, timezone, timedelta
 
 from aletheia.storage.models import Position
 from aletheia.storage import repositories as repo
-from aletheia.portfolio.pnl import close_position
 
 
 class TestStopLossCloses:

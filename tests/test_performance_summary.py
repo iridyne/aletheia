@@ -1,7 +1,6 @@
 """Unit tests for aletheia.analytics.performance_summary (pure, no DB)."""
 import math
 
-import pytest
 
 from aletheia.analytics.performance_summary import (
     calmar,

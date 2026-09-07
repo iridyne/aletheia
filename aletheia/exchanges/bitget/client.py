@@ -1,7 +1,6 @@
 """Bitget API client — ExchangeAdapter implementation."""
 
 from dataclasses import dataclass
-from datetime import datetime
 import math
 from urllib.parse import urlencode
 
@@ -11,7 +10,7 @@ from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     SubmissionResponseUnknownError,
 )
-from aletheia.config.secrets import get_secret, redact
+from aletheia.config.secrets import get_secret
 from aletheia.data.symbols import to_bitget, to_canonical
 
 

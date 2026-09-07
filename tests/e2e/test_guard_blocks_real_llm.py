@@ -7,7 +7,6 @@ guard is active and that llm_complete returns a clean unavailable result.
 
 from __future__ import annotations
 
-import pytest
 
 
 async def test_guard_blocks_real_llm():

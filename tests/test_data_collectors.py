@@ -6,7 +6,6 @@ All tests are offline (no network, no DB). We mock ccxt and httpx.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 
 

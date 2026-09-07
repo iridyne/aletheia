@@ -198,7 +198,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
 
     # 6. enriched_context render emits all five LLM-visible tokens
     from aletheia.data.context_builder import render_enriched_context_md
-    from aletheia.data.models import LeverageState, MacroSnapshot
+    from aletheia.data.models import MacroSnapshot
     from aletheia.data.normalizer import compute_leverage_state
     lv = compute_leverage_state(
         symbol="BTC/USDT",

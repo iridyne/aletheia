@@ -10,7 +10,7 @@ import logging
 from aletheia.config.loader import load_config
 from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
 from aletheia.storage.models import MarketSnapshot
-from aletheia.storage.repositories import insert_market_snapshot, insert_market_snapshot_batch
+from aletheia.storage.repositories import insert_market_snapshot_batch
 from aletheia.trading.instruments import (
     MARKET_USDT_FUTURES,
     observed_instruments_from_config,

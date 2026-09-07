@@ -11,7 +11,6 @@ index once ``data/knowledge/`` was cleaned; this test refuses to let that
 regression return.
 """
 
-from pathlib import Path
 
 from tests.test_experience_loop import setup_env
 

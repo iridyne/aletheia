@@ -1,5 +1,4 @@
 """Tests for proxy fallback transport in aletheia.net."""
-import asyncio
 import os
 from unittest.mock import patch, AsyncMock, MagicMock
 

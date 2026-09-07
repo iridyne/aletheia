@@ -3,10 +3,9 @@
 import json
 import pytest
 from unittest.mock import MagicMock
-from unittest.mock import patch
 
 from aletheia.agent_runtime.permissions import (
-    register_tool, is_tool_permitted, get_permitted_tools, TOOL_REGISTRY,
+    is_tool_permitted, get_permitted_tools, TOOL_REGISTRY,
 )
 from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent

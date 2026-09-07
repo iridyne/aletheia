@@ -7,7 +7,6 @@ from pathlib import Path
 from aletheia.storage.models import KnowledgeItem
 from aletheia.storage.repositories import (
     insert_knowledge_item, insert_knowledge_item_if_absent, update_knowledge_item,
-    list_knowledge_items,
 )
 
 from aletheia.knowledge.document import canonicalize_written_document

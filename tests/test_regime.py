@@ -7,7 +7,6 @@ from aletheia.regime.detector import (
     detect_regime,
     debounced_detect,
     reset_state,
-    MarketRegime,
     REGIME_BULL,
     REGIME_BEAR,
     REGIME_SIDEWAYS,

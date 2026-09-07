@@ -268,7 +268,6 @@ def test_funding_materialization_restores_daily_loss_availability():
     """After funding settles, the exact net amount becomes available."""
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.portfolio.paper_account import ensure_paper_account, settle_position_closed
-    from aletheia.storage import repositories as repo
 
     ensure_paper_account()
     _pending_paper_close("pending-settle", entry_price=100.0, exit_price=102.0,
@@ -400,7 +399,6 @@ def test_delayed_previous_day_settlement_is_not_today_phantom():
         ensure_paper_account,
         settle_position_closed,
     )
-    from aletheia.storage import repositories as repo
 
     ensure_paper_account()
     _orphaned_paper_close("delayed-settlement", -6.0)
@@ -425,7 +423,6 @@ def test_delayed_previous_day_settlement_with_wrong_amount_remains_unavailable()
         ensure_paper_account,
         settle_position_closed,
     )
-    from aletheia.storage import repositories as repo
 
     ensure_paper_account()
     _orphaned_paper_close("delayed-corrupt-settlement", -6.0)
@@ -463,7 +460,6 @@ def test_new_close_event_without_valid_paper_position_remains_unavailable():
 def test_unreconciled_invalid_exit_price_evidence_blocks_account_economics():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.portfolio.paper_account import INVALID_EXIT_PRICE_EVIDENCE
-    from aletheia.storage import repositories as repo
 
     _closed_position("invalid-exit", 4326.3885071)
     force_update_position(

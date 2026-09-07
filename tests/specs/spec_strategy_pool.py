@@ -1,9 +1,7 @@
 
 from __future__ import annotations
 
-import ast
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

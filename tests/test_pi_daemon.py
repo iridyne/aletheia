@@ -1,7 +1,6 @@
 """Tests for the System Operator event-driven daemon (pi_daemon.py)."""
 
 import asyncio
-import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest

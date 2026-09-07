@@ -50,7 +50,6 @@ from aletheia.storage.models import (
     SerenityTheme,
     StrategyRecord,
     TradeProposal,
-    UniverseDiscoveryBenchmark,
     decode_strategy_parameters,
 )
 from aletheia.storage.sqlite import (

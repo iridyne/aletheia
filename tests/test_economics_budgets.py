@@ -8,7 +8,6 @@ that Phase 2B-2 will add to `complete_with_fallback`. Tests import from
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest

@@ -12,7 +12,7 @@ but never exercise end-to-end:
 
 import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import pytest
 

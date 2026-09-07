@@ -54,7 +54,7 @@ async def test_lco_reads_are_side_effect_free_and_off_the_event_loop(
 
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
-    from aletheia.server.routes import analytics, settings
+    from aletheia.server.routes import analytics
     from aletheia.storage.sqlite import get_db
     import aletheia.config.loader as config_loader
 
@@ -101,7 +101,7 @@ async def test_lco_limits_monotonic_cache_and_server_timing(tmp_path, monkeypatc
 
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
-    from aletheia.server.routes import analytics, settings
+    from aletheia.server.routes import analytics
 
 
     ticks = iter((100.0, 100.0, 120.0, 131.0, 131.0))

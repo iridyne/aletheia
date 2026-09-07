@@ -1,9 +1,6 @@
 """Tests for Risk Engine + Paper Broker + Execution Gateway."""
 
 import pytest
-import json
-from datetime import datetime, timezone
-from unittest.mock import patch
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations

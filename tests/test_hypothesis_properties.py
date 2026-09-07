@@ -6,7 +6,6 @@
 - data.symbols  转换安全性（任意输入不崩溃）
 """
 
-import pytest
 from hypothesis import given, assume, strategies as st
 
 # ---------------------------------------------------------------------------

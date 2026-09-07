@@ -358,7 +358,6 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
 
 def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from types import SimpleNamespace
 
     from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
@@ -411,7 +410,6 @@ def test_quantize_to_reference_precision_matches_venue_ticks():
 
 def test_market_close_stays_market_without_cancel_history(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from types import SimpleNamespace
 
     from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo

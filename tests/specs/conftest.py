@@ -2,7 +2,6 @@
 
 import pytest
 
-from tests.specs.spec_meta import SPEC_REGISTRY
 
 
 def pytest_collection_modifyitems(items):

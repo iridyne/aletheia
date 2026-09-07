@@ -37,7 +37,7 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
 )
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
-from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
+from aletheia.portfolio.pnl import build_exit_reasoning, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
 _PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}

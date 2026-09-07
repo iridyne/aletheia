@@ -1,10 +1,6 @@
 """Regression tests for backup security fixes #1434 #1618."""
 from __future__ import annotations
 import inspect
-import os
-import tempfile
-from pathlib import Path
-import pytest
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,8 +42,7 @@ def test_restore_security_error_class_exists():
 
 def test_restore_rejects_symlink_at_destination(tmp_path):
     """RestoreService must raise RestoreSecurityError when destination is a symlink."""
-    from aletheia.backup.restore import RestoreService, RestoreSecurityError
-    import shutil
+    from aletheia.backup.restore import RestoreService
 
     # Create a fake bundle with one file
     bundle = tmp_path / "bundle"

@@ -10,7 +10,7 @@ These tests exercise the FULL behavior chain, not just structure:
 import asyncio
 from datetime import datetime
 import sqlite3
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

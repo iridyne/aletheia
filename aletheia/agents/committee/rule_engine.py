@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from aletheia.agents.committee.base import (
-    AgentDirection,
     DecisionReport,
     RuleCheckResult,
 )

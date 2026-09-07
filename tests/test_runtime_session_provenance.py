@@ -500,7 +500,6 @@ def test_verification_fails_on_fingerprint_mismatch(tmp_path, monkeypatch):
     """If the persisted row has a different fingerprint verification must fail (non-durable)."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
 
     # Let insert succeed normally.
@@ -587,7 +586,6 @@ def test_doctor_probe_recognizes_external_managed_gateway_session(tmp_path, monk
     """CLI Doctor must not label the live Gateway's DB session as a stale crash."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.diagnostics import doctor
     from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
     from datetime import timezone
     from datetime import datetime
@@ -752,7 +750,6 @@ def test_doctor_probe_stale_open_sessions(tmp_path, monkeypatch):
     """Doctor must surface stale open sessions from prior crashes."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session as rs
-    from aletheia.storage import repositories as repo
     from aletheia.diagnostics.doctor import _probe_runtime_session_provenance, Report
     from datetime import timezone
     from datetime import datetime

@@ -31,7 +31,7 @@ from aletheia.storage.models import AuditEvent
 from aletheia.storage.repositories import transition_order, update_order_metadata
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
-from aletheia.uta.compat import instrument_from_local, scope_from_local
+from aletheia.uta.compat import scope_from_local
 from aletheia.uta.manager import build_uta_registry, query_uta
 from aletheia.uta.models import (
     UTAAccountIdentity,

@@ -7,7 +7,6 @@ import time
 from datetime import datetime, timedelta, timezone
 import json
 from threading import RLock
-from typing import Any
 
 from fastapi import APIRouter, Response
 from pydantic import BaseModel, JsonValue
@@ -1771,7 +1770,6 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
     /opportunity-funnel/current-snapshot — it skips the extras below.
     """
     from aletheia.storage.sqlite import get_db
-    from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
 
     db = get_db()

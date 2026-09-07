@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timezone
-from aletheia.analytics.profit_gradient_evidence import _parse_utc, _iso
+from aletheia.analytics.profit_gradient_evidence import _parse_utc
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import (

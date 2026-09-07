@@ -8,7 +8,6 @@ with no rollback path — a sleeping bomb (identified 2026-06-29).
 
 from __future__ import annotations
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -32,7 +31,6 @@ def test_pslesson_has_guard_fields():
               "accept() stamps activated_at; dry_run_until=+24h; expires_at=+30d"),
 )
 def test_accept_stamps_guard_timestamps(tmp_path, monkeypatch):
-    from aletheia.storage.sqlite import get_db
     from aletheia.storage.migrations import run_migrations
     from aletheia.learning.lessons import LessonStore
 

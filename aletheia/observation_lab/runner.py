@@ -35,7 +35,7 @@ import logging
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 logger = logging.getLogger("aletheia.observation_lab.runner")
 

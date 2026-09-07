@@ -1,6 +1,5 @@
 """Tests for aletheia.data.history_downloader."""
 
-import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch, MagicMock
 

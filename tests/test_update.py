@@ -1467,7 +1467,6 @@ def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
     from aletheia.update import smoke
 
     # Force the import subprocess to fail.
-    import subprocess
 
     class _Fail:
         returncode = 1
@@ -1483,7 +1482,7 @@ def test_smoke_import_gate_detects_broken_module(tmp_path, monkeypatch):
 def test_apply_no_auto_restart(tmp_path, monkeypatch):
     """Neither success nor rollback may restart the gateway (user requirement)."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.update import git_ops, applier
+    from aletheia.update import applier
 
     _stub_clean_pull(monkeypatch)
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})

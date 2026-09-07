@@ -9,7 +9,6 @@ Claim prefix: PL-RG
 
 import math
 import threading
-import time
 
 import pytest
 
@@ -125,7 +124,6 @@ def test_risk_gate_reject_propagation(tmp_path, monkeypatch):
     from aletheia.execution.gateway import submit_proposal
     from aletheia.risk.kill_switch import activate, deactivate
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage import repositories as repo
 
     activate("test_pl_rg_02", actor="human")
     try:

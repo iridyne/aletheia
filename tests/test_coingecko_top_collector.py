@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from aletheia.data.collectors import coingecko_top as cg_mod
 from aletheia.data.collectors.coingecko_top import (

@@ -1,7 +1,6 @@
 """Agent orchestrator — runs agents with permission enforcement."""
 
 import asyncio
-import traceback
 
 from aletheia.agent_runtime.run_logger import (
     AgentRunAlreadyActive,

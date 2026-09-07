@@ -12,10 +12,8 @@ Without that registration the conformance matrix collects zero EQ-* cases.
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 

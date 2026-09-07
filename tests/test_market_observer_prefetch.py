@@ -669,8 +669,7 @@ async def test_spot_prefetch_omits_hl_and_position_x(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_failed_prefetch_does_not_reach_llm(tmp_path, monkeypatch):
     """When _prefetched.failed=True, _analyze_symbol() returns early without LLM call."""
-    import asyncio
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agents.market_observer import _analyze_symbol, _SymbolPrefetch
@@ -1025,7 +1024,6 @@ async def test_llm_loop_runs_concurrently(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_llm_loop_concurrent_results_collected(tmp_path, monkeypatch):
     """Concurrent _analyze_symbol results (outputs/errors) are all captured."""
-    import asyncio
     from types import SimpleNamespace
 
     _prepare_db(tmp_path, monkeypatch)
@@ -1526,7 +1524,6 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
     → second symbol should be pressure-skipped.  Third (also low signal) should
     also be skipped.
     """
-    import asyncio
     import time
     from types import SimpleNamespace
 
@@ -1635,7 +1632,6 @@ async def test_pressure_skips_low_signal_symbols_when_budget_tight(tmp_path, mon
 @pytest.mark.asyncio
 async def test_pressure_does_not_skip_high_signal_symbols(tmp_path, monkeypatch):
     """High-signal symbols (score >= threshold) are never pressure-skipped."""
-    import asyncio
     import time
     from types import SimpleNamespace
 
@@ -1769,7 +1765,6 @@ def test_latency_history_rolling_window_capped_at_n(tmp_path, monkeypatch):
     from aletheia.storage.migrations import run_migrations
     from aletheia.agents.market_observer import (
         _record_observer_llm_latency,
-        _read_observer_llm_latency_p50,
         _LLM_LATENCY_SETTINGS_KEY,
         _LLM_LATENCY_ROLLING_N,
     )

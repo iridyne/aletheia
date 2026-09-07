@@ -9,8 +9,6 @@ Contract: persistence_recovery_contract
 Claim prefix: PR
 """
 
-import ast
-import asyncio
 import sqlite3
 from pathlib import Path
 

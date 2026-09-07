@@ -34,7 +34,6 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     from aletheia.files import jsonl
     from aletheia.portfolio import broker_funding_settlement as settlement
     from aletheia.portfolio import outcome_hooks
-    from aletheia.storage import repositories as repo
 
     reader_started = asyncio.Event()
     release_reader = asyncio.Event()

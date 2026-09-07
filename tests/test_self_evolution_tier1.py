@@ -4,7 +4,7 @@ Tests verify that settle_due() correctly generates guard_candidate knowledge ite
 for outcomes that breach the loss threshold, while respecting dedup and direction.
 """
 
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------

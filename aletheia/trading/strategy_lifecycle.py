@@ -19,7 +19,6 @@ from aletheia.storage.repositories import (
     list_knowledge_items,
     list_strategy_fills,
     list_strategy_orders,
-    list_strategy_positions,
     list_strategy_risk_decisions,
     update_strategy,
 )

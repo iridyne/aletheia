@@ -1344,8 +1344,6 @@ def test_paper_internal_entry_plan_executes_through_risk_and_gateway(
 ):
     from aletheia.execution import gateway
     from aletheia.execution.entry_plan_execution import (
-        build_entry_execution_receipt,
-        build_entry_plan_order_intent,
         execute_entry_plan,
     )
 

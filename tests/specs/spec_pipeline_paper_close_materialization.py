@@ -190,7 +190,6 @@ def test_paper_close_uses_frozen_net_balance_cost_contract(tmp_path, monkeypatch
     cfg = _patch_config(monkeypatch)
 
     from aletheia.execution.paper_broker import close_paper_position
-    from aletheia.storage import repositories as repo
 
     _, position = _seed_open_position(
         direction="long", stop_price=95.0, take_profit_price=120.0
@@ -2462,7 +2461,6 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
         get_paper_account,
     )
     from aletheia.portfolio.pnl import compute_portfolio
-    from aletheia.storage import repositories as repo
 
     # Seed three closes already in the terminal state — mirroring the
     # ALLO/CL/FIL production incident.

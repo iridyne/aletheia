@@ -17,7 +17,7 @@ from aletheia.data.symbols import (
 )
 from aletheia.storage.models import UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
-from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
+from aletheia.trading.indicators import atr, bollinger, volume_sma_ratio
 from aletheia.trading.technical_analysis import TechnicalBar, timeframe_milliseconds
 from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
 

@@ -14,12 +14,11 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from aletheia.gateway.exchange_adapter import MockExchangeAdapter, RemoteFill
 from aletheia.gateway.reconciliation import reconcile_fills
 from aletheia.gateway.state_store import GatewayStateStore
-from aletheia.storage.models import PSFill, new_id
+from aletheia.storage.models import new_id
 from aletheia.storage.sqlite import get_db
 
 
@@ -136,7 +135,6 @@ def test_overlapping_remote_fill_does_not_cause_safe_freeze():
     from aletheia.gateway.recovery import GatewayRecoveryService
     from aletheia.gateway.session import GatewaySessionStore
     from aletheia.gateway.state_machine import GatewayStateMachine
-    from aletheia.gateway.exchange_adapter import RemoteOrder
 
     ts = "2026-01-01T12:00:00+00:00"
     _insert_order("bitget", "aletheia_ord-overlap", status="filled")

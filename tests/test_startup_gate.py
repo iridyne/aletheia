@@ -13,7 +13,6 @@ All LLM calls are mocked — no real network or subprocess here.
 import asyncio
 import sqlite3
 
-import pytest
 
 from aletheia.config.schema import AletheiaConfig, ProviderConfig
 from aletheia.config.loader import save_config, _invalidate_config_cache

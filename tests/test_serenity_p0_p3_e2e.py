@@ -8,7 +8,6 @@ These tests exercise the actual code paths (not just source-string assertions):
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 

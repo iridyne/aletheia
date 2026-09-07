@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -63,7 +62,6 @@ def _make_open_position(
 ) -> str:
     """Insert a Position row directly so we can assert what averaging-in updates."""
     from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
 
     pos = Position(
         symbol=symbol,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 import sqlite3
 import pytest
-from pathlib import Path
 
 
 @pytest.fixture

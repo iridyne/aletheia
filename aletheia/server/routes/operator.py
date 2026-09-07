@@ -49,7 +49,7 @@ from aletheia.agent_shell.operator_store import (
     update_extension,
     create_task,
 )
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
 

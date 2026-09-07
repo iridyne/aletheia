@@ -6,7 +6,6 @@ the verification URL + user code from its stdout to show in the web UI, and poll
 All subprocess interaction is mocked.
 """
 
-import asyncio
 
 import pytest
 

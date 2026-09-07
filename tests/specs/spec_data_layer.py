@@ -95,7 +95,6 @@ def test_get_market_data_provider_is_not_cached():
 def test_market_data_provider_protocol():
     """Import check: Protocol is runtime_checkable; async methods present by name."""
     from aletheia.data.providers import MarketDataProvider
-    from typing import Protocol, runtime_checkable
 
     # runtime_checkable means isinstance() works structurally.
     assert hasattr(MarketDataProvider, "__protocol_attrs__") or (
@@ -397,7 +396,6 @@ def test_symbol_round_trip_invariant():
     )
 )
 def test_instrument_id_rejects_non_canonical():
-    import pytest
     from aletheia.data.symbols import InstrumentId
 
     # These must raise ValueError (no slash in symbol).

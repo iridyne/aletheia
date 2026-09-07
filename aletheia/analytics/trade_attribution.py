@@ -422,7 +422,6 @@ def _compute_holding_hours(opened_at: str | None, closed_at: str | None) -> floa
     if not opened_at or not closed_at:
         return None
     try:
-        from datetime import datetime, timezone
         fmt_patterns = ["%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]
         t_open = _parse_dt(opened_at, fmt_patterns)
         t_close = _parse_dt(closed_at, fmt_patterns)

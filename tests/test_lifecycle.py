@@ -85,7 +85,6 @@ def test_do_stop_clears_pid_only_after_port_freed(tmp_path, monkeypatch, capsys)
 def test_do_stop_cleans_our_orphans(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.gateway import lifecycle
-    from aletheia.gateway import pidfile
 
     # No tracked supervisor, but an orphan holds the port.
     monkeypatch.setattr(lifecycle, "is_running", lambda: False)

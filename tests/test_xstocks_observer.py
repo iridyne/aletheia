@@ -9,7 +9,6 @@ xStocks (AAPLON/USDT etc.) are Bitget tokenized equity tokens:
 import asyncio
 import sqlite3
 
-import pytest
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations

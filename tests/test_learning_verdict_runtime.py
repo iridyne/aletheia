@@ -264,7 +264,6 @@ def _filter_outcome(
 def test_latest_measurement_verdict_orders_by_exact_created_instant():
     from aletheia.learning.ledger import (
         get_latest_measurement_verdict,
-        insert_record,
     )
     from aletheia.learning.models import LearningContributionVerdict
 
@@ -319,7 +318,6 @@ def test_latest_measurement_verdict_orders_by_exact_created_instant():
 def test_latest_measurement_verdict_treats_offset_equivalent_instants_as_ties():
     from aletheia.learning.ledger import (
         get_latest_measurement_verdict,
-        insert_record,
     )
     from aletheia.learning.models import LearningContributionVerdict
 

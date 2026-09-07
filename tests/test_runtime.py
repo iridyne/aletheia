@@ -3,7 +3,6 @@
 import asyncio
 
 import pytest
-from unittest.mock import patch, AsyncMock
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations

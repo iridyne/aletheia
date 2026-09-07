@@ -1267,7 +1267,6 @@ def test_router_returns_openai_native(tmp_path, monkeypatch):
 
 # ── Streaming tests ──────────────────────────────────────────────────────────
 
-from aletheia.model_provider.base import StreamChunk
 
 
 @pytest.mark.anyio

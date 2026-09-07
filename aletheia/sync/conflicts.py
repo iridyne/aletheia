@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from aletheia.storage.hashing import sha256_json
 from aletheia.storage.sqlite import get_db
 
 

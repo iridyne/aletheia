@@ -73,7 +73,6 @@ def _put_setting(conn, key: str, value: str):
 )
 def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
     import json
-    import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
 
     conn = _setup_db(tmp_path, monkeypatch)
@@ -114,7 +113,6 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
 )
 def test_bitget_active_rejects_legacy_cache(tmp_path, monkeypatch):
     import json
-    import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
 
     conn = _setup_db(tmp_path, monkeypatch)
