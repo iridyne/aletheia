@@ -6,7 +6,6 @@ response shape is pending one demo sampling (see PARTIAL_REDUCE_RESEARCH.md).
 
 import asyncio
 
-import aletheia.execution.reconciliation as recon
 
 
 class _FakeExchange:
@@ -17,15 +16,6 @@ class _FakeExchange:
         return self._orders
 
 
-class _FakeClient:
-    def __init__(self, open_ids=None, raise_exc=None):
-        self._open_ids = open_ids or []
-        self._raise = raise_exc
-
-    async def get_open_orders(self):
-        if self._raise:
-            raise self._raise
-        return [{"id": i} for i in self._open_ids]
 
 
 # ── get_open_orders response parsing (real client, mocked ccxt exchange) ─────
@@ -54,56 +44,3 @@ def test_binance_get_open_orders_parses(monkeypatch):
     assert asyncio.run(c.get_open_orders()) == [
         {"id": "abc", "symbol": "ETH/USDT:USDT", "status": "open"}
     ]
-
-
-# ── _reconcile_ccxt_broker wiring ────────────────────────────────────────────
-
-def _insert_order(db, oid, mode, *, status="submitted", ex_id="ex-1"):
-    db.execute(
-        "INSERT INTO orders (id,symbol,market_type,direction,order_type,quantity,"
-        "execution_mode,status,exchange_order_id) VALUES (?,?,?,?,?,?,?,?,?)",
-        (oid, "BTC/USDT", "usdt_futures", "long", "limit", 0.1, mode, status, ex_id),
-    )
-
-
-def test_open_list_absence_stays_unresolved(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import list_orders, _select_one
-
-    db = get_db()
-    _insert_order(db, "o1", "okx_live_limited", ex_id="still-open")
-    _insert_order(db, "o2", "okx_live_limited", ex_id="gone")
-    # Open-list absence alone cannot distinguish fill/cancel/reject/history lag.
-    monkeypatch.setattr(recon, "_ccxt_client_for_mode", lambda mode: _FakeClient(open_ids=["still-open"]))
-
-    res = recon._reconcile_ccxt_broker("okx_live_limited", list_orders(limit=500))
-    assert res["checked"] == 2 and res["filled"] == 0
-    assert [order["id"] for order in res["unreconciled"]] == ["o2"]
-    assert _select_one("orders", "o2")["status"] == "submitted"
-    assert _select_one("orders", "o1")["status"] == "submitted"
-
-
-def test_reconcile_fetch_failure_infers_nothing(monkeypatch):
-    from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import list_orders, _select_one
-
-    db = get_db()
-    _insert_order(db, "o3", "binance_live_limited", ex_id="whatever")
-    monkeypatch.setattr(recon, "_ccxt_client_for_mode",
-                        lambda mode: _FakeClient(raise_exc=RuntimeError("network down")))
-
-    res = recon._reconcile_ccxt_broker("binance_live_limited", list_orders(limit=500))
-    assert res["filled"] == 0
-    assert len(res["unreconciled"]) == 1 and res["errors"]
-    # fail-safe: a failed read never fabricates a fill
-    assert _select_one("orders", "o3")["status"] == "submitted"
-
-
-def test_reconcile_no_live_orders_is_noop(monkeypatch):
-    from aletheia.storage.repositories import list_orders
-    called = []
-    monkeypatch.setattr(recon, "_ccxt_client_for_mode",
-                        lambda mode: called.append(mode) or _FakeClient())
-    res = recon._reconcile_ccxt_broker("okx_live_limited", list_orders(limit=500))
-    assert res == {"checked": 0, "filled": 0, "errors": [], "unreconciled": []}
-    assert called == []  # no client built when there's nothing to reconcile

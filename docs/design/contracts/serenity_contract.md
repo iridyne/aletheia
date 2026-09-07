@@ -8,13 +8,13 @@
 > - `aletheia/agents/research_worker.py` (多镜头研究 pipeline + 符号过滤 + 晋升)
 > - 决策/执行/持仓层的 trade_school 穿透 (见 §8–§10)
 > Cross-references: decision_lifecycle_contract.md · knowledge_contract.md · risk_engine_contract.md · live_unlock_contract.md · data_model.md
-> Last updated: 2026-08-10
+> Last updated: 2026-09-07 (D2 canonical Candidate entry)
 
 ---
 
 ## §1 什么是 Serenity Lens
 
-Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角研究、给出结构化裁决与证据质量分级,产出可被 System Operator 消费的 `SerenityOpportunity`。它是一条横跨全栈的纵切,而非单个模块:
+Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角研究、给出结构化裁决与证据质量分级,产出可经真实 PA 准入发布为 durable Candidate 的 `SerenityOpportunity`。它是一条横跨全栈的纵切,而非单个模块:
 
 ```
 标的 → 多镜头研究(4 lens)   [research_worker.py]
@@ -22,13 +22,14 @@ Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角
      → 可研究性分级(A/B/C)   [serenity_evidence.py]
      → 强制裁决(verdict)     [research_worker Stage 4]
      → 评分卡 + bucket       [serenity_scoring.py]
-     → 归因(signal_source)   [trading_context / trading_decision]
-     → 晋升到 PI 队列         [routes/data.py + research_worker auto_promote]
+     → 来源准入 + PA 证据     [publish_serenity_candidates]
+     → Candidate / Generation → Planner → Compiler → EntryPlan
+     → Plan execution/watcher → Risk → Gateway
      → 持有周期判别(school)   [position_manager / execution 全链]
      → 关仓复盘(PostMortem)   [pnl.py / trade_attribution.py]
 ```
 
-**目标态声明**: 本契约描述当前**已实现**的 Serenity 子系统。9 个 `spec_serenity_*.py` 是其可执行验证(见 §12),本文档是它们的统一规范入口——此前 Serenity 断言分散在 9 个 logical contract 中,无统一 L2 文档 (EVO 评估报告 L2 gap)。
+**范围**: 本契约描述当前 Serenity 研究与 canonical 入场/持仓边界；§12 区分历史 spec 映射和当前验证。不据文档同步宣称已测试、部署或取得真实交易资格。
 
 ---
 
@@ -42,13 +43,13 @@ Serenity Lens 是 Aletheia 的**深度研究镜头**:对一个标的做多视角
 
 3. **来源天花板不可绕过**: 见 §3.2。`prediction_market` / 各 methodology / `price_action` / `llm` / `model` 来源无论自评多高,硬顶 `speculative`。
 
-4. **信息真空封顶**: 可研究性 C 级(投机/稀薄证据)把最终分数封顶 ≤40,低于 `research_priority` 阈值 52,阻止信息真空进入 PI 可执行队列 (§4.2)。
+4. **信息真空封顶**: 可研究性 C 级(投机/稀薄证据)把最终分数封顶 ≤40,低于 `research_priority` 阈值 52,阻止信息真空通过自动晋升评分门 (§4.2)。
 
-5. **加密-only 符号过滤**: LLM 幻觉出的非加密品种(股票/forex/聚合体)在持久化前被 `_is_tradeable_crypto_symbol()` 拒绝,不得进入 PI 交易上下文 (§10)。历史事故: LLM 曾生成 MSTR/SPY/GBP/USD 写入 serenity_opps。
+5. **加密-only 符号过滤**: LLM 幻觉出的非加密品种(股票/forex/聚合体)在持久化前被 `_is_tradeable_crypto_symbol()` 拒绝,不得据此取得 Candidate 入场权限 (§10)。历史事故: LLM 曾生成 MSTR/SPY/GBP/USD 写入 serenity_opps。
 
 6. **学习/持有判别不得触碰信任边界**: `trade_school` 判别器穿透执行层(§8),但**对实盘解锁 surface 和风控 guard 完全不可见**(§9)——`live.py` 与 `risk/engine.py` 的实盘门控代码里不得出现 `trade_school`。这是 Serenity 长周期特性与 trust boundary 的隔离墙。
 
-7. **归因无 silent None**: Serenity pick 必须回填可追溯的 `opportunity_id` + `signal_source='serenity'`,不得静默 None (§6)。
+7. **归因无 silent None**: Serenity Plan/Proposal 必须携带可追溯的 source ID、`opportunity_id` 与 `trade_school='serenity'`,不得静默 None (§6)。
 
 ---
 
@@ -128,7 +129,7 @@ Stage 1 证据收集用**多个 LLM 视角**并行代替单次调用 (S1 multi-l
 - 多 lens 收集完 emit `event_type='lens_synthesis'` 合成事件 (ML-S03)。
 - **methodology 旁路**: `_ICT_METHODOLOGY_SYSTEM` 模式不走多 lens (ML-B02);且该来源经 §3.2 硬顶为 speculative。
 
-Stage 4 **强制裁决** (S4 verdict): `_OPPORTUNITIES_SYSTEM` 强制 LLM 输出结构化 `verdict_json`(`recommendation` ∈ long/short/watch/avoid + `bull_case` + `bear_case` + `key_assumption`),消除两边倒措辞 (SV-S02/SV-B01)。裁决穿透到 `TradingDecision.bear_case` / `key_assumptions` 字段与 PI decision schema (SV-S03/S04/B02),并在 trading_context Layer 3 暴露给 PI (SV-C01)。
+Stage 4 **强制裁决** (S4 verdict): `_OPPORTUNITIES_SYSTEM` 强制 LLM 输出结构化 `verdict_json`(`recommendation` ∈ long/short/watch/avoid + `bull_case` + `bear_case` + `key_assumption`),消除两边倒措辞 (SV-S02/SV-B01)。裁决是研究证据，不是可执行 TradingDecision；source/hash 冻结后仍须由共享真实 PA evaluator 与 Entry Planner/Compiler 形成入场计划。历史 SV-S03/S04/B02/C01 对旧 PI context 的断言不再是当前入场权限。
 
 生成端**必须**路由过评估器: `research_worker` 与 `prediction_observer` 都调 `assess_evidence_tier` / `assess_opportunity_tier`(SE-S02/S03),否则证据仍是自评。
 
@@ -165,44 +166,59 @@ Run ID 同时是 attempt 与 progress generation。当前 `stage`、`updated_at`
 
 ---
 
-## §6 归因链 signal_source (attribution)
+## §6 不可变来源与归因
 
-Serenity pick 必须可追溯到来源,防止 opportunity_id 静默 None(历史根因 trading_decision.py:250)。
-
-- `PiDecision.signal_source` 默认 `'market_observer'`,additive 迁移保证旧库有列 (SA-S01/S03)。
-- `_attach_opportunity_context` 回填规则: 仅匹配 Serenity → `opportunity_id=serenity_id` + `signal_source='serenity'`(无 silent None,SA-I01);**同时匹配 market_observer 与 Serenity 时 market_observer 优先**(SA-I02)。
-- pending_signal 按 symbol+direction 直配优先于可能被 limit=5 截断的 layer3(SA-I03/S05);`record_decision` 持久化 `signal_source` 到 `pi_decisions`(SA-C01)。
-- exact Serenity pending carrier 必须按 `opportunity_id` 独立 hydrate thesis、score、
-  assessed tier、researchability 与 evidence IDs；全局 active top-five 只是展示窗口，
-  不能决定待判断候选是否拥有研究事实。证据身份进入 material fingerprint，补证后
-  必须重新开放 defer 判断。
+Candidate context 出生时包含真实 `source.kind='serenity'`、`source.id=SerenityOpportunity.id`、
+`source.trade_school='serenity'`，连同 source cutoff、evidence/material hash 一起冻结。
+Universe 使用其真实 member ID 与 short_term；不复制一份来源注册表。Generation 续租/复用
+不改写出生 context。Compiler 冻结 Plan 的 source_kind/source_id/trade_school，
+`build_entry_plan_order_intent` 将其写入 Proposal attribution，同时显式写
+`opportunity_id=plan.source_id` 与 trade_school；Position/thesis/close feedback 保持研究归因。
+不按 symbol 匹配 pending，不再通过 PiDecision 或 `_attach_opportunity_context` 授权。
 
 ---
 
-## §7 晋升链 promote → PI 队列 (Option A, owner 定 2026-06-27)
+## §7 晋升链 promote → durable Candidate
 
-**不再写死 draft StrategyRecord**(与 Position C 呼应)。`promote_serenity_theme`(routes/data.py)函数体**不含** `StrategyRecord` / `state='draft'`(SP-S02);改为向 PI 队列写 `signal_pending` 的 `PiDecision`(`signal_source='serenity'`,`action_intent=pi_evaluate`)并 `notify_pi_daemon`(SP-S03)。自动晋升只认达到门槛的 child；同 theme 仍有 active child 未持有 exact carrier 时 theme 保持 active，后续研究/补证可重试完整 active sibling 集且不得重复 carrier。所有 active child 都有 carrier 后才标 `promoted`。新增 evidence 与 active sibling 的 assessed tier/researchability 重评必须在同一短事务；终态 sibling 不改写。
+手工 `routes/data.py:promote_serenity_theme` 与自动
+`research_worker._auto_promote_serenity_opportunities` 使用同一
+`publish_serenity_candidates(theme_id, opportunity_ids, *, min_score_for_pi=None,
+new_candidates_only=False) -> list[str]`。返回按请求去重顺序的 durable Candidate IDs；
+`new_candidates_only=True` 只计新建。空请求拒绝；同 source+material 幂等复用，不再叫 pending。
 
-自动晋升的当前 score、risk gates 与 threshold 必须在创建 carrier 的同一
-`BEGIN IMMEDIATE` 内重验；手工晋升不应用 score 门槛。一个 exact、唯一的 final
-`trade`/`skip` 与 pending carrier 同样构成已决载体，即使 transient pending 已被
-retention 删除也不得重新入队。晋升计数和 wake 只统计本次新建 carrier；幂等重试为 0。
+发布前在 writer 事务外准备研究证据、exact registry instrument、当前真实 feature/行情、
+共享 PA evaluator 与 `prepare_candidate_requalification`。研究方向不得冒充机制或反转 PA；
+无 compatible Profile/能力证据为 unavailable，方向冲突为 serenity_pa_direction_conflict。
+`serenity_research_v1` / `research_authority` 只证明来源准入，不冒充 Universe Utility。
+不执行整次 Universe refresh，也不在发布函数内调用模型形成 Proposal。
 
-System Operator 的 exact terminal Serenity `skip` 与 final PiDecision/filter evidence
-同事务推进 source `active→reviewed`，避免已消费 carrier 继续显示 active。`trade` 不在
-该处终结，仍由真实持仓关闭路径推进 `traded_closed`。
+短事务重验 source material hash 和全局 exact instrument owner，原子写真实
+source-scoped snapshot、member 与 current PlanningGeneration，然后才置 theme promoted。
+缺来源/证据、hash 改变、exact instrument 不明、不 eligible 或跨来源 instrument_owned
+导致全批回滚，不留下半成品晋升。Universe refresh/reconcile 只处理 Universe 来源；
+两个来源仍共用一个 exact venue/symbol/market_type owner，全球 attention TTL 继续适用。
 
-**D5 自动晋升开关**: `SerenityConfig.auto_promote` 默认 **False**,`min_score_for_pi ∈ [0,100]`;经 `/api/settings/serenity` 暴露 + bounds-check(SP-S01/S04/B03),`api_reference.md` 登记该路由(SP-S05)。auto_promote 打开时 research_worker 用 `score_serenity_opportunity` 打分后自动入队,审计标签 `'serenity_auto_promote'`(SP-S06)。
+自动晋升保留 `auto_promote`（默认 False）与 `min_score_for_pi` 评分门；低于门槛的 child
+不发布。手工晋升不应用该分数门，但同样必须通过真实证据、风险 gate 与 PA 准入。
+当前 writer 有发布结果才标记 theme promoted；不能把 theme 状态解释成每个 child 都已获交易权。
+晋升只唤醒 canonical Planner；不可用/idle 不回到旧 PI evaluator、Ranker 或 signal_pending。
+
+**历史（退役 Option A）**：曾经的 promote→PiDecision(signal_pending)→PI queue、
+exact pending hydrate、final trade/skip carrier 去重与 orphan claim 恢复，仅解释旧审计。
+这些入口现在不执行、不生成新提案。旧研究待处理项须凭新鲜真实证据重新准入，不能继承
+pending 作为批准；已成交持仓和未知订单仍由现有 Gateway/持仓 owner 收口。
 
 ---
 
 ## §8 持有周期判别 trade_school (holding)
 
-Serenity 是**长周期**策略,不能被短线机制误杀。判别符 `trade_school` 从决策层穿透到仓位层:
+Serenity 是**长周期**策略,不能被短线机制误杀。判别符 `trade_school` 从 Candidate/Plan/Proposal 穿透到仓位层:
 
 - `TradeProposal.trade_school` 与 `Position.trade_school` 默认 `"short_term"`,遗留记录不会意外采用 serenity 行为(SH-S01);additive 迁移双表带 `DEFAULT 'short_term'`(SH-S02)。
-- `SerenityConfig.stop_loss_pct`(默认 8.0)+ `max_hold_days`(默认 90),前端 Settings 有控件(SH-S03/S07)。
-- `submit_decision_as_proposal` 由 `signal_source` 派生 `trade_school`,serenity 用长周期止损(SH-S04);穿透 paper_tools/gateway/4 broker/reconciler 全链(SH-S05)。
+- `SerenityConfig.max_hold_days`（默认90）保留持仓上限；旧 stop_loss_pct 设置/API/UI 已退役，磁盘旧字段经配置迁移剥离。
+- Compiler 冻结正有限 `holding_horizon_hours=cfg.serenity.max_hold_days*24`；Proposal.expected_horizon_hours 接收 holding。Plan.expected_horizon_hours 仍是 4h/24h 择时（≤48h），expires_at 仍为 60/240 分钟入场有效期；真实 maker Order 另有 60 秒 lifetime。
+- max_hold_days=90 时，SWING 择时24h、entry expiry4h、持仓2160h互不替代。PA invalidation 不是持仓周期届满。short_term holding 仍复制其 timing horizon。
+- 最终真实结构 stop 保留，Compiler 基于最终 stop 重新约束风险仓位；不再存在 Serenity 固定百分比入场 stop 设置，不能覆盖所选有效结构。
 - `position_manager`: serenity 仓位**不受 72h 短期上限**(`_decide_exit` 100h 仍返回 None,SH-B01)、**trailing stop 是 no-op**(SH-B02);short_term 回归——72h cap 仍触发(SH-B03)。serenity 走 `thesis_invalidated` 退出(读 `get_serenity_opportunity`,由 `trade_school=='serenity'` 守卫,SH-S08)。
 - 关仓自动复盘: `pnl._close_serenity_feedback` 写 `SerenityPostMortem`(SH-S09);`trade_attribution` 在标准 join 落空时回落 serenity opportunity 查询(SH-S10)。
 
@@ -212,8 +228,9 @@ Serenity 是**长周期**策略,不能被短线机制误杀。判别符 `trade_s
 
 > 本节是不变量 #6 的可执行锁。**Serenity 的持有特性绝不能成为绕过实盘门控的通道。**
 
-对称性(paper↔live 必须一致):
-- 三个 live broker(bitget/binance/okx)的 `execute_live_order` 签名带 `trade_school: str = 'short_term'`(LR-S01),`Position(...)` 构造赋值 `trade_school`(LR-S03);`gateway.submit_proposal` 在 demo/testnet 与 live_limited 三条 dispatch 路径都传 `proposal.trade_school`(LR-S02)。
+Proposal→Gateway→Position/reconciliation 必须保留 school 与 source，不能因执行 route 改变持有语义。
+本入场切片不宣称已完成六种外部 mode 的 UTA 唯一私有账户切换；那是批准的后续部分，
+读取、mutation 资格与实盘解锁仍需各自真实证据。
 
 隔离墙(信任边界不被 school 触及):
 - **`server/routes/live.py` 不含 `trade_school`**,仍要求 `confirm=true` + 保留 `"live_disabled"`(LR-S04)。
@@ -225,7 +242,7 @@ Serenity 是**长周期**策略,不能被短线机制误杀。判别符 `trade_s
 ## §10 股票代币执行 (xstock)
 
 Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equity_tradeable`,与 equity_observer 的观察专用 `equity` 互不干扰:
-- research_worker 对 stock token 打 `equity_tradeable` + `is_stock_token`(SX-S01);trading_context 允许 `equity_tradeable` 执行(不放进 `execution_eligible=False`),但仍屏蔽纯 `equity`(SX-S02)。
+- research_worker 的 stock-token 研究分类不是执行批准；只有已登记的 exact venue/symbol/market_type 与受支持 instrument context、真实 PA/eligibility 门可发布 Candidate。纯股票 ticker 或预测问题文本不能伪造成 instrument。
 - `equity_observer` 不含 `equity_tradeable`,保持观察-only,OBS-S04 不被破坏(SX-S03)。
 - 加密-only 过滤(§2 不变量 #5,SE-S07/I07): `_is_tradeable_crypto_symbol`(= research_worker 的 `_is_allowed_serenity_symbol` 别名) + `_ALLOWED_QUOTE_CURRENCIES` 在持久化前拒绝 MSTR/USD、SPY、GBP/USD、USDT/INR,放行 BTC/USDT、ETH/BTC 等。
 
@@ -237,15 +254,17 @@ Serenity 直接产出的股票代币(xStocks)机会使用独立资产类别 `equ
 |---------|------------------|------|
 | `SerenityOpportunity` | `assessed_tier` / `researchability_grade` / `verdict_json` | SE/SR-S02/SV-S01 |
 | `SerenityEvidence` | `agent_lens` | ML-S02 |
-| `PiDecision` | `signal_source`(默认 market_observer) | SA-S01/S03 |
+| Candidate context / EntryPlan | immutable source kind/id/school；Plan holding_horizon_hours | 当前 entry-plan-contract |
+| `PiDecision`（历史） | 旧 signal_source，非当前入场事实 | 历史 SA-S01/S03 |
 | `TradeProposal` / `Position` | `trade_school`(默认 short_term) | SH-S01/S02 |
-| `SerenityConfig`(schema.py) | `stop_loss_pct` / `max_hold_days` / `auto_promote` / `min_score_for_pi` | SH-S03/SP-S01 |
+| `SerenityConfig`(schema.py) | `max_hold_days` / `auto_promote` / `min_score_for_pi` | SH-S03/SP-S01 |
 
 ---
 
-## §12 Spec 映射表 (可执行验证)
+## §12 历史 Spec 映射与当前验证
 
-9 个 logical contract,约 73 个 claim。所有断言的可执行验证在下列文件:
+下表保留旧版9个 logical contract 的定位历史，不宣称这些旧文件或 claim 仍存在/通过。
+promote→PI 队列、TradingDecision 和 broker 源码拼写断言已不代表当前入场契约：
 
 | Spec 文件 | 契约名 | 覆盖 | claim |
 |-----------|--------|------|-------|
@@ -263,13 +282,13 @@ Research attempt lifecycle 的聚焦行为由 `tests/test_serenity_workbench.py`
 `tests/test_serenity_scheduler_continuity.py` 覆盖：queued/running cancel race、worker
 acknowledgement、terminal CAS、durable progress surface 与 restart reconciliation。
 
-> 运行: `uv run pytest tests/test_spec_conformance.py -q`(spec_*.py 不匹配 pytest 默认 python_files,须经 conformance 硬编码导入;直接 `pytest tests/specs/spec_serenity_*.py` 亦可点名收集)。
+当前 publication/holding 聚焦验证：`tests/test_serenity_routes.py`、`tests/test_serenity_manual_opportunity_evidence_gate.py`、`tests/test_serenity_p0_p3_e2e.py`、`tests/test_entry_plan_execution.py`。本次文档编辑没有运行这些测试。
 
 ---
 
 ## §13 已知限制
 
-- **L1 评分权重硬编码**: `tier_score_map` / `stage_score_map` / `avg_score_map` / `_RESEARCHABILITY_CEILING` 写死在 `serenity_scoring.py`,非 config-driven。注意区分: Serenity 的**行为参数**(止损/持有天数/自动晋升/PI 阈值)**已** config 化 + 前端控件(§8/§7);硬编码的仅是**内部评分映射**这一实现细节。MVP 阶段不暴露 (owner 待定)。
+- **L1 评分权重硬编码**: `tier_score_map` / `stage_score_map` / `avg_score_map` / `_RESEARCHABILITY_CEILING` 写死在 `serenity_scoring.py`,非 config-driven。注意区分: Serenity 的**行为参数**(持有天数/自动晋升/自动评分阈值)**已** config 化 + 前端控件(§8/§7);硬编码的仅是**内部评分映射**这一实现细节。MVP 阶段不暴露 (owner 待定)。
 - **评估器无历史学习**: 评估器是静态规则,不随交易结果自适应(设计如此,保确定性)。
 - **取消是协作式**: 当前 provider 请求返回前不能释放 worker thread；若需要有界硬停，
   必须先把研究 worker 隔离到独立 process owner，不能把 thread timeout 当作物理终止。
@@ -280,9 +299,9 @@ acknowledgement、terminal CAS、durable progress surface 与 restart reconcilia
 
 | 契约 | 关系 |
 |------|------|
-| decision_lifecycle_contract.md | Serenity opportunity → PiDecision(signal_pending)→ TradeProposal 是其一条 signal_source 分支 |
-| knowledge_contract.md | Serenity 证据/裁决经 Layer 3 注入 System Operator prompt |
+| decision_lifecycle_contract.md / entry-plan-contract.md | Serenity → durable Candidate/current Generation → Planner/Compiler/Plan → Risk/Gateway，与 Universe 同主线 |
+| knowledge_contract.md | 研究证据保留；旧 Layer 3 入场注入仅是历史，不授权新入场 |
 | risk_engine_contract.md | trade_school 对风控 guard 不可见(§9 隔离墙) |
 | live_unlock_contract.md | trade_school 对实盘解锁 surface 不可见(§9 隔离墙) |
 | data_model.md | SerenityOpportunity / SerenityEvidence / trade_school 列 |
-| promotion_gates_contract.md | Serenity 走 PI 队列晋升(Option A),不走已 LEGACY 的 strategy_lifecycle |
+| promotion_gates_contract.md | 历史 Option A 仅供追溯；当前 publication 见 §7，不走旧 PI 队列或 strategy_lifecycle |

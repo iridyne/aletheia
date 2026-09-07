@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import hashlib
 import json
 import re
@@ -290,7 +292,7 @@ def test_paper_funding_identity_repair_preserves_close_time_evidence_and_project
     }
     evidence_root.pop("funding_accounting_version")
     evidence_root.pop("funding_economics_fingerprint")
-    repo.update_position(
+    force_update_position(
         position_id,
         reconciliation_evidence=json.dumps(
             evidence_root, sort_keys=True, separators=(",", ":"),
@@ -411,7 +413,7 @@ def test_paper_funding_identity_repair_preserves_close_time_evidence_and_project
 
     after_root.pop("funding_accounting_version")
     after_root.pop("funding_economics_fingerprint")
-    repo.update_position(
+    force_update_position(
         position_id,
         funding_cost=float(after_position["funding_cost"]) + 0.01,
         reconciliation_evidence=json.dumps(
@@ -433,7 +435,7 @@ def test_paper_funding_identity_repair_preserves_close_time_evidence_and_project
     poisoned_root["funding_economics_fingerprint"] = (
         "sha256:" + hashlib.sha256(poisoned_funding_bytes).hexdigest()
     )
-    repo.update_position(
+    force_update_position(
         position_id,
         funding_cost=after_position["funding_cost"],
         reconciliation_evidence=json.dumps(

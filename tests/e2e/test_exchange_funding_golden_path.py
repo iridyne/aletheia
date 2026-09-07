@@ -173,7 +173,7 @@ _PROCESS_REPLAY = textwrap.dedent(
             opened_at=OPENED_AT,
         )
         repo.insert_position(position)
-        repo.update_order(entry_order.id, position_id=position.id)
+        repo.update_order_metadata(entry_order.id, position_id=position.id)
         close_order = Order(
             id=f"close-order-{suffix}",
             proposal_id=proposal.id,
@@ -192,11 +192,11 @@ _PROCESS_REPLAY = textwrap.dedent(
             created_at=CLOSED_AT,
         )
         repo.insert_order(close_order)
-        repo.update_position(
+        repo.claim_position_close(
             position.id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="submitted",
-            pending_close_requested_at=CLOSED_AT,
+            order_id=close_order.id,
+            status="submitted",
+            requested_at=CLOSED_AT,
         )
         fills = [{
             "tradeId": f"close-{suffix}",

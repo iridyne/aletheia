@@ -32,7 +32,7 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-
+    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
 def _insert_position(execution_mode: str) -> Position:
     pos = Position(
@@ -44,40 +44,21 @@ def _insert_position(execution_mode: str) -> Position:
         current_price=101.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(pos)
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(pos)
     return pos
 
 
-def _patch_unconfirmed_close(
-    monkeypatch,
-    broker_module: str,
-    client_name: str,
-    response_module: str,
-    exchange_status: str,
-    captured: list | None = None,
-):
-    mod = importlib.import_module(broker_module)
-    response_cls = importlib.import_module(response_module).OrderResponse
+def _patch_unconfirmed_close(monkeypatch, execution_mode, exchange_status, captured=None):
+    from tests.uta.test_execution_coordinator import _Adapter
+    from aletheia.uta.models import SubmissionReport, CommandEvidence, OrderStatusReport, OrderLifecycle
+    async def submit(command):
+        if captured is not None:
+            captured.append(command)
+        now = datetime.now(timezone.utc)
+        return SubmissionReport(identity=command.expected_account, command_id=command.command_id, evidence=CommandEvidence.ACKNOWLEDGED, received_at=now, venue_order_id="EX-CLOSE-1", profile_version="1", order=OrderStatusReport(identity=command.expected_account, instrument=command.instrument, side=command.side, order_type=command.order_type, original_quantity=command.quantity, filled_quantity="0.005" if exchange_status == "partially_filled" else "0", state=OrderLifecycle.PARTIALLY_FILLED if exchange_status == "partially_filled" else OrderLifecycle.OPEN, received_at=now))
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda mode: _Adapter(submit, mode))
 
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def place_order(self, order):
-            if captured is not None:
-                captured.append(order)
-            return response_cls(
-                order_id="EX-CLOSE-1",
-                client_oid=order.client_oid,
-                status=exchange_status,
-                fill_price=100.5,
-                filled_quantity=0.005,
-            )
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(mod, client_name, FakeClient)
 
 
 @pytest.mark.parametrize(
@@ -87,35 +68,10 @@ def _patch_unconfirmed_close(
         ("partially_filled", "partially_filled"),
     ],
 )
-@pytest.mark.parametrize(
-    "broker_module,client_name,response_module,execution_mode",
-    [
-        (
-            "aletheia.execution.bitget_broker",
-            "BitgetClient",
-            "aletheia.exchanges.bitget.client",
-            "bitget_demo",
-        ),
-        (
-            "aletheia.execution.okx_broker",
-            "OKXClient",
-            "aletheia.exchanges.okx.client",
-            "okx_demo",
-        ),
-        (
-            "aletheia.execution.binance_broker",
-            "BinanceClient",
-            "aletheia.exchanges.binance.client",
-            "binance_testnet",
-        ),
-    ],
-)
+@pytest.mark.parametrize("execution_mode", ["bitget_demo", "okx_demo", "binance_testnet"])
 def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     tmp_path,
     monkeypatch,
-    broker_module,
-    client_name,
-    response_module,
     execution_mode,
     exchange_status,
     expected_status,
@@ -124,10 +80,7 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     pos = _insert_position(execution_mode)
     captured = []
     _patch_unconfirmed_close(
-        monkeypatch,
-        broker_module,
-        client_name,
-        response_module,
+        monkeypatch, execution_mode,
         exchange_status,
         captured,
     )
@@ -151,7 +104,7 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     assert still_open["pending_close_order_id"]
     assert still_open["pending_close_status"] == expected_status
 
-    orders = repo.list_orders()
+    orders = [order for order in repo.list_orders() if order["position_id"] == pos.id]
     assert len(orders) == 1
     assert orders[0]["status"] == expected_status
     assert orders[0]["exchange_order_id"] == "EX-CLOSE-1"
@@ -164,7 +117,7 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     assert still_open["exit_reasoning"] is None
     assert repo.list_fills() == []
     assert len(captured) == 1
-    assert captured[0].client_oid == f"close-{pos.id}"
+    assert captured[0].client_order_id == f"close-{pos.id}"
 
     second_result = close_position_routed(
         pos.id,
@@ -177,8 +130,9 @@ def test_exchange_close_unconfirmed_does_not_fabricate_full_close(
     assert second_result["closed"] is False
     assert second_result["already_pending"] is True
     assert len(captured) == 1
-    assert len(repo.list_orders()) == 1
-    assert json.loads(repo.list_orders()[0]["close_reasoning"])["reason"] == (
+    orders = [order for order in repo.list_orders() if order["position_id"] == pos.id]
+    assert len(orders) == 1
+    assert json.loads(orders[0]["close_reasoning"])["reason"] == (
         "Thesis changed while breadth weakened."
     )
 
@@ -443,30 +397,20 @@ def test_bitget_unconfirmed_close_keeps_existing_tpsl_bracket(tmp_path, monkeypa
         execution_mode="bitget_demo",
         exchange_tpsl_order_id=json.dumps({"sl": "sl-1", "tp": "tp-1"}),
     )
-    repo.insert_position(pos)
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(pos)
     captured = []
     _patch_unconfirmed_close(
         monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "BitgetClient",
-        "aletheia.exchanges.bitget.client",
+        "bitget_demo",
         "submitted",
         captured,
     )
 
-    import aletheia.execution.bitget_broker as bitget_broker
-
-    cancel_calls = []
-
-    def fake_cancel(client, exchange_symbol, tpsl_json):
-        cancel_calls.append((exchange_symbol, tpsl_json))
-
-    monkeypatch.setattr(bitget_broker, "_try_cancel_tpsl", fake_cancel)
-
-    result = bitget_broker.close_demo_position(pos.id, reason="stop_loss")
+    from aletheia.execution import coordinator
+    result = coordinator.close_position(pos.id, reason="stop_loss")
 
     assert result["closed"] is False
-    assert cancel_calls == []
     still_open = repo._select_one("positions", pos.id)
     assert still_open["status"] == "open"
     assert json.loads(still_open["exchange_tpsl_order_id"]) == {"sl": "sl-1", "tp": "tp-1"}

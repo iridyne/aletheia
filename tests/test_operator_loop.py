@@ -30,8 +30,8 @@ def _make_config(tmp_path):
     cfg = {
         "runtime": {"paused": False, "kill_switch_active": False},
         "agent": {"permission_mode": "Paper"},
-        "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-        "risk": {"max_demo_position_margin_usdt": 200.0},
+        "trading": {"default_stop_loss_pct": 3.0},
+        "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
         "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
     }
     (tmp_path / "config.yaml").write_text(yaml.dump(cfg), encoding="utf-8")
@@ -57,8 +57,8 @@ class TestBuildSystemAssessment:
         cfg_dict = {
             "runtime": {"paused": False, "kill_switch_active": True},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 200.0},
+            "trading": {"default_stop_loss_pct": 3.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         import aletheia.config.loader as loader
@@ -121,7 +121,7 @@ class TestDecideActions:
             signal_win_rate=35.0,
         )
         actions = decide_actions(assessment)
-        assert [a for a in actions if a.action_type == "tighten_confidence"] == []
+        assert [a for a in actions if a.action_type == "reduce_sizing"] == []
         diagnoses = [a for a in actions if a.action_type == "notify_operator"]
         assert len(diagnoses) == 1
         assert diagnoses[0].params["diagnosis_kind"] == "aggregate_signal_quality"
@@ -289,19 +289,18 @@ class TestRateLimiting:
         )
         _action_log.clear()
 
-        # First few should succeed, then get rate-limited
-        successes = 0
-        for i in range(_MAX_CONFIG_PATCHES_PER_DAY + 2):
-            action = OperatorAction(
-                action_type="tighten_confidence", level=1,
-                params={"delta": 2}, reason=f"test {i}",
-            )
-            result = _execute_level1_action(action)
-            if result["status"] == "executed":
-                successes += 1
-        # First one succeeds, subsequent may hit cooldown or rate limit
-        assert successes >= 1
-        assert successes <= _MAX_CONFIG_PATCHES_PER_DAY
+        from aletheia.agent_shell.operator_loop import _persist_action
+        from aletheia.config.loader import load_config
+
+        for _ in range(_MAX_CONFIG_PATCHES_PER_DAY):
+            _persist_action("config_patch", param="default_stop_loss_pct",
+                            before="3.0", after="2.5", direction="tighten")
+        result = _execute_level1_action(OperatorAction(
+            action_type="reduce_sizing", level=1,
+            params={"reduce_pct": 20}, reason="daily budget exhausted",
+        ))
+        assert result["status"] == "rate_limited"
+        assert load_config().risk.demo.capital.max_position_margin_usdt == 200.0
 
     def test_cooldown_prevents_same_param(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
@@ -312,7 +311,7 @@ class TestRateLimiting:
         _action_log.clear()
 
         action = OperatorAction(
-            action_type="tighten_confidence", level=1,
+            action_type="reduce_sizing", level=1,
             params={"delta": 2}, reason="first",
         )
         result1 = _execute_level1_action(action)
@@ -320,7 +319,7 @@ class TestRateLimiting:
 
         # Same action immediately — should hit cooldown
         action2 = OperatorAction(
-            action_type="tighten_confidence", level=1,
+            action_type="reduce_sizing", level=1,
             params={"delta": 2}, reason="second",
         )
         result2 = _execute_level1_action(action2)
@@ -353,8 +352,8 @@ class TestCapitalAllocation:
         cfg_dict = {
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 25.0},
+            "trading": {"default_stop_loss_pct": 3.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 25.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -389,56 +388,6 @@ class TestCapitalAllocation:
         assert result["old"] == 3.0
         assert result["new"] == 2.5
 
-    def test_scanner_weight_adjust(self, tmp_path, monkeypatch):
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import (
-            OperatorAction, _execute_level1_action, _action_log,
-        )
-        _action_log.clear()
-
-        action = OperatorAction(
-            action_type="adjust_scanner_weight", level=1,
-            params={"family": "momentum", "delta": 0.15}, reason="test",
-        )
-        result = _execute_level1_action(action)
-        assert result["status"] == "executed"
-        assert result["family"] == "momentum"
-        assert result["delta"] == 0.15
-
-        from aletheia.config.loader import load_config
-        assert load_config().universe.scanner_weights["momentum"] == 1.15
-
-    def test_scanner_weight_save_failure_is_not_recorded_as_success(
-        self, tmp_path, monkeypatch,
-    ):
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        import aletheia.agent_shell.operator_loop as operator_loop
-        import aletheia.config.loader as loader
-
-        recorded: list[tuple] = []
-        monkeypatch.setattr(
-            operator_loop,
-            "_record_action",
-            lambda *args, **kwargs: recorded.append((args, kwargs)),
-        )
-
-        def fail_save(_cfg):
-            raise OSError("injected save failure")
-
-        monkeypatch.setattr(loader, "save_config", fail_save)
-        result = operator_loop._execute_level1_action(operator_loop.OperatorAction(
-            action_type="adjust_scanner_weight",
-            level=1,
-            params={"family": "momentum", "delta": 0.15},
-            reason="test",
-        ))
-
-        assert result["status"] == "failed"
-        assert result["reason"] == "config_persistence_failed"
-        assert recorded == []
-
 
 # ─── Stage 4: Full Loop Integration ─────────────────────────────────────────
 
@@ -449,8 +398,8 @@ class TestRunOperatorLoop:
         cfg_dict = {
             "runtime": {"paused": True, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 200.0},
+            "trading": {"default_stop_loss_pct": 3.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         import aletheia.config.loader as loader
@@ -519,25 +468,7 @@ class TestRunOperatorLoop:
 # ─── Deterministic config-control policy (not Learning contribution) ─────────
 
 class TestParamDrift:
-    def test_drift_detects_tightened_confidence(self, tmp_path, monkeypatch):
-        import yaml
-        _init_test_db(tmp_path, monkeypatch)
-        cfg_dict = {
-            "runtime": {"paused": False, "kill_switch_active": False},
-            "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 200.0},
-            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
-        }
-        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import _get_param_drift
-        assert _get_param_drift("min_confidence_to_trade") == "tightened"
 
-    def test_drift_detects_neutral_confidence(self, tmp_path, monkeypatch):
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import _get_param_drift
-        assert _get_param_drift("min_confidence_to_trade") == "neutral"
 
     def test_drift_detects_tightened_sizing(self, tmp_path, monkeypatch):
         import yaml
@@ -545,8 +476,8 @@ class TestParamDrift:
         cfg_dict = {
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 100.0},
+            "trading": {"default_stop_loss_pct": 3.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 100.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -555,52 +486,7 @@ class TestParamDrift:
 
 
 class TestLoosenRules:
-    def test_rule5a_activity_dead_zone_auto_restores_confidence(self, tmp_path, monkeypatch):
-        """4h+ no fills + confidence tightened -> bounded Level 1 recovery."""
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
 
-        assessment = SystemAssessment(
-            timestamp="2026-01-01T00:00:00Z",
-            ohlcv_ready=True,
-            signal_status="healthy",
-            signal_win_rate=55.0,
-            strategies_paper_running=3,
-            trades_24h=0,
-            trades_48h=0,
-            hours_since_last_trade=4.0,
-            win_rate_7d=9.5,
-            param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_margin_usdt": "neutral",
-                         "default_stop_loss_pct": "neutral"},
-        )
-        actions = decide_actions(assessment)
-        loosen = [a for a in actions if a.action_type == "loosen_confidence"]
-        assert len(loosen) == 1
-        assert loosen[0].level == 1
-        assert "no fills in 4.0h" in loosen[0].reason
-
-    def test_rule5a_does_not_fire_if_not_tightened(self, tmp_path, monkeypatch):
-        _init_test_db(tmp_path, monkeypatch)
-        _make_config(tmp_path)
-        from aletheia.agent_shell.operator_loop import SystemAssessment, decide_actions
-
-        assessment = SystemAssessment(
-            timestamp="2026-01-01T00:00:00Z",
-            ohlcv_ready=True,
-            signal_status="healthy",
-            signal_win_rate=55.0,
-            strategies_paper_running=3,
-            trades_24h=0,
-            hours_since_last_trade=15.0,
-            param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_margin_usdt": "neutral",
-                         "default_stop_loss_pct": "neutral"},
-        )
-        actions = decide_actions(assessment)
-        loosen = [a for a in actions if a.action_type == "loosen_confidence"]
-        assert len(loosen) == 0
 
     def test_rule5b_winning_streak_auto_executes_sizing_increase(self, tmp_path, monkeypatch):
         """3+ streak + PF>1.5 + tightened sizing + WR>=35 -> Level 1 recovery."""
@@ -618,8 +504,7 @@ class TestLoosenRules:
             recent_streak=4,
             profit_factor_7d=2.0,
             win_rate_7d=60.0,
-            param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_margin_usdt": "tightened",
+            param_drift={"max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -643,8 +528,7 @@ class TestLoosenRules:
             recent_streak=4,
             profit_factor_7d=2.0,
             win_rate_7d=30.0,
-            param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_margin_usdt": "tightened",
+            param_drift={"max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
@@ -666,8 +550,7 @@ class TestLoosenRules:
             trades_24h=5,
             win_rate_7d=60.0,
             exit_composition_7d={"take_profit": 8, "stop_loss": 2},
-            param_drift={"min_confidence_to_trade": "neutral",
-                         "max_demo_position_margin_usdt": "neutral",
+            param_drift={"max_demo_position_margin_usdt": "neutral",
                          "default_stop_loss_pct": "tightened"},
         )
         actions = decide_actions(assessment)
@@ -690,15 +573,14 @@ class TestLoosenRules:
             trades_24h=5,
             trades_48h=8,
             win_rate_7d=50.0,
-            param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_margin_usdt": "neutral",
+            param_drift={"max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "neutral"},
         )
         actions = decide_actions(assessment)
         drift = [a for a in actions if a.action_type.startswith("neutral_drift_")]
         assert len(drift) == 1
         assert drift[0].level == 2
-        assert "min_confidence_to_trade" in drift[0].action_type
+        assert "max_demo_position_margin_usdt" in drift[0].action_type
 
     def test_rule5d_only_one_param_per_cycle(self, tmp_path, monkeypatch):
         _init_test_db(tmp_path, monkeypatch)
@@ -714,8 +596,7 @@ class TestLoosenRules:
             trades_24h=5,
             trades_48h=8,
             win_rate_7d=50.0,
-            param_drift={"min_confidence_to_trade": "tightened",
-                         "max_demo_position_margin_usdt": "tightened",
+            param_drift={"max_demo_position_margin_usdt": "tightened",
                          "default_stop_loss_pct": "tightened"},
         )
         actions = decide_actions(assessment)
@@ -733,14 +614,14 @@ class TestConsecutiveEscalation:
 
         # Simulate 3 prior tighten actions
         for _ in range(3):
-            _persist_action("config_patch", param="min_confidence_to_trade",
-                           before="medium", after="high", direction="tighten")
+            _persist_action("config_patch", param="max_demo_position_margin_usdt",
+                           before="200", after="160", direction="tighten")
 
         action = OperatorAction(
-            action_type="tighten_confidence", level=1,
+            action_type="reduce_sizing", level=1,
             reason="signal degraded",
         )
-        result = _maybe_escalate(action, "min_confidence_to_trade", "tighten")
+        result = _maybe_escalate(action, "max_demo_position_margin_usdt", "tighten")
         assert result.level == 2
         assert "[ESCALATED" in result.reason
 
@@ -753,14 +634,14 @@ class TestConsecutiveEscalation:
 
         # Only 2 prior tightens
         for _ in range(2):
-            _persist_action("config_patch", param="min_confidence_to_trade",
-                           before="medium", after="high", direction="tighten")
+            _persist_action("config_patch", param="max_demo_position_margin_usdt",
+                           before="200", after="160", direction="tighten")
 
         action = OperatorAction(
-            action_type="tighten_confidence", level=1,
+            action_type="reduce_sizing", level=1,
             reason="signal degraded",
         )
-        result = _maybe_escalate(action, "min_confidence_to_trade", "tighten")
+        result = _maybe_escalate(action, "max_demo_position_margin_usdt", "tighten")
         assert result.level == 1
 
 
@@ -818,26 +699,6 @@ class TestPersistentActionLog:
 
 
 class TestLoosenHandlers:
-    def test_loosen_confidence_never_below_neutral(self, tmp_path, monkeypatch):
-        import yaml
-        _init_test_db(tmp_path, monkeypatch)
-        # Set confidence to "high" (tightened above neutral "medium")
-        cfg_dict = {
-            "runtime": {"paused": False, "kill_switch_active": False},
-            "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "high", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 200.0},
-            "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
-        }
-        (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
-        from aletheia.agent_shell.operator_loop import OperatorAction, _action_loosen_confidence, _action_log
-        from aletheia.config.loader import load_config
-
-        _action_log.clear()
-        action = OperatorAction(action_type="loosen_confidence", level=2, reason="test")
-        result = _action_loosen_confidence(action)
-        assert result["status"] == "executed"
-        assert result["new"] == "medium"  # back to neutral, not below
 
     def test_increase_sizing_caps_at_neutral(self, tmp_path, monkeypatch):
         import yaml
@@ -846,8 +707,8 @@ class TestLoosenHandlers:
         cfg_dict = {
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 3.0},
-            "risk": {"max_demo_position_margin_usdt": 180.0},
+            "trading": {"default_stop_loss_pct": 3.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 180.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -869,8 +730,8 @@ class TestLoosenHandlers:
         cfg_dict = {
             "runtime": {"paused": False, "kill_switch_active": False},
             "agent": {"permission_mode": "Paper"},
-            "trading": {"min_confidence_to_trade": "medium", "default_stop_loss_pct": 1.0},
-            "risk": {"max_demo_position_margin_usdt": 200.0},
+            "trading": {"default_stop_loss_pct": 1.0},
+            "risk": {"demo": {"capital": {"max_position_margin_usdt": 200.0}}},
             "historical_data": {"nightly_backfill_enabled": False, "min_bars_for_backtest": 200},
         }
         (tmp_path / "config.yaml").write_text(yaml.dump(cfg_dict), encoding="utf-8")
@@ -937,9 +798,6 @@ class TestContentHealthSelfSupervision:
         # 20 one-directional (short) proposals in 24h → content.proposal_bias warn.
         # (The strategy-FSM zombie WARN was removed with the rules engine, Position C
         # 2026-07-02; proposal_bias is a still-live content probe that WARNs.)
-        # Disable the direction brake so the probe emits "warn" (unmitigated bias).
-        import aletheia.agent_shell.trading_decision as td
-        monkeypatch.setattr(td, "_proposal_direction_overheated", lambda *a, **kw: None)
         now = datetime.now(timezone.utc).isoformat()
         for i in range(20):
             sq._db_conn.execute(
@@ -953,3 +811,30 @@ class TestContentHealthSelfSupervision:
         assert "content.proposal_bias" in names, \
             f"content_health did not capture the proposal bias: {assessment.content_health}"
         assert all(c["severity"] in ("warn", "blocker") for c in assessment.content_health)
+
+
+def test_operator_loop_restores_sizing_and_persists_cooldown(tmp_path, monkeypatch):
+    _init_test_db(tmp_path, monkeypatch)
+    _make_config(tmp_path)
+    from aletheia.agent_shell import operator_loop
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.storage.sqlite import get_db
+
+    cfg = load_config()
+    cfg.risk.demo.capital.max_position_margin_usdt = 100.0
+    save_config(cfg)
+    monkeypatch.setattr(operator_loop, "build_system_assessment", lambda: operator_loop.SystemAssessment(
+        recent_streak=3, profit_factor_7d=2.0, win_rate_7d=70.0,
+        param_drift={"max_demo_position_margin_usdt": "tightened"},
+    ))
+    first = operator_loop.run_operator_loop(trigger="sizing-recovery")
+    assert first["results"][0]["status"] == "executed"
+    assert load_config().risk.demo.capital.max_position_margin_usdt == 120.0
+    assert get_db().execute(
+        "SELECT after_state FROM audit_events WHERE actor='operator_loop' "
+        "AND event_type='config_patch' AND entity_id='max_demo_position_margin_usdt'"
+    ).fetchone()[0] == "120.0"
+    operator_loop._action_log.clear()
+    second = operator_loop.run_operator_loop(trigger="sizing-recovery")
+    assert second["results"][0]["status"] == "cooldown"
+    assert load_config().risk.demo.capital.max_position_margin_usdt == 120.0

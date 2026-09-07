@@ -55,29 +55,6 @@ def test_level_action_sets_exist():
 
 @spec_claim(
     SpecClaim(
-        "OL-S02", "operator_layer", "§param_registry keys", "L2a",
-        "PARAM_REGISTRY dict exists with required keys: min_confidence_to_trade, "
-        "default_stop_loss_pct, max_demo_position_margin_usdt",
-    ),
-)
-def test_param_registry_required_keys():
-    """PARAM_REGISTRY must contain at minimum the three tunable params from the design."""
-    import aletheia.agent_shell.operator_loop as ol
-
-    assert hasattr(ol, "PARAM_REGISTRY"), "PARAM_REGISTRY missing from operator_loop"
-    assert isinstance(ol.PARAM_REGISTRY, dict), "PARAM_REGISTRY must be a dict"
-
-    required_keys = {
-        "min_confidence_to_trade",
-        "default_stop_loss_pct",
-        "max_demo_position_margin_usdt",
-    }
-    missing = required_keys - set(ol.PARAM_REGISTRY.keys())
-    assert not missing, f"PARAM_REGISTRY missing required keys: {missing}"
-
-
-@spec_claim(
-    SpecClaim(
         "OL-S06", "operator_layer", "§scheduler cron", "L2a",
         "scheduler.py registers pi_operator_loop job with CronTrigger "
         "at hour='0,4,8,12,16,20', minute=15",
@@ -249,66 +226,6 @@ def test_level_sets_are_disjoint():
     assert not l1_l2, f"INVARIANT VIOLATION: actions in both L1 and L2: {l1_l2}"
     assert not l1_l3, f"INVARIANT VIOLATION: actions in both L1 and L3: {l1_l3}"
     assert not l2_l3, f"INVARIANT VIOLATION: actions in both L2 and L3: {l2_l3}"
-
-
-@spec_claim(
-    SpecClaim(
-        "OL-C07", "operator_layer", "§permission_model bounded_confidence_recovery", "L2c",
-        "loosen_confidence and increase_sizing are Level 1 liveness exceptions bounded "
-        "at neutral; widen_stop_loss remains a Level 2 human proposal",
-        status="implemented",
-    ),
-)
-def test_bounded_neutral_recoveries_are_the_only_level1_loosen_exceptions():
-    """Confidence and sizing may auto-restore only to neutral; widening stays L2."""
-    import aletheia.agent_shell.operator_loop as ol
-
-    assert "loosen_confidence" in ol._LEVEL_1_ACTIONS
-    assert "loosen_confidence" not in ol._LEVEL_2_ACTIONS
-    assert "increase_sizing" in ol._LEVEL_1_ACTIONS
-    assert "increase_sizing" not in ol._LEVEL_2_ACTIONS
-
-    proposal_only_actions = {"widen_stop_loss"}
-    missing_from_l2 = proposal_only_actions - ol._LEVEL_2_ACTIONS
-    assert not missing_from_l2, (
-        f"Loosening actions missing from _LEVEL_2_ACTIONS: {missing_from_l2}"
-    )
-
-    # The full invariant: they must NOT be reachable via _execute_level1_action.
-    # Check by inspecting the AST of _execute_level1_action for elif branches matching
-    # these action names — the legacy branches violate the Level 2 boundary.
-    src = _OPERATOR_LOOP_SRC.read_text(encoding="utf-8")
-    tree = ast.parse(src)
-
-    reachable_in_l1_exec: set[str] = set()
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.FunctionDef) and node.name == "_execute_level1_action"):
-            continue
-        for child in ast.walk(node):
-            if not isinstance(child, ast.Compare):
-                continue
-            # Look for: action.action_type == "<name>"
-            left = child.left
-            if not (isinstance(left, ast.Attribute) and left.attr == "action_type"):
-                continue
-            for comp in child.comparators:
-                if isinstance(comp, ast.Constant) and comp.value in (
-                    proposal_only_actions | {"loosen_confidence", "increase_sizing"}
-                ):
-                    reachable_in_l1_exec.add(comp.value)
-
-    assert "loosen_confidence" in reachable_in_l1_exec
-    assert "increase_sizing" in reachable_in_l1_exec
-    assert not (reachable_in_l1_exec & proposal_only_actions), (
-        "Level 2 proposal-only loosening actions became reachable in the Level 1 executor"
-    )
-
-    spec = ol.PARAM_REGISTRY["min_confidence_to_trade"]
-    assert spec.neutral == "medium"
-    assert spec.ladder == ["speculative", "medium", "high"]
-    sizing = ol.PARAM_REGISTRY["max_demo_position_margin_usdt"]
-    assert sizing.neutral == 200.0
-    assert sizing.tighten_direction == "down"
 
 
 # ---------------------------------------------------------------------------
@@ -638,57 +555,6 @@ def test_automatic_methodology_research_is_suspended():
 
 @spec_claim(
     SpecClaim(
-        "OL-B10", "operator_layer", "§selfheal structured_audit fields", "L2b",
-        "_emit_self_heal_action must persist all 5 required audit fields in "
-        "KnowledgeItem.content (JSON): operation_type / trigger_reason / result "
-        "/ before_state / after_state (operator_layer.md §不变式2).",
-        status="implemented",
-    ),
-)
-def test_selfheal_emit_stores_structured_fields():
-    """_emit_self_heal_action must write all 5 structured fields to KnowledgeItem.content."""
-    import json as _json
-    from unittest.mock import patch
-
-    captured: list = []
-
-    def fake_insert(item):
-        captured.append(item)
-
-    with patch("aletheia.storage.repositories.insert_knowledge_item", side_effect=fake_insert):
-        from aletheia.agent_shell import commands as _cmds
-        _cmds._emit_self_heal_action(
-            action="clean_stale_heartbeats",
-            reason="heartbeat table >10k rows",
-            operation_type="data_cleanup",
-            trigger_reason="heartbeat table >10k rows",
-            result="deleted 9823 rows",
-            before_state="10021 rows",
-            after_state="198 rows",
-        )
-
-    assert captured, "_emit_self_heal_action did not call insert_knowledge_item"
-    item = captured[0]
-    content_raw = item.content
-    assert content_raw is not None, (
-        "KnowledgeItem.content must not be None for self-heal actions — "
-        "it must carry the 5 structured audit fields."
-    )
-    try:
-        content = _json.loads(content_raw)
-    except Exception:
-        pytest.fail(f"KnowledgeItem.content is not valid JSON: {content_raw!r}")
-
-    required_fields = {"operation_type", "trigger_reason", "result", "before_state", "after_state"}
-    missing_fields = required_fields - set(content.keys())
-    assert not missing_fields, (
-        f"_emit_self_heal_action KnowledgeItem.content missing required fields: {missing_fields}. "
-        "All 5 structured audit fields are mandatory per operator_layer.md §不变式2."
-    )
-
-
-@spec_claim(
-    SpecClaim(
         "PCI-G03", "operator_layer",
         "§pi_constitution constitution_files_not_in_write_whitelist",
         "L2a",
@@ -742,82 +608,11 @@ def test_write_operator_report_root_is_data_dir():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "OL-B11", "operator_layer", "§selfheal dual_audit_path consistency", "L2b",
-        "_persist_action (AuditEvent) and _emit_self_heal_action (KnowledgeItem) "
-        "are the two write paths for self-heal operations. The KnowledgeItem path "
-        "must carry all 5 structured fields (§不变式2) in content JSON. "
-        "_persist_action carries before_state/after_state via AuditEvent model; "
-        "operation_type and trigger_reason are implied by event_type+message. "
-        "Claim locks the KnowledgeItem path as the authoritative structured store.",
-        status="implemented",
-    ),
-)
-def test_knowledge_item_is_structured_selfheal_store():
-    """KnowledgeItem.content (via _emit_self_heal_action) is the structured audit store.
-
-    _persist_action uses AuditEvent (before_state/after_state present but operation_type
-    and trigger_reason are embedded in event_type+message — sufficient for operational
-    log but not for structured query). The KnowledgeItem path is the contract-mandated
-    structured store.
-
-    This store remains available to a future externally approved maintenance owner;
-    the Python operator loop no longer claims to be that owner.
-    """
-    # 1. KnowledgeItem has content field
-    from aletheia.storage.models import KnowledgeItem
-
-    # Pydantic model — check field names
-    field_names = set(KnowledgeItem.model_fields.keys())
-    assert "content" in field_names, (
-        "KnowledgeItem model missing 'content' field — cannot store structured JSON audit."
-    )
-
-    from aletheia.agent_shell import commands as _commands
-    assert callable(_commands._emit_self_heal_action)
-
-
 # ---------------------------------------------------------------------------
 # Self-heal L2 action taxonomy + PI approval gate + human-confirm marker
 # (operator_layer.md [产品定义] §L2人工确认行 + §不变式1/§不变式3)
 # SH-S01 / SH-C02 / SH-B03  2026-06-30 SDD alignment
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "SH-S01", "operator_layer",
-        "§selfheal l2_action_types exist",
-        "L2a",
-        "_LEVEL_2_ACTIONS 必须包含自愈专属类型 clear_signal_pending、"
-        "modify_prompt_fragment、modify_config_fragment——对应产品定义 D6 §L2人工确认行。"
-        "三个动作须在集合中注册，operator layer dispatcher 才能路由到正确 handler，"
-        "人工确认门控才能接管。",
-        status="partial",
-    ),
-)
-def test_l2_selfheal_action_types_registered():
-    """_LEVEL_2_ACTIONS must include the three L2 self-heal action types.
-
-    The product definition (operator_layer.md §自愈档位) mandates that
-    clear_signal_pending / modify_prompt_fragment / modify_config_fragment
-    are L2 (human-confirm required). Without registration in _LEVEL_2_ACTIONS
-    the dispatcher cannot route them to _create_proposal, and the human
-    confirmation gate is bypassed.
-    """
-    import aletheia.agent_shell.operator_loop as ol
-
-    required_l2_selfheal = {
-        "clear_signal_pending",
-        "modify_prompt_fragment",
-        "modify_config_fragment",
-    }
-    missing = required_l2_selfheal - ol._LEVEL_2_ACTIONS
-    assert not missing, (
-        f"SH-S01 VIOLATED: _LEVEL_2_ACTIONS is missing L2 self-heal action types: {missing}. "
-        "Add them to align with operator_layer.md §自愈档位 L2人工确认行."
-    )
 
 
 @spec_claim(
@@ -891,131 +686,6 @@ def test_l2_proposal_artifact_carries_human_confirm_required():
 # ---------------------------------------------------------------------------
 # Round 2 Ranker Signal-Quality Claims (Coriva impl plan 2026-06-30)
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "OL-SCORE-NORM", "operator_layer",
-        "§ranker confidence_score normalization",
-        "L2b",
-        "confidence_score 贡献上限为 50 分（经 clip_norm 到 [0,1] 再乘 50）"
-        "——防止 0-100 原始值直接主导 regime/factor 信号（Round 1 方向集中根因）。"
-        "paper_trader_ranker._compute_trade_score 中 conf_score 直接加分路径必须被替换。",
-        status="implemented",
-    ),
-)
-def test_score_norm_confidence_capped():
-    """confidence_score=100 时贡献不超过 75 分（clip_norm 后上限 50 + default offsets）。"""
-    from aletheia.agents.paper_trader_ranker import _compute_trade_score
-    from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
-
-    neutral_regime = MarketRegime(state="sideways", confidence=0.3)
-    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
-                    return_value=neutral_regime):
-        high_conf_opp = {"confidence_score": 100, "symbol": "BTC/USDT",
-                         "scanner_family": "test"}
-        score = _compute_trade_score(high_conf_opp, None, {"status": "watch"}, "high")
-    assert score <= 75.0, (
-        f"confidence_score=100 贡献超出预期上限 75（实际={score}），"
-        "regime/factor 信号将被压制 — 检查 clip_norm 是否正确"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "OL-SIDEWAYS-TREND-TAX", "operator_layer",
-        "§ranker sideways regime trend tax",
-        "L2b",
-        "sideways regime (confidence>0.6) + trend-family scanner → score -= 25。"
-        "当前 sideways 分支完全缺失，CTA 文献实证其为趋势跟踪最差 regime。",
-        status="implemented",
-    ),
-)
-def test_sideways_trend_tax_applied():
-    """sideways + breakout scanner 应比 reversion 低至少 15 分。"""
-    from aletheia.agents.paper_trader_ranker import _compute_trade_score
-    from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
-
-    sideways = MarketRegime(state="sideways", confidence=0.75)
-    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
-                    return_value=sideways):
-        base_opp = {"confidence_score": 50, "symbol": "ETH/USDT", "scanner_family": "breakout"}
-        score_trend = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
-                                           direction="long")
-        opp_rev = dict(base_opp, scanner_family="reversion")
-        score_rev = _compute_trade_score(opp_rev, None, {"status": "watch"}, "medium",
-                                          direction="long")
-    assert score_trend < score_rev - 15, (
-        f"sideways + breakout({score_trend}) 应比 reversion({score_rev}) 低至少 15 分（trend_tax 未触发）"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "OL-FACTOR-SMOOTH", "operator_layer",
-        "§ranker factor IC smooth scoring",
-        "L2b",
-        "factor retrospective win_rate has no direct score authority. The ranker consumes only "
-        "the bounded prospective score_delta emitted by the shared experiment adapter.",
-        status="implemented",
-    ),
-)
-def test_factor_scoring_is_continuous():
-    """Unapproved history is neutral; authorized bounded deltas remain continuous."""
-    from aletheia.agents.paper_trader_ranker import _compute_trade_score
-    from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
-
-    flat = MarketRegime(state="sideways", confidence=0.1)
-    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
-                    return_value=flat):
-        base = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
-        sig_low  = {"status": "active", "win_rate": 0.52, "trade_count": 10,
-                    "authority_applied": False, "score_delta": 99.0}
-        sig_high = {"status": "active", "win_rate": 0.60, "trade_count": 10,
-                    "authority_applied": False, "score_delta": -99.0}
-        s_low  = _compute_trade_score(base, None, sig_low, "medium", direction="long")
-        s_high = _compute_trade_score(base, None, sig_high, "medium", direction="long")
-        assert s_low == s_high
-        authorized_low = {"authority_applied": True, "score_delta": 1.0}
-        authorized_high = {"authority_applied": True, "score_delta": 4.0}
-        a_low = _compute_trade_score(base, None, authorized_low, "medium", direction="long")
-        a_high = _compute_trade_score(base, None, authorized_high, "medium", direction="long")
-    assert a_high - a_low == 3.0
-
-
-@spec_claim(
-    SpecClaim(
-        "OL-REGIME-SMOOTH", "operator_layer",
-        "§ranker regime confidence smooth weighting",
-        "L2b",
-        "regime 加分乘以 confidence^1.5（连续），消除 >0.5 断崖。"
-        "confidence=0.49 vs 0.51 的分差应 < 5（原差距 ±20）。",
-        status="implemented",
-    ),
-)
-def test_regime_scoring_no_cliff():
-    """regime.confidence=0.49 vs 0.51 分差应 < 5（无断崖）。"""
-    from aletheia.agents.paper_trader_ranker import _compute_trade_score
-    from aletheia.regime.detector import MarketRegime
-    import unittest.mock as mock
-
-    base_opp = {"confidence_score": 50, "symbol": "BTC/USDT", "scanner_family": "test"}
-
-    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
-                    return_value=MarketRegime(state="bear", confidence=0.49)):
-        s_below = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
-                                        direction="short")
-    with mock.patch("aletheia.agents.paper_trader_ranker.get_current_regime",
-                    return_value=MarketRegime(state="bear", confidence=0.51)):
-        s_above = _compute_trade_score(base_opp, None, {"status": "watch"}, "medium",
-                                        direction="short")
-    assert abs(s_above - s_below) < 5, (
-        f"confidence 0.49→0.51 分差 {abs(s_above-s_below):.1f} 超出 5 分，"
-        "regime 评分仍有断崖效应"
-    )
 
 
 # ---------------------------------------------------------------------------

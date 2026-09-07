@@ -13,6 +13,8 @@ cancellation.
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -532,7 +534,7 @@ def _seed_closed_pending(*, suffix: str):
         opened_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_position(position)
-    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_order_metadata(entry_order.id, position_id=position.id)
     close_order = Order(
         id=f"close-closed-pending-{suffix}",
         proposal_id=proposal.id,
@@ -585,7 +587,7 @@ def _seed_closed_pending(*, suffix: str):
             "filled_at": _FILL_TIME,
         }],
     }
-    repo.update_position(
+    force_update_position(
         position.id,
         status="closed",
         close_reason="take_profit",
@@ -620,7 +622,7 @@ def test_entry_gap_selector_excludes_durable_close_identity(
     db.execute(
         "UPDATE orders SET close_reason=NULL WHERE id=?", (close_order.id,)
     )
-    repo.update_position(
+    force_update_position(
         position.id,
         pending_close_order_id=None,
         pending_close_status=None,
@@ -751,18 +753,18 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
 
     position, close_order = _seed_closed_pending(suffix=defect)
     if defect == "missing_backlink":
-        repo.update_order(close_order.id, position_id=None)
+        repo.update_order_metadata(close_order.id, position_id=None)
     elif defect == "quantity_mismatch":
-        repo.update_order(close_order.id, quantity=0.5)
+        repo.update_order_metadata(close_order.id, quantity=0.5)
     elif defect == "unverified":
-        repo.update_position(position.id, exit_fill_verified=False)
+        force_update_position(position.id, exit_fill_verified=False)
     elif defect == "wrong_price_source":
-        repo.update_position(position.id, exit_price_source="unavailable")
+        force_update_position(position.id, exit_price_source="unavailable")
     elif defect == "incomplete_evidence":
         stored = repo._select_one("positions", position.id)
         evidence = json.loads(stored["reconciliation_evidence"])
         evidence.pop("fills")
-        repo.update_position(
+        force_update_position(
             position.id,
             reconciliation_evidence=json.dumps(evidence, sort_keys=True),
         )
@@ -773,7 +775,7 @@ def test_closed_pending_cleanup_rejects_incomplete_local_chain(
         stored = repo._select_one("positions", position.id)
         evidence = json.loads(stored["reconciliation_evidence"])
         evidence["fee_in_quote"] = 0.3
-        repo.update_position(
+        force_update_position(
             position.id,
             exit_fee=0.3,
             reconciliation_evidence=json.dumps(evidence, sort_keys=True),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
@@ -241,7 +243,7 @@ def test_broker_funding_rejects_stale_position_snapshot(
     position_id, stale, funding, ledger = _seed_pending_broker_funding_close(
         tmp_path, monkeypatch,
     )
-    repo.update_position(position_id, **{field: value})
+    force_update_position(position_id, **{field: value})
     before = _broker_funding_state(position_id)
     from aletheia.portfolio.broker_funding_settlement import (
         materialize_broker_funding_economics,
@@ -771,13 +773,7 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
     from tests.specs.spec_pipeline_stop_propagation import (
         _patch_private_fill_history,
     )
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
-        fill_price=61000.0,
-    )
-    from aletheia.exchanges.bitget.client import BitgetClient
+    _patch_private_fill_history(monkeypatch, fill_price=61000.0,)
 
     async def _funding(self, *, broker_id, start_time_ms, end_time_ms, **kwargs):
         return make_complete_ledger(
@@ -789,7 +785,6 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
             events=[],
         )
 
-    monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
     monkeypatch.setattr(
         "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
         _funding,
@@ -805,8 +800,9 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
     )
-    repo.insert_position(position)
-    from aletheia.execution.bitget_broker import close_demo_position
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(position)
+    from aletheia.execution.coordinator import close_position as close_demo_position
     from aletheia.execution.reconciliation import reconcile
 
     close_demo_position(position.id, reason="take_profit")
@@ -832,13 +828,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         _patch_private_fill_history,
     )
 
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
-        fill_price=61000.0,
-    )
-    from aletheia.exchanges.bitget.client import BitgetClient
+    _patch_private_fill_history(monkeypatch, fill_price=61000.0,)
 
     async def _funding(self, *, broker_id, start_time_ms, end_time_ms, **_kwargs):
         event = normalize_bitget_funding_rows([{
@@ -858,7 +848,6 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
             events=[event],
         )
 
-    monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
     monkeypatch.setattr(
         "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
         _funding,
@@ -884,7 +873,8 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
     )
-    repo.insert_position(target)
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(target)
     initial = repo._select_one("positions", target.id)
     from aletheia.execution import broker_funding
 
@@ -904,7 +894,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         "compute_stored_broker_funding",
         _compute_with_racing_candidate,
     )
-    from aletheia.execution.bitget_broker import close_demo_position
+    from aletheia.execution.coordinator import close_position as close_demo_position
     from aletheia.execution.reconciliation import reconcile
 
     close_result = close_demo_position(target.id, reason="take_profit")
@@ -1376,7 +1366,7 @@ async def test_expired_funding_terminalization_stale_owner_is_noop(
     real_contract = uta_manager.funding_history_retention_contract
 
     def change_owner(execution_mode, *, cfg):
-        repo.update_position(
+        force_update_position(
             "expired-owner-conflict",
             outcome_exclusion_reason="manual_owner_state",
         )
@@ -1419,7 +1409,7 @@ async def test_malformed_funding_window_remains_retryable_and_rotates(
         opened_at=now - timedelta(hours=2),
         closed_at=now - timedelta(hours=1),
     )
-    repo.update_position("malformed-window", opened_at="not-a-timestamp")
+    force_update_position("malformed-window", opened_at="not-a-timestamp")
 
     from aletheia.portfolio import broker_funding_settlement as settlement
 

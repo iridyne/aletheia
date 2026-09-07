@@ -283,16 +283,6 @@ def test_ranker_guard_and_persona_learning_return_static_baseline_during_inciden
         "reopened_by_source": {"native": 2},
     })
 
-    from aletheia.agents import paper_trader_ranker as ranker
-    monkeypatch.setattr(
-        ranker, "evaluate_guards",
-        lambda *a, **k: (_ for _ in ()).throw(AssertionError("guard must refreeze")),
-    )
-    result = ranker._evaluate_guards_safe(
-        {"symbol": "BTC/USDT", "market": "usdt_futures"}, None, None,
-        "long", "high", False, None, None,
-    )
-    assert result is None
 
     from aletheia.trading import sizing_policy
     cfg = SimpleNamespace(trading=SimpleNamespace(
@@ -312,23 +302,6 @@ def test_operator_prompt_progressive_unlock_and_rollout_share_incident_refreeze(
         "reopened_by_source": {"native": 2},
     })
 
-    from aletheia.agent_shell import trading_context
-    monkeypatch.setattr(trading_context, "_build_layer1_snapshot", lambda: {})
-    monkeypatch.setattr(trading_context, "_build_layer2_short_term", lambda: {
-        "reflection": "learned", "trading_memo": "learned",
-        "reasoning_feedback": "learned", "calibration_feedback": "learned",
-    })
-    monkeypatch.setattr(trading_context, "_build_layer3_wisdom", lambda: {
-        "lessons": ["learned"], "ps_lessons": ["learned"],
-        "guard_candidates": ["learned"],
-    })
-    context = trading_context.build_enriched_trading_context()
-    assert all(context["layer2"][key] is None for key in (
-        "reflection", "trading_memo", "reasoning_feedback", "calibration_feedback",
-    ))
-    assert context["layer3"]["lessons"] == []
-    assert context["layer3"]["ps_lessons"] == []
-    assert context["learning_manifest"]["components"] == {}
 
     from aletheia.trading import persona
     learned_persona = SimpleNamespace(

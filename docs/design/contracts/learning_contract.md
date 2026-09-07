@@ -11,12 +11,13 @@
 > They remain Proposals; current guarantees are only the implemented slices explicitly adopted
 > below.
 
-> Issue #2737 migration boundary: the [current Phase 1 Contract](observation_experiment_ownership_v2.md) freezes legacy coupling, and the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) preserves Learning ownership of research, lessons, knowledge, and pre-registration nominations while targeting Observation Lab ownership for registered Experiments. Until the explicit Phase 8 cutover, the legacy Experiment ledger and resolver described below remain implemented authority.
+> Single-mainline cutover (2026-09-07): Observation Lab is the only online Experiment authority. Legacy ledgers remain migration/history inputs, never an executable fallback. Authority can move only to `lab`, with the existing checkpoint/archive/receipt proof. Missing authority is unavailable. Candidate → Planning Generation → Planner → Compiler → Entry Plan → Risk/Gateway is the sole entry path; legacy Ranker and entry-decision consumers are retired.
+> Pre-cutover experiment maturity descriptions below are historical evidence only where they reference the legacy experiment ledger, fixed-look evaluator or lifecycle controller. They grant no current execution or treatment authority.
 
 Learning is not a dashboard-only feature. Its product role is to turn market
 observations, trade decisions, closed trades, reviews, and later corrections into
 machine-readable knowledge that can be reused by future market evaluation,
-ranking, System Operator reasoning, and guarded trade approval.
+entry planning through its explicit consumer contract, Operator diagnosis, and guarded trade approval.
 
 Learning output must improve decision context without bypassing trust boundaries:
 it must not edit credentials, unlock live trading, submit orders directly, or
@@ -45,7 +46,7 @@ realized closes + fixed-horizon candidate/shadow outcomes
   -> attribution/path/economic interpretation
   -> cases + reviews + memos + factor/reasoning/calibration/reflection + guard candidates
   -> knowledge/lesson/policy/skill/filter/shadow stores
-  -> market observer + paper ranker/filters/guards + System Operator + sizing/risk checks
+  -> market observer + explicit entry-planning Learning consumers + Operator diagnosis + sizing/risk checks
   -> candidate/decision/proposal/order/position or blocked/skipped counterfactual
   -> later outcomes and effectiveness reports
 ```
@@ -66,15 +67,15 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Narrative review | `agents/post_trade_reviewer.py` | medium-confidence prose; also triggers deterministic case building |
 | Risk critique and lesson constraint | `agents/risk_critic.py`, `risk/engine.py`, `learning/experiments.py` | `risk_critic` writes a medium-confidence advisory research note only. Manual/owner/human Risk lessons remain static safety rules. The automatic-lesson experiment hook is measurement-unsupported, so automatic lessons currently remain advisory and cannot acquire blocking authority. |
 | Lesson extraction/review | `agents/dreaming_agent.py`, `agents/lesson_reviewer.py` | promotion/overturn requires clean cost-aware outcomes matching every populated symbol/direction/scanner dimension; global history is context only |
-| Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt, ranker score, and Operator prompt |
+| Memo synthesis | `analytics/insight_synthesizer.py`, `memo_effectiveness.py` | memo reaches observer prompt; Ranker scoring and old Operator entry-prompt consumers are retired |
 | Factor feedback | `analytics/factor_feedback.py`, `learning/experiments.py` | exact clean history is diagnostic. The `ranker_factor_filter` hook is measurement-unsupported, creates no formal exposure, and returns the static watch/neutral behavior. |
-| Reasoning feedback | `analytics/reasoning_feedback.py` | Operator prompt advice |
-| Confidence calibration | `analytics/confidence_calibration.py` | Operator prompt advice |
-| Last-decision reflection | `agent_shell/reflection.py` | Operator prompt advice; only exact proposal→position or opportunity→fixed-horizon/shadow outcomes are rendered |
-| Operator Learning bundle | `learning/prompt_bundles.py`, `agent_shell/trading_decision.py` | consumer-wired but measurement-unsupported: the existing Opportunity 4h market return predates prompt exposure and does not measure the resulting trade/skip decision utility, so the static no-Learning prompt baseline remains active |
+| Reasoning feedback | `analytics/reasoning_feedback.py` | retained feedback evidence; old Operator entry-prompt injection retired |
+| Confidence calibration | `analytics/confidence_calibration.py` | retained calibration evidence; old Operator entry-prompt injection retired |
+| Historical last-decision reflection | `agent_shell/reflection.py` | historical read-only evidence; no current entry-prompt injection or entry writer |
+| Historical Operator Learning bundle | `learning/prompt_bundles.py`; `trading_decision.py` consumer removed | entry consumer retired; historically measurement-unsupported: the existing Opportunity 4h market return predates prompt exposure and does not measure the resulting trade/skip decision utility, so it never granted measured prompt authority; no current entry bundle consumer |
 | Learned guards | `knowledge/guards.py`, `analytics/guard_promotion.py` | seed/manual guards retain their static safety class. Learned guards remain observe-only because `ranker_learned_guard` is measurement-unsupported; retrospective matches alone cannot grant block/penalty authority. |
 | Trust guard chain | `trust/guard_chain.py` | pre-risk observability only; even a `block` verdict does not block execution |
-| Case/memo score | `agents/paper_trader_ranker.py`, `learning/experiments.py` | retrospective case/memo values remain diagnostics. `ranker_case_score` has candidate-level Shadow measurement with exact 4h outcomes and a static zero delta; `ranker_memo_score` remains measurement-unsupported, creates no formal exposure, and returns the static zero delta. |
+| Historical case/memo score | `learning/experiments.py`; Ranker consumer removed | retrospective case/memo values remain diagnostics; no current scoring consumer. `ranker_case_score` has candidate-level Shadow measurement with exact 4h outcomes and a static zero delta; `ranker_memo_score` remains measurement-unsupported, creates no formal exposure, and returns the static zero delta. |
 | Advisory retrieval | `knowledge/router.py`, `knowledge/retrieval.py` | ordinary advisory context remains available; the separate `observer_advisory_bundle` treatment hook is measurement-unsupported and injects no experimental bundle |
 | Persona learning | `trading/persona.py`, `persona_rollout.py`, `sizing_policy.py`, `trading/sizing.py` | clean realized history can calculate a bounded proposal, but `persona_sizing` is measurement-unsupported and actual notional remains the static baseline; downstream Risk caps remain unchanged |
 | Exit diagnostics | `analytics/trade_path.py`, `analytics/exit_policy_advisor.py`, `analytics/exit_breakeven_shadow.py` | exact-protected stop exits may prove favorable excursion before the materialized first stop trigger; retrospective advice can only recommend the prospective paired shadow, and neither path mutates an exit or grants Learning authority |
@@ -91,13 +92,13 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 | Path/capability | Consumer | Exposure + outcome | Measurement/authority | Current conclusion |
 | --- | --- | --- | --- | --- |
 | `universe_family_calibration` | wired | full-arm canonical outcomes plus mirror/fallback | supported; owner-gated paper lifecycle | code-level causal loop complete; a qualified natural contribution verdict is empirical runtime evidence, not a contract guarantee |
-| `operator_learning_bundle` | wired | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
+| `operator_learning_bundle` | retired entry consumer | current Opportunity outcome is not causal to the later prompt treatment | unsupported | static no-Learning prompt baseline; no new formal exposure or authority |
 | `observer_advisory_bundle` | wired | unsupported | unsupported | static observer context; no experimental bundle or exposure |
-| `ranker_case_score` | wired | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
+| `ranker_case_score` | retired entry consumer | exact candidate-level 4h `filter_candidate_outcomes` | supported for Shadow measurement; Paper authority unsupported | candidate-level Shadow measurement; actual Ranker delta remains `0` |
 | `momentum_entry_geometry` | Entry Plan compiler | exact Momentum Candidate exposure plus 4h `filter_candidate_outcomes` | stable control/treatment assignment; Paper-only v2 authority requires the immutable treatment exposure receipt | v1 control and v2 causal geometry preserve the same Candidate, PlanIntent, sizing, Risk, Gateway, and outcome identity |
 | `mechanism_entry_learning` | Entry hypothesis planner | Planning Generation ITT unit plus exact Fill-T0 4h `filter_candidate_outcomes` | deterministic empty-context control; owner-gated Paper prompt context | current behavior identity must match; unavailable evidence becomes the empty baseline before inference |
-| `ranker_memo_score`, `ranker_factor_filter` | wired | unsupported | unsupported | static score/filter baseline |
-| `ranker_learned_guard` | wired | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
+| `ranker_memo_score`, `ranker_factor_filter` | retired entry consumer | unsupported | unsupported | static score/filter baseline |
+| `ranker_learned_guard` | retired entry consumer | unsupported | unsupported | learned guards observe only; seed/manual guards are a separate static safety class |
 | `risk_lesson_constraint` | wired | unsupported | unsupported | automatic lessons advisory-only; manual/owner lessons are non-experimental static constraints |
 | `persona_sizing` | wired | unsupported | unsupported | learned proposal may be displayed; applied notional remains static |
 | Lesson → policy → draft skill | wired artifact loop | reviewed realized evidence, not measured-ledger exposure | artifact lifecycle only | implemented; draft skills have no automatic activation or authority |
@@ -110,7 +111,7 @@ outcome adapter, can be measured, or can receive authority. Current measured mat
 and mechanism Entry Learning are Paper-authority-capable;
 Momentum v2 remains fail-closed unless its exact treatment exposure is present and applied.
 `ranker_case_score` is explicitly Shadow-only (`paper_authority_supported=False`)
-and its Ranker delta remains zero. Any further path requires its own causal unit,
+and its former Ranker consumer is retired. Registry capability is not a current call site. Any further path requires its own causal unit,
 outcome adapter, behavior contract, failure semantics, focused tests and a new
 from-zero observation window; changing only a registry flag is forbidden.
 
@@ -389,7 +390,7 @@ Current consumers:
 
 | Consumer | Reads |
 | --- | --- |
-| `agent_shell/trading_context.py` Layer 3 | `LessonStore().list_all(status="applied", limit=5)` for System Operator prompt context |
+| `agent_shell/context.py::_curated_learning_context` | applied, non-expired lessons past dry-run for read-only Operator diagnosis; no entry treatment |
 | `risk/engine.py::_check_lesson_constraints` | `status="applied"`, non-expired lessons after dry-run. `manual`/`owner`/`human` sources remain static constraints; automatic sources propose an advisory block and require exact `risk_lesson_constraint` treatment authority linked to `proposal:<id>:4h`. Adapter errors fail closed as `lesson_check_error:internal_failure`. |
 | `lesson_reviewer` | `proposed` for promotion and `accepted` for overturn checks |
 | `doctor` / analytics | Counts and status visibility |
@@ -492,12 +493,12 @@ reflection, shadow outcomes, and contribution analytics are additional paths lis
 knowledge_items high_confidence + active
   -> knowledge_fts
   -> retrieve_lessons()
-  -> advisory prompt/ranker context
+  -> market-observer advisory context
 ```
 
 Used by:
 
-- `paper_trader_ranker`
+- Historical `paper_trader_ranker` retrieval is retired; it is not a current consumer.
 - `market_observer`
 - `knowledge/router.py` advisory context
 
@@ -509,7 +510,7 @@ Path A answers: "Which past knowledge is relevant to this decision?"
 ps_lessons proposed
   -> lesson_reviewer
   -> ps_lessons applied
-  -> System Operator prompt + risk lesson constraints
+  -> read-only Operator diagnostic context + risk lesson constraints
 ```
 
 Path B answers: "Which reviewed structured lessons are active constraints or
@@ -522,8 +523,9 @@ review status, or structured recommendation fields. `ps_lessons` rows do.
 
 ## 6. Memo Evolution And Time Decay
 
-Insight Synthesizer writes `trading_memo` items. The latest memo can currently influence three
-different stages: market-observer context, paper-ranker score, and System Operator context.
+Insight Synthesizer writes `trading_memo` items. The latest memo remains available to
+market-observer context. The former paper-ranker score and Operator entry-prompt consumers
+are retired; this does not create a memo consumer in the Entry Planner.
 
 Current safeguards:
 
@@ -595,7 +597,9 @@ or other composite research context. A `narrowed` result that needs such materia
 scope therefore remains research evidence and fails closed instead of persisting a
 broader guard candidate with different treatment semantics.
 
-Ranker enforcement keeps two authority classes separate:
+Historical Ranker enforcement (consumer now retired) kept two authority classes separate.
+The following settings/call sequence explain historical evidence only; they are not current
+entry controls and do not transfer enforcement authority to the Planner:
 
 - shipped seed guards and owner-authored manual guards follow `guard.enabled` and
   `guard.enforce_in_paper_ranker`; disabling autonomous Learning or paper Learning influence does
@@ -636,50 +640,21 @@ rates, expected assignment and actual-intervention rates, adapter availability,
 sample/window requirements, overlap, and data quality. Its statuses are `ready`,
 `slow_but_viable`, `not_experimentable_now`, and `unsupported`.
 
-Only `ready` or `slow_but_viable` may idempotently register one existing-ledger
-Shadow experiment. Unsupported/non-viable hypotheses remain visible without
-experiment, exposure, verdict, epoch, Consumer influence, Paper authority, Risk,
-Execution, or Live authority. Shadow always returns the static Baseline; Paper
-authority still requires the existing explicit admission path.
+Experimentability remains a research assessment; it no longer registers a legacy
+Shadow experiment. Registration and owner admission use Observation Lab.
 
-### 7.3 Economic Knowledge, inheritance, and evidence-driven death
+### 7.3 Economic Knowledge and inheritance
 
-`EconomicKnowledgeFactV1` is a reproducible read-only projection, not a table and
-not a second verdict or lifecycle. One fact maps one-to-one to an existing consumed
-positive confirmatory fixed-look verdict from a Paper experiment. Qualification
-requires positive actual intervention, treatment and control samples, complete
-policy/stage/behavior/horizon/outcome/metric/fixed-look identity, the current
-cost-model version, and a cost-aware effect above the declared practical threshold.
-Shadow differences, monitoring positives, incomplete identity, incompatible metrics,
-and Paper fixtures without those facts do not qualify. A fixture may prove the code
-path only; it never proves production economic contribution.
-
-Behavioral inheritance delegates the exact projected scope/action/fingerprint and
-experiment identity to the existing path adapter and `resolve_learning_authority`;
-Economic Knowledge grants no authority itself. Cognitive retrieval is explicitly
-labeled `economic_knowledge_evidence`, requires exact path and Consumer scope, and
-cannot broadcast to another Consumer or activate a Skill.
-
-A later negative or invalid verdict, determinate harm, or canonical lifecycle
-refreeze removes the fact from the *current* projection. The original verdict and
-historical projection remain auditable. Requalification requires a new prospective
-experiment and consumed confirmatory positive verdict; history is never rewritten.
+Historical positive verdicts are retained unchanged but do not qualify as current
+Lab Economic Knowledge. The current qualification projection reports unavailable
+until canonical consumed-result evidence can support it; inherited numeric values
+remain baseline and no treatment authority is created. Research nominations and
+their immutable provenance remain available.
 
 ### 7.4 Knowledge Yield and cost accounting
 
-`knowledge-yield/v1` reports
-`qualified current Economic Knowledge / hypotheses entering prospective test`
-for an explicit time window. A denominator with experiments and no qualification
-reports `0`; an absent denominator remains unavailable. Each slice is separated by
-path, behavior-contract version, metric version, outcome-contract version, and
-horizon. There is deliberately no cross-slice aggregate, so incompatible metrics
-cannot be presented as one performance number.
-
-Each slice also exposes invalid verdicts, refrozen hypotheses, median time to
-evidence, generation cost from immutable nomination manifests, and an operational
-drag ratio. Missing cost or timing provenance is explicit and never replaced by an
-estimate. These are system-learning economics and must not be confused with any
-single strategy-family return metric.
+The current yield projection reports unavailable, with no fabricated zero yield or
+cross-version aggregate. Historical verdicts are not counted as current Lab facts.
 
 ### 7.5 Advisory Meta-Evolution
 
@@ -705,9 +680,8 @@ aletheia learning yield report
 aletheia learning meta-recommendations
 ```
 
-It emits machine-readable facts and explicit unavailable/partial coverage. With no
-current positive qualification, `knowledge list` returns `current_qualified_n: 0`
-and `production_economic_contribution_state: none`; it never manufactures success.
+The CLI emits explicit unavailable coverage and preserves historical evidence.
+`production_economic_contribution_state` is `unavailable`, not a fabricated `none`.
 See the [Learning Qualification CLI runbook](../../operations/runbooks/LEARNING_QUALIFICATION_CLI.md).
 
 ---

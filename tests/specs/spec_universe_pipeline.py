@@ -11,615 +11,48 @@ feature-keying invariants against regression.
 """
 
 import asyncio
-import ast
-from contextlib import nullcontext
 import inspect
 import json
-import textwrap
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
-def test_refresh_registers_full_scored_arm_with_selected_subset():
-    """Both publication branches must preserve the intent-to-treat denominator."""
-    from aletheia.universe.service import UniverseService
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(UniverseService.refresh)))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_build_experiment_candidate_outcomes"
-    ]
-
-    assert len(calls) == 2
-    for call in calls:
-        assert isinstance(call.args[0], ast.Name)
-        assert call.args[0].id == "pre_scored"
-        allocated = next(
-            keyword.value for keyword in call.keywords if keyword.arg == "allocated"
-        )
-        assert isinstance(allocated, ast.Name)
-        assert allocated.id == "allocated"
-
-
-def _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-    tmp_path,
-    monkeypatch,
-    failure_kind,
-    *,
-    caller_owns_transaction=False,
-    reuse_previous_snapshot=False,
-    seed_attempt_exposure=False,
-):
-    from tests.test_entry_logic import setup_env
-
-    setup_env(tmp_path, monkeypatch)
+@pytest.mark.parametrize("writer", [
+    "ensure_candidate_planning_generation",
+    "insert_forward_outcomes_batch",
+    "insert_filter_candidate_outcomes_batch",
+    "insert_universe_twin_shadow_bundle",
+])
+def test_target_publication_failure_preserves_previous_authority(tmp_path, monkeypatch, writer):
+    import sqlite3
+    from tests.test_sqlite_writer import _setup_db
+    from tests.test_candidate_selection_utility import _controlled_admitted_target_candidate
     from aletheia.config.loader import load_config
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseMember, UniverseSnapshot
-    from aletheia.storage.sqlite import get_db
-    from aletheia.universe import service
+    from aletheia.universe.service import UniverseService
 
+    _setup_db(tmp_path, monkeypatch)
     cfg = load_config()
-    cfg.universe.enabled = True
-    cfg.regime.enabled = False
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
-    cfg.exchange.preferred_market_type = "spot"
     cfg.market_data.ccxt_exchange = "bitget"
-    if failure_kind == "candidate_authority_evidence":
-        from aletheia.universe.candidate_selection_authority import (
-            candidate_selection_policy_identity,
-        )
-
-        from aletheia.config.schema import UniverseConfig
-
-        cfg.universe = UniverseConfig.model_validate({
-            **cfg.universe.model_dump(mode="json"),
-            "candidate_selection_policy": "candidate_selection_utility_v1",
-            "candidate_selection_policy_epoch": "candidate-selection-utility:test",
-        })
-        from aletheia.storage.models import AuditEvent
-
-        repo.insert_audit_event(AuditEvent(
-            actor="human",
-            source="dashboard",
-            event_type="candidate_selection_authority_admitted",
-            entity_type="universe_config",
-            entity_id=cfg.universe.candidate_selection_policy_epoch,
-        ))
-
-    feature = {
-        "asset_id": "asset-emission-retry",
-        "symbol": "BTC/USDT",
-        "venue": "bitget",
-        "market_type": "spot",
-        "last_price": 60_000.0,
-        "quote_volume_24h": 1_000_000_000.0,
-        "spread_bps": 2.0,
-        "execution_eligible": True,
-    }
-    scanner_result = {
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "opportunity_score": 70.0,
-        "all_scores": {"momentum": 70.0},
-        "reasons": ["positive momentum"],
-        "risk_flags": [],
-    }
-    allocated = [{
-        **feature,
-        **scanner_result,
-        "total_score": 70.0,
-        "tradability_score": 90.0,
-        "liquidity_score": 90.0,
-        "ttl_sec": 3600,
-    }]
-    fingerprint_members = allocated
-    if failure_kind == "candidate_authority_evidence":
-        fingerprint_members = [{
-            **allocated[0],
-            "candidate_selection_policy": "candidate_selection_utility_v1",
-            "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
-            "candidate_selection_utility_pct": 1.0,
-            "opportunity_mechanism": "continuation",
-            "opportunity_mechanism_version": "continuation/v1",
-            "opportunity_source_component": "momentum",
-            "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
-            "opportunity_evidence_hash": "a" * 64,
-            "_candidate_opportunity_record": {"source_record_hash": "a" * 64},
-        }]
-    previous = UniverseSnapshot(
-        id="previous-healthy-universe",
-        market_type="crypto",
-        status="active",
-        expires_at="2099-01-01T00:00:00+00:00",
-        summary=(
-            json.dumps(
-                {
-                    "information_policy_epoch": service.POLICY_EPOCH_LABEL,
-                        "member_fingerprint": service._member_fingerprint(
-                            fingerprint_members,
-                            None,
-                            policy_id=(
-                                str(cfg.universe.candidate_selection_policy_epoch)
-                                if failure_kind == "candidate_authority_evidence"
-                                else "legacy_total_score_v1"
-                            ),
-                        ),
-                }
-            )
-            if reuse_previous_snapshot
-            else "{}"
-        ),
+    _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
     )
-    repo.insert_universe_snapshot(previous)
-    repo.insert_universe_member(UniverseMember(
-        id="previous-healthy-member",
-        snapshot_id=previous.id,
-        asset_id="previous-asset",
-        symbol="ETH/USDT",
-        market_type="spot",
-        rank=1,
-        total_score=80.0,
-        scanner_family="momentum",
-        scanner_direction="long",
-        expires_at="2099-01-01T00:00:00+00:00",
-    ))
-    previous_member_expires_at = repo.get_universe_member(
-        "previous-healthy-member"
-    )["expires_at"]
-    requalification_generation_id = None
-    requalification_before = None
-    if failure_kind == "scanner_completion":
-        existing_candidate = UniverseMember(
-            id="existing-requalification-candidate",
-            snapshot_id=previous.id,
-            asset_id=feature["asset_id"],
-            venue="bitget",
-            symbol="BTC/USDT",
-            market_type="spot",
-            rank=2,
-            total_score=70.0,
-            scanner_family="momentum",
-            scanner_direction="long",
-            expires_at="2099-01-01T00:00:00+00:00",
-        )
-        repo.insert_universe_member(existing_candidate)
-        generation, _ = repo.ensure_candidate_planning_generation(existing_candidate.id)
-        requalification_generation_id = generation["id"]
-        requalification_before = repo.get_candidate_planning_generation(generation["id"])
+    db = repo.get_db()
+    before_snapshots = [tuple(row) for row in db.execute("SELECT * FROM universe_snapshots")]
+    before_generations = [tuple(row) for row in db.execute("SELECT * FROM candidate_planning_generations")]
 
-    async def sync_registry(_cfg):
-        return 1
+    def fail_write(*args, **kwargs):
+        raise sqlite3.OperationalError("publication_write_failed")
 
-    async def collect_features(_assets, _cfg, *, scanner_run_id):
-        assert scanner_run_id
-        return [feature]
-
-    async def settle_due():
-        return 0
-
-    failure_code = (
-        "forward_outcomes_registration_failed"
-        if failure_kind == "forward_outcomes"
-        else "canonical_outcomes_registration_failed"
-        if failure_kind == "canonical_outcomes"
-        else "candidate_selection_authority_evidence_failed"
-        if failure_kind == "candidate_authority_evidence"
-        else f"candidate_planning_generation_{failure_kind}_failed"
-    )
-
-    def planning_generation_failure(*_args, **_kwargs):
-        raise RuntimeError(failure_code)
-
-    monkeypatch.setattr(service, "load_config", lambda: cfg)
-    monkeypatch.setattr(service.repo, "mark_outlier_outcomes_failed", lambda: 0)
-    monkeypatch.setattr(
-        service.repo,
-        "list_universe_assets",
-        lambda **_kwargs: [feature],
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.registry.sync_registry", sync_registry
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.features.collect_features", collect_features
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.filters.apply_tradability_filters",
-        lambda rows, *_args, **_kwargs: rows,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.scanners.run_all_scanners",
-        lambda _row: scanner_result,
-    )
-    attempt_exposure = None
-    attempt_experiment = None
-    if seed_attempt_exposure:
-        from aletheia.analytics.filter_evidence import build_candidate_outcomes
-        from aletheia.learning.ledger import insert_exposure
-        from tests.specs.spec_learning_ledger import (
-            _exposure,
-            _registered_experiment,
-        )
-
-        hypothesis, attempt_experiment = _registered_experiment(
-            "universe-attempt"
-        )
-        attempt_exposure = _exposure(
-            hypothesis,
-            attempt_experiment,
-            token="universe-attempt",
-            exposed_at="2026-09-02T00:00:00+00:00",
-        )
-
-        def compute_total_score(*_args, **kwargs):
-            outcome_seed = build_candidate_outcomes(
-                outcome_candidate_key=attempt_exposure.candidate_key,
-                venue="bitget",
-                symbol="BTC/USDT",
-                market_type="spot",
-                direction="long",
-                scanner_family="momentum",
-                regime_tag=None,
-                entry_price_usd=60_000.0,
-                entry_spread_bps=2.0,
-                funding_rate_at_entry=None,
-                entry_ts=attempt_exposure.exposed_at,
-                allocation_selected=None,
-                horizons=("4h",),
-            )
-            write = {
-                "record": attempt_exposure,
-                "outcome_seeds": outcome_seed,
-            }
-            deferred = kwargs.get("deferred_exposure_writes")
-            if deferred is None:
-                assert insert_exposure(**write)
-            else:
-                deferred.append(write)
-            return 70.0
-    else:
-        compute_total_score = lambda *_args, **_kwargs: 70.0
-
-    monkeypatch.setattr(
-        "aletheia.universe.allocator.compute_total_score",
-        compute_total_score,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.allocator.get_family_multipliers", lambda **_kwargs: {}
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.allocator.allocate_universe",
-        lambda *_args, **_kwargs: allocated,
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.settle_due", settle_due
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder.register_pending",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "aletheia.analytics.causal_controls.record_universe_control_cohort",
-        lambda **_kwargs: None,
-    )
-    experiment_outcome_registrations = []
-    monkeypatch.setattr(
-        service,
-        "_build_experiment_candidate_outcomes",
-        lambda *_args, **_kwargs: (
-            experiment_outcome_registrations.append(True),
-            [object()] if failure_kind == "canonical_outcomes" else [],
-        )[1],
-    )
-    monkeypatch.setattr(
-        "aletheia.agent_runtime.scheduler.get_latest_volume_ranking", lambda: None
-    )
-    persisted_attempt_batches = []
-    if seed_attempt_exposure:
-        persist_attempt_learning_exposures = (
-            service._persist_attempt_learning_exposures
-        )
-
-        def capture_attempt_learning_exposures(writes):
-            persisted_attempt_batches.append(len(writes))
-            persist_attempt_learning_exposures(writes)
-
-        monkeypatch.setattr(
-            service,
-            "_persist_attempt_learning_exposures",
-            capture_attempt_learning_exposures,
-        )
-    if failure_kind == "candidate_authority_evidence":
-        bundle = type("AuthorityBundle", (), {
-            "batch": type("Batch", (), {"policy_epoch_id": cfg.universe.candidate_selection_policy_epoch})(),
-            "evidence": (),
-            "outcomes": (),
-        })()
-        monkeypatch.setattr(
-            "aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy",
-            lambda **_kwargs: {
-                "verdict": "positive",
-                "promotion_eligible": True,
-                "policy_epoch_id": cfg.universe.candidate_selection_policy_epoch,
-                "selection_policy": candidate_selection_policy_identity(cfg),
-                "blocking_reasons": [],
-                "invalid_reasons": [],
-            },
-        )
-        monkeypatch.setattr(service, "_build_candidate_selection_bundle", lambda **_kwargs: bundle)
-        monkeypatch.setattr(
-            "aletheia.universe.candidate_selection_shadow.target_candidates_from_bundle",
-            lambda *_args, **_kwargs: [{
-                **allocated[0],
-                "candidate_selection_policy": "candidate_selection_utility_v1",
-                "candidate_selection_policy_epoch": cfg.universe.candidate_selection_policy_epoch,
-                "candidate_selection_utility_pct": 1.0,
-                "opportunity_mechanism": "continuation",
-                "opportunity_mechanism_version": "continuation/v1",
-                "opportunity_source_component": "momentum",
-                "opportunity_source_cutoff_at": "2026-09-03T00:00:00+00:00",
-                "opportunity_evidence_hash": "a" * 64,
-                "_candidate_opportunity_record": {
-                    "source_record_hash": "a" * 64,
-                    "decision": {
-                        "primary_mechanism": "continuation",
-                        "primary_direction": "long",
-                        "economic_utility_pct": 1.0,
-                        "opportunity_evidence": {
-                            "feature_snapshot_id": "feature-test",
-                            "source_cutoff_at": "2026-09-03T00:00:00+00:00",
-                            "context": {},
-                            "mechanisms": [{
-                                "mechanism_id": "continuation",
-                                "mechanism_version": "continuation/v1",
-                                "source_component_id": "momentum",
-                                "evidence_refs": [],
-                                "capability_gaps": [],
-                            }],
-                        },
-                    },
-                },
-            }],
-        )
-        monkeypatch.setattr(
-            "aletheia.universe.candidate_selection_shadow.target_admitted_identity_keys",
-            lambda *_args, **_kwargs: {("bitget", "BTC/USDT", "spot", "momentum", "long")},
-        )
-        monkeypatch.setattr(
-            "aletheia.universe.allocator.decorate_universe_candidates",
-            lambda *_args: None,
-        )
-        monkeypatch.setattr(
-            service.repo,
-            "insert_universe_twin_shadow_bundle",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(failure_code)),
-        )
-    elif failure_kind == "scanner_completion":
-        update_scanner_run = service.repo.update_universe_scanner_run
-
-        def fail_scanner_completion(run_id, **kwargs):
-            if kwargs.get("status") == "completed":
-                raise RuntimeError(failure_code)
-            return update_scanner_run(run_id, **kwargs)
-
-        monkeypatch.setattr(
-            service.repo,
-            "update_universe_scanner_run",
-            fail_scanner_completion,
-        )
-    elif failure_kind == "forward_outcomes":
-        insert_forward_outcomes_batch = service.repo.insert_forward_outcomes_batch
-
-        def fail_forward_outcomes(*_args, **_kwargs):
-            insert_forward_outcomes_batch(*_args, **_kwargs)
-            raise RuntimeError(failure_code)
-
-        monkeypatch.setattr(
-            service.repo,
-            "insert_forward_outcomes_batch",
-            fail_forward_outcomes,
-        )
-    elif failure_kind == "canonical_outcomes":
-        monkeypatch.setattr(
-            service.repo,
-            "insert_filter_candidate_outcomes_batch",
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(failure_code)),
-        )
-    else:
-        monkeypatch.setattr(
-            service.repo,
-            "ensure_candidate_planning_generation",
-            planning_generation_failure,
-        )
-
-    caller_transaction = repo.transaction() if caller_owns_transaction else nullcontext()
-    with caller_transaction:
-        result = asyncio.run(service.UniverseService().refresh())
-
-    assert result is None
-    db = get_db()
-    snapshots = db.execute(
-        "SELECT id,status FROM universe_snapshots ORDER BY rowid"
-    ).fetchall()
-    assert [dict(row) for row in snapshots] == [{
-        "id": previous.id,
-        "status": "active",
-    }]
-    members = db.execute(
-        "SELECT id,snapshot_id FROM universe_members ORDER BY rowid"
-    ).fetchall()
-    expected_members = [{
-        "id": "previous-healthy-member",
-        "snapshot_id": previous.id,
-    }]
-    if failure_kind == "scanner_completion":
-        expected_members.append({
-            "id": "existing-requalification-candidate",
-            "snapshot_id": previous.id,
-        })
-    assert [dict(row) for row in members] == expected_members
-    if reuse_previous_snapshot:
-        assert repo.get_universe_member("previous-healthy-member")["expires_at"] == (
-            previous_member_expires_at
-        )
-    failed_run = db.execute(
-        "SELECT status,snapshot_id,errors FROM universe_scanner_runs "
-        "ORDER BY rowid DESC LIMIT 1"
-    ).fetchone()
-    assert failed_run["status"] == "failed"
-    if reuse_previous_snapshot:
-        assert failed_run["snapshot_id"] is None
-    else:
-        assert failed_run["snapshot_id"]
-        assert failed_run["snapshot_id"] != previous.id
-    assert failure_code in failed_run["errors"]
-    assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0
-    assert experiment_outcome_registrations == [True]
-    if attempt_exposure is not None and attempt_experiment is not None:
-        assert persisted_attempt_batches == [1]
-        assert db.execute(
-            "SELECT COUNT(*) FROM learning_exposures WHERE exposure_id=?",
-            (attempt_exposure.exposure_id,),
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "SELECT COUNT(*) FROM filter_candidate_outcomes "
-            "WHERE outcome_candidate_key=?",
-            (attempt_exposure.candidate_key,),
-        ).fetchone()[0] == 0
-        experiment_row = db.execute(
-            "SELECT status,started_at FROM learning_experiments WHERE experiment_id=?",
-            (attempt_experiment.experiment_id,),
-        ).fetchone()
-        assert dict(experiment_row) == {"status": "registered", "started_at": None}
-    if requalification_generation_id:
-        requalification_after = repo.get_candidate_planning_generation(
-            requalification_generation_id
-        )
-        assert requalification_after["last_requalified_at"] is None
-        assert (
-            requalification_after["soft_expires_at"]
-            == requalification_before["soft_expires_at"]
-        )
-
-
-@spec_claim(
-    SpecClaim(
-        "UP-25",
-        "universe_pipeline",
-        "§3 atomic Candidate planning publication",
-        "L2b",
-        "When durable Candidate Planning Generation creation escapes with an unhandled failure, "
-        "UniverseService rolls back the attempted snapshot publication, keeps the previous "
-        "healthy snapshot active, and records the failed run with the attempted snapshot id.",
-        status="implemented",
-    ),
-)
-def test_planning_generation_evidence_failure_cannot_publish_partial_universe_refresh(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path, monkeypatch, "evidence"
-    )
-
-
-def test_unhandled_planning_generation_failure_cannot_publish_partial_universe_refresh(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path, monkeypatch, "runtime"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "UP-29",
-        "universe_pipeline",
-        "§3 completed-scan Candidate attention authority",
-        "L2b",
-        "Candidate attention reconciliation and scanner-run completion commit atomically; "
-        "a completion write failure preserves the previous lease and records a failed run.",
-        status="implemented",
-    ),
-)
-def test_scanner_completion_failure_rolls_back_candidate_requalification(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path, monkeypatch, "scanner_completion"
-    )
-
-
-def test_change_suppressed_completion_failure_rolls_back_candidate_requalification(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path,
-        monkeypatch,
-        "scanner_completion",
-        reuse_previous_snapshot=True,
-    )
-
-
-def test_planning_generation_failure_rolls_back_inside_existing_transaction(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path,
-        monkeypatch,
-        "evidence",
-        caller_owns_transaction=True,
-    )
-
-
-def test_forward_outcome_failure_rolls_back_universe_publication(
-    tmp_path, monkeypatch
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path, monkeypatch, "forward_outcomes"
-    )
-
-
-@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
-def test_canonical_outcome_failure_cannot_complete_universe_decision(
-    tmp_path, monkeypatch, reuse_previous_snapshot
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path,
-        monkeypatch,
-        "canonical_outcomes",
-        reuse_previous_snapshot=reuse_previous_snapshot,
-    )
-
-
-@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
-def test_publication_failure_rolls_back_attempt_learning_activation(
-    tmp_path, monkeypatch, reuse_previous_snapshot
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path,
-        monkeypatch,
-        "canonical_outcomes",
-        reuse_previous_snapshot=reuse_previous_snapshot,
-        seed_attempt_exposure=True,
-    )
-
-
-@pytest.mark.parametrize("reuse_previous_snapshot", [False, True])
-def test_candidate_authority_evidence_failure_cannot_publish_target_snapshot(
-    tmp_path, monkeypatch, reuse_previous_snapshot,
-):
-    _assert_planning_generation_failure_cannot_publish_partial_universe_refresh(
-        tmp_path,
-        monkeypatch,
-        "candidate_authority_evidence",
-        reuse_previous_snapshot=reuse_previous_snapshot,
-    )
+    monkeypatch.setattr(repo, writer, fail_write)
+    assert asyncio.run(UniverseService().refresh()) is None
+    assert [tuple(row) for row in db.execute("SELECT * FROM universe_snapshots")] == before_snapshots
+    assert [tuple(row) for row in db.execute("SELECT * FROM candidate_planning_generations")] == before_generations
+    failed = db.execute("SELECT status,errors FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert failed[0] == "failed"
+    assert "publication_write_failed" in failed[1]
 
 
 # ---------------------------------------------------------------------------
@@ -633,7 +66,7 @@ def test_candidate_authority_evidence_failure_cannot_publish_target_snapshot(
               "small move → None (mirrors score_event thresholds)"),
 )
 def test_infer_direction_event_branch():
-    from aletheia.universe.signal_emitter import _infer_direction
+    from aletheia.universe.scanners import _infer_direction
 
     assert _infer_direction("event", {"return_1h": 9.0}) == "long"
     assert _infer_direction("event", {"return_1h": -9.0}) == "short"
@@ -689,33 +122,8 @@ def test_forward_outcome_direction_uses_scanner_direction():
     )
 
 
-@spec_claim(
-    SpecClaim("UP-04", "universe_pipeline", "§2 US-3 market_type propagation", "L2a",
-              "inserted_members carries market_type so signal_emitter labels perp "
-              "opportunities correctly (was fallback-'spot' for all)"),
-)
-def test_inserted_members_carry_market_type():
-    from aletheia.universe import service
-
-    src = inspect.getsource(service)
-    assert '"market_type": item.get("market_type"' in src, (
-        "inserted_members must include market_type; otherwise signal_emitter:70 "
-        "falls back to 'spot' for every opportunity, mislabeling perp"
-    )
 
 
-@spec_claim(
-    SpecClaim("UP-05", "universe_pipeline", "§2 US-8 feature keying", "L2a",
-              "signal_emitter keys features by (symbol, market_type) so a symbol's "
-              "spot and perp feature rows don't overwrite each other"),
-)
-def test_feature_lookup_uses_composite_key():
-    from aletheia.universe import signal_emitter
-
-    src = inspect.getsource(signal_emitter)
-    assert "feat_by_key" in src and 'f.get("market_type"' in src, (
-        "feature lookup must be keyed by (symbol, market_type), not symbol alone"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -728,21 +136,6 @@ def test_feature_lookup_uses_composite_key():
               "PI layer1 exposes market_observer's key_observations (numeric "
               "citations); previously only a truncated thesis reached the PI"),
 )
-def test_key_observations_reach_pi():
-    from aletheia.agent_shell.trading_context import _top_observations
-
-    # Parser: JSON array → first n bullets; junk/empty → [].
-    assert _top_observations('["1h RSI 68", "price > SMA20", "funding +0.03%"]', n=2) == [
-        "1h RSI 68", "price > SMA20",
-    ]
-    assert _top_observations("") == []
-    assert _top_observations(None) == []
-    assert _top_observations("not json") == []
-
-    # Structural: layer1 carries it AND the System Operator prompt renders it.
-    from aletheia.agent_shell import trading_context, trading_decision
-    assert '"key_observations": _top_observations' in inspect.getsource(trading_context)
-    assert "key_observations" in inspect.getsource(trading_decision)
 
 
 @spec_claim(
@@ -786,26 +179,6 @@ def test_macro_context_populates_fng():
     assert "top_movers_summary=macro_row.get" in src
 
 
-@spec_claim(
-    SpecClaim("UP-10", "universe_pipeline", "§2 US-9 short hard-disable", "L2b",
-              "when short_enabled=False, NO score overrides the regime gate for a "
-              "short (previously score>=66 slipped through)"),
-)
-def test_short_disable_is_hard():
-    from aletheia.universe.signal_emitter import _passes_regime_gate
-
-    class _Regime:
-        long_bias = 0.0
-        short_bias = 0.0
-        state = "bull"
-
-    r = _Regime()
-    # short_enabled=False → even a 99 score short is blocked
-    assert _passes_regime_gate("short", 99.0, r, short_enabled=False) is False
-    # short_enabled=True → high score still overrides (unchanged behavior)
-    assert _passes_regime_gate("short", 99.0, r, short_enabled=True) is True
-    # long is never affected by the short switch
-    assert _passes_regime_gate("long", 99.0, r, short_enabled=False) is True
 
 
 @spec_claim(
@@ -962,20 +335,6 @@ def test_snapshot_freshness_rejects_far_future_timestamp(monkeypatch):
     ) is True
 
 
-@spec_claim(
-    SpecClaim(
-        "UP-21", "universe_pipeline", "§signal emission terminal evidence", "L2a",
-        "signal_emitter exposes one terminal evidence writer so every selected universe "
-        "member ends as emitted, reused, rejected, or error instead of silently disappearing.",
-        status="implemented",
-    ),
-)
-def test_signal_emitter_has_terminal_evidence_writer():
-    from aletheia.universe import signal_emitter
-
-    assert hasattr(signal_emitter, "_record_emission_decision")
-    source = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
-    assert source.count("_record_emission_decision(") >= 8
 
 
 @spec_claim(
@@ -1567,144 +926,3 @@ def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # UP-26 — live-duplicate suppression prevents scanner flooding (#326)
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "UP-26", "universe_pipeline", "§signal emission live-duplicate guard (#326)", "L2b",
-        "emit_deterministic_opportunities must suppress a new signal for symbol+direction "
-        "when a live (open/queued, non-expired) opportunity for the same symbol+direction+market "
-        "already exists in the evaluation queue. Without this, fast-signalling symbols emit "
-        "a new slot-stealing candidate every 10 min while prior ones are still pending (#326).",
-        status="implemented",
-    ),
-)
-def test_live_duplicate_suppressed_when_active_opportunity_exists(tmp_path, monkeypatch):
-    """#326: a second emission for the same symbol+direction must be suppressed.
-
-    Two calls to emit_deterministic_opportunities with identical symbol+direction:
-    - First call: no live opportunity exists → emits 1 opportunity.
-    - Second call (different snapshot_id): live opportunity still open → suppressed.
-    """
-    import sqlite3
-    from datetime import datetime, timedelta, timezone
-
-    from tests.test_entry_logic import setup_env
-
-    setup_env(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sq
-    import aletheia.storage.repositories as repo
-    from aletheia.storage.migrations import run_migrations
-
-    sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "live_dup_test.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    sq._db_conn = conn
-    run_migrations()
-
-    from aletheia.universe.signal_emitter import emit_deterministic_opportunities
-    from aletheia.storage.models import UniverseSnapshot, UniverseMember
-    from aletheia.config.loader import load_config
-
-    cfg = load_config()
-    cfg.universe.enabled = True
-    cfg.regime.enabled = False
-    cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
-    cfg.market_data.ccxt_exchange = "binance"
-
-    now = datetime.now(timezone.utc)
-    expires_at = (now + timedelta(minutes=60)).isoformat()
-
-    def _make_member(snapshot_id: str) -> tuple[dict, dict]:
-        snap = UniverseSnapshot(
-            id=snapshot_id, exchange="binance", market_type="spot",
-            universe_size=1, created_at=now.isoformat(),
-        )
-        repo.insert_universe_snapshot(snap)
-        member = UniverseMember(
-            snapshot_id=snapshot_id, asset_id=f"asset-{snapshot_id}",
-            symbol="SNDK/USDT", rank=1, total_score=75.0,
-            scanner_family="momentum", expires_at=expires_at,
-        )
-        repo.insert_universe_member(member)
-        feat = {
-            "asset_id": f"asset-{snapshot_id}",
-            "symbol": "SNDK/USDT",
-            "venue": "binance",
-            "market_type": "spot",
-            "instrument_background": {
-                "version": "instrument-background/v1",
-                "status": "complete",
-                "venue": "binance",
-                "symbol": "SNDK/USDT",
-                "market_type": "spot",
-                "physical_market_type": "spot",
-                "asset_class": "crypto",
-                "product_kind": "crypto_spot",
-                "reference_asset": "SNDK",
-                "relationship": "direct_asset",
-                "classification": {"source": "test_fixture"},
-            },
-            "analysis_context": {
-                "version": "instrument-analysis-context/v1",
-                "status": "supported",
-                "kind": "crypto",
-                "applicable_evidence": [
-                    "instrument_market_data", "btc_relative_strength",
-                    "global_crypto_regime", "crypto_family_prior",
-                ],
-                "inapplicable_evidence": [],
-                "unavailable_evidence": [],
-            },
-            "last_price": 50.0,
-            "quote_volume_24h": 100_000_000.0,
-            "spread_bps": 5.0,
-            "execution_eligible": True,
-            "scanner_family": "momentum",
-            "scanner_direction": "short",
-            "reasons": ["RS24h -6.0% vs BTC"],
-            "total_score": 75.0,
-            "return_4h": -4.0,
-            "relative_strength_24h": -6.0,
-        }
-        member_row = member.model_dump()
-        member_row.update({
-            "venue": "binance",
-            "instrument_background": feat["instrument_background"],
-            "analysis_context": feat["analysis_context"],
-        })
-        return [member_row], [feat]
-
-    monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.lookup_factor_signal", lambda _: {}
-    )
-    monkeypatch.setattr(
-        "aletheia.universe.signal_emitter.has_fresh_market_snapshot", lambda *a, **kw: True
-    )
-
-    members1, feats1 = _make_member("snap-flood-1")
-    created1 = emit_deterministic_opportunities(
-        members1, "snap-flood-1", feats1
-    )
-    assert created1 == 1, f"first emission should create 1 opportunity, got {created1}"
-
-    members2, feats2 = _make_member("snap-flood-2")
-    created2 = emit_deterministic_opportunities(
-        members2, "snap-flood-2", feats2
-    )
-    assert created2 == 0, (
-        f"second emission must be suppressed (live_duplicate_suppressed) — got {created2}; "
-        "the live-duplicate guard at signal_emitter.py is missing or bypassed"
-    )
-
-    # Confirm the suppression reason is recorded in filter_decisions.
-    rows = conn.execute(
-        "SELECT reason_code FROM filter_decisions "
-        "WHERE symbol='SNDK/USDT' AND filter_name='opportunity_emission' "
-        "AND decision='rejected' ORDER BY evaluated_at DESC LIMIT 5"
-    ).fetchall()
-    reason_codes = {r["reason_code"] for r in rows}
-    assert "live_duplicate_suppressed" in reason_codes, (
-        f"expected live_duplicate_suppressed in filter_decisions; got {reason_codes}"
-    )

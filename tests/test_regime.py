@@ -13,7 +13,6 @@ from aletheia.regime.detector import (
     REGIME_SIDEWAYS,
     REGIME_VOLATILE,
 )
-from aletheia.universe.signal_emitter import _passes_regime_gate
 from aletheia.data.providers import Candle
 
 
@@ -319,42 +318,3 @@ class TestDebouncedDetect:
 
 
 # ── _passes_regime_gate ────────────────────────────────────────────────────────
-
-
-class TestPassesRegimeGate:
-    def test_long_passes_in_bull_regime(self):
-        regime = MarketRegime(state="bull", long_bias=0.75, short_bias=0.25)
-        assert _passes_regime_gate("long", 50.0, regime) is True
-
-    def test_short_blocked_in_bull_regime(self):
-        regime = MarketRegime(state="bull", long_bias=0.75, short_bias=0.25)
-        assert _passes_regime_gate("short", 50.0, regime) is False
-
-    def test_short_passes_in_bear_regime(self):
-        regime = MarketRegime(state="bear", long_bias=0.25, short_bias=0.75)
-        assert _passes_regime_gate("short", 50.0, regime) is True
-
-    def test_long_blocked_in_bear_regime(self):
-        regime = MarketRegime(state="bear", long_bias=0.25, short_bias=0.75)
-        assert _passes_regime_gate("long", 50.0, regime) is False
-
-    def test_both_pass_in_sideways(self):
-        regime = MarketRegime(state="sideways", long_bias=0.50, short_bias=0.50)
-        assert _passes_regime_gate("long", 50.0, regime) is True
-        assert _passes_regime_gate("short", 50.0, regime) is True
-
-    def test_high_score_overrides_hostile_regime(self):
-        regime = MarketRegime(state="bull", long_bias=0.75, short_bias=0.25)
-        # Score >= 60 * 1.1 = 66 → overrides
-        assert _passes_regime_gate("short", 67.0, regime) is True
-
-    def test_moderate_score_blocked_in_hostile_regime(self):
-        regime = MarketRegime(state="bull", long_bias=0.75, short_bias=0.25)
-        # Score = 55 < 66 → blocked
-        assert _passes_regime_gate("short", 55.0, regime) is False
-
-    def test_volatile_regime_both_reduced(self):
-        regime = MarketRegime(state="volatile", long_bias=0.35, short_bias=0.35)
-        # bias=0.35 >= threshold 0.30 → passes
-        assert _passes_regime_gate("long", 50.0, regime) is True
-        assert _passes_regime_gate("short", 50.0, regime) is True

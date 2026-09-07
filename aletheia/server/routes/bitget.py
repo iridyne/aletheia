@@ -398,66 +398,13 @@ async def okx_test_candidate(req: OkxCandidateRequest):
 
 @router.get("/uta/state")
 async def uta_state():
-    """Return the cached unified (multi-broker) account state.
-
-    Fast path: reads the in-memory cache written by sync_all_exchanges().
-    Falls back to per-broker Bitget cache when the unified cache is empty
-    (first run before the scheduler has fired).
-    Never blocks on a network call.
-    """
-    from aletheia.config.loader import load_config
-    from aletheia.portfolio.exchange_sync import get_unified_cached_state, get_cached_state, status_for
+    """Return the cached UTA projection without polling private accounts."""
+    from aletheia.portfolio.exchange_sync import get_unified_cached_state, status_for
 
     unified = await asyncio.to_thread(get_unified_cached_state)
     if unified is not None:
         sync_status = status_for(unified)
         return {**unified, "sync_status": sync_status}
-
-    # Fallback is valid only for the Bitget demo account that owns this legacy
-    # cache.  Never present it as the selected OKX/Binance account.
-    cfg = load_config()
-    if (
-        cfg.exchange.paper_execution_mode != "bitget_demo"
-        or cfg.exchange.uta_read_boundary_for("bitget_demo") == "uta_v1"
-    ):
-        return {
-            "total_equity_usdt": None,
-            "total_available_usdt": None,
-            "total_unrealized_pnl": None,
-            "accounts": [],
-            "positions": [],
-            "errors": [],
-            "connected_brokers": [],
-            "fetched_at": None,
-            "sync_status": "unconfigured",
-            "sync_complete": False,
-        }
-
-    # Fallback: wrap the Bitget-only cache in the unified shape
-    bitget = await asyncio.to_thread(get_cached_state)
-    if bitget is not None:
-        sync_status = status_for(bitget)
-        return {
-            "total_equity_usdt": bitget.get("equity_usdt", 0),
-            "total_available_usdt": bitget.get("available_usdt", 0),
-            "total_unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
-            "accounts": [{
-                "broker_id": "bitget_demo",
-                "bitget_profile": cfg.exchange.bitget_profile,
-                "display_name": "Bitget Demo",
-                "equity_usdt": bitget.get("equity_usdt", 0),
-                "available_usdt": bitget.get("available_usdt", 0),
-                "frozen_usdt": bitget.get("frozen_usdt", 0),
-                "unrealized_pnl": bitget.get("futures_unrealized_pnl", 0),
-                "asset_breakdown": bitget.get("asset_breakdown", []),
-            }],
-            "positions": bitget.get("positions", []),
-            "errors": [],
-            "connected_brokers": ["bitget_demo"] if sync_status == "ok" else [],
-            "fetched_at": bitget.get("fetched_at", ""),
-            "sync_status": sync_status,
-            "sync_complete": sync_status == "ok",
-        }
 
     return {
         "total_equity_usdt": None,

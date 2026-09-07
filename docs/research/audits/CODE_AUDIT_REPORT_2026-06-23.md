@@ -273,7 +273,7 @@ Consumers: risk_engine check #11 / pnl._latest_price / paper_broker._btc_price_n
 | **data_contract_violation** — 跨模块字段语义漂移 | 4 | `e68b7bf` (paper-trader symbol mismatch), `3377d48` (direction_bias normalize), `a9b2d93` (portfolio mode filter vs equity curve), `d7c2570` (PnLZone realized tile) | SQLite 黑板字段随各 agent 迭代漂移，下游读方使用旧语义 | `spec_data_model.py`: assert `opportunities.symbol` 符合 `BTC/USDT` canonical 格式；assert portfolio endpoint 返回全模式 PnL |
 | **silent_drop** — 数据静默消失无审计 | 3 | `5691bc7` (ranker kills non-target symbols), `78b3a9f` (paper-trader early-return on price miss), `831599c` (prediction fallback to top-volume) | guard/filter 逻辑 early-return 无结构化 event，最多 `logger.debug` | assert `paper_trader` 对每个被过滤 candidate 写 `candidate_skipped` event |
 | **async_event_loop** — aiohttp/asyncio/scheduler 交互 | 3 | `d6995ec` (aiohttp session leak), `3541681` (IOCP drain §17), `da0d045` (SQLite lock storm from ProactorEventLoop) | Windows ProactorEventLoop IOCP drain 挂住 `asyncio.run()` 拆卸；per-call provider 规则未强制 | `spec_agent_contracts.py`: assert CCXT provider 每次调用新建；assert 无 session 跨 `asyncio.run()` 复用 |
-| **sync_drift** — 文档/前端 vs 代码不同步 | 3 | `baec297` (scheduler job count in Overview.tsx), `63f691a` (§17 stale observer), `b6f6635` (scanner §16 doc vs code lag) | UI 和文档各自维护，scheduler job 数量以 magic number 硬编码在前端 | `spec_agent_contracts.py` AC-S08 已有；需补前端 `scheduler.status_snapshot().job_count >= 28` |
+| **sync_drift** — 文档/前端 vs 代码不同步 | 3 | `baec297` (scheduler job count in Overview.tsx), `63f691a` (§17 stale observer), `b6f6635` (scanner §16 doc vs code lag) | UI 和文档各自维护，scheduler job 数量以 magic number 硬编码在前端 | 后续清理已删除源码 job 数量门槛；任务数不是行为契约 |
 | **timezone_or_unicode** — UTC/tz 后缀漂移 | 2 | `9880fcb` (timestamps not UTC-aware), `0303907` (datetime tz parsing) | SQLite `datetime('now')` 存 naive UTC；Python 代码时而 aware 时而 naive；浏览器解析不一致 | `spec_data_model.py`: assert REST API 所有 `*_at` 字段结尾为 `Z` 或 `+00:00` |
 
 ### 5.2 高频文件修复频次表
@@ -285,7 +285,7 @@ Consumers: risk_engine check #11 / pnl._latest_price / paper_broker._btc_price_n
 | `aletheia/risk/engine.py` | 4 | paper/live mode 条件逻辑隐式，新增模式必触发回归 | spec_risk_engine.py claims 已有基础覆盖；缺 check #8 zero-capital 和 check #16 empty-positions 两个 claim |
 | `frontend/src/pages/Settings.tsx` | 4 | 全配置 UI 单文件，随功能叠加无界增长 | 按 contract 分组拆分；lint spec 检测硬编码 px/hex |
 | `aletheia/server/routes/news.py` + `settings.py` | 3 | 多 feature branch 叠加 field additions，diff 污染 | 已在当前 unstaged diff 中，需随 batch commit 一并提交 |
-| `aletheia/agent_runtime/scheduler.py` | 3 | 以 accretion 增长；job 注册正确性无机器检验 | AC-S08 claim 已有；补 `_record_job_failure` 覆盖率 spec |
+| `aletheia/agent_runtime/scheduler.py` | 3 | 以 accretion 增长；job 注册正确性无机器检验 | 后续清理已删除源码 job 数量门槛；失败记录需由行为验证 |
 
 > **结论**: `pnl.py` 是 60 天内修复次数最多的文件（5 次），强烈建议在下一 sprint 提取 `PnLContext` 并为其增加 `spec_pnl_contract.py`，这将消除同一类根因导致的整类回归风险。
 

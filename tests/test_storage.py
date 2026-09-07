@@ -1,6 +1,9 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
 import json
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import pytest
 from unittest.mock import patch
 from pathlib import Path
@@ -55,13 +58,48 @@ def test_audit_event_crud(tmp_path):
     reset_db()
 
 
-def test_agent_run_crud(tmp_path):
+def test_agent_run_lifecycle_cas_and_db_constraints(tmp_path):
     setup_test_db(tmp_path)
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
-    repo.update_agent_run(run.id, status="completed", ended_at="2026-01-01T00:00:00")
+    assert repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="completed",
+        ended_at="2026-01-01T00:00:00",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
     result = repo.get_agent_run(run.id)
     assert result["status"] == "completed"
+
+    assert not repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="failed",
+        ended_at="2026-01-01T00:00:01",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
+
+    with pytest.raises(ValueError, match="invalid_agent_run_transition"):
+        repo.finish_agent_run(
+            run.id,
+            expected_status="queued",
+            status="completed",
+            ended_at="2026-01-01T00:00:01",
+            outputs_created="[]",
+            errors="[]",
+            tools_called="[]",
+            cost_estimate=None,
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        get_db().execute("UPDATE agent_runs SET status='invented' WHERE id=?", (run.id,))
     reset_db()
 
 
@@ -112,6 +150,41 @@ def test_trade_proposal_to_order_flow(tmp_path):
     fills = repo.list_fills()
     assert len(fills) == 1
     assert fills[0]["fill_price"] == 3000.0
+    reset_db()
+
+
+@pytest.mark.parametrize(
+    ("current", "target", "allowed"),
+    [
+        ("pending", "submitted", True),
+        ("submitted", "partially_filled", True),
+        ("partially_filled", "filled", True),
+        ("cancelled", "filled", True),
+        ("filled", "cancelled", False),
+        ("error", "pending", False),
+    ],
+)
+def test_order_transition_table(tmp_path, current, target, allowed):
+    setup_test_db(tmp_path)
+    order = Order(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=3000.0,
+        execution_mode="paper_internal",
+        status=current,
+        source="adopted",
+    )
+    repo.insert_order(order)
+    if allowed:
+        repo.transition_order(order.id, status=target)
+        assert repo.get_order(order.id)["status"] == target
+    else:
+        with pytest.raises(ValueError, match="invalid_order_transition"):
+            repo.transition_order(order.id, status=target)
+        assert repo.get_order(order.id)["status"] == current
     reset_db()
 
 
@@ -307,6 +380,75 @@ def _real_db_env(tmp_path, monkeypatch):
 
 
 @pytest.mark.real_db
+def test_fill_wins_real_db_race_against_cancel(tmp_path, monkeypatch):
+    _real_db_env(tmp_path, monkeypatch)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1,
+        price=100,
+        execution_mode="paper_internal",
+        source="adopted",
+    )
+    repo.insert_order(order)
+    barrier = threading.Barrier(2)
+
+    def apply(status):
+        barrier.wait(timeout=3)
+        try:
+            repo.transition_order(order.id, status=status)
+        except ValueError:
+            pass
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(apply, ("cancelled", "filled")))
+    assert repo.get_order(order.id)["status"] == "filled"
+    reset_db()
+
+
+@pytest.mark.real_db
+def test_private_materialization_wins_real_db_race_against_ack(tmp_path, monkeypatch):
+    _real_db_env(tmp_path, monkeypatch)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1,
+        price=100,
+        execution_mode="paper_internal",
+        source="adopted",
+    )
+    repo.insert_order(order)
+    barrier = threading.Barrier(2)
+
+    def acknowledge():
+        barrier.wait(timeout=3)
+        repo.finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id="venue-1",
+            status="submitted",
+            error_reason=None,
+        )
+
+    def materialize():
+        barrier.wait(timeout=3)
+        repo.transition_order(
+            order.id,
+            exchange_order_id="venue-1",
+            status="filled",
+            filled_at="2026-09-06T00:00:00+00:00",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda fn: fn(), (acknowledge, materialize)))
+    assert repo.get_order(order.id)["status"] == "filled"
+    reset_db()
+
+
+@pytest.mark.real_db
 def test_insert_commits_and_releases_lock(tmp_path, monkeypatch):
     import sqlite3
     from aletheia.storage.sqlite import db_path
@@ -341,7 +483,16 @@ def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
 
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
-    repo.update_agent_run(run.id, status="completed")
+    assert repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="completed",
+        ended_at="2026-01-01T00:00:00",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
 
     other = sqlite3.connect(str(db_path()), timeout=2)
     try:

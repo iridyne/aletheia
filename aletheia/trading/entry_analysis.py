@@ -150,7 +150,7 @@ class EntryHypothesis(BaseModel):
     entry_profile_id: str | None = None
     execution_urgency: Literal["PASSIVE", "BOUNDED_URGENT"] | None = None
     risk_tier: Literal["LOW", "MEDIUM", "NONE"]
-    horizon: Literal["INTRADAY", "NONE"]
+    horizon: Literal["INTRADAY", "SWING", "NONE"]
     supporting_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     opposing_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     learning_evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
@@ -182,7 +182,7 @@ class EntryHypothesis(BaseModel):
             raise ValueError("entry_execution_urgency_required")
         if self.entry_profile_id == "grounded-anchor-resting-maker" and self.execution_urgency != "PASSIVE":
             raise ValueError("resting_maker_must_be_passive")
-        if self.risk_tier == "NONE" or self.horizon != "INTRADAY":
+        if self.risk_tier == "NONE" or self.horizon == "NONE":
             raise ValueError("entry_risk_horizon_required")
         if not self.supporting_fact_refs:
             raise ValueError("supporting_fact_required")
@@ -568,12 +568,11 @@ def build_entry_analysis_context(
     if generation.get("entry_behavior_fingerprint"):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
-        opportunity_context = CandidateOpportunityContextV1.model_validate_json(
-            candidate.get("candidate_opportunity_context_json") or ""
+        opportunity_context = CandidateOpportunityContextV1.model_validate(
+            json.loads(generation["requalification_source_json"])["candidate_opportunity_context"]
         )
         if (
-            opportunity_context.candidate_id != candidate.get("id")
-            or opportunity_context.context_hash != candidate.get("candidate_opportunity_context_hash")
+            opportunity_context.candidate_id != generation["candidate_id"]
             or opportunity_context.opportunity["primary_mechanism"] != generation.get("opportunity_mechanism")
             or opportunity_context.opportunity["direction"] != generation.get("direction")
             or opportunity_context.candidate_selection["policy"] != generation.get("candidate_selection_policy")

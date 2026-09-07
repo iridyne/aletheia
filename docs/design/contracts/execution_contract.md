@@ -83,10 +83,8 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 | 模式 | 真实单 | Broker | 位置 |
 |------|--------|--------|------|
 | `paper_internal` | 否(本地模拟) | paper_broker | `paper_broker.py:17` |
-| `bitget_demo` | 是(demo 账户) | bitget_broker | `bitget_broker.py:53` |
-| `okx_demo` | 是(demo) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise okx_broker | `gateway.py` / `execution/coordinator.py` |
-| `binance_testnet` | 是(testnet) | qualified `uta_v1`: Gateway → Coordinator → UTA; otherwise binance_broker | `gateway.py` / `execution/coordinator.py` |
-| `bitget/okx/binance_live_limited` | 是(**真实资金**) | exact qualified `uta_v1`: Gateway → Coordinator → UTA；否则原 broker | `gateway.py` / `execution/coordinator.py` |
+| `bitget_demo` / `okx_demo` / `binance_testnet` | 是(demo/testnet) | Gateway → Coordinator → UTA | `gateway.py` / `execution/coordinator.py` |
+| `bitget/okx/binance_live_limited` | 是(**真实资金**) | Gateway → Coordinator → UTA | `gateway.py` / `execution/coordinator.py` |
 
 `_is_live()` 判定:`execution_mode in (bitget/okx/binance)_live_limited`(`engine.py:35`)。
 
@@ -141,11 +139,11 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 | Adapter | 支持 market_type | 路由要点 | 来源 |
 |---------|-----------------|----------|------|
-| okx | `spot` + `usdt_futures` | `SUPPORTED_MARKET_TYPES`;`okx_ccxt_symbol()` 按类型选符号(spot=canonical 无后缀 / perp=`:USDT`);spot 无杠杆/无 contractSize 换算/无 reduceOnly,市价买用 `tgtCcy=base_ccy` | `okx/client.py` |
-| bitget | `usdt_futures`(demo 仅永续) | demo 模拟盘只提供 USDT 永续 | `bitget_broker.py:11` |
+| okx | `spot` + `usdt_futures` | UTA profile 处理精确 contract-size、client-id 与 spot/perp 参数；实际可用性仍由 venue facts 与资格约束 | `uta/profiles/okx.py` |
+| bitget | profile 声明 `spot` + `usdt_futures` | Classic v2 / UTA v3 明确隔离；声明能力不代表 demo 标的或凭据已合格 | `uta/profiles/bitget.py` |
 
 > **OKX demo 现货已实测**(2026-06-28):demo 沙盒列 522 现货标的,真下单 buy+sell 全程通过。详见 `docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md`。spec:`tests/specs/spec_spot_parity.py`(SP-S01~S06)。
-> **AI 决定 market_type**:opportunity 带 `market` 字段透出给 PI;PI 显式选 → 否则继承 opportunity.market → 否则按"空头必永续/其余现货"兜底(非固定偏向)。`trading_decision.py`。
+> 当前 market_type 来自 canonical Candidate/EntryPlan 的 exact instrument；不存在旧 PI fallback 类型选择。
 
 ### 3.2 Symbol Availability Pre-check（标的可用性预检）
 
@@ -153,7 +151,7 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 
 | 模式 | 标的来源 | 缓存 TTL |
 |------|---------|---------|
-| `okx_demo` | `execution.venue_capabilities.load_venue_capabilities()`（复用 OKX broker 的 sandbox CCXT 专属列表） | 4h |
+| `okx_demo` | `execution.venue_capabilities.load_venue_capabilities()`（sandbox 公共行情列表） | 4h |
 | `okx_live_limited` | `universe_registry`（venue=`"okx"`） | 4h |
 | `bitget_demo` / `bitget_live_limited` | `universe_registry`（venue=`"bitget"`） | 4h |
 | `binance_testnet` / `binance_live_limited` | `universe_registry`（venue=`"binance"`） | 4h |
@@ -163,7 +161,7 @@ broker 不得在批准后读取可变 config 补一个 TP。§10.4 的 position-
 上层 `agents/`、`universe/`、`trading/`、`risk/` 只消费
 `execution.venue_capabilities` 提供的 canonical capability facts，不导入具体
 exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查；
-`portfolio/uta/` 仍只负责 exchange account/position 的归一化只读聚合。
+`uta/` 负责唯一私有账户读取与规范化执行；本地 paper 账本不进入远端适配器。
 
 **新交易所接入方式**（e.g. Hyperliquid）：
 1. 往 `execution.venue_capabilities.EXECUTION_MODE_TO_VENUE` 加 `"hyperliquid_demo": "hyperliquid"`
@@ -203,14 +201,12 @@ route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
 
 | 项 | 行为 | 位置 |
 |----|------|------|
-| 时机 | 新仓首次成交后(叠仓不下) | `bitget_broker.py:153-163` |
-| 内容 | `place_tpsl_order(plan_type=pos_loss/pos_profit, trigger_price, hold_side, size)` | `bitget_broker.py:299-336` |
-| SL | `trigger=proposal.stop_price` | :313 |
-| TP | `trigger=proposal.take_profit`（仅使用已获 Risk 批准的值） | `gateway.py`, `bitget_broker.py` |
-| 开关 | `trading.exchange_tpsl_enabled`(`schema.py:341`) | — |
-| 失败 | 非致命,仅 warn,本地 stop/TP 仍生效 | :321 |
-| 持久化 | `position.exchange_tpsl_order_id`(JSON) | :336 |
-| 平仓 | 平仓前自动取消 pending TPSL(`_try_cancel_tpsl`) | :234,339 |
+| 路径 | Gateway → Coordinator → UTA profile | `execution/coordinator.py` |
+| 内容 | 持久化 protection child 后发送 typed protective_stop / take_profit command | `place_protection` |
+| SL / TP | 使用 Position 已批准的 stop_price / take_profit_price，不另造保护价格 | `place_protection` |
+| 能力 | profile 不支持时不可伪造成功；本地保护判断保留 | `uta/profiles/` |
+| 持久化 | 仅已确认的 venue IDs 写入 position.exchange_tpsl_order_id；未决 child 保留 | `execution/coordinator.py` |
+| 替换 | 原 stop 撤单确认后才提交新 stop，失败不报告替换成功 | `replace_protective_stop` |
 
 ---
 
@@ -236,7 +232,9 @@ route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
 3. 回填 exchange_order_id + status
 4. Insert Fill + Position(失败非致命,可恢复)
 ```
-位置:`bitget_broker.py:87-99`(okx/binance 同构)。
+位置：`execution/coordinator.py`。提交前持久化 exact `uta_account_identity_json`；历史 NULL 不按当前配置补造身份。
+
+`SubmitOrderCommand.reference_price` 只携带已批准的数量/价格对应的参考价格，不是市价单的 limit price。仅 Classic v2 futures entry 在同一已验证账户内按 `quantity × reference_price / leverage` 准备钱包保证金；缺少参考价格不得推测转账金额，UTA v3 不走 Classic 钱包转账。准备失败必须为 `NOT_SENT`，不得留下未知提交或伪造成交。
 
 第 1 步的 `pending` 不是“还没发生所以可忽略”。它代表真实提交是否发生仍未知，必须一直留在 Risk
 工作集中：在对应 live/demo 池占用入场槽位和同符号权利，并把尚未由 open Position 表示的数量加入
@@ -245,8 +243,8 @@ route 也在读取/更新 Proposal 前返回 `403 preview_execution_blocked`。
 | 场景 | 处理 | 位置 |
 |------|------|------|
 | 下单失败 | Order `status=error`+`error_reason`,proposal→`error` | `gateway.py:183` |
-| 部分成交 | Order `status=submitted`,Fill 仅记已成量,position 按实成量 | `bitget_broker.py:113` |
-| 并发重复提交 | gateway 持久租约先阻断；交易所仍以 `client_oid=proposal_id` 作第二层幂等保护 | `gateway.py`, `bitget_broker.py:106` |
+| 部分成交 | Order partially_filled，等待 private Fill 证据；Position 仅按真实成交物化 | `execution/coordinator.py` / `execution/reconciliation.py` |
+| 并发重复提交 | Gateway 持久租约与 Coordinator 未决订单检查阻断；client_order_id 保留 venue 幂等身份 | `gateway.py` / `execution/coordinator.py` |
 
 **失败语义([trust §1.3](../../governance/policies/trust_and_change_control.md)):**
 - 失败必须留下可检查状态,**不得删除部分创建的行来掩盖失败**。
@@ -417,7 +415,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   只返回原 claim，不得覆盖。Position 保持 open 且 `exit_reasoning` 为空，直到完整 private Fill
   在共享 materializer 中验证通过。非空 carrier 损坏或与 `close_reason` 不一致时必须
   `materialization_missing`，不得降级成 generic actor/source；历史 `NULL` carrier 保持兼容。
-- 按 `execution_mode` 分派:`bitget_demo→close_demo_position` / `okx_demo、binance_testnet→Gateway close route（qualified uta_v1 时 Coordinator → UTA，否则 legacy broker）` / `paper_internal→本地 close`。
+- 六种外部 execution_mode 均经 Gateway → Coordinator → UTA；`paper_internal` 保持本地 close。资格不满足时拒绝，不回退旧 broker。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过:demo 模式仍走真实交易所 close;`paper_internal` 本地撮合。
 - **保护性平仓价格不可伪造**：触发判断和 `paper_internal` close Fill 只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。单仓路由即使收到 `fallback_exit_price`，本地分支也必须忽略它并在 manager 内重新取价。交易所仓由 `execution_mode` 固定 venue（OKX / Bitget / Binance），只有 `paper_internal` 使用配置的 market-data venue。内存 exact-instrument cache 必须小于 90 秒；SQLite 只能回退到同 venue、同 `spot` / `perp`（兼容旧 `usdt_futures` 拼写）且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨 spot/perp 或过期价格触发/生成退出成交。
@@ -721,29 +719,17 @@ slippage、fee、broker、Risk 或 Live 配置；
 
 ## 12. Unified Trading Account V1 migration boundary
 
-Issue #2299 接受的 D2 设计取代 #2189 中“UTA remains read-only”这一句，但不改变 Gateway、
-Risk 或本地存储的既有权威。Phase 0～2 已实现冻结合同、Decimal-safe 模型、registry、shadow
-parity 和 account/position read projection；Phase 3 把 reconciliation、stale/pending recovery、
-verified exit、funding settlement 与 Live Trust 的私有读取切到 UTA 规范化报告。Phase 4 已实现
-Binance testnet 的配置门控 entry/full-close 垂直切片与 submit/modify/cancel command evidence；凭据
-qualification 未通过时选择器仍必须保持 legacy。Phase 5 已实现 OKX demo 的
-spot/perp contract-size 换算、demo client-id、entry/full-close、原生保护单与替换路径；它同样只在
-当前代码/账户资格 artifact 通过后由 Gateway 选择，否则继续使用 OKX legacy broker。Phase 6
-已为 Bitget Classic v2 与 UTA v3 分别实现 contract-size、leverage、hedge close、submit/modify/cancel
-和原生保护参数，并由每个请求的显式 `uta=false/true` 保证端点族隔离。Bitget demo 的 entry、close、
-protection 与 replacement 只有在 exact-code/account/profile/generation qualification 通过时才走
-Gateway → Coordinator → UTA；否则继续使用 native legacy broker。因 owner 无法提供交易所凭据，
-本阶段只完成静态 conformance，未声称任一 Bitget profile 已获运行时资格。live-limited profile
-在 Phase 7 已完成静态接线：既有 Live Trust state、authorization reference/account-equivalence 与
-exact-code/account/profile/generation qualification 全部通过后，entry/full-close 才选择同一
-Coordinator；stale、mismatch 或 disabled authority 都在 selector/UTA send 之前拒绝。canonical
-entry command 同时保留 post-only/TIF，以及仅在 profile 声明原生支持时保留 attached TP/SL。
-未获资格的 live profile 继续使用既有 legacy broker；本阶段没有生成 live qualification artifact、
-没有发送真实或 demo 订单，也没有激活任何 live selector。
+Issue #2299 及已批准的唯一主线切换保留 Gateway、Risk 与本地存储权威。六种外部
+execution_mode 仅使用 CCXTUTAAdapter；Bitget Classic v2 与 UTA v3 保留明确 profile 隔离。
+账户读取不要求 mutation qualification；所有 mutation 仍要求现有 exact-code/account/profile/
+generation 与 execution evidence 资格，live 另受既有 Live Trust 授权约束。没有 legacy/shadow
+选择器或旧 broker fallback。静态实现不代表凭据资格或 Fedora 部署已完成。
 
-后续切换必须遵守：Gateway 是唯一业务写授权；Generic Execution Coordinator 是正常产品路径中
-UTA mutation 的唯一调用者；UTA 不写 Aletheia DB。外部调用必须位于 SQLite writer transaction
-之外，返回后只用短 expected-state/CAS 应用证据。`partial`、`unsupported`、`unavailable`、
-timeout 或异常都不能变成空、零、取消、仓位消失或完整经济事实；可能已经发送的 mutation 必须是
-`ambiguous` 且禁止自动重试。完整目标、profile rollout 与 qualification 证据由已接受的
-[`unified_trading_account.md`](../proposals/unified_trading_account.md) 和 Issue #2299 管理。
+提交前 Order 持久化 exact 非秘密账户身份。旧订单身份缺失或不匹配时，保留记录与未决事实，
+阻断该账户新入场及无法证明归属的私有操作；不得用当前配置补造历史身份。
+
+Gateway 是唯一业务写授权；Coordinator 是正常产品路径中 UTA mutation 的调用者；
+UTA 不写 Aletheia DB。外部调用位于 SQLite writer transaction 之外，返回后以短
+expected-state/CAS 应用证据。partial、unsupported、unavailable、timeout 或异常不能变成
+空、零、取消、仓位消失或完整经济事实；可能已发送的 mutation 保持 ambiguous，禁止自动重试。
+完整资格要求见 [`unified_trading_account.md`](../proposals/unified_trading_account.md)。

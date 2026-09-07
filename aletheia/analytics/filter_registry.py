@@ -1,21 +1,7 @@
-"""Filter Registry — declarative inventory of every opportunity-screening filter.
+"""Read-only filter inventory for current controls and historical evidence.
 
-The opportunity pipeline drops candidates at many stages (TTL expiry, ranker
-gates, debate downgrade, direction brakes, risk rejection). Each drop is a
-*filter* acting with a hand-set parameter. This registry is the single source of
-truth for what those filters are, where their parameters live, which way they
-move to loosen/tighten, and what realized-outcome signal can tell us whether the
-filter is mis-calibrated.
-
-It generalizes the two existing per-parameter registries in the codebase:
-  - `operator_loop.PARAM_REGISTRY` / `ParamSpec` (bounded config-tuning of 3
-    global params from aggregate account health), and
-  - `allocator._FAMILY_TTL` + `get_family_multipliers` (per-scanner-family
-    forward-outcome calibration of score multipliers).
-
-Phase 1 is OBSERVE-ONLY: this module is pure data + helpers. It performs no DB
-reads, no config writes, and no trading mutation. `filter_controller.py` consumes
-it to compute shadow recommendations; a future phase may actuate through it.
+Retired entry filters remain resolvable by historical ID but are excluded from
+the current control registry. Recommendations never mutate trading or config.
 """
 
 from __future__ import annotations
@@ -124,7 +110,7 @@ def _report_only_gate(
 # actuation address the dominant bottleneck before low-impact knobs.
 # Every value below was verified against source on 2026-07-10.
 
-FILTER_REGISTRY: tuple[FilterSpec, ...] = (
+_HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     FilterSpec(
         name="family_ttl",
         stage="ttl_expired",
@@ -240,8 +226,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="debate_downgraded",
         drop_reason_codes=("Persisted debate trace.",),
         config_path="",
-        hardcoded_at="aletheia/agent_shell/trading_decision.py:50-51 "
-                     "(_MIN_CONVICTION_TO_TRADE=55, _DEBATE_RANGE=(40,80))",
+        hardcoded_at="retired with #2945 (was aletheia/agent_shell/trading_decision.py"
+                     ":50-51, _MIN_CONVICTION_TO_TRADE=55, _DEBATE_RANGE=(40,80))",
         current_value="min_conviction=55, debate_range=(40,80)",
         loosen_direction="down",  # lower min conviction → fewer downgraded skips
         neutral=55.0, floor=45.0, ceiling=65.0,
@@ -258,8 +244,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="operator_skip",
         drop_reason_codes=("direction_overheated",),
         config_path="",
-        hardcoded_at="aletheia/agent_shell/trading_decision.py:55-57 (_BIAS_BRAKE_*), "
-                     "405-407 (_proposal_direction_overheated defaults)",
+        hardcoded_at="retired with #2945 (was aletheia/agent_shell/trading_decision.py"
+                     ":55-57 _BIAS_BRAKE_*, :405-407 _proposal_direction_overheated)",
         current_value="bias_brake: min_proposals=20, max_dir_pct=0.80, bypass_conviction=85; "
                       "overheated: min_sample=15, max_share=0.95, override=75",
         loosen_direction="up",  # higher max_share → fewer brake trips
@@ -284,8 +270,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         # this FilterSpec.
         drop_reason_codes=("operator_low_conviction", "conviction_below_minimum"),
         config_path="",
-        hardcoded_at="aletheia/agent_shell/trading_decision.py "
-                     "(_MIN_CONVICTION_TO_TRADE)",
+        hardcoded_at="retired with #2945 (was aletheia/agent_shell/trading_decision.py"
+                     ", _MIN_CONVICTION_TO_TRADE)",
         current_value="minimum_conviction=55",
         loosen_direction="down",
         neutral=55.0,
@@ -303,7 +289,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="operator_skip",
         drop_reason_codes=("rsi_contrary_to_entry",),
         config_path="",
-        hardcoded_at="aletheia/agent_shell/decision_facts.py",
+        hardcoded_at="retired with #2945 (was aletheia/agent_shell/decision_facts.py)",
         current_value="non-MR short RSI<30 (demo sideways short RSI<40) or long RSI>70",
         loosen_direction="n/a",
         neutral=None, floor=30.0, ceiling=70.0,
@@ -320,8 +306,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="ranker_score",
         drop_reason_codes=(),  # score penalty, not a hard drop reason
         config_path="",
-        hardcoded_at="aletheia/agents/paper_trader_ranker.py:310-317 "
-                     "(ramp /10.0, no_history -5, blocked_candidate -50)",
+        hardcoded_at="retired with #2945 (was aletheia/agents/paper_trader_ranker.py"
+                     ":310-317, ramp /10.0, no_history -5, blocked_candidate -50)",
         current_value="ramp_trades=10, no_history_penalty=-5, blocked_penalty=-50",
         loosen_direction="down",  # smaller penalty / faster ramp → new factors surface
         neutral=10.0, floor=3.0, ceiling=20.0,
@@ -337,7 +323,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="paper_trader_selection",
         drop_reason_codes=(),  # unselected candidates become shadow rows, not drops
         config_path="",
-        hardcoded_at="aletheia/agents/paper_trader.py:137 (_select_signal_candidates limit=3)",
+        hardcoded_at="retired with #2945 (was aletheia/agents/paper_trader.py:137, "
+                     "_select_signal_candidates limit=3)",
         current_value="3",
         loosen_direction="up",  # more signals per cycle
         neutral=3.0, floor=2.0, ceiling=5.0,
@@ -427,7 +414,8 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="paper_trader_selection",
         drop_reason_codes=(),  # cooldown-skipped symbols are not logged today
         config_path="",
-        hardcoded_at="aletheia/agents/paper_trader.py (_RECENT_SIGNAL_COOLDOWN_MINUTES=30)",
+        hardcoded_at="retired with #2945 (was aletheia/agents/paper_trader.py, "
+                     "_RECENT_SIGNAL_COOLDOWN_MINUTES=30)",
         current_value="30 min",
         loosen_direction="down",  # shorter cooldown → more signals
         neutral=30.0, floor=30.0, ceiling=480.0,
@@ -630,7 +618,7 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         stage="ranker_rejected",
         drop_reason_codes=("committee_direction_conflict",),
         config_path="",
-        hardcoded_at="aletheia/agents/committee/integration.py",
+        hardcoded_at="retired with #2945 (was aletheia/agents/committee/integration.py)",
         current_value="committee long/short opposite scanner direction → skip",
         loosen_direction="n/a",
         neutral=None, floor=None, ceiling=None,
@@ -686,6 +674,16 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     ),
 )
 
+# Historical IDs remain decodable, but retired entry stages have no current knobs.
+FILTER_REGISTRY: tuple[FilterSpec, ...] = tuple(
+    spec for spec in _HISTORICAL_FILTER_REGISTRY
+    if spec.stage not in {
+        "ranker_excluded", "paper_ranker", "debate_downgraded", "operator_skip",
+        "paper_trader_selection", "paper_trader_enqueue", "signal_emitter",
+        "proposal_submission", "ranker_rejected",
+    } and spec.name != "ranker_ic_ramp"
+)
+
 
 # Intentional hard rules that the controller must never treat as tunable. Kept
 # explicit so the report can show "excluded by design" rather than silently omit.
@@ -712,7 +710,7 @@ def filters_by_stage(stage: str) -> tuple[FilterSpec, ...]:
 
 
 def filter_by_name(name: str) -> FilterSpec | None:
-    for f in FILTER_REGISTRY:
+    for f in _HISTORICAL_FILTER_REGISTRY:
         if f.name == name:
             return f
     return None

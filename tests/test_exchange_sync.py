@@ -45,63 +45,28 @@ class _FakePosition:
         self.mark_price = 3010.0
 
 
-def test_store_routes_one_exact_upsert_through_writer_lane(monkeypatch):
-    from aletheia.portfolio import exchange_sync as es
-
-    writes = []
-    monkeypatch.setattr(es, "execute_write", lambda sql, params: writes.append((sql, params)))
-
-    es._store(es.ExchangeAccountState(
-        mode="demo",
-        equity_usdt=1.0,
-        available_usdt=1.0,
-        frozen_usdt=0.0,
-        futures_unrealized_pnl=0.0,
-        open_positions_count=0,
-        open_orders_count=0,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        asset_breakdown=[],
-        positions=[],
-    ))
-
-    assert len(writes) == 1
-    assert "ON CONFLICT(key) DO UPDATE" in writes[0][0]
-    assert writes[0][1][0] == "exchange_account_state.demo"
-
-
 def _patch_client(monkeypatch, *, balances=None, positions=None, orders=None,
                   raises_on_balances=False, mix_equity=None):
-    """Mock BitgetClient so tests don't hit the network.
-
-    mix_equity: if given, get_mix_account returns {usdtEquity: mix_equity};
-                if None (default), returns {} so spot balances determine equity.
-    """
+    """Provide a UTA read result without network or credentials."""
     from aletheia.portfolio import exchange_sync as es
+    from aletheia.uta import manager
 
-    _mix_equity = mix_equity
+    def query(**kwargs):
+        if raises_on_balances:
+            raise RuntimeError("account read unavailable")
+        equity = sum(b.available + b.frozen for b in balances) if balances else 10000.0
+        rows = [{"broker_id": "bitget_demo", "market_type": "usdt_futures", **vars(p)} for p in positions or []]
+        return manager.UnifiedState(
+            total_equity_usdt=equity, total_available_usdt=equity,
+            total_unrealized_pnl=sum(p.unrealized_pnl for p in positions or []),
+            accounts=[{"broker_id": "bitget_demo", "equity_usdt": equity, "available_usdt": equity}],
+            positions=rows, connected_brokers=["bitget_demo"],
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            execution_modes=manager.DEFAULT_UNIFIED_EXECUTION_MODES,
+        )
 
-    class _FakeClient:
-        def __init__(self, mode="demo", profile="classic_v2"):
-            self.mode = mode
-            self.profile = profile
-        def _get_creds(self):
-            return ("k", "s", "p")
-        async def get_balances(self):
-            if raises_on_balances:
-                raise RuntimeError("Bitget API error: timeout")
-            return balances or [_FakeBalance("USDT", 10000.0, 0.0)]
-        async def get_mix_account(self, product_type="USDT-FUTURES"):
-            if _mix_equity is not None:
-                return {"usdtEquity": str(_mix_equity), "available": str(_mix_equity), "locked": "0", "unrealizedPL": "0"}
-            return {}
-        async def get_positions(self):
-            return positions if positions is not None else []
-        async def get_open_orders(self, market_type="spot"):
-            return orders or []
-
-    # Patch the import path used inside _client_or_unconfigured.
-    import aletheia.exchanges.bitget.client as bg_client
-    monkeypatch.setattr(bg_client, "BitgetClient", _FakeClient)
+    monkeypatch.setattr(manager, "get_unified_state_sync", query)
+    monkeypatch.setattr(es, "_unified_identity_is_current", lambda state: (True, "current"))
     return es
 
 
@@ -113,35 +78,16 @@ def test_sync_writes_cache_and_status_ok(tmp_path, monkeypatch):
                        balances=[_FakeBalance("USDT", 9500.0, 500.0)],
                        positions=[_FakePosition(unrealized_pnl=42.0)],
                        orders=[{"id": "o1"}])
-    state = es.sync_exchange_account()
+    state = es.sync_all_exchanges()
     assert state is not None
-    # equity = spot holdings (9500 available + 500 frozen); futures unrealized PnL is
-    # a separate field. When mix/account returns {} (no demo futures data) the spot
-    # sum is the authoritative total.
-    assert state.equity_usdt == 9500.0 + 500.0
-    assert state.futures_unrealized_pnl == 42.0
-    cached = es.get_cached_state()
-    assert cached["equity_usdt"] == state.equity_usdt
+    assert state["total_equity_usdt"] == 10000.0
+    assert state["total_unrealized_pnl"] == 42.0
+    cached = es.get_unified_cached_state()
+    assert cached["total_equity_usdt"] == 10000.0
     assert es.status_for(cached) == "ok"
 
 
 # --- degradation: no credentials ---
-
-def test_sync_unconfigured_returns_none_no_raise(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.portfolio import exchange_sync as es
-    # Force _client_or_unconfigured to return (None, mode) by patching BitgetClient.
-    import aletheia.exchanges.bitget.client as bg_client
-
-    class _NoCreds:
-        def __init__(self, mode="demo", profile="classic_v2"):
-            self.mode = mode
-            self.profile = profile
-        def _get_creds(self): raise RuntimeError("not configured")
-    monkeypatch.setattr(bg_client, "BitgetClient", _NoCreds)
-
-    assert es.sync_exchange_account() is None
-    assert es.status_for(es.get_cached_state()) == "unconfigured"
 
 
 # --- degradation: API failure preserves last cache ---
@@ -149,16 +95,16 @@ def test_sync_unconfigured_returns_none_no_raise(tmp_path, monkeypatch):
 def test_sync_failure_preserves_previous_cache(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch)
-    first = es.sync_exchange_account()
+    first = es.sync_all_exchanges()
     assert first is not None
 
     # Now make the next call fail; the previous cache must remain.
     _patch_client(monkeypatch, raises_on_balances=True)
-    second = es.sync_exchange_account()
+    second = es.sync_all_exchanges()
     assert second is None  # this call failed
-    cached = es.get_cached_state()
+    cached = es.get_unified_cached_state()
     assert cached is not None
-    assert cached["equity_usdt"] == first.equity_usdt  # still the old good value
+    assert cached["total_equity_usdt"] == first["total_equity_usdt"]
 
 
 # --- staleness ---
@@ -166,8 +112,8 @@ def test_sync_failure_preserves_previous_cache(tmp_path, monkeypatch):
 def test_status_stale_when_cache_too_old(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch)
-    es.sync_exchange_account()
-    cached = es.get_cached_state()
+    es.sync_all_exchanges()
+    cached = es.get_unified_cached_state()
     # Manually backdate the entry to be older than the freshness window.
     cached["age_seconds"] = 99999
     assert es.status_for(cached) == "stale"
@@ -177,20 +123,8 @@ def test_future_account_timestamp_is_stale(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio import exchange_sync as es
 
-    es._store(es.ExchangeAccountState(
-        mode="demo",
-        equity_usdt=100.0,
-        available_usdt=100.0,
-        frozen_usdt=0.0,
-        futures_unrealized_pnl=0.0,
-        open_positions_count=0,
-        open_orders_count=0,
-        fetched_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
-        asset_breakdown=[],
-        positions=[],
-    ))
-
-    cached = es.get_cached_state("demo")
+    es._store_unified({"fetched_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()})
+    cached = es.get_unified_cached_state()
     assert cached is not None
     assert cached["age_seconds"] < 0
     assert es.status_for(cached) == "stale"
@@ -218,33 +152,6 @@ async def test_uta_state_uses_canonical_future_timestamp_status(monkeypatch):
 
     assert payload["sync_status"] == "stale"
 
-
-@pytest.mark.asyncio
-async def test_uta_state_offloads_credential_bound_cache_validation(monkeypatch):
-    from aletheia.portfolio import exchange_sync as es
-    from aletheia.server.routes import bitget
-
-    calls = []
-
-    async def run_in_thread(function, *args):
-        calls.append(function)
-        return function(*args)
-
-    monkeypatch.setattr(bitget.asyncio, "to_thread", run_in_thread)
-    monkeypatch.setattr(
-        es,
-        "get_unified_cached_state",
-        lambda: {
-            "total_equity_usdt": 0.0,
-            "age_seconds": 0.0,
-            "sync_status": "ok",
-        },
-    )
-
-    payload = await bitget.uta_state()
-
-    assert payload["total_equity_usdt"] == 0.0
-    assert calls == [es.get_unified_cached_state]
 
 
 @pytest.mark.asyncio
@@ -277,7 +184,7 @@ def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     save_config(cfg)
     es = _patch_client(monkeypatch,
                        balances=[_FakeBalance("USDT", 10000.0, 0.0)])
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     from aletheia.portfolio.pnl import compute_portfolio
     out = compute_portfolio()
@@ -316,20 +223,9 @@ def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
     cfg.exchange.mode = "demo"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
-    es._store(es.ExchangeAccountState(
-        mode="demo",
-        equity_usdt=0.0,
-        available_usdt=0.0,
-        frozen_usdt=0.0,
-        futures_unrealized_pnl=0.0,
-        open_positions_count=0,
-        open_orders_count=0,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        asset_breakdown=[],
-        positions=[],
-    ))
+    es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 0.0, 0.0)])
+    es.sync_all_exchanges()
 
-    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
     from aletheia.portfolio.pnl import compute_portfolio
 
     portfolio = compute_portfolio()
@@ -337,9 +233,6 @@ def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
     assert portfolio["account_equity_usdt"] == 0.0
     assert portfolio["total_value_usdt"] == 0.0
 
-    balance = _build_layer1_snapshot()["balance"]
-    assert balance["equity_usdt"] == 0.0
-    assert balance["available_usdt"] == 0.0
 
 
 def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
@@ -354,18 +247,8 @@ def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
     cfg.exchange.mode = "demo"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
-    es._store(es.ExchangeAccountState(
-        mode="demo",
-        equity_usdt=0.0,
-        available_usdt=0.0,
-        frozen_usdt=0.0,
-        futures_unrealized_pnl=0.0,
-        open_positions_count=0,
-        open_orders_count=0,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        asset_breakdown=[],
-        positions=[],
-    ))
+    es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 0.0, 0.0)])
+    es.sync_all_exchanges()
 
     monkeypatch.setattr("aletheia.portfolio.pnl.mark_positions_to_market", lambda persist=False: [])
     monkeypatch.setattr(
@@ -418,14 +301,13 @@ def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "okx_demo"
     save_config(cfg)
-    monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
     monkeypatch.setattr(
         es, "_unified_identity_is_current", lambda _state: (True, "current")
     )
     monkeypatch.setattr(
         manager,
         "get_unified_state_sync",
-        lambda: SimpleNamespace(
+        lambda **kwargs: SimpleNamespace(
             total_equity_usdt=123.45,
             total_available_usdt=120.0,
             total_unrealized_pnl=3.45,
@@ -434,6 +316,7 @@ def test_unified_cache_carries_sync_metadata(tmp_path, monkeypatch):
             errors=[],
             connected_brokers=["okx_demo"],
             fetched_at=datetime.now(timezone.utc).isoformat(),
+            execution_modes=manager.DEFAULT_UNIFIED_EXECUTION_MODES,
         ),
     )
 
@@ -493,7 +376,7 @@ def test_unified_cache_generation_mismatch_revokes_authority(monkeypatch):
     assert reason == "uta_account_generation_mismatch"
 
 
-def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
+def test_unified_cache_rejects_legacy_adapter_identity(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.portfolio import exchange_sync as es
     from aletheia.uta.models import UTAAccountIdentity
@@ -534,7 +417,7 @@ def test_unified_cache_accepts_exact_legacy_adapter_identity(monkeypatch):
         ]
     }
 
-    assert es._unified_identity_is_current(state) == (True, "current")
+    assert es._unified_identity_is_current(state) == (False, "uta_account_generation_mismatch")
 
 
 def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
@@ -568,10 +451,6 @@ def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
             return (demo, live)
 
     cfg = AletheiaConfig()
-    cfg.exchange.uta_read_boundaries = {
-        "okx_demo": "uta_v1",
-        "okx_live_limited": "uta_v1",
-    }
     monkeypatch.setattr(es, "load_config", lambda: cfg)
     monkeypatch.setattr(
         "aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry()
@@ -599,14 +478,6 @@ def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
     assert es._unified_identity_is_current({"accounts": []}) == (
         False, "uta_scope_missing"
     )
-
-
-def test_periodic_unified_sync_cannot_target_live_scope():
-    import inspect
-
-    from aletheia.portfolio import exchange_sync as es
-
-    assert "execution_modes" not in inspect.signature(es.sync_all_exchanges).parameters
 
 
 def test_unified_cache_preserves_explicit_empty_connected_set(tmp_path, monkeypatch):
@@ -644,15 +515,15 @@ async def test_exchange_cache_rejects_non_finite_json(tmp_path, monkeypatch):
 
     execute_write(
         "INSERT INTO settings(key, value) VALUES(?, ?)",
-        ("exchange_account_state.demo", '{"equity_usdt": Infinity}'),
+        ("exchange_account_state.unified", '{"equity_usdt": Infinity}'),
     )
-    cached = es.get_cached_state("demo")
+    cached = es.get_unified_cached_state()
     assert es.status_for(cached) == "error"
     assert cached["cache_error"] == "invalid_cache"
     assert cached["equity_usdt"] is None
 
     execute_write(
-        "INSERT INTO settings(key, value) VALUES(?, ?)",
+        "INSERT OR REPLACE INTO settings(key, value) VALUES(?, ?)",
         ("exchange_account_state.unified", "{"),
     )
     payload = await bitget.uta_state()
@@ -668,56 +539,12 @@ def test_uta_v1_default_cache_never_falls_back_to_legacy_bitget(tmp_path, monkey
 
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "bitget_demo"
-    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
     save_config(cfg)
-    es._store(
-        es.ExchangeAccountState(
-            mode="demo",
-            equity_usdt=999.0,
-            available_usdt=999.0,
-            frozen_usdt=0.0,
-            futures_unrealized_pnl=0.0,
-            open_positions_count=0,
-            open_orders_count=0,
-            fetched_at=datetime.now(timezone.utc).isoformat(),
-            asset_breakdown=[],
-            positions=[],
-        )
-    )
+    from aletheia.storage.sqlite import execute_write
+    execute_write("INSERT INTO settings(key, value) VALUES(?, ?)",
+                  ("exchange_account_state.demo", '{"equity_usdt": 999}'))
 
-    assert es.get_cached_state() is None
-
-
-def test_uta_v1_sync_skips_private_legacy_bitget_read(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
-    import aletheia.uta.manager as manager
-
-    cfg = load_config()
-    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
-    save_config(cfg)
-    monkeypatch.setattr(
-        es,
-        "sync_exchange_account",
-        lambda: pytest.fail("legacy Bitget client must not be constructed"),
-    )
-    monkeypatch.setattr(
-        manager,
-        "get_unified_state_sync",
-        lambda: SimpleNamespace(
-            total_equity_usdt=0.0,
-            total_available_usdt=0.0,
-            total_unrealized_pnl=0.0,
-            accounts=[],
-            positions=[],
-            errors=[],
-            connected_brokers=[],
-            fetched_at=datetime.now(timezone.utc).isoformat(),
-        ),
-    )
-
-    assert es.sync_all_exchanges() is not None
+    assert es.get_unified_cached_state() is None
 
 
 def test_active_broker_rejects_generation_mismatch(monkeypatch):
@@ -764,7 +591,7 @@ def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monk
     """A stale external cache must not become local-paper account value."""
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 10000.0, 0.0)])
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -794,7 +621,7 @@ def test_external_position_count_surfaces_drift(tmp_path, monkeypatch):
     es = _patch_client(monkeypatch,
                        balances=[_FakeBalance("USDT", 10000.0, 0.0)],
                        positions=[_FakePosition(), _FakePosition(symbol="SOLUSDT")])
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     from aletheia.portfolio.pnl import compute_portfolio
     out = compute_portfolio()
@@ -807,7 +634,7 @@ def test_external_position_count_surfaces_drift(tmp_path, monkeypatch):
 async def test_exchange_account_endpoint(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch)
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     from httpx import AsyncClient, ASGITransport
     from aletheia.server.app import app
@@ -817,7 +644,7 @@ async def test_exchange_account_endpoint(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["state"]["equity_usdt"] == 10000.0
+    assert body["state"]["total_equity_usdt"] == 10000.0
 
 
 @pytest.mark.anyio
@@ -834,7 +661,7 @@ async def test_positions_reconciliation_endpoint(tmp_path, monkeypatch):
     save_config(cfg)
     es = _patch_client(monkeypatch,
                        positions=[_FakePosition(symbol="BTCUSDT", side="short")])
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     from httpx import AsyncClient, ASGITransport
     from aletheia.server.app import app
@@ -859,7 +686,7 @@ def test_sync_alone_never_writes_local_positions(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch,
                        positions=[_FakePosition(), _FakePosition(symbol="ETHUSDT")])
-    es.sync_exchange_account()
+    es.sync_all_exchanges()
 
     # Local positions table must remain untouched by the sync.
     assert repo.list_positions() == []
@@ -960,3 +787,35 @@ def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):
     with _pytest.raises(ValueError):
         adopt_position({"symbol": "BTCUSDT", "side": "short", "quantity": 0.0,
                         "entry_price": 60000.0}, "demo")
+def test_exact_live_refresh_does_not_replace_demo_cache(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import exchange_sync as es
+    from aletheia.uta import manager
+    from aletheia.uta.models import UTAAccountIdentity
+
+    demo = UTAAccountIdentity(account_id="okx_demo", execution_mode="okx_demo",
+        venue="okx", environment="demo", profile="okx_demo", credential_generation=1,
+        adapter_implementation="CCXTUTAAdapter", adapter_version="1", ccxt_version="4.5.56")
+    live = demo.model_copy(update={"account_id": "okx_live_limited",
+        "execution_mode": "okx_live_limited", "environment": "live", "profile": "okx_live"})
+    monkeypatch.setattr(manager, "build_uta_registry", lambda cfg: SimpleNamespace(
+        configured_identities=lambda: (demo, live)))
+
+    def query(*, execution_modes=None):
+        identity = live if execution_modes == (live.execution_mode,) else demo
+        amount = 25.0 if identity == live else 100.0
+        return manager.UnifiedState(amount, amount, 0.0,
+            accounts=[{"broker_id": identity.execution_mode, "identity": identity.model_dump(mode="json"),
+                       "equity_usdt": amount, "available_usdt": amount}],
+            connected_brokers=[identity.execution_mode],
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            execution_modes=execution_modes or manager.DEFAULT_UNIFIED_EXECUTION_MODES)
+
+    monkeypatch.setattr(manager, "get_unified_state_sync", query)
+    es.sync_all_exchanges()
+    live_state = es.sync_all_exchanges(execution_modes=(live.execution_mode,))
+    assert es.status_for(live_state) == "ok"
+    assert es.get_unified_cached_state()["total_equity_usdt"] == 100.0
+    assert es.get_unified_cached_state(execution_modes=(live.execution_mode,))["total_equity_usdt"] == 25.0
+    from aletheia.risk.engine import account_available_for_execution
+    assert account_available_for_execution(live.execution_mode) == 25.0

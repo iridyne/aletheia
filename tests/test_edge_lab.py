@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.position_fixture import force_update_position
+
 
 @pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
@@ -291,7 +293,7 @@ class TestFamilyScorecard:
             fill_price=65000.0, fill_quantity=0.01, fee=0.0,
             filled_at=closed_at,
         ))
-        repo.update_position(
+        force_update_position(
             "pos1",
             current_price=65000.0,
             unrealized_pnl=0.0,

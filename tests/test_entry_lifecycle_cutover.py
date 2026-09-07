@@ -713,3 +713,31 @@ def test_b1_terminal_dependency_recovery_requires_real_book_and_no_model(_inmemo
     if created:
         assert recovered["cycle_reason"] == "planning_dependencies_recovered"
         assert recovered["previous_generation_id"] == first["id"]
+
+
+def test_legacy_retirement_preserves_submission_evidence(_inmemory_db):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import _apply_retired_entry_authority_v72
+
+    db = repo.get_db()
+    for identity, status in (("unsubmitted", "pending"), ("owned", "approved"),
+                             ("unknown", "executing"), ("with-order", "pending")):
+        db.execute("INSERT INTO trade_proposals(id,symbol,market_type,direction,status) "
+                   "VALUES (?,'BTC/USDT','perp','long',?)", (identity, status))
+    db.execute("INSERT INTO proposal_execution_claims(proposal_id,owner_token,claimed_at,lease_expires_at) VALUES "
+               "('owned','owner','2026-09-01','2026-09-02')")
+    db.execute("INSERT INTO orders(id,proposal_id,symbol,market_type,direction,order_type,quantity,execution_mode,status) "
+               "VALUES ('order','with-order','BTC/USDT','perp','long','limit',1,'bitget_demo','submitted')")
+    db.execute("INSERT INTO pi_decisions(id,action) VALUES ('old-pending','signal_pending')")
+    db.commit()
+    _apply_retired_entry_authority_v72(db)
+    assert dict(db.execute("SELECT id,status FROM trade_proposals")) == {
+        "unsubmitted": "rejected", "owned": "approved", "unknown": "executing", "with-order": "pending",
+    }
+    assert db.execute("SELECT action FROM pi_decisions WHERE id='old-pending'").fetchone()[0] == "entry_path_retired"
+    assert db.execute("SELECT status FROM orders WHERE id='order'").fetchone()[0] == "submitted"
+    assert db.execute("SELECT owner_token FROM proposal_execution_claims WHERE proposal_id='owned'").fetchone()[0] == "owner"
+    events = list(db.execute("SELECT entity_id,before_state,after_state FROM audit_events WHERE event_type='entry_path_retired'"))
+    assert {row[0] for row in events} == {"unsubmitted", "old-pending"}
+    _apply_retired_entry_authority_v72(db)
+    assert list(db.execute("SELECT entity_id,before_state,after_state FROM audit_events WHERE event_type='entry_path_retired'")) == events

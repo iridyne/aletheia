@@ -681,15 +681,6 @@ async def run_divergence_scanner(
                 else:
                     outputs.append(f"skip_duplicate_source_version:{source_version}")
                 continue
-            try:
-                from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-                notify_paper_trader(source="divergence_scanner_opportunity")
-            except Exception:
-                logger.debug(
-                    "Failed to notify Ranker after divergence Opportunity commit",
-                    exc_info=True,
-                )
             log_tool(
                 run_id,
                 "create_opportunity",

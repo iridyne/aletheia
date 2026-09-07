@@ -63,22 +63,22 @@ def test_legacy_or_invalid_trade_motivation_is_unavailable_not_invented():
 
 
 def test_action_intent_is_normalized_from_action_and_direction():
-    from aletheia.agent_shell.trading_decision import TradingDecision
+    from types import SimpleNamespace
     from aletheia.trading.trade_motivation import (
         build_trade_motivation,
         parse_trade_motivation,
     )
 
-    canonical = build_trade_motivation(TradingDecision(
+    canonical = build_trade_motivation(SimpleNamespace(
         action="trade", symbol="BTC/USDT", direction="short", conviction=60,
         reasoning="short thesis",
     ))
     assert canonical["action_intent"] == "short"
-    assert build_trade_motivation(TradingDecision(
+    assert build_trade_motivation(SimpleNamespace(
         action="skip", symbol="BTC/USDT", direction="long", conviction=20,
         reasoning="no trade",
     ))["action_intent"] == "hold"
-    assert build_trade_motivation(TradingDecision(
+    assert build_trade_motivation(SimpleNamespace(
         action="trade", symbol="BTC/USDT", direction=None, conviction=60,
         reasoning="conflicting entry intent",
     ))["action_intent"] == "unavailable"
@@ -91,74 +91,13 @@ def test_action_intent_is_normalized_from_action_and_direction():
     ] == "unavailable"
 
 
-def test_pi_decision_persists_the_same_structured_motivation_in_evidence_manifest():
-    from aletheia.agent_shell.reflection import _build_pi_decision
-    from aletheia.trading.trade_motivation import build_trade_motivation
-    from aletheia.agent_shell.trading_decision import TradingDecision
-
-    decision = TradingDecision(
-        action="trade",
-        symbol="BTC/USDT",
-        direction="long",
-        conviction=68,
-        reasoning="Retest held with expanding volume.",
-        supporting_signals=["volume expansion"],
-        opposing_signals=["funding elevated"],
-        key_assumptions=["liquidity holds"],
-        invalidation_conditions=["close below retest low"],
-        expected_horizon_hours=4.0,
-    )
-    evidence_manifest = {"t0": {"source_id": "opp-1"}}
-    motivation = build_trade_motivation(decision, evidence_manifest)
-
-    persisted = _build_pi_decision({
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "market_type": "usdt_futures",
-        "conviction": 68,
-        "reasoning": decision.reasoning,
-        "evidence_manifest": evidence_manifest,
-        "trade_motivation": motivation,
-    })
-
-    assert json.loads(persisted.evidence_manifest_json) == {
-        "t0": {"source_id": "opp-1"},
-        "trade_motivation": motivation,
-    }
-
-
-def test_terminal_skip_rewrites_stale_entry_motivation_to_hold():
-    from aletheia.agent_shell.reflection import _build_pi_decision
-    from aletheia.agent_shell.trading_decision import TradingDecision
-    from aletheia.trading.trade_motivation import build_trade_motivation
-
-    stale = build_trade_motivation(TradingDecision(
-        action="trade", symbol="BTC/USDT", direction="long", conviction=60,
-        reasoning="candidate looked tradeable before the deterministic brake",
-    ))
-    persisted = _build_pi_decision({
-        "action": "skip",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "market_type": "spot",
-        "conviction": 60,
-        "reasoning": "direction overheated",
-        "proposal_status": "not_applicable",
-        "proposal_reason": "direction_overheated",
-        "evidence_manifest": {},
-        "trade_motivation": stale,
-    })
-
-    motivation = json.loads(persisted.evidence_manifest_json)["trade_motivation"]
-    assert motivation["action_intent"] == "hold"
 
 
 def test_observed_facts_keep_only_refs_resolved_by_exact_manifest():
-    from aletheia.agent_shell.trading_decision import TradingDecision
+    from types import SimpleNamespace
     from aletheia.trading.trade_motivation import build_trade_motivation
 
-    decision = TradingDecision(
+    decision = SimpleNamespace(
         action="trade", symbol="BTC/USDT", direction="long", conviction=70,
         reasoning="grounded setup",
         observed_facts=[

@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '../../../api/client'
 import { ConfirmProvider } from '../../../components/ui'
 import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from './PaperTradingSettings'
-import SRC from './PaperTradingSettings.tsx?raw'
 
 let root: Root | undefined
 let container: HTMLElement
@@ -115,8 +114,6 @@ describe('PaperTradingSettings', () => {
     expect(html).toContain('Setting cash to 0 is preserved')
     expect(html).toContain('Close local spot positions')
     expect(html).toContain('Close all local positions')
-    expect(SRC).toContain('const confirm = useConfirm()')
-    expect(SRC).toContain('title: \'Set local paper cash balance?\'')
   })
 
   it('keeps capital events and paper parameter controls composed', () => {
@@ -134,9 +131,43 @@ describe('PaperTradingSettings', () => {
     expect(html).toContain('Default stop-loss (%)')
     expect(html).toContain('Trailing Stop &amp; Breakeven')
     expect(html).toContain('Persona-Based Sizing')
-    expect(SRC).toContain('Legacy sizing scale')
-    expect(SRC).toContain('not a calibrated Kelly fraction')
     expect(html).toContain('Market-Aware Position Review')
+  })
+  it('distinguishes loading and failed capital reads from zero and retries both reads', async () => {
+    const events = deferred<never>()
+    const net = deferred<never>()
+    vi.spyOn(api, 'getCapitalEvents').mockReturnValueOnce(events.promise).mockResolvedValue([])
+    vi.spyOn(api, 'getNetDeposits').mockReturnValueOnce(net.promise).mockResolvedValue({ net_deposits_usdt: 0, first_event_at: null })
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
+    await act(async () => {
+      root?.render(<QueryClientProvider client={client}><CapitalEventsCard /></QueryClientProvider>)
+    })
+    expect(container.textContent).toContain('Loading capital events')
+    expect(container.textContent).toContain('Net deposits: loading')
+    expect(container.querySelector('table')).toBeNull()
+    await act(async () => {
+      events.reject(new Error('events unavailable'))
+      net.reject(new Error('net unavailable'))
+    })
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Capital events unavailable')
+      expect(container.textContent).toContain('Net deposits: not available')
+    })
+    expect(container.textContent).not.toContain('0.00 USDT')
+    expect(container.querySelector('table')).toBeNull()
+    const retries = Array.from(container.querySelectorAll('button')).filter(candidate => candidate.textContent === 'Retry')
+    expect(retries).toHaveLength(2)
+    await act(async () => { retries.forEach(retry => retry.click()) })
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Net deposits: 0.00 USDT')
+      expect(container.textContent).not.toContain('Capital events unavailable')
+      expect(container.textContent).not.toContain('Loading capital events')
+    })
+    client.clear()
   })
 
   it('appends older capital-event pages without losing newer rows', async () => {

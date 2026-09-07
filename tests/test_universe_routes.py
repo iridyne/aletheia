@@ -475,8 +475,8 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
     monkeypatch.setattr(universe, "load_config", lambda: cfg)
     monkeypatch.setattr("aletheia.universe.service.load_config", lambda: cfg)
     fallback = client.get("/api/universe/current").json()
-    assert fallback["members"][0]["id"] is None
-    assert "opportunity_score" not in fallback["members"][0]
+    assert fallback["members"] == []
+    assert fallback["fallback"] is False
     assert TypeAdapter(universe.UniverseCurrentResponse).validate_python(fallback, strict=True) == fallback
 
     assert client.get("/api/universe/calibration").json()["by_cohort_horizon"][0]["source_outcome_fingerprint"]
@@ -512,11 +512,6 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
     from aletheia.server.routes.settings import CandidateSelectionStatusResponse
     selection = client.get("/api/settings/universe/candidate-selection").json()
     assert TypeAdapter(CandidateSelectionStatusResponse).validate_json(json.dumps(selection), strict=True) == selection
-    with patch("aletheia.universe.candidate_selection_evaluation.evaluate_candidate_selection_policy", side_effect=RuntimeError("unavailable")):
-        unavailable = client.get("/api/settings/universe/candidate-selection").json()
-    assert unavailable["evaluation_available"] is False
-    assert unavailable["qualification"]["policy_epoch_id"] is None
-    assert TypeAdapter(CandidateSelectionStatusResponse).validate_json(json.dumps(unavailable), strict=True) == unavailable
     cfg.universe.enabled = True
     with patch("aletheia.universe.service.UniverseService.refresh", new_callable=AsyncMock, return_value=None):
         assert client.post("/api/universe/refresh").status_code == 500
@@ -524,6 +519,3 @@ def test_universe_openapi_preserves_repository_projection_json(client, monkeypat
         refreshed = client.post("/api/universe/refresh")
     assert refreshed.status_code == 200
     assert TypeAdapter(universe.UniverseRefreshResponse).validate_json(refreshed.content, strict=True) == refreshed.json()
-
-
-

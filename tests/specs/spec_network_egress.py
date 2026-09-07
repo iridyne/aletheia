@@ -22,7 +22,7 @@ The choke point is ``aletheia/net.py``. This spec locks:
   - the connectivity monitor rides the same net.py client, so an enforce-mode
     proxy outage is detected and auto-pauses trading via the existing gate
     (NET-S08);
-  - sync urllib egress (webhook, polymarket fallback) goes through net's opener,
+  - sync urllib egress (webhook) goes through net's opener,
     not a raw urlopen that ignores the managed proxy (NET-S10).
 
 New logical contract ``network_egress_contract`` (not in REQUIRED_CONTRACTS —
@@ -305,8 +305,8 @@ def test_settings_network_update_surface():
 
 @spec_claim(
     SpecClaim("NET-S10", _CONTRACT, "§4 sync urllib choke point", "L2a",
-              "external sync egress (webhook notifications, polymarket urllib "
-              "fallback) builds its opener via aletheia.net so it honours the "
+              "external sync egress (webhook notifications) builds its opener "
+              "via aletheia.net so it honours the "
               "managed proxy instead of a raw urlopen that ignores it"),
 )
 def test_sync_urllib_uses_net_opener():

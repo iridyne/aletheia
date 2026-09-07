@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import importlib
 import json
 
@@ -26,16 +28,16 @@ def _position(*, execution_mode: str = "bitget_demo") -> Position:
 def _legacy_snapshot(monkeypatch, *, positions: list[dict], fetched_at: str,
                      age_seconds: float = 1.0):
     from aletheia.portfolio import position_reconciler as reconciler
+    mode = reconciler._execution_mode_for(reconciler.exchange_sync.load_config().exchange.mode)
 
     snapshot = {
-        "positions": positions,
-        "open_positions_count": len(positions),
+        "positions": [{"broker_id": mode, **row} for row in positions],
+        "accounts": [{"broker_id": mode}],
         "age_seconds": age_seconds,
         "fetched_at": fetched_at,
     }
-    monkeypatch.setattr(reconciler.exchange_sync, "get_unified_cached_state", lambda: None)
     monkeypatch.setattr(
-        reconciler.exchange_sync, "get_cached_state", lambda mode=None: snapshot,
+        reconciler.exchange_sync, "get_unified_cached_state", lambda **kwargs: snapshot,
     )
     return snapshot
 
@@ -107,6 +109,7 @@ def test_same_snapshot_retry_is_idempotent_and_second_view_confirms_without_clos
     assert repo.get_active_position_disappearance_candidate(candidate["identity_key"])
 
     snapshot["fetched_at"] = "2026-07-12T05:02:00+00:00"
+    monkeypatch.setattr(reconciler.exchange_sync, "get_unified_cached_state", lambda **kwargs: snapshot)
     second = reconciler.run_reconcile("demo")
     candidate = repo.list_position_disappearance_candidates(status="pending")[0]
     assert candidate["confirmation_count"] == 2
@@ -135,7 +138,7 @@ def test_stale_or_wrong_account_view_never_advances_candidate(tmp_path, monkeypa
 
     # An OKX local compared with a fresh Bitget-only unified view is incomplete,
     # not a second absence observation.
-    repo.update_position("position-under-test", execution_mode="okx_demo")
+    force_update_position("position-under-test", execution_mode="okx_demo")
     import aletheia.config.loader as loader
     cfg = loader.load_config()
     cfg.exchange.paper_execution_mode = "okx_demo"
@@ -165,15 +168,15 @@ def test_exchange_reappearance_resolves_but_degraded_fallback_does_not(
     reconciler.run_reconcile("demo")
     candidate = repo.list_position_disappearance_candidates(status="pending")[0]
 
-    monkeypatch.setattr(reconciler.exchange_sync, "get_cached_state", lambda mode=None: None)
+    monkeypatch.setattr(reconciler.exchange_sync, "get_unified_cached_state", lambda **kwargs: None)
     degraded = reconciler.run_reconcile("demo")
     assert degraded["disappearance"]["resolved"] == []
     assert repo.get_active_position_disappearance_candidate(candidate["identity_key"])
 
-    snapshot["positions"] = [_ex("ETHUSDT", "long", 1.0, 3_000.0)]
+    snapshot["positions"] = [{"broker_id": "bitget_demo", **_ex("ETHUSDT", "long", 1.0, 3_000.0)}]
     snapshot["fetched_at"] = "2026-07-12T05:04:00+00:00"
     monkeypatch.setattr(
-        reconciler.exchange_sync, "get_cached_state", lambda mode=None: snapshot,
+        reconciler.exchange_sync, "get_unified_cached_state", lambda **kwargs: snapshot,
     )
     reappeared = reconciler.run_reconcile("demo")
     assert reappeared["disappearance"]["resolved"] == [candidate["id"]]

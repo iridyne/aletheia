@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
-from statistics import median
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from aletheia.learning.economic_knowledge import (
-    project_current_economic_knowledge,
-    project_economic_knowledge_as_of,
-)
 
 
 class KnowledgeYieldSliceV1(BaseModel):
@@ -87,320 +81,24 @@ def build_knowledge_yield_report(
     end = _instant(window_end)
     if start is None or end is None or end <= start:
         raise ValueError("Knowledge Yield requires a valid increasing UTC window")
+    from aletheia.observation_lab.canonical import get_authority_source
+
     try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        if get_authority_source().source == "lab":
-            return KnowledgeYieldReportV1(
-                window_start=window_start,
-                window_end=window_end,
-                generation_cost_availability="unavailable",
-                current_economic_knowledge_n=0,
-                slices=[],
-                availability="unavailable",
-                unavailable_reasons=["canonical_lab_result_projection_unavailable"],
-            )
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        if "no such table: observation_authority_state" not in str(exc):
-            return KnowledgeYieldReportV1(
-                window_start=window_start,
-                window_end=window_end,
-                generation_cost_availability="unavailable",
-                current_economic_knowledge_n=0,
-                slices=[],
-                availability="unavailable",
-                unavailable_reasons=["canonical_lab_authority_unavailable"],
-            )
-    from aletheia.storage.sqlite import get_db, iso_instant_us, register_instant_us
-
-    start_us = iso_instant_us(window_start)
-    end_us = iso_instant_us(window_end)
-    assert start_us is not None and end_us is not None
-    register_instant_us(get_db())
-    experiments = get_db().execute(
-        "SELECT e.experiment_id, e.created_at, e.ended_at, e.stage, "
-        "e.status AS experiment_status, "
-        "e.primary_metric, h.hypothesis_id, h.path_id, h.consumer, "
-        "h.behavior_contract_version, "
-        "h.target_horizon, h.status AS hypothesis_status "
-        "FROM learning_experiments e JOIN learning_hypotheses h "
-        "ON h.hypothesis_id=e.hypothesis_id ORDER BY e.created_at, e.experiment_id"
-    ).fetchall()
-    generation_rows = get_db().execute(
-        "SELECT hypothesis_id, research_status, publication_status, envelope_json, "
-        "created_at FROM learning_hypothesis_nominations ORDER BY created_at, nomination_id"
-    ).fetchall()
-    generation_attempts: list[dict] = []
-    generation_costs: list[float] = []
-    generation_cost_missing = False
-    for row in generation_rows:
-        created = _instant(str(row["created_at"]))
-        if created is None or not start <= created < end:
-            continue
-        try:
-            envelope = json.loads(row["envelope_json"])
-            draft_path = str(envelope["draft"]["path_id"])
-            cost = envelope["generation_manifest"].get("estimated_cost_usd")
-        except (KeyError, TypeError, ValueError):
-            draft_path, cost = "unavailable", None
-        if path_id is not None and draft_path != path_id:
-            continue
-        generation_attempts.append(dict(row))
-        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0:
-            generation_cost_missing = True
-        else:
-            generation_costs.append(float(cost))
-    facts = project_current_economic_knowledge()
-    interval_facts = project_economic_knowledge_as_of(window_end)
-    from aletheia.learning.registry import get_learning_path
-
-    grouped: dict[tuple[str, str, str, str, str], list[dict]] = {}
-    for row in experiments:
-        data = dict(row)
-        created = _instant(str(data["created_at"]))
-        if created is None or not start <= created < end:
-            continue
-        if path_id is not None and data["path_id"] != path_id:
-            continue
-        data["outcome_contract_version"] = get_learning_path(
-            str(data["path_id"])
-        ).outcome_contract_version
-        key = (
-            str(data["path_id"]),
-            str(data["behavior_contract_version"] or "unavailable"),
-            str(data["primary_metric"] or "unavailable"),
-            str(data["outcome_contract_version"] or "unavailable"),
-            str(data["target_horizon"] or "unavailable"),
+        reason = (
+            "canonical_lab_result_projection_unavailable"
+            if get_authority_source().source == "lab"
+            else "canonical_lab_authority_unavailable"
         )
-        grouped.setdefault(key, []).append(data)
-
-    slices: list[KnowledgeYieldSliceV1] = []
-    for key, members in sorted(grouped.items()):
-        experiment_ids = {str(member["experiment_id"]) for member in members}
-        hypothesis_ids = {str(member["hypothesis_id"]) for member in members}
-        qualified = [
-            fact for fact in interval_facts
-            if fact.experiment_id in experiment_ids
-            and (evidenced := _instant(fact.window_end)) is not None
-            and start <= evidenced < end
-        ]
-        invalid_verdict_rows = get_db().execute(
-            f"SELECT v.hypothesis_id FROM learning_contribution_verdicts v "
-            f"WHERE v.verdict='invalid' AND v.experiment_id IN "
-            f"({','.join('?' for _ in experiment_ids)}) "
-            f"AND aletheia_instant_us(v.created_at) >= ? "
-            f"AND aletheia_instant_us(v.created_at) < ?",
-            tuple(sorted(experiment_ids)) + (start_us, end_us),
-        ).fetchall()
-        invalid_n = len(invalid_verdict_rows)
-        invalid_hypothesis_ids: set[str] = {str(r[0]) for r in invalid_verdict_rows}
-        lifecycle_refreeze_rows = get_db().execute(
-            f"SELECT DISTINCT le.hypothesis_id FROM learning_lifecycle_events le "
-            f"WHERE le.action IN ('refreeze', 'invalidate') "
-            f"AND le.experiment_id IN ({','.join('?' for _ in experiment_ids)}) "
-            f"AND aletheia_instant_us(le.created_at) >= ? "
-            f"AND aletheia_instant_us(le.created_at) < ?",
-            tuple(sorted(experiment_ids)) + (start_us, end_us),
-        ).fetchall()
-        refrozen_hypothesis_ids: set[str] = {str(r[0]) for r in lifecycle_refreeze_rows}
-        refrozen_n = len(refrozen_hypothesis_ids)
-        evidence_days: list[float] = []
-        for fact in qualified:
-            experiment = next(
-                member for member in members
-                if member["experiment_id"] == fact.experiment_id
-            )
-            created = _instant(str(experiment["created_at"]))
-            evidenced = _instant(fact.window_end)
-            if created is not None and evidenced is not None and evidenced >= created:
-                evidence_days.append((evidenced - created).total_seconds() / 86_400)
-
-        nomination_rows = get_db().execute(
-            f"SELECT envelope_json, source_bundle_hash FROM learning_hypothesis_nominations "
-            f"WHERE hypothesis_id IN ({','.join('?' for _ in hypothesis_ids)}) "
-            f"AND aletheia_instant_us(created_at) < ?",
-            tuple(sorted(hypothesis_ids)) + (end_us,),
-        ).fetchall()
-        costs: list[float] = []
-        missing_cost = False
-        methods: set[str] = set()
-        producers: set[str] = set()
-        producer_versions: set[str] = set()
-        source_bundles: set[str] = set()
-        source_artifacts: set[str] = set()
-        root_outcomes: set[str] = set()
-        parents: set[str] = set()
-        research_counts: dict[str, int] = {}
-        compilable_n = 0
-        advisory_n = 0
-        for row in nomination_rows:
-            source_bundles.add(str(row["source_bundle_hash"]))
-            try:
-                envelope = json.loads(row["envelope_json"])
-                manifest = envelope["generation_manifest"]
-                draft = envelope["draft"]
-                value = manifest.get("estimated_cost_usd")
-                methods.add(str(manifest.get("method") or "unavailable"))
-                producers.add(str(manifest.get("producer") or "unavailable"))
-                producer_versions.add(str(manifest.get("producer_version") or "unavailable"))
-                parents.update(str(value) for value in manifest.get("parent_hypothesis_ids", []))
-                source_artifacts.update(str(value) for value in draft.get("source_artifact_ids", []))
-                try:
-                    from aletheia.learning.hypotheses import HypothesisResearchEvidenceV1
-                    evidence = HypothesisResearchEvidenceV1.model_validate(
-                        envelope["research_evidence"]
-                    )
-                    root_outcomes.update(str(v) for v in evidence.observation.outcome_identities)
-                    research_status = evidence.research_status
-                except Exception:
-                    research_status = str(
-                        envelope.get("research_evidence", {}).get("research_status") or "unavailable"
-                    )
-                research_counts[research_status] = research_counts.get(research_status, 0) + 1
-                compilable_n += draft.get("status") == "compilable"
-                advisory_n += draft.get("status") == "advisory_only"
-            except (KeyError, TypeError, ValueError):
-                value = None
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
-                missing_cost = True
-            else:
-                costs.append(float(value))
-        if not nomination_rows:
-            missing_cost = True
-
-        verdict_rows = get_db().execute(
-            f"SELECT hypothesis_id, verdict, inference_role, harm_metrics_json "
-            f"FROM learning_contribution_verdicts WHERE experiment_id IN "
-            f"({','.join('?' for _ in experiment_ids)}) "
-            f"AND aletheia_instant_us(created_at) >= ? "
-            f"AND aletheia_instant_us(created_at) < ?",
-            tuple(sorted(experiment_ids)) + (start_us, end_us),
-        ).fetchall()
-        real_intervention_hypotheses: set[str] = set()
-        for verdict_row in verdict_rows:
-            try:
-                verdict_metrics = json.loads(verdict_row["harm_metrics_json"] or "{}")
-            except (TypeError, ValueError):
-                verdict_metrics = {}
-            if (
-                isinstance(verdict_metrics, dict)
-                and isinstance(verdict_metrics.get("actual_intervention_treatment_n"), int)
-                and verdict_metrics["actual_intervention_treatment_n"] > 0
-            ):
-                real_intervention_hypotheses.add(str(verdict_row["hypothesis_id"]))
-        confirmatory_n = sum(
-            str(row["inference_role"]) == "confirmatory" for row in verdict_rows
-        )
-
-        denominator = len(hypothesis_ids)
-        qualified_n = len({fact.hypothesis_id for fact in qualified})
-        # Unique hypotheses affected by an invalid verdict or refreeze/invalidate lifecycle
-        # action within the window, intersected with real-intervention hypotheses.
-        affected_hypothesis_ids = (
-            (invalid_hypothesis_ids | refrozen_hypothesis_ids) & real_intervention_hypotheses
-        )
-        n_real = len(real_intervention_hypotheses)
-        unavailable: list[str] = []
-        exclusions: list[str] = []
-        if missing_cost:
-            unavailable.append("generation_cost_incomplete")
-        if source_artifacts and not root_outcomes:
-            unavailable.append("root_outcome_lineage_incomplete")
-        if denominator == 0:
-            unavailable.append("no_prospective_hypotheses")
-        if invalid_n:
-            exclusions.append("invalid_verdict")
-        if refrozen_n:
-            exclusions.append("refrozen_hypothesis")
-        slices.append(KnowledgeYieldSliceV1(
-            path_id=key[0],
-            behavior_contract_version=key[1],
-            metric_version=key[2],
-            outcome_contract_version=key[3],
-            target_horizon=key[4],
-            consumers=sorted({str(member["consumer"]) for member in members}),
-            generation_methods=sorted(methods),
-            producers=sorted(producers),
-            producer_versions=sorted(producer_versions),
-            source_bundle_hashes=sorted(source_bundles),
-            source_artifact_ids=sorted(source_artifacts),
-            root_outcome_identities=sorted(root_outcomes),
-            derivation_parent_hypothesis_ids=sorted(parents),
-            generation_attempt_n=len(nomination_rows),
-            research_status_counts=dict(sorted(research_counts.items())),
-            compilable_nomination_n=compilable_n,
-            advisory_nomination_n=advisory_n,
-            unique_hypothesis_n=len(hypothesis_ids),
-            shadow_admission_n=sum(
-                str(member["stage"]) == "shadow" for member in members
-            ),
-            real_intervention_hypothesis_n=n_real,
-            confirmatory_outcome_n=confirmatory_n,
-            redundancy_replay_ratio=(
-                1.0 - len(source_bundles) / len(nomination_rows)
-                if nomination_rows else None
-            ),
-            exclusions=exclusions,
-            coverage={
-                "experiments": len(members),
-                "hypotheses": len(hypothesis_ids),
-                "nominations": len(nomination_rows),
-                "verdicts": len(verdict_rows),
-            },
-            hypotheses_entering_prospective_test_n=denominator,
-            qualified_economic_knowledge_n=qualified_n,
-            knowledge_yield=qualified_n / denominator if denominator else None,
-            invalid_verdict_n=invalid_n,
-            refrozen_hypothesis_n=refrozen_n,
-            median_days_to_evidence=median(evidence_days) if evidence_days else None,
-            estimated_generation_cost_usd=sum(costs) if costs and not missing_cost else None,
-            operational_drag_ratio=len(affected_hypothesis_ids) / n_real if n_real else None,
-            availability="complete" if not unavailable else "partial",
-            unavailable_reasons=unavailable,
-        ))
-    published_n = sum(
-        row["publication_status"] == "published" and row["hypothesis_id"] is not None
-        for row in generation_attempts
-    )
-    unique_nominated = len({
-        str(row["hypothesis_id"])
-        for row in generation_attempts
-        if row["hypothesis_id"] is not None
-    })
-    rejected_or_advisory_n = sum(
-        str(row["research_status"]) in {
-            "rejected", "insufficient_context", "advisory_only",
-        }
-        or row["publication_status"] != "published"
-        for row in generation_attempts
-    )
+    except Exception:
+        reason = "canonical_lab_authority_unavailable"
     return KnowledgeYieldReportV1(
         window_start=window_start,
         window_end=window_end,
-        generation_attempt_n=len(generation_attempts),
-        published_nomination_n=published_n,
-        unpublished_nomination_n=len(generation_attempts) - published_n,
-        rejected_or_advisory_nomination_n=rejected_or_advisory_n,
-        unique_nominated_hypothesis_n=unique_nominated,
-        generation_to_hypothesis_conversion=(
-            unique_nominated / len(generation_attempts)
-            if generation_attempts else None
-        ),
-        total_recorded_generation_cost_usd=(
-            sum(generation_costs)
-            if generation_costs and not generation_cost_missing else None
-        ),
-        generation_cost_availability=(
-            "complete"
-            if generation_attempts and not generation_cost_missing
-            else "partial"
-            if generation_costs
-            else "unavailable"
-        ),
-        current_economic_knowledge_n=len(facts),
-        slices=slices,
+        generation_cost_availability="unavailable",
+        current_economic_knowledge_n=0,
+        slices=[],
+        availability="unavailable",
+        unavailable_reasons=[reason],
     )
 
 

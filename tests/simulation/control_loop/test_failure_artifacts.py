@@ -21,7 +21,7 @@ def test_unhandled_scenario_assertion_writes_complete_replay_pack(tmp_path):
             seed=20260713,
             reproduce="uv run pytest tests/simulation/control_loop/test_failure_artifacts.py -q",
         ) as harness:
-            harness.seed_candidates(high=1, medium=2)
+            harness.advance_time(2.0)
             raise AssertionError("deliberate fixed-scenario failure")
 
     evidence = artifact_root / run_id
@@ -39,4 +39,4 @@ def test_unhandled_scenario_assertion_writes_complete_replay_pack(tmp_path):
     assert "api_key" not in config_text
     assert "secret" not in config_text
     with sqlite3.connect(evidence / "app.db") as db:
-        assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 3
+        assert db.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0] == 0

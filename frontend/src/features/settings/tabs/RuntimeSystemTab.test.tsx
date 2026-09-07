@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { RuntimeSystemTab } from './RuntimeSystemTab'
-import SRC from './RuntimeSystemTab.tsx?raw'
 
 function renderRuntimeTab(updateStatus: Record<string, unknown> = { ok: false }) {
   const client = new QueryClient()
@@ -41,35 +40,11 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('Data Retention')
     expect(html).toContain('Export')
     expect(html).toContain('Auto-update enabled')
-    expect(SRC).toContain('<HistoricalDataCard settings={settings} qc={qc} onDirty={onDirty} />')
-    expect(SRC).toContain('<RetentionCard settings={settings} qc={qc} onDirty={onDirty} />')
-    expect(SRC).toContain('<DataExportCard />')
     expect(html).toContain('Save config')
     expect(html).toContain('Enforce (fail-closed)')
     expect(html).toContain('Test Connection')
-    expect(SRC).toContain('mutationFn: api.checkForUpdate')
-    expect(SRC).toContain("onSuccess: result => qc.setQueryData(['update-status'], result)")
   })
 
-  it('limits Usage-dependent retention to 90 days', () => {
-    expect(SRC).toContain("key: 'agent_runs_days',          label: 'Agent runs',          unit: 'days', min: 1, max: 90")
-    expect(SRC).toContain("key: 'tool_calls_days',          label: 'Tool calls',          unit: 'days', min: 1, max: 90")
-    expect(SRC).toContain("key: 'runtime_sessions_days',    label: 'Runtime sessions',    unit: 'days', min: 1, max: 90")
-  })
-
-  it('projects Remote Control Token browser-storage success and failure', () => {
-    expect(SRC).toContain('const [remoteTokenMessage, setRemoteTokenMessage]')
-    expect(SRC).toContain('const result = api.setRemoteControlToken(remoteToken)')
-    expect(SRC).toContain("role={remoteTokenMessage.ok ? 'status' : 'alert'}")
-    expect(SRC).toContain("text: result.ok ? 'Token saved in this browser.' : result.error")
-  })
-
-  it('keeps immediate mutation errors isolated by source', () => {
-    expect(SRC).toContain("type ImmediateErrorSource = 'app' | 'runtime' | 'remote'")
-    expect(SRC).toContain("clearImmediateError('app')")
-    expect(SRC).toContain("clearImmediateError('runtime')")
-    expect(SRC).toContain("clearImmediateError('remote')")
-  })
 
   it('renders source update evidence as CLI guidance without browser apply', () => {
     const html = renderRuntimeTab({
@@ -87,7 +62,6 @@ describe('RuntimeSystemTab', () => {
     expect(html).toContain('22222222')
     expect(html).toContain('Run <code>aletheia update</code> from the controlling terminal')
     expect(html).not.toContain('Apply update</button>')
-    expect(SRC).not.toContain('Pull latest code?')
   })
 
   it('keeps packaged update apply available', () => {
@@ -102,8 +76,19 @@ describe('RuntimeSystemTab', () => {
     })
 
     expect(html).toContain('Apply update</button>')
-    expect(SRC).toContain('Apply packaged update?')
-    expect(SRC).toContain('api.applyUpdate')
+  })
+
+  it("shows a held source release without claiming it is deployed", () => {
+    const html = renderRuntimeTab({
+      mode: "source_release", status: "hold", phase: "observer_hold",
+      hold: true, reason: "observer_advanced", target_tag: "v9.1.0", target_sha: "abcdef012345",
+    })
+    expect(html).toContain("observer_advanced")
+    expect(html).toContain("v9.1.0")
+    expect(html).toContain("abcdef01")
+    expect(html).not.toContain("up to date")
+    expect(html).not.toContain("Auto-update enabled")
+    expect(html).not.toContain("Apply update</button>")
   })
 
   it('fails closed when update mode is missing or unknown', () => {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import sqlite3
 from datetime import datetime, timezone
 
@@ -568,7 +570,7 @@ def test_mismatched_entry_order_identity_blocks_outcome_hooks(tmp_path, monkeypa
         status="filled",
     )
     repo.insert_order(unrelated_order)
-    repo.update_position(opened["position_id"], order_id=unrelated_order.id)
+    force_update_position(opened["position_id"], order_id=unrelated_order.id)
 
     result = close_position(
         opened["position_id"], exit_price=110.0, reason="take_profit"
@@ -848,7 +850,7 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
     repo.insert_position(position)
     monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
-    repo.update_position(
+    force_update_position(
         position.id,
         outcome_eligible=False,
         outcome_exclusion_reason="not_marked_eligible",
@@ -906,7 +908,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     # can still commit while outcome_write_eligibility degrades gracefully.
     real_attribution = _oi_module.attribution_chain_complete
 
-    def _raise_attribution_error(row):
+    def _raise_attribution_error(row, *, db=None):
         raise AttributionReadError("temporary close-time attribution read failure")
 
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
@@ -992,7 +994,7 @@ def test_local_paper_close_recovers_transient_attribution_read_failure(
 
     real_attribution = _oi_module.attribution_chain_complete
 
-    def _raise_attribution_error(row):
+    def _raise_attribution_error(row, *, db=None):
         raise AttributionReadError("temporary local attribution read failure")
 
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
@@ -1115,7 +1117,7 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
     repo.insert_position(position)
     monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
-    repo.update_order(str(position.order_id), position_id=None)
+    repo.update_order_metadata(str(position.order_id), position_id=None)
 
     hook_calls = []
     monkeypatch.setattr(

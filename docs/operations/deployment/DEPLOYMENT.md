@@ -60,6 +60,20 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
    它只接受严格 SemVer，并执行精确 SHA、迁移、SQLite、Smoke、Gateway 和
    Paper/live-disabled 健康门禁。qualification runtime 默认锁定，不随正式 Tag 自动改变。
 
+Linux source 的人工 `aletheia update` 与 timer 使用同一个 `auto.run` 事务、部署锁、
+hold、失败 Tag、settlement/Observer 门禁及失败恢复。`--no-restart` 在副作用前拒绝。
+HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
+也不以 master 的 ahead/behind 数量宣称已部署。
+
+实验 runtime registry/shadow/promote 控制面已退役。升级前先停 owned timer，持有部署锁，
+核实实际 backend cwd/SHA；将标准 checkout 对齐同一 SHA，完成正常停止、settlement 与
+联合 checkpoint/authoritative backup，再使旧版本的 current artifact 指向标准目录。
+重绑 owned 服务并证明 cwd、boot SHA、frontdoor PID、健康与 runtime session 一致后，
+才允许切换删线版本。离线运行 `aletheia runtime retire-experiment-schema --backup <archive>`
+验证备份中的原表 schema/rows 与当前一致后退役五张实验表，再运行 `aletheia data migrate`。
+有未保存改动、非主线祖先、未决实验进程或缺备份证明时必须阻断；不重置历史证据。
+存量目录迁移和恢复验证是部署前提，本地测试不代替 Fedora 上线证明。
+
 候选 PR 打开后若普通 PR 又推进了 `master`，可信的 refresh workflow 会在已有候选存在时
 以真实 branch merge-base 判断候选是否过期，并用自身 workflow run 身份认证后自动更新并
 重新验证同一个候选；没有 owner 先前的 `operational_need=true` 意图时不会凭空创建发布候选。

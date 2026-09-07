@@ -105,6 +105,27 @@ class AuditEvent(BaseModel):
     message: str | None = None
 
 
+AgentRunStatus = Literal[
+    "queued",
+    "running",
+    "completed",
+    "completed_with_errors",
+    "failed",
+    "timed_out",
+    "stale",
+    "cancelled",
+    "rejected_queue_full",
+    # Historical terminals with no writer left, kept legal so the CHECK migration
+    # runs on real data while no transition can produce them. The read paths
+    # still classify all three: run_view.FAILED_AGENT_RUN_STATUSES has "error",
+    # run_view.SUCCESS_AGENT_RUN_STATUSES has "success", and
+    # health._FAILED_STATUSES adds "cancel_requested".
+    "error",
+    "cancel_requested",
+    "success",
+]
+
+
 class AgentRun(BaseModel):
     id: str = Field(default_factory=new_id)
     agent_name: str
@@ -112,7 +133,7 @@ class AgentRun(BaseModel):
     permission_mode: str = "Observe"
     started_at: str = Field(default_factory=_utcnow)
     ended_at: str | None = None
-    status: str = "running"
+    status: AgentRunStatus = "running"
     model_provider: str | None = None
     model_name: str | None = None
     tools_called: str = "[]"
@@ -563,6 +584,30 @@ class RiskDecision(_Provenanced):
     created_at: str = Field(default_factory=_utcnow)
 
 
+OrderStatus = Literal[
+    "pending",
+    "open",
+    "submitted",
+    "submission_unknown",
+    "submission_rejected",
+    "materialization_missing",
+    "partial",
+    "partially_filled",
+    "filled",
+    "overfilled",
+    "cancelled",
+    "error",
+    # Historical terminals with no writer left. analytics/trade_stats.py
+    # classifies all three when reading orders: completed_fill_statuses has
+    # "executed", definitive_failure_statuses has "failed" and "rejected".
+    # Legal values with no incoming transition, so stored rows stay readable
+    # while new writes cannot produce them.
+    "executed",
+    "failed",
+    "rejected",
+]
+
+
 class Order(_Provenanced):
     id: str = Field(default_factory=new_id)
     proposal_id: str | None = None
@@ -578,6 +623,8 @@ class Order(_Provenanced):
     reference_price: float | None = None
     reference_price_source: str | None = None
     execution_mode: str
+    # Exact non-secret UTA identity captured before external submission; never backfilled from current config.
+    uta_account_identity_json: str | None = None
     exchange_order_id: str | None = None
     # Stable exchange-side idempotency/recovery key.  This is persisted before
     # submission so a timeout that loses the venue order id can still be
@@ -604,7 +651,7 @@ class Order(_Provenanced):
     # Optional trade_decision_rationale.v1 JSON captured with a pending exchange
     # close claim. The Position publishes it only after verified settlement.
     close_reasoning: str | None = None
-    status: str = "pending"
+    status: OrderStatus = "pending"
     source: str = "native"  # "native" | "adopted" — see TradeProposal.source
     created_at: str = Field(default_factory=_utcnow)
     filled_at: str | None = None
@@ -634,6 +681,9 @@ class Fill(_Provenanced):
     fill_evidence_hash: str | None = None
     market_event_id: str | None = None
     filled_at: str = Field(default_factory=_utcnow)
+
+
+PositionStatus = Literal["open", "closed"]
 
 
 class Position(_Provenanced):
@@ -671,7 +721,7 @@ class Position(_Provenanced):
     # sector-concentration check (#16), which resolves scanner_family per open
     # position via its opportunity_id — without it that check is silenced.
     opportunity_id: str | None = None
-    status: str = "open"
+    status: PositionStatus = "open"
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None
@@ -1614,6 +1664,7 @@ class UniverseSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=_utcnow)
     market_type: str = "crypto"
+    source_kind: Literal["universe", "serenity"] = "universe"
     policy_id: str | None = None
     status: str = "active"
     expires_at: str | None = None
@@ -1661,7 +1712,7 @@ class UniverseMember(BaseModel):
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
@@ -1680,7 +1731,7 @@ class UniverseMember(BaseModel):
     def _validate_candidate_selection_evidence(self):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
-        target = self.candidate_selection_policy == "candidate_selection_utility_v1"
+        target = self.candidate_selection_policy in {"candidate_selection_utility_v1", "serenity_research_v1"}
         mechanism_evidence = (
             self.opportunity_mechanism_version,
             self.opportunity_source_component,
@@ -1763,7 +1814,7 @@ class CandidatePlanningGeneration(_Provenanced):
         "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
     ] | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
     ] | None = None
     candidate_selection_policy_epoch: str | None = None
     mechanism_version: str | None = None

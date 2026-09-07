@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import asyncio
 from datetime import datetime, timezone
 
@@ -125,7 +127,7 @@ def _seed_position(
         ),
     )
     db.commit()
-    repo.update_position(position_id, order_id=entry_order_id)
+    force_update_position(position_id, order_id=entry_order_id)
     return position
 
 
@@ -602,7 +604,7 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
     closed_at = datetime.fromtimestamp(
         (bucket + 300_000) / 1000, tz=timezone.utc
     ).isoformat()
-    repo.update_position(position.id, status="closed", closed_at=closed_at)
+    force_update_position(position.id, status="closed", closed_at=closed_at)
     calls = {"requested": 0}
 
     class Provider:
@@ -775,7 +777,7 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
 
     bucket = 1_786_579_200_000
     position = _seed_position(position_id="position-path-closed-gap")
-    repo.update_position(
+    force_update_position(
         position.id,
         status="closed",
         quantity=0.005,
@@ -856,12 +858,12 @@ async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
         symbol="ETH/USDT",
         identity_suffix="batch-2",
     )
-    repo.update_position(
+    force_update_position(
         first_position.id,
         status="closed",
         closed_at="2026-08-13T00:16:00+00:00",
     )
-    repo.update_position(
+    force_update_position(
         second_position.id,
         status="closed",
         closed_at="2026-08-13T01:16:00+00:00",
@@ -1379,7 +1381,7 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
 
     class Provider:
         async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
-            repo.update_position(
+            force_update_position(
                 position.id,
                 status="closed",
                 closed_at=datetime.fromtimestamp(
@@ -1446,7 +1448,7 @@ async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
     from aletheia.storage import repositories as repo
 
     position = _seed_position(position_id="position-invalid-opened-at")
-    repo.update_position(position.id, opened_at="not-a-timestamp")
+    force_update_position(position.id, opened_at="not-a-timestamp")
     monkeypatch.setattr(
         ccxt_provider,
         "get_market_data_provider",
@@ -1525,7 +1527,7 @@ def test_unavailable_identity_is_preserved_and_reported():
     from aletheia.storage import repositories as repo
 
     position = _seed_position(position_id="position-path-unavailable")
-    repo.update_position(
+    force_update_position(
         position.id,
         status="closed",
         closed_at="2026-08-13T00:05:00+00:00",
@@ -1832,7 +1834,7 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
         ),
     )
     db.commit()
-    repo.update_position(
+    force_update_position(
         position.id,
         status="closed",
         quantity=1.26,
@@ -1943,7 +1945,7 @@ def test_oldest_deferred_bucket_prefers_open_positions_over_closed_history():
         symbol="ETH/USDT",
         identity_suffix="hist",
     )
-    repo.update_position(
+    force_update_position(
         closed.id,
         status="closed",
         closed_at="2026-07-13T00:00:00+00:00",
@@ -1989,7 +1991,7 @@ async def test_observer_processes_open_position_before_closed_history(
         symbol="ETH/USDT",
         identity_suffix="hist-obs",
     )
-    repo.update_position(
+    force_update_position(
         closed.id,
         status="closed",
         closed_at="2026-07-13T00:00:00+00:00",

@@ -148,3 +148,75 @@
    `created_at` 兜底。
 6. LLM prompt 中任何 long/short、支持/反对语义都要按本次方向验证；不要因为最终公式
    看似对称，就假设 prompt 本身没有方向偏置。
+
+---
+
+## SOP-11 ｜ 关闭状态词表必须从**读路径**枚举，而非只看写路径
+
+**陷阱**：只看当前写路径（`INSERT`/`UPDATE` 的 `status=...`）会漏掉"历史代码曾写入、
+现已停止写入"的值。这些值仍然存在于数据库行中；给 `CHECK` 约束或 `Literal` 加上这些值
+时若缺漏，迁移在含历史数据的 Fedora 生产库会直接失败。
+
+**真实案例（2026-09-07 #2953/#2954 AgentRun/Order 词表关闭）**：
+- 只扫写路径列出了 9 个状态值；加上 CHECK 约束后，spec 套件爆出 8 个新失败。
+- 缺漏的 6 个值全部来自**读路径**：
+  - `error`、`success`：来自 `run_view.FAILED_AGENT_RUN_STATUSES` / `SUCCESS_AGENT_RUN_STATUSES`
+  - `cancel_requested`：来自 `health._FAILED_STATUSES`
+  - `executed`、`failed`、`rejected`：来自 `trade_stats.completed_fill_statuses` /
+    `definitive_failure_statuses`
+- 每一个都是"某段历史代码曾写入，现已演化或删除，但数据库里仍有旧行"。
+
+**SOP**：
+1. 先 `grep -r "status.*['\"]" --include="*.py"` 找所有写路径（完整，不抽样）。
+2. **强制**：再 `grep -r "STATUSES\|status_set\|status_list\|fill_statuses\|FAILED_STATUS" --include="*.py"` 找所有读路径聚合常量，逐一展开其值。
+3. 检查聚合统计模块（如 `trade_stats.py`）——它们往往是历史终态的唯一残存引用。
+4. 把两批结果合并为候选词表；带 `# historical terminal` 注释标注仅出现在读路径的值。
+5. 对写路径和读路径各写一个 `assert set(WRITE_STATUSES).issubset(FULL_VOCAB)` 断言，
+   放在迁移函数同文件，防止词表再次悄悄缩水。
+
+---
+
+## SOP-12 ｜ 把 `None` 返回改成 `raise` 前，追踪所有调用方的控制流
+
+**陷阱**：一个返回 `None` 的函数可能被上游用作 **fail-closed 哨兵**（`if x is None: return`
+/ `except Exception: return`）。把它改成 `raise` 会让 fail-closed 退化为**永久阻塞**或
+fail-open，效果完全相反。
+
+**真实案例（2026-09-07 A3 learning ledger interlock 被正确放弃）**：
+- 审计报告指出 `ledger.list_open_experiments` 返回 `None` 应改为 `raise`，以"强制执行
+  interlock"（判定为 P1）。
+- 追踪调用方发现：唯一消费方是 `candidate_selection_overlap_block_reason`，它用
+  `except Exception: return BLOCK_REASON` 包裹，任何异常都会让候选选择**永久拒绝所有入场**。
+- 改成 `raise` = 生产宕机，不是修复。正确答案是**放弃 A3**，记录为设计债，不在当次改动。
+
+**SOP**：
+1. 找到函数的所有调用方（`grep` + codegraph）。
+2. 逐一追踪：`None` 返回时控制流走哪条分支？是 early return、还是向上传播？
+3. 特别警惕 `except Exception: return <block_reason>` 模式——这是 fail-closed 的标准写法，
+   任何 `raise` 改造都会把 fail-closed 变成永久阻塞。
+4. 若调用方已经 fail-closed，`None` 返回是**正确的信号契约**，不是 bug。需要 interlock
+   时应在**调用方**加显式逻辑，而非改变被调用方的异常语义。
+5. 高影响判断（"这是 P1"）在采纳前必须走完 SOP-1 的跨模块反查。
+
+---
+
+## SOP-13 ｜ 接手大 PR 留下的混乱前，先量红色基线
+
+**陷阱**：在不知道当前红色基线的情况下开始修复，会把"原本就存在的失败"误计为"我引入
+的回归"，导致修复目标不清、反复返工。
+
+**真实案例（2026-09-07 #2945 收尾）**：
+- PR #2945 是一个跳过完整 CI 的大型 squash-merge，合入后 master 处于 55 spec 失败
+  （之前基线是 29）。
+- 若不先量基线，贸然动手，每次新增失败都无法判断是"#2945 的债"还是"本次改动引入的"。
+- 先跑 `uv run pytest tests/specs/ -q` 拿到精确数字（55 failed/1337 passed），
+  之后每批修复都能用数字验证方向正确。
+
+**SOP**：
+1. 接手任何"已知混乱"或大型 squash-merge 之后的分支前，**先跑一次基线测量**：
+   ```sh
+   uv run pytest tests/specs/ -q 2>&1 | tail -5
+   ```
+2. 记录数字（failed/passed），作为后续每批修复的参照锚点。
+3. 每批修复后立即重跑同一命令，确认数字在向好方向移动；若反向，立即停止找根因。
+4. 基线数字落进 PR 描述或 commit message，让 reviewer 看到起点和终点。

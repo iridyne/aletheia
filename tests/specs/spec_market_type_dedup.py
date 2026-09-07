@@ -146,17 +146,6 @@ def test_lifecycle_lookup_reuses_reviewed_opportunity(tmp_path, monkeypatch):
     assert found["status"] == "reviewed"
 
 
-@spec_claim(
-    SpecClaim("OD-S02b", "data_layer_contract", "§3 signal_emitter passes market", "L2a",
-              "signal_emitter passes market= to the lifecycle identity lookup "
-              "so same-symbol opps in different markets don't collide (OD-S02 lock)"),
-)
-def test_signal_emitter_passes_market_filter():
-    from aletheia.universe import signal_emitter
-    src = inspect.getsource(signal_emitter.emit_deterministic_opportunities)
-    assert "market=" in src and "find_opportunity_by_symbol_snapshot" in src, (
-        "signal_emitter must pass market= to the lifecycle identity lookup"
-    )
 
 
 @spec_claim(

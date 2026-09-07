@@ -49,26 +49,18 @@ class ParamSpec:
     tighten_direction: str  # "up" | "down"
     floor: Any
     ceiling: Any
-    step: Any            # per-cycle cap (pct for numeric, 1 step for ladder)
-    ladder: list | None  # categorical params only
+    step: Any            # per-cycle cap
 
 
 PARAM_REGISTRY: dict[str, ParamSpec] = {
-    "min_confidence_to_trade": ParamSpec(
-        "min_confidence_to_trade", "trading",
-        neutral="medium", tighten_direction="up",
-        floor="speculative", ceiling="high", step=1,
-        ladder=["speculative", "medium", "high"]),
     "max_demo_position_margin_usdt": ParamSpec(
         "max_demo_position_margin_usdt", "risk",
         neutral=200.0, tighten_direction="down",
-        floor=20.0, ceiling=500.0, step=0.30,
-        ladder=None),
+        floor=20.0, ceiling=500.0, step=0.30),
     "default_stop_loss_pct": ParamSpec(
         "default_stop_loss_pct", "trading",
         neutral=2.0, tighten_direction="down",
-        floor=1.0, ceiling=5.0, step=1.0,
-        ladder=None),
+        floor=1.0, ceiling=5.0, step=1.0),
 }
 
 
@@ -78,40 +70,14 @@ def _get_param_drift(param_name: str) -> str:
     if not spec:
         return "neutral"
     cfg = load_config()
-    section = getattr(cfg, spec.config_section, None)
-    if section is None:
-        return "neutral"
-    current = getattr(section, spec.name, spec.neutral)
-
-    if spec.ladder:
-        try:
-            cur_idx = spec.ladder.index(current)
-            neu_idx = spec.ladder.index(spec.neutral)
-        except ValueError:
-            return "neutral"
-        if spec.tighten_direction == "up":
-            if cur_idx > neu_idx:
-                return "tightened"
-            elif cur_idx < neu_idx:
-                return "loosened"
-        else:
-            if cur_idx < neu_idx:
-                return "tightened"
-            elif cur_idx > neu_idx:
-                return "loosened"
-        return "neutral"
-    else:
-        if spec.tighten_direction == "down":
-            if current < spec.neutral:
-                return "tightened"
-            elif current > spec.neutral:
-                return "loosened"
-        else:
-            if current > spec.neutral:
-                return "tightened"
-            elif current < spec.neutral:
-                return "loosened"
-        return "neutral"
+    current = (cfg.risk.demo.capital.max_position_margin_usdt
+               if param_name == "max_demo_position_margin_usdt"
+               else cfg.trading.default_stop_loss_pct)
+    if current < spec.neutral:
+        return "tightened"
+    if current > spec.neutral:
+        return "loosened"
+    return "neutral"
 
 
 # ─── Persistent Action Log ───────────────────────────────────────────────────
@@ -290,7 +256,7 @@ class OperatorAction:
 # Level classification. Level-1 names must map to effects this loop actually
 # owns and can verify; historical compatibility aliases are not capabilities.
 _LEVEL_1_ACTIONS = {
-    "tighten_confidence", "loosen_confidence", "reduce_sizing", "increase_sizing", "tighten_stop_loss",
+    "reduce_sizing", "increase_sizing", "tighten_stop_loss",
     "adjust_scanner_weight", "notify_operator",
 }
 
@@ -299,7 +265,7 @@ _LEVEL_2_ACTIONS = {
     "add_universe_symbol",
     # L2 self-heal actions (operator_layer.md §自愈档位 L2) — require human confirmation.
     # Routed to _create_proposal automatically by classify_action → dispatch path.
-    "clear_signal_pending", "modify_prompt_fragment", "modify_config_fragment",
+    "modify_prompt_fragment", "modify_config_fragment",
 }
 
 _LEVEL_3_ACTIONS = {
@@ -359,15 +325,10 @@ class SystemAssessment:
     # Filter pressure: families whose blocked candidates show positive net returns
     filter_pressure: list[dict] = field(default_factory=list)
     # Config snapshot (safe params)
-    min_confidence: str = "medium"  # speculative < medium < high
     default_stop_loss_pct: float = 3.0
     max_demo_notional: float = 200.0
     # Param drift state
     param_drift: dict[str, str] = field(default_factory=dict)
-    # Read-only evidence from the candidate queue.  This is deliberately
-    # separate from trade performance: a never-opened pipeline has no last fill
-    # timestamp and must still be able to recover from an automatic supply gate.
-    candidate_supply_drought: dict[str, Any] | None = None
 
 
 def build_system_assessment() -> SystemAssessment:
@@ -534,26 +495,11 @@ def build_system_assessment() -> SystemAssessment:
         assessment.filter_pressure = []
 
     # Config snapshot
-    assessment.min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     assessment.default_stop_loss_pct = getattr(cfg.trading, "default_stop_loss_pct", 3.0)
     assessment.max_demo_notional = cfg.risk.demo.capital.max_position_margin_usdt
 
     # Param drift
     assessment.param_drift = {name: _get_param_drift(name) for name in PARAM_REGISTRY}
-
-    # Candidate supply liveness.  This consumes durable ranker telemetry only;
-    # it never invokes the ranker, PI, risk, or execution path.  In particular,
-    # a confidence-gate drought is different from poor trade outcomes: it means
-    # the downstream decision layers are receiving no work at all.
-    try:
-        from aletheia.agent_shell.operator_store import list_events
-        from aletheia.analytics.candidate_supply import evaluate_candidate_supply_drought
-
-        assessment.candidate_supply_drought = evaluate_candidate_supply_drought(
-            list_events(limit=20)
-        )
-    except Exception as e:
-        logger.debug("assessment: candidate supply state unavailable: %s", e)
 
     # Content health — the manager ingests its own content-quality diagnostics so it
     # supervises "is the AI output garbage", not just "is the loop alive". Cheap subset
@@ -569,95 +515,6 @@ def build_system_assessment() -> SystemAssessment:
         logger.debug("assessment: content health error: %s", e)
 
     return assessment
-
-
-def _auto_confidence_tightening_is_active() -> bool:
-    """Whether the current ``high`` setting was last set by the old auto loop.
-
-    A user-selected high threshold is a product control and B1.1 must not
-    silently override it.  The recovery applies only to the durable
-    ``operator_loop`` config patch that tightened medium -> high.
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-
-        row = get_db().execute(
-            "SELECT before_state, after_state, message FROM audit_events "
-            "WHERE actor='operator_loop' AND event_type='config_patch' "
-            "AND entity_id='min_confidence_to_trade' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
-        if row is None:
-            return False
-        return (
-            row["before_state"] == "medium"
-            and row["after_state"] == "high"
-            and str(row["message"] or "").startswith("tighten:")
-        )
-    except Exception as e:
-        logger.debug("assessment: confidence patch provenance unavailable: %s", e)
-        return False
-
-
-def _legacy_aggregate_confidence_tightening_is_active() -> bool:
-    """Whether B1's retired aggregate-health writer left the current gate high.
-
-    This is a one-way compatibility repair, not a general relaxation: only the
-    exact legacy audit rationale is eligible.  A later owner setting, another
-    controller, or an unproven historical patch remains untouched.
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-
-        row = get_db().execute(
-            "SELECT before_state, after_state, message FROM audit_events "
-            "WHERE actor='operator_loop' AND event_type='config_patch' "
-            "AND entity_id='min_confidence_to_trade' "
-            "ORDER BY timestamp DESC LIMIT 1"
-        ).fetchone()
-        return bool(
-            row is not None
-            and row["before_state"] == "medium"
-            and row["after_state"] == "high"
-            and "signal win_rate degraded" in str(row["message"] or "")
-        )
-    except Exception as e:
-        logger.debug("assessment: legacy confidence patch provenance unavailable: %s", e)
-        return False
-
-
-def _confidence_recovery_reason(assessment: SystemAssessment) -> str | None:
-    """Return a bounded reason to restore automatic ``high`` to neutral.
-
-    The legacy fill-clock branch remains for an established trading history.
-    The B1.1 branch closes its blind spot: zero fills leave that clock ``None``,
-    so two consecutive ranker snapshots showing that the confidence gate is the
-    main exclusion reason become sufficient liveness evidence.  Recovery never
-    goes below the neutral ``medium`` tier and never relaxes guards or risk.
-    """
-    if (assessment.param_drift.get("min_confidence_to_trade") != "tightened"
-            or assessment.kill_switch_active):
-        return None
-    if _legacy_aggregate_confidence_tightening_is_active():
-        return (
-            "legacy aggregate signal-health patch: restoring retired automatic "
-            "min_confidence_to_trade tightening from high to neutral medium"
-        )
-    if (assessment.hours_since_last_trade is not None
-            and assessment.hours_since_last_trade >= 4):
-        return (
-            f"confidence drought: no fills in {assessment.hours_since_last_trade:.1f}h; "
-            "restoring min_confidence_to_trade from high to neutral medium"
-        )
-    drought = assessment.candidate_supply_drought or {}
-    if (drought.get("main_reason") == "confidence_below"
-            and _auto_confidence_tightening_is_active()):
-        return (
-            "candidate supply drought: confidence gate excluded the ranked working set "
-            f"for {int(drought.get('consecutive_cycles') or 0)} consecutive cycles; "
-            "restoring auto-tightened min_confidence_to_trade from high to neutral medium"
-        )
-    return None
 
 
 def _get_strategy_performance(strategy_id: str) -> dict | None:
@@ -692,19 +549,14 @@ def _execute_level1_action(action: OperatorAction) -> dict:
     """Execute a Level 1 (auto) action. Returns result dict."""
     result = {"action": action.action_type, "status": "skipped", "reason": ""}
 
-    if action.action_type == "tighten_confidence":
-        result = _action_tighten_confidence(action)
-    elif action.action_type == "loosen_confidence":
-        result = _action_loosen_confidence(action)
-    elif action.action_type == "reduce_sizing":
+    if action.action_type == "reduce_sizing":
         result = _action_reduce_sizing(action)
     elif action.action_type == "increase_sizing":
         result = _action_increase_sizing(action)
     elif action.action_type == "tighten_stop_loss":
         result = _action_tighten_stop_loss(action)
     # NOTE: widen_stop_loss remains a Level-2 loosening action.
-    # loosen_confidence and increase_sizing are bounded liveness exceptions: each
-    # can only restore a tightened value to neutral and never beyond it (OL-C07).
+    # increase_sizing restores only to neutral, never beyond it (OL-C07).
     elif action.action_type == "adjust_scanner_weight":
         result = _action_adjust_scanner_weight(action)
     elif action.action_type == "notify_operator":
@@ -715,78 +567,6 @@ def _execute_level1_action(action: OperatorAction) -> dict:
         result["reason"] = f"unknown action type: {action.action_type}"
 
     return result
-
-
-_CONFIDENCE_LADDER = ["speculative", "medium", "high"]
-
-
-def _action_tighten_confidence(action: OperatorAction) -> dict:
-    param_name = "min_confidence_to_trade"
-    last = _last_action_time("config_patch", param_name)
-    if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "tighten_confidence", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "tighten_confidence", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
-
-    cfg = load_config()
-    current = getattr(cfg.trading, param_name, "medium")
-    try:
-        idx = _CONFIDENCE_LADDER.index(current)
-    except ValueError:
-        idx = 1
-    if idx >= len(_CONFIDENCE_LADDER) - 1:
-        return {"action": "tighten_confidence", "status": "skipped", "reason": "already at highest"}
-
-    new_val = _CONFIDENCE_LADDER[idx + 1]
-    cfg.trading.min_confidence_to_trade = new_val
-    save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=current, after=new_val, direction="tighten",
-                    reason=action.reason)
-    logger.info("operator: tightened %s: %s → %s — %s", param_name, current, new_val, action.reason)
-    return {"action": "tighten_confidence", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
-
-
-def _action_loosen_confidence(action: OperatorAction) -> dict:
-    param_name = "min_confidence_to_trade"
-    last = _last_action_time("config_patch", param_name)
-    if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
-        return {"action": "loosen_confidence", "status": "cooldown",
-                "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
-        return {"action": "loosen_confidence", "status": "rate_limited",
-                "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
-
-    cfg = load_config()
-    current = getattr(cfg.trading, param_name, "medium")
-    spec = PARAM_REGISTRY[param_name]
-    try:
-        idx = _CONFIDENCE_LADDER.index(current)
-    except ValueError:
-        idx = 1
-    neu_idx = _CONFIDENCE_LADDER.index(spec.neutral)
-    if idx <= 0:
-        return {"action": "loosen_confidence", "status": "skipped", "reason": "already at loosest"}
-    # Never loosen past neutral
-    target_idx = max(idx - 1, neu_idx) if spec.tighten_direction == "up" else min(idx + 1, neu_idx)
-    target_idx = idx - 1  # loosen = step down on ladder
-    if target_idx < _CONFIDENCE_LADDER.index(spec.neutral):
-        target_idx = _CONFIDENCE_LADDER.index(spec.neutral)
-
-    new_val = _CONFIDENCE_LADDER[target_idx]
-    if new_val == current:
-        return {"action": "loosen_confidence", "status": "skipped", "reason": "already at neutral"}
-    cfg.trading.min_confidence_to_trade = new_val
-    save_config(cfg)
-    _persist_action("config_patch", param=param_name,
-                    before=current, after=new_val, direction="loosen",
-                    reason=action.reason)
-    logger.info("operator: loosened %s: %s → %s — %s", param_name, current, new_val, action.reason)
-    return {"action": "loosen_confidence", "status": "executed",
-            "param": param_name, "old": current, "new": new_val}
 
 
 def _action_reduce_sizing(action: OperatorAction) -> dict:
@@ -807,9 +587,7 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
     if new_val >= current:
         return {"action": "reduce_sizing", "status": "skipped", "reason": "already at floor"}
 
-    # Compatibility assignment keeps the one-release flat projection and the
-    # authoritative Demo policy synchronized.
-    cfg.risk.max_demo_position_margin_usdt = new_val
+    cfg.risk.demo.capital.max_position_margin_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
@@ -840,7 +618,7 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
     if new_val <= current:
         return {"action": "increase_sizing", "status": "skipped", "reason": "already at or above neutral"}
 
-    cfg.risk.max_demo_position_margin_usdt = new_val
+    cfg.risk.demo.capital.max_position_margin_usdt = new_val
     cfg.risk.demo.revision += 1
     save_config(cfg)
     _persist_action("config_patch", param=param_name,
@@ -911,9 +689,7 @@ def _action_widen_stop_loss(action: OperatorAction) -> dict:
 def _action_neutral_drift(action: OperatorAction) -> dict:
     """Route neutral-drift proposals to the appropriate loosen handler."""
     param_name = action.params.get("param", "")
-    if param_name == "min_confidence_to_trade":
-        return _action_loosen_confidence(action)
-    elif param_name == "max_demo_position_margin_usdt":
+    if param_name == "max_demo_position_margin_usdt":
         return _action_increase_sizing(action)
     elif param_name == "default_stop_loss_pct":
         return _action_widen_stop_loss(action)
@@ -1100,31 +876,6 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
 
     # Stage 3: Parameter Tuning — bounded recovery plus Level 2 proposals.
 
-    # Rule 5A: Activity dead-zone -> restore confidence to neutral. Owner decision
-    # 2026-07-13: this one bounded recovery is Level 1 because the proposal path has
-    # no consumer and left the loop permanently locked. Poor 7d performance does
-    # not suppress candidate supply; reduce_sizing remains active independently.
-    confidence_recovery_reason = _confidence_recovery_reason(assessment)
-    if confidence_recovery_reason:
-        params: dict[str, str] = {}
-        # Only the B1.1 supply branch changes candidate admission behavior.
-        # Keep the pre-existing fill-clock recovery byte-for-byte epoch-neutral
-        # so its deterministic simulation/replay contract remains intact.
-        if confidence_recovery_reason.startswith((
-                "candidate supply drought:", "legacy aggregate signal-health patch:")):
-            from aletheia.agent_shell.skip_policy import ensure_skip_remediation_policy_epoch
-            policy_epoch_id = ensure_skip_remediation_policy_epoch()
-            params["policy_epoch_id"] = policy_epoch_id
-            confidence_recovery_reason = (
-                f"{confidence_recovery_reason}; policy_epoch={policy_epoch_id}"
-            )
-        actions.append(OperatorAction(
-            action_type="loosen_confidence",
-            level=1,
-            params=params,
-            reason=confidence_recovery_reason,
-        ))
-
     # Rule 5B: Winning streak + high PF -> restore sizing toward neutral.
     # The win-rate guard is disjoint from reduce_sizing (<35), so opposing sizing
     # actions cannot be emitted in one cycle. The handler's shared parameter
@@ -1163,7 +914,8 @@ def decide_actions(assessment: SystemAssessment) -> list[OperatorAction]:
             and 45 <= assessment.win_rate_7d <= 65
             and assessment.trades_48h > 0
             and not assessment.kill_switch_active):
-        for param_name, drift in assessment.param_drift.items():
+        for param_name in PARAM_REGISTRY:
+            drift = assessment.param_drift.get(param_name, "neutral")
             if drift != "neutral":
                 actions.append(OperatorAction(
                     action_type=f"neutral_drift_{param_name}",
@@ -1241,32 +993,6 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             result = _execute_level1_action(action)
             results.append(result)
 
-    # Phase 3b: Record a durable liveness-block token when the loop decided to
-    # loosen confidence but was blocked (cooldown, rate-limit, etc.). Required by
-    # assert_confidence_liveness invariant: a decision to loosen that is prevented
-    # by a transient guard must leave DB evidence so the invariant can distinguish
-    # "legitimately blocked" from "loop silently failed to act".
-    confidence_recovery_reason = _confidence_recovery_reason(assessment)
-    if confidence_recovery_reason:
-        loosen_decided = any(a.action_type == "loosen_confidence" for a in actions)
-        loosen_executed = any(
-            r.get("action") == "loosen_confidence" and r.get("status") == "executed"
-            for r in results
-        )
-        if loosen_decided and not loosen_executed:
-            blocker_reason = next(
-                (r.get("reason", "unknown") for r in results
-                 if r.get("action") == "loosen_confidence"),
-                "blocked",
-            )
-            _persist_action(
-                "operator_control_loop_blocked",
-                param="min_confidence_to_trade",
-                before="high",
-                after="high",
-                reason=f"{confidence_recovery_reason}: {blocker_reason}",
-            )
-
     # Phase 4: Persist assessment as knowledge_item
     summary = {
         "trigger": trigger,
@@ -1291,7 +1017,6 @@ def run_operator_loop(trigger: str = "scheduled") -> dict[str, Any]:
             "kill_switch": assessment.kill_switch_active,
             "open_positions": assessment.open_positions,
             "param_drift": assessment.param_drift,
-            "candidate_supply_drought": assessment.candidate_supply_drought,
             "content_health": assessment.content_health,
         },
         "actions_decided": len(actions),

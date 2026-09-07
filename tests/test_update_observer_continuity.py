@@ -12,6 +12,7 @@ import pytest
 def _settled_update_boundary(monkeypatch):
     from aletheia.observation_lab import runner
     from aletheia.update import applier, target_fresh
+    monkeypatch.setattr(applier.sys, "platform", "darwin")
     monkeypatch.setattr(applier, "_stop_gateway", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_restart_gateway", lambda: {"ok": True})
     monkeypatch.setattr(

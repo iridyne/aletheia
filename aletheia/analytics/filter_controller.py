@@ -700,28 +700,9 @@ def run_controller_observe(min_samples: int = _DEFAULT_MIN_SAMPLES) -> dict[str,
     controller_recommendations with status='shadow_only'. No config is touched.
     """
     generated_at = _now_iso()
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
+    from aletheia.counterfactual.filter_experiments import _require_lab_authority
 
-        if get_authority_source().source == "lab":
-            return {
-                **_empty_run_summary(min_samples, generated_at=generated_at),
-                "pass_status": "success",
-                "pass_reason": "canonical_lab_authority",
-            }
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        if "no such table: observation_authority_state" not in str(exc):
-            return {
-                **_empty_run_summary(
-                    min_samples,
-                    generated_at=generated_at,
-                    skipped_reason="experiment_authority_unavailable",
-                ),
-                "pass_status": "error",
-                "pass_reason": "experiment_authority_unavailable",
-            }
+    _require_lab_authority()
 
     # Freshness gate — skip if the latest observe row is younger than half the
     # configured cadence. Prevents Main APScheduler misfires + manual

@@ -1,8 +1,14 @@
 """Agent orchestrator — runs agents with permission enforcement."""
 
+import asyncio
 import traceback
 
-from aletheia.agent_runtime.run_logger import begin_queued_run, start_run, end_run
+from aletheia.agent_runtime.run_logger import (
+    AgentRunAlreadyActive,
+    begin_queued_run,
+    end_run,
+    start_run,
+)
 from aletheia.storage.models import AgentArtifactRef, AgentRun
 from aletheia.config.loader import load_config
 from aletheia.files.jsonl import write_audit
@@ -29,7 +35,16 @@ async def run_agent(
     provider_name = raw_provider_name if isinstance(raw_provider_name, str) else None
 
     if existing_run is None:
-        run = start_run(agent_name, trigger_type, permission_mode, provider_name)
+        try:
+            run = start_run(agent_name, trigger_type, permission_mode, provider_name)
+        except AgentRunAlreadyActive as exc:
+            return {
+                "run_id": exc.run_id,
+                "status": "already_active",
+                "outputs": [],
+                "errors": [],
+                "output_artifacts": [],
+            }
     else:
         run = existing_run
         begin_queued_run(
@@ -71,6 +86,13 @@ async def run_agent(
                         len(_agent_warnings),
                         "; ".join(str(w) for w in _agent_warnings[:3]),
                     )
+    except asyncio.CancelledError:
+        end_run(
+            run,
+            status="cancelled",
+            errors=["agent run cancelled before lifecycle completion"],
+        )
+        raise
     except Exception as e:
         # #70 fix: persist only the exception type + first line (not the full
         # traceback which leaks internal paths and possibly credentials from

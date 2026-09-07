@@ -61,6 +61,7 @@ class CCXTProfile:
     open_order_requests: tuple[dict[str, object], ...] = ({},)
     closed_order_requests: tuple[dict[str, object], ...] = ({},)
     fill_requests: tuple[dict[str, object], ...] = ({},)
+    client_order_lookup_param: str | None = None
     ledger_requests: tuple[dict[str, object], ...] = ({},)
     supported_market_types: tuple[str, ...] = ("usdt_futures",)
     private_history_retention_days = 90
@@ -95,6 +96,14 @@ class CCXTProfile:
 
     def funding_ledger_requests(self, *, start_at: datetime, received_at: datetime) -> tuple[dict[str, object], ...]:
         return self.ledger_requests
+    async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
+        rows = await exchange.fetch_my_trades(symbol, since, limit, {**params, "paginate": True, "paginationCalls": 10})
+        if not isinstance(rows, list):
+            raise ValueError("invalid CCXT fills")
+        return rows, len(rows) >= limit
+
+    def close_position_absent(self, error: BaseException) -> bool:
+        return False
 
     def validate_identity(self, identity: UTAAccountIdentity) -> None:
         expected = (

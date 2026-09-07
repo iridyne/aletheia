@@ -36,6 +36,7 @@ from typing import Optional
 from aletheia.data.symbols import to_canonical
 from aletheia.portfolio import exchange_sync
 from aletheia.storage.repositories import list_all_open_positions, list_positions
+from aletheia.portfolio.pnl import _account_environment
 
 logger = logging.getLogger("aletheia.position_reconciler")
 
@@ -251,10 +252,6 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         result.sync_status = "local_only"
         return result
 
-    # Demo reconciliation prefers the unified (UTA) state, but only the active
-    # broker's rows. Live accounts are not represented by the current UTA adapters
-    # (all registered adapters are demo/testnet), so a demo aggregate must never be
-    # used to classify live positions.
     cached = None
     # View-completeness gate (P0, 2026-07-02): only trust the unified view for
     # classification when the ACTIVE broker is actually in it. A unified cache can
@@ -262,8 +259,11 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     # leaving only bitget). Classifying OKX locals against that incomplete view
     # orphans them → thrash. This is the "fresh but incomplete" variant the earlier
     # stale-cache fix did not cover. See dynamic_sizing_operator_persona_design.md §4.1.
-    if account_mode == "demo":
-        unified = exchange_sync.get_unified_cached_state()
+    if target_execution_mode:
+        unified = (
+            exchange_sync.get_unified_cached_state(execution_modes=(target_execution_mode,))
+            if account_mode == "live" else exchange_sync.get_unified_cached_state()
+        )
         connected = {
             account.get("broker_id")
             for account in ((unified or {}).get("accounts") or [])
@@ -315,24 +315,6 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
                 "Reconcile: active-broker view unusable (%s) — not classifying "
                 "against an incomplete or ambiguous unified view.", view_reason,
             )
-    if cached is None:
-        # No fresh multi-broker (unified) view. The legacy per-mode cache is
-        # written ONLY by the Bitget sync, so falling back to it is safe only when
-        # the active paper broker IS Bitget. On a non-Bitget account (e.g.
-        # okx_demo) that cache is fresh-but-EMPTY of this account's positions, so
-        # classifying against it marks every real position `orphaned` →
-        # reconcile-close (local only) → the position survives on the exchange →
-        # re-adopt next cycle → an endless false-orphan thrash (41% of positions
-        # closed reconciled_gone, 56% re-adopted, strategy attribution destroyed).
-        # For a non-Bitget account with no usable unified view, leave `cached`
-        # None so the guard below reports all-managed and bails — never infer
-        # orphans from a wrong-broker cache. Live keeps the legacy path (live
-        # reconcile is alert-only and Bitget-based today). See
-        # docs/research/audits/ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.
-        # The legacy cache is Bitget-only. It is valid for Bitget demo/live, but
-        # never for OKX/Binance or any future broker account.
-        if (target_execution_mode or "").startswith("bitget"):
-            cached = exchange_sync.get_cached_state(account_mode)
     sync_status = exchange_sync.status_for(cached)
 
     result.sync_status = sync_status
@@ -341,7 +323,7 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
         result.view_evidence = build_view_evidence(
             cached,
             broker_id=target_execution_mode,
-            account_environment=account_mode,
+            account_environment=_account_environment(target_execution_mode),
             execution_mode=target_execution_mode,
             complete=(cached is not None and sync_status == "ok"),
         )
@@ -807,7 +789,6 @@ def _validated_adoption_leverage(
 def _reconciliation_identity(
     exchange_pos: dict,
     *,
-    account_mode: str,
     execution_mode: str,
     symbol: str,
     market_type: str,
@@ -825,10 +806,11 @@ def _reconciliation_identity(
             market_type=market_type,
             direction=direction,
         )
+    account_environment = _account_environment(execution_mode)
     supplied_environment = str(
-        exchange_pos.get("account_environment") or account_mode
+        exchange_pos.get("account_environment") or account_environment
     )
-    if supplied_environment != account_mode:
+    if supplied_environment != account_environment:
         raise _adoption_error(
             field="account_environment",
             symbol=symbol,
@@ -837,7 +819,7 @@ def _reconciliation_identity(
         )
     account_fingerprint = logical_account_fingerprint(
         broker_id=broker_id,
-        account_environment=account_mode,
+        account_environment=account_environment,
         execution_mode=execution_mode,
     )
     supplied_fingerprint = str(exchange_pos.get("account_fingerprint") or "")
@@ -851,7 +833,7 @@ def _reconciliation_identity(
     identity = {
         "execution_mode": execution_mode,
         "broker_id": broker_id,
-        "account_environment": account_mode,
+        "account_environment": account_environment,
         "account_fingerprint": account_fingerprint,
         "symbol": symbol,
         "market_type": market_type,
@@ -963,7 +945,6 @@ def _reconcile_managed_leverage(
             execution_mode = str(local.get("execution_mode") or "")
             identity = _reconciliation_identity(
                 exchange,
-                account_mode=account_mode,
                 execution_mode=execution_mode,
                 symbol=item.symbol,
                 market_type=market_type,
@@ -987,7 +968,7 @@ def _reconcile_managed_leverage(
             },
             "projection_source": "exact_managed_exchange_view",
         }
-        repo.update_position(
+        repo.update_open_position_materialization(
             position_id,
             leverage=leverage,
             reconciliation_identity=_merged_json(
@@ -1094,7 +1075,8 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     """
     from aletheia.storage.models import TradeProposal, Order, Position
     from aletheia.storage.repositories import (
-        transaction, insert_trade_proposal, insert_order, insert_position, update_position,
+        transaction, insert_trade_proposal, insert_order, insert_position,
+        update_open_position_exit_plan,
     )
     from aletheia.files.jsonl import write_audit
 
@@ -1162,7 +1144,6 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     )
     reconciliation_identity = _reconciliation_identity(
         exchange_pos,
-        account_mode=account_mode,
         execution_mode=execution_mode,
         symbol=symbol,
         market_type=market_type,
@@ -1300,7 +1281,7 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         insert_trade_proposal(proposal)
         insert_order(order)
         insert_position(position)
-        update_position(
+        update_open_position_exit_plan(
             position.id,
             stop_source="adopted_default_pct",
             exit_plan_version=1,

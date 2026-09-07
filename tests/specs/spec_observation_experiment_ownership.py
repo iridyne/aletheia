@@ -85,18 +85,6 @@ _WRITER_ALLOWLIST = frozenset({
     "aletheia/universe/service.py",
 })
 
-_TREATMENT_CALLER_ALLOWLIST = frozenset({
-    "aletheia/agents/paper_trader_ranker.py",
-    "aletheia/analytics/factor_feedback.py",
-    "aletheia/knowledge/guards.py",
-    "aletheia/learning/economic_knowledge.py",
-    "aletheia/learning/experiments.py",
-    "aletheia/learning/prompt_bundles.py",
-    "aletheia/risk/engine.py",
-    "aletheia/trading/entry_plan_compiler.py",
-    "aletheia/trading/sizing_policy.py",
-    "aletheia/universe/allocator.py",
-})
 
 _TREATMENT_APIS = ("apply_numeric_treatment", "apply_boolean_treatment")
 
@@ -207,21 +195,6 @@ def test_legacy_experiment_reference_inventory_cannot_grow():
     )
 
 
-@spec_claim(SpecClaim(
-    "OEO-S02", _CONTRACT, "Frozen legacy treatment-call inventory", "L2a",
-    "Phase 1 enumerates every legacy apply_numeric_treatment/apply_boolean_treatment reference and rejects new callers.",
-))
-def test_legacy_treatment_caller_inventory_cannot_grow():
-    discovered = {
-        path
-        for path, source in _production_sources().items()
-        if any(api in source for api in _TREATMENT_APIS)
-    }
-    _assert_exact_inventory(
-        label="LEGACY TREATMENT CALLER",
-        discovered=discovered,
-        allowed=_TREATMENT_CALLER_ALLOWLIST,
-    )
 
 
 @spec_claim(SpecClaim(

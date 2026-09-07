@@ -8,14 +8,13 @@ The AI's intended protective levels were discarded between proposal and position
 
 These tests assert the 1-to-1 contract end-to-end:
 
-    proposal.stop_price  ──gateway──>  broker acknowledgement
+    proposal.stop_price  ──gateway──>  UTA acknowledgement
                           ──private fill reconciliation──>
                           positions.stop_price (EXACT match)
 
-Coverage is intentionally broker-PARALLEL: the same claim is verified against
-okx_demo, binance_testnet, AND bitget so a future copy-paste into any one broker
-cannot silently re-drop the stop. Only the exchange HTTP boundary is mocked
-(place_order / private history); the order→fill→position DB chain runs for real.
+Coverage uses the same coordinator for okx_demo, binance_testnet, and Bitget.
+Only normalized UTA submission/private-history reports are isolated; the
+order→fill→position DB chain and approved protection propagation run for real.
 
 Contract: pipeline_stop_propagation
 Claim prefix: PL-STOP
@@ -30,7 +29,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 # ---------------------------------------------------------------------------
-# Shared DB + secrets setup
+# Shared isolated DB + UTA boundary setup
 # ---------------------------------------------------------------------------
 
 
@@ -72,185 +71,92 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _stub_exchange_secrets(monkeypatch):
-    """Make every exchange client constructible without real credentials."""
-    import aletheia.config.secrets as secrets
-    monkeypatch.setattr(secrets, "get_secret", lambda *a, **k: "test-secret")
-    # Clients import get_secret into their own module namespace.
-    for modpath in (
-        "aletheia.exchanges.okx.client",
-        "aletheia.exchanges.binance.client",
-        "aletheia.exchanges.bitget.client",
-    ):
-        try:
-            mod = __import__(modpath, fromlist=["get_secret"])
-            monkeypatch.setattr(mod, "get_secret", lambda *a, **k: "test-secret", raising=False)
-        except Exception:
-            pass
-    # Skip the external-API order-constraints fetch in CI/offline environments.
-    # The gateway calls prepare_exchange_quantity before executing any real-exchange
-    # proposal; without network access it raises ConstraintUnavailable → rejected.
-    # Tests already mock place_order; returning the quantity unchanged is correct
-    # because the tests assert post-fill DB state, not size normalisation.
-    import aletheia.execution.order_constraints as _oc
-    monkeypatch.setattr(_oc, "prepare_exchange_quantity", lambda _mode, _sym, _mtype, qty, _price: qty)
-    import aletheia.execution.gateway as _gw
-    monkeypatch.setattr(_gw, "_prepare_exchange_quantity", lambda _mode, _sym, _mtype, qty, _price: (qty, None))
-    # Also prevent the OKX demo symbol-list refresh from hitting the network.
-    import aletheia.execution.okx_broker as _okx
-    monkeypatch.setattr(_okx, "_get_demo_symbols", lambda *a, **k: None)
+def _stub_uta_execution(monkeypatch):
+    """Isolate account qualification and venue rules; no credential access."""
+    from aletheia.execution import coordinator, gateway, order_constraints
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
+    monkeypatch.setattr(order_constraints, "prepare_exchange_quantity", lambda mode, symbol, market, qty, price: qty)
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda mode, symbol, market, qty, price: (qty, None))
 
 
-# Each broker: (label, module path, OrderResponse class path, default execution_mode)
-_BROKERS = [
-    ("okx", "aletheia.execution.okx_broker", "aletheia.exchanges.okx.client", "okx_demo"),
-    ("binance", "aletheia.execution.binance_broker", "aletheia.exchanges.binance.client", "binance_testnet"),
-    ("bitget", "aletheia.execution.bitget_broker", "aletheia.exchanges.bitget.client", "bitget_live_limited"),
-]
+_BROKERS = ["okx_demo", "binance_testnet", "bitget_live_limited"]
 
 
-def _patch_filled_place_order(monkeypatch, client_module_path, fill_price):
-    """Patch submission acknowledgement; private fills remain a separate fact."""
-    client_mod = __import__(client_module_path, fromlist=["OrderResponse"])
-    OrderResponse = client_mod.OrderResponse
+def _patch_filled_place_order(monkeypatch, fill_price):
+    from datetime import datetime, timezone
+    from tests.uta.test_execution_coordinator import _Adapter
+    from aletheia.uta.models import SubmissionReport, CommandEvidence, OrderStatusReport, OrderLifecycle, UTACapabilities
 
-    # Find the client class (OKXClient / BinanceClient / BitgetClient).
-    client_cls = next(
-        getattr(client_mod, n)
-        for n in dir(client_mod)
-        if n.endswith("Client") and isinstance(getattr(client_mod, n), type)
-    )
+    sequence = 0
+    captured = []
 
-    sequence = {"value": 0}
+    async def submit(command):
+        nonlocal sequence
+        captured.append(command)
+        sequence += 1
+        now = datetime.now(timezone.utc)
+        return SubmissionReport(identity=command.expected_account, command_id=command.command_id,
+            evidence=CommandEvidence.ACKNOWLEDGED, received_at=now,
+            client_order_id=command.client_order_id, venue_order_id=f"EX-STOP-{sequence}", profile_version="1",
+            order=OrderStatusReport(identity=command.expected_account, instrument=command.instrument,
+                side=command.side, order_type=command.order_type, original_quantity=command.quantity,
+                filled_quantity=command.quantity, price=str(fill_price), state=OrderLifecycle.FILLED, received_at=now))
 
-    async def fake_place_order(self, order):
-        sequence["value"] += 1
-        return OrderResponse(
-            order_id=f"EX-STOP-{sequence['value']}",
-            client_oid=getattr(order, "client_oid", None),
-            status="filled",
-            fill_price=fill_price,
-            filled_quantity=order.quantity,
-        )
+    def adapter(mode):
+        instance = _Adapter(submit, mode)
+        instance.capabilities = UTACapabilities(source="isolated_test")
+        return instance
 
-    async def fake_close(self):
-        return None
-
-    async def fake_set_leverage(self, *args, **kwargs):
-        return None
-
-    async def fake_transfer(self, *args, **kwargs):
-        return None
-
-    monkeypatch.setattr(client_cls, "place_order", fake_place_order)
-    monkeypatch.setattr(client_cls, "close", fake_close, raising=False)
-    monkeypatch.setattr(client_cls, "set_leverage", fake_set_leverage, raising=False)
-    monkeypatch.setattr(client_cls, "transfer", fake_transfer, raising=False)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", adapter)
+    return captured
 
 
-def _private_fill_row(
-    order: dict,
-    *,
-    fill_price: float,
-    fee_rate: float,
-) -> dict:
-    return {
-        "orderId": order["exchange_order_id"],
-        "tradeId": (
-            f"PRIVATE-{order['execution_mode']}-{order['exchange_order_id']}"
-        ),
-        "clientOid": order.get("client_order_id"),
-        "fillPrice": str(fill_price),
-        "fillQuantity": str(order["quantity"]),
-        "fee": str(float(fill_price) * float(order["quantity"]) * fee_rate),
-        "feeCoin": "USDT",
-        "cTime": "1784050000000",
-    }
+def _patch_private_fill_history(monkeypatch, *, fill_price: float, fee_rate: float = 0.0006):
+    """Normalized private reports scoped to each persisted Order identity."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from aletheia.execution import reconciliation
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import FillReport, FillListReport, OrderListReport, OrderQueryReport, FundingLedgerReport
+    from tests.uta.test_execution_coordinator import _identity
 
+    modes = ("okx_demo", "binance_testnet", "bitget_demo", "okx_live_limited", "binance_live_limited", "bitget_live_limited")
+    monkeypatch.setattr(reconciliation, "build_uta_registry", lambda *args: SimpleNamespace(
+        configured_identities=lambda: tuple(_identity(mode) for mode in modes)))
 
-def _patch_private_fill_history(
-    monkeypatch,
-    broker_module_path: str,
-    client_module_path: str,
-    *,
-    fill_price: float,
-    fee_rate: float = 0.0006,
-):
-    """Expose exact per-fill evidence after the submission handoff."""
-    broker = __import__(broker_module_path, fromlist=["fetch_private_fill_evidence"])
-    client_mod = __import__(client_module_path, fromlist=["BitgetClient"])
+    async def query(mode, method, request, *, expected_account):
+        assert expected_account == _identity(mode)
+        now = datetime.now(timezone.utc)
+        envelope = dict(identity=expected_account, completeness="complete", scope=request.scope,
+                        received_at=now, profile_version="1")
+        if method == "get_open_orders":
+            return OrderListReport(**envelope)
+        if method == "get_order":
+            return OrderQueryReport(**envelope)
+        if method == "get_funding_ledger":
+            return FundingLedgerReport(**envelope)
+        assert method == "get_fills"
+        fills = []
+        for order in repo.list_orders(limit=1000):
+            if order["execution_mode"] != mode or not order["exchange_order_id"]:
+                continue
+            if request.venue_order_id and request.venue_order_id != order["exchange_order_id"]:
+                continue
+            if request.client_order_id and request.client_order_id != order["client_order_id"]:
+                continue
+            instrument = instrument_from_local(order["symbol"], order["market_type"])
+            if request.scope.instrument and request.scope.instrument != instrument:
+                continue
+            fills.append(FillReport(identity=expected_account, instrument=instrument,
+                venue_order_id=order["exchange_order_id"], client_order_id=order["client_order_id"],
+                venue_fill_id=f"PRIVATE-{mode}-{order["exchange_order_id"]}",
+                side="buy" if order["direction"] == "long" else "sell", quantity=str(order["quantity"]),
+                price=str(fill_price), fee=str(fill_price * order["quantity"] * fee_rate), fee_currency="USDT",
+                executed_at=datetime.fromtimestamp(1784050000, tz=timezone.utc), received_at=now))
+        return FillListReport(**envelope, fills=tuple(fills))
 
-    if hasattr(broker, "fetch_private_fill_evidence"):
-        async def _evidence(order):
-            return [
-                _private_fill_row(
-                    order,
-                    fill_price=fill_price,
-                    fee_rate=fee_rate,
-                )
-            ]
-
-        monkeypatch.setattr(broker, "fetch_private_fill_evidence", _evidence)
-        monkeypatch.setattr(
-            "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-            _evidence,
-        )
-
-    if hasattr(client_mod, "BitgetClient"):
-        client_cls = client_mod.BitgetClient
-
-        async def _open_orders(self, **kwargs):
-            return []
-
-        async def _fills(self, **kwargs):
-            from aletheia.execution.reconciliation import _list_unresolved_core_orders
-
-            execution_mode = getattr(self, "execution_mode", None) or (
-                "bitget_demo" if getattr(self, "mode", "live") == "demo"
-                else "bitget_live_limited"
-            )
-            return [
-                _private_fill_row(
-                    order,
-                    fill_price=fill_price,
-                    fee_rate=fee_rate,
-                )
-                for order in _list_unresolved_core_orders()
-                if order.get("execution_mode") == execution_mode
-                and order.get("exchange_order_id")
-            ]
-
-        async def _order_fills(self, *, order_id, **kwargs):
-            from aletheia.storage import repositories as repo
-
-            order = next(
-                (
-                    row for row in repo.list_orders(limit=1000)
-                    if str(row.get("exchange_order_id") or "") == str(order_id)
-                ),
-                None,
-            )
-            return (
-                [
-                    _private_fill_row(
-                        order,
-                        fill_price=fill_price,
-                        fee_rate=fee_rate,
-                    )
-                ]
-                if order is not None
-                else []
-            )
-
-        monkeypatch.setattr(client_cls, "get_open_orders", _open_orders)
-        monkeypatch.setattr(client_cls, "get_fills", _fills)
-        monkeypatch.setattr(client_cls, "get_order_fills", _order_fills)
-
-        from aletheia.execution.reconciliation import _UTAReconciliationProjection
-
-        monkeypatch.setattr(_UTAReconciliationProjection, "get_open_orders", _open_orders)
-        monkeypatch.setattr(_UTAReconciliationProjection, "get_fills", _fills)
-        monkeypatch.setattr(_UTAReconciliationProjection, "get_order_fills", _order_fills)
+    monkeypatch.setattr(reconciliation, "query_uta", query)
 
 
 def _materialize_exchange_result(result: dict) -> str:
@@ -279,20 +185,19 @@ def _materialize_exchange_result(result: dict) -> str:
         "AND take_profit onto the new Position row (okx/binance/bitget) — not None",
     ),
 )
-@pytest.mark.parametrize("label,broker_path,client_path,exec_mode", _BROKERS)
+@pytest.mark.parametrize("exec_mode", _BROKERS)
 def test_broker_open_persists_stop_and_tp(
-    tmp_path, monkeypatch, label, broker_path, client_path, exec_mode
+    tmp_path, monkeypatch, exec_mode
 ):
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, client_path, fill_price=60000.0)
-    _patch_private_fill_history(
-        monkeypatch, broker_path, client_path, fill_price=60000.0
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=60000.0)
+    _patch_private_fill_history(monkeypatch, fill_price=60000.0)
 
     from aletheia.storage import repositories as repo
 
-    broker = __import__(broker_path, fromlist=["execute_live_order"])
+    from aletheia.execution import coordinator as broker
+    label = exec_mode
     proposal_id = f"p-stop-{label}"
     risk_decision_id = f"rd-stop-{label}"
     seed_order_authority(
@@ -308,7 +213,7 @@ def test_broker_open_persists_stop_and_tp(
         stop_price=61200.0,
         take_profit=57600.0,
     )
-    result = broker.execute_live_order(
+    result = broker.execute_order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
         symbol="BTC/USDT",
@@ -348,20 +253,19 @@ def test_broker_open_persists_stop_and_tp(
         "for a short, the lower stop wins (okx/binance/bitget)",
     ),
 )
-@pytest.mark.parametrize("label,broker_path,client_path,exec_mode", _BROKERS)
+@pytest.mark.parametrize("exec_mode", _BROKERS)
 def test_broker_average_in_tightens_stop(
-    tmp_path, monkeypatch, label, broker_path, client_path, exec_mode
+    tmp_path, monkeypatch, exec_mode
 ):
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, client_path, fill_price=60000.0)
-    _patch_private_fill_history(
-        monkeypatch, broker_path, client_path, fill_price=60000.0
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=60000.0)
+    _patch_private_fill_history(monkeypatch, fill_price=60000.0)
 
     from aletheia.storage import repositories as repo
 
-    broker = __import__(broker_path, fromlist=["execute_live_order"])
+    from aletheia.execution import coordinator as broker
+    label = exec_mode
 
     # First fill: short with a loose stop at 61500.
     first_proposal_id = f"p-avg1-{label}"
@@ -378,7 +282,7 @@ def test_broker_average_in_tightens_stop(
         execution_mode=exec_mode,
         stop_price=61500.0,
     )
-    r1 = broker.execute_live_order(
+    r1 = broker.execute_order(
         proposal_id=first_proposal_id, risk_decision_id=first_risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="short",
         order_type="market", quantity=0.01, price=60000.0,
@@ -400,7 +304,7 @@ def test_broker_average_in_tightens_stop(
         execution_mode=exec_mode,
         stop_price=60800.0,
     )
-    r2 = broker.execute_live_order(
+    r2 = broker.execute_order(
         proposal_id=second_proposal_id, risk_decision_id=second_risk_decision_id,
         symbol="BTC/USDT", market_type="usdt_futures", direction="short",
         order_type="market", quantity=0.01, price=60000.0,
@@ -433,14 +337,9 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
     live-only stale-data gate is skipped; default config (permission=Paper) approves
     a small demo proposal."""
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=1551.57)
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.okx_broker",
-        "aletheia.exchanges.okx.client",
-        fill_price=1551.57,
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=1551.57)
+    _patch_private_fill_history(monkeypatch, fill_price=1551.57,)
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db
@@ -501,14 +400,9 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
 )
 def test_no_open_position_silently_loses_proposal_stop(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=100.0)
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.okx_broker",
-        "aletheia.exchanges.okx.client",
-        fill_price=100.0,
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=100.0)
+    _patch_private_fill_history(monkeypatch, fill_price=100.0,)
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db

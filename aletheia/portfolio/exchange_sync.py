@@ -1,4 +1,4 @@
-"""Exchange Account Sync — pull real account state from Bitget (read-only).
+"""Exchange Account Sync — cache read-only UTA account projections.
 
 Closes the portfolio-sync-gap (memory `aletheia-portfolio-sync-gap` /
 WEBUI_BACKEND_HANDOFF #3): until now `compute_portfolio` only saw locally-managed
@@ -23,7 +23,6 @@ Governance:
 import json
 import logging
 import math
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -43,54 +42,10 @@ def _reject_non_finite_json(value: str) -> None:
     raise ValueError(f"non-finite JSON number: {value}")
 
 
-@dataclass
-class AssetBreakdown:
-    coin: str
-    usdt_value: float   # current value in USDT
-    pct: float          # percentage of total equity (0-100)
-
-
-@dataclass
-class ExchangeAccountState:
-    mode: str  # "demo" | "live"
-    equity_usdt: float
-    available_usdt: float
-    frozen_usdt: float
-    futures_unrealized_pnl: float
-    open_positions_count: int
-    open_orders_count: int
-    fetched_at: str  # ISO UTC
-    asset_breakdown: list  # list[AssetBreakdown] as dicts for JSON serialisation
-    positions: list  # list[dict] — raw exchange positions for exposure/PnL wiring
-
 
 def _settings_key(mode: str) -> str:
     return f"{_KEY_PREFIX}.{mode}"
 
-
-def _store(state: ExchangeAccountState) -> None:
-    """Persist the latest snapshot. Idempotent upsert into settings.
-
-    The writer lane owns the connection, so an abandoned timeout worker cannot
-    leave an implicit transaction open on its thread-local connection.
-    """
-    payload = json.dumps({
-        "mode": state.mode,
-        "equity_usdt": state.equity_usdt,
-        "available_usdt": state.available_usdt,
-        "frozen_usdt": state.frozen_usdt,
-        "futures_unrealized_pnl": state.futures_unrealized_pnl,
-        "open_positions_count": state.open_positions_count,
-        "open_orders_count": state.open_orders_count,
-        "fetched_at": state.fetched_at,
-        "asset_breakdown": state.asset_breakdown or [],
-        "positions": state.positions or [],
-    }, allow_nan=False)
-    execute_write(
-        "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        (_settings_key(state.mode), payload),
-    )
 
 
 def _read_raw(mode: str) -> Optional[dict]:
@@ -156,45 +111,6 @@ def account_available_value(state: Optional[dict]) -> float | None:
     return _numeric_account_value(state, "available_usdt", "total_available_usdt")
 
 
-def get_cached_state(mode: Optional[str] = None) -> Optional[dict]:
-    """Return the cached state for `mode` (defaults to current cfg.exchange.mode).
-
-    Adds an `age_seconds` field. Caller decides what to do with stale data.
-    Returns None if nothing has ever been fetched for this mode.
-
-    Multi-broker default-path correction: the legacy per-mode cache key is
-    "demo"/"live" and is written ONLY by the Bitget-specific sync
-    (`sync_exchange_account`). When the active paper broker has migrated away
-    from Bitget (e.g. paper_execution_mode="okx_demo"), that "demo" cache holds
-    the stale/idle Bitget balance (~$167), NOT the real active account. Callers
-    that pass `mode=None` (the trading context, PnL, scorecard) want the REAL
-    active-account equity — so on the default path we prefer the unified
-    (multi-broker) cache projection when the active broker isn't Bitget. Callers
-    that pass an explicit `mode` (CLI bitget tools) still get the per-mode cache
-    verbatim. This keeps the System Operator from seeing a phantom near-bankrupt account
-    and skipping every signal (the "minimum profit loop" stall, 2026-06-23).
-    """
-    explicit_mode = mode is not None
-    if mode is None:
-        cfg = load_config()
-        mode = cfg.exchange.mode
-        # Default path + active paper broker is non-Bitget → use unified cache,
-        # which carries the true total equity across all brokers.
-        active_boundary = cfg.exchange.uta_read_boundary_for(
-            cfg.exchange.paper_execution_mode or ""
-        )
-        active_mode = cfg.exchange.paper_execution_mode or ""
-        if not explicit_mode and active_mode not in {"", "paper_internal"} and (
-            not (cfg.exchange.paper_execution_mode or "").startswith("bitget")
-            or active_boundary == "uta_v1"
-        ):
-            return get_unified_cached_state()
-    raw = _read_raw(mode)
-    if raw is None:
-        return None
-    raw["age_seconds"] = _age_seconds(raw.get("fetched_at", ""))
-    return raw
-
 
 def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -> str:
     """Classify a cached state for the UI: ok / stale / unconfigured / error."""
@@ -214,51 +130,9 @@ def status_for(state: Optional[dict], max_age_sec: int = _DEFAULT_MAX_AGE_SEC) -
     return "ok"
 
 
-def _client_or_unconfigured() -> tuple[Optional[object], str]:
-    """Return (client, mode) when creds are configured, else (None, mode).
-
-    `BitgetClient._get_creds()` raises if any of the 3 secrets is missing — we
-    catch that and report `unconfigured` cleanly so callers never see an exception.
-    """
-    cfg = load_config()
-    mode = cfg.exchange.mode
-    try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-        client = BitgetClient(mode=mode, profile=configured_bitget_profile())
-        client._get_creds()  # raises RuntimeError when not configured
-        return client, mode
-    except Exception:
-        return None, mode
-
-
-def _run_async(coro, timeout: float = 10.0):
-    """Run a coroutine to completion from sync code, safe whether or not a loop runs.
-
-    Uses shutdown(wait=False) so that a hung asyncio.run() teardown (Windows
-    ProactorEventLoop IOCP drain) doesn't block the calling thread forever.
-    The outer _run_sync_with_timeout has a 75s budget; individual API calls
-    must finish well within that (default 10s each) to avoid the outer guard
-    abandoning this thread while inner pools still hold live sockets.
-    """
-    import asyncio
-    from concurrent.futures import ThreadPoolExecutor
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    pool = ThreadPoolExecutor(max_workers=1)
-    try:
-        return pool.submit(asyncio.run, coro).result(timeout=timeout)
-    finally:
-        pool.shutdown(wait=False)
-
-
-
-
-def get_unified_cached_state() -> Optional[dict]:
-    """Return the cached unified (multi-broker) state."""
-    raw = _read_raw("unified")
+def get_unified_cached_state(*, execution_modes: tuple[str, ...] | None = None) -> Optional[dict]:
+    """Return the UTA cache for the requested scope (default: demo accounts)."""
+    raw = _read_raw(_unified_cache_scope(execution_modes))
     if raw is None:
         return None
     if raw.get("cache_error") == "invalid_cache":
@@ -273,6 +147,8 @@ def get_unified_cached_state() -> Optional[dict]:
             if account.get("broker_id")
         ]
     identity_current, identity_reason = _unified_identity_is_current(raw)
+    if identity_current and _unified_cache_scope(raw.get("execution_modes")) != _unified_cache_scope(execution_modes):
+        identity_current, identity_reason = False, "uta_account_scope_mismatch"
     raw["identity_current"] = identity_current
     raw["identity_reason"] = identity_reason
     raw["sync_status"] = _unified_sync_status(raw)
@@ -281,7 +157,7 @@ def get_unified_cached_state() -> Optional[dict]:
 
 
 def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
-    """Generation/profile/boundary mismatch immediately revokes cache authority."""
+    """Generation/profile/adapter mismatch immediately revokes cache authority."""
     scope_value = state.get("execution_modes")
     if not isinstance(scope_value, (list, tuple)):
         return False, "uta_scope_missing"
@@ -291,18 +167,15 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
     if len(execution_modes) != len(scope_value):
         return False, "uta_scope_invalid"
     try:
-        from aletheia.uta.manager import build_uta_registry, expected_cache_identity
+        from aletheia.uta.manager import build_uta_registry
 
         cfg = load_config()
         registry = build_uta_registry(cfg)
-        expected = {}
-        for identity in registry.configured_identities():
-            if identity.execution_mode not in execution_modes:
-                continue
-            boundary = cfg.exchange.uta_read_boundary_for(identity.execution_mode)
-            expected[identity.execution_mode] = expected_cache_identity(
-                cfg, identity, boundary
-            ).model_dump(mode="json")
+        expected = {
+            identity.execution_mode: identity.model_dump(mode="json")
+            for identity in registry.configured_identities()
+            if identity.execution_mode in execution_modes
+        }
     except Exception:
         return False, "uta_registry_configuration_invalid"
     observed = {
@@ -318,8 +191,6 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         account = observed[execution_mode]
         if account.get("identity") != expected_identity:
             return False, "uta_account_generation_mismatch"
-        if account.get("boundary") != cfg.exchange.uta_read_boundary_for(execution_mode):
-            return False, "uta_boundary_mismatch"
     return True, "current"
 
 
@@ -382,215 +253,14 @@ def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
     return False, f"{active} not connected (have {sorted(connected) or 'none'})"
 
 
-def sync_exchange_account() -> Optional[ExchangeAccountState]:
-    """Fetch the real account state from Bitget once and cache it.
-
-    Returns the new state on success, or None on any failure (caller falls back
-    to the previous cached state). Never raises; logs and writes an audit on error.
-    """
-    client, mode = _client_or_unconfigured()
-    if client is None:
-        logger.info("exchange_sync skipped: %s credentials not configured", mode)
-        return None
-
-    try:
-        # Build per-coin breakdown. Strategy:
-        # 1. Try spot/account/assets — works for live classic accounts, returns real coin balances.
-        # 2. Try mix/account/accounts — futures account, authoritative for classic demo accounts.
-        # 3. If both return zero/empty, try UTA v3 API (unified trading account).
-        # 4. Each non-USDT coin value is coin_qty * USDT_ticker_price (or usdValue from UTA).
-        coin_usdt: dict[str, float] = {}  # coin → USDT value
-
-        # Spot holdings (live accounts / coins held in spot wallet)
-        try:
-            balances = _run_async(client.get_balances())
-            for b in balances:
-                coin = (b.currency or "").upper()
-                qty = float(b.available) + float(b.frozen)
-                if qty <= 0:
-                    continue
-                if coin == "USDT":
-                    coin_usdt["USDT"] = coin_usdt.get("USDT", 0) + qty
-                else:
-                    # Convert to USDT via spot ticker
-                    try:
-                        ticker = _run_async(client.get_ticker(f"{coin}USDT", market_type="spot"))
-                        coin_usdt[coin] = coin_usdt.get(coin, 0) + qty * ticker.last_price
-                    except Exception:
-                        pass  # skip if no USDT pair
-        except Exception as e:
-            logger.info("exchange_sync: spot balances skipped (%s)", e)
-
-        # Mix (futures) account — authoritative total equity for classic demo accounts
-        usdt_avail = 0.0
-        usdt_frozen = 0.0
-        futures_upnl = 0.0
-        equity_from_mix = None
-        try:
-            mix_acct = _run_async(client.get_mix_account("USDT-FUTURES"))
-            if mix_acct:
-                equity_from_mix = float(mix_acct.get("usdtEquity") or mix_acct.get("accountEquity") or 0)
-                usdt_avail = float(mix_acct.get("available") or 0)
-                usdt_frozen = float(mix_acct.get("locked") or 0)
-                futures_upnl = float(mix_acct.get("unrealizedPL") or mix_acct.get("crossedUnrealizedPL") or 0)
-                # If spot returned nothing (classic demo), use mix USDT as the whole balance
-                if not coin_usdt and equity_from_mix > 0:
-                    coin_usdt["USDT"] = equity_from_mix
-                logger.info("exchange_sync: mix equity=%.4f avail=%.4f", equity_from_mix, usdt_avail)
-        except Exception as e:
-            logger.info("exchange_sync: mix account skipped (%s), falling back to spot", e)
-
-        # UTA (Unified Trading Account) — fallback when classic spot+mix both return zero.
-        # Unified accounts (v3 API) hold multi-coin assets that are invisible to v2 endpoints.
-        if not coin_usdt and (equity_from_mix is None or equity_from_mix <= 0):
-            try:
-                uta_acct = _run_async(client.get_uta_account())
-                if uta_acct:
-                    uta_equity = float(uta_acct.get("usdtEquity") or 0)
-                    uta_unrealised = float(uta_acct.get("usdtUnrealisedPnl") or uta_acct.get("unrealisedPnl") or 0)
-                    assets = uta_acct.get("assets") or []
-                    if assets:
-                        for a in assets:
-                            coin = (a.get("coin") or "").upper()
-                            usd_val = float(a.get("usdValue") or 0)
-                            avail = float(a.get("available") or 0)
-                            locked = float(a.get("locked") or 0)
-                            if usd_val > 0:
-                                coin_usdt[coin] = coin_usdt.get(coin, 0) + usd_val
-                            if coin == "USDT":
-                                usdt_avail += avail
-                                usdt_frozen += locked
-                        futures_upnl += uta_unrealised
-                        if uta_equity > 0:
-                            equity_from_mix = uta_equity
-                        logger.info(
-                            "exchange_sync: UTA account equity=%.4f assets=%d",
-                            uta_equity, len(assets),
-                        )
-            except Exception as e:
-                logger.info("exchange_sync: UTA account skipped (%s)", e)
-
-        # Futures positions — unrealized PnL and open count
-        positions_count = 0
-        positions_list: list[dict] = []
-        try:
-            futures = _run_async(client.get_positions())
-            positions_count = len(futures)
-            from aletheia.portfolio.disappearance_confirmation import (
-                logical_account_fingerprint,
-            )
-
-            broker_id = "bitget_demo" if mode == "demo" else "bitget_live_limited"
-            account_fingerprint = logical_account_fingerprint(
-                broker_id=broker_id,
-                account_environment=mode,
-                execution_mode=broker_id,
-            )
-            positions_list = [
-                {
-                    "broker_id": broker_id,
-                    "account_environment": mode,
-                    "account_fingerprint": account_fingerprint,
-                    "position_id": getattr(p, "position_id", None),
-                    "symbol": p.symbol,
-                    "side": p.side,
-                    "quantity": p.quantity,
-                    "entry_price": p.entry_price,
-                    "unrealized_pnl": float(p.unrealized_pnl or 0),
-                    "leverage": p.leverage,
-                    "mark_price": float(p.mark_price or 0),
-                    # get_positions() returns derivative positions only — tag the
-                    # type so symbol display (perp → no slash) stays correct.
-                    "market_type": "usdt_futures",
-                }
-                for p in futures
-            ]
-            if equity_from_mix is None:
-                futures_upnl = sum(float(p.unrealized_pnl or 0) for p in futures)
-        except Exception as e:
-            logger.info("exchange_sync: futures positions skipped (%s)", e)
-
-        # Open orders
-        open_orders = 0
-        try:
-            open_orders += len(_run_async(client.get_open_orders(market_type="spot")))
-        except Exception as e:
-            logger.info("exchange_sync: spot open orders skipped (%s)", e)
-        try:
-            open_orders += len(_run_async(client.get_open_orders(market_type="usdt_futures")))
-        except Exception as e:
-            logger.info("exchange_sync: futures open orders skipped (%s)", e)
-
-        # No usable data from any source — return None to preserve the last good cache.
-        if not coin_usdt and equity_from_mix is None:
-            logger.info("exchange_sync: no data from any source, preserving cache")
-            return None
-
-        # Final equity: mix is authoritative when available, else sum of spot coins
-        equity = equity_from_mix if equity_from_mix is not None else sum(coin_usdt.values())
-
-        # Build breakdown list sorted by value desc, with percentages
-        total = equity if equity > 0 else 1.0
-        breakdown = [
-            {"coin": coin, "usdt_value": round(val, 4), "pct": round(val / total * 100, 2)}
-            for coin, val in sorted(coin_usdt.items(), key=lambda x: -x[1])
-            if val > 0
-        ]
-
-        state = ExchangeAccountState(
-            mode=mode,
-            equity_usdt=round(equity, 4),
-            available_usdt=round(usdt_avail, 4),
-            frozen_usdt=round(usdt_frozen, 4),
-            futures_unrealized_pnl=round(futures_upnl, 4),
-            open_positions_count=positions_count,
-            open_orders_count=open_orders,
-            fetched_at=datetime.now(timezone.utc).isoformat(),
-            asset_breakdown=breakdown,
-            positions=positions_list,
-        )
-        _store(state)
-        return state
-    except Exception as e:
-        logger.warning("exchange_sync failed: %s", e)
-        try:
-            from aletheia.files.jsonl import write_audit
-            write_audit({
-                "actor": "system", "source": "exchange_sync",
-                "event_type": "exchange_sync_failed", "entity_type": "exchange_account",
-                "entity_id": mode, "message": f"sync error: {e}",
-            })
-        except Exception:
-            pass
-        return None
-
-
-def sync_all_exchanges() -> Optional[dict]:
-    """Parallel-query all configured brokers via UTA and cache the unified state.
-
-    Also refreshes the Bitget-specific cache so the legacy get_cached_state() path
-    stays warm for callers that haven't migrated to get_unified_cached_state() yet.
-    Returns the serialised UnifiedState dict, or None on total failure.
-    """
+def sync_all_exchanges(*, execution_modes: tuple[str, ...] | None = None) -> Optional[dict]:
+    """Read configured UTA accounts and cache only their exact requested scope."""
     from aletheia.uta.manager import (
-        DEFAULT_UNIFIED_EXECUTION_MODES,
         get_unified_state_sync,
     )
 
-    cfg = load_config()
-    if cfg.exchange.uta_read_boundary_for("bitget_demo") != "uta_v1":
-        try:
-            sync_exchange_account()
-        except Exception as e:
-            logger.debug("legacy bitget sync failed (non-fatal): %s", e)
-
     try:
-        unified = get_unified_state_sync()
-        connected_brokers = getattr(unified, "connected_brokers", None)
-        if connected_brokers is None:
-            connected_brokers = [
-                acct.get("broker_id") for acct in unified.accounts if acct.get("broker_id")
-            ]
+        unified = get_unified_state_sync(execution_modes=execution_modes)
         payload = {
             "total_equity_usdt": unified.total_equity_usdt,
             "total_available_usdt": unified.total_available_usdt,
@@ -598,15 +268,12 @@ def sync_all_exchanges() -> Optional[dict]:
             "accounts": unified.accounts,
             "positions": unified.positions,
             "errors": unified.errors,
-            "shadow_errors": getattr(unified, "shadow_errors", []),
-            "connected_brokers": connected_brokers,
+            "connected_brokers": unified.connected_brokers,
             "fetched_at": unified.fetched_at,
-            "execution_modes": list(getattr(
-                unified,
-                "execution_modes",
-                DEFAULT_UNIFIED_EXECUTION_MODES,
-            )),
+            "execution_modes": list(unified.execution_modes),
         }
+        payload["age_seconds"] = _age_seconds(unified.fetched_at)
+        payload["identity_current"], payload["identity_reason"] = _unified_identity_is_current(payload)
         payload["sync_status"] = _unified_sync_status(payload)
         payload["sync_complete"] = payload["sync_status"] == "ok"
         _store_unified(payload)
@@ -649,10 +316,17 @@ def sync_all_exchanges() -> Optional[dict]:
         return None
 
 
-def _store_unified(payload: dict) -> None:
-    import json
+def _unified_cache_scope(execution_modes: tuple[str, ...] | None) -> str:
+    from aletheia.uta.manager import DEFAULT_UNIFIED_EXECUTION_MODES
 
-    key = f"{_KEY_PREFIX}.unified"
+    modes = execution_modes if execution_modes is not None else DEFAULT_UNIFIED_EXECUTION_MODES
+    if set(modes) == set(DEFAULT_UNIFIED_EXECUTION_MODES):
+        return "unified"
+    return "unified." + ",".join(sorted(set(modes)))
+
+
+def _store_unified(payload: dict) -> None:
+    key = _settings_key(_unified_cache_scope(payload.get("execution_modes")))
     data = json.dumps(payload, allow_nan=False)
     execute_write(
         "INSERT INTO settings(key, value, updated_at) VALUES(?, ?, datetime('now')) "

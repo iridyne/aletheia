@@ -248,22 +248,11 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     n_open = len(seen)
 
     try:
-        from aletheia.data.candidate_market_facts import (
-            pending_candidate_instruments,
-            record_candidate_refresh_failure,
-        )
-
-        for iid in pending_candidate_instruments():
-            if iid.exchange != exchange:
-                record_candidate_refresh_failure(
-                    iid,
-                    component="market_snapshot_schedule",
-                    reason="venue_not_configured",
-                )
-                continue
+        for asset in repo.list_candidate_planning_refresh_assets(venue=exchange):
+            iid = InstrumentId.from_parts(asset["venue"], asset["symbol"], asset["market_type"])
             seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
     except Exception:
-        logger.debug("market_snapshots: pending candidate expansion failed", exc_info=True)
+        logger.warning("market_snapshots: planning expansion failed", exc_info=True)
     n_pending = len(seen) - n_open
 
     for iid in observed_instruments_from_config(cfg):

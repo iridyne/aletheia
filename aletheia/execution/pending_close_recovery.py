@@ -36,7 +36,7 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
-
+from aletheia.uta.models import UTAAccountIdentity
 logger = logging.getLogger("aletheia.pending_close_recovery")
 
 # Lockstep with position_manager escalation threshold.
@@ -191,6 +191,7 @@ def _exchange_open_order_ids(order: dict) -> set[str] | None:
             OrderQuery(scope=scope_from_local(
                 str(order["symbol"]), str(order.get("market_type") or "spot")
             )),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
     except Exception as exc:
         logger.warning(
@@ -244,6 +245,7 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
                 venue_order_id=exchange_order_id or None,
                 client_order_id=client_order_id or None,
             ),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
             return None
@@ -281,6 +283,7 @@ def _uta_history_lookup(order: dict):
                 venue_order_id=exchange_order_id or None,
                 client_order_id=client_order_id or None,
             ),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
             return _HISTORY_FAILED
@@ -413,23 +416,8 @@ def _apply_absent_close_recovery(order: dict, position: dict, reason_code: str) 
         if reason_code == TRADE_RATE_LIMIT_CANCEL_REASON:
             raise RuntimeError("pending_close_recovery: rate-limited close must be parked, not released")
 
-        db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
-            (reason_code, order_id, order_row["status"]),
-        )
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open' AND pending_close_order_id=?
-            """,
-            (position_id, order_id),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError("pending_close_recovery: position claim release failed")
+        repo.transition_order(order_id, status="cancelled", error_reason=reason_code)
+        repo.release_position_close_claim(position_id, order_id=order_id)
 
         repo.insert_audit_event(
             AuditEvent(
@@ -504,21 +492,16 @@ def _apply_park_rate_limited_close(order: dict, position: dict) -> bool:
         ):
             return False
 
-        db.execute(
-            "UPDATE orders SET status='cancelled', error_reason=? "
-            "WHERE id=? AND status=?",
-            (TRADE_RATE_LIMIT_CANCEL_REASON, order_id, order_row["status"]),
+        repo.transition_order(
+            order_id,
+            status="cancelled",
+            error_reason=TRADE_RATE_LIMIT_CANCEL_REASON,
         )
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_status=?
-            WHERE id=? AND status='open' AND pending_close_order_id=?
-            """,
-            (VENUE_TRADE_RATE_LIMITED_STATUS, position_id, order_id),
+        repo.update_position_close_claim(
+            position_id,
+            order_id=order_id,
+            status=VENUE_TRADE_RATE_LIMITED_STATUS,
         )
-        if cursor.rowcount != 1:
-            raise RuntimeError("pending_close_recovery: rate-limit park failed")
 
         repo.insert_audit_event(
             AuditEvent(
@@ -639,21 +622,7 @@ def release_rate_limited_close_claim(
             ("operator_authorized_cleanup_trade_rate_limited",
              order_id, TRADE_RATE_LIMIT_CANCEL_REASON),
         )
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open'
-              AND pending_close_order_id=? AND pending_close_status=?
-            """,
-            (position_id, order_id, claim_status),
-        )
-        if cursor.rowcount != 1:
-            raise RuntimeError(
-                "pending_close_recovery: owner-authorized park release failed"
-            )
+        repo.release_position_close_claim(position_id, order_id=order_id)
         repo.insert_audit_event(
             AuditEvent(
                 actor=str(actor or "human"),
@@ -839,18 +808,10 @@ def _apply_submission_rejected_release(position: dict) -> bool:
             "pending_close_order_id": position_row.get("pending_close_order_id"),
             "pending_close_status": position_row.get("pending_close_status"),
         }
-        cursor = db.execute(
-            """
-            UPDATE positions
-            SET pending_close_order_id=NULL,
-                pending_close_status=NULL,
-                pending_close_requested_at=NULL
-            WHERE id=? AND status='open' AND pending_close_status='submission_rejected'
-            """,
-            (position_id,),
-        )
-        if cursor.rowcount != 1:
+        order_id = str(position_row.get("pending_close_order_id") or "")
+        if not order_id:
             return False
+        repo.release_position_close_claim(position_id, order_id=order_id)
         repo.insert_audit_event(
             AuditEvent(
                 actor="system",

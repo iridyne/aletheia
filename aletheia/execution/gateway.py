@@ -36,7 +36,7 @@ from aletheia.storage.repositories import (
     release_proposal_execution_claim,
     replace_proposal_execution_claim,
     transaction,
-    update_position,
+    update_open_position_exit_plan,
     update_trade_proposal,
 )
 from aletheia.files.jsonl import write_audit
@@ -565,7 +565,10 @@ def execute_existing_proposal(
 def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     """Cancel through Gateway; a concurrently materialized Fill always wins."""
 
-    from aletheia.execution.bitget_broker import cancel_entry_order
+    from aletheia.execution.coordinator import cancel_order
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import CancelOrderCommand, CommandEvidence, UTAAccountIdentity
+    from uuid import uuid4
     from aletheia.storage import repositories as repo
 
     plan = repo.get_entry_plan(plan_id)
@@ -599,13 +602,13 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                 return {"status": "filled", "entry_plan_id": plan_id}
             if fresh_order.get("status") not in {"open", "partially_filled"}:
                 return {"status": fresh_order["status"], "entry_plan_id": plan_id}
-            repo.update_order(order["id"], status="cancelled", error_reason=reason)
+            repo.transition_order(order["id"], status="cancelled", error_reason=reason)
             release_entry_risk_reservation(str(order["proposal_id"]))
         return {"status": "cancelled", "entry_plan_id": plan_id}
 
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
-    if order.get("execution_mode") != "bitget_demo":
+    if order.get("execution_mode") not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
         return {"status": "capability_unavailable", "entry_plan_id": plan_id}
 
     if fully_filled(order):
@@ -617,13 +620,20 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         )
         return {"status": "filled", "entry_plan_id": plan_id}
 
-    result = cancel_entry_order(
-        exchange_order_id=order["exchange_order_id"],
-        symbol=order["symbol"],
-        market_type=order["market_type"],
-        execution_mode=order["execution_mode"],
-    )
-    if not result.get("cancelled"):
+    try:
+        identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
+        if identity.execution_mode != order["execution_mode"]:
+            raise ValueError("uta_account_identity_mismatch")
+        result = cancel_order(CancelOrderCommand(
+            command_id=str(uuid4()), expected_account=identity,
+            instrument=instrument_from_local(order["symbol"], order["market_type"]),
+            purpose="entry", proposal_id=order["proposal_id"],
+            target_venue_order_id=order["exchange_order_id"],
+            target_client_order_id=order.get("client_order_id"), reason=reason,
+        ))
+    except Exception:
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+    if result.evidence is not CommandEvidence.ACKNOWLEDGED:
         return {"status": "cancel_pending", "entry_plan_id": plan_id}
 
     fresh_after_ack = repo.get_order(order["id"])
@@ -660,8 +670,9 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                     client_order_id=str(order.get("client_order_id") or "") or None,
                     venue_order_id=str(order.get("exchange_order_id") or "") or None,
                 ),
+                expected_account=identity,
             )
-            rows = await _UTAReconciliationProjection(str(order["execution_mode"])).get_order_fills(
+            rows = await _UTAReconciliationProjection(str(order["execution_mode"]), identity).get_order_fills(
                 order_id=str(order.get("exchange_order_id") or "") or None,
                 client_order_id=str(order.get("client_order_id") or "") or None,
                 symbol=str(order["symbol"]),
@@ -717,7 +728,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             "submission_unknown",
             "materialization_missing",
         }:
-            repo.update_order(order["id"], status="cancelled", error_reason=reason)
+            repo.transition_order(order["id"], status="cancelled", error_reason=reason)
         if fresh_plan:
             repo.transition_entry_plan(
                 plan_id,
@@ -887,7 +898,7 @@ def rebind_open_paper_orders_to_monitoring(instrument, monitoring: dict) -> int:
                     "partially_filled",
                 }:
                     continue
-                repo.update_order(
+                repo.update_order_metadata(
                     str(order["id"]),
                     matching_stream_generation_id=stream_generation_id,
                     matching_subscription_generation_id=subscription_generation_id,
@@ -897,116 +908,39 @@ def rebind_open_paper_orders_to_monitoring(instrument, monitoring: dict) -> int:
     return rebound
 
 
-def _qualified_uta_mutation_selected(cfg, execution_mode: str) -> bool:
-    exchange = getattr(cfg, "exchange", None)
-    if exchange is None or exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
-        return False
-    from aletheia.trust.uta_qualification import require_uta_mutation_qualification
-
-    require_uta_mutation_qualification(execution_mode, cfg)
-    return True
-
-
-def close_exchange_position(
-    position_id: str,
-    reason: str,
-    *,
-    close_reasoning: str | None = None,
-) -> dict:
-    """Gateway-owned close dispatch; rollout selection is configuration-only."""
+def close_exchange_position(position_id: str, reason: str, *, close_reasoning: str | None = None) -> dict:
+    """Route external closes through the qualified account coordinator."""
+    from aletheia.execution.coordinator import close_position
     from aletheia.storage import repositories as repo
 
     row = repo.get_position(position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
-    mode = row.get("execution_mode")
-    if mode in {
-        "binance_testnet",
-        "okx_demo",
-        "bitget_demo",
-        "binance_live_limited",
-        "okx_live_limited",
-        "bitget_live_limited",
-    } and _qualified_uta_mutation_selected(
-        load_config(), mode
-    ):
-        from aletheia.execution.coordinator import close_position
-
-        return close_position(
-            position_id, reason=reason, close_reasoning=close_reasoning
-        )
-    if mode in {"binance_testnet", "binance_live_limited"}:
-        from aletheia.execution.binance_broker import close_testnet_position
-
-        return close_testnet_position(
-            position_id, reason=reason, close_reasoning=close_reasoning
-        )
-    if mode in {"okx_demo", "okx_live_limited"}:
-        from aletheia.execution.okx_broker import close_okx_position
-
-        return close_okx_position(
-            position_id, reason=reason, close_reasoning=close_reasoning
-        )
-    if mode in {"bitget_demo", "bitget_live_limited"}:
-        from aletheia.execution.bitget_broker import close_demo_position
-
-        return close_demo_position(
-            position_id, reason=reason, close_reasoning=close_reasoning
-        )
-    raise ValueError(f"Gateway close route does not support mode {mode!r}")
+    if row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
+        raise ValueError(f"Gateway close route does not support mode {row['execution_mode']!r}")
+    return close_position(position_id, reason=reason, close_reasoning=close_reasoning)
 
 
 def place_exchange_protection(position_id: str) -> dict:
-    """Authorize one selected protection backend for an existing demo Position."""
+    """Route protection through the qualified account coordinator."""
+    from aletheia.execution.coordinator import place_protection
     from aletheia.storage import repositories as repo
 
     row = repo.get_position(position_id)
-    mode = (row or {}).get("execution_mode")
-    if mode not in {"okx_demo", "bitget_demo"}:
+    if row is None or row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
         raise ValueError(f"Gateway protection route does not support position {position_id!r}")
-    if _qualified_uta_mutation_selected(load_config(), mode):
-        from aletheia.execution.coordinator import place_protection
-
-        return place_protection(position_id)
-    if mode == "bitget_demo":
-        return {}
-    from aletheia.execution.okx_broker import place_okx_protective_orders
-
-    return place_okx_protective_orders(
-        position_id=position_id,
-        symbol=row["symbol"],
-        market_type=row.get("market_type") or "usdt_futures",
-        direction=row["direction"],
-        quantity=float(row.get("quantity") or 0),
-        stop_price=row.get("stop_price"),
-        take_profit_price=row.get("take_profit_price"),
-        execution_mode="okx_demo",
-    )
+    return place_protection(position_id)
 
 
-def replace_exchange_protective_stop(
-    position_id: str, new_stop_price: float
-) -> bool:
-    """Authorize one selected stop-replacement backend for a demo Position."""
+def replace_exchange_protective_stop(position_id: str, new_stop_price: float) -> bool:
+    """Replace protection through the qualified account coordinator."""
+    from aletheia.execution.coordinator import replace_protective_stop
     from aletheia.storage import repositories as repo
 
     row = repo.get_position(position_id)
-    mode = (row or {}).get("execution_mode")
-    if mode not in {"okx_demo", "bitget_demo"}:
+    if row is None or row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
         return False
-    if _qualified_uta_mutation_selected(load_config(), mode):
-        from aletheia.execution.coordinator import replace_protective_stop
-
-        return replace_protective_stop(position_id, new_stop_price)
-    if mode == "bitget_demo":
-        from aletheia.execution.bitget_broker import replace_exchange_stop
-
-        replace_exchange_stop(position_id, new_stop_price)
-        return True
-    from aletheia.execution.okx_broker import replace_okx_exchange_stop
-
-    replace_okx_exchange_stop(position_id, new_stop_price)
-    return True
+    return replace_protective_stop(position_id, new_stop_price)
 
 
 _EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
@@ -1121,7 +1055,7 @@ def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
         updates["stop_source"] = proposal.stop_source
     if updates:
         updates["exit_plan_version"] = 1
-        update_position(pid, **updates)
+        update_open_position_exit_plan(pid, **updates)
 
 
 def _exchange_order_matches_proposal(
@@ -2067,17 +2001,7 @@ def _execute_proposal(
             # execution_proposal is a quantity-only copy, so its broker argument
             # remains semantically trade_school=proposal.trade_school.
             try:
-                uta_selected = False
-                if allowed_mode in {"binance_testnet", "okx_demo", "bitget_demo"}:
-                    if _qualified_uta_mutation_selected(cfg, allowed_mode):
-                        uta_selected = True
-                        from aletheia.execution.coordinator import execute_order as execute_live_order
-                    elif allowed_mode == "binance_testnet":
-                        from aletheia.execution.binance_broker import execute_live_order
-                    elif allowed_mode == "okx_demo":
-                        from aletheia.execution.okx_broker import execute_live_order
-                    else:
-                        from aletheia.execution.bitget_broker import execute_live_order
+                from aletheia.execution.coordinator import execute_order as execute_live_order
                 _entry = execution_proposal.price or 0.0
                 order_kwargs = dict(
                     proposal_id=proposal.id,
@@ -2091,22 +2015,17 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(
-                        execution_proposal.take_profit
-                        if uta_selected or allowed_mode == "bitget_demo"
-                        else None
-                    ),
+                    take_profit_price=execution_proposal.take_profit,
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
-                if uta_selected or allowed_mode == "bitget_demo":
-                    order_kwargs.update(
-                        entry_plan_id=execution_proposal.entry_plan_id,
-                        order_tactic=execution_proposal.order_tactic,
-                        time_in_force=execution_proposal.time_in_force,
-                        post_only=bool(execution_proposal.post_only),
-                    )
+                order_kwargs.update(
+                    entry_plan_id=execution_proposal.entry_plan_id,
+                    order_tactic=execution_proposal.order_tactic,
+                    time_in_force=execution_proposal.time_in_force,
+                    post_only=bool(execution_proposal.post_only),
+                )
                 result = execute_live_order(**order_kwargs)
             except (PostSubmitDBError, SubmissionUnknownError) as e:
                 return _record_unresolved_execution(proposal, e)
@@ -2267,15 +2186,7 @@ def _execute_proposal(
                 )
                 return {"status": "rejected", "proposal_id": proposal.id, "message": "Live trading is disabled"}
             try:
-                uta_selected = _qualified_uta_mutation_selected(cfg, allowed_mode)
-                if uta_selected:
-                    from aletheia.execution.coordinator import execute_order as execute_live_order
-                elif allowed_mode == "okx_live_limited":
-                    from aletheia.execution.okx_broker import execute_live_order
-                elif allowed_mode == "binance_live_limited":
-                    from aletheia.execution.binance_broker import execute_live_order
-                else:
-                    from aletheia.execution.bitget_broker import execute_live_order
+                from aletheia.execution.coordinator import execute_order as execute_live_order
                 _entry2 = execution_proposal.price or 0.0
                 order_kwargs = dict(
                     proposal_id=proposal.id,
@@ -2289,22 +2200,17 @@ def _execute_proposal(
                     strategy_id=execution_proposal.strategy_id,
                     execution_mode=allowed_mode,
                     stop_price=execution_proposal.stop_price,
-                    take_profit_price=(
-                        execution_proposal.take_profit
-                        if uta_selected or allowed_mode == "bitget_live_limited"
-                        else None
-                    ),
+                    take_profit_price=execution_proposal.take_profit,
                     leverage=execution_proposal.leverage,
                     opportunity_id=execution_proposal.opportunity_id,
                     trade_school=execution_proposal.trade_school,
                 )
-                if uta_selected or allowed_mode == "bitget_live_limited":
-                    order_kwargs.update(
-                        entry_plan_id=execution_proposal.entry_plan_id,
-                        order_tactic=execution_proposal.order_tactic,
-                        time_in_force=execution_proposal.time_in_force,
-                        post_only=bool(execution_proposal.post_only),
-                    )
+                order_kwargs.update(
+                    entry_plan_id=execution_proposal.entry_plan_id,
+                    order_tactic=execution_proposal.order_tactic,
+                    time_in_force=execution_proposal.time_in_force,
+                    post_only=bool(execution_proposal.post_only),
+                )
                 result = execute_live_order(**order_kwargs)
             except (PostSubmitDBError, SubmissionUnknownError) as e:
                 return _record_unresolved_execution(proposal, e)
@@ -2319,6 +2225,7 @@ def _execute_proposal(
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
+                    _fail_entry_plan(proposal, "live_order_failed")
                 msg = f"live_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"

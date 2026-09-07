@@ -77,44 +77,6 @@ def test_consecutive_kill_round_detection_exists():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "D8-S03",
-        "kill_conditions_contract",
-        "§K2 loop stall probe present",
-        "L2a",
-        "doctor.py 存在 loop.profit 探针（_probe_profit_loop），检测 opportunities 流动而 "
-        "proposals 为零超过阈值时长——是决策链僵死 Kill 条件的监测结构前提，"
-        "当前已实现需保留（防止探针被误删）。",
-    )
-)
-def test_loop_profit_stall_probe_exists():
-    import pathlib
-
-    doctor_path = (
-        pathlib.Path(__file__).resolve().parents[2]
-        / "aletheia"
-        / "diagnostics"
-        / "doctor.py"
-    )
-    assert doctor_path.exists(), f"doctor.py not found at {doctor_path}"
-    source = doctor_path.read_text(encoding="utf-8")
-
-    # 探针函数名
-    assert "_probe_profit_loop" in source, (
-        "doctor.py: _probe_profit_loop probe function missing — "
-        "loop stall detection (K2) has been removed"
-    )
-    # 报告键名确认 loop.profit 存在
-    assert 'loop.profit' in source, (
-        "doctor.py: 'loop.profit' report key missing — "
-        "the loop stall probe is no longer emitting its signal"
-    )
-    # 必须同时检测 opportunities 和 proposals 两侧
-    assert "opportunities" in source and "proposals" in source, (
-        "doctor.py: loop stall probe must reference both 'opportunities' and "
-        "'proposals' tables to detect the decoupling — one side missing"
-    )
 
 
 @spec_claim(

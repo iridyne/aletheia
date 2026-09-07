@@ -12,6 +12,86 @@ import pytest
 from typer.testing import CliRunner
 
 
+
+@pytest.mark.parametrize("entrypoint", ["applier", "continuity"])
+def test_linux_legacy_update_refused_before_side_effects(monkeypatch, entrypoint):
+    from aletheia.update import applier, continuity
+
+    monkeypatch.setattr(applier.sys, "platform", "linux")
+    monkeypatch.setattr(applier, "_is_packaged", lambda: False)
+    monkeypatch.setattr(applier, "load_config", lambda: pytest.fail("legacy config read"))
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: pytest.fail("legacy preflight"))
+    apply = applier.apply_update if entrypoint == "applier" else continuity.apply_update_with_continuity
+    assert apply(restart=True) == {
+        "applied": False, "mode": "source_release", "reason": "source_update_requires_auto",
+    }
+
+
+def test_manual_linux_no_restart_has_no_deployment_effects(monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import auto
+
+    monkeypatch.setattr(update_cmd.sys, "platform", "linux")
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(auto, "run", lambda: pytest.fail("deployment started"))
+    result = CliRunner().invoke(update_cmd.update_app, ["--no-restart"])
+    assert result.exit_code == 1
+    assert "source_update_requires_restart" in result.output
+
+
+def test_manual_update_shares_timer_lock_and_hold(tmp_path, monkeypatch):
+    from aletheia.cli import update_cmd
+    from aletheia.update import auto, git_ops
+
+    _linux_source(monkeypatch)
+    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
+    monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
+    monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: pytest.fail("unexpected fetch"))
+    with auto._deployment_lock() as acquired:
+        assert acquired
+        result = CliRunner().invoke(update_cmd.update_app, [])
+        assert result.exit_code == 0
+        assert result.output.strip() == "already_running"
+    auto._write_state({}, hold=True, phase="held", reason="restore_failed")
+    result = CliRunner().invoke(update_cmd.update_app, [])
+    assert result.exit_code == 1
+    assert result.output.strip() == "global_hold"
+    assert auto.status()["hold"] is True
+
+
+def test_release_check_persists_exact_candidate_without_activation(tmp_path, monkeypatch):
+    from aletheia.update import applier
+
+    events = []
+    auto, git_ops, backup = _configured_candidate_run(tmp_path, monkeypatch, events)
+    monkeypatch.setattr(applier, "_is_packaged", lambda: False)
+    monkeypatch.setattr(git_ops, "behind_count", lambda *args: pytest.fail("branch distance is not a release"))
+    checked = applier.check_for_update()
+    assert checked["has_update"] is True
+    assert (checked["target_tag"], checked["target_sha"], checked["target_version"]) == (
+        "v1.1.0", "target-sha", "1.1.0",
+    )
+    assert events == []
+    backup.create_backup.assert_not_called()
+    monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: pytest.fail("GET fetched"))
+    progress = applier.update_progress()
+    assert progress["mode"] == "source_release"
+    assert progress["status"] == "available"
+    assert progress["target_sha"] == "target-sha"
+
+
+@pytest.mark.parametrize("invalid", ["tag_not_on_master", "tag_version_mismatch"])
+def test_explicit_check_uses_release_validation(tmp_path, monkeypatch, invalid):
+    auto, git_ops, backup = _configured_candidate_run(tmp_path, monkeypatch, [])
+    if invalid == "tag_not_on_master":
+        monkeypatch.setattr(git_ops, "is_ancestor", lambda older, newer: older != "target-sha")
+    else:
+        monkeypatch.setattr(git_ops, "version_at_ref", lambda ref: '__version__ = "1.0.0"')
+    result = auto.check()
+    assert result["reason"] == invalid
+    assert result["has_update"] is False
+    backup.create_backup.assert_not_called()
+
 def _state_paths(tmp_path: Path) -> dict[str, Path]:
     root = tmp_path / "update"
     return {"root": root, "state": root / "auto-deploy.json", "lock": root / "auto-deploy.lock"}
@@ -501,6 +581,37 @@ def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypa
     assert "smoke_stage=fast_tests" in error.value.detail
     assert "workflow route mismatch" in error.value.detail
 
+
+def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.update import auto, git_ops
+
+    root = tmp_path / "candidates"
+    monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
+    monkeypatch.setattr(git_ops, "_git", lambda *_args: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        auto,
+        "RestoreService",
+        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
+    )
+    monkeypatch.setattr(auto, "_uv", lambda: pytest.fail("preflight must not resolve uv"))
+
+    calls = []
+    monkeypatch.setattr(
+        auto,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    worktree = auto._candidate_preflight("target_commit", tmp_path / "backup.tar")
+    assert worktree.is_dir()
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[0] == auto.sys.executable
+    assert command[1] == "-c"
+    assert kwargs["cwd"] == worktree
+    assert str(worktree) in kwargs["env"]["PYTHONPATH"]
 
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     from aletheia.update import auto

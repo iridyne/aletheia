@@ -190,7 +190,7 @@ runtime-home `logs/audit.jsonl` 及其轮转存档**只允许追加写入**，�
 
 Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：完整 JSON 仅追加换行；只有当尾部字节能由稳定 event payload 证明为同一记录前缀时才追加缺失后缀；否则 fail-closed 并保留 outbox backlog，不猜测或截断审计数据。
 
-每条新 lifecycle event 在同一 SQLite 事务中以 `learning-lifecycle:<event_id>` 写入结构化 `audit_events`；outbox 仅负责同一 stable ID 的 append-only JSONL mirror，重试不得重复结构化审计。
+旧 Learning lifecycle stable-ID 审计保持历史证据；新实验事件只由 Observation Lab 事务与 outbox 产生。
 
 - 实现保证: `write_audit()` 经 `_append_jsonl_line()` → `path.open("a", encoding="utf-8")` (`jsonl.py:59`)，以 `"a"` 模式打开，操作系统级别追加。
 - ⚠️ **无 truncate 防护**: 代码层面没有显式拒绝其他路径写入 audit 文件的机制；信任依赖进程隔离和 change-control 纪律（见 §8）。
@@ -214,25 +214,18 @@ Durable lifecycle retry 遇到无终止换行的尾部时也遵守该约束：�
 | 凭证变更 | `secret_rotated` | `cli/secrets_cmd.py:46-50`；前端 Settings 路由另有审计 |
 | Agent Shell 命令执行（含拒绝） | `agent_shell_command` | `agent_shell/audit.py:37-44` |
 | 外部持仓认领（reconciler） | `position_adopted` | `portfolio/position_reconciler.py:361-382`；`after_state` 含 `commit_hash` + `parent_hash`（链入 §6.4 提案 hash chain，TaG P1-2） |
-| Learning lifecycle transition | `learning_lifecycle_transition` | `learning/lifecycle.py`；SQLite lifecycle event/state 先原子提交，JSONL mirror 使用 stable event id 幂等补写 |
+| Experiment lifecycle transition | Observation Lab lifecycle event/outbox | `observation_lab/canonical.py`；旧 Learning lifecycle 只读归档，不再推进 |
 | Funding settlement/correction/terminal history expiry | `paper_position_funding_settled` / `paper_position_economics_repaired` / `paper_position_economics_corrected` / `exchange_position_funding_settled` / `exchange_position_funding_history_expired` | `portfolio/funding_audit.py` + `portfolio/broker_funding_settlement.py`；会计或 terminal-state 事务内写 stable-ID SQLite audit，JSONL mirror 独立幂等补写 |
 | 历史 filled Order 链恢复结果 | `order_reconciled` / `order_reconciliation_inconclusive` | `execution/reconciliation.py:_write_filled_gap_event`；同一 Order、结果类型和 reason 使用 stable event id，SQLite 与 JSONL 各自幂等收敛（§6.3b） |
 
 `FORBIDDEN_INTENTS` 集合中的意图（`agent_shell/registry.py:415-426`）在 `agent_shell/commands.py:167` 被拦截；被拦截时同路径写 `agent_shell_command` 审计记录，`message` 前缀为 `"DENIED"`。
 
-### §6.3a Learning lifecycle audit outbox
+### §6.3a Retired Learning lifecycle evidence
 
-`learning_lifecycle_events` 是 lifecycle transition 的权威 SQLite 事实和 JSONL outbox。状态转换
-与 event 在同一事务提交，文件故障不得回滚已完成的安全动作。新 event 以
-`audit_mirror_status=pending` 创建；历史 event 在 additive migration 中默认视为 `mirrored`，避免
-无法证明的全量重复回放。
-
-JSONL 使用 `learning-lifecycle:<event_id>` 作为 stable `id`。`write_audit(..., dedup_id=...)`
-在 audit 文件锁内检查所有轮转文件，因此进程在 append 后、SQLite acknowledgement 前崩溃时，
-重试不会追加第二条物理记录。成功后写 `audit_mirrored_at`；失败保留
-`audit_failure_reason=jsonl_append_failed`，并把 `learning_lifecycle_audit_reconciler` health 标为
-`degraded`。essential reconciler 每 5 分钟有界重试最多 100 条，不重放 transition。全部清空后
-当前 health 可恢复为 `healthy`，但 durable last-failure identity 保留。
+旧 `learning_lifecycle_events` 与 `learning-lifecycle:<event_id>` JSONL 记录保留原始身份。
+旧 writer 与 reconciler 已退役；显式迁移必须验证 checkpoint、归档与 pending receipts，
+不能删除未证明安全的证据，也不能重放历史 transition 获得当前授权。
+新实验 lifecycle、撤销与交付由 Observation Lab 的现有事务/outbox 承担。
 
 ### §6.3b Historical filled-gap reconciliation audit identity
 

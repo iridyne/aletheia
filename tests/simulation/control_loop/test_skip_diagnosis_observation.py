@@ -16,10 +16,12 @@ def test_degraded_aggregate_signal_creates_no_trading_side_effect(tmp_path):
 
         assert diagnosis.finding == "not_applicable"
         assert not any(
-            row.get("action") == "tighten_confidence"
+            row.get("action") in {"tighten_confidence", "loosen_confidence"}
             for row in summary["results"]
         )
-        assert harness.load_config().trading.min_confidence_to_trade == "medium"
+        assert harness.db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE event_type='config_patch'"
+        ).fetchone()[0] == 0
         assert harness.db.execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
         assert harness.db.execute("SELECT COUNT(*) FROM risk_decisions").fetchone()[0] == 0
         assert_invariants(harness)

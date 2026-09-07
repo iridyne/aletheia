@@ -324,23 +324,6 @@ def prune_task_notes_db_join(
     return deleted
 
 
-def prune_session_logs(days: int = 14, keep: tuple[str, ...] = ("operator-main",)) -> int:
-    """DEPRECATED — retained as a thin wrapper for legacy callers.
-
-    Historical mtime-based sweep is replaced by :func:`prune_session_logs_db_join`
-    which joins against ``agent_shell_sessions.created_at`` (and honours
-    active-branch / parent-session exemptions). The ``keep`` tuple is forwarded
-    as ``extra_exempt_stems`` so callers that pinned specific stems (e.g. the
-    persistent operator-main transcript) continue to see those files preserved.
-    """
-    logger.warning(
-        "prune_session_logs is deprecated; forwarding to prune_session_logs_db_join. "
-        "keep=%r forwarded as extra_exempt_stems.",
-        keep,
-    )
-    return prune_session_logs_db_join(days=days, extra_exempt_stems=tuple(keep))
-
-
 def append_session_log(session_id: str, record: dict) -> Path:
     path = session_log_path(session_id)
     payload = dict(record)

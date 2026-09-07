@@ -596,7 +596,7 @@ def test_inspect_status_json_reports_fresh_zero_exchange_account(cli_db, monkeyp
 
     monkeypatch.setattr(
         exchange_sync,
-        "get_cached_state",
+        "get_unified_cached_state",
         lambda: {"equity_usdt": 0.0, "age_seconds": 3.0},
     )
     monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")
@@ -625,7 +625,7 @@ def test_inspect_status_labels_stale_exchange_account(cli_db, monkeypatch):
 
     monkeypatch.setattr(
         exchange_sync,
-        "get_cached_state",
+        "get_unified_cached_state",
         lambda: {"total_equity_usdt": 123.45, "age_seconds": 999.0},
     )
     monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "stale")
@@ -653,7 +653,7 @@ def test_inspect_status_reports_exchange_account_read_failure(cli_db, monkeypatc
     def fail_read():
         raise RuntimeError("secret backend path leaked")
 
-    monkeypatch.setattr(exchange_sync, "get_cached_state", fail_read)
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", fail_read)
 
     result = runner.invoke(app, ["inspect", "status", "--json"])
 
@@ -673,7 +673,7 @@ def test_inspect_status_marks_incomplete_active_broker_view_partial(cli_db, monk
 
     monkeypatch.setattr(
         exchange_sync,
-        "get_cached_state",
+        "get_unified_cached_state",
         lambda: {"equity_usdt": 1000.0, "age_seconds": 1.0},
     )
     monkeypatch.setattr(exchange_sync, "status_for", lambda _state: "ok")

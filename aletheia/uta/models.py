@@ -514,6 +514,7 @@ class SubmitOrderCommand(MutationCommand):
     quantity: PositiveDecimalValue
     order_type: str
     limit_price: PositiveDecimalValue | None = None
+    reference_price: PositiveDecimalValue | None = None
     trigger_price: PositiveDecimalValue | None = None
     stop_loss_price: PositiveDecimalValue | None = None
     take_profit_price: PositiveDecimalValue | None = None

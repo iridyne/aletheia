@@ -70,9 +70,6 @@ _ESSENTIAL_JOBS: set[str] = {
     "funding_audit_reconciler",
     "outcome_hook_replay",
     "shadow_resolver",
-    "learning_contribution_evaluator",
-    "learning_measurement_startup_catchup",
-    "learning_lifecycle_audit_reconciler",
     "universe_scanner_audit_reconciler",
     "observation_lab_bridge",
 }
@@ -103,15 +100,9 @@ def _equity_observer_trigger() -> OrTrigger:
         ),
     ])
 
-# A persisted overdue Learning measurement should recover after the gateway is
-# ready, but before the legacy two-minute startup catch-up.  The latter remains
-# as a retry if this direct evaluator run fails before recording its watermark.
-_LEARNING_EVALUATOR_RESTART_DELAY_SEC = 60
 
 # Track which jobs were selectively paused (for targeted resume).
 _selectively_paused_jobs: set[str] = set()
-# Track paper_trader nudges deferred by pause (wake on resume).
-_pending_wake_jobs: set[str] = set()
 
 
 # Hard time budgets for scheduler jobs that depend on external IO or LLM calls.
@@ -123,8 +114,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "market_data": 90.0,
     "market_observer": 500.0,
     "dreaming_agent": 300.0,
-    "paper_trader": 300.0,
-    "fast_trigger_authorizer": 300.0,
     "pi_trading_decision": 300.0,
     "equity_observer": 240.0,
     "prediction_observer": 240.0,
@@ -157,9 +146,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     "paper_funding_settler": 60.0,
     "broker_funding_settler": 120.0,
     "funding_audit_reconciler": 15.0,
-    "learning_contribution_evaluator": 60.0,
-    "learning_lifecycle_controller": 60.0,
-    "learning_lifecycle_audit_reconciler": 30.0,
     "universe_scanner_audit_reconciler": 15.0,
     "observation_lab_bridge": 30.0,
     # #90 fix: tpsl_fill_check runs every 90s and calls Bitget via
@@ -564,10 +550,6 @@ _EXECUTOR_WORKERS = {
     # reconciliation, or settlement jobs.  The position manager is the only job
     # in this lane and still uses SQLite's normal single-writer coordination.
     "protective": 1,
-    # Contribution measurement and its one-shot restart recovery share one
-    # serial lane.  This preserves their mutual exclusion without letting the
-    # 31-job general IO queue postpone the current measurement window.
-    "learning_measurement": 1,
     "observer": 1,
     # LLM-backed jobs also write run logs/artifacts. Keep them serial so a slow
     # model call cannot make two agent jobs compete for SQLite at once.
@@ -602,7 +584,6 @@ def _run_job_guarded(job_id: str, fn):
             record_learning_job_skipped,
             record_learning_job_started,
             record_learning_job_success,
-            record_measurement_job_partial,
         )
         if is_autonomous_learning_job(job_id):
             gate_reason = learning_job_gate_reason(job_id)
@@ -614,25 +595,13 @@ def _run_job_guarded(job_id: str, fn):
         result = fn()
         if not getattr(_JOB_RUN_STATE, "failure_recorded", False):
             _record_job_success(job_id)
-            failed_experiments = (
-                result.get("failed_experiments", 0)
-                if job_id == "learning_lifecycle_controller"
-                and isinstance(result, dict)
-                else 0
-            )
-            if isinstance(failed_experiments, int) and failed_experiments > 0:
-                record_measurement_job_partial(
+            if job_id == "lesson_reviewer":
+                record_learning_job_success(
                     job_id,
-                    f"experiment_lifecycle_failed:{failed_experiments}",
+                    attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
                 )
             else:
-                if job_id == "lesson_reviewer":
-                    record_learning_job_success(
-                        job_id,
-                        attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
-                    )
-                else:
-                    record_learning_job_success(job_id)
+                record_learning_job_success(job_id)
         return result
     except Exception as e:
         logger.warning("%s job failed outside wrapper: %s", job_id, e)
@@ -702,29 +671,6 @@ def _run_sync_with_timeout(
         raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
 
 
-def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
-    """Safety-net: mark any still-running agent_run row as ended from caller thread.
-
-    Handles the case where asyncio.run() teardown hangs (IOCP drain) after the
-    coroutine already completed successfully — the daemon thread's finally block
-    never reaches its DB update, leaving a ghost 'running' row that the periodic
-    cleanup later marks as 'stale'.
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE agent_runs SET status = ?, ended_at = datetime('now') "
-            "WHERE agent_name = ? AND status = 'running'",
-            (target_status, job_id),
-        )
-        if not was_in_tx:
-            db.commit()
-    except Exception as e:
-        logger.debug("_ensure_agent_run_ended(%s, %s) failed: %s", job_id, target_status, e)
-
-
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
     """Run an async job with a hard wall-clock bound.
 
@@ -767,12 +713,10 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     try:
         result = future.result(timeout=timeout + 5.0)
         _bump_timeout_metric("async_completed")
-        _ensure_agent_run_ended(job_id, "completed")
         return result
     except _AsyncJobDeadline as exc:
         # asyncio.wait_for enforced the actual job deadline on the worker loop.
         _bump_timeout_metric("async_timed_out")
-        _ensure_agent_run_ended(job_id, "timed_out")
         raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
     except concurrent.futures.TimeoutError:
         # The persistent loop itself did not respond to cancellation in time.
@@ -786,7 +730,6 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             "future cancelled and worker capacity remains bounded",
             job_id, timeout + 5.0,
         )
-        _ensure_agent_run_ended(job_id, "timed_out")
         raise TimeoutError(f"job {job_id} worker unresponsive after {timeout + 5.0}s")
 
 
@@ -1152,64 +1095,6 @@ def _operator_assessment_due(
         return True
 
 
-def _initial_learning_evaluator_run_time(
-    interval_minutes: int,
-    *,
-    now: datetime | None = None,
-) -> datetime:
-    """Preserve the durable measurement deadline across gateway restarts.
-
-    APScheduler's in-memory interval trigger otherwise restarts its cadence from
-    process boot. A restart just before ``next_due_at`` could postpone the sole
-    contribution evaluator by almost a full interval while its durable health
-    row correctly reports overdue. A past deadline gets one bounded post-boot
-    recovery attempt; the existing two-minute startup catch-up remains a retry.
-    """
-    current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        current = current.replace(tzinfo=timezone.utc)
-    else:
-        current = current.astimezone(timezone.utc)
-    default_run = current + timedelta(minutes=max(15, int(interval_minutes)))
-    try:
-        from aletheia.learning.control import get_learning_job_health
-
-        raw_due = get_learning_job_health(
-            "learning_contribution_evaluator"
-        ).next_due_at
-        if not raw_due:
-            return default_run
-        durable_due = datetime.fromisoformat(
-            str(raw_due).replace("Z", "+00:00")
-        )
-        if durable_due.tzinfo is None:
-            durable_due = durable_due.replace(tzinfo=timezone.utc)
-        else:
-            durable_due = durable_due.astimezone(timezone.utc)
-    except (AttributeError, TypeError, ValueError):
-        return default_run
-    except Exception:
-        logger.warning(
-            "Learning evaluator deadline unavailable during scheduler startup"
-        )
-        return default_run
-
-    if durable_due <= current:
-        return current + timedelta(seconds=_LEARNING_EVALUATOR_RESTART_DELAY_SEC)
-    return min(durable_due, default_run)
-
-
-def _observation_lab_owns_experiment_cycle() -> bool:
-    """Keep Main's legacy evaluator/lifecycle jobs out of Lab authority mode."""
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        return get_authority_source().source == "lab"
-    except Exception as exc:  # fail closed on an unreadable authority boundary
-        logger.warning("Observation experiment authority unavailable at scheduler startup: %s", exc)
-        return True
-
-
 def _run_pricing_reference_refresh() -> None:
     try:
         from aletheia.economics.pricing_sync import start_pricing_refresh
@@ -1377,23 +1262,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=120,
         next_run_time=datetime.now() + timedelta(seconds=40),
         executor="io",
-    )
-    # 3-min cadence gives momentum (30min TTL) ~10 review chances, mean_reversion
-    # (60min TTL) ~20. Was 5-min (6 / 12), which combined with the change-suppression
-    # TTL bug (fixed in repositories.refresh_active_snapshot_ttls) starved fast
-    # families of review opportunities. Well below any SQLite/agent-executor budget.
-    _scheduler.add_job(
-        _guarded("paper_trader", _run_paper_trader), "interval", minutes=3, id="paper_trader",
-        misfire_grace_time=60, executor="agents",
-    )
-    _scheduler.add_job(
-        _guarded("fast_trigger_authorizer", _run_fast_trigger_authorizer),
-        "interval",
-        minutes=1,
-        id="fast_trigger_authorizer",
-        misfire_grace_time=60,
-        next_run_time=datetime.now() + timedelta(seconds=90),
-        executor="agents",
     )
     # pi_trading_decision is the ~15min safety-net fallback (agent_contracts.md row 6).
     # When the daemon is enabled it is the primary path; this scheduled job is only a
@@ -1588,44 +1456,7 @@ def init_scheduler() -> BackgroundScheduler | None:
         executor="io",
         next_run_time=datetime.now() + timedelta(minutes=4),
     )
-    # AT-01 evaluator/lifecycle jobs remain a legacy compatibility lane only.
-    # Once Lab is authoritative, the observation bridge/runner owns this cycle;
-    # registering the old jobs would leave two lifecycle authorities in Main.
-    if not _observation_lab_owns_experiment_cycle():
-        _learning_interval = max(15, int(cfg.learning.evaluation_interval_minutes))
-        _learning_evaluator_initial_run = _initial_learning_evaluator_run_time(
-            _learning_interval,
-        )
-        _scheduler.add_job(
-            _guarded("learning_contribution_evaluator", _run_learning_contribution_evaluator),
-            "interval", minutes=_learning_interval, id="learning_contribution_evaluator",
-            misfire_grace_time=300, max_instances=1, coalesce=True,
-            executor="learning_measurement",
-            next_run_time=_learning_evaluator_initial_run,
-        )
-        _scheduler.add_job(
-            _guarded("learning_measurement_startup_catchup", _run_measurement_startup_catchup),
-            "date", run_date=datetime.now() + timedelta(minutes=2),
-            id="learning_measurement_startup_catchup", misfire_grace_time=None,
-            executor="learning_measurement",
-        )
-        _scheduler.add_job(
-            _guarded("learning_lifecycle_controller", _run_learning_lifecycle_controller),
-            "interval", minutes=_learning_interval, id="learning_lifecycle_controller",
-            misfire_grace_time=300, max_instances=1, coalesce=True, executor="io",
-            next_run_time=datetime.now() + timedelta(minutes=4),
-        )
-        _scheduler.add_job(
-            _guarded(
-                "learning_lifecycle_audit_reconciler",
-                _run_learning_lifecycle_audit_reconciler,
-            ),
-            "interval", minutes=5, id="learning_lifecycle_audit_reconciler",
-            misfire_grace_time=120, max_instances=1, coalesce=True, executor="io",
-            next_run_time=datetime.now() + timedelta(minutes=5),
-        )
-    else:
-        logger.info("legacy Learning evaluator/lifecycle jobs skipped: Lab owns experiment cycle")
+
     # Core collector lane: primary-venue orderbook/funding/OI every two minutes.
     # Cross-venue and macro context has a separate job below so it cannot inherit
     # a consumed primary-venue deadline.
@@ -1850,12 +1681,6 @@ def resume_scheduler() -> bool:
                 len(_selectively_paused_jobs),
             )
             _selectively_paused_jobs.clear()
-        # Wake jobs that received notify calls during pause
-        if _pending_wake_jobs:
-            for job_id in list(_pending_wake_jobs):
-                _pending_wake_jobs.discard(job_id)
-                if job_id == "paper_trader":
-                    _arm_paper_trader_job()
         if _scheduler.state != STATE_RUNNING:
             raise RuntimeError(
                 f"scheduler_resume_incomplete:state={_scheduler.state}"
@@ -1879,153 +1704,6 @@ def get_pause_state() -> dict:
             ),
         }
     return {"scheduler_active": True, "mode": "running"}
-
-
-_PAPER_TRADER_NUDGE_DEBOUNCE_SEC = 3.0
-_PAPER_TRADER_NUDGE_DELAY_SEC = 0.5
-_PAPER_TRADER_WAKE_STATE: dict[str, object] = {
-    "last_nudge_mono": 0.0,
-    "last_requested_at": None,
-    "pending_sources": set(),
-    "burst_count": 0,
-    "last_dispatched_at": None,
-    "last_completed_at": None,
-    "last_result": None,
-}
-
-
-def _reset_paper_trader_wake_state_for_tests() -> None:
-    """Reset bounded process-local wake telemetry without touching scheduler state."""
-    with _SCHEDULER_JOB_LOCK:
-        _PAPER_TRADER_WAKE_STATE.update({
-            "last_nudge_mono": 0.0,
-            "last_requested_at": None,
-            "pending_sources": set(),
-            "burst_count": 0,
-            "last_dispatched_at": None,
-            "last_completed_at": None,
-            "last_result": None,
-        })
-
-
-def _paper_trader_job_next_run_at() -> str | None:
-    if _scheduler is None or not _scheduler.running:
-        return None
-    try:
-        job = _scheduler.get_job("paper_trader")
-        value = getattr(job, "next_run_time", None) if job else None
-        return value.isoformat() if value else None
-    except Exception:
-        return None
-
-
-def paper_trader_wake_status() -> dict[str, object]:
-    """Return sanitized Ranker wake state for Overview/CLI diagnostics."""
-    with _SCHEDULER_JOB_LOCK:
-        sources = sorted(str(value) for value in _PAPER_TRADER_WAKE_STATE["pending_sources"])
-        return {
-            "scheduler_active": bool(_scheduler is not None and _scheduler.running),
-            "pending": bool(sources),
-            "pending_sources": sources,
-            "burst_count": int(_PAPER_TRADER_WAKE_STATE["burst_count"]),
-            "last_requested_at": _PAPER_TRADER_WAKE_STATE["last_requested_at"],
-            "last_dispatched_at": _PAPER_TRADER_WAKE_STATE["last_dispatched_at"],
-            "last_completed_at": _PAPER_TRADER_WAKE_STATE["last_completed_at"],
-            "last_result": _PAPER_TRADER_WAKE_STATE["last_result"],
-            "next_run_at": _paper_trader_job_next_run_at(),
-        }
-
-
-def _consume_paper_trader_wake() -> list[str]:
-    with _SCHEDULER_JOB_LOCK:
-        sources = sorted(str(value) for value in _PAPER_TRADER_WAKE_STATE["pending_sources"])
-        _PAPER_TRADER_WAKE_STATE["pending_sources"] = set()
-        if sources:
-            _PAPER_TRADER_WAKE_STATE["last_dispatched_at"] = datetime.now(timezone.utc).isoformat()
-        return sources
-
-
-def _record_paper_trader_wake_result(result: object, *, error: str | None = None) -> None:
-    summary: dict[str, object]
-    if isinstance(result, dict):
-        summary = {
-            "run_id": result.get("run_id"),
-            "status": result.get("status"),
-            "outputs": list(result.get("outputs") or [])[:20],
-            "errors": list(result.get("errors") or [])[:10],
-        }
-    else:
-        summary = {"run_id": None, "status": "failed" if error else "unknown", "outputs": [], "errors": []}
-    if error:
-        summary["errors"] = [error]
-    with _SCHEDULER_JOB_LOCK:
-        _PAPER_TRADER_WAKE_STATE["last_completed_at"] = datetime.now(timezone.utc).isoformat()
-        _PAPER_TRADER_WAKE_STATE["last_result"] = summary
-
-
-def _arm_paper_trader_job() -> bool:
-    if _scheduler is None or not _scheduler.running:
-        return False
-    try:
-        job = _scheduler.get_job("paper_trader")
-        if job is None:
-            return False
-        _scheduler.modify_job(
-            "paper_trader",
-            next_run_time=datetime.now() + timedelta(seconds=_PAPER_TRADER_NUDGE_DELAY_SEC),
-        )
-        return True
-    except Exception:
-        return False
-
-
-def notify_paper_trader(source: str = "unknown") -> bool:
-    """Pull paper_trader's next fire time forward to now — inline event trigger.
-
-    Fire-and-forget: safe to call from any thread, never blocks, never raises.
-    APScheduler's max_instances=1 gate handles overlap: if paper_trader is
-    already running, the modify is a no-op and the current run absorbs the
-    pending work. If not running, it fires within ~1s.
-
-    Debounced: a burst of notifications within _PAPER_TRADER_NUDGE_DEBOUNCE_SEC
-    collapses into a single wake so a universe refresh emitting N opportunities
-    in tight succession does not thrash the modify path.
-
-    Guards: skips silently when the scheduler is down, paused, or the job is
-    absent. Layered-pause / kill-switch state is respected via the same executor
-    the regular tick uses — no bypass.
-
-    Returns True if a modify was issued, False otherwise. The boolean is
-    diagnostic; the caller should not treat False as a failure.
-    """
-    if _scheduler is None or not _scheduler.running:
-        return False
-    now_mono = time.monotonic()
-    with _SCHEDULER_JOB_LOCK:
-        try:
-            job = _scheduler.get_job("paper_trader")
-        except Exception:
-            return False
-        if job is None:
-            return False
-        pending_sources = _PAPER_TRADER_WAKE_STATE["pending_sources"]
-        assert isinstance(pending_sources, set)
-        pending_sources.add(str(source or "unknown")[:120])
-        _PAPER_TRADER_WAKE_STATE["burst_count"] = int(
-            _PAPER_TRADER_WAKE_STATE["burst_count"]
-        ) + 1
-        _PAPER_TRADER_WAKE_STATE["last_requested_at"] = datetime.now(timezone.utc).isoformat()
-        last_nudge = float(_PAPER_TRADER_WAKE_STATE["last_nudge_mono"])
-        if now_mono - last_nudge < _PAPER_TRADER_NUDGE_DEBOUNCE_SEC:
-            return False
-        # Check if paper_trader is selectively paused; defer wake if so
-        if "paper_trader" in _selectively_paused_jobs:
-            _pending_wake_jobs.add("paper_trader")
-            return False
-        _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = now_mono
-        if not _arm_paper_trader_job():
-            return False
-        return True
 
 
 def reschedule_universe_refresh(interval_min: int) -> bool:
@@ -2082,59 +1760,6 @@ def _reschedule_job_preserving_pause(job_id: str, *, trigger: str, **kwargs) -> 
             raise ValueError(f"unsupported scheduler trigger: {trigger}")
         _scheduler.modify_job(job_id, trigger=replacement, next_run_time=None)
         return True
-
-
-def reschedule_learning_jobs(interval_min: int) -> bool:
-    """Apply the configured interval to both live Learning jobs."""
-    if _scheduler is None:
-        return False
-    job_ids = (
-        "learning_contribution_evaluator",
-        "learning_lifecycle_controller",
-    )
-    try:
-        with _SCHEDULER_JOB_LOCK:
-            jobs = {job_id: _scheduler.get_job(job_id) for job_id in job_ids}
-            if any(job is None for job in jobs.values()):
-                return False
-            previous = {
-                job_id: (job.trigger, job.next_run_time)
-                for job_id, job in jobs.items()
-                if job is not None
-            }
-            updated = []
-            try:
-                for job_id in job_ids:
-                    old_next_run = previous[job_id][1]
-                    trigger = IntervalTrigger(
-                        minutes=interval_min,
-                        timezone=_scheduler.timezone,
-                    )
-                    next_run = (
-                        None
-                        if old_next_run is None
-                        else trigger.get_next_fire_time(
-                            None, datetime.now(_scheduler.timezone),
-                        )
-                    )
-                    _scheduler.modify_job(
-                        job_id, trigger=trigger, next_run_time=next_run,
-                    )
-                    updated.append(job_id)
-            except Exception:
-                for job_id in reversed(updated):
-                    old_trigger, old_next_run = previous[job_id]
-                    _scheduler.modify_job(
-                        job_id,
-                        trigger=old_trigger,
-                        next_run_time=old_next_run,
-                    )
-                raise
-        logger.info("Rescheduled Learning jobs to every %d min", interval_min)
-        return True
-    except Exception as e:  # noqa: BLE001 — saved config still applies at restart
-        logger.warning("Failed to reschedule Learning jobs (applies at next restart): %s", e)
-        return False
 
 
 def reconcile_historical_data_jobs(historical_cfg) -> bool:
@@ -2378,12 +2003,7 @@ def status_snapshot() -> dict:
     does not show "active" when init failed or the scheduler is paused.
     """
     try:
-        try:
-            cfg = load_config(persist_migrations=False)
-        except TypeError:
-            # Keep lightweight test doubles/older adapters compatible while the
-            # production loader remains explicitly non-mutating.
-            cfg = load_config()
+        cfg = load_config(persist_migrations=False)
         enabled = bool(cfg.runtime.scheduler_enabled)
     except Exception:
         enabled = None
@@ -2644,16 +2264,22 @@ def _run_exchange_sync():
     """Periodic refresh of the cached real-account view (read-only)."""
     try:
         from aletheia.portfolio.exchange_sync import sync_all_exchanges
-        result = _run_sync_with_timeout("exchange_sync", sync_all_exchanges)
-        if result is None:
-            logger.warning("exchange_sync returned no unified state")
-            _record_job_failure("exchange_sync", "exchange_sync_total_failure")
-            return
-        if isinstance(result, dict) and result.get("errors"):
-            logger.warning(
-                "exchange_sync completed with %d reported account errors",
-                len(result["errors"]),
+        from aletheia.uta.manager import build_uta_registry
+
+        scopes = [None] + [
+            (identity.execution_mode,)
+            for identity in build_uta_registry().configured_identities()
+            if identity.execution_mode.endswith("_live_limited")
+        ]
+        failed = False
+        for scope in scopes:
+            result = _run_sync_with_timeout(
+                "exchange_sync", lambda: sync_all_exchanges(execution_modes=scope)
             )
+            if result is None or result.get("errors"):
+                failed = True
+                logger.warning("exchange_sync account scope unavailable: %s", scope)
+        if failed:
             _record_job_failure("exchange_sync", "exchange_sync_reported_errors")
             return
         _record_job_success("exchange_sync")
@@ -2684,7 +2310,6 @@ def _run_portfolio_snapshot():
     except Exception as e:
         logger.warning("portfolio_snapshot job failed: %s", e)
         _record_job_failure("portfolio_snapshot", str(e))
-
 
 
 def _run_position_path_observer():
@@ -2722,96 +2347,15 @@ def _run_position_path_observer():
         logger.warning("position_path_observer job failed: %s", exc)
         _record_job_failure("position_path_observer", str(exc))
 
-def _run_paper_trader():
-    cfg = load_config()
-    runtime = getattr(cfg, "runtime", None)
-    if getattr(runtime, "paused", False):
-        return
-    if getattr(runtime, "kill_switch_active", False):
-        logger.info("paper_trader: kill_switch active, skipping scheduler trigger")
-        return
-    if cfg.agent.permission_mode not in ("Paper", "Full"):
-        return
-    wake_sources = _consume_paper_trader_wake()
-    trigger_type = (
-        f"on_demand:{','.join(wake_sources)}"[:240]
-        if wake_sources
-        else "scheduled"
-    )
-    result = None
-    try:
-        result = _run_async_with_timeout(
-            "paper_trader",
-            _async_run("paper_trader", trigger_type=trigger_type),
-        )
-        _record_paper_trader_wake_result(result)
-    except TimeoutError:
-        logger.warning(
-            "paper_trader job timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["paper_trader"],
-        )
-        _record_paper_trader_wake_result(result, error="timeout")
-        _record_job_failure("paper_trader", "timeout")
-    except Exception as e:
-        logger.warning("paper_trader job failed: %s", e)
-        _record_paper_trader_wake_result(result, error=type(e).__name__)
-        _record_job_failure("paper_trader", str(e))
-    finally:
-        # Notifications arriving while a run is in flight are not lost.  The
-        # current run cannot see facts committed after its snapshot, so re-arm
-        # one coalesced follow-up instead of waiting for the 3-minute heartbeat.
-        if paper_trader_wake_status()["pending"]:
-            with _SCHEDULER_JOB_LOCK:
-                _PAPER_TRADER_WAKE_STATE["last_nudge_mono"] = 0.0
-                _arm_paper_trader_job()
-
-
-def _run_fast_trigger_authorizer():
-    """Review at most one ranked Setup; provider failure leaves it unarmed."""
-
-    cfg = load_config(persist_migrations=False)
-    if (
-        not getattr(cfg.fast_trigger, "enabled", True)
-        or cfg.fast_trigger.mode == "off"
-        or cfg.runtime.paused
-        or cfg.runtime.kill_switch_active
-    ):
-        return
-    if cfg.agent.permission_mode not in ("Paper", "Full"):
-        return
-    from aletheia.universe.fast_trigger import authorize_next_setup
-
-    try:
-        result = _run_async_with_timeout(
-            "fast_trigger_authorizer", authorize_next_setup(cfg)
-        )
-        if isinstance(result, dict) and result.get("status") == "pending_authorization":
-            _record_job_failure(
-                "fast_trigger_authorizer",
-                str(result.get("reason_code") or "operator_unavailable"),
-            )
-            logger.warning(
-                "fast_trigger_authorizer unavailable: %s",
-                result.get("reason_code"),
-            )
-    except TimeoutError:
-        _record_job_failure("fast_trigger_authorizer", "timeout", "TimeoutError")
-        logger.warning("fast_trigger_authorizer timed out; setup remains unarmed")
-    except Exception as exc:
-        _record_job_failure(
-            "fast_trigger_authorizer", str(exc), type(exc).__name__
-        )
-        logger.warning("fast_trigger_authorizer failed: %s", type(exc).__name__)
-
 
 def _run_pi_trading_decision():
-    """System Operator heartbeat — notifies the event-driven daemon or runs inline as fallback.
+    """Wake the daemon, or run the same durable planner inline.
 
     When pi_daemon is enabled and running, this job simply wakes the daemon
     (which handles debounce, cooldown, and the actual LLM evaluation). The daemon
     provides sub-second response to signal events; this job is the 15-min safety net.
 
-    When pi_daemon is disabled or not running, runs the evaluation inline (legacy path).
+    When the daemon is unavailable, the identical planner runs inline.
     """
     cfg = load_config()
     if cfg.runtime.paused:
@@ -2826,24 +2370,17 @@ def _run_pi_trading_decision():
             if notify_pi_daemon(source="heartbeat"):
                 return
             _record_job_failure("pi_trading_heartbeat", "daemon_notify_failed")
-    except Exception:
-        pass
+    except Exception as exc:
+        # Fall through to the inline planner (see docstring), but never silently:
+        # a daemon path that keeps raising must be visible in the failure counter.
+        logger.warning("pi_trading_heartbeat daemon path failed: %s", exc)
+        _record_job_failure("pi_trading_heartbeat", str(exc))
 
-    # Legacy fallback: daemon disabled or not started — run inline
+    # The heartbeat and daemon use the same durable planner.
     try:
-        from aletheia.agent_shell.commands import evaluate_trading_opportunity
-        result = _run_async_with_timeout("pi_trading_decision", evaluate_trading_opportunity({}))
-        action = result.get("action", "skip")
-        if action in ("trade", "scale_in", "flip"):
-            logger.info(
-                "pi_trading_decision: %s %s %s conviction=%s proposal=%s",
-                action, result.get("direction"), result.get("symbol"),
-                result.get("conviction"), result.get("proposal_id"),
-            )
-        elif action == "watch":
-            logger.info("pi_trading_decision: watch %s — %s", result.get("symbol"), result.get("reasoning", "")[:60])
-        else:
-            logger.debug("pi_trading_decision: %s — %s", action, result.get("reasoning", "")[:80])
+        from aletheia.agent_shell.entry_planner import run_entry_planner_batch
+        result = _run_async_with_timeout("pi_trading_decision", run_entry_planner_batch())
+        logger.debug("pi_trading_decision: %s", result.get("status"))
         _record_job_success("pi_trading_decision")
     except TimeoutError:
         logger.warning("pi_trading_decision job timed out after %.0fs", _ASYNC_JOB_TIMEOUT_SEC.get("pi_trading_decision", 300))
@@ -2938,7 +2475,11 @@ def _run_position_reconcile():
     # new risk). Like position_manager it manages existing state and must run even
     # when paused. Invariant: execution_contract §10 (aligned with kill_switch).
     try:
-        from aletheia.agent_runtime.run_logger import start_run, end_run
+        from aletheia.agent_runtime.run_logger import (
+            AgentRunAlreadyActive,
+            end_run,
+            start_run,
+        )
         from aletheia.portfolio.position_reconciler import run_reconcile
 
         run = start_run("position_reconciler", "scheduled", cfg.agent.permission_mode)
@@ -2962,6 +2503,11 @@ def _run_position_reconcile():
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
+    except AgentRunAlreadyActive as exc:
+        logger.info(
+            "position_reconcile skipped: active run %s already owns the lifecycle",
+            exc.run_id,
+        )
     except Exception as e:
         logger.warning("position_reconcile job failed: %s", e)
         _record_job_failure("position_reconcile", str(e))
@@ -3043,11 +2589,11 @@ def _claim_observed_tpsl_close(
             error_reason="private_fill_evidence_pending",
         )
         repo.insert_order(close_order)
-        repo.update_position(
+        repo.claim_position_close(
             position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="materialization_missing",
-            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+            order_id=close_order.id,
+            status="materialization_missing",
+            requested_at=datetime.now(timezone.utc).isoformat(),
         )
         return repo.get_order(close_order.id), True
 
@@ -3395,7 +2941,6 @@ def _run_cleanup():
             "filter_shadow_experiments": repo.prune_filter_shadow_experiments(r.filter_shadow_experiments_days),
             "operator_evaluation_events": repo.prune_operator_evaluation_events(30),
             "pi_decisions_transient": repo.prune_pi_decisions(7),
-            "signal_pending_stale": repo.prune_signal_pending_stale(30),
             "system_actions": repo.prune_system_actions(7),
             # Market OHLCV per-timeframe TTL + legacy_unknown hard drop.
             "market_ohlcv": repo.prune_market_ohlcv(ttl_days={
@@ -3583,26 +3128,16 @@ def _prune_news(cfg) -> dict[str, int | str | None]:
 
 
 def _prune_session_logs(cfg) -> dict[str, int | str | None]:
-    """DB-JOIN-based session-log prune (Agent 4). Falls back to the legacy
-    file-only pruner if the DB-join variant is not yet importable. The
-    operator's persistent main session id is threaded through as an extra
-    exempt stem so it is never reaped even when its DB row falls outside
-    the retention window."""
+    """Prune by the configured DB age, preserving the persistent main session."""
     try:
         from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
-        days = int(getattr(cfg.retention, "agent_shell_session_logs_days", 14))
-        main_stem = str(getattr(getattr(cfg, "operator", None), "main_session_id", "") or "")
-        extra = (main_stem,) if main_stem else ()
-        deleted = prune_session_logs_db_join(days, extra_exempt_stems=extra)
+        deleted = prune_session_logs_db_join(
+            cfg.retention.agent_shell_session_logs_days,
+            extra_exempt_stems=(cfg.operator.main_session_id,),
+        )
         return {"deleted": deleted, "error": None}
-    except Exception as e1:
-        try:
-            from aletheia.agent_shell.file_artifacts import prune_session_logs
-            keep = (cfg.operator.main_session_id,)
-            deleted = prune_session_logs(14, keep)
-            return {"deleted": deleted, "error": None}
-        except Exception as e2:
-            return {"deleted": 0, "error": str(e2)}
+    except Exception as exc:
+        return {"deleted": 0, "error": str(exc)}
 
 def _prune_task_notes(cfg) -> dict[str, int | str | None]:
     """Task-notes filesystem prune (Agent 4) — joins agent_shell_tasks to
@@ -4027,41 +3562,6 @@ def _run_learning_startup_catchup():
         _record_job_failure("learning_startup_catchup", str(e))
 
 
-def _run_learning_contribution_evaluator():
-    try:
-        from aletheia.learning.lifecycle import run_contribution_evaluator
-        return _run_sync_with_timeout("learning_contribution_evaluator", run_contribution_evaluator)
-    except Exception as e:
-        logger.warning("learning_contribution_evaluator failed: %s", e)
-        _record_job_failure("learning_contribution_evaluator", str(e))
-
-
-def _run_learning_lifecycle_controller():
-    try:
-        from aletheia.learning.lifecycle import run_lifecycle_controller
-        return _run_sync_with_timeout("learning_lifecycle_controller", run_lifecycle_controller)
-    except Exception as e:
-        logger.warning("learning_lifecycle_controller failed: %s", e)
-        _record_job_failure("learning_lifecycle_controller", str(e))
-
-
-def _run_learning_lifecycle_audit_reconciler():
-    try:
-        from aletheia.learning.lifecycle import reconcile_lifecycle_audits
-        return _run_sync_with_timeout(
-            "learning_lifecycle_audit_reconciler",
-            reconcile_lifecycle_audits,
-        )
-    except Exception as e:
-        logger.warning("learning_lifecycle_audit_reconciler failed: %s", e)
-        from aletheia.learning.control import record_measurement_job_failure
-        record_measurement_job_failure(
-            "learning_lifecycle_audit_reconciler",
-            "audit_reconciler_internal_failure",
-        )
-        _record_job_failure("learning_lifecycle_audit_reconciler", str(e))
-
-
 def _run_funding_audit_reconciler():
     """Retry funding audit mirrors without replaying accounting transitions."""
     try:
@@ -4082,18 +3582,6 @@ def _run_funding_audit_reconciler():
         logger.warning("funding_audit_reconciler failed: %s", e)
         _record_job_failure("funding_audit_reconciler", str(e))
         return None
-
-
-def _run_measurement_startup_catchup():
-    """Recover at most one current measurement window, independent of autonomy."""
-    try:
-        from aletheia.learning.control import measurement_catchup_due
-        if measurement_catchup_due("learning_contribution_evaluator"):
-            return _run_learning_contribution_evaluator()
-        return {"status": "fresh"}
-    except Exception as e:
-        logger.warning("learning_measurement_startup_catchup failed: %s", e)
-        _record_job_failure("learning_measurement_startup_catchup", str(e))
 
 
 def _cleanup_stale_scanner_runs():
@@ -4135,19 +3623,15 @@ def _cleanup_stale_agent_runs():
     timeout (5 min) + grace (15 s) so we only clean genuinely orphaned rows.
     """
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        was_in_tx = db.in_transaction
-        result = db.execute(
-            "UPDATE agent_runs SET status = 'stale', ended_at = datetime('now') "
-            "WHERE status = 'running' "
-            "AND datetime(started_at) < datetime('now', '-20 minutes')",
+        from aletheia.agent_runtime.run_logger import mark_stale_running_runs
+
+        rows = mark_stale_running_runs(
+            max_age_minutes=20,
+            reason="scheduler health reconciled an abandoned active run",
+            source="scheduler_health",
         )
-        rows = result.rowcount if result else 0
         if rows:
             logger.info("Marked %d stale agent run(s) as stale during health check", rows)
-        if not was_in_tx:
-            db.commit()
     except Exception as e:
         logger.debug("Failed to cleanup stale agent runs: %s", e)
 
@@ -4417,7 +3901,7 @@ def _ohlcv_backfill_body():
 
 def _run_okx_demo_symbols():
     try:
-        from aletheia.execution.okx_broker import refresh_okx_demo_symbols
+        from aletheia.execution.venue_capabilities import refresh_okx_demo_symbols
         count = refresh_okx_demo_symbols()
         logger.info("okx_demo_symbols refreshed: %d symbols", count)
     except Exception as e:

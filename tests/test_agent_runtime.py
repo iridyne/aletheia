@@ -126,7 +126,12 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
     setup_test_env(tmp_path, monkeypatch)
 
     import aletheia.agent_runtime.run_logger as run_logger
-    from aletheia.agent_runtime.run_logger import end_run, mark_stale_running_runs, queue_run
+    from aletheia.agent_runtime.run_logger import (
+        begin_queued_run,
+        end_run,
+        mark_stale_running_runs,
+        queue_run,
+    )
 
     def fail_log(_record):
         raise OSError("diagnostic sink unavailable")
@@ -136,6 +141,7 @@ def test_agent_run_jsonl_failure_cannot_orphan_or_relabel_lifecycle(tmp_path, mo
     queued = queue_run("research_agent", "manual", "Observe")
     assert repo.get_agent_run(queued.id)["status"] == "queued"
 
+    begin_queued_run(queued, permission_mode="Observe", model_provider=None)
     end_run(queued, status="completed", outputs=["done"])
     assert repo.get_agent_run(queued.id)["status"] == "completed"
 

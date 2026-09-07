@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v70"
+SCHEMA_VERSION = "aletheia-sqlite-v77"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -6337,6 +6337,15 @@ _MIGRATION_DESCRIPTIONS = {
     "20260904_0068_legacy_entry_updated_at_v69": (
         "restore the last pre-cutover Candidate refresh timestamp on legacy false no-plan rows"
     ),
+    "20260907_0074_agent_run_lifecycle_v75": (
+        "closed AgentRun lifecycle and one durable active claim per Agent"
+    ),
+    "20260907_0075_order_lifecycle_v76": (
+        "closed Order states behind one aggregate transition owner"
+    ),
+    "20260907_0076_position_lifecycle_v77": (
+        "closed Position states behind aggregate lifecycle owners"
+    ),
 }
 
 
@@ -7660,6 +7669,498 @@ def _apply_entry_version_collapse_v70(db: sqlite3.Connection) -> None:
         db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
         raise
     db.execute("PRAGMA optimize")
+
+def _apply_entry_source_scope_v71(db: sqlite3.Connection) -> None:
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'").fetchone()[0]
+    old = "('legacy_total_score_v1','candidate_selection_utility_v1')"
+    if sql.count(old) != 1:
+        raise MigrationStateError("entry_source_policy_schema_mismatch")
+    sql = sql.replace(old, "('legacy_total_score_v1','candidate_selection_utility_v1','serenity_research_v1')")
+    sql = sql.replace("candidate_planning_generations", "candidate_planning_generations_v71", 1)
+    objects = db.execute("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND "
+                         "(type='trigger' OR (type='index' AND tbl_name='candidate_planning_generations'))").fetchall()
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("SAVEPOINT entry_source_scope_v71")
+    try:
+        for kind, name, _ in objects:
+            if kind == "trigger":
+                db.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+        db.execute(sql)
+        db.execute("INSERT INTO candidate_planning_generations_v71 SELECT * FROM candidate_planning_generations")
+        db.execute("DROP TABLE candidate_planning_generations")
+        db.execute("ALTER TABLE candidate_planning_generations_v71 RENAME TO candidate_planning_generations")
+        for _, _, statement in objects:
+            db.execute(statement)
+        db.execute("ALTER TABLE universe_snapshots ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'universe' CHECK(source_kind IN ('universe','serenity'))")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("entry_source_scope_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT entry_source_scope_v71")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT entry_source_scope_v71")
+        db.execute("RELEASE SAVEPOINT entry_source_scope_v71")
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys=ON")
+
+
+def _apply_retired_entry_authority_v72(db: sqlite3.Connection) -> None:
+    """Retire unsubmitted legacy entry authority without touching exchange evidence."""
+    db.execute("SAVEPOINT retired_entry_authority_v72")
+    try:
+        for table, field, terminal, predicate in (
+            ("trade_proposals", "status", "rejected",
+             "entry_plan_id IS NULL AND source='native' AND status IN ('pending','approved') "
+             "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=trade_proposals.id) "
+             "AND NOT EXISTS (SELECT 1 FROM proposal_execution_claims c WHERE c.proposal_id=trade_proposals.id)"),
+            ("pi_decisions", "action", "entry_path_retired",
+             "action='signal_pending' AND proposal_id IS NULL"),
+            ("universe_setups", "state", "invalidated",
+             "state IN ('pending_authorization','armed','pullback_seen','triggering') "
+             "AND (proposal_id IS NULL OR EXISTS (SELECT 1 FROM trade_proposals p "
+             "WHERE p.id=universe_setups.proposal_id AND p.status='rejected' "
+             "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id) "
+             "AND NOT EXISTS (SELECT 1 FROM proposal_execution_claims c WHERE c.proposal_id=p.id)))"),
+        ):
+            db.execute(
+                f"INSERT INTO audit_events "
+                "(id,actor,source,event_type,entity_type,entity_id,before_state,after_state,message) "
+                f"SELECT lower(hex(randomblob(16))),'schema_migration','entry_cutover',"
+                f"'entry_path_retired',?,id,json_object(?,{field}),json_object(?,?),"
+                f"'entry_path_retired' FROM {table} WHERE {predicate}",
+                (table, field, field, terminal),
+            )
+            db.execute(f"UPDATE {table} SET {field}=? WHERE {predicate}", (terminal,))
+        db.execute("RELEASE SAVEPOINT retired_entry_authority_v72")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT retired_entry_authority_v72")
+        db.execute("RELEASE SAVEPOINT retired_entry_authority_v72")
+        raise
+
+
+def _apply_uta_order_identity_v73(db: sqlite3.Connection) -> None:
+    db.execute("ALTER TABLE orders ADD COLUMN uta_account_identity_json TEXT")
+
+
+# Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
+SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
+
+
+def _ensure_runtime_baseline(db) -> None:
+    """Backfill only missing historical operator provenance, never registry state."""
+    for table in (
+        "agent_shell_sessions", "agent_shell_commands", "agent_shell_messages",
+        "agent_shell_tasks", "agent_shell_artifacts", "agent_shell_events", "agent_shell_heartbeats",
+    ):
+        columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if "runtime_id" in columns:
+            db.execute(f"UPDATE {table} SET runtime_id='runtime-local-current' WHERE runtime_id IS NULL OR runtime_id=''")
+    for column in ("runtime_mode", "runtime_state"):
+        db.execute(f"UPDATE agent_shell_heartbeats SET {column}='current' WHERE {column} IS NULL OR {column}=''")
+
+
+_RETIRED_RUNTIME_TABLES = (
+    "runtime_registry", "runtime_checkpoints", "runtime_events",
+    "runtime_exclusive_lock", "runtime_ownership",
+)
+
+
+def retire_runtime_continuity_tables(
+    db: sqlite3.Connection, *, backup_path: Path | None = None,
+) -> None:
+    """Retire old control tables only with an exact, authoritative archived copy.
+
+    Call offline after the same-SHA standard-directory migration. No service or
+    artifact is stopped, rebound, or deleted by this database-only operation.
+    """
+    from contextlib import ExitStack
+    import os
+    import shutil
+    import tarfile
+    import tempfile
+
+    from aletheia.backup.verify import verify_backup
+    from aletheia.config.loader import _PROJECT_ROOT
+
+    if db.in_transaction:
+        raise MigrationStateError("runtime_retirement_requires_transaction_boundary")
+    existing = [table for table in _RETIRED_RUNTIME_TABLES if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,),
+    ).fetchone()]
+    if not existing:
+        return
+    populated = any(db.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone() for table in existing)
+    with ExitStack() as stack:
+        archive_db = None
+        if populated:
+            if backup_path is None:
+                # ponytail: check env var or fall back to latest verified backup in data_dir/backups
+                env_backup = os.environ.get("ALETHEIA_BACKUP_PATH")
+                if env_backup and Path(env_backup).is_file():
+                    backup_path = Path(env_backup)
+                else:
+                    try:
+                        from aletheia.config.loader import get_data_dir
+
+                        backup_dir = get_data_dir() / "backups"
+                        if backup_dir.is_dir():
+                            candidates = sorted(
+                                backup_dir.glob("backup_*.tar.gz"),
+                                key=lambda p: p.stat().st_mtime,
+                                reverse=True,
+                            )
+                            if candidates and candidates[0].is_file():
+                                backup_path = candidates[0]
+                    except Exception:
+                        pass
+            if backup_path is None:
+                raise MigrationStateError("runtime_retirement_requires_verified_backup")
+            tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="aletheia-runtime-retirement-"))
+            copied = Path(tmp) / "backup.tar.gz"
+            shutil.copyfile(backup_path, copied)
+            checked = verify_backup(copied)
+            # ponytail: checked.valid verifies checksums & db integrity; row comparison below verifies exact table contents
+            if not checked.valid:
+                raise MigrationStateError("runtime_retirement_backup_unverified")
+            with tarfile.open(copied, "r:gz") as archive:
+                members = [m for m in archive.getmembers() if len(Path(m.name).parts) == 2 and Path(m.name).name == "app.db" and m.isfile()]
+                if len(members) != 1:
+                    raise MigrationStateError("runtime_retirement_backup_database_missing")
+                archived = archive.extractfile(members[0])
+                assert archived is not None
+                database_path = Path(tmp) / "app.db"
+                with database_path.open("wb") as destination:
+                    shutil.copyfileobj(archived, destination)
+                archive_db = sqlite3.connect(f"{database_path.as_uri()}?mode=ro&immutable=1", uri=True)
+                stack.callback(archive_db.close)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if "runtime_registry" in existing:
+                for state, artifact in db.execute("SELECT state, artifact_path FROM runtime_registry"):
+                    if state in {"shadowing", "draining", "legacy_position_manager"}:
+                        raise MigrationStateError("runtime_retirement_active_process_unresolved")
+                    if state == "current" and artifact and Path(artifact).resolve() != _PROJECT_ROOT.resolve():
+                        raise MigrationStateError("runtime_retirement_requires_standard_directory")
+            for table in existing:
+                if archive_db is not None:
+                    source_schema = db.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()
+                    archived_schema = archive_db.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()
+                    if archived_schema is None or source_schema[0] != archived_schema[0]:
+                        raise MigrationStateError("runtime_retirement_backup_source_changed")
+                    columns = len(db.execute(f'PRAGMA table_info("{table}")').fetchall())
+                    order = ",".join(str(i + 1) for i in range(columns))
+                    source_rows = db.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+                    archived_rows = archive_db.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+                    from itertools import zip_longest
+                    if any(a is None or b is None or tuple(a) != tuple(b) for a, b in zip_longest(source_rows, archived_rows)):
+                        raise MigrationStateError("runtime_retirement_backup_source_changed")
+                elif db.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
+                    raise MigrationStateError("runtime_retirement_requires_verified_backup")
+            for table in existing:
+                db.execute(f'DROP TABLE "{table}"')
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+
+
+_AGENT_RUN_LIFECYCLE_CHECKSUM = hashlib.sha256(
+    b"agent-run-lifecycle-v75"
+).hexdigest()
+
+
+def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
+    """Close AgentRun states and make SQLite the cross-trigger admission owner."""
+
+    table_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_runs'"
+    ).fetchone()
+    if table_row is None or not table_row[0]:
+        raise MigrationStateError("agent_run_lifecycle_missing_table")
+    table_sql = str(table_row[0])
+    active_index = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_agent_runs_one_active_per_agent'"
+    ).fetchone()
+    if "CHECK(status IN" in table_sql and active_index is not None:
+        return
+
+    columns = [str(row[1]) for row in db.execute("PRAGMA table_info(agent_runs)")]
+    expected_columns = [
+        "id",
+        "agent_name",
+        "trigger_type",
+        "permission_mode",
+        "started_at",
+        "ended_at",
+        "status",
+        "model_provider",
+        "model_name",
+        "tools_called",
+        "outputs_created",
+        "errors",
+        "cost_estimate",
+    ]
+    if columns != expected_columns:
+        raise MigrationStateError(
+            "agent_run_lifecycle_schema_mismatch:" + ",".join(columns)
+        )
+    allowed = (
+        "queued",
+        "running",
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "timed_out",
+        "stale",
+        "cancelled",
+        "rejected_queue_full",
+        # Historical terminals the read paths still classify (run_view.py,
+        # health.py). Rejecting them here would fail-close a real upgrade.
+        "error",
+        "cancel_requested",
+        "success",
+    )
+    placeholders = ",".join("?" for _ in allowed)
+    invalid = db.execute(
+        f"SELECT status FROM agent_runs WHERE status NOT IN ({placeholders}) LIMIT 1",
+        allowed,
+    ).fetchone()
+    if invalid is not None:
+        raise MigrationStateError(f"agent_run_lifecycle_invalid_status:{invalid[0]}")
+    indexes = [
+        str(row[0])
+        for row in db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='agent_runs' AND sql IS NOT NULL "
+            "AND name!='idx_agent_runs_one_active_per_agent'"
+        )
+    ]
+    row_count = int(db.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0])
+
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT agent_run_lifecycle_v75")
+    try:
+        # Migration runs before scheduler/manual workers start. Any active row is
+        # therefore owned by the previous process and must not retain its lease.
+        db.execute(
+            "UPDATE agent_runs SET status='stale', "
+            "ended_at=COALESCE(ended_at, datetime('now')) "
+            "WHERE status IN ('queued','running')"
+        )
+        db.execute(
+            """
+            CREATE TABLE agent_runs_v71 (
+                id TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+                permission_mode TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                status TEXT NOT NULL DEFAULT 'running' CHECK(status IN (
+                    'queued','running','completed','completed_with_errors','failed',
+                    'timed_out','stale','cancelled','rejected_queue_full',
+                    'error','cancel_requested','success'
+                )),
+                model_provider TEXT,
+                model_name TEXT,
+                tools_called TEXT DEFAULT '[]',
+                outputs_created TEXT DEFAULT '[]',
+                errors TEXT DEFAULT '[]',
+                cost_estimate REAL
+            )
+            """
+        )
+        quoted_columns = ",".join(f'"{name}"' for name in columns)
+        db.execute(
+            f"INSERT INTO agent_runs_v71 ({quoted_columns}) "
+            f"SELECT {quoted_columns} FROM agent_runs"
+        )
+        db.execute("DROP TABLE agent_runs")
+        db.execute("ALTER TABLE agent_runs_v71 RENAME TO agent_runs")
+        for sql in indexes:
+            db.execute(sql)
+        db.execute(
+            "CREATE UNIQUE INDEX idx_agent_runs_one_active_per_agent "
+            "ON agent_runs(agent_name) WHERE status IN ('queued','running')"
+        )
+        if int(db.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0]) != row_count:
+            raise MigrationStateError("agent_run_lifecycle_row_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("agent_run_lifecycle_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("RELEASE SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        raise
+    db.execute("PRAGMA optimize")
+
+
+_ORDER_LIFECYCLE_CHECKSUM = hashlib.sha256(b"order-lifecycle-v76").hexdigest()
+
+
+def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
+    """Close the Order status vocabulary without changing historical rows."""
+
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='orders'"
+    ).fetchone()
+    if row is None or not row[0]:
+        raise MigrationStateError("order_lifecycle_missing_table")
+    table_sql = str(row[0])
+    if "CHECK(status IN" in table_sql:
+        return
+    columns = [str(item[1]) for item in db.execute("PRAGMA table_info(orders)")]
+    if "status" not in columns:
+        raise MigrationStateError("order_lifecycle_schema_mismatch:columns")
+    allowed = (
+        "pending", "open", "submitted", "submission_unknown", "submission_rejected",
+        "materialization_missing", "partial", "partially_filled", "filled",
+        "overfilled", "cancelled", "error",
+        # Historical terminals trade_stats.py still classifies on read.
+        "executed", "failed", "rejected",
+    )
+    placeholders = ",".join("?" for _ in allowed)
+    invalid = db.execute(
+        f"SELECT status FROM orders WHERE status NOT IN ({placeholders}) LIMIT 1",
+        allowed,
+    ).fetchone()
+    if invalid is not None:
+        raise MigrationStateError(f"order_lifecycle_invalid_status:{invalid[0]}")
+    create_sql = table_sql.replace("CREATE TABLE orders", "CREATE TABLE orders_v76", 1)
+    status_column = "status TEXT NOT NULL DEFAULT 'pending'"
+    checked_status = (
+        "status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ("
+        "'pending','open','submitted','submission_unknown','submission_rejected','materialization_missing',"
+        "'partial','partially_filled','filled','overfilled','cancelled','error',"
+        "'executed','failed','rejected'))"
+    )
+    if create_sql.count(status_column) != 1:
+        raise MigrationStateError("order_lifecycle_schema_mismatch:status")
+    create_sql = create_sql.replace(status_column, checked_status, 1)
+    objects = [
+        str(item[0])
+        for item in db.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name='orders' "
+            "AND type IN ('index','trigger') AND sql IS NOT NULL"
+        )
+    ]
+    row_count = int(db.execute("SELECT COUNT(*) FROM orders").fetchone()[0])
+    foreign_keys = bool(db.execute("PRAGMA foreign_keys").fetchone()[0])
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    if foreign_keys:
+        db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT order_lifecycle_v76")
+    try:
+        db.execute(create_sql)
+        quoted_columns = ",".join(f'"{name}"' for name in columns)
+        db.execute(
+            f"INSERT INTO orders_v76 ({quoted_columns}) "
+            f"SELECT {quoted_columns} FROM orders"
+        )
+        db.execute("DROP TABLE orders")
+        db.execute("ALTER TABLE orders_v76 RENAME TO orders")
+        for sql in objects:
+            db.execute(sql)
+        if int(db.execute("SELECT COUNT(*) FROM orders").fetchone()[0]) != row_count:
+            raise MigrationStateError("order_lifecycle_row_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("order_lifecycle_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT order_lifecycle_v76")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT order_lifecycle_v76")
+        db.execute("RELEASE SAVEPOINT order_lifecycle_v76")
+        raise
+    finally:
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        if foreign_keys:
+            db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA optimize")
+
+
+_POSITION_LIFECYCLE_CHECKSUM = hashlib.sha256(
+    b"position-lifecycle-v77"
+).hexdigest()
+
+
+def _apply_position_lifecycle_v77(db: sqlite3.Connection) -> None:
+    """Close Position status values while preserving its wide evidence schema."""
+
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='positions'"
+    ).fetchone()
+    if row is None or not row[0]:
+        raise MigrationStateError("position_lifecycle_missing_table")
+    table_sql = str(row[0])
+    if "CHECK(status IN ('open','closed'))" in table_sql:
+        return
+    columns = [str(item[1]) for item in db.execute("PRAGMA table_info(positions)")]
+    if "status" not in columns:
+        raise MigrationStateError("position_lifecycle_schema_mismatch:columns")
+    invalid = db.execute(
+        "SELECT status FROM positions WHERE status NOT IN ('open','closed') LIMIT 1"
+    ).fetchone()
+    if invalid is not None:
+        raise MigrationStateError(f"position_lifecycle_invalid_status:{invalid[0]}")
+    create_sql = table_sql.replace(
+        "CREATE TABLE positions", "CREATE TABLE positions_v73", 1
+    )
+    status_column = "status TEXT NOT NULL DEFAULT 'open'"
+    if create_sql.count(status_column) != 1:
+        raise MigrationStateError("position_lifecycle_schema_mismatch:status")
+    create_sql = create_sql.replace(
+        status_column,
+        "status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed'))",
+        1,
+    )
+    objects = [
+        str(item[0])
+        for item in db.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name='positions' "
+            "AND type IN ('index','trigger') AND sql IS NOT NULL"
+        )
+    ]
+    row_count = int(db.execute("SELECT COUNT(*) FROM positions").fetchone()[0])
+    foreign_keys = bool(db.execute("PRAGMA foreign_keys").fetchone()[0])
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    if foreign_keys:
+        db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT position_lifecycle_v77")
+    try:
+        db.execute(create_sql)
+        quoted_columns = ",".join(f'"{name}"' for name in columns)
+        db.execute(
+            f"INSERT INTO positions_v73 ({quoted_columns}) "
+            f"SELECT {quoted_columns} FROM positions"
+        )
+        db.execute("DROP TABLE positions")
+        db.execute("ALTER TABLE positions_v73 RENAME TO positions")
+        for sql in objects:
+            db.execute(sql)
+        if int(db.execute("SELECT COUNT(*) FROM positions").fetchone()[0]) != row_count:
+            raise MigrationStateError("position_lifecycle_row_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("position_lifecycle_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT position_lifecycle_v77")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT position_lifecycle_v77")
+        db.execute("RELEASE SAVEPOINT position_lifecycle_v77")
+        raise
+    finally:
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        if foreign_keys:
+            db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA optimize")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8074,6 +8575,48 @@ _MIGRATIONS = (
         checksum=_ENTRY_VERSION_COLLAPSE_CHECKSUM,
         schema_version="aletheia-sqlite-v70",
         apply=_apply_entry_version_collapse_v70,
+    ),
+    MigrationStep(
+        migration_id="20260907_0070_entry_source_scope_v71",
+        checksum=hashlib.sha256(b"entry_source_scope_v71:universe_snapshots.source_kind").hexdigest(),
+        schema_version="aletheia-sqlite-v71",
+        apply=_apply_entry_source_scope_v71,
+    ),
+    MigrationStep(
+        migration_id="20260907_0071_retired_entry_authority_v72",
+        checksum=hashlib.sha256(b"retired_entry_authority_v72:unsubmitted_only:audit").hexdigest(),
+        schema_version="aletheia-sqlite-v72",
+        apply=_apply_retired_entry_authority_v72,
+    ),
+    MigrationStep(
+        migration_id="20260907_0072_uta_order_identity_v73",
+        checksum=hashlib.sha256(b"uta_order_identity_v73:orders.uta_account_identity_json:nullable_no_backfill").hexdigest(),
+        schema_version="aletheia-sqlite-v73",
+        apply=_apply_uta_order_identity_v73,
+    ),
+    MigrationStep(
+        migration_id="20260907_0073_runtime_control_retirement_v74",
+        checksum=hashlib.sha256(b"runtime_control_retirement_v74:verified_backup:standard_directory").hexdigest(),
+        schema_version="aletheia-sqlite-v74",
+        apply=retire_runtime_continuity_tables,
+    ),
+    MigrationStep(
+        migration_id="20260907_0074_agent_run_lifecycle_v75",
+        checksum=_AGENT_RUN_LIFECYCLE_CHECKSUM,
+        schema_version="aletheia-sqlite-v75",
+        apply=_apply_agent_run_lifecycle_v75,
+    ),
+    MigrationStep(
+        migration_id="20260907_0075_order_lifecycle_v76",
+        checksum=_ORDER_LIFECYCLE_CHECKSUM,
+        schema_version="aletheia-sqlite-v76",
+        apply=_apply_order_lifecycle_v76,
+    ),
+    MigrationStep(
+        migration_id="20260907_0076_position_lifecycle_v77",
+        checksum=_POSITION_LIFECYCLE_CHECKSUM,
+        schema_version="aletheia-sqlite-v77",
+        apply=_apply_position_lifecycle_v77,
     ),
 )
 

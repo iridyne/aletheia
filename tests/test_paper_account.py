@@ -550,24 +550,6 @@ def test_local_paper_available_balance_tightens_risk_without_affecting_external(
     assert _cached_available_balance_usdt("bitget_demo") is None
 
 
-def test_agent_context_explains_human_local_cash_adjustments(tmp_path, monkeypatch):
-    _setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio.paper_account import adjust_cash
-    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
-
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-    adjust_cash(15.0, note="operator top-up")
-
-    layer = _build_layer1_snapshot()
-    assert layer["balance"]["source"] == "local_paper_ledger"
-    assert layer["balance"]["available_usdt"] == pytest.approx(215.0)
-    assert layer["recent_account_changes"] == [{
-        "action": "manual_credit", "amount_usdt": 15.0,
-        "note": "operator top-up", "at": layer["recent_account_changes"][0]["at"],
-    }]
 
 
 def test_account_write_does_not_invert_lock_order_with_risk_transaction(

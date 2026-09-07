@@ -808,22 +808,16 @@ def _window_summary(target: RetentionTarget, args: argparse.Namespace) -> str:
 def _fs_prune_session_logs(args: argparse.Namespace) -> dict[str, Any]:
     """Remove *.jsonl transcripts whose DB session row is older than the window.
 
-    Delegates to ``file_artifacts.prune_session_logs_db_join`` when available so
+    Delegates to ``file_artifacts.prune_session_logs_db_join`` so
     the exact same code path drives the recurring nightly cleanup.
     """
-    try:
-        from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
-    except ImportError:
-        return {"skipped": "prune_session_logs_db_join not yet available"}
+    from aletheia.agent_shell.file_artifacts import prune_session_logs_db_join
     count = prune_session_logs_db_join(days=args.agent_shell_session_logs_days)
     return {"prune_session_logs_db_join": int(count or 0)}
 
 
 def _fs_prune_task_notes(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
-    except ImportError:
-        return {"skipped": "prune_task_notes_db_join not yet available"}
+    from aletheia.agent_shell.file_artifacts import prune_task_notes_db_join
     count = prune_task_notes_db_join(
         days_completed=args.agent_shell_task_notes_completed_days,
         days_failed=args.agent_shell_task_notes_failed_days,
@@ -832,26 +826,17 @@ def _fs_prune_task_notes(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _fs_prune_backups(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        from aletheia.maintenance.filesystem_retention import prune_backups
-    except ImportError:
-        return {"skipped": "prune_backups not yet available"}
+    from aletheia.maintenance.filesystem_retention import prune_backups
     return {"prune_backups": int(prune_backups(keep_recent=args.backups_keep_recent) or 0)}
 
 
 def _fs_prune_diagnostics(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        from aletheia.maintenance.filesystem_retention import prune_diagnostics_dir
-    except ImportError:
-        return {"skipped": "prune_diagnostics_dir not yet available"}
+    from aletheia.maintenance.filesystem_retention import prune_diagnostics_dir
     return {"prune_diagnostics_dir": int(prune_diagnostics_dir(days=args.diagnostics_days) or 0)}
 
 
 def _fs_prune_pre_migration_backup(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
-    except ImportError:
-        return {"skipped": "prune_pre_migration_backup not yet available"}
+    from aletheia.maintenance.filesystem_retention import prune_pre_migration_backup
     return {
         "prune_pre_migration_backup": int(
             prune_pre_migration_backup(days=args.pre_migration_backup_days) or 0

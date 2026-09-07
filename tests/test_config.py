@@ -231,7 +231,7 @@ def test_unknown_config_error_exposes_safe_path_and_repair_hint(tmp_path):
     ("enabled", "activated_at"),
     [(False, None), (True, "2026-08-31T12:00:00+00:00")],
 )
-def test_removed_ai_entry_keys_are_migrated_before_strict_validation(
+def test_removed_entry_keys_are_migrated_before_strict_validation(
     tmp_path, enabled, activated_at,
 ):
     import aletheia.config.loader as loader
@@ -242,6 +242,10 @@ def test_removed_ai_entry_keys_are_migrated_before_strict_validation(
         "ai_entry_hypothesis_enabled": enabled,
         "ai_entry_hypothesis_activated_at": activated_at,
     })
+    raw["trading"]["min_confidence_to_trade"] = "high"
+    raw["serenity"]["stop_loss_pct"] = 8.0
+    raw["exchange"]["uta_read_boundaries"] = {"bitget_demo": "legacy"}
+    raw["runtime"].update(runtime_continuity_enabled=True, runtime_continuity_lock_ttl_sec=300, runtime_continuity_shadow_port_offset=100)
     config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     original = config_file.read_text(encoding="utf-8")
 
@@ -254,7 +258,7 @@ def test_removed_ai_entry_keys_are_migrated_before_strict_validation(
     assert config_file.read_text(encoding="utf-8") == original
 
 
-def test_removed_ai_entry_keys_are_persisted_once_when_requested(tmp_path):
+def test_removed_entry_keys_are_persisted_once_when_requested(tmp_path):
     import aletheia.config.loader as loader
 
     config_file = tmp_path / "config.yaml"
@@ -263,6 +267,11 @@ def test_removed_ai_entry_keys_are_persisted_once_when_requested(tmp_path):
         "ai_entry_hypothesis_enabled": True,
         "ai_entry_hypothesis_activated_at": "2026-08-31T12:00:00+00:00",
     })
+    raw["trading"]["min_confidence_to_trade"] = "high"
+    raw["serenity"]["stop_loss_pct"] = 8.0
+    raw["exchange"]["uta_read_boundaries"] = {"bitget_demo": "shadow_read"}
+    raw["exchange"]["uta_account_config_generations"] = {"bitget_demo": 7}
+    raw["runtime"].update(runtime_continuity_enabled=True, runtime_continuity_lock_ttl_sec=300, runtime_continuity_shadow_port_offset=100)
     config_file.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
 
     with patch.object(loader, "DATA_DIR", tmp_path), patch.object(
@@ -274,7 +283,11 @@ def test_removed_ai_entry_keys_are_persisted_once_when_requested(tmp_path):
     assert loaded.agent.permission_mode == "Paper"
     assert "ai_entry_hypothesis_enabled" not in persisted["agent"]
     assert "ai_entry_hypothesis_activated_at" not in persisted["agent"]
-
+    assert "min_confidence_to_trade" not in persisted["trading"]
+    assert "stop_loss_pct" not in persisted["serenity"]
+    assert "uta_read_boundaries" not in persisted["exchange"]
+    assert persisted["exchange"]["uta_account_config_generations"] == {"bitget_demo": 7}
+    assert not {"runtime_continuity_enabled", "runtime_continuity_lock_ttl_sec", "runtime_continuity_shadow_port_offset"}.intersection(persisted["runtime"])
 
 def test_strict_config_load_preserves_dynamic_mappings(tmp_path):
     config_file = tmp_path / "config.yaml"

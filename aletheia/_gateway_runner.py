@@ -22,14 +22,14 @@ import sys
 import time
 from pathlib import Path
 
-from aletheia.config.loader import bootstrap, get_data_dir
+from aletheia.config.loader import _PROJECT_ROOT, bootstrap, get_data_dir
 from aletheia.gateway.frontdoor_route import frontdoor_route_path, write_frontdoor_route
 from aletheia.gateway.pidfile import (
     write_pid, _resolve_real_python,
     find_gateway_orphans, find_port_holders, kill_pid_tree, port_in_use, wait_port_free,
 )
 from aletheia.gateway.network import backend_bind_host, frontdoor_bind_hosts
-from aletheia.runtime_continuity.processes import current_gateway_launch_context, runtime_process_env
+
 
 logger = logging.getLogger("aletheia.gateway.supervisor")
 
@@ -110,7 +110,7 @@ def _publish_frontdoor_route(
     reason: str,
 ) -> None:
     try:
-        runtime_context = runtime_context or current_gateway_launch_context(cfg, port=backend_port)
+        runtime_context = runtime_context or {}
         write_frontdoor_route(
             backend_base_url=_backend_base_url(cfg, backend_port),
             runtime_id=str(runtime_context.get("runtime_id") or "runtime-local-current"),
@@ -212,8 +212,19 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
     from aletheia.gateway.logs import rotate_if_needed
     rotate_if_needed(errors_log)
     real_python, env_patch = _resolve_real_python()
-    runtime_context = current_gateway_launch_context(cfg, port=port)
-    runtime_context["host"] = backend_bind_host()
+    if platform.system() == "Linux" and (_PROJECT_ROOT / "pyproject.toml").is_file():
+        interpreter = _PROJECT_ROOT / ".venv" / "bin" / "python"
+        if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+            raise RuntimeError("standard_checkout_interpreter_unavailable")
+        real_python, env_patch = str(interpreter), {}
+    runtime_context = {
+        "runtime_id": os.environ.get("ALETHEIA_RUNTIME_ID") or "runtime-local-current",
+        "runtime_mode": "current",
+        "runtime_state": "current",
+        "host": backend_bind_host(),
+        "port": int(port if port is not None else cfg.app.dashboard_port),
+        "workdir": _PROJECT_ROOT,
+    }
     logger.info(
         "gateway_supervisor_stage stage=backend_launch_context elapsed_ms=%.1f",
         (time.monotonic() - spawn_started) * 1000.0,
@@ -228,15 +239,13 @@ def _spawn_server(cfg, *, port: int | None = None, frontdoor_holder: list | None
         # factory (§23/§24). See gateway/frontdoor.py cmd for the same rationale.
         "--loop", "none",
     ]
-    env = runtime_process_env(
-        base_env=os.environ.copy(),
-        runtime_id=runtime_context["runtime_id"],
-        runtime_mode=runtime_context["runtime_mode"],
-        runtime_state=runtime_context["runtime_state"],
-        port=runtime_context["port"],
-        workdir=runtime_context["workdir"],
-        env_patch=env_patch,
-    )
+    env = os.environ.copy()
+    env.update(env_patch)
+    env["PYTHONPATH"] = str(_PROJECT_ROOT)
+    env["ALETHEIA_RUNTIME_ID"] = runtime_context["runtime_id"]
+    env["ALETHEIA_RUNTIME_MODE"] = "current"
+    env["ALETHEIA_RUNTIME_STATE"] = "current"
+    env["ALETHEIA_RUNTIME_PORT"] = str(runtime_context["port"])
 
     popen_kwargs: dict = {
         "stdout": subprocess.DEVNULL,

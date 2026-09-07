@@ -1,18 +1,3 @@
-"""Spec: Strategy Pool exposure (RED, written 2026-06-24 during freeze).
-
-These claims describe how the Strategies subsystem MUST expose per-strategy
-KPIs (win_rate / total_pnl / trade_count) to the System Operator decision chain
-after Round 2 解冻. They are recorded with status="missing" because the
-production code path (trading_context.py's Layer 2 strategies builder) is
-inside the EXPERIMENT FREEZE clearance and cannot be modified during Round 1.
-
-The fix is small (Round 2 第一周): JOIN strategy_records with
-build_strategy_kpis() so PI sees real numbers instead of None/?.
-
-Note: an earlier audit incorrectly named the helper as
-`per_strategy_kpi_summary` — the real name is `build_strategy_kpis()` in
-`aletheia/analytics/trade_stats.py:227`. Verified 2026-06-24.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +8,6 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
-_TRADING_CONTEXT = "aletheia/agent_shell/trading_context.py"
 
 
 def _project_root() -> str:
@@ -86,19 +70,6 @@ def test_build_strategy_kpis_shape():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("SP-S03", "strategy_pool", "§KPI exposure to PI", "L2a",
-              "trading_context.py must call build_strategy_kpis() so PI sees real KPIs"),
-)
-def test_trading_context_uses_strategy_kpis():
-    """trading_context.py 源码必须 reference build_strategy_kpis."""
-    import pathlib
-    src = (pathlib.Path(_project_root()) / _TRADING_CONTEXT).read_text(encoding="utf-8")
-    assert "build_strategy_kpis" in src, (
-        "trading_context.py never references build_strategy_kpis — System Operator prompt 仍然拿到 "
-        "win_rate=None total_pnl=None trade_count=None. "
-        "See round2_week1_decision_chain_fixes.md Fix S-Bug-C"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,66 +133,8 @@ def test_short_bias_scanner_family_reachable():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("SP-S06", "strategy_pool", "§scanner-family regime scoring config", "L2a",
-              "The ranker's regime score deltas are config-driven "
-              "(cfg.universe.scanner_regime_scoring), defaults reproduce the prior "
-              "hardcoded values EXACTLY (verified no-op). Rehomes regime affinity to "
-              "the scanner-family config layer (Position C insight) as a SOFT, tunable "
-              "signal — NOT a hard block (owner directive: no low-dim hard interception)."),
-)
-def test_regime_scoring_is_config_driven_noop():
-    import pathlib
-    from aletheia.config.schema import AletheiaConfig
-
-    cfg = AletheiaConfig()
-    srs = cfg.universe.scanner_regime_scoring
-    # Defaults MUST equal the prior hardcoded ranker values (no behavior change).
-    assert srs["bear_short"] == 20.0 and srs["bear_long"] == -25.0, srs
-    assert srs["bull_long"] == 20.0 and srs["bull_short"] == -20.0, srs
-    assert srs["volatile_penalty"] == 10.0, srs
-    assert srs["sideways_trend_penalty"] == 25.0 and srs["sideways_reversion_bonus"] == 15.0, srs
-
-    # Ranker must READ the config (not re-hardcode) — else the config is inert.
-    ranker_src = (pathlib.Path(_project_root()) / "aletheia" / "agents" / "paper_trader_ranker.py").read_text(encoding="utf-8")
-    assert "scanner_regime_scoring" in ranker_src, (
-        "paper_trader_ranker must read cfg.universe.scanner_regime_scoring"
-    )
 
 
 # ---------------------------------------------------------------------------
 # SP-S07 — regime scoring applies to strategy-LESS opportunities (the 70% gap)
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim("SP-S07", "strategy_pool", "§regime scoring strategy-independent", "L2b",
-              "The regime score delta is applied to a candidate with NO linked strategy "
-              "(strategy_evidence=None, strategy_has_ruleset=False) — proving regime "
-              "affinity is a scanner-family/candidate-level signal, not a strategy-record "
-              "property. Closes the orphan-opportunity gap (~70% of opps have no strategy)."),
-)
-def test_regime_scoring_applies_without_strategy(monkeypatch):
-    import aletheia.agents.paper_trader_ranker as r
-    from aletheia.regime.detector import MarketRegime
-
-    # Bear regime at full confidence → weight = 1.0, deltas apply undiluted.
-    bear = MarketRegime(state="bear", confidence=1.0, long_bias=0.2, short_bias=0.8)
-    monkeypatch.setattr(r, "get_current_regime", lambda: bear)
-    # Isolate the regime term: zero out the direction-dependent lesson penalty.
-    monkeypatch.setattr(r, "_lesson_penalty", lambda *a, **k: 0.0)
-
-    opp = {"symbol": "X/USDT", "confidence_score": 50, "scanner_family": "momentum"}
-    factor = {"status": "watch", "win_rate": None, "trade_count": 0}
-
-    # NO strategy passed (strategy_evidence=None, strategy_has_ruleset=False).
-    s_short = r._compute_trade_score(opp, None, factor, "medium",
-                                     None, strategy_has_ruleset=False, direction="short")
-    s_long = r._compute_trade_score(opp, None, factor, "medium",
-                                    None, strategy_has_ruleset=False, direction="long")
-
-    # bear_short(+20) − bear_long(−25) = +45, applied with no strategy present.
-    assert abs((s_short - s_long) - 45.0) < 0.01, (
-        f"regime delta not applied strategy-independently: short={s_short} long={s_long} "
-        f"(expected diff 45.0 from bear_short − bear_long)"
-    )

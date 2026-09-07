@@ -44,8 +44,16 @@ class CandidateOpportunityContextV1(BaseModel):
     def _validate_and_hash(self) -> "CandidateOpportunityContextV1":
         selection = self.candidate_selection
         source = self.source
+        if any(key in source for key in ("kind", "id", "trade_school")) or selection.get("policy") == "serenity_research_v1":
+            school = {"universe": "short_term", "serenity": "serenity"}.get(source.get("kind"))
+            if school is None or source.get("trade_school") != school or not isinstance(source.get("id"), str) or not source["id"].strip():
+                raise ValueError("candidate_opportunity_source_identity_invalid")
+            if source["kind"] == "universe" and source["id"] != self.candidate_id:
+                raise ValueError("candidate_opportunity_source_identity_invalid")
+            if (source["kind"] == "serenity") != (selection.get("policy") == "serenity_research_v1"):
+                raise ValueError("candidate_opportunity_source_policy_invalid")
         opportunity = self.opportunity
-        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1"}:
+        if selection.get("policy") not in {"legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"}:
             raise ValueError("candidate_opportunity_policy_invalid")
         if selection.get("policy") == "candidate_selection_utility_v1" and not selection.get("policy_epoch"):
             raise ValueError("candidate_opportunity_policy_epoch_missing")
@@ -81,7 +89,7 @@ class CandidateOpportunityContextV1(BaseModel):
         if opportunity.get("horizon") != OPPORTUNITY_HORIZON:
             raise ValueError("candidate_opportunity_horizon_invalid")
         if opportunity.get("mechanism_source") not in {
-            "target_authority", "legacy_projection"
+            "target_authority", "legacy_projection", "research_authority"
         } or not str(opportunity.get("mechanism_version") or "").strip():
             raise ValueError("candidate_opportunity_mechanism_identity_invalid")
         if not str(opportunity.get("source_component_id") or "").strip():
@@ -161,6 +169,7 @@ def target_candidate_opportunity_context(
             "decision_version": decision["version"],
         },
         source={
+            "kind": "universe", "id": candidate_id, "trade_school": "short_term",
             "detected_at": detected_at,
             "source_cutoff_at": evidence["source_cutoff_at"],
             "feature_snapshot_id": evidence.get("feature_snapshot_id"),
@@ -222,6 +231,7 @@ def legacy_candidate_opportunity_context(
             "source_record_hash": fingerprint(source_material),
         },
         source={
+            "kind": "universe", "id": candidate_id, "trade_school": "short_term",
             "detected_at": detected_at,
             "source_cutoff_at": detected_at,
             "feature_snapshot_id": candidate.get("feature_snapshot_id"),
@@ -247,6 +257,39 @@ def legacy_candidate_opportunity_context(
             "regime": candidate.get("regime_tag"),
             "shock_state": candidate.get("shock_state"),
         },
+    )
+
+def serenity_candidate_opportunity_context(
+    *, candidate_id: str, opportunity: Mapping[str, Any], feature: Mapping[str, Any],
+    source_record_hash: str, detected_at: str,
+) -> CandidateOpportunityContextV1:
+    """Research proves provenance; the shared PA evaluator proves timing."""
+    from aletheia.trading.entry_profiles import compatible_entry_profiles
+    from aletheia.universe.opportunity_evidence import build_opportunity_evidence
+
+    evidence = build_opportunity_evidence(feature, candidate_key=candidate_id, source_cutoff_at=detected_at)
+    supported = [item for item in evidence.mechanisms
+                 if item.applicability == "applicable" and not item.capability_gaps
+                 and compatible_entry_profiles(item.mechanism_id)]
+    if not supported:
+        raise ValueError("serenity_pa_unavailable")
+    primary = max(supported, key=lambda item: item.pessimistic_strength)
+    if primary.direction != opportunity["direction"]:
+        raise ValueError("serenity_pa_direction_conflict")
+    return CandidateOpportunityContextV1(
+        candidate_id=candidate_id,
+        candidate_selection={"policy": "serenity_research_v1", "policy_epoch": "serenity_research_v1",
+                             "source_record_hash": source_record_hash},
+        source={"kind": "serenity", "id": opportunity["id"], "trade_school": "serenity",
+                "detected_at": detected_at, "source_cutoff_at": detected_at,
+                "feature_snapshot_id": feature["feature_snapshot_id"]},
+        opportunity={"primary_mechanism": primary.mechanism_id, "direction": primary.direction,
+                     "horizon": OPPORTUNITY_HORIZON, "mechanism_version": primary.mechanism_version,
+                     "mechanism_source": "research_authority", "source_component_id": primary.source_component_id,
+                     "economic_utility_pct": None, "capability_status": "supported", "capability_gaps": [],
+                     "primary_evidence_refs": list(primary.evidence_refs), "secondary_mechanisms": [],
+                     "pessimistic_strength": primary.pessimistic_strength},
+        context=dict(evidence.context),
     )
 
 

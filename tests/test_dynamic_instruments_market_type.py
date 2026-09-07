@@ -64,15 +64,14 @@ def test_spot_and_missing_market_type_default_to_spot(monkeypatch):
     assert by_sym.get("ADA/USDT") == "spot"
 
 
-def test_pending_candidate_precedes_config_and_universe_discovery(monkeypatch):
-    from aletheia.data import candidate_market_facts
+def test_planning_candidate_precedes_config_and_universe_discovery(monkeypatch):
     from aletheia.data.symbols import InstrumentId
     import aletheia.storage.repositories as repo
 
     monkeypatch.setattr(
-        candidate_market_facts,
-        "pending_candidate_instruments",
-        lambda: [InstrumentId.from_parts("binance", "PEND/USDT", "perp")],
+        repo,
+        "list_candidate_planning_refresh_assets",
+        lambda **kwargs: [{"venue": "binance", "symbol": "PEND/USDT", "market_type": "perp"}],
     )
     monkeypatch.setattr(
         md,

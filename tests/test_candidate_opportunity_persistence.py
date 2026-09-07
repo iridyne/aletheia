@@ -118,3 +118,158 @@ def test_historical_measured_context_hash_is_not_rewritten():
     assert restored.model_dump_json() == serialized
     assert "admission_basis" not in restored.opportunity
     assert _member(restored).candidate_selection_utility_pct == 1.5
+
+
+def _serenity_publication_source():
+    import math
+    from datetime import timezone
+    from aletheia.config.loader import load_config
+    from aletheia.data.providers import Candle
+    from aletheia.storage.models import SerenityTheme, SerenityOpportunity, SerenityEvidence, UniverseAsset, UniverseFeatureSnapshot
+
+    now = datetime.now(timezone.utc)
+    venue = load_config().market_data.ccxt_exchange
+    theme = SerenityTheme(name="Research publication", status="active")
+    repo.insert_serenity_theme(theme)
+    opportunity = SerenityOpportunity(theme_id=theme.id, symbol="BTC/USDT", direction="long", market_type="spot")
+    repo.insert_serenity_opportunity(opportunity)
+    repo.insert_serenity_evidence(SerenityEvidence(theme_id=theme.id, title="Filed research", source="sec",
+        source_ref="https://www.sec.gov/Archives/research", tier="disclosed", assessed_tier="disclosed", supports=True))
+    asset = UniverseAsset(venue=venue, symbol=opportunity.symbol, market_type="spot")
+    repo.upsert_universe_asset(asset)
+    repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(asset_id=asset.id, ts=now.isoformat(),
+        quote_volume_24h=10_000_000, spread_bps=5, depth_10bps_usd=30_000, data_freshness_sec=0,
+        return_1h=1, return_4h=3, return_24h=8, relative_strength_24h=5, rsi_14=60, atr_pct=2))
+    for timeframe, interval, count in (("15m", 900_000, 96), ("1h", 3_600_000, 1)):
+        end = int(now.timestamp()*1000) // interval * interval
+        candles = [Candle(timestamp=end-(count-index)*interval, open=100+math.sin(index/3),
+            high=102+math.sin(index/3), low=98+math.sin(index/3), close=100+math.sin(index/3), volume=1000)
+            for index in range(count)]
+        repo.upsert_ohlcv_candles(opportunity.symbol, timeframe, candles, exchange=venue, market_type="spot")
+    repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?, last_mutated_at=?", (now.isoformat(), now.isoformat()))
+    return theme, opportunity
+
+
+def test_serenity_publication_is_idempotent_scoped_and_never_writes_pi_decisions():
+    import json
+    from datetime import timezone
+    theme, opportunity = _serenity_publication_source()
+    ids = repo.publish_serenity_candidates(theme.id, [opportunity.id, opportunity.id])
+    assert repo.publish_serenity_candidates(theme.id, [opportunity.id]) == ids
+    assert repo.publish_serenity_candidates(theme.id, [opportunity.id], new_candidates_only=True) == []
+    candidate = repo.get_candidate(ids[0])
+    source = json.loads(candidate["candidate_opportunity_context_json"])["source"]
+    assert (source["kind"], source["id"], source["trade_school"]) == ("serenity", opportunity.id, "serenity")
+    generation = repo.get_candidate_planning_for_candidate(ids[0])
+    repo.reconcile_candidate_attention(set(), producer_scope="universe", eligible_identity_keys=set(),
+        refresh_source={"scanner_run_id": "universe-refresh"}, soft_lease_sec=900, now=datetime.now(timezone.utc))
+    assert repo.get_candidate_planning_generation(generation["id"])["attention_status"] == "active"
+    repo.expire_universe_snapshots()
+    assert repo.get_db().execute("SELECT status FROM universe_snapshots WHERE id=?", (candidate["snapshot_id"],)).fetchone()[0] == "active"
+    assert repo.get_db().execute("SELECT COUNT(*) FROM pi_decisions").fetchone()[0] == 0
+    assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 1
+    assert repo.get_serenity_theme(theme.id)["status"] == "promoted"
+
+
+def test_serenity_publication_rolls_back_all_rows_on_failure():
+    theme, opportunity = _serenity_publication_source()
+    db = repo.get_db()
+    db.execute("CREATE TEMP TRIGGER reject_research_generation BEFORE INSERT ON candidate_planning_generations BEGIN SELECT RAISE(ABORT, 'publication failure'); END")
+    import sqlite3
+    with pytest.raises(sqlite3.IntegrityError, match="publication failure"):
+        repo.publish_serenity_candidates(theme.id, [opportunity.id])
+    assert db.execute("SELECT COUNT(*) FROM universe_snapshots").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM universe_members").fetchone()[0] == 0
+    assert repo.get_serenity_theme(theme.id)["status"] == "active"
+
+
+def test_serenity_publication_rechecks_source_after_pa_preparation(monkeypatch):
+    theme, opportunity = _serenity_publication_source()
+    prepare = repo.prepare_candidate_requalification
+    def change_source(candidate):
+        proof = prepare(candidate)
+        repo.update_serenity_opportunity(opportunity.id, thesis="changed research")
+        return proof
+    monkeypatch.setattr(repo, "prepare_candidate_requalification", change_source)
+    with pytest.raises(ValueError, match="serenity_source_changed"):
+        repo.publish_serenity_candidates(theme.id, [opportunity.id])
+    assert repo.get_db().execute("SELECT COUNT(*) FROM universe_members").fetchone()[0] == 0
+    assert repo.get_serenity_theme(theme.id)["status"] == "active"
+
+
+def test_cross_source_cannot_replace_active_instrument_owner():
+    from datetime import timezone
+    theme, opportunity = _serenity_publication_source()
+    ids = repo.publish_serenity_candidates(theme.id, [opportunity.id])
+    owner = repo.get_candidate_planning_for_candidate(ids[0])
+    source = repo.get_candidate(ids[0])
+    context = _context().model_dump()
+    context["candidate_id"] = "universe-collision"
+    context["context_hash"] = ""
+    context["source"].update(kind="universe", id="universe-collision", detected_at=datetime.now(timezone.utc).isoformat(), source_cutoff_at=datetime.now(timezone.utc).isoformat())
+    context["source"]["detected_at"] = context["source"]["source_cutoff_at"]
+    frozen = CandidateOpportunityContextV1.model_validate(context)
+    candidate = UniverseMember.model_validate(_member(_context()).model_dump() | {
+        "id": frozen.candidate_id, "venue": source["venue"], "market_type": source["market_type"], "asset_id": source["asset_id"],
+        "opportunity_source_cutoff_at": frozen.source["source_cutoff_at"],
+        "candidate_opportunity_context_json": frozen.model_dump_json(), "candidate_opportunity_context_hash": frozen.context_hash})
+    repo.insert_universe_snapshot(UniverseSnapshot(id=candidate.snapshot_id))
+    repo.insert_candidate(candidate)
+    with pytest.raises(ValueError, match="instrument_owned"):
+        repo.ensure_candidate_planning_generation(candidate.id)
+    assert repo.get_candidate_planning_generation(owner["id"])["is_current"] == 1
+    assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations WHERE is_current=1").fetchone()[0] == 1
+
+
+def test_serenity_pa_absent_or_opposed_does_not_create_entry_authority():
+    theme, opportunity = _serenity_publication_source()
+    repo.update_serenity_opportunity(opportunity.id, direction="short")
+    with pytest.raises(ValueError, match="serenity_pa_direction_conflict"):
+        repo.publish_serenity_candidates(theme.id, [opportunity.id])
+    repo.update_serenity_opportunity(opportunity.id, direction="long")
+    repo.execute_write("DELETE FROM market_ohlcv WHERE timeframe='15m'")
+    with pytest.raises(ValueError, match="serenity_pa_requalification_unavailable"):
+        repo.publish_serenity_candidates(theme.id, [opportunity.id])
+    assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0
+    assert repo.get_db().execute("SELECT COUNT(*) FROM pi_decisions").fetchone()[0] == 0
+    assert repo.get_serenity_theme(theme.id)["status"] == "active"
+
+
+def test_research_batch_collision_rolls_back_and_released_owner_can_cut_over():
+    import json
+    from datetime import timezone
+    from aletheia.storage.models import SerenityOpportunity
+    theme, first = _serenity_publication_source()
+    second = SerenityOpportunity(theme_id=theme.id, symbol=first.symbol, direction="long", market_type="spot")
+    repo.insert_serenity_opportunity(second)
+    with pytest.raises(ValueError, match="instrument_owned"):
+        repo.publish_serenity_candidates(theme.id, [first.id, second.id])
+    assert repo.get_db().execute("SELECT COUNT(*) FROM universe_members").fetchone()[0] == 0
+    assert repo.get_serenity_theme(theme.id)["status"] == "active"
+    ids = repo.publish_serenity_candidates(theme.id, [first.id])
+    old = repo.get_candidate_planning_for_candidate(ids[0])
+    with pytest.raises(ValueError, match="instrument_owned"):
+        repo.publish_serenity_candidates(theme.id, [second.id])
+    repo.expire_candidate_attention(now=datetime(2099, 1, 1, tzinfo=timezone.utc))
+    new_ids = repo.publish_serenity_candidates(theme.id, [second.id])
+    successor = repo.get_candidate_planning_for_candidate(new_ids[0])
+    assert successor["id"] != old["id"]
+    assert repo.get_candidate_planning_generation(old["id"])["is_current"] == 0
+    assert json.loads(successor["requalification_source_json"])["candidate_opportunity_context"]["source"]["id"] == second.id
+
+
+def test_generation_source_is_frozen_and_refresh_assets_allow_all_venues():
+    import json
+    from datetime import timezone
+    theme, opportunity = _serenity_publication_source()
+    candidate_id = repo.publish_serenity_candidates(theme.id, [opportunity.id])[0]
+    candidate = repo.get_candidate(candidate_id)
+    generation = repo.get_candidate_planning_for_candidate(candidate_id)
+    frozen = json.loads(generation["requalification_source_json"])["candidate_opportunity_context"]
+    repo.reconcile_candidate_attention({generation["id"]}, producer_scope="serenity", eligible_identity_keys=set(),
+        refresh_source={"publication": "serenity"}, soft_lease_sec=900, now=datetime.now(timezone.utc))
+    refreshed = repo.get_candidate_planning_generation(generation["id"])
+    assert json.loads(refreshed["requalification_source_json"])["candidate_opportunity_context"] == frozen
+    assert [row["id"] for row in repo.list_candidate_planning_refresh_assets()] == [candidate["asset_id"]]
+    assert repo.list_candidate_planning_refresh_assets(venue="unconfigured-venue") == []
+    assert repo.list_universe_snapshots() == []

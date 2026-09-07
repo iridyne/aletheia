@@ -23,60 +23,6 @@ from aletheia.storage.models import Opportunity
 
 # ─── 1. Zero eligible candidates ─────────────────────────────────────────────
 
-async def test_paper_trader_no_eligible_candidates_completes_without_side_effects(
-    e2e_db, monkeypatch, tmp_path
-):
-    """When all opportunities are below the confidence threshold, paper trader exits cleanly.
-
-    Verifies the seam between ranker (reads DB) and paper trader loop:
-    - errors == [] (no crash or silent exception swallowed)
-    - DB contains zero pi_decisions and zero trade_proposals
-    """
-    import aletheia.config.loader as loader
-    from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from aletheia.agents.paper_trader import run_paper_trader
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.trading.min_confidence_to_trade = "high"
-    cfg.agent.autonomous_learning = False
-    save_config(cfg)
-
-    # Seed only below-threshold opportunities — observer would produce these when
-    # signals are weak; the ranker must filter them out without crashing.
-    repo.insert_opportunity(Opportunity(
-        symbol="ETH/USDT", market="spot", direction_bias="long",
-        confidence="speculative", confidence_score=35,
-        source_agent="market_observer", scanner_family="momentum",
-        status="open", execution_eligible=True,
-    ))
-    repo.insert_opportunity(Opportunity(
-        symbol="SOL/USDT", market="spot", direction_bias="long",
-        confidence="medium", confidence_score=55,
-        source_agent="market_observer", scanner_family="momentum",
-        status="open", execution_eligible=True,
-    ))
-
-    init_tool_registry()
-    result = await run_paper_trader(
-        permission_mode="Paper", run_id="failure-path-no-candidates"
-    )
-
-    assert result["errors"] == [], f"Expected no errors, got: {result['errors']}"
-
-    decisions = e2e_db.execute("SELECT * FROM pi_decisions").fetchall()
-    proposals = e2e_db.execute("SELECT * FROM trade_proposals").fetchall()
-    assert len(decisions) == 0, (
-        "No pi_decisions should exist when no candidates pass the confidence threshold"
-    )
-    assert len(proposals) == 0, (
-        "No proposals should exist when no candidates pass the confidence threshold"
-    )
 
 
 # ─── 2. Risk whitelist rejection ─────────────────────────────────────────────
@@ -197,7 +143,7 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
     """With kill switch active, the operator loop writes no config changes.
 
     The断点 being tested: operator loop is still scheduled and runs (it is NOT
-    skipped entirely), but all control actions (tighten_confidence, reduce_sizing,
+    skipped entirely), but all control actions (reduce_sizing,
     etc.) are suppressed. Only a notify_operator request should be dispatched.
 
     Verifies:
@@ -221,7 +167,6 @@ def test_kill_switch_suppresses_config_patches_emits_notify(e2e_db, monkeypatch,
     # that fallback owner explicitly rather than inheriting production defaults.
     cfg.operator.enabled = False
     cfg.operator.loop_enabled = True
-    cfg.trading.min_confidence_to_trade = "high"
     save_config(cfg)
 
     # Provide deterministic signal health so the assessment has context to act on.

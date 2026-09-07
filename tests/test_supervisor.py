@@ -241,6 +241,13 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     from aletheia import _gateway_runner as runner
     from aletheia.config.loader import load_config
 
+    from aletheia.storage.sqlite import get_db
+    db = get_db()
+    db.execute("CREATE TABLE runtime_registry (state TEXT, artifact_path TEXT)")
+    db.execute("INSERT INTO runtime_registry VALUES (?, ?)", ("current", str(tmp_path / "old-bundle")))
+    db.commit()
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "process-runtime")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "old-bundle"))
     captured = {}
 
     class FakeProc:
@@ -265,6 +272,9 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     assert "9876" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "debug"
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
+    assert captured["kwargs"]["cwd"] == str(runner._PROJECT_ROOT)
+    assert captured["kwargs"]["env"]["PYTHONPATH"] == str(runner._PROJECT_ROOT)
+    assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_ID"] == "process-runtime"
     from aletheia.gateway.frontdoor_route import read_frontdoor_route
 
     route = read_frontdoor_route()
@@ -788,3 +798,32 @@ def test_sigterm_tears_down_all_owned_descendants_subprocess(tmp_path):
                 os.kill(pid, signal.SIGKILL)
             except Exception:
                 pass
+
+
+def test_linux_source_requires_standard_checkout_interpreter(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from aletheia import _gateway_runner as runner
+
+    root = tmp_path / "standard"
+    root.mkdir()
+    (root / "pyproject.toml").touch()
+    monkeypatch.setattr(runner, "_PROJECT_ROOT", root)
+    monkeypatch.setattr(runner, "get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr(runner.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(runner, "_resolve_real_python", lambda: ("old-bundle-python", {}))
+    cfg = SimpleNamespace(app=SimpleNamespace(dashboard_port=9876))
+    with pytest.raises(RuntimeError, match="standard_checkout_interpreter_unavailable"):
+        runner._spawn_server(cfg)
+    interpreter = root / ".venv" / "bin" / "python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text("#!/bin/sh\nexit 0\n")
+    interpreter.chmod(0o700)
+    captured = {}
+    def spawn(command, **kwargs):
+        captured.update(command=command, **kwargs)
+        return SimpleNamespace(pid=1234, poll=lambda: 0)
+    monkeypatch.setattr(runner.subprocess, "Popen", spawn)
+    monkeypatch.setattr(runner, "_publish_frontdoor_route", lambda *a, **kw: None)
+    assert runner._spawn_server(cfg) == 0
+    assert captured["command"][0] == str(interpreter)
+    assert captured["cwd"] == str(root)

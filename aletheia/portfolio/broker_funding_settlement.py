@@ -364,7 +364,7 @@ def materialize_broker_funding_economics(
             "funding_accounting_version": "broker-funding-v1",
         })
 
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             realized_pnl=realized,
             funding_cost=float(funding_cost),
@@ -575,7 +575,7 @@ def _terminalize_funding_history_expired(
             raise ValueError("funding terminal evidence conflict")
         evidence_root["funding_terminal"] = terminal
 
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             funding_source="unavailable",
             outcome_eligible=False,
@@ -608,9 +608,13 @@ async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dic
     from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.uta.compat import scope_from_local
     from aletheia.uta.manager import query_uta
-    from aletheia.uta.models import FundingLedgerQuery, ReadCompleteness
+    from aletheia.uta.models import FundingLedgerQuery, ReadCompleteness, UTAAccountIdentity
 
     execution_mode = str(position["execution_mode"])
+    order = repo.get_order(str(position.get("order_id") or ""))
+    if order is None or not order.get("uta_account_identity_json"):
+        raise ValueError("uta_account_identity_unavailable")
+    identity = UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"])
     report = await query_uta(
         execution_mode,
         "get_funding_ledger",
@@ -620,6 +624,7 @@ async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dic
             start_at=datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc),
             end_at=datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc),
         )),
+        expected_account=identity,
     )
     if report.completeness is not ReadCompleteness.COMPLETE:
         from aletheia.uta.funding import FUNDING_HISTORY_RETENTION_EXPIRED

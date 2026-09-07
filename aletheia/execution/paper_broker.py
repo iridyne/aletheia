@@ -11,10 +11,12 @@ from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     find_compatible_open_position,
     insert_order,
-    update_order,
+    transition_order,
+    update_order_metadata,
     insert_fill,
     insert_position,
-    update_position,
+    update_open_position_exit_plan,
+    update_open_position_materialization,
 )
 from aletheia.execution.position_enrichment import liquidation_price_for as _liq_price
 
@@ -452,7 +454,7 @@ def _materialize_paper_entry(
     filled_take_profit: float | None = None
     with repo.transaction(immediate=True):
         if existing_order:
-            update_order(
+            transition_order(
                 order.id,
                 status=existing_order_status,
                 filled_at=fill.filled_at if existing_order_status == "filled" else None,
@@ -516,10 +518,17 @@ def _materialize_paper_entry(
                     existing["id"],
                     updated_plan,
                     provenance="paper_position_addition_v1",
-                    extra_position_updates=update_kwargs,
+                    materialization_updates=update_kwargs,
                 )
             else:
-                update_position(existing["id"], **update_kwargs)
+                exit_fields = {
+                    name: update_kwargs.pop(name)
+                    for name in tuple(update_kwargs)
+                    if name == "stop_price"
+                }
+                update_open_position_materialization(existing["id"], **update_kwargs)
+                if exit_fields:
+                    update_open_position_exit_plan(existing["id"], **exit_fields)
             position_id = existing["id"]
         else:
             # Protection belongs to the immutable Proposal/Risk authority. The
@@ -600,7 +609,7 @@ def _materialize_paper_entry(
         # Every entry leg, including an averaging leg, retains a direct backlink
         # to the Position it materialized. The Position.order_id remains the
         # original opening leg, while later Orders no longer become orphan facts.
-        update_order(order.id, position_id=position_id)
+        update_order_metadata(order.id, position_id=position_id)
     return position_id, filled_take_profit
 
 

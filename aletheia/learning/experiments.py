@@ -19,29 +19,11 @@ _log = logging.getLogger(__name__)
 _LAST_SUCCESS_POLICY_VALUES: dict[str, dict] = {}
 
 from aletheia.config.loader import load_config
-from aletheia.learning.behavior_contracts import current_behavior_contract_hash
-from aletheia.learning.hypotheses import (
-    HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
-    hypothesis_fingerprint,
-)
-from aletheia.learning.ledger import (
-    get_exposure_by_dedup_key,
-    get_hypothesis_by_fingerprint,
-    get_open_experiment,
-    get_record,
-    insert_experiment,
-    insert_exposure,
-    insert_hypothesis,
-)
-from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 from aletheia.learning.policy_epochs import PolicyEpoch, build_policy_epoch
 from aletheia.learning.registry import get_learning_path
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 from aletheia.observation_lab.canonical import NumericTreatmentAdapter as _ObservationNumericAdapter
 
-# Hypothesis statuses that forbid opening a *new* experiment. They are durable
-# terminal decisions on the hypothesis, not merely on one experiment row.
-TERMINAL_HYPOTHESIS_STATUSES = frozenset({"refrozen", "idle_expired"})
 _COST_MODEL_MEASURED_PATH_IDS = frozenset({
     "universe_family_calibration",
     "ranker_case_score",
@@ -93,7 +75,16 @@ def _resolve_numeric_via_observation_lab(
     treatment_value = float(treatment)
     if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
         raise ValueError("numeric Learning treatment values must be finite")
-    authority = get_authority_source(db=runtime_db)
+    try:
+        authority = get_authority_source(db=runtime_db)
+    except (FileNotFoundError, RuntimeError, sqlite3.Error):
+        return InfluenceDecision(
+            baseline_value, False, "unassigned", "authority_source_unavailable",
+        )
+    if authority.source != "lab":
+        return InfluenceDecision(
+            baseline_value, False, "unassigned", "authority_source_unavailable",
+        )
     receipt_id = (
         "observation-treatment:"
         + hashlib.sha256(json.dumps({
@@ -109,7 +100,7 @@ def _resolve_numeric_via_observation_lab(
         if candidate_key
         else uuid4().hex
     )
-    if deferred_exposure_writes is not None and authority.source == "lab":
+    if deferred_exposure_writes is not None:
         from aletheia.storage.sqlite import get_db
 
         if not _outbox_capacity_available(runtime_db or get_db(), receipt_id=receipt_id):
@@ -120,9 +111,6 @@ def _resolve_numeric_via_observation_lab(
             return InfluenceDecision(
                 baseline_value, False, "unassigned", "outbox_backpressure",
             )
-    if require_outcome_seed and len(outcome_seeds or []) != 1:
-        if authority.source != "lab":
-            raise RuntimeError("learning_outcome_seed_unavailable")
     persist_receipt = deferred_exposure_writes is None
     adapter_id = str((manifest or {}).get("treatment_adapter_id") or f"learning.numeric:{path_id}")
     adapter_version = str((manifest or {}).get("treatment_adapter_version") or "v1")
@@ -150,8 +138,6 @@ def _resolve_numeric_via_observation_lab(
         "outcome_candidate_key": outcome_candidate_key,
         "outcome_seed": (outcome_seeds or [None])[0],
     }
-    if authority.source != "lab":
-        return InfluenceDecision(baseline_value, False, "unassigned", "authority_source_legacy")
     gate_reason = _learning_gate_reason()
     if gate_reason is not None:
         receipt_values = {
@@ -265,155 +251,9 @@ def _resolve_numeric_via_observation_lab(
     )
 
 
-def stable_assignment(experiment: LearningExperiment, candidate_key: str) -> str:
-    raw = f"{experiment.experiment_id}:{experiment.assignment_salt}:{candidate_key}"
-    fraction = int(hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16], 16) / float(0xFFFFFFFFFFFFFFFF)
-    return "treatment" if fraction < experiment.allocation_pct else "control"
-
-
 def _learning_gate_reason() -> str | None:
     from aletheia.learning.control import learning_influence_gate_reason
     return learning_influence_gate_reason()
-
-
-def _enforce_shadow_authority_provenance(
-    *,
-    path_id: str,
-    experiment: LearningExperiment,
-    authorized: bool,
-    reason: str | None,
-) -> tuple[bool, str]:
-    """Keep every Shadow consumer on baseline and surface provenance drift.
-
-    The authority resolver is the primary gate.  This final consumer-side
-    invariant prevents a resolver regression or state race from granting Shadow
-    behavior and makes any unexpected rejection reason immediately visible in
-    the existing infra-event channel.  The normalized reason is also persisted
-    on the immutable exposure, so the cohort can never silently admit it.
-    """
-
-    normalized_reason = str(reason or "authority_reason_unavailable")
-    if experiment.stage != "shadow":
-        return bool(authorized), normalized_reason
-    if not authorized and normalized_reason == "experiment_stage_not_paper":
-        return False, normalized_reason
-
-    violation_reason = (
-        f"shadow_authority_invariant_violation:{normalized_reason}"
-    )
-    _log.critical(
-        "learning shadow authority invariant violated "
-        "path=%s experiment=%s status=%s authorized=%s reason=%s",
-        path_id,
-        experiment.experiment_id,
-        experiment.status,
-        bool(authorized),
-        normalized_reason,
-    )
-    try:
-        from aletheia.infra.events import emit_infra_event
-
-        emit_infra_event(
-            severity="critical",
-            source="learning_authority",
-            code="shadow_authority_provenance_invalid",
-            message=(
-                "A Shadow Learning exposure reached the consumer with "
-                "unexpected authority provenance and was forced to baseline."
-            ),
-            action="Inspect the experiment; do not admit or pool this cohort.",
-            entity_id=experiment.experiment_id,
-            metadata={
-                "path_id": path_id,
-                "experiment_stage": experiment.stage,
-                "experiment_status": experiment.status,
-                "authority_authorized": bool(authorized),
-                "authority_reason": normalized_reason,
-            },
-            dedupe_sec=600,
-        )
-    except Exception:  # pragma: no cover - visibility must not weaken the gate
-        _log.exception("failed to emit Shadow authority invariant event")
-    return False, violation_reason
-
-
-def _ensure_experiment(
-    *, path_id: str, scope: dict, action: dict, source_cohort: str,
-    target_horizon: str, consumer: str,
-) -> tuple[LearningHypothesis, LearningExperiment | None]:
-    """Resolve the hypothesis for this scope and its open experiment.
-
-    Returns ``(hypothesis, None)`` when the hypothesis has been refrozen and has
-    no open experiment: a refreeze is a durable decision that this line of
-    enquiry is closed, so it must not be reopened.  Hypotheses are resolved by
-    fingerprint, so without this the same refrozen hypothesis received a fresh
-    experiment on the next scanner tick and the refreeze silently expired.
-    """
-    path = get_learning_path(path_id)
-    fingerprint = hypothesis_fingerprint(
-        path_id=path_id, scope=scope, action=action,
-        target_horizon=target_horizon, source_cohort=source_cohort,
-        behavior_contract_version=path.behavior_contract_version,
-    )
-    row = get_hypothesis_by_fingerprint(fingerprint)
-    if row is None:
-        hypothesis = LearningHypothesis(
-            fingerprint=fingerprint,
-            behavior_contract_version=path.behavior_contract_version,
-            fingerprint_schema_version=HYPOTHESIS_FINGERPRINT_SCHEMA_VERSION,
-            cohort_id=hashlib.sha256(source_cohort.encode("utf-8")).hexdigest()[:16],
-            path_id=path_id,
-            overlap_group=path.overlap_group,
-            source_type=source_cohort,
-            scope_json=json.dumps(scope, sort_keys=True),
-            action_json=json.dumps(action, sort_keys=True),
-            consumer=consumer,
-            target_horizon=target_horizon,
-            status="shadow",
-            harm_budget_json=json.dumps({
-                "max_loss_rate_increase": 0.15,
-                "max_mae_p95_worsening_pp": 0.25,
-            }, sort_keys=True),
-        )
-        insert_hypothesis(hypothesis)
-        row = get_hypothesis_by_fingerprint(fingerprint)
-    if row is None:
-        raise RuntimeError("learning hypothesis was not persisted")
-    hypothesis = LearningHypothesis.model_validate(row)
-
-    experiment_row = get_open_experiment(hypothesis.hypothesis_id)
-    if experiment_row is None:
-        if hypothesis.status in TERMINAL_HYPOTHESIS_STATUSES:
-            _log.debug(
-                "refusing new experiment on %s hypothesis %s (path=%s)",
-                hypothesis.status, hypothesis.hypothesis_id, path_id,
-            )
-            return hypothesis, None
-        experiment = LearningExperiment(
-            hypothesis_id=hypothesis.hypothesis_id,
-            assignment_salt=uuid4().hex,
-            allocation_pct=0.5,
-            min_samples_per_arm=50,
-            min_market_days=7,
-            promotion_gate_json=json.dumps({"prospective_only": True, "net_of_costs": True}),
-            harm_gate_json="{}",
-        )
-        insert_experiment(experiment)
-        experiment_row = get_open_experiment(hypothesis.hypothesis_id)
-    if experiment_row is None:
-        raise RuntimeError("learning experiment was not persisted")
-    return hypothesis, LearningExperiment.model_validate(experiment_row)
-
-
-def _verdict_authorizes(experiment: LearningExperiment, policy_epoch: str) -> bool:
-    """Compatibility shim for callers; all authority lives in one resolver."""
-    from aletheia.learning.authority import resolve_learning_authority
-    hypothesis = get_record("learning_hypotheses", experiment.hypothesis_id)
-    if hypothesis is None:
-        return False
-    return resolve_learning_authority(
-        str(hypothesis.get("path_id") or ""), experiment, policy_epoch,
-    ).authorized
 
 
 def _code_fingerprint() -> str | None:
@@ -561,310 +401,30 @@ def current_policy_epoch(
     ))
 
 
-def _policy_epoch(path_id: str) -> str:
-    """Create/rotate the path epoch on a behavior-producing call."""
-    from aletheia.learning.policy_epochs import persist_policy_epoch
-
-    return persist_policy_epoch(_policy_epoch_definition(path_id))
-
-
-def apply_numeric_treatment(
-    *, path_id: str, scope: dict, action: dict, source_cohort: str,
-    target_horizon: str, candidate_key: str | None, baseline: float,
-    treatment: float, consumer: str, consumer_stage: str,
-    outcome_candidate_key: str | None = None, opportunity_id: str | None = None,
-    manifest: dict | None = None,
-    assignment_key: str | None = None,
-    expected_hypothesis_fingerprint: str | None = None,
-    expected_experiment_id: str | None = None,
-    suppress_shadow_if_paper_active: bool = False,
-    exposed_at: str | None = None,
-    outcome_seeds: list | None = None,
-    require_outcome_seed: bool = False,
-    deferred_exposure_writes: list[dict] | None = None,
-    runtime_db: sqlite3.Connection | None = None,
-) -> InfluenceDecision:
-    """Record prospective exposure and apply only an authorized paper treatment."""
-    baseline_value = float(baseline)
-    treatment_value = float(treatment)
-    if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
-        raise ValueError("numeric Learning treatment values must be finite")
-    authority_unavailable = False
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        authority_source = get_authority_source(db=runtime_db).source
-    except sqlite3.OperationalError as exc:
-        if "no such table: observation_authority_state" in str(exc):
-            authority_source = "legacy"
-        else:
-            authority_source = "legacy"
-            authority_unavailable = True
-    except (FileNotFoundError, RuntimeError, sqlite3.Error):
-        authority_source = "legacy"
-        authority_unavailable = True
-    if authority_unavailable:
-        return InfluenceDecision(
-            baseline_value, False, "unassigned", "authority_source_unavailable",
-        )
-    if authority_source == "lab":
-        return _resolve_numeric_via_observation_lab(
-            path_id=path_id,
-            scope=scope,
-            action=action,
-            source_cohort=source_cohort,
-            target_horizon=target_horizon,
-            candidate_key=candidate_key,
-            baseline=baseline_value,
-            treatment=treatment_value,
-            consumer=consumer,
-            consumer_stage=consumer_stage,
-            outcome_candidate_key=outcome_candidate_key,
-            manifest=manifest,
-            assignment_key=assignment_key,
-            exposed_at=exposed_at,
-            outcome_seeds=outcome_seeds,
-            require_outcome_seed=require_outcome_seed,
-            deferred_exposure_writes=deferred_exposure_writes,
-            runtime_db=runtime_db,
-        )
-    gate_reason = _learning_gate_reason()
-    if gate_reason is not None:
-        return InfluenceDecision(baseline_value, False, "disabled", gate_reason)
-    path = get_learning_path(path_id)
-    if not path.measurement_supported:
-        return InfluenceDecision(
-            baseline_value, False, "disabled", "measurement_unsupported"
-        )
-    if not candidate_key:
-        return InfluenceDecision(baseline_value, False, "unassigned", "missing_candidate_key")
-
-    if expected_hypothesis_fingerprint is not None or expected_experiment_id is not None:
-        if not expected_hypothesis_fingerprint or not expected_experiment_id:
-            return InfluenceDecision(
-                baseline_value, False, "unassigned", "expected_paper_identity_incomplete"
-            )
-        path = get_learning_path(path_id)
-        requested_fingerprint = hypothesis_fingerprint(
-            path_id=path_id,
-            scope=scope,
-            action=action,
-            target_horizon=target_horizon,
-            source_cohort=source_cohort,
-            behavior_contract_version=path.behavior_contract_version,
-        )
-        if requested_fingerprint != expected_hypothesis_fingerprint:
-            return InfluenceDecision(
-                baseline_value, False, "unassigned", "expected_paper_identity_mismatch"
-            )
-        hypothesis_row = get_hypothesis_by_fingerprint(
-            expected_hypothesis_fingerprint
-        )
-        if hypothesis_row is None:
-            return InfluenceDecision(
-                baseline_value, False, "unassigned", "expected_paper_hypothesis_unavailable"
-            )
-        hypothesis = LearningHypothesis.model_validate(hypothesis_row)
-        experiment_row = get_open_experiment(hypothesis.hypothesis_id)
-        if (
-            experiment_row is None
-            or experiment_row.get("experiment_id") != expected_experiment_id
-            or not str(experiment_row.get("stage") or "").startswith("paper_")
-        ):
-            return InfluenceDecision(
-                baseline_value, False, "unassigned", "expected_paper_experiment_unavailable",
-                hypothesis_id=hypothesis.hypothesis_id,
-            )
-        experiment = LearningExperiment.model_validate(experiment_row)
-    else:
-        if suppress_shadow_if_paper_active:
-            from aletheia.learning.ledger import list_open_experiments
-            from aletheia.storage.repositories import transaction
-
-            # Serialize the path-level Paper check with hypothesis/experiment
-            # creation. Admission cannot appear between these operations and
-            # leave a second Shadow loop open beside it.
-            with transaction(immediate=True):
-                if any(
-                    str(row.get("stage") or "")
-                    in {"paper_10", "paper_25", "paper_50", "paper_active"}
-                    for row in list_open_experiments(path_id=path_id)
-                ):
-                    return InfluenceDecision(
-                        baseline_value,
-                        False,
-                        "unassigned",
-                        "active_paper_identity_required",
-                    )
-                hypothesis, experiment = _ensure_experiment(
-                    path_id=path_id,
-                    scope=scope,
-                    action=action,
-                    source_cohort=source_cohort,
-                    target_horizon=target_horizon,
-                    consumer=consumer,
-                )
-        else:
-            hypothesis, experiment = _ensure_experiment(
-                path_id=path_id, scope=scope, action=action, source_cohort=source_cohort,
-                target_horizon=target_horizon, consumer=consumer,
-            )
-    if experiment is None:
-        # Terminal hypothesis with nothing open: record no exposure and apply
-        # nothing. Accruing further samples here would silently restart a
-        # completed lifecycle generation.
-        return InfluenceDecision(
-            baseline_value, False, "unassigned", f"hypothesis_{hypothesis.status}",
-            hypothesis_id=hypothesis.hypothesis_id,
-        )
-    if (
-        experiment.status == "registered"
-        and deferred_exposure_writes
-        and any(
-            write["record"].experiment_id == experiment.experiment_id
-            for write in deferred_exposure_writes
-        )
-    ):
-        # Match the transaction-visible activation that the first exposure
-        # formerly provided to later candidates in this same scanner attempt.
-        experiment = experiment.model_copy(update={"status": "active"})
-    if require_outcome_seed and len(outcome_seeds or []) != 1:
-        raise RuntimeError("learning_outcome_seed_unavailable")
-    assignment = stable_assignment(experiment, assignment_key or candidate_key)
-    assignment_unit_key = assignment_key or candidate_key
-    policy_epoch = _policy_epoch(path_id)
-    behavior_contract_hash = current_behavior_contract_hash(
-        path_id=path_id,
-        policy_epoch=policy_epoch,
-        target_horizon=target_horizon,
-        outcome_contract_version=path.outcome_contract_version,
-        metric_version=path.metric_version,
-    )
-    from aletheia.learning.authority import resolve_learning_authority
-    authority = resolve_learning_authority(path_id, experiment, policy_epoch)
-    authority_authorized = authority.authorized
-    authority_reason = authority.reason
-    if not path.paper_authority_supported:
-        authority_authorized = False
-        authority_reason = (
-            "experiment_stage_not_paper"
-            if experiment.stage == "shadow"
-            else "authority_unwired"
-        )
-    authorized, authority_reason = _enforce_shadow_authority_provenance(
-        path_id=path_id,
-        experiment=experiment,
-        authorized=authority_authorized,
-        reason=authority_reason,
-    )
-    # Permission provenance and realized behavior are intentionally distinct:
-    # a treatment assignment can be authorized yet produce no numeric delta.
-    authority_applied = authorized and assignment == "treatment"
-    delta = treatment_value - baseline_value
-    behavior_changed = (
-        authority_applied
-        and math.isfinite(delta)
-        and delta != 0.0
-    )
-    value = treatment_value if behavior_changed else baseline_value
-    behavior_change_reason = (
-        "effective_treatment_delta"
-        if behavior_changed
-        else "no_effective_treatment_delta"
-        if authority_applied
-        else "control_assignment"
-        if assignment == "control"
-        else "authority_not_applied"
-    )
-    stage = experiment.stage if authorized else "shadow_refrozen"
-    dedup_key = (
-        f"{experiment.experiment_id}:{candidate_key}:{stage}:{policy_epoch}:"
-        f"{behavior_contract_hash}"
-    )
-    exposure = LearningExposure(
-        dedup_key=dedup_key,
-        experiment_id=experiment.experiment_id,
-        hypothesis_id=hypothesis.hypothesis_id,
-        assignment=assignment,
-        consumer=consumer,
-        consumer_stage=f"{consumer_stage}:{stage}" if consumer_stage else stage,
-        path_id=path_id,
-        overlap_group=path.overlap_group,
-        assignment_unit_key=assignment_unit_key,
-        candidate_key=candidate_key,
-        opportunity_id=opportunity_id,
-        before_json=json.dumps({"value": baseline_value}, sort_keys=True),
-        after_json=json.dumps({"value": value}, sort_keys=True),
-        manifest_json=json.dumps({
-            **(manifest or {}),
-            "proposed_value": treatment_value,
-            "authority_applied": authority_applied,
-            "authority_reason": authority_reason,
-            "behavior_changed": behavior_changed,
-            "behavior_change_reason": behavior_change_reason,
-        }, sort_keys=True),
-        outcome_candidate_key=outcome_candidate_key,
-        outcome_source="fixed_horizon_candidate" if outcome_candidate_key else None,
-        outcome_contract_version=path.outcome_contract_version,
-        experiment_stage=experiment.stage,
-        concurrent_policy_epoch=policy_epoch,
-        # P1-1: attribute the exposure to the running build so evidence produced by
-        # different code versions is distinguishable (the fingerprint is also folded
-        # into policy_epoch above, so a rebuild rotates the epoch on restart).
-        code_commit=_code_fingerprint(),
-        behavior_contract_hash=behavior_contract_hash,
-        **({"exposed_at": exposed_at} if exposed_at is not None else {}),
-    )
-    if deferred_exposure_writes is not None:
-        stored = get_exposure_by_dedup_key(dedup_key)
-        if stored:
-            exposure = LearningExposure(**stored)
-        else:
-            deferred_exposure_writes.append({
-                "record": exposure,
-                "require_open_experiment_id": experiment.experiment_id,
-                "require_open_experiment_stage": experiment.stage,
-                "outcome_seeds": outcome_seeds,
-            })
-    else:
-        inserted = insert_exposure(
-            exposure,
-            require_open_experiment_id=experiment.experiment_id,
-            require_open_experiment_stage=experiment.stage,
-            outcome_seeds=outcome_seeds,
-        )
-        if inserted is None:
-            return InfluenceDecision(
-                baseline_value,
-                False,
-                "unassigned",
-                "experiment_closed_before_exposure",
-                hypothesis.hypothesis_id,
-                experiment.experiment_id,
-            )
-        if not inserted:
-            stored = get_exposure_by_dedup_key(dedup_key)
-            if stored:
-                exposure = LearningExposure(**stored)
-            else:
-                return InfluenceDecision(
-                    baseline_value,
-                    False,
-                    "unassigned",
-                    "experiment_closed_before_exposure",
-                    hypothesis.hypothesis_id,
-                    experiment.experiment_id,
-                )
-    return InfluenceDecision(
-        value, behavior_changed, assignment,
-        (
-            authority_reason
-            if behavior_changed
-            else f"baseline:{behavior_change_reason}"
-            if authority_applied
-            else f"baseline:{authority_reason}"
-        ),
-        hypothesis.hypothesis_id, experiment.experiment_id, exposure.exposure_id,
+def apply_numeric_treatment(*, path_id: str, scope: dict, action: dict, source_cohort: str,
+target_horizon: str, candidate_key: str | None, baseline: float,
+treatment: float, consumer: str, consumer_stage: str,
+outcome_candidate_key: str | None = None, opportunity_id: str | None = None,
+manifest: dict | None = None,
+assignment_key: str | None = None,
+expected_hypothesis_fingerprint: str | None = None,
+expected_experiment_id: str | None = None,
+suppress_shadow_if_paper_active: bool = False,
+exposed_at: str | None = None,
+outcome_seeds: list | None = None,
+require_outcome_seed: bool = False,
+deferred_exposure_writes: list[dict] | None = None,
+runtime_db: sqlite3.Connection | None = None,) -> InfluenceDecision:
+    """Apply numeric influence only through the canonical Lab authority."""
+    return _resolve_numeric_via_observation_lab(
+        path_id=path_id, scope=scope, action=action,
+        source_cohort=source_cohort, target_horizon=target_horizon,
+        candidate_key=candidate_key, baseline=baseline, treatment=treatment,
+        consumer=consumer, consumer_stage=consumer_stage,
+        outcome_candidate_key=outcome_candidate_key, manifest=manifest,
+        assignment_key=assignment_key, exposed_at=exposed_at,
+        outcome_seeds=outcome_seeds, require_outcome_seed=require_outcome_seed,
+        deferred_exposure_writes=deferred_exposure_writes, runtime_db=runtime_db,
     )
 
 

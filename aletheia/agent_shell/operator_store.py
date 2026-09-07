@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -140,47 +141,10 @@ def _json_load(value):
 
 
 def _current_runtime_id() -> str:
-    db = get_db()
-    try:
-        row = db.execute(
-            "SELECT runtime_id FROM runtime_registry WHERE state = 'current' "
-            "ORDER BY COALESCE(promoted_at, created_at) DESC, rowid DESC LIMIT 1"
-        ).fetchone()
-        if row:
-            return str(row["runtime_id"])
-    except Exception:
-        pass
-    return "runtime-local-current"
+    return os.environ.get("ALETHEIA_RUNTIME_ID") or "runtime-local-current"
 
 
-def _attach_runtime_ownership(
-    *,
-    entity_type: str,
-    entity_id: str,
-    runtime_id: str,
-    ownership_kind: str,
-    metadata: dict | None = None,
-) -> None:
-    db = get_db()
-    db.execute(
-        """
-        INSERT INTO runtime_ownership (
-            id, entity_type, entity_id, runtime_id, ownership_kind, status, metadata
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?)
-        ON CONFLICT(entity_type, entity_id, status) WHERE status = 'active'
-        DO UPDATE SET runtime_id = excluded.runtime_id,
-            ownership_kind = excluded.ownership_kind,
-            metadata = excluded.metadata
-        """,
-        (
-            str(uuid.uuid4()),
-            entity_type,
-            entity_id,
-            runtime_id,
-            ownership_kind,
-            _json_dump(metadata or {}),
-        ),
-    )
+
 
 
 def _commit_if_needed(db, was_in_tx: bool) -> None:
@@ -520,13 +484,7 @@ def create_task(
             effective_completed_at,
         ),
     )
-    _attach_runtime_ownership(
-        entity_type="agent_shell_task",
-        entity_id=task_id,
-        runtime_id=effective_runtime_id,
-        ownership_kind="operator_task",
-        metadata={"task_type": task_type, "status": status},
-    )
+
     _commit_if_needed(db, was_in_tx)
     task = get_task(task_id)
     if task is not None:

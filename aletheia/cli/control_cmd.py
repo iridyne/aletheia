@@ -496,7 +496,6 @@ def _runtime_continuity() -> dict[str, Any]:
             else None
         )
         return {
-            "enabled": cfg.runtime.runtime_continuity_enabled,
             "paused": cfg.runtime.paused,
             "pause_owners": owners,
             "pause_blockers": list(blockers),

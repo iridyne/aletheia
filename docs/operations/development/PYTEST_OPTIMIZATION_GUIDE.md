@@ -351,7 +351,7 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 | 默认禁止 live trading | `tests/specs/spec_live_unlock.py`、`tests/specs/spec_serenity_live_readiness.py` |
 | GET 接口不能返回密钥值 | `tests/specs/spec_api_reference.py`、`tests/test_secrets.py` |
 | 市场数据不能直接用 Bitget execution client | `tests/specs/spec_data_layer.py` |
-| 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_equity_observer.py`、`tests/test_universe_settings_ui.py` |
+| 前端 symbol 展示必须走 `fmtSymbol` | `tests/specs/spec_equity_observer.py` |
 | SQLite 并发三根柱子不能破 | `tests/specs/spec_data_model.py`、`tests/test_storage.py` |
 | AI 默认只跑快反馈 + 上次失败 | `tests/test_pytest_tiering.py`、`scripts/test_ai.ps1` |
 

@@ -98,63 +98,6 @@ def test_native_entry_freezes_versioned_hypothesis_before_hash_and_persistence()
     assert proposal.commit_hash is not None
     assert stored["commit_hash"] == proposal.commit_hash
 
-def test_claim_freezes_exact_in_flight_decision_inputs_before_pi_row_exists():
-    from aletheia.agent_shell.reflection import claim_decision
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PiDecision
-
-    opportunity = _opportunity()
-    repo.transition_open_opportunity_to_queued(opportunity.id)
-    repo.insert_pi_decision(
-        PiDecision(
-            action="signal_pending",
-            opportunity_id=opportunity.id,
-            signal_source="market_observer",
-            symbol=opportunity.symbol,
-            direction="long",
-            market_type="usdt_futures",
-        )
-    )
-    proposal = TradeProposal(
-        id="proposal-in-flight-decision",
-        opportunity_id=opportunity.id,
-        symbol=opportunity.symbol,
-        market_type="usdt_futures",
-        direction="long",
-        quantity=2.0,
-        price=100.0,
-        stop_price=95.0,
-    )
-
-    claimed, created = claim_decision(
-        {
-            "action": "trade",
-            "symbol": opportunity.symbol,
-            "direction": "long",
-            "market_type": "usdt_futures",
-            "opportunity_id": opportunity.id,
-            "signal_source": "market_observer",
-            "proposal_id": proposal.id,
-            "proposal_status": "submitting",
-            "reasoning": "in-flight rationale",
-            "bear_case": "support may fail",
-            "key_assumptions": ["volume persists"],
-            "trade_motivation": {
-                "thesis": "breakout continuation",
-                "supporting_evidence": ["volume"],
-                "invalidation_conditions": [],
-            },
-        },
-        proposal=proposal,
-    )
-
-    assert created is True
-    assert claimed["proposal_id"] == proposal.id
-    snapshot = json.loads(repo.get_trade_proposal(proposal.id)["attribution_snapshot"])
-    context = snapshot["position_hypothesis"]["opening_decision_context"]
-    assert context["reasoning"] == "in-flight rationale"
-    assert context["bear_case"] == "support may fail"
-    assert context["key_assumptions"] == ["volume persists"]
 
 
 

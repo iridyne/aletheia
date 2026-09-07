@@ -4,17 +4,35 @@ from datetime import datetime, timezone, timedelta
 import json
 import logging
 
-from aletheia.storage.models import AgentArtifactRef, AgentRun, AgentRunArtifact
+from aletheia.storage.models import (
+    AgentArtifactRef,
+    AgentRun,
+    AgentRunArtifact,
+    AgentRunStatus,
+)
 from aletheia.storage.repositories import (
-    insert_agent_run,
+    begin_agent_run,
+    claim_agent_run,
+    finish_agent_run,
     insert_agent_run_artifacts,
+    mark_agent_run_stale,
     transaction,
-    update_agent_run,
 )
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_agent_run_log, write_audit
 
 _logger = logging.getLogger("aletheia.agent_runtime.run_logger")
+
+
+class AgentRunAlreadyActive(RuntimeError):
+    def __init__(self, run_id: str, agent_name: str) -> None:
+        self.run_id = run_id
+        self.agent_name = agent_name
+        super().__init__(f"agent '{agent_name}' already has an active run: {run_id}")
+
+
+class AgentRunTransitionError(RuntimeError):
+    pass
 
 
 def _write_agent_run_log_best_effort(record: dict) -> bool:
@@ -37,7 +55,7 @@ def _create_run(
     permission_mode: str,
     model_provider: str | None,
     *,
-    status: str,
+    status: AgentRunStatus,
     event: str,
 ) -> AgentRun:
     run = AgentRun(
@@ -47,7 +65,9 @@ def _create_run(
         model_provider=model_provider,
         status=status,
     )
-    insert_agent_run(run)
+    existing_run_id = claim_agent_run(run)
+    if existing_run_id is not None:
+        raise AgentRunAlreadyActive(existing_run_id, agent_name)
     _write_agent_run_log_best_effort({"event": event, **run.model_dump()})
     return run
 
@@ -86,21 +106,21 @@ def queue_run(agent_name: str, trigger_type: str, permission_mode: str, model_pr
 def begin_queued_run(run: AgentRun, *, permission_mode: str, model_provider: str | None) -> None:
     """Transition a pre-created manual job from queued to running."""
 
+    if not begin_agent_run(
+        run.id,
+        permission_mode=permission_mode,
+        model_provider=model_provider,
+    ):
+        raise AgentRunTransitionError(f"agent_run_begin_conflict:{run.id}")
     run.permission_mode = permission_mode
     run.model_provider = model_provider
     run.status = "running"
-    update_agent_run(
-        run.id,
-        status="running",
-        permission_mode=permission_mode,
-        model_provider=model_provider,
-    )
     _write_agent_run_log_best_effort({"event": "run_started", **run.model_dump()})
 
 
 def end_run(
     run: AgentRun,
-    status: str = "completed",
+    status: AgentRunStatus = "completed",
     outputs: list[str] | None = None,
     errors: list[str] | None = None,
     artifact_refs: list[AgentArtifactRef] | None = None,
@@ -113,21 +133,22 @@ def end_run(
         pass
     tools_called = _aggregate_tools_called(run.id)
     cost_summary = _aggregate_cost(run.id)
-    update_data = {
-        "status": status,
-        "ended_at": datetime.now(timezone.utc).isoformat(),
-        "outputs_created": json.dumps(outputs if outputs is not None else []),
-        "errors": json.dumps(errors if errors is not None else []),
-        "tools_called": json.dumps(tools_called),
-        # AgentRun.cost_estimate is only populated when every recorded runtime
-        # cost event is complete. The known subtotal remains available from the
-        # append-only event ledger when this cache is NULL.
-        "cost_estimate": cost_summary.get("cost_estimate_usd"),
-    }
-    if cost_summary.get("final_model"):
-        update_data["model_name"] = cost_summary["final_model"]
+    ended_at = datetime.now(timezone.utc).isoformat()
     with transaction():
-        update_agent_run(run.id, **update_data)
+        if not finish_agent_run(
+            run.id,
+            expected_status=run.status,
+            status=status,
+            ended_at=ended_at,
+            outputs_created=json.dumps(outputs if outputs is not None else []),
+            errors=json.dumps(errors if errors is not None else []),
+            tools_called=json.dumps(tools_called),
+            # AgentRun.cost_estimate is populated only when every recorded event
+            # is complete; the event ledger retains the known subtotal otherwise.
+            cost_estimate=cost_summary.get("cost_estimate_usd"),
+            model_name=cost_summary.get("final_model"),
+        ):
+            raise AgentRunTransitionError(f"agent_run_finish_conflict:{run.id}")
         insert_agent_run_artifacts([
             AgentRunArtifact(
                 run_id=run.id,
@@ -136,6 +157,8 @@ def end_run(
             )
             for artifact in artifact_refs or []
         ])
+    run.status = status
+    run.ended_at = ended_at
     _write_agent_run_log_best_effort({
         "event": "run_ended",
         "run_id": run.id,
@@ -229,22 +252,11 @@ def mark_stale_running_runs(
             errors = _decode_json_list(row["errors"])
             if stale_error not in errors:
                 errors.append(stale_error)
-            cur = db.execute(
-                """
-                UPDATE agent_runs
-                SET status = ?, ended_at = ?, errors = ?
-                WHERE id = ? AND status IN (?, ?)
-                """,
-                (
-                    "stale",
-                    ended_at,
-                    json.dumps(errors, ensure_ascii=False),
-                    row["id"],
-                    "running",
-                    "queued",
-                ),
-            )
-            if cur.rowcount:
+            if mark_agent_run_stale(
+                str(row["id"]),
+                ended_at=ended_at,
+                errors=json.dumps(errors, ensure_ascii=False),
+            ):
                 marked += 1
                 mirror_records.append(
                     {

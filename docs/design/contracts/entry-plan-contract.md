@@ -3,11 +3,11 @@
 ## Scope and authority
 
 This Contract owns the current Candidate planning boundary from an
-execution-eligible Universe Candidate through immutable `EntryPlan` activation
+execution-eligible Universe or Serenity Candidate through immutable `EntryPlan` activation
 and Fast Monitoring. It implements the accepted
 [Entry Plan proposal](../proposals/entry-plan-contract.md).
 
-The production entry points are Universe publication,
+The production entry points are Universe and Serenity publication,
 `run_entry_planner_batch()`, canonical Entry Plan execution, and Fast
 Monitoring. Durable authority remains in `candidate_planning_generations`,
 `entry_plans`, canonical Proposals/Risk Decisions, and Orders. Risk is the only
@@ -17,6 +17,66 @@ Historical planning retains its numeric format labels; canonical JSON and hashes
 are not rewritten. Current Grounded planning writes no numeric Candidate, Planner,
 Hypothesis, Profile, TriggerSpec, or Plan format label. It requires exact context,
 hypothesis, selected Anchor, Profile, TriggerSpec, and compiled geometry identities.
+
+## Single entry mainline and source ownership
+
+Universe and `publish_serenity_candidates()` publish durable Candidates and ensure
+one current PlanningGeneration. Snapshot `source_kind` and required
+`reconcile_candidate_attention(producer_scope=...)` scope producer refresh and
+admission loss; global TTL still bounds both sources. Exact
+`venue + symbol + market_type` retains one global current owner. Cross-source
+active attention, active Plan or unresolved execution blocks publication with
+`instrument_owned`; a source cannot evict the other or gain a second entry owner.
+
+Candidate context is born with hash-covered `source.kind`, `source.id` and
+`source.trade_school`, source cutoff and evidence identity. Universe uses its real
+member ID and `short_term`; Serenity uses its real research opportunity ID and
+`serenity`. Publication/attention renewal never rewrites a generation's birth
+context or hash. Serenity uses `serenity_research_v1` / `research_authority`, not
+Universe Utility or a legacy momentum identity. Research direction and confidence
+are not PA capability: the shared real-instrument PA evaluator, compatible Profile
+and `prepare_candidate_requalification` must qualify timing; missing evidence or
+a direction conflict blocks publication without changing the research direction.
+See [Serenity contract](serenity_contract.md).
+
+Planner → EntryHypothesis → Compiler → immutable EntryPlan → Plan execution /
+watcher → Risk → Gateway is the only entry implementation. Resting plans may
+execute immediately through that same implementation; triggered plans wait for
+the registered TriggerSpec. Idle/unavailable Planner work never falls back to
+TradingDecision, Ranker, PaperTrader, `signal_pending`, PiDecision entry claims,
+Setup authorization/materialization or old pending defer/wake recovery. Those
+entry facts and `pi_reflection.json` remain historical, not current entry truth.
+Shared position review, close/reduce/adjust actions and their audit remain separate.
+Unknown submissions and existing Orders/Fills/Positions retain Gateway
+reconciliation, cancellation and settlement; retirement does not invent terminal
+exchange outcomes or reconstruct a Proposal from an orphan legacy claim.
+
+Current analytics expose `candidate_attention`, `entry_plans`, `planning_history`
+and the workbench summary. Old ranker/funnel cohorts are read-only history, not a
+current queue, capacity, admission or defer authority. Planning refresh uses
+`list_candidate_planning_refresh_assets`; old pending alone adds no market demand.
+
+## Timing, holding and source attribution
+
+The Compiler freezes `source_kind`, `source_id`, `trade_school` and positive finite
+`holding_horizon_hours` in Plan JSON/hash. Order-intent creation carries source
+fields in Proposal attribution, sets Serenity `opportunity_id` to the real source
+ID, and sets `Proposal.expected_horizon_hours = Plan.holding_horizon_hours`.
+Risk checks source/school and holding against the immutable Plan before Gateway.
+Position attribution and Serenity thesis/close feedback retain that source.
+
+`Plan.expected_horizon_hours` remains timing (4h INTRADAY, 24h SWING, schema bound
+≤48h); `expires_at` remains the 60/240-minute entry opportunity lifetime. Actual
+maker Order timeout remains its separate 60-second clock. Short-term holding
+copies the timing horizon; Serenity holding freezes `cfg.serenity.max_hold_days *
+24` (90 days gives 2160h). A 24h SWING Plan can therefore expire for entry after
+4h without shortening a filled Serenity Position to four or 24 hours. Structural
+invalidation is not holding-period expiry. Serenity keeps its thesis/max-hold
+exit rules and is not subjected to the short-term 72h cap. Compiler geometry keeps
+the real structural stop and sizes risk against the final stop, not an earlier
+shorter stop. The former Serenity fixed-percent entry-stop setting is retired; no school setting overrides that geometry.
+Historical Plans may read missing holding as their original expected horizon;
+missing current source/fingerprint authority never grants a new submission.
 
 ## Canonical Entry hypothesis authority
 
@@ -67,8 +127,8 @@ Candidate capability must be `supported` before market acquisition or inference.
 `observe_only` and `unavailable` are typed planning blocks, not economic NO_PLAN;
 execution rechecks capability in the immutable planning context.
 Candidate T0 evidence, Planning T1 facts and T1-cutoff Learning evidence remain separate. Planning permits
-only `INTRADAY`; the Candidate policy's 4h comparison horizon is not a Swing Entry
-authority. At least one current Planning fact is mandatory, and AI owns no price,
+`INTRADAY` or `SWING`; the Candidate policy's 4h comparison horizon is not
+holding-period authority. At least one current Planning fact is mandatory, and AI owns no price,
 size, leverage, stop, target, slippage, trigger parameter, or Risk field.
 
 Current planning identity is venue, symbol, market type, mechanism,
@@ -78,7 +138,7 @@ supersedes the old generation and invalidates its active pre-order plan; Fast
 Monitoring and execution revalidate both the current generation and exact
 Candidate context/hash before creating or cancelling an order.
 
-Demo Candidate selection uses one Utility-family path: measured returns rank
+Universe Demo Candidate selection uses one Utility-family path: measured returns rank
 first and genuine sample scarcity may fill unused slots by conservative signal
 strength. Startup carries explicit admission_basis/startup_reason and null
 economic_utility_pct through the typed Context; null is not zero return or
@@ -125,7 +185,7 @@ creates one compatibility-cutover cycle while retaining
 the old row and JSON unchanged. `cycle_number`, predecessor, reason, model/compiler
 invocation facts, last stage, and typed outcome are durable audit facts.
 
-An expired Plan may open a later cycle only after a newer completed Universe
+An expired Plan may open a later cycle only after a newer completed source
 requalification with a later source cutoff and no unresolved Order, Fill, or
 Position. Runtime/config/capability blocks resume the same cycle and never count
 as economic `NO_PLAN`; validation/compiler failures are also non-economic.
@@ -308,7 +368,10 @@ no production write, Risk, Gateway, or activation authority.
 
 `tests/specs/spec_entry_plan_contract.py::test_momentum_geometry_measurement_is_read_only_and_fail_closed`
 is the executable claim for this boundary.
-## Momentum geometry v2 controlled Paper boundary
+## Historical Momentum geometry v2 controlled Paper boundary
+
+The following records the former controlled experiment, not a current Planner
+selector or fallback. Current Grounded profiles and fingerprints above own entry.
 
 The planner continues to request `momentum-retrace-reclaim/v1`. For an exact
 Momentum Candidate with 21 completed causal bars, the existing Learning allocator
@@ -325,7 +388,7 @@ unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
 only after this authority check.
 ## Non-goals
 
-This Contract does not add an execution exchange, database table,
-migration, provider type, frontend page, reprice/taker fallback, second Risk
+This convergence adds source/retirement migrations, but no execution exchange,
+second planning ledger, provider type, frontend page, reprice/taker fallback, second Risk
 Engine, second scheduler, or autonomous live authority. It does not tune
 scanner economics, ranking, Risk limits, or trigger economics.

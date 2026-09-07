@@ -111,16 +111,14 @@ def test_plan_repairs_active_member_even_when_not_yet_execution_eligible(monkeyp
     }
 
 
-def test_pending_candidate_refreshes_stale_ohlcv_before_regular_members(monkeypatch):
+def test_planning_candidate_refreshes_stale_ohlcv_before_regular_members(monkeypatch):
     from aletheia.data import active_ohlcv_backfill as backfill
-    from aletheia.data import candidate_market_facts
-    from aletheia.data.symbols import InstrumentId
 
     now = datetime(2026, 8, 14, 12, tzinfo=timezone.utc)
     monkeypatch.setattr(
-        candidate_market_facts,
-        "pending_candidate_instruments",
-        lambda: [InstrumentId.from_parts("okx", "PEND/USDT", "perp")],
+        backfill.repo,
+        "list_candidate_planning_refresh_assets",
+        lambda: [{"venue": "okx", "symbol": "PEND/USDT", "market_type": "perp"}],
     )
     monkeypatch.setattr(
         backfill.repo,

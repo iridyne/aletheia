@@ -18,14 +18,97 @@ from aletheia.storage.models import (
 )
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
 
-@pytest.mark.real_db
-@pytest.mark.parametrize("mechanism,family,direction,market_type,fill_fraction", [
-    ("continuation", "momentum", "long", "spot", 1),
-    ("reversal", "mean_reversion", "short", "perp", 1),
-    ("continuation", "momentum", "long", "spot", .5),
-    ("reversal", "mean_reversion", "short", "perp", .5),
+@pytest.mark.parametrize("kind,school,source_id,holding", [
+    ("serenity", "serenity", "research-opportunity", 2160),
+    ("universe", "short_term", "c1", 24),
 ])
-def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, request, tmp_path, mechanism, family, direction, market_type, fill_fraction):
+def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, school, source_id, holding):
+    from tests.test_entry_analysis import _anchor, _context_v2
+    from aletheia.config.loader import load_config
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+    from aletheia.risk.engine import account_equity_for_execution
+
+    cfg = load_config()
+    cfg.agent.permission_mode = "Full"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.serenity.max_hold_days = 90
+    primary = _anchor("candidate_reference", 100, "candidate:c1")
+    invalidation = _anchor("confirmed_swing", 95, "swing:s1")
+    data = _context_v2((primary, invalidation)).model_dump(exclude={"context_fingerprint"})
+    behavior, schema = entry_contract_fingerprints()
+    generation = {"id": "g1", "last_candidate_id": "c1", "candidate_family": "mean_reversion",
+        "venue": "bitget", "symbol": "BTC/USDT", "market_type": "perp", "direction": "long",
+        "entry_behavior_fingerprint": behavior, "schema_fingerprint": schema,
+        "producer_commit": "isolated-test", "planning_identity": "a" * 64, "cycle_number": 1}
+    data["planning_generation"].update(entry_behavior_fingerprint=behavior, schema_fingerprint=schema)
+    data["candidate"]["candidate_price"] = 100
+    data["candidate_opportunity_context"]["source"] = {"kind": kind, "id": source_id, "trade_school": school}
+    data["market_structure"]["15m"].update(atr14=2, break_tolerance=0.1)
+    data["execution_context"].update(bid=99.9, ask=100.1, spread_bps=2, depth_10bps_usd=100000, estimated_costs=0.1)
+    context = EntryAnalysisContext.model_validate(data)
+    hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
+        primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
+        entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
+        horizon="SWING", supporting_fact_refs=(invalidation.anchor_id,))
+    plan = compile_entry_plan(generation, context, hypothesis, cfg)
+    assert plan.expected_horizon_hours == 24
+    assert plan.holding_horizon_hours == holding
+    assert datetime.fromisoformat(plan.expires_at) - datetime.fromisoformat(plan.approved_at) == timedelta(hours=4)
+    assert (plan.source_kind, plan.source_id, plan.trade_school) == (kind, source_id, school)
+    assert plan.stop_price == pytest.approx(94.9)
+    now = datetime.fromisoformat(plan.approved_at)
+    proposal = build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
+        observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
+    assert proposal.expected_horizon_hours == holding
+    assert proposal.trade_school == school
+    assert proposal.opportunity_id == (source_id if kind == "serenity" else None)
+    assert proposal.stop_price == plan.stop_price
+    assert proposal.quantity * (proposal.price - proposal.stop_price) <= (
+        account_equity_for_execution("paper_internal", cfg) * plan.max_risk_pct / 100
+    )
+    with pytest.raises(ValueError, match="entry_plan_expired"):
+        build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now + timedelta(hours=4))
+
+
+@pytest.mark.parametrize("legacy_version", [None, "entry-plan/v1"])
+def test_historical_plan_readable_but_cannot_submit(monkeypatch, legacy_version):
+    from aletheia.trading.entry_compat import decode_entry_plan
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", _actual_ai_entry_authority)
+    payload = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT").model_dump(mode="json")
+    for field in ("source_kind", "source_id", "trade_school", "holding_horizon_hours"):
+        payload.pop(field)
+    if legacy_version:
+        payload["version"] = legacy_version
+        payload.pop("behavior_fingerprint")
+        payload.pop("schema_fingerprint")
+    historical = decode_entry_plan(json.dumps(payload))
+    assert historical.holding_horizon_hours == historical.expected_horizon_hours == 4
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValueError, match="ai_entry_running_contract_mismatch"):
+        build_entry_plan_order_intent(historical, bid=99.9, ask=100.1,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
+
+
+@pytest.mark.parametrize("holding", [0, -1, float("inf"), float("nan")])
+def test_holding_horizon_requires_positive_finite_value(holding):
+    payload = _plan().model_dump()
+    payload["holding_horizon_hours"] = holding
+    with pytest.raises(ValueError, match="holding_horizon_hours"):
+        EntryPlan.model_validate(payload)
+
+
+@pytest.mark.real_db
+@pytest.mark.parametrize("mechanism,family,direction,market_type,fill_fraction,school", [
+    ("continuation", "momentum", "long", "spot", 1, "short_term"),
+    ("reversal", "mean_reversion", "short", "perp", 1, "short_term"),
+    ("continuation", "momentum", "long", "spot", .5, "short_term"),
+    ("reversal", "mean_reversion", "short", "perp", .5, "short_term"),
+    ("continuation", "momentum", "long", "spot", 1, "serenity"),
+])
+def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, request, tmp_path, mechanism, family, direction, market_type, fill_fraction, school):
     import asyncio
     import math
     from tests.test_candidate_selection_utility import _controlled_admitted_target_candidate
@@ -52,7 +135,16 @@ def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, req
     from aletheia.agent_runtime.runtime_session import start_runtime_session, end_runtime_session
     start_runtime_session(cfg)
     request.addfinalizer(end_runtime_session)
-    candidate = _controlled_admitted_target_candidate(cfg, monkeypatch, mechanism=mechanism, direction=direction, market_type=market_type)
+    research_id = None
+    if school == "serenity":
+        from tests.test_candidate_opportunity_persistence import _serenity_publication_source
+        from aletheia.storage.models import UniverseMember
+        theme, opportunity = _serenity_publication_source()
+        research_id = opportunity.id
+        [candidate_id] = repo.publish_serenity_candidates(theme.id, [research_id])
+        candidate = UniverseMember.model_validate(repo.get_candidate(candidate_id))
+    else:
+        candidate = _controlled_admitted_target_candidate(cfg, monkeypatch, mechanism=mechanism, direction=direction, market_type=market_type)
     cfg = load_config()
     now = datetime.now(timezone.utc)
     symbol = candidate.symbol
@@ -82,7 +174,7 @@ def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, req
         hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
             primary_anchor_ref=primary["anchor_id"], invalidation_anchor_ref=invalidation["anchor_id"],
             entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
-            horizon="INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],))
+            horizon="SWING" if school == "serenity" else "INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],))
         from aletheia.agents import helpers
         from aletheia.model_provider.base import ModelResponse
         from aletheia.agent_shell.entry_planner import system_operator_entry_planner
@@ -95,7 +187,7 @@ def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, req
         return await system_operator_entry_planner(context, "test")
     result = asyncio.run(plan_next_candidate(model, cfg=cfg))
     stored = repo.get_candidate_planning_generation(generation["id"])
-    assert result["status"] == "planned", stored["result_json"]
+    assert result["status"] == "planned", (stored["result_json"], [c["execution_context"] for c in contexts])
     plan = EntryPlan.model_validate_json(repo.get_entry_plan(result["entry_plan_id"])["plan_json"])
     _actual_ai_entry_authority(plan)
     assert stored["model_invoked"] == stored["compiler_invoked"] == 1
@@ -124,6 +216,14 @@ def test_controlled_grounded_candidate_through_real_paper_close(monkeypatch, req
     [position] = repo.list_positions(execution_mode="paper_internal")
     assert position["order_id"] == order["id"] and position["proposal_id"] == order["proposal_id"]
     assert fill["fill_quantity"] == pytest.approx(order["quantity"] * fill_fraction)
+    assert position["trade_school"] == school
+    assert position["opportunity_id"] == research_id
+    if school == "serenity":
+        from aletheia.portfolio.position_manager import _decide_exit
+        assert plan.holding_horizon_hours == cfg.serenity.max_hold_days * 24
+        assert plan.expected_horizon_hours == 24
+        aged_position = {**position, "opened_at": (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()}
+        assert _decide_exit(aged_position, price=position["entry_price"], cfg=cfg) is None
     sqlite_store.close_db()
     assert repo.get_position(position["id"])["quantity"] == pytest.approx(fill["fill_quantity"])
     if fill_fraction < 1:
@@ -260,6 +360,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         planning_generation_id="gen-1",
         candidate_id="candidate-1",
         candidate_family="momentum",
+        source_kind="universe", source_id="candidate-1", trade_school="short_term",
         venue="bitget",
         symbol="BTC/USDT",
         market_type="perp",
@@ -637,12 +738,16 @@ def test_canonical_risk_enforces_the_plan_worst_price_boundary(monkeypatch):
     )
 
 
-def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypatch):
+@pytest.mark.parametrize("school", ["short_term", "serenity"])
+def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypatch, school):
     from types import SimpleNamespace
 
     from aletheia.risk import engine
 
     plan = _plan()
+    if school == "serenity":
+        plan = EntryPlan.model_validate({**plan.model_dump(), "source_kind": "serenity",
+            "source_id": "serenity-opportunity", "trade_school": school, "holding_horizon_hours": 2160})
     payload, digest = entry_plan_payload(plan)
     monkeypatch.setattr(
         engine,
@@ -669,6 +774,11 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
     assert engine._entry_plan_authority_violations(proposal, capital_base=1_000, resolved_policy=resolved) == []
     reduced = proposal.model_copy(update={"quantity": proposal.quantity / 2, "leverage": 1})
     assert engine._entry_plan_authority_violations(reduced, capital_base=1_000, resolved_policy=resolved) == []
+    for forged in (proposal.model_copy(update={"trade_school": "forged"}),
+                   proposal.model_copy(update={"opportunity_id": "other-source"})):
+        assert "entry_plan_order_identity_mismatch" in engine._entry_plan_authority_violations(
+            forged, capital_base=1_000, resolved_policy=resolved
+        )
 
 
 def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkeypatch):
@@ -823,6 +933,7 @@ def _persist_waiting_plan(
             "source_record_hash": "a" * 64,
         },
         source={
+            "kind": "universe", "id": candidate_id, "trade_school": "short_term",
             "detected_at": detected_at,
             "source_cutoff_at": detected_at,
             "feature_snapshot_id": "fixture",
@@ -1139,6 +1250,7 @@ def test_execution_lineage_distinguishes_no_fill_from_missing_order(tmp_path, mo
 
 
 def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
+    from tests.uta.test_execution_coordinator import _identity
     plan = _persist_waiting_plan()
     assert repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered")
     assert repo.transition_entry_plan(plan.plan_id, expected_status="triggered", status="risk_reserved")
@@ -1153,6 +1265,7 @@ def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
     )
     repo.insert_trade_proposal(proposal)
     order = Order(
+        uta_account_identity_json=_identity("bitget_demo").model_dump_json(),
         proposal_id=proposal.id,
         entry_plan_id=plan.plan_id,
         symbol=plan.symbol,
@@ -1174,6 +1287,23 @@ def _persist_ordered_plan() -> tuple[EntryPlan, Order]:
         order_id=order.id,
     )
     return plan, order
+
+def _cancel_ack(command):
+    from aletheia.uta.models import CommandReport, CommandEvidence
+    return CommandReport(identity=command.expected_account, command_id=command.command_id,
+                         evidence=CommandEvidence.ACKNOWLEDGED, received_at=datetime.now(timezone.utc),
+                         venue_order_id=command.target_venue_order_id, profile_version="1")
+
+
+def test_order_and_entry_plan_transition_roll_back_together(monkeypatch):
+    plan, order = _persist_ordered_plan()
+    monkeypatch.setattr(repo, "transition_entry_plan", lambda *_args, **_kwargs: False)
+
+    with pytest.raises(repo.OrderTransitionConflict):
+        repo.transition_order(order.id, status="filled")
+
+    assert repo.get_order(order.id)["status"] == "submitted"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
 
 
 def test_paper_broker_rejects_forged_entry_plan_limit_authority():
@@ -2127,16 +2257,16 @@ def test_stale_source_state_cannot_advance_triggered_plan():
 
 
 def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
 
     plan, order = _persist_ordered_plan()
 
-    def fill_during_cancel(**_kwargs):
+    def fill_during_cancel(command):
         repo.insert_fill(Fill(order_id=order.id, fill_price=100, fill_quantity=1, fee_source="reconciled"))
-        repo.update_order(order.id, status="filled")
-        return {"cancelled": True, "order_id": "exchange-1"}
+        repo.transition_order(order.id, status="filled")
+        return _cancel_ack(command)
 
-    monkeypatch.setattr(bitget_broker, "cancel_entry_order", fill_during_cancel)
+    monkeypatch.setattr(coordinator, "cancel_order", fill_during_cancel)
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "filled"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
@@ -2180,7 +2310,7 @@ def test_gateway_cancel_recovers_exact_entry_order_relation():
             fee_source="reconciled",
         )
     )
-    repo.update_order(order.id, status="filled")
+    repo.transition_order(order.id, status="filled")
 
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
 
@@ -2189,18 +2319,14 @@ def test_gateway_cancel_recovers_exact_entry_order_relation():
 
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.execution import exchange_materialization, reconciliation
     from aletheia.uta import manager
     from aletheia.uta.models import OrderLifecycle, ReadCompleteness
 
     plan, order = _persist_ordered_plan()
 
-    monkeypatch.setattr(
-        bitget_broker,
-        "cancel_entry_order",
-        lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
-    )
+    monkeypatch.setattr(coordinator, "cancel_order", _cancel_ack)
 
     async def exact_order(*_args, **_kwargs):
         return SimpleNamespace(
@@ -2220,7 +2346,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
         assert repo.get_order(order_id)["status"] == "submitted"
         materialized.extend(rows)
         repo.insert_fill(Fill(order_id=order_id, fill_price=100, fill_quantity=0.5, fee_source="reconciled"))
-        repo.update_order(order_id, status="partially_filled")
+        repo.transition_order(order_id, status="partially_filled")
 
     monkeypatch.setattr(manager, "query_uta", exact_order)
     monkeypatch.setattr(
@@ -2242,16 +2368,12 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
 
 
 def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monkeypatch):
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.uta import manager
     from aletheia.uta.models import ReadCompleteness
 
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(
-        bitget_broker,
-        "cancel_entry_order",
-        lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
-    )
+    monkeypatch.setattr(coordinator, "cancel_order", _cancel_ack)
 
     async def incomplete_order(*_args, **_kwargs):
         return SimpleNamespace(
@@ -2267,16 +2389,12 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
 
 
 def test_gateway_cancel_waits_when_order_quantity_leads_fill_history(monkeypatch):
-    from aletheia.execution import bitget_broker, gateway, reconciliation
+    from aletheia.execution import coordinator, gateway, reconciliation
     from aletheia.uta import manager
     from aletheia.uta.models import OrderLifecycle, ReadCompleteness
 
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(
-        bitget_broker,
-        "cancel_entry_order",
-        lambda **_kwargs: {"cancelled": True, "order_id": "exchange-1"},
-    )
+    monkeypatch.setattr(coordinator, "cancel_order", _cancel_ack)
 
     async def terminal_order(*_args, **_kwargs):
         return SimpleNamespace(
@@ -2320,14 +2438,17 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     from aletheia.execution import reconciliation
     from aletheia.uta.models import OrderLifecycle
 
+    from tests.uta.test_execution_coordinator import _identity
+    monkeypatch.setattr(reconciliation, "build_uta_registry", lambda: SimpleNamespace(
+        configured_identities=lambda: (_identity("bitget_demo"),)))
     plan, order = _persist_ordered_plan()
-    repo.update_order(
+    repo.update_order_metadata(
         order.id,
-        source="native",
         order_tactic="OPPOSING_BBO_IOC",
         time_in_force="ioc",
-        status=starting_status,
     )
+    repo.execute_write("UPDATE orders SET source='native' WHERE id=?", (order.id,))
+    repo.transition_order(order.id, status=starting_status)
 
     async def no_rows(self, **_kwargs):
         return []
@@ -2377,13 +2498,16 @@ def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
     from aletheia.execution import reconciliation
     from aletheia.uta.models import OrderLifecycle
 
+    from tests.uta.test_execution_coordinator import _identity
+    monkeypatch.setattr(reconciliation, "build_uta_registry", lambda: SimpleNamespace(
+        configured_identities=lambda: (_identity("bitget_demo"),)))
     plan, order = _persist_ordered_plan()
-    repo.update_order(
+    repo.update_order_metadata(
         order.id,
-        source="native",
         order_tactic="OPPOSING_BBO_IOC",
         time_in_force="ioc",
     )
+    repo.execute_write("UPDATE orders SET source='native' WHERE id=?", (order.id,))
 
     async def no_rows(self, **_kwargs):
         return []

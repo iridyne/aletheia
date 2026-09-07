@@ -27,22 +27,19 @@ def test():
 
 @bitget_app.command()
 def sync():
-    """Pull real account state from Bitget once (debug helper for the cached sync)."""
+    """Refresh the configured Bitget account through UTA."""
+    from aletheia.config.loader import load_config
     from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.portfolio.exchange_sync import sync_exchange_account, get_cached_state, status_for
+    from aletheia.portfolio.exchange_sync import sync_all_exchanges, status_for
 
     assert_migrations_current()
-    state = sync_exchange_account()
-    cached = get_cached_state()
-    if state is None and cached is None:
-        typer.echo("Sync skipped or failed (no credentials, or exchange error). "
-                   "Check `aletheia bitget test` and `aletheia secrets list`.", err=True)
+    mode = "bitget_live_limited" if load_config().exchange.mode == "live" else "bitget_demo"
+    state = sync_all_exchanges(execution_modes=(mode,))
+    if state is None or status_for(state) != "ok":
+        typer.echo(f"UTA account unavailable: {state}", err=True)
         raise typer.Exit(1)
-    s = state.__dict__ if state else (cached or {})
-    typer.echo(f"status: {status_for(cached)}")
-    typer.echo(f"mode: {s.get('mode')}")
-    typer.echo(f"equity_usdt: {s.get('equity_usdt')}")
-    typer.echo(f"  available: {s.get('available_usdt')}  frozen: {s.get('frozen_usdt')}  "
-               f"futures_uPnL: {s.get('futures_unrealized_pnl')}")
-    typer.echo(f"open_positions: {s.get('open_positions_count')}  open_orders: {s.get('open_orders_count')}")
-    typer.echo(f"fetched_at: {s.get('fetched_at')}")
+    account = next(row for row in state["accounts"] if row["broker_id"] == mode)
+    typer.echo(f"mode: {mode}")
+    typer.echo(f"equity_usdt: {account.get('equity_usdt')}")
+    typer.echo(f"available_usdt: {account.get('available_usdt')}")
+    typer.echo(f"fetched_at: {state.get('fetched_at')}")

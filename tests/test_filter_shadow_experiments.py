@@ -5,6 +5,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def lab_authority():
+    from aletheia.observation_lab.canonical import set_authority_source
+
+    set_authority_source("lab", actor="test", reason="filter-shadow fixture")
+
+
 def test_shared_first_exposure_orders_same_second_by_exact_instant():
     from aletheia.analytics.filter_evidence import FIRST_EXPOSURE_CTE_SQL
     from aletheia.storage.sqlite import get_db, register_instant_us
@@ -127,29 +134,22 @@ def _record_ttl_candidate(
 
 
 def test_replay_ready_plan_is_registered_once_and_starts_prospectively():
-    from aletheia.counterfactual.filter_experiments import (
-        register_replay_ready_experiments,
-    )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
-    replay = _ready_replay(filter_version="fixed-v1")
-
-    first = register_replay_ready_experiments([replay], now=started_at)
+    first = register_replay_ready_experiments([_ready_replay(filter_version="fixed-v1")], now=started_at)
     second = register_replay_ready_experiments(
-        [_ready_replay(filter_version="fixed-v1", ttl_sec=7200)],
-        now=started_at + timedelta(hours=1),
+        [_ready_replay(filter_version="fixed-v1", ttl_sec=7200)], now=started_at + timedelta(hours=1),
     )
-    rows = get_db().execute("SELECT * FROM filter_shadow_experiments").fetchall()
-
+    rows = list_filter_shadow_observations()
     assert first == {"registered": 1, "already_registered": 0, "skipped": 0}
     assert second == {"registered": 0, "already_registered": 1, "skipped": 0}
     assert len(rows) == 1
-    assert rows[0]["started_at"] == started_at.isoformat(timespec="microseconds")
-    assert rows[0]["status"] == "collecting"
-    assert rows[0]["control_parameter"] == '{"ttl_sec":1800}'
-    assert rows[0]["treatment_parameter"] == '{"ttl_sec":3600}'
-    assert rows[0]["production_mutation_allowed"] == 0
+    assert datetime.fromisoformat(rows[0]["started_at"]) == started_at
+    assert rows[0]["control_parameter"] == {"ttl_sec": 1800}
+    assert rows[0]["treatment_parameter"] == {"ttl_sec": 3600}
+
 
 
 def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_config(monkeypatch):
@@ -157,7 +157,7 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
     version = _record_ttl_candidate(
@@ -190,8 +190,8 @@ def test_shadow_evaluation_uses_only_future_first_exposures_and_never_mutates_co
     save_calls = []
     monkeypatch.setattr(loader, "save_config", lambda *args, **kwargs: save_calls.append(1))
     summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=2))
-    experiment = get_db().execute("SELECT * FROM filter_shadow_experiments").fetchone()
-    evaluation = get_db().execute("SELECT * FROM filter_shadow_evaluations").fetchone()
+    experiment = list_filter_shadow_observations()[0]
+    evaluation = experiment["latest_evaluation"]
 
     assert summary == {"evaluated": 1, "ready_for_review": 1, "completed_no_support": 0, "invalidated": 0}
     assert experiment["status"] == "ready_for_review"
@@ -620,25 +620,21 @@ def test_observer_pre_filter_replay_registers_least_permissive_winner():
     from aletheia.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
     replay = _ready_observer_replay(filter_version="obs-fixed-v1")
 
     summary = register_replay_ready_experiments([replay], now=started_at)
-    rows = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments "
-        "WHERE filter_name='observer_pre_filter'"
-    ).fetchall()
+    rows = list_filter_shadow_observations()
 
     assert summary == {"registered": 1, "already_registered": 0, "skipped": 0}
     assert len(rows) == 1
     row = rows[0]
     # Least-permissive winner: largest rsi_deviation among ready alternatives,
     # tie-broken by largest atr_pct. Here (10.0, 0.7) beats (6.0, 0.5).
-    assert row["treatment_parameter"] == '{"atr_pct":0.7,"rsi_deviation":10.0}'
-    assert row["control_parameter"] == '{"atr_pct":0.8,"rsi_deviation":12.0}'
-    assert row["production_mutation_allowed"] == 0
+    assert row["treatment_parameter"] == {"atr_pct": 0.7, "rsi_deviation": 10.0}
+    assert row["control_parameter"] == {"atr_pct": 0.8, "rsi_deviation": 12.0}
     # Observer replays declare their own stricter gates; the registration must
     # honor them rather than falling back to the family_ttl 0.05 / 0.70 pair.
     assert row["min_coverage"] == 0.80
@@ -652,7 +648,7 @@ def test_observer_replay_without_ready_alternatives_is_skipped():
     from aletheia.counterfactual.filter_experiments import (
         register_replay_ready_experiments,
     )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
     started_at = datetime(2026, 7, 31, 12, 0, tzinfo=timezone.utc)
     replay = _ready_observer_replay(filter_version="obs-empty-v1")
@@ -660,76 +656,23 @@ def test_observer_replay_without_ready_alternatives_is_skipped():
         alt["readiness"] = "no_support"
 
     summary = register_replay_ready_experiments([replay], now=started_at)
-    rows = get_db().execute(
-        "SELECT COUNT(*) FROM filter_shadow_experiments"
-    ).fetchone()
+    rows = list_filter_shadow_observations()
 
     assert summary == {"registered": 0, "already_registered": 0, "skipped": 1}
-    assert rows[0] == 0
+    assert rows == []
 
 
-def test_ranker_confidence_replay_registers_and_rebuilds_prospectively(monkeypatch):
-    from aletheia.counterfactual import filter_experiments
-    from aletheia.storage.sqlite import get_db
+def test_ranker_confidence_replay_selects_least_permissive_threshold():
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
-    start = datetime(2026, 8, 10, 3, 0, tzinfo=timezone.utc)
-    replay = {
-        "filter_name": "ranker_confidence_gate",
-        "filter_version": "ranker-fixed-v1",
-        "stage": "paper_ranker",
-        "scanner_family": "mean_reversion",
-        "direction": "long",
-        "market_type": "perp",
-        "horizon": "4h",
-        "current_minimum_confidence": "high",
-        "candidate_cap_reached": False,
-        "min_samples": 20,
-        "alternatives": [
-            {
-                "minimum_confidence": "speculative",
-                "readiness": "ready_for_controlled_experiment",
-            },
-            {
-                "minimum_confidence": "medium",
-                "readiness": "ready_for_controlled_experiment",
-            },
-        ],
-    }
-    assert filter_experiments.register_replay_ready_experiments(
-        [replay], now=start
-    )["registered"] == 1
+    replay = _ready_ranker_replay()
+    replay["alternatives"].append({"minimum_confidence": "speculative", "readiness": "ready_for_controlled_experiment"})
+    register_replay_ready_experiments([replay])
+    row = list_filter_shadow_observations()[0]
+    assert row["control_parameter"] == {"minimum_confidence": "high"}
+    assert row["treatment_parameter"] == {"minimum_confidence": "medium"}
 
-    calls = []
-    monkeypatch.setattr(
-        filter_experiments,
-        "build_ranker_confidence_replay",
-        lambda **kwargs: calls.append(kwargs) or {
-            "current_pass": {
-                "candidate_count": 20, "settled_n": 20,
-                "outcome_coverage": 1.0, "raw_avg_net_pct": 0.0,
-            },
-            "alternatives": [{
-                "minimum_confidence": "medium",
-                "candidate_count": 20,
-                "settled_n": 20,
-                "outcome_coverage": 1.0,
-                "raw_avg_net_pct": 0.4,
-                "shrunk_avg_net_pct": 0.2,
-            }],
-        },
-    )
-    summary = filter_experiments.evaluate_active_shadow_experiments(
-        now=start + timedelta(hours=5)
-    )
-    experiment = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone()
-
-    assert summary["ready_for_review"] == 1
-    assert experiment["production_mutation_allowed"] == 0
-    assert experiment["control_parameter"] == '{"minimum_confidence":"high"}'
-    assert experiment["treatment_parameter"] == '{"minimum_confidence":"medium"}'
-    assert calls[0]["evaluated_after"] == start.isoformat(timespec="microseconds")
 
 
 def test_shadow_experiment_invalidates_when_production_filter_version_changes():
@@ -737,7 +680,7 @@ def test_shadow_experiment_invalidates_when_production_filter_version_changes():
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
 
     start = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
     version = _record_ttl_candidate(
@@ -757,12 +700,12 @@ def test_shadow_experiment_invalidates_when_production_filter_version_changes():
     assert changed_version != version
 
     summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    experiment = get_db().execute("SELECT * FROM filter_shadow_experiments").fetchone()
-    evaluation = get_db().execute("SELECT * FROM filter_shadow_evaluations").fetchone()
+    experiment = list_filter_shadow_observations()[0]
+    evaluation = experiment["latest_evaluation"]
 
     assert summary["invalidated"] == 1
     assert experiment["status"] == "invalidated"
-    assert experiment["invalidation_reason"] == "production_filter_version_changed"
+    assert evaluation["reason"] == "production_filter_version_changed"
     assert evaluation["disposition"] == "invalidated"
 
 
@@ -853,10 +796,10 @@ def _record_ranker_candidate(
 
 def test_frozen_units_use_exact_first_exposure_within_same_second():
     from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.units import list_frozen_units
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures
+    from aletheia.observation_lab.db import get_lab_db
     from aletheia.storage.sqlite import get_db
 
     started_at = datetime(2026, 8, 30, 10, 0, 0, 50_000, tzinfo=timezone.utc)
@@ -882,14 +825,13 @@ def test_frozen_units_use_exact_first_exposure_within_same_second():
         "'test', 'v1', 'shared-frozen-candidate', ?, ?)",
         rows,
     )
-    experiment = dict(
-        db.execute("SELECT * FROM filter_shadow_experiments").fetchone()
-    )
-
-    assert capture_frozen_units_for(experiment) == 1
-    units = list_frozen_units(experiment["id"])
-    assert [(unit["decision"], unit["first_evaluated_at"]) for unit in units] == [
-        ("passed", "2026-08-30T10:00:00.100000+00:00")
+    root = get_lab_db().execute("SELECT observation_id FROM observation_windows").fetchone()[0]
+    assert capture_filter_shadow_exposures(root, 1)["units_inserted"] == 1
+    units = [dict(row) for row in get_lab_db().execute(
+        "SELECT assignment, exposed_at FROM observation_exposures WHERE observation_id=?", (root,),
+    )]
+    assert [(unit["assignment"], unit["exposed_at"]) for unit in units] == [
+        ("control", "2026-08-30T10:00:00.100000+00:00")
     ]
 
 
@@ -899,8 +841,7 @@ def _seed_ranker_cohort(
     """Seed `count` passed + `count` rejected first-exposure ranker rows.
 
     Returns the deterministic ``filter_version`` derived from the shared
-    ``{"minimum": "high"}`` parameter snapshot so callers can register a replay
-    that lines up with the seeded rows on the legacy live-replay path too.
+    ``{"minimum": "high"}`` parameter snapshot for canonical Lab registration.
     """
     version = ""
     for i in range(count):
@@ -926,21 +867,17 @@ def _seed_ranker_cohort(
 
 def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
     from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.units import count_frozen_units
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _seed_ranker_cohort(start, count=20)
 
-    experiment = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone()
-    captured = capture_frozen_units_for(dict(experiment))
+    experiment = list_filter_shadow_observations()[0]
+    captured = capture_filter_shadow_exposures(experiment["observation_id"], 1)["exposures_inserted"]
     assert captured == 40  # 20 passed + 20 rejected
 
     # An unrelated master iteration bumps filter_version for a different scope
@@ -957,25 +894,21 @@ def test_ranker_confidence_unrelated_filter_version_bump_does_not_invalidate():
         )
 
     summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=2))
-    experiment_after = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone()
+    experiment_after = list_filter_shadow_observations()[0]
 
     assert experiment_after["status"] != "invalidated"
-    assert experiment_after["invalidation_reason"] is None
     assert summary["invalidated"] == 0
     # Frozen units survive the version bump — provenance shifts but identity holds.
-    assert count_frozen_units(experiment_after["id"]) >= 40
+    assert experiment_after["frozen_units"] == 43
 
 
 def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze():
     from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
         evaluate_active_shadow_experiments,
         register_replay_ready_experiments,
     )
-    from aletheia.observation_lab.units import list_frozen_units
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from aletheia.observation_lab.db import get_lab_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     register_replay_ready_experiments([_ready_ranker_replay()], now=start)
@@ -995,25 +928,27 @@ def test_ranker_confidence_parameter_snapshot_change_invalidates_before_freeze()
         net_return_pct=0.4,
         minimum="medium",
     )
-    experiment = dict(get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone())
+    experiment = list_filter_shadow_observations()[0]
 
     # The incompatible row is not admitted to the immutable frozen cohort.
-    assert capture_frozen_units_for(experiment) == 1
-    assert len(list_frozen_units(experiment["id"])) == 1
+    capture = capture_filter_shadow_exposures(experiment["observation_id"], 1)
+    assert capture["verdict"] == "invalid"
+    assert get_lab_db().execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE candidate_key=?",
+        ("opportunity:mean_reversion:changed-minimum",),
+    ).fetchone()[0] == 0
 
-    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    after = dict(get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone())
-    assert summary["invalidated"] == 1
+    after = list_filter_shadow_observations()[0]
     assert after["status"] == "invalidated"
-    assert after["invalidation_reason"] == "adapter_causal_input_changed"
+    assert after["latest_evaluation"]["reason"] == "adapter_causal_input_changed"
+    summary = evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
+    assert summary["evaluated"] == 0
+    assert list_filter_shadow_observations()[0]["latest_evaluation"]["evaluation_id"] == after["latest_evaluation"]["evaluation_id"]
 
 
 def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
     from aletheia.counterfactual import filter_experiments as fe
+    from aletheia.observation_lab.filter_shadow import list_filter_shadow_observations
     from aletheia.storage.sqlite import get_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
@@ -1033,23 +968,21 @@ def test_ranker_confidence_malformed_parameter_snapshot_invalidates():
     )
 
     summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    experiment = dict(db.execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone())
+    experiment = list_filter_shadow_observations()[0]
     assert summary["invalidated"] == 1
     assert experiment["status"] == "invalidated"
-    assert experiment["invalidation_reason"] == "adapter_causal_input_changed"
+    assert experiment["latest_evaluation"]["reason"] == "adapter_causal_input_changed"
 
 
 def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
     from aletheia.counterfactual import filter_experiments as fe
-    from aletheia.storage.sqlite import get_db
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
     fe.register_replay_ready_experiments([_ready_ranker_replay()], now=start)
     _seed_ranker_cohort(start, count=5)  # small — semantics change, no need for gate
-    experiment = get_db().execute("SELECT * FROM filter_shadow_experiments").fetchone()
-    fe.capture_frozen_units_for(dict(experiment))
+    experiment = list_filter_shadow_observations()[0]
+    capture_filter_shadow_exposures(experiment["observation_id"], 1)
 
     # Owner review §6: adapter/evaluator semantics are versioned. A deliberate bump
     # invalidates the collecting cohort; append-only evaluation history is preserved.
@@ -1060,98 +993,67 @@ def test_ranker_confidence_adapter_identity_change_invalidates(monkeypatch):
     )
 
     summary = fe.evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    experiment_after = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone()
-    evaluation = get_db().execute(
-        "SELECT * FROM filter_shadow_evaluations ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
+    experiment_after = list_filter_shadow_observations()[0]
+    evaluation = experiment_after["latest_evaluation"]
 
     assert summary["invalidated"] == 1
     assert experiment_after["status"] == "invalidated"
-    assert experiment_after["invalidation_reason"] == "adapter_causal_identity_changed"
+    assert evaluation["reason"] == "adapter_causal_identity_changed"
     assert evaluation["disposition"] == "invalidated"
 
 
-def test_ranker_confidence_evaluation_from_frozen_units_matches_live_replay():
-    from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
-        evaluate_active_shadow_experiments,
-        register_replay_ready_experiments,
-    )
-    from aletheia.storage.sqlite import get_db
-
-    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
-    # Seed first so both live-replay (which filters by ``filter_version``) and
-    # the frozen path see the exact same 25 passed + 25 rejected rows.
-    version = _seed_ranker_cohort(start, count=25)
-    register_replay_ready_experiments(
-        [_ready_ranker_replay(filter_version=version)], now=start
-    )
-
-    # First evaluation: no frozen units yet, uses the live replay path.
-    evaluate_active_shadow_experiments(now=start + timedelta(hours=1))
-    live_eval = dict(get_db().execute(
-        "SELECT * FROM filter_shadow_evaluations ORDER BY created_at DESC LIMIT 1"
-    ).fetchone())
-
-    # Freeze the exact same cohort, then re-evaluate through the frozen path.
-    experiment = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments"
-    ).fetchone()
-    assert capture_frozen_units_for(dict(experiment)) == 50
-    evaluate_active_shadow_experiments(now=start + timedelta(hours=2))
-    frozen_eval = dict(get_db().execute(
-        "SELECT * FROM filter_shadow_evaluations ORDER BY created_at DESC LIMIT 1"
-    ).fetchone())
-
-    # Owner review §9 Evidence Equivalence — same frozen inputs must produce
-    # the same counts, coverage, effect, and disposition.
-    for field in (
-        "control_candidate_count", "control_settled_n",
-        "control_outcome_coverage", "control_raw_avg_net_pct",
-        "treatment_candidate_count", "treatment_settled_n",
-        "treatment_outcome_coverage", "treatment_raw_avg_net_pct",
-        "treatment_shrunk_avg_net_pct", "edge_delta_pct", "disposition",
-    ):
-        assert frozen_eval[field] == live_eval[field], (
-            f"{field} diverged: frozen={frozen_eval[field]} live={live_eval[field]}"
-        )
-
-
 def test_two_ranker_experiments_collect_independently():
-    from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
-        register_replay_ready_experiments,
-    )
-    from aletheia.observation_lab.units import list_frozen_units
-    from aletheia.storage.sqlite import get_db
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.filter_shadow import capture_filter_shadow_exposures, list_filter_shadow_observations
+    from aletheia.observation_lab.db import get_lab_db
 
     start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
-    register_replay_ready_experiments(
-        [_ready_ranker_replay(scanner_family="mean_reversion")], now=start
-    )
-    register_replay_ready_experiments(
-        [_ready_ranker_replay(scanner_family="momentum")], now=start
-    )
+    for family in ("mean_reversion", "momentum"):
+        register_replay_ready_experiments([_ready_ranker_replay(scanner_family=family)], now=start)
     _seed_ranker_cohort(start, count=10, scanner_family="mean_reversion")
     _seed_ranker_cohort(start, count=7, scanner_family="momentum")
+    keys = {}
+    for root in list_filter_shadow_observations():
+        capture_filter_shadow_exposures(root["observation_id"], 1)
+        keys[root["scanner_family"]] = {row[0] for row in get_lab_db().execute(
+            "SELECT outcome_candidate_key FROM observation_exposures WHERE observation_id=?", (root["observation_id"],),
+        )}
+    assert len(keys["mean_reversion"]) == 20
+    assert len(keys["momentum"]) == 14
+    assert keys["mean_reversion"].isdisjoint(keys["momentum"])
 
-    rows = get_db().execute(
-        "SELECT * FROM filter_shadow_experiments "
-        "WHERE filter_name='ranker_confidence_gate' ORDER BY scanner_family"
-    ).fetchall()
-    assert len(rows) == 2
-    a, b = dict(rows[0]), dict(rows[1])
-    assert capture_frozen_units_for(a) == 20  # 10 pass + 10 rej
-    assert capture_frozen_units_for(b) == 14  # 7 pass + 7 rej
 
-    # Disjoint frozen sets — a candidate belongs to at most one Observation Lab
-    # cohort because scanner_family scopes them apart.
-    keys_a = {u["outcome_candidate_key"] for u in list_frozen_units(a["id"])}
-    keys_b = {u["outcome_candidate_key"] for u in list_frozen_units(b["id"])}
-    assert keys_a and keys_b
-    assert keys_a.isdisjoint(keys_b)
+
+def test_controller_lab_pass_advances_canonical_observation():
+    from aletheia.analytics.filter_controller import run_controller_observe
+    from aletheia.counterfactual.filter_experiments import register_replay_ready_experiments
+    from aletheia.observation_lab.db import get_lab_db
+
+    start = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    version = _seed_ranker_cohort(start, count=20)
+    register_replay_ready_experiments([_ready_ranker_replay(filter_version=version)], now=start)
+    lab = get_lab_db()
+    root = lab.execute("SELECT observation_id FROM observation_windows").fetchone()[0]
+    assert lab.execute("SELECT COUNT(*) FROM observation_exposures").fetchone()[0] == 0
+    result = run_controller_observe(min_samples=20)
+    assert result["lab_windows"]["windows_errored"] == 0
+    assert lab.execute(
+        "SELECT COUNT(*) FROM observation_exposures WHERE observation_id=?", (root,),
+    ).fetchone()[0] == 40
+    assert lab.execute(
+        "SELECT COUNT(*) FROM observation_evaluations WHERE observation_id=?", (root,),
+    ).fetchone()[0] == 1
+
+
+def test_controller_legacy_authority_refuses_without_recommendation_writes():
+    from aletheia.analytics.filter_controller import run_controller_observe
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute("UPDATE observation_authority_state SET authority_source='legacy'")
+    with pytest.raises(RuntimeError, match="observation_lab_authority_required"):
+        run_controller_observe(min_samples=20)
+    assert db.execute("SELECT COUNT(*) FROM controller_recommendations").fetchone()[0] == 0
 
 
 def test_open_readonly_snapshot_rejects_writes(tmp_path):

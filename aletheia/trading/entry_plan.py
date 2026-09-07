@@ -165,6 +165,10 @@ class EntryPlan(BaseModel):
     planning_generation_id: str
     candidate_id: str
     candidate_family: str
+    # Absent only on historical plans, which cannot obtain new submission authority.
+    source_kind: Literal["universe", "serenity"] | None = None
+    source_id: str | None = Field(default=None, min_length=1)
+    trade_school: Literal["short_term", "serenity"] | None = None
     venue: str = Field(min_length=1)
     symbol: str = Field(min_length=1)
     market_type: Literal["spot", "perp"]
@@ -183,6 +187,9 @@ class EntryPlan(BaseModel):
     stop_price: float
     target_price: float
     expected_horizon_hours: float = Field(gt=0, le=48)
+    holding_horizon_hours: float = Field(
+        default_factory=lambda data: data["expected_horizon_hours"], gt=0, allow_inf_nan=False,
+    )
     approved_at: str
     expires_at: str
     order_tactic: Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"]
@@ -239,6 +246,12 @@ class EntryPlan(BaseModel):
 
     @model_validator(mode="after")
     def _contract_is_coherent(self) -> EntryPlan:
+        source = (self.source_kind, self.source_id, self.trade_school)
+        if any(value is not None for value in source):
+            if not all(value is not None for value in source):
+                raise ValueError("entry_plan_source_incomplete")
+            if self.trade_school != {"universe": "short_term", "serenity": "serenity"}[self.source_kind]:
+                raise ValueError("entry_plan_source_school_mismatch")
         provenance_fields = (
             "analysis_context_fingerprint",
             "entry_hypothesis_json",

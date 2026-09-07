@@ -23,8 +23,6 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-_TRADING_CONTEXT = "aletheia/agent_shell/trading_context.py"
-_TRADING_DECISION = "aletheia/agent_shell/trading_decision.py"
 
 
 def _project_root() -> str:
@@ -54,46 +52,6 @@ def _find_call_keywords(source: str, func_name: str) -> list[set[str]]:
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S01", "learning_pipeline", "§Layer3 lessons", "L2a",
-              "_build_layer3_wisdom lessons must query a real-producer item_type "
-              "(trade_case_study) so PI's Layer3 lessons is non-empty",
-              status="implemented"),
-)
-def test_layer3_lessons_filter_aligned():
-    """Layer3 lessons MUST query an item_type that has a real producer + DB rows.
-
-    Fixed 2026-06-27 (L-Bug-A): the old filter ('lesson','accepted_lesson',
-    'trading_guard') matched ZERO rows — none had a producer, so Layer3 lessons
-    was permanently empty. The fix queries trade_case_study (attributed
-    closed-trade cases) directly via list_knowledge_items(item_type=...). This
-    test verifies that query alignment hermetically (source AST). Runtime
-    non-emptiness is a machine-dependent data-health concern for `aletheia doctor`,
-    not a spec assertion (#20: the old `assert n>0` against the real app.db failed
-    on any machine/CI/worktree without seeded case studies).
-    """
-    import pathlib
-    src = (pathlib.Path(_project_root()) / _TRADING_CONTEXT).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    queried_types: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            tgt = node.func
-            name = tgt.id if isinstance(tgt, ast.Name) else (tgt.attr if isinstance(tgt, ast.Attribute) else None)
-            if name == "list_knowledge_items":
-                for kw in node.keywords:
-                    if kw.arg == "item_type" and isinstance(kw.value, ast.Constant) \
-                            and isinstance(kw.value.value, str):
-                        queried_types.add(kw.value.value)
-
-    assert queried_types, (
-        "no list_knowledge_items(item_type=...) call in trading_context — Layer3 "
-        "would scan the whole table and be flooded by system_action"
-    )
-    assert "trade_case_study" in queried_types, (
-        f"Layer3 lessons must query trade_case_study; found item_types={queried_types}. "
-        f"See round2_week1_decision_chain_fixes.md Fix L-Bug-A"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -101,34 +59,6 @@ def test_layer3_lessons_filter_aligned():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S02", "learning_pipeline", "§Layer3 guards", "L2a",
-              "_build_layer3_wisdom guards must call list_knowledge_items(item_type='guard_candidate')",
-              status="implemented"),
-)
-def test_layer3_guards_filter_via_query():
-    """Layer3 _build_layer3_wisdom must call list_knowledge_items with item_type='guard_candidate'."""
-    import pathlib
-    src = (pathlib.Path(_project_root()) / _TRADING_CONTEXT).read_text(encoding="utf-8")
-
-    # Find all list_knowledge_items calls; at least one must specify item_type=guard_candidate
-    tree = ast.parse(src)
-    has_guard_filtered_call = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            tgt = node.func
-            name = tgt.id if isinstance(tgt, ast.Name) else (tgt.attr if isinstance(tgt, ast.Attribute) else None)
-            if name == "list_knowledge_items":
-                for kw in node.keywords:
-                    if kw.arg == "item_type" and isinstance(kw.value, ast.Constant) \
-                            and kw.value.value == "guard_candidate":
-                        has_guard_filtered_call = True
-
-    assert has_guard_filtered_call, (
-        "no list_knowledge_items(item_type='guard_candidate', ...) call found in "
-        "trading_context.py — Layer3 guards permanently empty. "
-        "See round2_week1_decision_chain_fixes.md Fix L-Bug-A'"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,19 +66,6 @@ def test_layer3_guards_filter_via_query():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S03", "learning_pipeline", "§ps_lessons consumption", "L2a",
-              "trading_decision.py must reference ps_lessons when building System Operator prompt",
-              status="implemented"),
-)
-def test_ps_lessons_consumed_in_prompt():
-    """trading_decision.py source must mention ps_lessons (either via key access or function call)."""
-    import pathlib
-    src = (pathlib.Path(_project_root()) / _TRADING_DECISION).read_text(encoding="utf-8")
-    assert "ps_lessons" in src, (
-        "trading_decision.py never references ps_lessons — 184 行 ps_lessons "
-        "完全无消费. See round2_week1_decision_chain_fixes.md Fix L-Bug-B"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,20 +73,6 @@ def test_ps_lessons_consumed_in_prompt():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S04", "learning_pipeline", "§Layer3 entry", "L2a",
-              "_build_layer3_wisdom() callable exists in trading_context.py",
-              status="implemented"),
-)
-def test_layer3_function_exists():
-    """The Layer 3 wisdom builder MUST exist as an importable callable.
-
-    This is a structural anchor: the Round 2 fixes above target this specific
-    function — if it gets renamed/removed, the RED tests above would all xpass
-    for the wrong reason. This guard catches that drift.
-    """
-    from aletheia.agent_shell.trading_context import _build_layer3_wisdom
-    assert callable(_build_layer3_wisdom)
 
 
 # ---------------------------------------------------------------------------
@@ -180,43 +83,6 @@ def test_layer3_function_exists():
 _GUARDS_MODULE = "aletheia/knowledge/guards.py"
 
 
-@spec_claim(
-    SpecClaim("LP-S05", "learning_pipeline", "§Attribution root", "L2a",
-              "create_paper_proposal() in trading_decision.py must pass a real "
-              "opportunity_id (not the None literal) — the single root cause that "
-              "starves every downstream learning artifact of entry-context",
-              status="implemented"),
-)
-def test_proposal_carries_opportunity_id():
-    """The compatibility submitter must not rebuild away opportunity_id.
-
-    That one line severs the attribution chain at the source: market_observer
-    already writes scanner_family/universe/confidence into the opportunity, but
-    the System Operator drops opportunity_id at order time and nothing backfills it.
-    """
-    import pathlib
-    src = (pathlib.Path(_project_root()) / _TRADING_DECISION).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    found = False
-    hardcoded_none = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            tgt = node.func
-            name = tgt.id if isinstance(tgt, ast.Name) else (tgt.attr if isinstance(tgt, ast.Attribute) else None)
-            if name == "create_paper_proposal":
-                found = True
-                for kw in node.keywords:
-                    if kw.arg == "opportunity_id" and isinstance(kw.value, ast.Constant) \
-                            and kw.value.value is None:
-                        hardcoded_none = True
-            if name == "submit_prepared_paper_proposal":
-                found = True
-
-    assert found, "paper proposal submit call not found — refactor likely happened"
-    assert not hardcoded_none, (
-        "create_paper_proposal(opportunity_id=None) hard-codes None — attribution "
-        "chain severed at the source. See round2_week1_decision_chain_fixes.md Fix L-Bug-C"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -249,78 +115,6 @@ def test_guard_candidates_reachable_by_promoter():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S07", "learning_pipeline", "§Attribution runtime", "L2c",
-              "The opportunity→decision attribution chain MUST hold at RUNTIME for the "
-              "population that is structurally required to carry it: signal_pending rows "
-              "from the opportunity ranker (reasoning 'Ranker candidate...'). Checked on "
-              "the most-recent rows so the pre-fix historical backlog (and self-deleting "
-              "transient rows) cannot skew it. skip/watch (non-decisions) and "
-              "ruleset-fired signals (no source opportunity) are excluded — NULL "
-              "opportunity_id there is honest, not a severed chain. Fixed live by "
-              "b9ad957 (2026-06-27), deployed at the ~13:10 gateway restart.",
-              status="implemented"),
-)
-def test_runtime_pi_decisions_carry_opportunity_id():
-    """GREEN tripwire on the selected runtime app.db.
-
-    The learning loop attributes trade outcomes back to the opportunity that
-    triggered them via pi_decisions.opportunity_id. The population that MUST carry
-    that id is the opportunity ranker's signals (reasoning starts with
-    'Ranker candidate'). We measure the most RECENT such rows so that:
-
-      * the pre-fix historical backlog — rows written before b9ad957 went live at
-        the 2026-06-27 ~13:10 gateway restart — does not skew the result. It
-        self-deletes via prune_pi_decisions(days=7) and falls out of "most recent"
-        as soon as fresh rows accumulate.
-      * skip/watch rows (rejected candidates / non-decisions) are excluded — they
-        have no source opportunity, so a NULL opportunity_id there is correct.
-      * ruleset-fired signals are excluded — they originate from a technical rule,
-        not a scanned opportunity, so they have no opportunity_id to carry, and
-        PiDecision has no strategy_id field to anchor them either.
-
-    This is the only thing the learning loop cares about. If the live ranker path
-    regresses and stops propagating the id, recent rows go NULL and this fails.
-    Earlier scoping (all actions over a 2-day window) was wrong: it counted the
-    self-deleting backlog plus the legitimately-NULL skip/ruleset rows, so it sat
-    at ~50% forever even though the causal chain was healthy. Trade-path
-    attribution is covered by the static LP-S05 + PL-PT record_decision_trade.
-    Skips on machines without a populated app.db (CI / fresh clone).
-    """
-    from aletheia.storage.sqlite import db_path
-
-    db = db_path()
-    if not db.exists():
-        pytest.skip("no production app.db on this machine")
-
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
-    try:
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='pi_decisions'"
-        ).fetchone()
-        if not exists:
-            pytest.skip("production app.db has no pi_decisions table to evaluate")
-        rows = conn.execute(
-            "SELECT opportunity_id FROM pi_decisions "
-            "WHERE action = 'signal_pending' "
-            "AND reasoning LIKE 'Ranker candidate%' "
-            "ORDER BY created_at DESC LIMIT 200"
-        ).fetchall()
-    finally:
-        conn.close()
-
-    if not rows:
-        pytest.skip("no recent opportunity-ranker signals to evaluate")
-
-    nulls = sum(1 for (opp,) in rows if opp is None or opp == "")
-    null_pct = 100.0 * nulls / len(rows)
-    assert null_pct < 10.0, (
-        f"{null_pct:.1f}% of the {len(rows)} most-recent opportunity-ranker "
-        f"signal_pending rows have NULL opportunity_id ({nulls}/{len(rows)}) — the "
-        "live attribution chain has regressed. Opportunity-sourced ranker signals "
-        "MUST carry the originating opportunity_id (set in paper_trader.py from "
-        "candidate['opportunity_id']). See JUNK_DATA_FULL_SWEEP_2026-06-28.md."
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -754,76 +548,6 @@ async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monke
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S12", "learning_pipeline", "§8.1 Ranker consumption", "L2a",
-              "paper_trader_ranker._compute_trade_score() calls both _memo_scoring() "
-              "(reads trading_memo knowledge item) and _lesson_penalty() (reads "
-              "trade_case_study items), then routes each proposed delta through "
-              "_authorized_ranker_delta(); those helpers are NOT imported by or "
-              "called from aletheia/risk/engine.py or any sizing path. Unsupported "
-              "measurement stays at the zero-delta baseline.",
-              status="implemented"),
-)
-def test_ranker_consumes_memo_and_lesson_penalty_not_risk():
-    """LP-S12: §8.1 Ranker-side learning consumption invariant.
-
-    (a) _compute_trade_score() calls both proposed-delta producers and the
-        prospective authority adapter; current unsupported paths remain zero.
-    (b) risk/engine.py does NOT import or reference _memo_scoring or
-        _lesson_penalty — so Ranker score adjustments never propagate into
-        risk checks or sizing.
-    """
-    import ast
-    import pathlib
-
-    root = pathlib.Path(_project_root())
-
-    # (a) Ranker calls both learning helpers inside _score_opportunity
-    ranker_src = (root / "aletheia/agents/paper_trader_ranker.py").read_text(encoding="utf-8")
-    assert "_memo_scoring" in ranker_src, (
-        "_memo_scoring not found in paper_trader_ranker.py — §8.1 trading_memo "
-        "consumption path is broken"
-    )
-    assert "_lesson_penalty" in ranker_src, (
-        "_lesson_penalty not found in paper_trader_ranker.py — §8.1 trade_case_study "
-        "consumption path is broken"
-    )
-
-    # Verify both helpers are called inside _compute_trade_score (the scoring function)
-    tree = ast.parse(ranker_src)
-    score_fn_body_src = ""
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_compute_trade_score":
-            # Collect all call-target names inside the function
-            for child in ast.walk(node):
-                if isinstance(child, ast.Call):
-                    fn = child.func
-                    name = fn.id if isinstance(fn, ast.Name) else (
-                        fn.attr if isinstance(fn, ast.Attribute) else ""
-                    )
-                    score_fn_body_src += name + " "
-    assert "_memo_scoring" in score_fn_body_src, (
-        "_memo_scoring is not called inside _compute_trade_score — "
-        "trading_memo adjustments never reach Ranker scoring"
-    )
-    assert "_lesson_penalty" in score_fn_body_src, (
-        "_lesson_penalty is not called inside _compute_trade_score — "
-        "trade_case_study penalty never reaches Ranker scoring"
-    )
-    assert "_authorized_ranker_delta" in score_fn_body_src, (
-        "Ranker case/memo deltas bypassed the prospective authority boundary"
-    )
-
-    # (b) risk/engine.py must not reference these Ranker-internal helpers
-    engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
-    assert "_memo_scoring" not in engine_src, (
-        "_memo_scoring imported/referenced in risk/engine.py — §8.1 boundary "
-        "violated: Ranker learning adjustments must not reach risk gates"
-    )
-    assert "_lesson_penalty" not in engine_src, (
-        "_lesson_penalty imported/referenced in risk/engine.py — §8.1 boundary "
-        "violated: Ranker learning adjustments must not reach risk gates"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -894,62 +618,6 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("LP-S14", "learning_pipeline", "§8.2 System Operator prompt learning paths", "L2a",
-              "Exactly three learning-content paths reach the System Operator prompt via "
-              "trading_decision.py: (1) trading_memo (layer2.trading_memo), "
-              "(2) reasoning_feedback (layer2.reasoning_feedback), "
-              "(3) ps_lessons (layer3.ps_lessons, applied lessons from LessonStore). "
-              "knowledge_contract.md §8.2 previously said trading_memo was the "
-              "'only' path — that was incorrect; the corrected §8.2 enumerates "
-              "all three. This claim locks the complete set so future additions "
-              "require an explicit spec update.",
-              status="implemented"),
-)
-def test_pi_prompt_learning_paths_complete_enumeration():
-    """LP-S14: The three documented learning-content paths into the System Operator prompt.
-
-    (a) trading_decision.py renders 'trading_memo' (layer2 key) into the prompt.
-    (b) trading_decision.py renders 'reasoning_feedback' (layer2 key) into the prompt.
-    (c) trading_decision.py renders 'ps_lessons' (layer3 key) into the prompt.
-    (d) trading_context.py populates all three source keys from their respective
-        knowledge item types.
-
-    This is a static-source claim: it verifies the documented paths exist in code.
-    If a fourth learning path is added to the prompt it must also update this spec.
-    """
-    import pathlib
-
-    root = pathlib.Path(_project_root())
-    td_src = (root / _TRADING_DECISION).read_text(encoding="utf-8")
-    tc_src = (root / _TRADING_CONTEXT).read_text(encoding="utf-8")
-
-    # (a) trading_memo rendered in trading_decision
-    assert "trading_memo" in td_src, (
-        "trading_decision.py does not reference 'trading_memo' — §8.2 path 1 missing"
-    )
-    # (b) reasoning_feedback rendered in trading_decision
-    assert "reasoning_feedback" in td_src, (
-        "trading_decision.py does not reference 'reasoning_feedback' — §8.2 path 2 missing"
-    )
-    # (c) ps_lessons rendered in trading_decision
-    assert "ps_lessons" in td_src, (
-        "trading_decision.py does not reference 'ps_lessons' — §8.2 path 3 missing"
-    )
-
-    # (d) trading_context populates the three keys from the right item_types
-    # path 1: trading_memo comes from insight_synthesizer (get_latest_memo)
-    assert "trading_memo" in tc_src, (
-        "trading_context.py does not populate layer['trading_memo'] — §8.2 source broken"
-    )
-    # path 2: reasoning_feedback comes from reasoning_feedback module
-    assert "reasoning_feedback" in tc_src, (
-        "trading_context.py does not populate layer['reasoning_feedback'] — §8.2 source broken"
-    )
-    # path 3: ps_lessons comes from LessonStore (status='applied')
-    assert "ps_lessons" in tc_src, (
-        "trading_context.py does not populate layer['ps_lessons'] — §8.2 source broken"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1502,50 +1170,6 @@ def test_factor_feedback_excludes_synthetic_closes():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "LP-DUAL-01", "learning_pipeline", "§8.4 dual path invariant", "L2c",
-        "trading_decision.py MUST read structured ps_lessons from LessonStore "
-        "(not retrieve_lessons) for the System Operator prompt block, because FTS results "
-        "lack evidence_json and guard timestamps",
-        status="implemented",
-    ),
-)
-def test_trading_decision_reads_lessons_from_lesson_store():
-    """LP-DUAL-01: the structured prompt block comes from LessonStore, not FTS.
-
-    Dual-path invariant: trading_context.py populates layer3["ps_lessons"]
-    from LessonStore.list_all(status="applied") because only the structured
-    store carries evidence_json + activated_at + expires_at. The FTS path
-    (retrieve_lessons) returns knowledge_fts-sourced Lesson dataclasses that
-    lack these fields — they serve a different consumer (ranker / advisory).
-    trading_decision.py renders the pre-populated ps_lessons from the context.
-    Neither module calls retrieve_lessons() for the structured block.
-    """
-    import pathlib
-    root = pathlib.Path(_project_root())
-    tc_src = (root / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
-    td_src = (root / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
-
-    # trading_context.py must reference LessonStore (the structured CRUD store)
-    assert "LessonStore" in tc_src, (
-        "trading_context.py does not reference LessonStore for ps_lessons"
-    )
-    # trading_context.py must use list_all to read ps_lessons
-    assert "list_all" in tc_src, (
-        "trading_context.py does not call list_all for ps_lessons"
-    )
-    # trading_decision.py must render ps_lessons from the context
-    assert "ps_lessons" in td_src, (
-        "trading_decision.py does not render ps_lessons into the System Operator prompt"
-    )
-    # Neither module must call retrieve_lessons for the structured block
-    assert "retrieve_lessons" not in tc_src, (
-        "trading_context.py must not use retrieve_lessons for ps_lessons"
-    )
-    assert "retrieve_lessons" not in td_src, (
-        "trading_decision.py must not use retrieve_lessons for ps_lessons"
-    )
 
 # ---------------------------------------------------------------------------
 # LP-P3-01 — SkillStore producer is wired but draft-only

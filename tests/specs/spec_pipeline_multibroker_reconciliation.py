@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import importlib
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -14,32 +13,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
-BROKERS = (
-    pytest.param(
-        "aletheia.execution.okx_broker",
-        "OKXClient",
-        "okx_demo",
-        id="okx-demo",
-    ),
-    pytest.param(
-        "aletheia.execution.okx_broker",
-        "OKXClient",
-        "okx_live_limited",
-        id="okx-live-limited",
-    ),
-    pytest.param(
-        "aletheia.execution.binance_broker",
-        "BinanceClient",
-        "binance_testnet",
-        id="binance-testnet",
-    ),
-    pytest.param(
-        "aletheia.execution.binance_broker",
-        "BinanceClient",
-        "binance_live_limited",
-        id="binance-live-limited",
-    ),
-)
+MODES = ("okx_demo", "okx_live_limited", "binance_testnet", "binance_live_limited")
 
 OKX_ACCOUNTS = (
     pytest.param("okx_demo", "demo", id="okx-demo-account"),
@@ -51,32 +25,55 @@ BINANCE_ACCOUNTS = (
     pytest.param("binance_live_limited", "live", id="binance-live-account"),
 )
 
-CLOSE_BROKERS = (
-    pytest.param(
-        "aletheia.execution.okx_broker",
-        "OKXClient",
-        "okx_demo",
-        id="okx-demo-close",
-    ),
-    pytest.param(
-        "aletheia.execution.okx_broker",
-        "OKXClient",
-        "okx_live_limited",
-        id="okx-live-close",
-    ),
-    pytest.param(
-        "aletheia.execution.binance_broker",
-        "BinanceClient",
-        "binance_testnet",
-        id="binance-testnet-close",
-    ),
-    pytest.param(
-        "aletheia.execution.binance_broker",
-        "BinanceClient",
-        "binance_live_limited",
-        id="binance-live-close",
-    ),
-)
+from tests.uta.test_execution_coordinator import _identity
+from tests.test_exchange_submission_integrity import _prepare_broker, _report
+
+
+def _patch_private_evidence(monkeypatch, evidence):
+    from aletheia.execution import reconciliation
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import (
+        FillListReport, FillReport, OrderListReport, OrderQueryReport, FundingLedgerReport, ReadCompleteness,
+    )
+
+    modes = (*MODES, "bitget_demo", "bitget_live_limited")
+    monkeypatch.setattr(reconciliation, "build_uta_registry", lambda: SimpleNamespace(
+        configured_identities=lambda: tuple(_identity(mode) for mode in modes)))
+    async def query(mode, method, request, *, expected_account):
+        assert expected_account == _identity(mode)
+        now = datetime.now(timezone.utc)
+        envelope = dict(identity=expected_account, completeness=ReadCompleteness.COMPLETE,
+                        scope=request.scope, received_at=now, profile_version="1")
+        if method == "get_open_orders":
+            return OrderListReport(**envelope)
+        if method == "get_order":
+            return OrderQueryReport(**envelope)
+        if method == "get_funding_ledger":
+            return FundingLedgerReport(**{**envelope, "completeness": ReadCompleteness.UNAVAILABLE,
+                                         "reason_code": "funding_not_in_fixture"})
+        assert method == "get_fills"
+        fills = []
+        for order in repo.list_orders(limit=1000):
+            if order["execution_mode"] != mode or order["status"] == "filled":
+                continue
+            if request.venue_order_id and request.venue_order_id != order["exchange_order_id"]:
+                continue
+            if request.client_order_id and request.client_order_id != order["client_order_id"]:
+                continue
+            instrument = instrument_from_local(order["symbol"], order["market_type"])
+            if request.scope.instrument and request.scope.instrument != instrument:
+                continue
+            for row in await evidence(order):
+                fills.append(FillReport(identity=expected_account, instrument=instrument,
+                    venue_order_id=row["orderId"], client_order_id=order["client_order_id"],
+                    venue_fill_id=row["tradeId"], side="sell" if order["close_reason"] else "buy",
+                    quantity=row["fillQuantity"], price=row["fillPrice"], fee=row["fee"],
+                    fee_currency=row["feeCoin"],
+                    executed_at=datetime.fromtimestamp(int(row["cTime"]) / 1000, tz=timezone.utc), received_at=now))
+        return FillListReport(**envelope, fills=tuple(fills))
+
+    monkeypatch.setattr(reconciliation, "query_uta", query)
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -133,7 +130,7 @@ def _private_fill(exchange_order_id: str, *, suffix: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-01",
@@ -146,9 +143,7 @@ def _private_fill(exchange_order_id: str, *, suffix: str) -> dict:
         status="implemented",
     )
 )
-def test_delayed_private_fill_materializes_actual_economics(
-    tmp_path, monkeypatch, broker_module, client_name, execution_mode
-):
+def test_delayed_private_fill_materializes_actual_economics(tmp_path, monkeypatch, execution_mode):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.execution.exchange_materialization import (
@@ -159,30 +154,25 @@ def test_delayed_private_fill_materializes_actual_economics(
 
     proposal, decision = _seed_authority(execution_mode, suffix=execution_mode)
     exchange_order_id = f"EX-MBR-{execution_mode}"
-    order = Order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        client_order_id=proposal.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=execution_mode,
-        exchange_order_id=exchange_order_id,
-        status="submitted",
-    )
+    order = Order(proposal_id=proposal.id,
+    risk_decision_id=decision.id,
+    client_order_id=proposal.id,
+    symbol=proposal.symbol,
+    market_type=proposal.market_type,
+    direction=proposal.direction,
+    order_type=proposal.order_type,
+    quantity=proposal.quantity,
+    price=proposal.price,
+    execution_mode=execution_mode,
+    exchange_order_id=exchange_order_id,
+    status="submitted", uta_account_identity_json=_identity(execution_mode).model_dump_json())
     repo.insert_order(order)
 
     async def _evidence(stored_order):
         assert stored_order["id"] == order.id
         return [_private_fill(exchange_order_id, suffix=execution_mode)]
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+    _patch_private_evidence(monkeypatch, _evidence)
 
     result = reconcile()
 
@@ -229,7 +219,7 @@ def test_delayed_private_fill_materializes_actual_economics(
     ).fetchone()[0] == 1
 
 
-@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-02",
@@ -241,9 +231,7 @@ def test_delayed_private_fill_materializes_actual_economics(
         status="implemented",
     )
 )
-def test_reported_filled_waits_for_private_fill_before_finalizing(
-    tmp_path, monkeypatch, broker_module, client_name, execution_mode
-):
+def test_reported_filled_waits_for_private_fill_before_finalizing(tmp_path, monkeypatch, execution_mode):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -251,31 +239,15 @@ def test_reported_filled_waits_for_private_fill_before_finalizing(
     proposal, decision = _seed_authority(
         execution_mode, suffix=f"sync-{execution_mode}"
     )
-    broker = importlib.import_module(broker_module)
     exchange_order_id = f"EX-MBR-SYNC-{execution_mode}"
 
-    class _FilledResponseClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    async def _filled(command):
+        assert command.expected_account == _identity(execution_mode)
+        return _report(command, venue_order_id=exchange_order_id, state="filled", filled_quantity="0.01")
 
-        async def place_order(self, order):
-            return SimpleNamespace(
-                order_id=exchange_order_id,
-                client_oid=order.client_oid,
-                status="filled",
-                # These aggregate response values are not final fee/time evidence.
-                fill_price=60_111.0,
-                filled_quantity=0.01,
-            )
+    broker = _prepare_broker(monkeypatch, _filled)
 
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(broker, client_name, _FilledResponseClient)
-    if execution_mode == "okx_demo":
-        monkeypatch.setattr(broker, "_get_demo_symbols", lambda market_type: None)
-
-    opened = broker.execute_live_order(
+    opened = broker.execute_order(
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
         symbol=proposal.symbol,
@@ -303,10 +275,7 @@ def test_reported_filled_waits_for_private_fill_before_finalizing(
     async def _evidence(stored_order):
         return [_private_fill(exchange_order_id, suffix=f"sync-{execution_mode}")]
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+    _patch_private_evidence(monkeypatch, _evidence)
     result = reconcile()
     fill = db.execute(
         "SELECT * FROM fills WHERE order_id=?", (order["id"],)
@@ -336,7 +305,7 @@ def test_reported_filled_waits_for_private_fill_before_finalizing(
         pytest.param(True, "unavailable", id="inconsistent-legacy-marker"),
     ),
 )
-@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-05",
@@ -348,15 +317,10 @@ def test_reported_filled_waits_for_private_fill_before_finalizing(
         status="implemented",
     )
 )
-def test_verified_averaging_leg_does_not_upgrade_unverified_history(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    execution_mode,
-    old_verified,
-    old_source,
-):
+def test_verified_averaging_leg_does_not_upgrade_unverified_history(tmp_path,
+monkeypatch, execution_mode,
+old_verified,
+old_source,):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -380,28 +344,23 @@ def test_verified_averaging_leg_does_not_upgrade_unverified_history(
         execution_mode, suffix=f"average-{execution_mode}"
     )
     exchange_order_id = f"EX-MBR-AVERAGE-{execution_mode}"
-    order = Order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        client_order_id=proposal.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=execution_mode,
-        exchange_order_id=exchange_order_id,
-        status="materialization_missing",
-    )
+    order = Order(proposal_id=proposal.id,
+    risk_decision_id=decision.id,
+    client_order_id=proposal.id,
+    symbol=proposal.symbol,
+    market_type=proposal.market_type,
+    direction=proposal.direction,
+    order_type=proposal.order_type,
+    quantity=proposal.quantity,
+    price=proposal.price,
+    execution_mode=execution_mode,
+    exchange_order_id=exchange_order_id,
+    status="materialization_missing", uta_account_identity_json=_identity(execution_mode).model_dump_json())
     repo.insert_order(order)
     async def _evidence(stored_order):
         return [_private_fill(exchange_order_id, suffix=f"average-{execution_mode}")]
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+    _patch_private_evidence(monkeypatch, _evidence)
 
     result = reconcile()
 
@@ -415,7 +374,7 @@ def test_verified_averaging_leg_does_not_upgrade_unverified_history(
     assert position["entry_price_source"] == old_source
 
 
-@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-06",
@@ -427,9 +386,7 @@ def test_verified_averaging_leg_does_not_upgrade_unverified_history(
         status="implemented",
     )
 )
-def test_unmatched_estimated_fill_blocks_position_verification(
-    tmp_path, monkeypatch, broker_module, client_name, execution_mode
-):
+def test_unmatched_estimated_fill_blocks_position_verification(tmp_path, monkeypatch, execution_mode):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -439,20 +396,18 @@ def test_unmatched_estimated_fill_blocks_position_verification(
         execution_mode, suffix=f"estimated-conflict-{execution_mode}"
     )
     exchange_order_id = f"EX-MBR-ESTIMATED-{execution_mode}"
-    order = Order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        client_order_id=proposal.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=execution_mode,
-        exchange_order_id=exchange_order_id,
-        status="materialization_missing",
-    )
+    order = Order(proposal_id=proposal.id,
+    risk_decision_id=decision.id,
+    client_order_id=proposal.id,
+    symbol=proposal.symbol,
+    market_type=proposal.market_type,
+    direction=proposal.direction,
+    order_type=proposal.order_type,
+    quantity=proposal.quantity,
+    price=proposal.price,
+    execution_mode=execution_mode,
+    exchange_order_id=exchange_order_id,
+    status="materialization_missing", uta_account_identity_json=_identity(execution_mode).model_dump_json())
     repo.insert_order(order)
     repo.insert_fill(Fill(
         id=f"local-estimated-{execution_mode}",
@@ -471,10 +426,7 @@ def test_unmatched_estimated_fill_blocks_position_verification(
             exchange_order_id, suffix=f"estimated-conflict-{execution_mode}"
         )]
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+    _patch_private_evidence(monkeypatch, _evidence)
 
     result = reconcile()
 
@@ -502,7 +454,6 @@ def test_unmatched_estimated_fill_blocks_position_verification(
 def test_periodic_job_reconciles_all_explicit_account_orders(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.execution import binance_broker, okx_broker
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -516,44 +467,24 @@ def test_periodic_job_reconciles_all_explicit_account_orders(tmp_path, monkeypat
         proposal, decision = _seed_authority(
             execution_mode, suffix=f"scheduled-{execution_mode}"
         )
-        order = Order(
-            proposal_id=proposal.id,
-            risk_decision_id=decision.id,
-            client_order_id=proposal.id,
-            symbol=proposal.symbol,
-            market_type=proposal.market_type,
-            direction=proposal.direction,
-            order_type=proposal.order_type,
-            quantity=proposal.quantity,
-            price=proposal.price,
-            execution_mode=execution_mode,
-            exchange_order_id=f"EX-MBR-SCHEDULED-{execution_mode}",
-            status="materialization_missing",
-        )
+        order = Order(proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=execution_mode,
+        exchange_order_id=f"EX-MBR-SCHEDULED-{execution_mode}",
+        status="materialization_missing", uta_account_identity_json=_identity(execution_mode).model_dump_json())
         repo.insert_order(order)
         orders.append(order)
-
-    async def _okx_evidence(stored_order):
-        return [_private_fill(
-            stored_order["exchange_order_id"],
-            suffix=f"scheduled-{stored_order['execution_mode']}",
-        )]
-
-    async def _binance_evidence(stored_order):
-        return [_private_fill(
-            stored_order["exchange_order_id"],
-            suffix=f"scheduled-{stored_order['execution_mode']}",
-        )]
-
     async def _evidence(stored_order):
-        if str(stored_order["execution_mode"]).startswith("okx"):
-            return await _okx_evidence(stored_order)
-        return await _binance_evidence(stored_order)
-
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+        return [_private_fill(stored_order["exchange_order_id"],
+                              suffix=f"scheduled-{stored_order['execution_mode']}")]
+    _patch_private_evidence(monkeypatch, _evidence)
     monkeypatch.setattr(
         scheduler,
         "load_config",
@@ -587,17 +518,12 @@ def test_periodic_job_with_no_orders_constructs_no_exchange_client(
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.exchanges.binance import client as binance_client
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.okx import client as okx_client
+    from aletheia.execution import reconciliation
 
-    class _UnexpectedClient:
-        def __init__(self, *args, **kwargs):
-            raise AssertionError("empty reconciliation must not construct a client")
+    async def _unexpected_query(*args, **kwargs):
+        pytest.fail("empty reconciliation must not query an account")
 
-    monkeypatch.setattr(okx_client, "OKXClient", _UnexpectedClient)
-    monkeypatch.setattr(binance_client, "BinanceClient", _UnexpectedClient)
-    monkeypatch.setattr(bitget_client, "BitgetClient", _UnexpectedClient)
+    monkeypatch.setattr(reconciliation, "query_uta", _unexpected_query)
     monkeypatch.setattr(
         scheduler,
         "load_config",
@@ -631,13 +557,11 @@ def test_six_account_modes_query_only_their_mapped_uta_account(
 
     queried: list[str] = []
 
-    async def _empty(self, **_kwargs):
-        queried.append(self.execution_mode)
+    async def _empty(order):
+        queried.append(order["execution_mode"])
         return []
 
-    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_open_orders", _empty)
-    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", _empty)
-    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_order_fills", _empty)
+    _patch_private_evidence(monkeypatch, _empty)
 
     account_modes = (
         "bitget_demo",
@@ -651,20 +575,18 @@ def test_six_account_modes_query_only_their_mapped_uta_account(
         proposal, decision = _seed_authority(
             execution_mode, suffix=f"account-{execution_mode}"
         )
-        repo.insert_order(Order(
-            proposal_id=proposal.id,
-            risk_decision_id=decision.id,
-            client_order_id=proposal.id,
-            symbol=proposal.symbol,
-            market_type=proposal.market_type,
-            direction=proposal.direction,
-            order_type=proposal.order_type,
-            quantity=proposal.quantity,
-            price=proposal.price,
-            execution_mode=execution_mode,
-            exchange_order_id=f"EX-MBR-ACCOUNT-{execution_mode}",
-            status="submitted",
-        ))
+        repo.insert_order(Order(proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=execution_mode,
+        exchange_order_id=f"EX-MBR-ACCOUNT-{execution_mode}",
+        status="submitted", uta_account_identity_json=_identity(execution_mode).model_dump_json()))
 
     result = recon.reconcile()
 
@@ -711,39 +633,28 @@ def test_same_remote_trade_id_is_isolated_across_six_accounts(
         )
         exchange_order_id = f"EX-MBR-COLLISION-{execution_mode}"
         exchange_ids[execution_mode] = exchange_order_id
-        repo.insert_order(Order(
-            proposal_id=proposal.id,
-            risk_decision_id=decision.id,
-            client_order_id=proposal.id,
-            symbol=proposal.symbol,
-            market_type=proposal.market_type,
-            direction=proposal.direction,
-            order_type=proposal.order_type,
-            quantity=proposal.quantity,
-            price=proposal.price,
-            execution_mode=execution_mode,
-            exchange_order_id=exchange_order_id,
-            status="submitted",
-        ))
+        repo.insert_order(Order(proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        client_order_id=proposal.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        execution_mode=execution_mode,
+        exchange_order_id=exchange_order_id,
+        status="submitted", uta_account_identity_json=_identity(execution_mode).model_dump_json()))
 
     def _same_remote_fill(exchange_order_id: str) -> dict:
         row = _private_fill(exchange_order_id, suffix="unused")
         row["tradeId"] = shared_remote_fill_id
         return row
 
-    async def _empty_open(self, **_kwargs):
-        return []
+    async def _fills(order):
+        return [_same_remote_fill(exchange_ids[order["execution_mode"]])]
 
-    async def _fills(self, **_kwargs):
-        return [_same_remote_fill(exchange_ids[self.execution_mode])]
-
-    monkeypatch.setattr(
-        recon._UTAReconciliationProjection, "get_open_orders", _empty_open
-    )
-    monkeypatch.setattr(recon._UTAReconciliationProjection, "get_fills", _fills)
-    monkeypatch.setattr(
-        recon._UTAReconciliationProjection, "get_order_fills", _fills
-    )
+    _patch_private_evidence(monkeypatch, _fills)
 
     first = recon.reconcile()
     fills = [
@@ -781,23 +692,21 @@ def _seed_verified_open_position(execution_mode: str):
     proposal, decision = _seed_authority(
         execution_mode, suffix=f"close-{execution_mode}"
     )
-    entry_order = Order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        client_order_id=proposal.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        # Exchange Order keeps the submitted Proposal price; the private Fill
-        # below records the venue's different execution price.
-        price=proposal.price,
-        execution_mode=execution_mode,
-        exchange_order_id=f"EX-MBR-ENTRY-{execution_mode}",
-        status="filled",
-        filled_at="2026-07-13T00:00:00+00:00",
-    )
+    entry_order = Order(proposal_id=proposal.id,
+    risk_decision_id=decision.id,
+    client_order_id=proposal.id,
+    symbol=proposal.symbol,
+    market_type=proposal.market_type,
+    direction=proposal.direction,
+    order_type=proposal.order_type,
+    quantity=proposal.quantity,
+    # Exchange Order keeps the submitted Proposal price; the private Fill
+    # below records the venue's different execution price.
+    price=proposal.price,
+    execution_mode=execution_mode,
+    exchange_order_id=f"EX-MBR-ENTRY-{execution_mode}",
+    status="filled",
+    filled_at="2026-07-13T00:00:00+00:00", uta_account_identity_json=_identity(execution_mode).model_dump_json())
     repo.insert_order(entry_order)
     repo.insert_fill(Fill(
         id=f"private-entry-{execution_mode}",
@@ -825,14 +734,12 @@ def _seed_verified_open_position(execution_mode: str):
         opened_at="2026-07-13T00:00:00+00:00",
     )
     repo.insert_position(position)
-    repo.update_order(entry_order.id, position_id=position.id)
+    repo.update_order_metadata(entry_order.id, position_id=position.id)
     repo.update_trade_proposal(proposal.id, status="executed")
     return position
 
 
-@pytest.mark.parametrize(
-    "broker_module,client_name,execution_mode", CLOSE_BROKERS
-)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-10",
@@ -845,45 +752,21 @@ def _seed_verified_open_position(execution_mode: str):
         status="implemented",
     )
 )
-def test_close_waits_for_private_fill_then_materializes_once(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    execution_mode,
-):
+def test_close_waits_for_private_fill_then_materializes_once(tmp_path,
+monkeypatch, execution_mode,):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.portfolio.position_manager import close_position_routed
     from aletheia.storage import repositories as repo
 
     position = _seed_verified_open_position(execution_mode)
-    broker = importlib.import_module(broker_module)
     exchange_order_id = f"EX-MBR-CLOSE-{execution_mode}"
-    expected_account = {
-        "okx_demo": "demo",
-        "okx_live_limited": "live",
-        "binance_testnet": "testnet",
-        "binance_live_limited": "live",
-    }[execution_mode]
+    async def _filled_close(command):
+        assert command.expected_account == _identity(execution_mode)
+        assert command.reduce_only is True
+        return _report(command, venue_order_id=exchange_order_id, state="filled", filled_quantity="0.01")
 
-    class _FilledCloseClient:
-        def __init__(self, mode):
-            assert mode == expected_account
-
-        async def place_order(self, order):
-            assert order.reduce_only is True
-            return SimpleNamespace(
-                order_id=exchange_order_id,
-                status="filled",
-                fill_price=60_111.0,
-                filled_quantity=0.01,
-            )
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(broker, client_name, _FilledCloseClient)
+    _prepare_broker(monkeypatch, _filled_close)
     decision_reasoning = "Momentum reversed while breadth weakened."
     close_result = close_position_routed(
         position.id,
@@ -908,10 +791,7 @@ def test_close_waits_for_private_fill_then_materializes_once(
             exchange_order_id, suffix=f"close-{execution_mode}"
         )]
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _evidence,
-    )
+    _patch_private_evidence(monkeypatch, _evidence)
     result = reconcile()
     stored_position = repo._select_one("positions", position.id)
     stored_order = repo.get_order(close_order["id"])
@@ -964,7 +844,7 @@ def test_close_waits_for_private_fill_then_materializes_once(
     )
 
 
-@pytest.mark.parametrize("broker_module,client_name,execution_mode", BROKERS)
+@pytest.mark.parametrize("execution_mode", MODES)
 @spec_claim(
     SpecClaim(
         "PL-MBR-03",
@@ -976,9 +856,7 @@ def test_close_waits_for_private_fill_then_materializes_once(
         status="implemented",
     )
 )
-def test_private_fill_query_failure_stays_unresolved_and_sanitized(
-    tmp_path, monkeypatch, broker_module, client_name, execution_mode
-):
+def test_private_fill_query_failure_stays_unresolved_and_sanitized(tmp_path, monkeypatch, execution_mode):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -987,30 +865,25 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(
     proposal, decision = _seed_authority(
         execution_mode, suffix=f"failure-{execution_mode}"
     )
-    order = Order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        client_order_id=proposal.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=execution_mode,
-        exchange_order_id=f"EX-MBR-FAIL-{execution_mode}",
-        status="materialization_missing",
-    )
+    order = Order(proposal_id=proposal.id,
+    risk_decision_id=decision.id,
+    client_order_id=proposal.id,
+    symbol=proposal.symbol,
+    market_type=proposal.market_type,
+    direction=proposal.direction,
+    order_type=proposal.order_type,
+    quantity=proposal.quantity,
+    price=proposal.price,
+    execution_mode=execution_mode,
+    exchange_order_id=f"EX-MBR-FAIL-{execution_mode}",
+    status="materialization_missing", uta_account_identity_json=_identity(execution_mode).model_dump_json())
     repo.insert_order(order)
     sensitive = "private-api-secret-must-not-persist"
 
     async def _query_failure(stored_order):
         raise RuntimeError(sensitive)
 
-    monkeypatch.setattr(
-        "aletheia.execution.reconciliation._fetch_multibroker_evidence",
-        _query_failure,
-    )
+    _patch_private_evidence(monkeypatch, _query_failure)
 
     result = reconcile()
 
@@ -1025,6 +898,47 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(
     audit_text = (tmp_path / "logs" / "audit.jsonl").read_text(encoding="utf-8")
     assert sensitive not in audit_text
 
+def _read_profile_fills(monkeypatch, execution_mode, profile, payload, venue_order_id, contract_size):
+    import ccxt.async_support as ccxt
+    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import FillQuery, QueryScope
+    from tests.uta.test_ccxt_adapter import _install
+
+    exchange = getattr(ccxt, profile.exchange_name)()
+    exchange.set_markets([{
+        "id": "BTC-USDT-SWAP" if profile.expected_venue == "okx" else "BTCUSDT",
+        "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT",
+        "type": "swap", "spot": False, "swap": True, "future": False, "option": False,
+        "contract": True, "linear": True, "inverse": False, "contractSize": contract_size,
+    }])
+    calls = []
+
+    async def load(*args, **kwargs):
+        return exchange.markets
+
+    async def request(path, api, method, params, *args, **kwargs):
+        calls.append((path, params))
+        return payload
+
+    exchange.load_markets = load
+    exchange.request = request
+    _install(monkeypatch, exchange)
+    identity = _identity(execution_mode).model_copy(update={"profile": profile.expected_profile})
+
+    async def run():
+        adapter = CCXTUTAAdapter(identity, profile)
+        monkeypatch.setattr(adapter, "_now", lambda: datetime.fromtimestamp(1784050060, tz=timezone.utc))
+        try:
+            return await adapter.get_fills(FillQuery(
+                scope=QueryScope(instrument=instrument_from_local("BTC/USDT", "usdt_futures"),
+                    start_at=datetime.fromtimestamp(1784049900, tz=timezone.utc),
+                    end_at=datetime.fromtimestamp(1784050060, tz=timezone.utc)),
+                venue_order_id=venue_order_id))
+        finally:
+            await adapter.close()
+
+    return asyncio.run(run()), calls
 
 @spec_claim(
     SpecClaim(
@@ -1032,7 +946,7 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(
         "pipeline_multibroker_reconciliation",
         "§4 venue evidence normalization",
         "L2a",
-        "The broker-owned readers select the mapped demo, testnet, or live account and normalize "
+        "UTA profiles select the mapped demo, testnet, or live account and normalize "
         "only complete, order-matched private fills with actual fee and time.",
         status="implemented",
     )
@@ -1041,66 +955,29 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(
 def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
-    from aletheia.execution import okx_broker
+    from decimal import Decimal
+    from aletheia.uta.profiles import OKXDemoProfile, OKXLiveProfile
+    from aletheia.uta.models import ReadCompleteness
 
-    calls: list[dict] = []
-
-    class _Exchange:
-        async def load_markets(self):
-            return None
-
-        def market(self, symbol):
-            assert symbol == "BTC/USDT:USDT"
-            return {"id": "BTC-USDT-SWAP", "contractSize": 0.01}
-
-        async def private_get_trade_fills_history(self, params):
-            calls.append(params)
-            return {
-                "code": "0",
-                "data": [{
-                    "ordId": "OKX-PRIVATE-1",
-                    "billId": "OKX-FILL-1",
-                    "clOrdId": "proposalmbr",
-                    "fillPx": "60123.5",
-                    "fillSz": "1",
-                    "fee": "-0.123456",
-                    "feeCcy": "USDT",
-                    "ts": "1784050000000",
-                }],
-            }
-
-    class _Client:
-        def __init__(self, mode):
-            assert mode == account_mode
-            self.exchange = _Exchange()
-
-        def _ensure_exchange(self):
-            return self.exchange
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(okx_broker, "OKXClient", _Client)
-    rows = asyncio.run(okx_broker.fetch_private_fill_evidence({
-        "execution_mode": execution_mode,
-        "exchange_order_id": "OKX-PRIVATE-1",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "created_at": "2026-07-13T00:00:00+00:00",
-    }))
-
-    assert rows == [{
-        "orderId": "OKX-PRIVATE-1",
-        "tradeId": "OKX-FILL-1",
-        "clientOid": "proposalmbr",
-        "fillPrice": "60123.5",
-        "fillQuantity": "0.01",
-        "fee": "-0.123456",
-        "feeCoin": "USDT",
-        "cTime": "1784050000000",
-    }]
-    assert calls[0]["instType"] == "SWAP"
-    assert calls[0]["instId"] == "BTC-USDT-SWAP"
+    profile_type = OKXDemoProfile if account_mode == "demo" else OKXLiveProfile
+    profile = profile_type(api_key="isolated", secret="isolated", passphrase="isolated")
+    report, calls = _read_profile_fills(monkeypatch, execution_mode, profile, {
+        "code": "0", "data": [{
+            "instId": "BTC-USDT-SWAP", "instType": "SWAP", "side": "buy",
+            "ordId": "OKX-PRIVATE-1", "billId": "OKX-FILL-1", "tradeId": "OKX-FILL-1",
+            "clOrdId": "proposalmbr", "fillPx": "60123.5", "fillSz": "1",
+            "fee": "-0.123456", "feeCcy": "USDT", "ts": "1784050000000",
+        }]}, "OKX-PRIVATE-1", 0.01)
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert report.identity.execution_mode == execution_mode
+    [fill] = report.fills
+    assert fill.venue_order_id == "OKX-PRIVATE-1"
+    assert fill.quantity == Decimal("0.01")
+    assert fill.price == Decimal("60123.5")
+    assert fill.fee == Decimal("0.123456")
+    assert fill.fee_currency == "USDT"
+    assert fill.executed_at == datetime.fromtimestamp(1784050000, tz=timezone.utc)
+    assert calls[0][1]["instId"] == "BTC-USDT-SWAP"
 
 
 @spec_claim(
@@ -1109,7 +986,7 @@ def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
         "pipeline_multibroker_reconciliation",
         "§4 venue evidence normalization",
         "L2a",
-        "The broker-owned readers select the mapped demo, testnet, or live account and normalize "
+        "UTA profiles select the mapped demo, testnet, or live account and normalize "
         "only complete, order-matched private fills with actual fee and time.",
         status="implemented",
     )
@@ -1118,60 +995,25 @@ def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
 def test_binance_private_reader_normalizes_order_matched_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
-    from aletheia.execution import binance_broker
+    from decimal import Decimal
+    from aletheia.uta.profiles import BinanceTestnetProfile, BinanceLiveProfile
+    from aletheia.uta.models import ReadCompleteness
 
-    calls: list[dict] = []
-
-    class _Exchange:
-        async def load_markets(self):
-            return None
-
-        async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
-            calls.append({
-                "symbol": symbol,
-                "since": since,
-                "limit": limit,
-                "params": params,
-            })
-            return [{
-                "id": "BINANCE-FILL-1",
-                "order": "BINANCE-PRIVATE-1",
-                "price": 60_123.5,
-                "amount": 0.01,
-                "timestamp": 1_784_050_000_000,
-                "fee": {"cost": 0.123456, "currency": "USDT"},
-                "info": {"clientOrderId": "proposal-mbr"},
-            }]
-
-    class _Client:
-        def __init__(self, mode):
-            assert mode == account_mode
-            self.exchange = _Exchange()
-
-        def _ensure_exchange(self):
-            return self.exchange
-
-        async def close(self):
-            pass
-
-    monkeypatch.setattr(binance_broker, "BinanceClient", _Client)
-    rows = asyncio.run(binance_broker.fetch_private_fill_evidence({
-        "execution_mode": execution_mode,
-        "exchange_order_id": "BINANCE-PRIVATE-1",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "created_at": "2026-07-13T00:00:00+00:00",
-    }))
-
-    assert rows == [{
-        "orderId": "BINANCE-PRIVATE-1",
-        "tradeId": "BINANCE-FILL-1",
-        "clientOid": "proposal-mbr",
-        "fillPrice": "60123.5",
-        "fillQuantity": "0.01",
-        "fee": "0.123456",
-        "feeCoin": "USDT",
-        "cTime": "1784050000000",
-    }]
-    assert calls[0]["symbol"] == "BTC/USDT:USDT"
-    assert calls[0]["limit"] == 1000
+    profile_type = BinanceTestnetProfile if account_mode == "testnet" else BinanceLiveProfile
+    profile = profile_type(api_key="isolated", secret="isolated")
+    report, calls = _read_profile_fills(monkeypatch, execution_mode, profile, [{
+        "id": "42", "orderId": "BINANCE-PRIVATE-1", "symbol": "BTCUSDT", "side": "BUY",
+        "price": "60123.5", "qty": "0.01", "time": 1784050000000,
+        "commission": "0.123456", "commissionAsset": "USDT", "buyer": True, "maker": False,
+    }], "BINANCE-PRIVATE-1", 1)
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert report.identity.execution_mode == execution_mode
+    [fill] = report.fills
+    assert fill.venue_order_id == "BINANCE-PRIVATE-1"
+    assert fill.venue_fill_id == "42"
+    assert fill.quantity == Decimal("0.01")
+    assert fill.price == Decimal("60123.5")
+    assert fill.fee == Decimal("0.123456")
+    assert fill.fee_currency == "USDT"
+    assert fill.executed_at == datetime.fromtimestamp(1784050000, tz=timezone.utc)
+    assert calls[0][1]["symbol"] == "BTCUSDT"

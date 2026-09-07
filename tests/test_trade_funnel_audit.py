@@ -147,7 +147,7 @@ def test_trade_funnel_missing_tables_returns_insufficient_data_not_crash():
     db.execute("DROP TABLE opportunities")
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
 
     assert report["main_choke_point"]["severity"] == "insufficient_data"
     assert report["counts"]["opportunities_created"] == 0
@@ -163,7 +163,7 @@ def test_trade_funnel_missing_downstream_table_keeps_available_upstream_counts()
     db.execute("DROP TABLE orders")
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
 
     assert report["counts"]["opportunities_created"] == 1
     assert report["counts"]["orders_executed"] == 0
@@ -182,7 +182,7 @@ def test_trade_funnel_identifies_system_operator_skip_choke_point():
         _insert_signal(db, i, "skip")
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, min_sample_size=1, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1)
 
     assert report["counts"]["signal_pending_written"] == 4
     assert report["counts"]["system_operator_evaluated"] == 4
@@ -206,7 +206,7 @@ def test_trade_funnel_conversion_uses_linked_opportunity_cohort():
         _insert_signal(db, i, "skip")  # no matching opportunity in this cohort
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
 
     assert report["counts"]["system_operator_evaluated"] == 6  # event throughput remains visible
     assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
@@ -232,11 +232,8 @@ def test_trade_funnel_counts_durable_operator_defer_as_evaluated():
     _insert_defer(db, 1, (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat())
     db.commit()
 
-    report = build_trade_funnel_audit(
-        hours=24,
-        min_sample_size=1,
-        include_ranker_snapshot=False,
-    )
+    report = build_trade_funnel_audit(hours=24,
+    min_sample_size=1, )
 
     assert report["causal_cohort_counts"]["system_operator_evaluated"] == 1
     assert report["causal_cohort_counts"]["operator_deferred"] == 1
@@ -257,9 +254,7 @@ def test_trade_funnel_does_not_recommend_waiting_for_an_expired_defer():
     _insert_defer(db, 1, _iso())
     db.commit()
 
-    report = build_trade_funnel_audit(
-        hours=24, min_sample_size=1, include_ranker_snapshot=False,
-    )
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1, )
 
     assert report["causal_cohort_counts"]["operator_deferred"] == 0
     assert report["main_choke_point"]["stage"] == "system_operator_consumption"
@@ -277,9 +272,7 @@ def test_trade_funnel_preserves_terminal_decisions_in_a_mixed_defer_cohort():
     _insert_signal(db, 2, "skip")
     db.commit()
 
-    report = build_trade_funnel_audit(
-        hours=24, min_sample_size=1, include_ranker_snapshot=False,
-    )
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1, )
 
     assert report["causal_cohort_counts"]["operator_deferred"] == 1
     assert report["causal_cohort_counts"]["decisions_skip"] == 1
@@ -320,11 +313,8 @@ def test_trade_funnel_uses_persisted_ranker_and_submission_evidence():
     )
     db.commit()
 
-    report = build_trade_funnel_audit(
-        hours=24,
-        min_sample_size=1,
-        include_ranker_snapshot=False,
-    )
+    report = build_trade_funnel_audit(hours=24,
+    min_sample_size=1, )
 
     assert report["counts"]["ranker_candidates"] == 2
     assert report["counts"]["ranker_eligible"] == 1
@@ -366,7 +356,7 @@ def test_trade_funnel_explains_known_pre_signal_rejections():
         )
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
 
     assert report["causal_cohort_counts"]["ranker_candidates"] == 3
     assert report["causal_cohort_counts"]["ranker_eligible"] == 0
@@ -403,27 +393,23 @@ def test_trade_funnel_keeps_unknown_choke_when_rejections_do_not_cover_cohort():
     )
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
 
     assert report["causal_selection_rejection_coverage"] == 1
     assert report["main_choke_point"]["stage"] == "ranker_or_paper_trader"
 
 
-def test_ranker_snapshot_does_not_claim_selection_eligibility(monkeypatch):
+def test_historical_ranker_counts_do_not_invent_current_eligibility():
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
     _insert_opp(db, 1)
     db.commit()
-    monkeypatch.setattr(
-        "aletheia.agents.paper_trader_ranker.build_paper_candidates",
-        lambda limit: [{"opportunity_id": "opp-funnel-1"}],
-    )
 
     report = build_trade_funnel_audit(hours=24)
 
-    assert report["counts"]["ranker_candidates"] == 1
+    assert report["counts"]["ranker_candidates"] is None
     assert report["counts"]["ranker_eligible"] is None
 
 
@@ -439,7 +425,7 @@ def test_trade_funnel_cohort_uses_latest_terminal_decision_once():
     _insert_signal(db, 1, "trade")
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
     cohort = report["causal_cohort_counts"]
 
     assert cohort["system_operator_evaluated"] == 1
@@ -461,7 +447,7 @@ def test_trade_funnel_identifies_risk_engine_rejection_choke_point():
         _insert_risk(db, i, approved=False, reason="max_demo_position_notional")
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, min_sample_size=1, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1)
 
     assert report["counts"]["proposals_created"] == 3
     assert report["counts"]["risk_rejected"] == 3
@@ -483,11 +469,8 @@ def test_trade_funnel_small_rejected_sample_never_reports_ok_with_zero_positions
     _insert_opp(db, 99)  # enough upstream evidence; proposal sample remains thin
     db.commit()
 
-    report = build_trade_funnel_audit(
-        hours=24,
-        min_sample_size=3,
-        include_ranker_snapshot=False,
-    )
+    report = build_trade_funnel_audit(hours=24,
+    min_sample_size=3, )
     choke = report["main_choke_point"]
 
     assert choke["stage"] == "risk_engine"
@@ -514,7 +497,7 @@ def test_trade_funnel_groups_dynamic_risk_amounts_under_one_reason():
         )
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24)
     top = report["risk_rejection_reasons"][0]
 
     assert top["count"] == 3
@@ -545,7 +528,7 @@ def test_trade_funnel_identifies_execution_gap_after_risk_approval():
         _insert_risk(db, i, approved=True)
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, min_sample_size=1, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1)
 
     assert report["counts"]["risk_approved"] == 2
     assert report["counts"]["orders_executed"] == 0
@@ -567,7 +550,7 @@ def test_trade_funnel_points_tiny_positions_to_sizing_trace():
         _insert_position(db, i, notional=1.5)
     db.commit()
 
-    report = build_trade_funnel_audit(hours=24, min_sample_size=1, include_ranker_snapshot=False)
+    report = build_trade_funnel_audit(hours=24, min_sample_size=1)
 
     assert report["counts"]["positions_opened"] == 3
     assert report["position_stats"]["median_notional_usdt"] == 1.5

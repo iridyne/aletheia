@@ -17,6 +17,7 @@ class UniverseSnapshot(TypedDict):
     market_type: str
     policy_id: str | None
     status: str
+    source_kind: str
     expires_at: str | None
     summary: str | None
 
@@ -27,7 +28,7 @@ class CandidateLedgerFields(TypedDict):
     asset_id: str
     symbol: str
     rank: int
-    total_score: float
+    total_score: float | None
     opportunity_score: float | None
     tradability_score: float | None
     liquidity_score: float | None
@@ -59,6 +60,9 @@ class CandidateLedgerFields(TypedDict):
     opportunity_evidence_hash: str | None
     candidate_opportunity_context_version: str | None
     candidate_opportunity_context_json: str | None
+    admission_basis: str | None
+    startup_reason: str | None
+    pessimistic_strength: float | None
     candidate_opportunity_context_hash: str | None
 
 
@@ -72,7 +76,7 @@ class Candidate(TypedDict):
     asset_id: str | None
     symbol: str
     rank: int
-    total_score: float
+    total_score: float | None
     opportunity_score: NotRequired[float | None]
     tradability_score: float | None
     liquidity_score: NotRequired[float | None]
@@ -112,6 +116,9 @@ class Candidate(TypedDict):
     entry_plan_execution_mode: NotRequired[str | None]
     setup_state: NotRequired[str | None]
     triggered_opportunity_id: NotRequired[str | None]
+    admission_basis: NotRequired[str | None]
+    startup_reason: NotRequired[str | None]
+    pessimistic_strength: NotRequired[float | None]
 
 
 class UniverseFeatureSnapshot(TypedDict):
@@ -212,6 +219,8 @@ class EntryLifecycleCycle(TypedDict):
     outcome_reason: str | None
     entry_plan_id: str | None
     entry_plan_status: str | None
+    execution_state: str
+    execution: dict[str, Any]
     events: list[EntryLifecycleEvent]
 
 
@@ -226,6 +235,7 @@ class EntryLifecycleProjection(TypedDict):
     model_invoked: bool
     compiler_invoked: bool
     state_changed_at: str | None
+    execution_state: str
     next_action: str
     cycles: list[EntryLifecycleCycle]
 
@@ -283,6 +293,9 @@ class CandidatePlanningFields(TypedDict):
     outcome_reason: str | None
     entry_behavior_fingerprint: str | None
     schema_fingerprint: str | None
+    admission_basis: NotRequired[str | None]
+    startup_reason: NotRequired[str | None]
+    pessimistic_strength: NotRequired[float | None]
 
 
 class CandidateAttention(CandidatePlanningFields):
@@ -306,6 +319,8 @@ class CandidateAttentionWorkbench(CandidatePlanningFields, EntryLifecycleProject
     candidate_selection_utility_pct: float | None
     opportunity_mechanism_version: str | None
     opportunity_source_component: str | None
+    candidate_opportunity_context_json: str | None
+    candidate_opportunity_context_hash: str | None
     opportunity_source_cutoff_at: str | None
     opportunity_evidence_hash: str | None
     candidate_expires_at: str | None
@@ -485,6 +500,12 @@ class EntryPlanLineage(TypedDict):
     order: EntryLineageOrder | None
     fills: EntryLineageFills | None
     position: EntryLineagePosition | None
+    availability: dict[str, Any]
+    close_fills: list[dict[str, Any]]
+    close_orders: list[dict[str, Any]]
+    economics: dict[str, Any]
+    entry_outcomes: list[dict[str, Any]]
+    execution_state: str
 
 
 class EntryPlanProjection(EntryPlanRow):
@@ -521,6 +542,7 @@ class EntryWorkbenchResponse(TypedDict):
     entry_plans: list[EntryPlanProjection] | None
     current_candidates: list[CandidateWorkbenchRow] | None
     candidate_attention: list[CandidateAttentionWorkbench] | None
+    progress: dict[str, Any]
 
 
 class UniverseCurrentResponse(TypedDict):

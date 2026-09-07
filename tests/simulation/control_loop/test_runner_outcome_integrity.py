@@ -68,6 +68,11 @@ def test_trade_performance_uses_reconciled_paper_closes_and_exact_fill_age(tmp_p
 
         outcomes = eligible_strategy_outcomes()
         assert len(outcomes) == 2
+        assert sorted(row["realized_pnl"] for row in outcomes) == [-1.0, 1.0]
+        for row in outcomes:
+            assert row["quantity"] == pytest.approx(0.001)
+            assert row["entry_price"] == pytest.approx(60_000.0)
+            assert row["entry_fee"] == row["exit_fee"] == 0.0
         position_ids = {str(row["id"]) for row in outcomes}
 
         events = [
@@ -140,15 +145,6 @@ def test_trade_performance_replacement_only_deletes_dcls_owned_facts(tmp_path):
         ).fetchone())
         assert external_ledger_before["cash_balance_before_usdt"] == 201.0
         assert external_ledger_before["cash_balance_after_usdt"] == 208.0
-        harness.seed_candidates(high=1, medium=1)
-        candidate_ids = {
-            str(row["id"]) for row in harness.db.execute(
-                "SELECT id FROM opportunities "
-                "WHERE id LIKE 'dcls-high-candidate-%' "
-                "OR id LIKE 'dcls-medium-candidate-%'"
-            ).fetchall()
-        }
-
         external_opportunity = Opportunity(
             id="external-opportunity",
             symbol="ETH/USDT",
@@ -254,14 +250,6 @@ def test_trade_performance_replacement_only_deletes_dcls_owned_facts(tmp_path):
             )
         assert ledger[-1]["cash_balance_after_usdt"] == pytest.approx(209.0)
 
-        surviving_candidates = {
-            str(row["id"]) for row in harness.db.execute(
-                "SELECT id FROM opportunities "
-                "WHERE id LIKE 'dcls-high-candidate-%' "
-                "OR id LIKE 'dcls-medium-candidate-%'"
-            ).fetchall()
-        }
-        assert surviving_candidates == candidate_ids
         assert repo._select_one("positions", old_dcls_position["id"]) is None
         assert harness.db.execute(
             "SELECT COUNT(*) FROM paper_account_events "

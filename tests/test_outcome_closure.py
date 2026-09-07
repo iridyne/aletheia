@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
@@ -510,7 +512,7 @@ def _insert_closed_position_via_producer(
         opened_at=opened_iso,
     )
     repo.insert_position(position)
-    repo.update_order(order_id, position_id=position_id)
+    repo.update_order_metadata(order_id, position_id=position_id)
     if local_paper:
         from aletheia.portfolio.paper_account import record_position_opened
 
@@ -919,7 +921,7 @@ def test_local_close_rejects_invalid_persisted_entry_fee(bad_fee):
         entry_fee=0.0,
     )
     repo.insert_position(position)
-    repo.update_position(position.id, entry_fee=bad_fee)
+    force_update_position(position.id, entry_fee=bad_fee)
 
     with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
         close_position(position.id, exit_price=110.0)
@@ -936,7 +938,7 @@ def test_verified_close_rejects_invalid_persisted_entry_fee(bad_fee):
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    repo.update_position(position.id, entry_fee=bad_fee)
+    force_update_position(position.id, entry_fee=bad_fee)
 
     with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
         close_position_verified(position.id, _verified_result(position))
@@ -1102,13 +1104,25 @@ def test_verified_close_applies_clean_window_before_running_outcome_hooks(monkey
     assert hook_calls == []
 
 
-def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatch):
-    from dataclasses import replace
+@pytest.mark.parametrize("presence, expected_reason", [
+    ("absent", None),
+    ("present", "direct_query_position_present"),
+    ("unavailable", "direct_query_unavailable"),
+])
+def test_ready_candidate_uses_independent_account_presence(monkeypatch, presence, expected_reason):
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import (
+        PositionListReport, PositionStatusReport, QueryScope, ReadCompleteness,
+        VerifiedExitReport, VerifiedExitState,
+    )
+    from tests.uta.test_execution_coordinator import _identity
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
+    identity = _identity("bitget_demo").model_copy(update={"account_fingerprint": "account-scope-1"})
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
     candidate = PositionDisappearanceCandidate(
         id="candidate-ready", position_id=position.id, identity_key="identity-ready",
         broker_id="bitget_demo", account_environment="demo",
@@ -1119,126 +1133,46 @@ def test_ready_candidate_uses_protocol_and_resolves_after_admin_close(monkeypatc
         semantics_version="oi-v1",
     )
     repo.insert_position_disappearance_candidate(candidate)
-    absent = replace(
-        _verified_result(position), state="confirmed_absent_without_fill",
-        reason="position_absent_complete_history_no_fill", fills=(),
-    )
+    instrument = instrument_from_local(position.symbol, position.market_type)
 
-    class FakeClient:
-        async def get_verified_position_exit(self, request):
-            return replace(
-                absent,
-                account_environment=request.account_environment,
-                account_scope=request.account_scope,
+    async def query_account(mode, method, query, *, expected_account):
+        assert expected_account == identity
+        if method == "verify_position_exit":
+            return VerifiedExitReport(
+                identity=identity, completeness=ReadCompleteness.COMPLETE,
+                scope=QueryScope(instrument=instrument), received_at=datetime.now(timezone.utc),
+                profile_version="1", local_position_id=position.id,
+                state=VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL,
             )
-
-        async def get_positions(self):
-            return []
-
-    monkeypatch.setattr(
-        disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
-    )
-    result = disappearance_settlement.settle_ready_disappearance_candidate(
-        candidate.id
-    )
-    assert result["closure_type"] == "administrative"
-    assert repo._select_one("positions", position.id)["status"] == "closed"
-    stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
-    assert stored_candidate["status"] == "settled_administrative"
-    assert stored_candidate["direct_query_state"] == "confirmed_absent"
-
-
-def test_ready_candidate_direct_query_present_blocks_admin_close(monkeypatch):
-    from dataclasses import replace
-    from types import SimpleNamespace
-    from aletheia.portfolio import disappearance_settlement
-    from aletheia.storage.models import PositionDisappearanceCandidate
-
-    position = _position(execution_mode="bitget_demo")
-    repo.insert_position(position)
-    candidate = PositionDisappearanceCandidate(
-        id="candidate-present", position_id=position.id,
-        identity_key="identity-present", broker_id="bitget_demo",
-        account_environment="demo", account_fingerprint="account-scope-1",
-        execution_mode="bitget_demo", symbol=position.symbol,
-        market_type=position.market_type, direction=position.direction,
-        first_observed_at=position.opened_at, last_observed_at=position.opened_at,
-        confirmation_count=2, semantics_version="oi-v1",
-    )
-    repo.insert_position_disappearance_candidate(candidate)
-    absent = replace(
-        _verified_result(position), state="confirmed_absent_without_fill",
-        reason="position_absent_complete_history_no_fill", fills=(),
-    )
-
-    class FakeClient:
-        async def get_verified_position_exit(self, request):
-            return absent
-
-        async def get_positions(self):
-            # Fresh venue query still reports the position (cached view /
-            # fills protocol were blind — the 2026-08-19 XRP failure mode).
-            return [SimpleNamespace(
-                symbol="BTCUSDT", side="long", quantity=2.0,
-            )]
-
-    monkeypatch.setattr(
-        disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
-    )
-    result = disappearance_settlement.settle_ready_disappearance_candidate(
-        candidate.id
-    )
-    assert result["closed"] is False
-    assert result["reason"] == "direct_query_position_present"
-    assert repo._select_one("positions", position.id)["status"] == "open"
-    stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
-    assert stored_candidate["status"] == "pending"
-
-
-def test_ready_candidate_direct_query_unavailable_defers_close(monkeypatch):
-    from dataclasses import replace
-    from aletheia.portfolio import disappearance_settlement
-    from aletheia.storage.models import PositionDisappearanceCandidate
-
-    position = _position(execution_mode="bitget_demo")
-    repo.insert_position(position)
-    candidate = PositionDisappearanceCandidate(
-        id="candidate-unavailable", position_id=position.id,
-        identity_key="identity-unavailable", broker_id="bitget_demo",
-        account_environment="demo", account_fingerprint="account-scope-1",
-        execution_mode="bitget_demo", symbol=position.symbol,
-        market_type=position.market_type, direction=position.direction,
-        first_observed_at=position.opened_at, last_observed_at=position.opened_at,
-        confirmation_count=2, semantics_version="oi-v1",
-    )
-    repo.insert_position_disappearance_candidate(candidate)
-    absent = replace(
-        _verified_result(position), state="confirmed_absent_without_fill",
-        reason="position_absent_complete_history_no_fill", fills=(),
-    )
-
-    class FakeClient:
-        async def get_verified_position_exit(self, request):
-            return absent
-
-        async def get_positions(self):
+        assert method == "get_positions"
+        if presence == "unavailable":
             raise RuntimeError("positions endpoint unavailable")
+        positions = () if presence == "absent" else (PositionStatusReport(
+            identity=identity, instrument=instrument, side="long", quantity=2,
+            received_at=datetime.now(timezone.utc),
+        ),)
+        return PositionListReport(
+            identity=identity, completeness=ReadCompleteness.COMPLETE,
+            scope=query.scope, received_at=datetime.now(timezone.utc), profile_version="1",
+            positions=positions,
+        )
 
-    monkeypatch.setattr(
-        disappearance_settlement, "_client_for_mode", lambda mode: FakeClient(),
-    )
-    result = disappearance_settlement.settle_ready_disappearance_candidate(
-        candidate.id
-    )
-    assert result["closed"] is False
-    assert result["reason"] == "direct_query_unavailable"
-    assert repo._select_one("positions", position.id)["status"] == "open"
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query_account)
+    result = disappearance_settlement.settle_ready_disappearance_candidate(candidate.id)
     stored_candidate = repo.list_position_disappearance_candidates(limit=10)[0]
-    assert stored_candidate["status"] == "pending"
+    if expected_reason is None:
+        assert result["closure_type"] == "administrative"
+        assert repo.get_position(position.id)["status"] == "closed"
+        assert stored_candidate["status"] == "settled_administrative"
+        assert stored_candidate["direct_query_state"] == "confirmed_absent"
+    else:
+        assert result["closed"] is False
+        assert result["reason"] == expected_reason
+        assert repo.get_position(position.id)["status"] == "open"
+        assert stored_candidate["status"] == "pending"
 
 
 def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monkeypatch):
-    from dataclasses import replace
     from aletheia.portfolio import disappearance_settlement
     from aletheia.storage.models import PositionDisappearanceCandidate
 
@@ -1256,24 +1190,23 @@ def test_live_ready_candidate_queries_read_only_and_inconclusive_stays_open(monk
     repo.insert_position_disappearance_candidate(candidate)
     queried_modes = []
 
-    class FakeClient:
-        async def get_verified_position_exit(self, request):
-            queried_modes.append(request.execution_mode)
-            return replace(
-                _verified_result(position),
-                state="inconclusive",
-                reason="fill_history_incomplete",
-                fills=(),
-                history_complete=False,
-                account_environment=request.account_environment,
-                account_scope=request.account_scope,
-            )
+    from tests.uta.test_execution_coordinator import _identity
+    from aletheia.uta.models import VerifiedExitReport, VerifiedExitState, ReadCompleteness, QueryScope
+    identity = _identity("bitget_live_limited").model_copy(update={"account_fingerprint": "account-scope-live"})
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
 
-    monkeypatch.setattr(
-        disappearance_settlement,
-        "_client_for_mode",
-        lambda mode: FakeClient(),
-    )
+    async def query_account(mode, method, query, *, expected_account):
+        assert expected_account == identity
+        assert method == "verify_position_exit"
+        queried_modes.append(mode)
+        return VerifiedExitReport(
+            identity=identity, completeness=ReadCompleteness.PARTIAL,
+            scope=QueryScope(instrument=query.instrument), received_at=datetime.now(timezone.utc),
+            profile_version="1", local_position_id=position.id,
+            state=VerifiedExitState.INCONCLUSIVE, reason_code="fill_history_incomplete",
+        )
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query_account)
     result = disappearance_settlement.settle_ready_disappearance_candidate(
         candidate.id
     )
