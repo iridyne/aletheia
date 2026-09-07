@@ -1,5 +1,46 @@
 # Architecture Decision Log
 
+## 2026-09-07 — 观察到的 TPSL 平仓 claim 在创建时冻结账户身份，而不是留给对账补造
+
+### Context
+
+`scheduler._claim_observed_tpsl_close()` 从 Bitget plan-order history 观察到一次已执行的
+TPSL 触发后，创建 `status=materialization_missing` 的平仓 Order 作为 claim，等私有成交证据
+到齐再物化。私有查询当次失败时，claim 保留，由 `execution/reconciliation.py` 后续重试。
+
+`#2945` 的 UTA 收敛给对账加了账户身份前置校验：Order 必须带 `uta_account_identity_json`
+且与已配置 registry 身份一致，否则在任何私有读取之前被 fail-closed 移出扫描集。这条规则本身
+正确——`execution_contract.md` 明确"提交前持久化 exact `uta_account_identity_json`；历史
+NULL 不按当前配置补造身份"。
+
+但 TPSL claim 走的是旧 `BitgetClient` 路径，创建 Order 时没有写身份。两者相遇的结果是：
+首次私有查询失败后，claim 永远无法被对账恢复，Position 永久停在 open +
+`private_fill_evidence_pending`，而交易所侧仓位其实早已平掉。spec PL-TPSL-04 声称的
+"后续 ordinary reconciliation 重试该 exact executeOrderId 并只按完整私有证据平仓"因此不成立。
+
+### Decisions
+
+1. claim 创建时就冻结身份：`_claim_observed_tpsl_close()` 从 `build_uta_registry()` 取该
+   `execution_mode` 的已配置身份写入 `uta_account_identity_json`。
+2. 这不违反"历史 NULL 不补造身份"。该禁令针对的是**身份未知的历史行**。此处 claim 是由几秒前
+   在确定账户下读到的证据生成的，且 registry 解析 `bitget_demo` / `bitget_live_limited` 用的是
+   与 reader 完全相同的 secrets scope（`bitget.demo` / `bitget.live`）和
+   `exchange.bitget_profile`。身份在写入时可证，不是按当前配置猜测过去。
+3. registry 没有该 mode 的已配置身份时写 NULL，不编造。此时凭证缺失，对账本来也读不到私有证据，
+   fail-closed 是诚实结果而非退化。
+4. 不把身份推导下移到对账层。对账保持"不可证明账户者不读私有历史"这一条不变，身份责任留在
+   产生证据的那一侧。
+
+### Consequences
+
+- 首次私有查询失败不再产生不可恢复的 claim；Position 要么被完整私有证据平掉，要么留下可检查的
+  未决状态，两者都可收敛。
+- TPSL claim 与 `coordinator.py` 提交路径现在遵循同一条身份规则，不再是两套。
+- TPSL 路径仍在用旧 `BitgetClient` 而非 UTA reader，属于未完成的收敛；本决策只保证它写出的
+  claim 对 UTA 对账可见，不代表该路径已迁移。
+
+---
+
 ## 2026-07-11 — 回放只负责提出候选，独立前瞻样本才负责验证
 
 ### Context

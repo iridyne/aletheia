@@ -2572,6 +2572,27 @@ def _claim_observed_tpsl_close(
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
 
+        # Freeze the account whose plan-order history just proved this execution.
+        # A claim left at `materialization_missing` is finished by
+        # `execution/reconciliation.py`, which fail-closes any Order that cannot
+        # prove its account (execution_contract.md: 提交前持久化 exact
+        # `uta_account_identity_json`；历史 NULL 不按当前配置补造身份). Writing the
+        # identity HERE is not back-filling an unknown history: this claim is
+        # created from evidence read seconds ago under the configured
+        # `execution_mode` account, and the registry resolves that mode from the
+        # same secrets scope and `exchange.bitget_profile` the reader used. Left
+        # NULL, the deferred recovery can never run and the Position stays open
+        # at `private_fill_evidence_pending` forever.
+        from aletheia.uta.manager import build_uta_registry
+
+        identity = next(
+            (
+                candidate
+                for candidate in build_uta_registry().configured_identities()
+                if candidate.execution_mode == execution_mode
+            ),
+            None,
+        )
         close_order = Order(
             proposal_id=position.get("proposal_id"),
             client_order_id=f"close-{position_id}",
@@ -2587,6 +2608,9 @@ def _claim_observed_tpsl_close(
             exchange_order_id=execute_order_id,
             status="materialization_missing",
             error_reason="private_fill_evidence_pending",
+            uta_account_identity_json=(
+                identity.model_dump_json() if identity is not None else None
+            ),
         )
         repo.insert_order(close_order)
         repo.claim_position_close(

@@ -465,6 +465,19 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
         "load_config",
         lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
     )
+    # One configured account for the whole claim → recovery round trip. The claim
+    # freezes this identity on the close Order; reconcile later refuses to read
+    # private history for any Order that cannot prove the same account.
+    import aletheia.uta.manager as uta_manager
+    from tests.specs.uta_private_history import _identity
+
+    monkeypatch.setattr(
+        uta_manager,
+        "build_uta_registry",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            configured_identities=lambda: (_identity("bitget_demo"),)
+        ),
+    )
 
     scheduler._tpsl_fill_check_body()
 
@@ -480,6 +493,12 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 0
+    # The claim must be reconcilable: without a frozen account the deferred
+    # recovery below can never run and the Position stays open forever.
+    assert close_order["uta_account_identity_json"], (
+        "TPSL close claim has no frozen account identity — reconcile() would "
+        "fail-close it and the Position would never close"
+    )
 
     fills_available = True
     from aletheia.execution import reconciliation
@@ -491,6 +510,16 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
         reconciliation,
         [_private_close_fill("EXEC-TP-X")],
         calls=uta_calls,
+    )
+    # The claim froze the configured bitget_demo identity; reconcile compares the
+    # Order's frozen identity against the configured registry, so the registry
+    # this spec presents must be the same account.
+    monkeypatch.setattr(
+        reconciliation,
+        "build_uta_registry",
+        lambda: SimpleNamespace(
+            configured_identities=lambda: (_identity("bitget_demo"),)
+        ),
     )
 
     result = reconciliation.reconcile()
