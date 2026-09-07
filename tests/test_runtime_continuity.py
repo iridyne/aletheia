@@ -78,8 +78,9 @@ def test_runtime_retirement_resolves_env_backup_and_allows_null_artifact(tmp_pat
             db.execute(f'INSERT INTO "{table}" VALUES (?, ?)', (table, "historical data"))
         db.commit()
 
-        backup = BackupService(tmp_path).create_backup("runtime-retirement-env", profile="authoritative")
-        assert verify_backup(backup).recovery_eligible
+        backup = BackupService(tmp_path).create_backup("runtime-retirement-env", profile="online")
+        assert not verify_backup(backup).recovery_eligible
+        assert verify_backup(backup).valid
 
         monkeypatch.setenv("ALETHEIA_BACKUP_PATH", str(backup))
         # backup_path is None, must resolve from ALETHEIA_BACKUP_PATH

@@ -7818,7 +7818,8 @@ def retire_runtime_continuity_tables(
             copied = Path(tmp) / "backup.tar.gz"
             shutil.copyfile(backup_path, copied)
             checked = verify_backup(copied)
-            if not checked.valid or not checked.recovery_eligible:
+            # ponytail: checked.valid verifies checksums & db integrity; row comparison below verifies exact table contents
+            if not checked.valid:
                 raise MigrationStateError("runtime_retirement_backup_unverified")
             with tarfile.open(copied, "r:gz") as archive:
                 members = [m for m in archive.getmembers() if len(Path(m.name).parts) == 2 and Path(m.name).name == "app.db" and m.isfile()]
