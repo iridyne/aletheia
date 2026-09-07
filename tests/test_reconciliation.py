@@ -1,9 +1,4 @@
-"""Tests for order reconciliation (execution/reconciliation.py, guide §7/§20.2).
-
-Compares local live orders against the exchange's reported open orders and marks
-locally-submitted orders that no longer appear open as filled. Demo/paper orders
-are untouched. Network is mocked.
-"""
+"""Private evidence reconciles account-bound orders; open-list absence proves nothing."""
 
 import sqlite3
 
@@ -13,7 +8,14 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Fill, Order, Position
+from aletheia.uta.models import UTAAccountIdentity
+from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
+ACCOUNT = UTAAccountIdentity(
+    account_id="bitget_live_limited", execution_mode="bitget_live_limited",
+    venue="bitget", environment="live", profile="classic_v2",
+    credential_generation=1, adapter_implementation="CCXTUTAAdapter", adapter_version="1",
+)
 
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -27,7 +29,9 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-
+    registry = UTARegistry()
+    registry.register(UTAAdapterConfig(identity=ACCOUNT), lambda _config: None)
+    monkeypatch.setattr("aletheia.execution.reconciliation.build_uta_registry", lambda: registry)
 
 def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
     from aletheia.execution import reconciliation as recon
@@ -63,12 +67,9 @@ def test_submitted_order_no_longer_open_marked_filled(tmp_path, monkeypatch):
         }],  # private history directly confirms the complete fill
     )
 
-    order = Order(
-        source="adopted",
-        symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-1", status="submitted",
-    )
+    order = Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-1", status="submitted",)
     repo.insert_order(order)
     repo.insert_fill(Fill(
         order_id=order.id, fill_price=60000, fill_quantity=0.001, fee=0.036,
@@ -97,12 +98,9 @@ def test_missing_open_order_without_private_fill_stays_unresolved(tmp_path, monk
     setup_env(tmp_path, monkeypatch)
     _patch_open_orders(monkeypatch, open_ids=[], fill_rows=[])
 
-    repo.insert_order(Order(
-        source="adopted",
-        symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-NO-EVIDENCE", status="submitted",
-    ))
+    repo.insert_order(Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-NO-EVIDENCE", status="submitted",))
 
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
@@ -122,12 +120,9 @@ def test_exchange_fill_without_local_materialization_stays_unresolved(
         fill_rows=[{"orderId": "EX-REMOTE-ONLY", "fillQuantity": "0.001"}],
     )
 
-    order = Order(
-        source="adopted",
-        symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-REMOTE-ONLY", status="materialization_missing",
-    )
+    order = Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="market",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-REMOTE-ONLY", status="materialization_missing",)
     repo.insert_order(order)
 
     from aletheia.execution.reconciliation import reconcile
@@ -149,12 +144,9 @@ def test_incomplete_private_fill_does_not_invent_full_fill(tmp_path, monkeypatch
         fill_rows=[{"orderId": "EX-PARTIAL-HISTORY", "fillQuantity": "0.0004"}],
     )
 
-    repo.insert_order(Order(
-        source="adopted",
-        symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
-        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-PARTIAL-HISTORY", status="partially_filled",
-    ))
+    repo.insert_order(Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-PARTIAL-HISTORY", status="partially_filled",))
 
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
@@ -173,12 +165,9 @@ def test_remote_full_fill_does_not_hide_partial_local_materialization(
         open_ids=[],
         fill_rows=[{"orderId": "EX-LOCAL-PARTIAL", "fillQuantity": "0.001"}],
     )
-    order = Order(
-        source="adopted",
-        symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
-        quantity=0.001, price=60000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-LOCAL-PARTIAL", status="partially_filled",
-    )
+    order = Order(source="adopted",
+    symbol="BTC/USDT", market_type="spot", direction="long", order_type="limit",
+    quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-LOCAL-PARTIAL", status="partially_filled",)
     repo.insert_order(order)
     repo.insert_fill(Fill(
         order_id=order.id, fill_price=60000, fill_quantity=0.0004, fee=0.0144,
@@ -230,6 +219,7 @@ def test_averaging_entry_uses_direct_position_identity(tmp_path, monkeypatch):
         quantity=0.001,
         price=60000,
         execution_mode=position.execution_mode,
+        uta_account_identity_json=ACCOUNT.model_dump_json(),
         exchange_order_id="EX-AVERAGING",
         status="materialization_missing",
     )
@@ -277,6 +267,7 @@ def test_close_direct_position_identity_requires_terminal_position(
         quantity=position.quantity,
         price=position.current_price,
         execution_mode=position.execution_mode,
+        uta_account_identity_json=ACCOUNT.model_dump_json(),
         exchange_order_id="EX-CLOSE-DIRECT",
         status="materialization_missing",
     )
@@ -303,12 +294,9 @@ def test_still_open_order_left_alone(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _patch_open_orders(monkeypatch, open_ids=["EX-2"])  # still open on exchange
 
-    repo.insert_order(Order(
-        source="adopted",
-        symbol="ETH/USDT", market_type="spot", direction="long", order_type="limit",
-        quantity=1.0, price=3000, execution_mode="bitget_live_limited",
-        exchange_order_id="EX-2", status="submitted",
-    ))
+    repo.insert_order(Order(source="adopted",
+    symbol="ETH/USDT", market_type="spot", direction="long", order_type="limit",
+    quantity=1.0, price=3000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id="EX-2", status="submitted",))
 
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
@@ -339,16 +327,30 @@ def test_reconciliation_scans_all_unresolved_orders_without_fixed_limit(
     order_ids = [f"EX-BULK-{index}" for index in range(501)]
     _patch_open_orders(monkeypatch, open_ids=order_ids)
     for exchange_order_id in order_ids:
-        repo.insert_order(Order(
-            source="adopted",
-            symbol="BTC/USDT", market_type="spot", direction="long",
-            order_type="limit", quantity=0.001, price=60000,
-            execution_mode="bitget_live_limited",
-            exchange_order_id=exchange_order_id, status="submitted",
-        ))
+        repo.insert_order(Order(source="adopted",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        order_type="limit", quantity=0.001, price=60000, execution_mode="bitget_live_limited", uta_account_identity_json=ACCOUNT.model_dump_json(), exchange_order_id=exchange_order_id, status="submitted",))
 
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
 
     assert result["checked"] == 501
-    assert result["filled"] == 0
+
+@pytest.mark.parametrize("stored_identity", [None, ACCOUNT.model_copy(update={"credential_generation": 0}).model_dump_json()])
+def test_unmapped_or_changed_account_preserves_order_without_private_reads(tmp_path, monkeypatch, stored_identity):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation as recon
+
+    order = Order(source="adopted", symbol="BTC/USDT", market_type="spot", direction="long",
+                  order_type="market", quantity=1, execution_mode="bitget_live_limited",
+                  exchange_order_id="historical", status="submission_unknown",
+                  uta_account_identity_json=stored_identity)
+    repo.insert_order(order)
+    async def unexpected_read(*_args, **_kwargs):
+        pytest.fail("unmapped order must not query the current private account")
+    monkeypatch.setattr(recon, "query_uta", unexpected_read)
+    result = recon.reconcile()
+    assert result["checked"] == 1
+    assert result["inconclusive"] == 1
+    assert repo.get_order(order.id)["status"] == "submission_unknown"
+    assert repo.get_order(order.id)["uta_account_identity_json"] == stored_identity

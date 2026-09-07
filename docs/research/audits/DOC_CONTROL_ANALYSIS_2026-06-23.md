@@ -213,7 +213,8 @@
 - **中等**: `insight_synthesizer` 触发时间：§1 说 CST 02:30，§2.D 说 UTC 04:00，两者含义不同——代码与§1 一致（CST 02:30）
 - **轻微**: `stock_observer` timeout 入口仍存在于 `scheduler.py:33`，对应任务已无 `add_job` 调用
 
-**Spec 覆盖**: `tests/specs/spec_agent_contracts.py`，8 个 claims（AC-S01～AC-S08）。注意：AC-S01 用正则 `r'max_workers\s*=\s*(\d+)'` 仅匹配两处明确 `max_workers=1` 的辅助线程池，未验证 `_EXECUTOR_WORKERS` dict 中的 APScheduler 池大小——spec 通过但未真正验证约束目标。**未覆盖**：每任务超时机制、LLM 降级行为、每任务 catch-all 隔离、PI Agent 安全（绝不执行订单）。
+> 历史记录说明：下述覆盖统计为当时快照；后续已删除按源码 add_job 数量设下限的 claim，该数量不再是调度契约。
+**当时 Spec 覆盖**: `tests/specs/spec_agent_contracts.py`。注意：AC-S01 用正则 `r'max_workers\s*=\s*(\d+)'` 仅匹配两处明确 `max_workers=1` 的辅助线程池，未验证 `_EXECUTOR_WORKERS` dict 中的 APScheduler 池大小——spec 通过但未真正验证约束目标。**当时未覆盖**：每任务超时机制、LLM 降级行为、每任务 catch-all 隔离、PI Agent 安全（绝不执行订单）。
 
 **控制的代码模块**: `aletheia/agent_runtime/scheduler.py`、`aletheia/agents/paper_trader.py`、`aletheia/agents/paper_trader_ranker.py`、`aletheia/agents/equity_observer.py`、`aletheia/agent_shell/trading_decision.py`、`aletheia/knowledge/manager.py`、`aletheia/knowledge/guards.py`
 

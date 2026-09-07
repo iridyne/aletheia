@@ -290,10 +290,6 @@ export interface components {
             uta_account_config_generations?: {
                 [key: string]: number;
             };
-            /** Uta Read Boundaries */
-            uta_read_boundaries?: {
-                [key: string]: "legacy" | "shadow_read" | "uta_v1";
-            };
         };
         /**
          * FastTriggerConfig
@@ -1838,21 +1834,6 @@ export interface components {
              */
             paused_by_connectivity: boolean;
             /**
-             * Runtime Continuity Enabled
-             * @default false
-             */
-            runtime_continuity_enabled: boolean;
-            /**
-             * Runtime Continuity Lock Ttl Sec
-             * @default 300
-             */
-            runtime_continuity_lock_ttl_sec: number;
-            /**
-             * Runtime Continuity Shadow Port Offset
-             * @default 100
-             */
-            runtime_continuity_shadow_port_offset: number;
-            /**
              * Scheduler Enabled
              * @default true
              */
@@ -1862,9 +1843,8 @@ export interface components {
          * SerenityConfig
          * @description Serenity Research school — long-horizon industrial-chain analyst lens.
          *
-         *     Phase 3 (Option A, D5): promote theme → enqueue signal_pending PiDecisions
-         *     (PI remains sole trade-decision maker). auto_promote is default OFF;
-         *     manual-only promotion preserves the human-curator workflow.
+         *     Promotion publishes Candidates to the shared Entry Planner. Auto-promotion
+         *     is disabled by default; manual promotion retains the curator workflow.
          */
         SerenityConfig: {
             /**
@@ -1887,11 +1867,6 @@ export interface components {
              * @default 72
              */
             min_score_for_pi: number;
-            /**
-             * Stop Loss Pct
-             * @default 8
-             */
-            stop_loss_pct: number;
         };
         /** SettingsModelsResponse */
         SettingsModelsResponse: {
@@ -2261,11 +2236,6 @@ export interface components {
              * @default 72
              */
             max_position_hold_hours: number;
-            /**
-             * Min Confidence To Trade
-             * @default medium
-             */
-            min_confidence_to_trade: string;
             /**
              * Persona Auto Advance Enabled
              * @default false

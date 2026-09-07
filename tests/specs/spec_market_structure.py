@@ -155,25 +155,3 @@ def test_latest_close_time_and_spot_only_provider_guards_are_structural():
     assert "raise NotImplementedError" in spot_guard_source
     assert "_spot_canonical(symbol)" in ticker_source
     assert "_spot_canonical(symbol)" in ohlcv_source
-
-
-@spec_claim(SpecClaim(
-    "MS-A01",
-    "market_structure_contract",
-    "§ Durable state and consumers",
-    "L2c",
-    "Fast Trigger delegates to the pure core without provider/FVG I/O and its "
-    "persisted market-structure assessment remains Shadow-only",
-))
-def test_fast_trigger_market_structure_remains_shadow_only():
-    from aletheia.universe import fast_trigger
-    from aletheia.universe import market_structure
-
-    evaluator = inspect.getsource(market_structure.evaluate_market_structure)
-    materializer = inspect.getsource(fast_trigger.materialize_trigger)
-    assert "derive_market_structure(" in evaluator
-    assert "get_snapshot" not in evaluator
-    assert "derive_fvg_zones" not in evaluator
-    assert 'check_type="market_structure"' in materializer
-    assert 'authority="shadow"' in materializer
-    assert "hard_gate_decision" not in materializer

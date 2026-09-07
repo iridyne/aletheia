@@ -10,7 +10,7 @@ Architecture:
             ↓
   _pi_daemon_loop  (asyncio.Task in uvicorn loop)
       ├─ debounce  — collect burst signals before evaluating
-      ├─ evaluate_trading_opportunity()
+      ├─ run_entry_planner_batch() or exact-position portfolio review
       └─ cooldown  — prevent LLM hammering
 
 The APScheduler heartbeat job is kept at 15-min interval as a safety net;
@@ -63,7 +63,7 @@ _active_params: dict | None = None  # debounce/cooldown/heartbeat in effect
 _last_error_summary: str | None = None  # bounded, non-secret operator diagnostic
 
 # A negative value cannot collide with the non-negative queue depth returned by
-# evaluate_trading_opportunity(). The loop treats it as work still pending so a
+# run_entry_planner_batch(). The loop treats it as work still pending so a
 # transient evaluation failure is retried after cooldown without requiring a
 # fresh producer notification.
 _EVALUATION_RETRY_PENDING = -1
@@ -366,7 +366,7 @@ async def _pi_daemon_loop(
     if await asyncio.to_thread(_has_pending_signal_work):
         _generic_wake_pending = True
         _signal_event.set()
-        logger.info("pi_daemon: rearmed durable pending queue at startup")
+        logger.info("pi_daemon: rearmed durable Candidate planning at startup")
 
     while True:
         # Record the start of each cycle so daemon_status() can report a
@@ -374,21 +374,14 @@ async def _pi_daemon_loop(
         # stays 0.0 forever and operators have no liveness signal.
         _last_heartbeat = time.monotonic()
 
-        # Wait for a producer signal, portfolio retry, durable Operator defer
-        # deadline, or the heartbeat backstop.  A deadline is queried from
-        # SQLite every cycle so signal traffic and process restarts cannot reset
-        # or forget the promised re-evaluation time.
+        # Wait for a producer signal, portfolio retry, or the heartbeat backstop.
         loop = asyncio.get_running_loop()
         retry_delay = _next_retry_delay(loop.time())
-        defer_delay = await asyncio.to_thread(_next_pending_signal_defer_delay)
         if retry_delay is not None and retry_delay <= 0:
             triggered_by = "retry"
-        elif defer_delay is not None and defer_delay <= 0:
-            triggered_by = "defer_deadline"
         else:
             timeout_options = [
                 (retry_delay, "retry"),
-                (defer_delay, "defer_deadline"),
                 (heartbeat_sec, "heartbeat"),
             ]
             wait_timeout, timeout_trigger = min(
@@ -454,7 +447,7 @@ async def _pi_daemon_loop(
         # Evaluate on: a legacy generic wake, a heartbeat, or at least one position
         # whose events passed the rate limit. Purely rate-limited/coalescing events
         # (no ready batch) do NOT wake the LLM this cycle.
-        if not (generic or triggered_by in {"heartbeat", "defer_deadline"} or wake_batches):
+        if not (generic or triggered_by == "heartbeat" or wake_batches):
             continue
 
         wake_context = _build_wake_context(triggered_by, wake_batches)
@@ -481,46 +474,15 @@ async def _pi_daemon_loop(
 
 
 def _has_pending_signal_work() -> bool:
-    """Return whether one durable queued candidate still needs a final PI action.
-
-    This is intentionally a read-only liveness probe.  It does not rank, score,
-    or alter any candidate and it excludes expired or already-finalized sources.
-    """
+    """Probe durable canonical planning work without ranking or mutating it."""
     try:
-        from aletheia.storage.repositories import (
-            count_pending_candidate_planning,
-            count_unresolved_signal_pending,
-        )
+        from aletheia.storage.repositories import count_pending_candidate_planning
 
-        return count_pending_candidate_planning() > 0 or count_unresolved_signal_pending() > 0
+        return count_pending_candidate_planning() > 0
     except Exception as exc:
         logger.debug("pi_daemon: startup pending probe unavailable: %s", exc)
         return False
 
-
-def _next_pending_signal_defer_delay() -> float | None:
-    """Seconds until the next still-owed durable Operator defer, or ``None``.
-
-    Overdue promises return ``0`` and are therefore evaluated immediately.  A
-    malformed or unavailable deadline fails closed to the ordinary heartbeat;
-    it never causes an early model call.
-    """
-    try:
-        from aletheia.storage.repositories import next_pending_signal_defer_deadline
-
-        raw = next_pending_signal_defer_deadline()
-        if not raw:
-            return None
-        deadline = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        if deadline.tzinfo is None:
-            return None
-        return max(
-            (deadline.astimezone(timezone.utc) - datetime.now(timezone.utc)).total_seconds(),
-            0.0,
-        )
-    except Exception as exc:
-        logger.debug("pi_daemon: defer deadline unavailable: %s", exc)
-        return None
 
 
 def _build_wake_context(triggered_by: str, batches: list) -> dict:
@@ -618,10 +580,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
     global _last_error_summary
     try:
         from aletheia.agent_runtime.run_context import bind_economic_attribution
-        from aletheia.agent_shell.commands import (
-            evaluate_trading_opportunity,
-            review_portfolio_state,
-        )
+        from aletheia.agent_shell.commands import review_portfolio_state
         from aletheia.agent_shell.entry_planner import run_entry_planner_batch
         from aletheia.agent_runtime.scheduler import _record_job_success
 
@@ -648,8 +607,6 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
                 if result is None:
                     logger.info("pi_daemon: Candidate planning yielded to portfolio wake")
                     return _EVALUATION_PREEMPTED
-                if result.get("status") == "idle":
-                    result = await asyncio.wait_for(evaluate_trading_opportunity(evaluation_params), timeout=300.0)
         action = result.get("action") or result.get("status") or "unknown" if isinstance(result, dict) else "unknown"
         remaining = result.get("pending_queue_remaining") if isinstance(result, dict) else None
         if remaining is None:
@@ -695,7 +652,7 @@ async def _run_evaluation(triggered_by: str, wake_context: dict | None = None) -
     except asyncio.TimeoutError:
         from aletheia.agent_runtime.scheduler import _record_job_failure
 
-        logger.warning("pi_daemon: evaluate_trading_opportunity timed out after 300s")
+        logger.warning("pi_daemon: planning or portfolio review timed out after 300s")
         _last_error_summary = "evaluation_timeout"
         _record_job_failure("pi_trading_decision", "daemon_evaluation_timeout")
         _restore_wake_context(wake_context)

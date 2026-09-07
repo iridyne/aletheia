@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 
+from aletheia.async_utils import run_coro_from_sync
 logger = logging.getLogger("aletheia.execution.venue_capabilities")
 
 # Execution modes are policy names; this map only identifies the physical venue
@@ -69,18 +70,68 @@ def load_registry_symbols(venue: str) -> dict | None:
         return None
 
 
+_okx_demo_symbols: dict | None = None  # {"swap": frozenset, "spot": frozenset}
+_okx_demo_symbols_loaded_at: float = 0.0
+_OKX_SYMBOLS_TTL = 14400  # 4h
+_symbols_lock = threading.Lock()
+
+
+def _get_demo_symbols(market_type: str = "usdt_futures") -> frozenset:
+    """Return cached OKX demo symbols for the given market_type, loading lazily.
+
+    market_type "usdt_futures" / "perp" → swap frozenset
+    market_type "spot"                  → spot frozenset
+
+    Refresh failures propagate so an unavailable whitelist fails closed before order
+    submission. An empty frozenset means the venue loaded successfully but has no
+    products of the requested market type.
+    """
+    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
+    key = "spot" if market_type == "spot" else "swap"
+    if _okx_demo_symbols is not None and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL:
+        return _okx_demo_symbols.get(key, frozenset())
+    # Cache missing or stale — trigger a synchronous refresh
+    refresh_okx_demo_symbols()
+    if _okx_demo_symbols is None:
+        raise RuntimeError("okx_demo_symbol_refresh_unavailable")
+    return _okx_demo_symbols.get(key, frozenset())
+
+
+def refresh_okx_demo_symbols() -> int:
+    """Refresh the OKX demo symbol cache. Called by scheduler every 4h.
+
+    Returns the total number of supported symbols loaded (swap + spot).
+    """
+    global _okx_demo_symbols, _okx_demo_symbols_loaded_at
+
+    async def _load():
+        return await fetch_venue_capabilities("okx_demo")
+
+    with _symbols_lock:
+        if (
+            _okx_demo_symbols is not None
+            and (time.time() - _okx_demo_symbols_loaded_at) < _OKX_SYMBOLS_TTL
+        ):
+            return sum(len(_okx_demo_symbols.get(key, frozenset())) for key in ("swap", "spot"))
+        result = run_coro_from_sync(_load())
+        if not isinstance(result, dict):
+            raise RuntimeError("okx_demo_symbol_refresh_unavailable")
+        _okx_demo_symbols = result
+        _okx_demo_symbols_loaded_at = time.time()
+        total = len(result.get("swap", frozenset())) + len(result.get("spot", frozenset()))
+        logger.info("OKX demo symbols refreshed: %d swap + %d spot",
+                    len(result.get("swap", frozenset())), len(result.get("spot", frozenset())))
+        return total
+
+
 def load_venue_capabilities(execution_mode: str) -> dict | None:
     """Return normalized read-only capability facts for an execution mode.
 
-    OKX demo keeps the existing broker cache/source semantics. Other exchange
+    OKX demo keeps the existing cache/source semantics. Other exchange
     modes use the existing ``universe_registry`` truth. ``None`` is unknown or
     unavailable; an empty set inside a loaded mapping remains known unavailable.
     """
     if execution_mode == "okx_demo":
-        # The concrete broker owns the existing sandbox cache and refresh policy;
-        # this seam is the only upper-layer access to that implementation detail.
-        from aletheia.execution.okx_broker import _get_demo_symbols
-
         swap = _get_demo_symbols("usdt_futures")
         spot = _get_demo_symbols("spot")
         if swap is None or spot is None:

@@ -1,21 +1,7 @@
-"""Filter Registry — declarative inventory of every opportunity-screening filter.
+"""Read-only filter inventory for current controls and historical evidence.
 
-The opportunity pipeline drops candidates at many stages (TTL expiry, ranker
-gates, debate downgrade, direction brakes, risk rejection). Each drop is a
-*filter* acting with a hand-set parameter. This registry is the single source of
-truth for what those filters are, where their parameters live, which way they
-move to loosen/tighten, and what realized-outcome signal can tell us whether the
-filter is mis-calibrated.
-
-It generalizes the two existing per-parameter registries in the codebase:
-  - `operator_loop.PARAM_REGISTRY` / `ParamSpec` (bounded config-tuning of 3
-    global params from aggregate account health), and
-  - `allocator._FAMILY_TTL` + `get_family_multipliers` (per-scanner-family
-    forward-outcome calibration of score multipliers).
-
-Phase 1 is OBSERVE-ONLY: this module is pure data + helpers. It performs no DB
-reads, no config writes, and no trading mutation. `filter_controller.py` consumes
-it to compute shadow recommendations; a future phase may actuate through it.
+Retired entry filters remain resolvable by historical ID but are excluded from
+the current control registry. Recommendations never mutate trading or config.
 """
 
 from __future__ import annotations
@@ -124,7 +110,7 @@ def _report_only_gate(
 # actuation address the dominant bottleneck before low-impact knobs.
 # Every value below was verified against source on 2026-07-10.
 
-FILTER_REGISTRY: tuple[FilterSpec, ...] = (
+_HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     FilterSpec(
         name="family_ttl",
         stage="ttl_expired",
@@ -686,6 +672,16 @@ FILTER_REGISTRY: tuple[FilterSpec, ...] = (
     ),
 )
 
+# Historical IDs remain decodable, but retired entry stages have no current knobs.
+FILTER_REGISTRY: tuple[FilterSpec, ...] = tuple(
+    spec for spec in _HISTORICAL_FILTER_REGISTRY
+    if spec.stage not in {
+        "ranker_excluded", "paper_ranker", "debate_downgraded", "operator_skip",
+        "paper_trader_selection", "paper_trader_enqueue", "signal_emitter",
+        "proposal_submission", "ranker_rejected",
+    } and spec.name != "ranker_ic_ramp"
+)
+
 
 # Intentional hard rules that the controller must never treat as tunable. Kept
 # explicit so the report can show "excluded by design" rather than silently omit.
@@ -712,7 +708,7 @@ def filters_by_stage(stage: str) -> tuple[FilterSpec, ...]:
 
 
 def filter_by_name(name: str) -> FilterSpec | None:
-    for f in FILTER_REGISTRY:
+    for f in _HISTORICAL_FILTER_REGISTRY:
         if f.name == name:
             return f
     return None

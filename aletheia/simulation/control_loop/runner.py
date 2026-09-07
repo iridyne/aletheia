@@ -23,7 +23,6 @@ class ControlLoopHarness:
         root: Path,
         *,
         now: datetime | None = None,
-        initial_confidence: str = "medium",
         initial_sizing: float = 200.0,
         kill_switch: bool = False,
         artifact_root: Path | None = None,
@@ -110,12 +109,11 @@ class ControlLoopHarness:
         cfg.operator.loop_enabled = True
         cfg.agent.permission_mode = "Paper"
         cfg.exchange.paper_execution_mode = "paper_internal"
-        cfg.trading.min_confidence_to_trade = initial_confidence
         # DCLS outcomes use explicit zero-cost local fills so the requested
         # +/-1 USDT result is the complete net result, not a hidden fee estimate.
         cfg.trading.slippage_bps = 0.0
         cfg.trading.execution_fee_pct = 0.0
-        cfg.risk.max_demo_position_margin_usdt = initial_sizing
+        cfg.risk.demo.capital.max_position_margin_usdt = initial_sizing
         loader.save_config(cfg)
         self.db = get_db()
         self.initial_config = self.safe_config()
@@ -167,7 +165,6 @@ class ControlLoopHarness:
                 "loop_enabled": cfg.operator.loop_enabled,
             },
             "trading": {
-                "min_confidence_to_trade": cfg.trading.min_confidence_to_trade,
                 "default_stop_loss_pct": cfg.trading.default_stop_loss_pct,
             },
             "risk": {
@@ -176,16 +173,6 @@ class ControlLoopHarness:
             },
         }
 
-    def set_controls(
-        self, *, confidence: str | None = None, sizing: float | None = None
-    ) -> None:
-        cfg = self.load_config()
-        if confidence is not None:
-            cfg.trading.min_confidence_to_trade = confidence
-        if sizing is not None:
-            cfg.risk.max_demo_position_margin_usdt = sizing
-        self._loader.save_config(cfg)
-        self._record("set_controls", confidence=confidence, sizing=sizing)
 
     def change_signal_quality(self, *, win_rate: float, status: str) -> None:
         self.signal_health["signal_win_rate_24h"] = float(win_rate)
@@ -211,7 +198,8 @@ class ControlLoopHarness:
         from aletheia.files import jsonl
         from aletheia import notifications
         from aletheia.portfolio import pnl
-        from aletheia.portfolio.paper_account import record_position_opened
+        from aletheia.execution import paper_broker
+        from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import (
             Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
@@ -228,6 +216,7 @@ class ControlLoopHarness:
             created_at=opened_at.isoformat(),
         )
         repo.insert_opportunity(opportunity)
+        plan_id = self._next_id("plan")
         proposal = TradeProposal(
             id=self._next_id("proposal"),
             opportunity_id=opportunity.id,
@@ -235,7 +224,8 @@ class ControlLoopHarness:
             symbol="BTC/USDT",
             market_type="spot",
             direction="long",
-            order_type="market",
+            order_type="limit",
+            entry_plan_id=plan_id,
             quantity=0.001,
             price=60_000.0,
             execution_mode="paper_internal",
@@ -255,56 +245,51 @@ class ControlLoopHarness:
             created_at=opened_at.isoformat(),
         )
         repo.insert_risk_decision(decision)
-        position_id = self._next_id("position")
-        order = Order(
-            id=self._next_id("order"),
-            proposal_id=proposal.id,
-            risk_decision_id=decision.id,
-            symbol=proposal.symbol,
-            market_type=proposal.market_type,
-            direction=proposal.direction,
-            order_type=proposal.order_type,
-            quantity=0.001,
-            price=60_000.0,
-            execution_mode="paper_internal",
-            position_id=position_id,
-            status="filled",
-            created_at=opened_at.isoformat(),
-            filled_at=opened_at.isoformat(),
+        # Bounded synthetic market input is the simulation boundary. The real
+        # broker owns depth walking, fill evidence, Position and cash writes.
+        receipt = EntryExecutionReceiptV1(
+            attempt_id=self._next_id("attempt"), proposal_id=proposal.id,
+            entry_plan_id=plan_id,
+            instrument={"venue": "bitget", "symbol": "BTC/USDT", "market_type": "spot"},
+            stream_generation_id="dcls-stream", subscription_generation_id="dcls-subscription",
+            required_channels=("quote", "depth"),
+            quote={"bid": 59_999.0, "ask": 60_000.0, "sequence": self._sequence,
+                   "exchange_timestamp_ms": int(opened_at.timestamp() * 1000),
+                   "received_timestamp_ms": int(opened_at.timestamp() * 1000)},
+            depth={"bids": [[59_999.0, 1.0]], "asks": [[60_000.0, 1.0]],
+                   "sequence": self._sequence,
+                   "exchange_timestamp_ms": int(opened_at.timestamp() * 1000),
+                   "received_timestamp_ms": int(opened_at.timestamp() * 1000)},
+            captured_at=opened_at.isoformat(),
+            expires_at=(opened_at + timedelta(seconds=2)).isoformat(), receipt_hash="",
         )
-        repo.insert_order(order)
-        repo.insert_fill(Fill(
-            id=self._next_id("fill"),
-            order_id=order.id,
-            fill_price=60_000.0,
-            fill_quantity=0.001,
-            fee=0.0,
-            filled_at=opened_at.isoformat(),
-        ))
+        receipt = receipt.model_copy(update={
+            "receipt_hash": hashlib.sha256(receipt.canonical_json().encode()).hexdigest(),
+        })
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(paper_broker, "datetime", self._clocked_datetime(opened_at)))
+            for name, model in (("Order", Order), ("Fill", Fill), ("Position", Position)):
+                stack.enter_context(patch.object(
+                    paper_broker, name,
+                    lambda _model=model, _name=name, **fields: _model(
+                        id=self._next_id(_name.lower()), **fields
+                    ),
+                ))
+            entry = paper_broker.execute_paper_order(
+                proposal_id=proposal.id, risk_decision_id=decision.id,
+                symbol=proposal.symbol, market_type=proposal.market_type,
+                direction=proposal.direction, order_type=proposal.order_type,
+                quantity=proposal.quantity, price=proposal.price,
+                strategy_id="dcls", opportunity_id=opportunity.id,
+                entry_plan_id=plan_id, order_tactic="OPPOSING_BBO_IOC",
+                time_in_force="IOC", post_only=False, execution_receipt=receipt,
+                attribution_snapshot={"btc_entry_price": 60_000.0, "regime_tag": "unknown"},
+            )
+        if entry["fill_quantity"] != 0.001 or entry["fill_price"] != 60_000.0:
+            raise RuntimeError("DCLS entry did not fill the requested depth")
+        position_id = entry["position_id"]
         realized_pnl = 1.0 if won else -1.0
-        exit_price = 60_000.0 + realized_pnl / 0.001
-        repo.insert_position(Position(
-            id=position_id,
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.001,
-            entry_price=60_000.0,
-            current_price=60_000.0,
-            execution_mode="paper_internal",
-            strategy_id="dcls",
-            proposal_id=proposal.id,
-            order_id=order.id,
-            opportunity_id=opportunity.id,
-            status="open",
-            entry_price_source="local_fill",
-            entry_fill_verified=True,
-            entry_fee=0.0,
-            funding_cost=0.0,
-            funding_source="not_applicable",
-            opened_at=opened_at.isoformat(),
-        ))
-        record_position_opened(position_id)
+        exit_price = entry["fill_price"] + realized_pnl / entry["fill_quantity"]
         opened_iso = opened_at.isoformat()
         self.db.execute(
             "UPDATE paper_account_events SET created_at = ? "
@@ -524,36 +509,14 @@ class ControlLoopHarness:
             self._rebase_paper_ledger_by_event_time()
         self._record("record_outcome", won=won)
 
-    def seed_candidates(self, *, high: int, medium: int) -> None:
-        from aletheia.storage import repositories as repo
-        from aletheia.storage.models import Opportunity
-        # Candidate refresh must not delete the closed Opportunity rows that
-        # prove the simulated trade Outcomes' attribution chain.
-        self.db.execute(
-            "DELETE FROM opportunities "
-            "WHERE id LIKE 'dcls-high-candidate-%' "
-            "OR id LIKE 'dcls-medium-candidate-%'"
-        )
-        self.db.commit()
-        for confidence, count in (("high", high), ("medium", medium)):
-            for index in range(count):
-                repo.insert_opportunity(Opportunity(
-                    id=self._next_id(f"{confidence}-candidate"),
-                    symbol=f"DCLS{confidence[0].upper()}{index}/USDT", market="spot",
-                    direction_bias="long", thesis="deterministic control-loop candidate",
-                    confidence=confidence, confidence_score=80 if confidence == "high" else 55,
-                    source_agent="dcls", scanner_family="dcls",
-                    created_at=(self.clock.now() - timedelta(minutes=index)).isoformat(),
-                ))
-        self._record("seed_candidates", high=high, medium=medium)
 
-    def _clocked_datetime(self):
+    def _clocked_datetime(self, instant: datetime | None = None):
         clock = self.clock
 
         class ClockedDateTime(datetime):
             @classmethod
             def now(cls, tz=None):
-                value = clock.now()
+                value = instant or clock.now()
                 return value.replace(tzinfo=None) if tz is None else value.astimezone(tz)
 
         return ClockedDateTime
@@ -577,11 +540,6 @@ class ControlLoopHarness:
         self._record("run_operator_cycle", trigger=trigger, summary=summary)
         return summary
 
-    def run_candidate_filter(self) -> list[dict[str, Any]]:
-        from aletheia.agents.paper_trader_ranker import build_paper_candidates
-        candidates = build_paper_candidates(limit=100)
-        self._record("run_candidate_filter", candidate_ids=[c.get("id") for c in candidates])
-        return candidates
 
     def restart(self) -> None:
         from aletheia.storage.sqlite import get_db, reset_db

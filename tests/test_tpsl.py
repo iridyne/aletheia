@@ -1,13 +1,4 @@
-"""Tests for exchange-native TPSL bracket order logic.
-
-Covers:
-- BitgetClient.place_tpsl_order / cancel_plan_order / get_pending_plan_orders
-- bitget_broker._try_place_tpsl / _try_cancel_tpsl / replace_exchange_stop
-- position_manager has no bulk-position-absence close shortcut
-- execute_live_order with exchange_tpsl_enabled=True
-- TPSL failure is non-fatal (position still opens)
-- close_demo_position cancels TPSL before placing close order
-"""
+"""Native Bitget protocol and nonfatal qualified UTA protection failures."""
 from __future__ import annotations
 
 import json
@@ -379,150 +370,24 @@ async def test_close_uta_position_requires_symbol_and_pos_side():
     assert result["orderId"] == "flash-1"
 
 
-# ─── _try_place_tpsl ─────────────────────────────────────────────────────────
-
-
-def test_try_place_tpsl_stores_ids_on_success(tmp_path):
-    """_try_place_tpsl writes {"sl": ..., "tp": ...} to exchange_tpsl_order_id."""
-    from aletheia.execution.bitget_broker import _try_place_tpsl
-
-    mock_client = MagicMock()
-    mock_client.place_tpsl_order = AsyncMock(side_effect=["sl-id-1", "tp-id-1"])
-    mock_cfg = MagicMock()
-
-    with patch(
-        "aletheia.execution.bitget_broker._run_coro",
-        side_effect=closing_coro_runner("sl-id-1", "tp-id-1"),
-    ), patch("aletheia.execution.bitget_broker.update_position") as mock_update:
-        _try_place_tpsl(
-            client=mock_client,
-            position_id="pos-1",
-            exchange_symbol="BTCUSDT",
-            hold_side="long",
-            size=0.01,
-            stop_price=95000.0,
-            take_profit_price=105000.0,
-            cfg=mock_cfg,
-        )
-
-        mock_update.assert_called_once()
-        stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
-        assert stored["sl"] == "sl-id-1"
-        assert stored["tp"] == "tp-id-1"
-
-
-def test_try_place_tpsl_non_fatal_on_failure():
-    """_try_place_tpsl does not raise when API errors; update_position not called."""
-    from aletheia.execution.bitget_broker import _try_place_tpsl
-
-    mock_client = MagicMock()
-    mock_cfg = MagicMock()
-
-    with patch(
-        "aletheia.execution.bitget_broker._run_coro",
-        side_effect=closing_coro_runner(RuntimeError("API down"), RuntimeError("API down")),
-    ), \
-         patch("aletheia.execution.bitget_broker.update_position") as mock_update:
-        _try_place_tpsl(
-            client=mock_client, position_id="pos-2", exchange_symbol="BTCUSDT",
-            hold_side="long", size=0.01, stop_price=95000.0,
-            take_profit_price=105000.0, cfg=mock_cfg,
-        )
-        mock_update.assert_not_called()
-
-
-# ─── _try_cancel_tpsl ────────────────────────────────────────────────────────
-
-
-def test_try_cancel_tpsl_cancels_both_orders():
-    from aletheia.execution.bitget_broker import _try_cancel_tpsl
-
-    mock_client = MagicMock()
-    cancelled = []
-
-    def fake_run(coro):
-        coro.close()
-        cancelled.append("called")
-        return {"cancelled": True}
-
-    tpsl_json = json.dumps({"sl": "sl-99", "tp": "tp-99"})
-    with patch("aletheia.execution.bitget_broker._run_coro", side_effect=fake_run):
-        _try_cancel_tpsl(mock_client, "BTCUSDT", tpsl_json)
-
-    assert len(cancelled) == 2
-
-
-def test_try_cancel_tpsl_noop_on_empty():
-    from aletheia.execution.bitget_broker import _try_cancel_tpsl
-
-    mock_client = MagicMock()
-    with patch("aletheia.execution.bitget_broker._run_coro") as mock_run:
-        _try_cancel_tpsl(mock_client, "BTCUSDT", None)
-        mock_run.assert_not_called()
-
-
-# ─── replace_exchange_stop ───────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "execution_mode,expected_client_mode",
-    (
-        ("bitget_demo", "demo"),
-        ("bitget_live_limited", "live"),
-    ),
-)
-def test_replace_exchange_stop_cancel_and_replace(
-    execution_mode, expected_client_mode
-):
-    from aletheia.execution.bitget_broker import replace_exchange_stop
-
-    mock_row = {
-        "exchange_tpsl_order_id": json.dumps({"sl": "old-sl", "tp": "tp-88"}),
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "quantity": "0.01",
-        "execution_mode": execution_mode,
-    }
-
-    calls = []
-
-    def fake_run(coro):
-        coro.close()
-        calls.append("called")
-        return "new-sl-id"
-
-    with patch("aletheia.execution.bitget_broker._run_coro", side_effect=fake_run), \
-         patch("aletheia.execution.bitget_broker.BitgetClient") as mock_cls, \
-         patch("aletheia.execution.bitget_broker.to_bitget", return_value="BTCUSDT"), \
-         patch("aletheia.storage.repositories._select_one", return_value=mock_row), \
-         patch("aletheia.execution.bitget_broker.update_position") as mock_update:
-        mock_cls.return_value = MagicMock()
-
-        replace_exchange_stop("pos-3", 94000.0)
-
-        mock_cls.assert_called_once_with(mode=expected_client_mode, profile="classic_v2")
-        assert mock_update.called
-        stored = json.loads(mock_update.call_args[1]["exchange_tpsl_order_id"])
-        assert stored["sl"] == "new-sl-id"
-        assert stored["tp"] == "tp-88"
-
-
-def test_replace_exchange_stop_noop_when_no_tpsl():
-    """replace_exchange_stop is no-op if position has no exchange_tpsl_order_id."""
-    from aletheia.execution.bitget_broker import replace_exchange_stop
-
-    mock_row = {"exchange_tpsl_order_id": None, "symbol": "BTC/USDT", "direction": "long"}
-    with patch("aletheia.storage.repositories._select_one", return_value=mock_row), \
-         patch("aletheia.execution.bitget_broker._run_coro") as mock_run:
-        replace_exchange_stop("pos-none", 90000.0)
-        mock_run.assert_not_called()
-
-
-def test_position_manager_has_no_bulk_absence_close_shortcut():
-    """A missing row in a bulk account view is never terminal fill evidence."""
-    from aletheia.portfolio import position_manager
-
-    assert not hasattr(position_manager, "_sync_exchange_closed")
-    assert "_sync_exchange_closed" not in inspect.getsource(
-        position_manager.evaluate_open_positions
-    )
+def test_uta_protection_failure_preserves_position_without_fabricating_ids(tmp_path, monkeypatch):
+    from tests.uta.test_execution_coordinator import _setup_db, _insert_bound_position, _Adapter
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.models import UTACapabilities, CapabilitySupport
+    from aletheia.execution import gateway, coordinator
+    _setup_db(tmp_path, monkeypatch)
+    position = Position(symbol="BTC/USDT", market_type="usdt_futures", direction="long", quantity=0.01, entry_price=100, execution_mode="bitget_demo", stop_price=95, take_profit_price=110)
+    _insert_bound_position(position)
+    async def submit(command):
+        raise RuntimeError("exchange unavailable")
+    adapter = _Adapter(submit, "bitget_demo")
+    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    assert gateway.place_exchange_protection(position.id) == {}
+    stored = repo.get_position(position.id)
+    assert stored["status"] == "open"
+    assert stored["exchange_tpsl_order_id"] is None
+    assert repo.list_fills() == []
+    protection = [order for order in repo.list_orders() if order["position_id"] == position.id]
+    assert {order["close_reason"]: order["status"] for order in protection} == {"protective_stop": "submission_unknown", "take_profit": "submission_unknown"}

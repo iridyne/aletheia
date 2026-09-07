@@ -22,8 +22,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 _CONTRACT = "serenity_xstock_execution"
 _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
-_TRADING_CONTEXT = _ROOT / "aletheia" / "agent_shell" / "trading_context.py"
-_TRADING_DECISION = _ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
 _EQUITY_OBSERVER = _ROOT / "aletheia" / "agents" / "equity_observer.py"
 
 
@@ -45,30 +43,6 @@ def test_research_worker_stamps_equity_tradeable():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "SX-S02", _CONTRACT, "§trading_context allows equity_tradeable execution", "L2a",
-        "trading_context sets execution_eligible=True for asset_class='equity_tradeable' — "
-        "Serenity-produced stock tokens CAN be traded by PI",
-    ),
-)
-def test_trading_context_equity_tradeable_eligible():
-    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    # The guard must block "equity" but NOT "equity_tradeable".
-    # Pattern: only "equity" is in the blocked set/comparison.
-    assert '"equity"' in src or "'equity'" in src, (
-        "trading_context has no equity block at all"
-    )
-    # "equity_tradeable" must NOT appear in a blocking condition
-    lines = src.splitlines()
-    for i, line in enumerate(lines):
-        if "execution_eligible" in line.lower() and "equity_tradeable" in line:
-            # If equity_tradeable appears in an exclusion (!=, not in), that's a bug
-            if "!=" in line or "not in" in line:
-                raise AssertionError(
-                    f"Line {i+1} blocks equity_tradeable from execution — "
-                    "Serenity stock tokens must be eligible"
-                )
 
 
 @spec_claim(

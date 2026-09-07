@@ -35,10 +35,14 @@ async def _query_uta_verified_exit(
     execution_mode: str, request: VerifiedExitRequest
 ):
     from aletheia.uta.compat import instrument_from_local
-    from aletheia.uta.manager import create_uta_adapter, query_uta
-    from aletheia.uta.models import VerifiedExitQuery, VerifiedExitState
+    from aletheia.uta.manager import query_uta
+    from aletheia.uta.models import UTAAccountIdentity, VerifiedExitQuery, VerifiedExitState
 
-    identity = create_uta_adapter(execution_mode).identity
+    position = repo.get_position(request.position_id)
+    order = repo.get_order(str(position.get("order_id") or "")) if position else None
+    if order is None or not order.get("uta_account_identity_json"):
+        raise ValueError("uta_account_identity_unavailable")
+    identity = UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"])
     if (
         request.execution_mode != identity.execution_mode
         or request.broker_id != identity.execution_mode
@@ -63,6 +67,7 @@ async def _query_uta_verified_exit(
             ),
             local_order_ids=request.known_entry_order_ids,
         ),
+        expected_account=identity,
     )
     if report.state is VerifiedExitState.POSITION_PRESENT:
         return inconclusive_verified_exit(request, "position_present")
@@ -96,48 +101,14 @@ async def _query_uta_verified_exit(
     )
 
 
-class _UTAVerifiedExitProjection:
-    """Phase-3 compatibility seam over normalized UTA verified-exit reports."""
-
-    def __init__(self, execution_mode: str) -> None:
-        self.execution_mode = execution_mode
-
-    async def get_verified_position_exit(self, request: VerifiedExitRequest):
-        return await _query_uta_verified_exit(self.execution_mode, request)
-
-    async def get_positions(self):
-        from aletheia.uta.manager import query_uta
-        from aletheia.uta.models import PositionQuery
-
-        return await query_uta(
-            self.execution_mode, "get_positions", PositionQuery()
-        )
-
-    async def close(self) -> None:
-        return None
-
-
-def _client_for_mode(execution_mode: str):
-    return _UTAVerifiedExitProjection(execution_mode)
-
-
 def _run_query(execution_mode: str, request: VerifiedExitRequest):
     from aletheia.async_utils import run_coro_from_sync
 
-    async def run():
-        client = _client_for_mode(execution_mode)
-        try:
-            return await client.get_verified_position_exit(request)
-        finally:
-            close = getattr(client, "close", None)
-            if close is not None:
-                await close()
-
-    return run_coro_from_sync(run(), timeout=60)
+    return run_coro_from_sync(_query_uta_verified_exit(execution_mode, request), timeout=60)
 
 
 def _direct_positions_present(execution_mode: str, position: dict) -> bool | None:
-    """Fresh venue presence check through the configured profile client.
+    """Fresh venue presence check through the original exact UTA account.
 
     Independent of the verified-exit protocol's internal absence determination
     and of the cached sync view (2026-08-19: a post-crash empty view plus an
@@ -147,45 +118,31 @@ def _direct_positions_present(execution_mode: str, position: dict) -> bool | Non
     unavailable — callers must fail closed on None.
     """
     from aletheia.async_utils import run_coro_from_sync
-    from aletheia.uta.models import ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    from aletheia.uta.manager import query_uta
+    from aletheia.uta.models import PositionQuery, ReadCompleteness, UTAAccountIdentity
 
     try:
-        async def read():
-            client = _client_for_mode(execution_mode)
-            try:
-                return await client.get_positions()
-            finally:
-                close = getattr(client, "close", None)
-                if close is not None:
-                    await close()
-
-        report = run_coro_from_sync(read(), timeout=60)
+        entry = repo.get_order(str(position.get("order_id") or ""))
+        if entry is None or not entry.get("uta_account_identity_json"):
+            return None
+        identity = UTAAccountIdentity.model_validate_json(entry["uta_account_identity_json"])
+        report = run_coro_from_sync(query_uta(
+            execution_mode, "get_positions",
+            PositionQuery(scope=scope_from_local(position["symbol"], position["market_type"])),
+            expected_account=identity,
+        ), timeout=60)
     except Exception:
         return None
-    if isinstance(report, list):
-        rows = report
-    else:
-        if report.completeness is not ReadCompleteness.COMPLETE:
-            return None
-        rows = report.positions
-    direction = str(position.get("direction") or "").lower()
-    symbol = str(position.get("symbol") or "")
-    market_type = str(position.get("market_type") or "")
-    for row in rows:
-        try:
-            row_side = str(row.side or "").lower()
-            quantity = float(row.quantity)
-        except (TypeError, ValueError):
-            continue
-        row_instrument = getattr(row, "instrument", None)
-        if row_instrument is not None and (
-            row_instrument.canonical_symbol != symbol
-            or row_instrument.market_type != market_type
+    if report.completeness is not ReadCompleteness.COMPLETE:
+        return None
+    for row in report.positions:
+        if (
+            row.instrument.canonical_symbol == position["symbol"]
+            and row.instrument.market_type == position["market_type"]
+            and row.quantity > 0
+            and (not row.side or row.side in {position["direction"], "net", "both"})
         ):
-            continue
-        if quantity <= 0:
-            continue
-        if not row_side or row_side in {direction, "net", "both"}:
             return True
     return False
 

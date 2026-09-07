@@ -31,8 +31,6 @@ _CONTRACT = "serenity_attribution"
 _ROOT = Path(__file__).parent.parent.parent
 _MODELS = _ROOT / "aletheia" / "storage" / "models.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_TRADING_CONTEXT = _ROOT / "aletheia" / "agent_shell" / "trading_context.py"
-_TRADING_DECISION = _ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
 _REFLECTION = _ROOT / "aletheia" / "agent_shell" / "reflection.py"
 
 
@@ -58,22 +56,6 @@ def test_pi_decision_has_signal_source():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-S02", _CONTRACT, "§3.2 TradingDecision carries + stamps signal_source", "L2a",
-        "TradingDecision dataclass has signal_source and the attribution backfill "
-        "stamps it 'serenity' for Serenity-sourced picks",
-    ),
-)
-def test_trading_decision_has_signal_source_and_serenity_branch():
-    src = _TRADING_DECISION.read_text(encoding="utf-8")
-    assert "signal_source" in src, (
-        "trading_decision.py never mentions signal_source — the discriminator is unwired"
-    )
-    assert '"serenity"' in src, (
-        "trading_decision.py never stamps signal_source='serenity' — Serenity picks "
-        "would be mis-attributed to market_observer"
-    )
 
 
 @spec_claim(
@@ -90,25 +72,6 @@ def test_migration_adds_signal_source_column():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-S04", _CONTRACT, "§3.2 Layer 3 surfaces the Serenity id", "L2a",
-        "trading_context.py surfaces the Serenity opportunity id into the PI's Layer 3 "
-        "context — the anchor the attribution backfill reads to set opportunity_id",
-    ),
-)
-def test_layer3_surfaces_serenity_id():
-    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    # Region-scoped: layer1's opportunities block ALSO carries "id": o.get("id"),
-    # so a whole-file grep would false-positive. Anchor on the Serenity block and
-    # require the id within it — otherwise the backfill has nothing to map onto.
-    marker = "Serenity research opportunities"
-    assert marker in src, "trading_context.py has no Serenity Layer 3 block"
-    region = src[src.index(marker):]
-    assert '"id": o.get("id")' in region, (
-        "trading_context serenity block does not surface the opportunity id — the "
-        "System Operator prompt would describe a pick the decision can never link back to"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -116,227 +79,14 @@ def test_layer3_surfaces_serenity_id():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-S05", _CONTRACT, "§3.2 pending_signals carry opportunity_id for direct attribution", "L2a",
-        "trading_context unresolved pending queue selects opportunity_id + signal_source "
-        "columns — the direct attribution path that bypasses layer3 limit=5 truncation",
-    ),
-)
-def test_pending_signals_carry_opportunity_id():
-    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    # The query lives in a dedicated queue helper so prompt construction and queue
-    # accounting cannot drift into separate implementations.
-    helper_idx = src.index("def _build_pending_signal_queue")
-    helper_end = src.index("\ndef ", helper_idx + 1)
-    region = src[helper_idx:helper_end]
-    assert "opportunity_id" in region, (
-        "pending_signals query does not SELECT opportunity_id — serenity attribution "
-        "relies on layer3 limit=5 which silently truncates promoted opps"
-    )
-    assert "signal_source" in region, (
-        "pending_signals query does not SELECT signal_source — cannot distinguish "
-        "serenity signals from market_observer in the direct match path"
-    )
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-I03", _CONTRACT, "§3.2 pending_signal direct match takes priority over layer3", "L2b",
-        "When a serenity pending_signal matches the PI pick by symbol+direction, "
-        "_attach_opportunity_context uses its opportunity_id directly — not the "
-        "layer3 serenity_opportunities (which may be limit-truncated)",
-    ),
-)
-def test_pending_signal_direct_match_bypasses_layer3():
-    from aletheia.agent_shell.trading_decision import (
-        TradingDecision,
-        _attach_opportunity_context,
-    )
-    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
-    from aletheia.storage.repositories import (
-        insert_pi_decision,
-        insert_serenity_opportunity,
-        insert_serenity_theme,
-    )
-
-    theme = SerenityTheme(id="ser-direct-theme", name="direct attribution source")
-    insert_serenity_theme(theme)
-    source = SerenityOpportunity(
-        id="ser-direct-111",
-        theme_id=theme.id,
-        symbol="BTC/USDT",
-        direction="long",
-        market_type="spot",
-    )
-    insert_serenity_opportunity(source)
-    insert_pi_decision(PiDecision(
-        id="pending-ser-direct-111",
-        action="signal_pending",
-        opportunity_id=source.id,
-        signal_source="serenity",
-        symbol=source.symbol,
-        direction=source.direction,
-        market_type=source.market_type,
-    ))
-
-    decision = TradingDecision(
-        action="trade", symbol="BTC/USDT", direction="long", conviction=70, reasoning="x"
-    )
-    ctx = {
-        "layer1": {"opportunities": []},
-        "layer2": {
-                "pending_signals": [
-                    {"symbol": "BTC/USDT", "direction": "long",
-                     "market_type": "spot",
-                     "opportunity_id": "ser-direct-111", "signal_source": "serenity",
-                 "reasoning": "auto-promote", "at": "2026-07-01T12:00:00"}
-            ]
-        },
-        "layer3": {
-            "serenity_opportunities": []  # empty — simulates limit=5 truncation
-        },
-    }
-    _attach_opportunity_context(decision, ctx)
-    assert decision.opportunity_id == "ser-direct-111", (
-        f"pending_signal direct match failed: {decision.opportunity_id!r}"
-    )
-    assert decision.signal_source == "serenity", (
-        f"signal_source should be 'serenity', got {decision.signal_source!r}"
-    )
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-I01", _CONTRACT, "§3.2 Serenity pick → traceable source", "L2b",
-        "When a PI pick maps ONLY to a Serenity opportunity, the backfill sets "
-        "opportunity_id = serenity id AND signal_source = 'serenity' (no silent None)",
-    ),
-)
-def test_serenity_pick_backfills_id_and_source():
-    from aletheia.agent_shell.trading_decision import (
-        TradingDecision,
-        _attach_opportunity_context,
-    )
-
-    decision = TradingDecision(
-        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
-    )
-    ctx = {
-        "layer1": {"opportunities": []},  # no market_observer match
-        "layer3": {
-            "serenity_opportunities": [
-                {"id": "ser-aaa111", "symbol": "NVDA", "direction": "long"}
-            ]
-        },
-    }
-    _attach_opportunity_context(decision, ctx)
-    assert decision.opportunity_id == "ser-aaa111", (
-        f"serenity id not backfilled: {decision.opportunity_id!r}"
-    )
-    assert decision.signal_source == "serenity", (
-        f"signal_source should be 'serenity', got {decision.signal_source!r}"
-    )
 
 
-@spec_claim(
-    SpecClaim(
-        "SA-I02", _CONTRACT, "§3.2 market_observer takes precedence", "L2b",
-        "When a pick matches BOTH a market_observer and a Serenity opportunity, the "
-        "market_observer source wins (signal_source stays 'market_observer')",
-    ),
-)
-def test_market_observer_precedence_over_serenity():
-    from aletheia.agent_shell.trading_decision import (
-        TradingDecision,
-        _attach_opportunity_context,
-    )
-
-    decision = TradingDecision(
-        action="skip", symbol="NVDA", direction="long", conviction=70, reasoning="x"
-    )
-    ctx = {
-        "layer1": {
-            "opportunities": [
-                {"id": "mkt-bbb222", "symbol": "NVDA", "direction_bias": "long",
-                 "linked_strategy_id": "strat-1", "scanner_family": "momentum"}
-            ]
-        },
-        "layer3": {
-            "serenity_opportunities": [
-                {"id": "ser-aaa111", "symbol": "NVDA", "direction": "long"}
-            ]
-        },
-    }
-    _attach_opportunity_context(decision, ctx)
-    assert decision.opportunity_id == "mkt-bbb222", (
-        f"market opportunity should win, got {decision.opportunity_id!r}"
-    )
-    assert decision.signal_source == "market_observer", (
-        f"signal_source should stay 'market_observer', got {decision.signal_source!r}"
-    )
-    assert decision.scanner_family == "momentum"  # market enrichment intact
 
 
 # ---------------------------------------------------------------------------
 # L2c — Invariant (signal_source survives the persistence round-trip)
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "SA-C01", _CONTRACT, "§3.2 signal_source persisted on pi_decisions", "L2c",
-        "record_decision threads signal_source through to the persisted pi_decisions "
-        "row — a Serenity-sourced decision reads back with signal_source='serenity'",
-    ),
-)
-def test_signal_source_round_trips_through_record_decision():
-    from aletheia.agent_shell.reflection import record_decision
-    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
-    from aletheia.storage.repositories import (
-        insert_pi_decision,
-        insert_serenity_opportunity,
-        insert_serenity_theme,
-        list_pi_decisions,
-    )
-
-    theme = SerenityTheme(id="ser-roundtrip-theme", name="roundtrip source")
-    insert_serenity_theme(theme)
-    source = SerenityOpportunity(
-        id="ser-aaa111",
-        theme_id=theme.id,
-        symbol="NVDA",
-        direction="long",
-        market_type="spot",
-    )
-    insert_serenity_opportunity(source)
-    insert_pi_decision(PiDecision(
-        id="pending-ser-aaa111",
-        action="signal_pending",
-        opportunity_id=source.id,
-        signal_source="serenity",
-        symbol=source.symbol,
-        direction=source.direction,
-        market_type=source.market_type,
-    ))
-
-    record_decision(
-        {
-            "action": "trade",
-            "symbol": "NVDA",
-            "direction": "long",
-            "market_type": "spot",
-            "conviction": 70,
-            "reasoning": "serenity thesis",
-            "proposal_id": None,
-            "opportunity_id": "ser-aaa111",
-            "signal_source": "serenity",
-            "debate_ran": False,
-        }
-    )
-    rows = list_pi_decisions(limit=5)
-    match = [r for r in rows if r.get("opportunity_id") == "ser-aaa111"]
-    assert match, "pi_decisions row was not persisted"
-    assert match[0].get("signal_source") == "serenity", (
-        f"signal_source not persisted: {match[0].get('signal_source')!r}"
-    )

@@ -20,12 +20,7 @@ from aletheia.execution.order_constraints import (
 from aletheia.update.git_ops import current_commit, is_worktree_dirty
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.contract import UTA_CONTRACT_VERSION
-from aletheia.uta.manager import (
-    _legacy_brokers,
-    _query_legacy,
-    _shadow_differences,
-    create_uta_adapter,
-)
+from aletheia.uta.manager import create_uta_adapter
 from aletheia.uta.models import (
     CancelOrderCommand,
     CapabilitySupport,
@@ -158,27 +153,31 @@ async def _qualify(args) -> dict:
             "trading_permission": authority.trading_permission.value,
             "account_fingerprint": authority.account_fingerprint,
         }
-        legacy = _legacy_brokers((args.execution_mode,)).get(args.execution_mode)
-        if legacy is None:
-            raise RuntimeError("legacy parity adapter unavailable")
-        legacy_account, legacy_positions = await _query_legacy(legacy)
-        differences = _shadow_differences(legacy_account, legacy_positions, account, positions)
-        artifact["read_parity"] = {
+        identity_matches = authority.identity == account.identity == positions.identity == identity
+        artifact["account_read"] = {
+            "identity": identity.model_dump(mode="json"),
+            "identity_matches": identity_matches,
             "account_completeness": account.completeness.value,
             "position_completeness": positions.completeness.value,
-            "differences": differences,
         }
         read_ok = (
-            account.completeness is ReadCompleteness.COMPLETE
+            identity_matches
+            and identity.account_fingerprint is not None
+            and authority.account_fingerprint == identity.account_fingerprint
+            and account.completeness is ReadCompleteness.COMPLETE
+            and account.equity is not None
+            and account.available is not None
             and positions.completeness is ReadCompleteness.COMPLETE
-            and not differences
             and authority.completeness is ReadCompleteness.COMPLETE
             and authority.authenticated_private_readable
             and authority.trading_permission is CapabilitySupport.SUPPORTED
         )
+        artifact["account_read_passed"] = read_ok
+        if not read_ok:
+            artifact["unresolved_items"].append("account_read_unavailable")
+            return artifact
         if not args.execution_probe:
             artifact["unresolved_items"].append("execution_probe_not_requested")
-            artifact["read_parity_passed"] = read_ok
             return artifact
 
         instrument = instrument_from_local(args.symbol, "usdt_futures")
@@ -368,7 +367,6 @@ async def _qualify(args) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--execution-mode", required=True)
-    parser.add_argument("--read-parity", action="store_true")
     parser.add_argument("--execution-probe", action="store_true")
     parser.add_argument("--confirm-testnet-order", action="store_true")
     parser.add_argument("--confirm-demo-order", action="store_true")
@@ -377,8 +375,6 @@ def main() -> int:
     parser.add_argument("--leverage", type=int, default=1)
     parser.add_argument("--artifact", type=Path)
     args = parser.parse_args()
-    if not args.read_parity:
-        parser.error("--read-parity is required")
     if args.execution_probe and (args.reference_price is None or args.reference_price <= 0):
         parser.error("--execution-probe requires positive --reference-price")
     path = _artifact_path(args.execution_mode, args.artifact)

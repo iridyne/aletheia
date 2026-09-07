@@ -1,9 +1,8 @@
 """End-to-end behavioral tests for Serenity P0–P3 implementations.
 
 These tests exercise the actual code paths (not just source-string assertions):
-- P0: auto_promote writes PiDecision when config + score criteria met
+- P0: auto_promote publishes canonical Candidates from qualified research and PA
 - P1: thesis_invalidated exit fires when opportunity status != 'active'
-- P2: equity_tradeable flows through trading_context as execution_eligible
 - P3: _get_flow_context_block reads DB and returns structured data
 """
 
@@ -14,28 +13,6 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
 
-def _seed_promoted_serenity_opportunity(
-    *, opportunity_id: str, symbol: str, direction: str, market_type: str
-) -> None:
-    """Persist the exact Serenity source behind an executable pending carrier."""
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
-
-    theme = SerenityTheme(
-        name=f"Pending carrier for {opportunity_id}",
-        status="promoted",
-    )
-    repo.insert_serenity_theme(theme)
-    repo.insert_serenity_opportunity(SerenityOpportunity(
-        id=opportunity_id,
-        theme_id=theme.id,
-        symbol=symbol,
-        direction=direction,
-        market_type=market_type,
-        asset_class="crypto",
-        status="active",
-        action_intent="pi_evaluate",
-    ))
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +21,7 @@ def _seed_promoted_serenity_opportunity(
 
 
 class TestP0AutoPromote:
-    """Verify the auto_promote block in research_worker actually runs scoring,
-    creates PiDecision rows, and notifies PI daemon."""
+    """Auto-promotion publishes canonical Candidates and wakes the Planner."""
 
     def _setup_db_with_opps(self, score: int = 80):
         """Seed DB with a theme + opportunity that will score `score`."""
@@ -85,52 +61,24 @@ class TestP0AutoPromote:
 
         return theme.id, opp.id
 
-    def test_auto_promote_creates_pi_decision_when_score_sufficient(self):
-        """With auto_promote=True and score >= threshold, a signal_pending
-        PiDecision is inserted and the daemon is notified."""
+    def test_auto_promote_publishes_candidate_when_score_sufficient(self):
+        from aletheia.config.loader import load_config
+        from tests.test_candidate_opportunity_persistence import _serenity_publication_source
+        from aletheia.agents.research_worker import _auto_promote_serenity_opportunities
         from aletheia.storage import repositories as repo
 
-        theme_id, opp_id = self._setup_db_with_opps()
-
-        # Mock config to enable auto_promote
-        mock_cfg = MagicMock()
-        mock_cfg.serenity.auto_promote = True
-        mock_cfg.serenity.min_score_for_pi = 30  # Low threshold so our opp passes
-
+        theme, opportunity = _serenity_publication_source()
+        cfg = load_config()
+        cfg.serenity.min_score_for_pi = 0
         notify_calls = []
-
-        with patch("aletheia.config.loader.load_config", return_value=mock_cfg), \
-             patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
+        with patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
                    side_effect=lambda source="unknown": notify_calls.append(source)):
-            from aletheia.agents.research_worker import (
-                _auto_promote_serenity_opportunities,
-            )
-
-            promoted_count = _auto_promote_serenity_opportunities(
-                [opp_id],
-                mock_cfg,
-            )
-
-        # Verify outcomes
-        assert promoted_count == 1
-
-        # PiDecision inserted
-        decisions = repo.list_pi_decisions(limit=10)
-        serenity_decs = [d for d in decisions if d.get("signal_source") == "serenity"
-                         and d.get("opportunity_id") == opp_id]
-        assert len(serenity_decs) == 1
-        assert serenity_decs[0]["action"] == "signal_pending"
-
-        # Opportunity action_intent flipped
-        updated_opp = repo.get_serenity_opportunity(opp_id)
-        assert updated_opp["action_intent"] == "pi_evaluate"
-
-        # Theme marked promoted
-        theme = repo.get_serenity_theme(theme_id)
-        assert theme["status"] == "promoted"
-
-        # Daemon notified
-        assert "serenity_auto_promote" in notify_calls
+            assert _auto_promote_serenity_opportunities([opportunity.id], cfg) == 1
+            assert _auto_promote_serenity_opportunities([opportunity.id], cfg) == 0
+        assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 1
+        assert repo.get_db().execute("SELECT COUNT(*) FROM pi_decisions").fetchone()[0] == 0
+        assert repo.get_serenity_theme(theme.id)["status"] == "promoted"
+        assert notify_calls == ["serenity_auto_promote"]
 
     def test_auto_promote_skips_when_score_below_threshold(self):
         """Opportunities below min_score_for_pi are NOT promoted."""
@@ -277,210 +225,6 @@ class TestP1ThesisInvalidation:
 # ---------------------------------------------------------------------------
 
 
-class TestPendingSignalDirectMatch:
-    """Verify _attach_opportunity_context matches pending_signals directly."""
-
-    def test_pending_signal_match_bypasses_empty_layer3(self):
-        """A serenity pending_signal with opportunity_id is matched even when
-        layer3 serenity_opportunities is empty (simulating limit=5 truncation)."""
-        from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
-        )
-
-        decision = TradingDecision(
-            action="trade", symbol="SOL/USDT", direction="long",
-            conviction=75, reasoning="test",
-        )
-        _seed_promoted_serenity_opportunity(
-            opportunity_id="ser-sol-123",
-            symbol="SOL/USDT",
-            direction="long",
-            market_type="spot",
-        )
-        ctx = {
-            "layer1": {"opportunities": []},
-            "layer2": {
-                "pending_signals": [
-                    {"symbol": "SOL/USDT", "direction": "long",
-                     "market_type": "spot",
-                     "opportunity_id": "ser-sol-123", "signal_source": "serenity",
-                     "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
-                ]
-            },
-            "layer3": {"serenity_opportunities": []},
-        }
-        _attach_opportunity_context(decision, ctx)
-        assert decision.opportunity_id == "ser-sol-123"
-        assert decision.signal_source == "serenity"
-
-    def test_pending_signal_authority_wins_over_unqueued_market_observer(self):
-        """A durable pending carrier outranks an analysis-only open opportunity."""
-        from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
-        )
-
-        decision = TradingDecision(
-            action="trade", symbol="BTC/USDT", direction="long",
-            conviction=80, reasoning="test",
-        )
-        _seed_promoted_serenity_opportunity(
-            opportunity_id="ser-btc-888",
-            symbol="BTC/USDT",
-            direction="long",
-            market_type="spot",
-        )
-        ctx = {
-            "layer1": {
-                "opportunities": [
-                    {"id": "mkt-btc-999", "symbol": "BTC/USDT",
-                     "direction_bias": "long", "scanner_family": "momentum",
-                     "linked_strategy_id": "strat-x"}
-                ]
-            },
-            "layer2": {
-                "pending_signals": [
-                    {"symbol": "BTC/USDT", "direction": "long",
-                     "market_type": "spot",
-                     "opportunity_id": "ser-btc-888", "signal_source": "serenity",
-                     "reasoning": "auto-promote", "at": "2026-07-01T10:00:00"}
-                ]
-            },
-            "layer3": {"serenity_opportunities": []},
-        }
-        _attach_opportunity_context(decision, ctx)
-        assert decision.opportunity_id == "ser-btc-888"
-        assert decision.signal_source == "serenity"
-
-    def test_pending_signal_without_opportunity_id_skipped(self):
-        """A pending_signal with no opportunity_id is skipped (honest None)."""
-        from aletheia.agent_shell.trading_decision import (
-            TradingDecision, _attach_opportunity_context,
-        )
-
-        decision = TradingDecision(
-            action="trade", symbol="ETH/USDT", direction="short",
-            conviction=60, reasoning="test",
-        )
-        ctx = {
-            "layer1": {"opportunities": []},
-            "layer2": {
-                "pending_signals": [
-                    {"symbol": "ETH/USDT", "direction": "short",
-                     "opportunity_id": None, "signal_source": "market_observer",
-                     "reasoning": "scanner", "at": "2026-07-01T10:00:00"}
-                ]
-            },
-            "layer3": {"serenity_opportunities": []},
-        }
-        _attach_opportunity_context(decision, ctx)
-        assert decision.opportunity_id is None
-        assert decision.signal_source == "market_observer"
-
-
-# ---------------------------------------------------------------------------
-# P2 — xStocks execution eligibility end-to-end
-# ---------------------------------------------------------------------------
-
-
-class TestP2XStocksExecution:
-    """Verify equity_tradeable flows correctly through the execution chain."""
-
-    def test_equity_tradeable_is_execution_eligible(self):
-        """An opp with asset_class='equity_tradeable' gets execution_eligible=True
-        in the Layer 3 context building logic."""
-        # Direct logic test of the condition
-        _asset_class = "equity_tradeable"
-        _execution_eligible = (_asset_class not in ("equity",))
-        assert _execution_eligible is True
-
-    def test_pure_equity_is_not_execution_eligible(self):
-        """An opp with asset_class='equity' (equity_observer) stays False."""
-        _asset_class = "equity"
-        _execution_eligible = (_asset_class not in ("equity",))
-        assert _execution_eligible is False
-
-    def test_crypto_is_execution_eligible(self):
-        """Regular crypto opps remain eligible."""
-        _asset_class = "crypto"
-        _execution_eligible = (_asset_class not in ("equity",))
-        assert _execution_eligible is True
-
-    def test_research_worker_classifies_stock_token_as_equity_tradeable(self):
-        """is_stock_token symbols get asset_class='equity_tradeable' in research_worker."""
-        from aletheia.data.symbols import is_stock_token, stock_token_market_type
-
-        test_sym = "rNVDA/USDT"
-        assert is_stock_token(test_sym), f"{test_sym} should be a stock token"
-
-        # Replicate research_worker classification logic
-        if is_stock_token(test_sym):
-            _asset_class = "equity_tradeable"
-            _market_type = stock_token_market_type(test_sym)
-        else:
-            _asset_class = "crypto"
-            _market_type = "spot"
-
-        assert _asset_class == "equity_tradeable"
-        assert _market_type == "spot"
-
-    def test_trading_decision_does_not_skip_equity_tradeable(self):
-        """_attach_opportunity_context logic: 'equity' is skipped, 'equity_tradeable' is not."""
-        # Simulate the filter conditions from trading_decision.py line 994-998
-        opp_equity = {"asset_class": "equity", "execution_eligible": False}
-        opp_eq_tradeable = {"asset_class": "equity_tradeable", "execution_eligible": True}
-        opp_crypto = {"asset_class": "crypto", "execution_eligible": True}
-
-        def should_skip(o):
-            if not o.get("execution_eligible", True):
-                return True
-            if o.get("asset_class") == "equity":
-                return True
-            return False
-
-        assert should_skip(opp_equity) is True
-        assert should_skip(opp_eq_tradeable) is False
-        assert should_skip(opp_crypto) is False
-
-    def test_full_context_round_trip_equity_tradeable(self):
-        """Seed a serenity opp with equity_tradeable, build context, verify
-        it appears in layer3 as execution_eligible=True."""
-        from aletheia.storage import repositories as repo
-        from aletheia.storage.models import SerenityTheme, SerenityOpportunity
-
-        theme = SerenityTheme(name="xStock test", status="active")
-        repo.insert_serenity_theme(theme)
-        opp = SerenityOpportunity(
-            theme_id=theme.id,
-            symbol="rNVDA/USDT",
-            direction="long",
-            status="active",
-            asset_class="equity_tradeable",
-            market_type="spot",
-            confidence_score=80,
-            evidence_tier="high_confidence",
-            assessed_tier="high_confidence",
-            assessed_by="deterministic_evaluator",
-        )
-        repo.insert_serenity_opportunity(opp)
-
-        # Now exercise the same logic as trading_context Layer 3
-        from aletheia.storage.repositories import (
-            list_serenity_evidence,
-            list_serenity_opportunities,
-            list_serenity_risk_gates,
-        )
-        from aletheia.trading.serenity_scoring import score_serenity_opportunity
-
-        opps = list_serenity_opportunities(status="active", limit=10)
-        found = [o for o in opps if o["id"] == opp.id]
-        assert found, "Seeded opp not found in active list"
-
-        o = found[0]
-        _asset_class = o.get("asset_class") or "crypto"
-        _execution_eligible = (_asset_class not in ("equity",))
-
-        assert _asset_class == "equity_tradeable"
-        assert _execution_eligible is True
 
 
 # ---------------------------------------------------------------------------

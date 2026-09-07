@@ -10,7 +10,7 @@ from tests.test_update_settlement_hot_path import (
     test_update_barrier_keeps_cycle_lock_around_minimal_cut as _assert_lock_lifetime,
 )
 from tests.test_update_settlement_hot_path import (
-    test_update_progress_separates_stop_settlement_backup_and_keeps_lock as _assert_phase_boundary,
+    test_update_progress_separates_stop_settlement_and_keeps_lock as _assert_phase_boundary,
 )
 from tests.test_update_settlement_hot_path import (
     test_update_settlement_drains_only_delivery_then_strictly_verifies as _assert_minimal_cut,

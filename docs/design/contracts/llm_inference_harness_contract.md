@@ -82,17 +82,18 @@ model-visible by a context adapter. This distinction is load-bearing:
 `environment` means what the runtime knew, while `context_manifest` means what
 the adapter declared visible to the model. Missing facts remain absent.
 
-For a System Operator entry evaluation, the daemon binds a fresh
-`evaluation_id`, then the command adds the exact selected Opportunity and its
-durable `signal_pending` PiDecision before model inference only when that exact
-Opportunity/source identity resolves to one row. Zero or multiple carriers keep
-the decision ID absent; row order is never used to choose an identity. A failed
-attribution lookup also leaves the decision ID absent and cannot block the model
-evaluation. These are existing entities, not time-neighbour guesses. A final
-decision or Proposal created only after inference remains absent at that boundary.
-A direct daemon evaluation also keeps `run_id` absent unless an actual `AgentRun`
-is already bound; the evaluation ID must not be relabelled as an AgentRun foreign
-key.
+Canonical entry inference uses `agent_shell.entry_planner`. Its grounded
+EntryAnalysis input identifies the durable Candidate planning generation; an
+environment ContextArtifact links `planning-generation:<id>` from
+`candidate_planning_generations` to the exact logical call, with the analysis
+cutoff and rendered model-view character count. This is not a PiDecision or
+Proposal identity. Downstream entities not yet created remain absent, and
+`run_id` exists only when an actual AgentRun is bound.
+
+Historical System Operator evaluation, Opportunity, and `signal_pending`
+PiDecision attribution remains readable as observations of the retired entry
+path, not current Planner attribution or permission to infer again. Neither
+row order nor time proximity supplies missing identities.
 
 Selected News, Learning, technical, and environment artifacts are recorded as
 content-free `ContextArtifact` rows linked to the exact logical call. Technical
@@ -112,10 +113,9 @@ and the logical call remains an error.
 
 Reasoning control is caller-owned and default-off. `llm_structured()` preserves
 the existing provider request shape unless a caller explicitly selects a
-`reasoning_effort`. Market Observer, News Analyzer, and the System Operator's
-assessment, reassessment, and Bull/Bear debate calls select `none` because these
-bounded reads require immediate schema output and do not have budget for a
-separate reasoning phase. OpenAI-compatible adapters send that field only when
+`reasoning_effort`. Market Observer and News Analyzer select `none` for bounded
+schema reads; the canonical Entry Planner selects `medium`.
+OpenAI-compatible adapters send that field only when
 selected. If an endpoint returns a 400/422 that explicitly identifies
 `reasoning_effort` as unknown or unsupported, the adapter retries that read-only
 completion exactly once without the optional field; unrelated client errors
@@ -176,7 +176,6 @@ the Contract spec.
 | --- | --- | --- | --- | --- |
 | `agent_shell.entry_planner` | `agent_shell.entry_planner` | `v1` | `structured` | `none` |
 | `agent_shell.entry_planner.v2` | `agent_shell.entry_planner` | `v2` | `structured` | `none` |
-| `agent_shell.fast_trigger_authorizer` | `agent_shell.fast_trigger_authorizer` | `v1` | `structured` | `none` |
 | `agent_shell.general_query` | `agent_shell.general_query` | `v1` | `text` | `none` |
 | `agent_shell.intent_classification` | `agent_shell.intent_classification` | `v1` | `structured` | `none` |
 | `agent_shell.portfolio_review` | `agent_shell.portfolio_review` | `v1` | `structured` | `none` |
@@ -209,10 +208,6 @@ the Contract spec.
 | `research_worker.themes` | `research_worker.themes` | `v1` | `text` | `none` |
 | `risk_critic.review` | `risk_critic.review` | `v1` | `text` | `none` |
 | `startup_gate.provider_probe` | `startup_gate.provider_probe` | `v1` | `text` | `none` |
-| `system_operator.assess_opportunity` | `system_operator.assess_opportunity` | `v1` | `structured` | `none` |
-| `system_operator.debate_bear` | `system_operator.debate_bear` | `v1` | `structured` | `none` |
-| `system_operator.debate_bull` | `system_operator.debate_bull` | `v1` | `structured` | `none` |
-| `system_operator.reassess_direct_skip` | `system_operator.reassess_direct_skip` | `v1` | `structured` | `none` |
 <!-- END GENERATED CALLER MATRIX -->
 
 ## Observable result
@@ -222,9 +217,9 @@ which versioned prompt identity and context adapter it used, which model tool
 surface it could access, which output schema it had to satisfy, how many
 physical attempts it consumed, whether fallback occurred, and whether parsing
 and schema validation succeeded—without opening a raw prompt archive. For a
-System Operator candidate evaluation, the owner can also identify the exact
-queued Opportunity and, only for a unique carrier, PiDecision that incurred the
-call while correctly observing that a Proposal may not exist.
+canonical Entry Planner call, the owner can identify the exact planning
+generation through its ContextArtifact while correctly observing that a
+Proposal may not exist. Historical entry attribution retains its original meaning.
 
 ## Invariants and trust boundaries
 

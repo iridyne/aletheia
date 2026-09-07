@@ -7,8 +7,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
-from pydantic import JsonValue
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
 from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
 from aletheia.config.execution_costs import (
@@ -74,16 +73,6 @@ def _mutate_config_with_candidate_publication_permit(mutator):
         return mutate_config(mutator)
 
 
-def _notify_ranker_config_change() -> None:
-    """Wake Ranker after a committed config mutation that changes eligibility."""
-    try:
-        from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-        notify_paper_trader(source="ranker_config_changed")
-    except Exception:
-        # Config persistence is authoritative; wake telemetry is best-effort and
-        # the three-minute Ranker heartbeat remains the fallback.
-        pass
 
 
 def _reject_live_identity_change(cfg, *, changed: bool) -> None:
@@ -736,7 +725,6 @@ class ExchangeMarketsRequest(SettingsRequest):
     usdt_futures: bool
     paper_execution_mode: Optional[str] = None
     bitget_profile: Optional[str] = None
-    uta_read_boundary: Optional[Literal["legacy", "shadow_read", "uta_v1"]] = None
     confirm_exchange_divergence: bool = False
 
 
@@ -768,30 +756,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
     # Pre-validate outside the mutation lock to fail fast
     cfg_check = load_config()
     next_paper_mode = req.paper_execution_mode or cfg_check.exchange.paper_execution_mode
-    if req.uta_read_boundary == "uta_v1":
-        from aletheia.trust.uta_qualification import uta_profile_qualified
-
-        qualified, qualification_reason = uta_profile_qualified(
-            next_paper_mode, cfg_check
-        )
-        if not qualified:
-            raise HTTPException(
-                409,
-                detail={
-                    "code": "uta_profile_not_qualified",
-                    "message": "UTA v1 activation requires persisted qualification evidence.",
-                    "reason": qualification_reason,
-                },
-            )
-    if req.uta_read_boundary is not None and next_paper_mode not in {
-        "binance_testnet",
-        "okx_demo",
-        "bitget_demo",
-    }:
-        raise HTTPException(
-            400,
-            "uta_read_boundary is supported only for Binance testnet, OKX demo, and Bitget demo",
-        )
     _reject_live_identity_change(
         cfg_check,
         changed=(req.paper_execution_mode is not None and next_paper_mode != cfg_check.exchange.paper_execution_mode),
@@ -821,10 +785,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
                 generations["bitget_demo"] = generations.get("bitget_demo", 0) + 1
                 cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
-        if req.uta_read_boundary is not None:
-            boundaries = dict(cfg.exchange.uta_read_boundaries)
-            boundaries[next_paper_mode] = req.uta_read_boundary
-            cfg.exchange.uta_read_boundaries = boundaries
         changed = old != cfg.exchange.model_dump(mode="json")
         return True
 
@@ -835,8 +795,6 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
                  "entity_type": "exchange_config", "before": old,
                  "after": cfg.exchange.model_dump(mode="json"),
                  "message": "exchange config updated"})
-    if changed:
-        _notify_ranker_config_change()
     return {**cfg.exchange.model_dump(mode="json"), "exchange_alignment": alignment.to_dict()}
 
 
@@ -912,8 +870,6 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
         "before": old, "after": after,
         "message": f"Primary exchange set to {eid}",
     })
-    if old != after:
-        _notify_ranker_config_change()
     return {"exchange_id": eid, **after}
 
 
@@ -925,9 +881,6 @@ class RuntimeConfigUpdate(SettingsRequest):
     scheduler_enabled: Optional[bool] = None
     git_enabled: Optional[bool] = None
     auto_reload: Optional[bool] = None
-    runtime_continuity_enabled: Optional[bool] = None
-    runtime_continuity_lock_ttl_sec: Optional[int] = None
-    runtime_continuity_shadow_port_offset: Optional[int] = None
 
 
 class EconomicsConfigUpdate(SettingsRequest):
@@ -963,10 +916,6 @@ def update_runtime_config(req: RuntimeConfigUpdate):
     old = cfg.runtime.model_dump(mode="json")
     updates = req.model_dump(exclude_none=True)
     for field, value in updates.items():
-        if field == "runtime_continuity_lock_ttl_sec" and not (30 <= int(value) <= 3600):
-            raise HTTPException(400, "runtime_continuity_lock_ttl_sec must be between 30 and 3600")
-        if field == "runtime_continuity_shadow_port_offset" and not (1 <= int(value) <= 10000):
-            raise HTTPException(400, "runtime_continuity_shadow_port_offset must be between 1 and 10000")
         setattr(cfg.runtime, field, value)
     save_config(cfg)
     # Notify APScheduler if scheduler_enabled changed. The public resume entry
@@ -1213,13 +1162,11 @@ class SerenityConfigUpdate(SettingsRequest):
     enabled: Optional[bool] = None
     auto_promote: Optional[bool] = None
     min_score_for_pi: Optional[int] = None
-    stop_loss_pct: Optional[float] = None
     max_hold_days: Optional[int] = None
 
 
 _SERENITY_BOUNDS: dict[str, tuple[float, float]] = {
     "min_score_for_pi": (0, 100),
-    "stop_loss_pct": (0.1, 50.0),
     "max_hold_days": (1, 365),
 }
 
@@ -1313,15 +1260,8 @@ def _lab_experiment_authority() -> bool:
         from aletheia.observation_lab.canonical import get_authority_source
 
         return get_authority_source().source == "lab"
-    except FileNotFoundError:
+    except Exception:
         return False
-    except (AttributeError, TypeError):
-        # Test/read-model doubles may expose only ``execute``; that is not a
-        # usable authority source and must keep the compatibility projection
-        # path, while real SQLite/runtime failures remain fail-closed below.
-        return False
-    except Exception as exc:
-        return "no such table: observation_authority_state" not in str(exc)
 
 
 def _validated_paper_influence_paths(values: list[str]) -> list[str]:
@@ -1374,17 +1314,6 @@ async def update_learning_config(req: LearningConfigUpdate):
     for field, value in updates.items():
         setattr(cfg.learning, field, value)
     save_config(cfg)
-    rescheduled = False
-    if (
-        "evaluation_interval_minutes" in updates
-        and updates["evaluation_interval_minutes"] != old.get("evaluation_interval_minutes")
-    ):
-        from aletheia.agent_runtime.scheduler import reschedule_learning_jobs
-        from starlette.concurrency import run_in_threadpool
-        rescheduled = await run_in_threadpool(
-            reschedule_learning_jobs,
-            cfg.learning.evaluation_interval_minutes,
-        )
     from aletheia.files.jsonl import write_audit
     write_audit({"actor": "human", "source": "dashboard", "event_type": "learning_config_changed",
                  "entity_type": "learning_config", "before": old,
@@ -1392,7 +1321,7 @@ async def update_learning_config(req: LearningConfigUpdate):
                  "message": f"Learning experiment config updated: {list(updates.keys())}"})
     return {
         "updated": updates,
-        "rescheduled": rescheduled,
+        "rescheduled": False,
         "learning": cfg.learning.model_dump(mode="json"),
     }
 
@@ -1435,20 +1364,7 @@ def list_learning_experiments(limit: int = 100):
                 "target_horizon": spec.get("horizon") or spec.get("target_horizon"),
             })
         return result
-    from aletheia.storage.sqlite import get_db
-    try:
-        rows = get_db().execute(
-            "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.status, "
-            "e.allocation_pct, e.min_samples_per_arm, e.activation_verdict_id, "
-            "e.created_at, h.path_id, h.target_horizon "
-            "FROM learning_experiments e "
-            "LEFT JOIN learning_hypotheses h ON e.hypothesis_id = h.hypothesis_id "
-            "ORDER BY datetime(e.created_at) DESC LIMIT ?",
-            (min(max(limit, 1), 200),),
-        ).fetchall()
-    except Exception as exc:
-        raise HTTPException(503, "learning ledger unavailable") from exc
-    return [dict(row) for row in rows]
+    raise HTTPException(503, "canonical Lab authority unavailable")
 
 
 @router.get("/learning/experiments/{experiment_id}")
@@ -1546,29 +1462,7 @@ def get_learning_experiment(experiment_id: str):
                 else None
             ),
         }
-    from aletheia.learning.lifecycle import inspect_learning_experiment
-    from aletheia.learning.experiments import (
-        current_policy_epoch as resolve_current_policy_epoch,
-    )
-    from aletheia.learning.ledger import get_record
-    try:
-        row = get_record("learning_experiments", experiment_id)
-    except Exception as exc:
-        raise HTTPException(503, "learning ledger unavailable") from exc
-    if row is None:
-        raise HTTPException(404, f"experiment not found: {experiment_id}")
-    hypothesis_row = get_record("learning_hypotheses", str(row.get("hypothesis_id") or ""))
-    path_id = str((hypothesis_row or {}).get("path_id") or "")
-    policy_epoch = resolve_current_policy_epoch(
-        path_id,
-        persist_config_migrations=False,
-    ) if path_id else None
-    if policy_epoch is None:
-        raise HTTPException(409, "current policy epoch is not available")
-    return inspect_learning_experiment(
-        experiment_id,
-        current_policy_epoch=policy_epoch,
-    )
+    raise HTTPException(503, "canonical Lab authority unavailable")
 
 
 class AdmitTrialRequest(SettingsRequest):
@@ -1637,24 +1531,7 @@ class ObservationOwnerActionRequest(SettingsRequest):
 @router.post("/learning/experiments/{experiment_id}/admit-trial")
 def admit_learning_trial(experiment_id: str, req: AdmitTrialRequest):
     """Admit a shadow experiment to paper_10 trial. Change-management boundary."""
-    if _lab_experiment_authority():
-        raise HTTPException(409, "canonical Lab authority requires the Observation owner-action surface")
-    from aletheia.learning.lifecycle import _execute_trial_admission
-    result = _execute_trial_admission(
-        experiment_id,
-        verdict_id=req.verdict_id,
-        expected_policy_epoch=req.expected_policy_epoch,
-        reason=req.reason,
-    )
-    if result.action == "hold":
-        raise HTTPException(409, {"action": result.action, "reason": result.reason})
-    return {
-        "action": result.action,
-        "reason": result.reason,
-        "experiment_id": result.experiment_id,
-        "successor_experiment_id": result.successor_experiment_id,
-        "verdict_id": result.verdict_id,
-    }
+    raise HTTPException(409, "canonical Lab authority requires the Observation owner-action surface")
 
 
 @router.post("/learning/experiments/{experiment_id}/owner-action")
@@ -1803,8 +1680,6 @@ def update_regime_config(req: RegimeConfigUpdate):
                  "entity_type": "regime_config", "before": old,
                  "after": cfg.regime.model_dump(mode="json"),
                  "message": f"Regime config updated: {list(updates.keys())}"})
-    if updates:
-        _notify_ranker_config_change()
     return {"updated": updates}
 
 
@@ -1829,8 +1704,6 @@ def update_guard_config(req: GuardConfigUpdate):
                  "entity_type": "guard_config", "before": old,
                  "after": cfg.guard.model_dump(mode="json"),
                  "message": f"Guard config updated: {list(updates.keys())}"})
-    if updates:
-        _notify_ranker_config_change()
     return {"updated": updates}
 
 
@@ -2085,8 +1958,6 @@ def set_permission_mode(req: PermissionModeRequest):
     write_audit({"actor": "human", "source": "dashboard", "event_type": "permission_changed",
                  "entity_type": "permission_mode", "before": {"mode": old}, "after": {"mode": req.mode},
                  "message": f"Permission mode {old} -> {req.mode}"})
-    if old != req.mode:
-        _notify_ranker_config_change()
     return {"old": old, "new": req.mode}
 
 
@@ -2464,8 +2335,6 @@ def update_tradable_symbols(req: SymbolsUpdate):
                  "entity_type": "symbols", "before": old,
                  "after": {"mode": req.mode, "symbols": normalized},
                  "message": f"Symbol filter updated: mode={req.mode}"})
-    if old != {"mode": req.mode, "symbols": normalized}:
-        _notify_ranker_config_change()
     return {"mode": req.mode, "symbols": normalized}
 
 
@@ -2515,7 +2384,6 @@ class TradingConfigUpdate(SettingsRequest):
     max_position_hold_hours: Optional[float] = None
     slippage_bps: Optional[float] = None
     execution_fee_pct: Optional[float] = None
-    min_confidence_to_trade: Optional[str] = None
     auto_adopt_enabled: Optional[bool] = None
     trail_enabled: Optional[bool] = None
     trail_atr_mult: Optional[float] = None
@@ -2553,7 +2421,6 @@ _TRADING_BOUNDS: dict[str, tuple[float, float]] = {
     "persona_unlock_step_samples": (1, 1000),
     "persona_pyramid_add_trigger_pct": (0.1, 50.0),
 }
-_VALID_CONFIDENCE = {"high", "medium", "speculative"}
 _EXPERIMENTAL_ENABLEMENT_HOLDS = {
     "persona_pyramid_enabled": (
         "Persona pyramid is a policy helper with no production trigger or "
@@ -2575,10 +2442,7 @@ async def update_trading_config(req: TradingConfigUpdate):
                 if v is not None:
                     setattr(cfg.trading.market_aware_exits, k, v)
             continue
-        if field == "min_confidence_to_trade":
-            if value not in _VALID_CONFIDENCE:
-                raise HTTPException(400, f"min_confidence_to_trade must be one of {sorted(_VALID_CONFIDENCE)}")
-        elif field == "active_persona":
+        if field == "active_persona":
             if value not in (cfg.trading.personas or {}):
                 raise HTTPException(400, f"active_persona must be one of {sorted(cfg.trading.personas or {})}")
         elif field in _EXPERIMENTAL_ENABLEMENT_HOLDS and value is True:
@@ -2627,8 +2491,6 @@ async def update_trading_config(req: TradingConfigUpdate):
                  "entity_type": "trading_config", "before": old,
                  "after": cfg.trading.model_dump(mode="json"),
                  "message": f"Trading config updated: {list(updates.keys())}"})
-    if "min_confidence_to_trade" in updates:
-        _notify_ranker_config_change()
     if rollout_error is not None:
         raise HTTPException(
             503,
@@ -2796,66 +2658,15 @@ class UniverseConfigUpdate(SettingsRequest):
     market_type: Optional[str] = None
 
 
-class CandidateSelectionHarmMetrics(TypedDict):
-    target_loss_rate: NotRequired[float | None]
-    legacy_loss_rate: NotRequired[float | None]
-    target_mae_p95_pct: NotRequired[float | None]
-    legacy_mae_p95_pct: NotRequired[float | None]
-    target_cvar_05_pct: NotRequired[float | None]
-    legacy_cvar_05_pct: NotRequired[float | None]
-    target_mean_cost_pct: NotRequired[float | None]
-    legacy_mean_cost_pct: NotRequired[float | None]
-    target_max_symbol_share: NotRequired[float | None]
-    noninferiority_reasons: NotRequired[list[str]]
-
-
-class CandidateSelectionRuntimeProvenance(TypedDict):
-    producer_commits: list[str]
-    behavior_fingerprints: list[str]
-
-
-class CandidateSelectionQualification(TypedDict):
-    verdict: str
-    promotion_eligible: bool
-    policy_epoch_id: str | None
-    blocking_reasons: list[str]
-    invalid_reasons: list[str]
-    version: NotRequired[str]
-    authority: NotRequired[str]
-    owner_admission_required: NotRequired[bool]
-    training_cutoff: NotRequired[str | None]
-    selection_policy: NotRequired[JsonValue]
-    expected_cluster_n: NotRequired[int]
-    raw_scanner_run_n: NotRequired[int]
-    independent_policy_unit_n: NotRequired[int]
-    complete_cluster_n: NotRequired[int]
-    fixed_look_cluster_n: NotRequired[int]
-    consecutive_eligible_utc_days: NotRequired[int]
-    full_arm_outcome_coverage: NotRequired[float]
-    target_cluster_utility_mean: NotRequired[float | None]
-    legacy_cluster_utility_mean: NotRequired[float | None]
-    paired_utility_delta: NotRequired[float | None]
-    paired_utility_lower_bound: NotRequired[float | None]
-    harm_metrics: NotRequired[CandidateSelectionHarmMetrics]
-    outcome_exclusion_counts: NotRequired[dict[str, int]]
-    as_of_at: NotRequired[str]
-    runtime_provenance: NotRequired[CandidateSelectionRuntimeProvenance]
-    qualification_eligible: NotRequired[bool]
-
 
 class CandidateSelectionStatusResponse(TypedDict):
     configured_policy: str
     configured_policy_epoch: str | None
     authority_enabled: bool
     authority_block_reason: str | None
-    admission_block_reason: str | None
-    evaluation_available: bool
-    evaluation_error: str | None
-    qualification: CandidateSelectionQualification
+    selection_bases: list[str]
 
 
-class CandidateSelectionTransitionResponse(CandidateSelectionStatusResponse):
-    audit_mirror_status: str
 
 
 class UniverseConfigUpdateResponse(TypedDict):
@@ -2966,14 +2777,12 @@ def update_universe_config(req: UniverseConfigUpdate):
                  "entity_type": "universe_config", "before": old,
                  "after": cfg.universe.model_dump(mode="json"),
                  "message": f"Universe config updated: {list(updates.keys())}"})
-    if normalized_updates:
-        _notify_ranker_config_change()
     return {"updated": normalized_updates, "rescheduled": rescheduled, "universe": cfg.universe.model_dump(mode="json")}
 
 
 @router.get("/universe/candidate-selection", responses={200: {"model": CandidateSelectionStatusResponse}})
 def get_candidate_selection_status():
-    """Read the configured authority and its exact prospective qualification."""
+    """Read the configured Candidate selection authority."""
 
     from aletheia.universe.candidate_selection_authority import (
         recover_candidate_selection_authority_transition,

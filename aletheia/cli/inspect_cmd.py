@@ -71,11 +71,11 @@ def _exchange_account_projection() -> dict:
     try:
         from aletheia.portfolio.exchange_sync import (
             active_broker_view_complete,
-            get_cached_state,
+            get_unified_cached_state,
             status_for,
         )
 
-        cached = get_cached_state()
+        cached = get_unified_cached_state()
         status = status_for(cached)
         complete, completeness_reason = active_broker_view_complete()
         equity = _first_present(
@@ -729,87 +729,29 @@ def snapshots(
 
 @inspect_app.command("candidates")
 def candidates(
-    eligible_only: bool = typer.Option(False, "--eligible-only", help="Show only tradeable candidates"),
     limit: int = typer.Option(20, "--limit", "-n"),
     json_output: bool = typer.Option(False, "--json"),
 ):
-    """Recompute a Ranker preview (not historical evidence)."""
-    from aletheia.agents.paper_trader_ranker import build_paper_candidates
-    all_candidates = build_paper_candidates(limit=50)
-    display_keys = [
-        "symbol", "direction", "trade_score", "skip_reason", "confidence_score",
-        "scanner_family", "strategy_id", "universe_rank", "factor_status",
-        "evidence_status", "guard_blocked", "guard_reasons",
-    ]
-    result = []
-    for c in all_candidates:
-        if eligible_only and c.get("skip_reason") is not None:
-            continue
-        entry = {k: c.get(k) for k in display_keys}
-        result.append(entry)
-    _output(result[:limit], json_output)
+    """Show durable canonical planning candidates without recomputing admission."""
+    from aletheia.storage.repositories import list_entry_workbench_candidates
+    _output(list_entry_workbench_candidates(limit=limit), json_output)
 
 
 @inspect_app.command("entry-status")
 def entry_status(
-    hours: int = typer.Option(1, "--hours", "-h", help="Recent Opportunity window"),
     json_output: bool = typer.Option(False, "--json", help="Output raw JSON"),
 ):
-    """Show the exact current entry stage from durable lifecycle/filter facts."""
-    from aletheia.server.routes.analytics import get_opportunity_funnel
+    """Show current canonical planning facts; historical queues are not authority."""
+    from datetime import datetime, timezone
+    from aletheia.analytics.opportunity_progress import build_current_entry_status
 
-    current = get_opportunity_funnel(hours=max(1, int(hours))).get("current") or {}
+    current = build_current_entry_status(now=datetime.now(timezone.utc))
     if json_output:
         _output(current, True)
         return
-
-    typer.echo(f"state: {current.get('state') or 'unknown'}")
-    typer.echo(f"stage: {current.get('primary_stage') or 'unknown'}")
-    typer.echo(f"headline: {current.get('headline') or 'not available'}")
-    typer.echo(
-        "limiting reason: "
-        f"{current.get('reason_code') or 'none'} — "
-        f"{current.get('reason') or 'not available'}"
-    )
-    typer.echo(f"next trigger: {current.get('next_trigger') or 'not available'}")
-
-    counts = current.get("counts") or {}
-    typer.echo(
-        "last window: "
-        f"setups={counts.get('unique_setups', 'not available')} "
-        f"generations={counts.get('discovered_generations', 'not available')} "
-        f"superseded={counts.get('superseded_generations', 'not available')} "
-        f"ttl_expired={counts.get('ttl_expired', 'not available')}"
-    )
-
-    ranker = current.get("ranker") or {}
-    last_run = ranker.get("last_run") or {}
-    wake = ranker.get("wake") or {}
-    typer.echo(
-        "ranker: "
-        f"last={last_run.get('status') or 'not available'} "
-        f"trigger={last_run.get('trigger_type') or 'not available'} "
-        f"wake_pending={bool(wake.get('pending'))}"
-    )
-    if wake.get("pending_sources"):
-        typer.echo(f"wake sources: {', '.join(wake['pending_sources'])}")
-
-    candidates = current.get("candidates") or []
-    if not candidates:
-        typer.echo("candidates: none")
-        return
-    typer.echo("candidates:")
-    for candidate in candidates:
-        retry_in = candidate.get("retry_in_sec")
-        retry_text = f" retry_in={retry_in}s" if retry_in is not None else ""
-        passed = candidate.get("passed_filter_count")
-        passed_text = f" passed={passed}" if passed is not None else ""
-        typer.echo(
-            f"  {candidate.get('symbol')} {candidate.get('direction')} "
-            f"stage={candidate.get('stage')} status={candidate.get('status')} "
-            f"blocker={candidate.get('blocking_filter') or candidate.get('reason_code')}"
-            f"{passed_text}{retry_text}"
-        )
+    typer.echo(f"as of: {current['as_of']}")
+    _output(current["summary"], False)
+    _output(current["candidate_attention"], False)
 
 
 # ---------------------------------------------------------------------------
@@ -852,7 +794,6 @@ def config(
             "live": cfg.risk.live.model_dump(mode="json"),
         },
         "trading": {
-            "min_confidence_to_trade": cfg.trading.min_confidence_to_trade,
             "default_stop_loss_pct": cfg.trading.default_stop_loss_pct,
             "default_take_profit_pct": cfg.trading.default_take_profit_pct,
         },

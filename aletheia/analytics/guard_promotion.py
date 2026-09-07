@@ -42,14 +42,6 @@ def _atomic_write(path: Path, content: str) -> None:
         raise
 
 
-def _notify_ranker_guard_change() -> None:
-    """Wake Ranker after a committed guard-set mutation; never fail the mutation."""
-    try:
-        from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-        notify_paper_trader(source="guard_set_changed")
-    except Exception:
-        logger.debug("Failed to notify Ranker after guard-set change", exc_info=True)
 
 
 def _deprecate_expired_learned_guards() -> int:
@@ -293,7 +285,6 @@ def promote_guard_candidate_to_active(
                     _update_candidate_row_status(path)
                 else:
                     _atomic_write(path, active_content)
-                _notify_ranker_guard_change()
                 return True
             except Exception as e:
                 logger.warning("Failed to promote guard %s: %s", guard_id, e)
@@ -484,7 +475,6 @@ def _update_guard_status(guard_id: str, new_status: str) -> bool:
                     target.write_text(content, encoding="utf-8")
                     path.unlink()
 
-                _notify_ranker_guard_change()
                 return True
             except Exception as e:
                 logger.warning("Failed to update guard %s: %s", guard_id, e)
@@ -607,8 +597,6 @@ def downgrade_learned_guards_to_shadow(*, dry_run: bool = True) -> dict:
                 logger.warning("Failed to downgrade guard at %s: %s", path, e)
                 continue
 
-    if changed and not dry_run:
-        _notify_ranker_guard_change()
 
     return {
         "dry_run": dry_run,

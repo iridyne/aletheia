@@ -409,15 +409,6 @@ async def run_prediction_observer(permission_mode: str = "Observe", run_id: str 
         started_at = time.monotonic()
         insert_opportunity(opp)
         duration_ms = elapsed_ms(started_at)
-        try:
-            from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-            notify_paper_trader(source="prediction_observer_opportunity")
-        except Exception:
-            logger.debug(
-                "Failed to notify Ranker after prediction Opportunity commit",
-                exc_info=True,
-            )
         log_tool(
             run_id,
             "create_opportunity",

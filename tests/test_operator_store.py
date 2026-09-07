@@ -222,3 +222,12 @@ def test_create_extension_registry_and_run_persist_manifest(tmp_path, monkeypatc
     assert len(runs) == 1
     assert runs[0]["status"] == "passed"
     assert runs[0]["run_type"] == "sandbox_test"
+
+
+def test_task_provenance_uses_process_identity_without_registry(tmp_path, monkeypatch):
+    db = _init_test_db(tmp_path, monkeypatch)
+    from aletheia.agent_shell.operator_store import create_task, get_task
+    monkeypatch.setenv("ALETHEIA_RUNTIME_ID", "process-owned")
+    task_id = create_task(task_type="diagnostic", created_by="test", status="pending", priority="normal")
+    assert get_task(task_id)["runtime_id"] == "process-owned"
+    assert db.execute("SELECT 1 FROM sqlite_master WHERE name='runtime_ownership'").fetchone() is None

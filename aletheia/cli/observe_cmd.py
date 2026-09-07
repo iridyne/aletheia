@@ -30,29 +30,27 @@ def _experiment_authority_source() -> str:
 
         with readonly_db(allow_missing=True) as db:
             if db is None:
-                return "legacy"
+                return "unavailable"
             try:
                 row = db.execute(
                     "SELECT authority_source FROM observation_authority_state "
                     "WHERE state_key='experiment_authority'"
                 ).fetchone()
-            except sqlite3.OperationalError as exc:
-                if "no such table: observation_authority_state" in str(exc):
-                    return "legacy"
+            except sqlite3.OperationalError:
                 return "unavailable"
             if row is None:
                 return "unavailable"
             source = str(row[0])
             return source if source in {"legacy", "lab"} else "unavailable"
     except FileNotFoundError:
-        return "legacy"
+        return "unavailable"
     except Exception:
         return "unavailable"
 
 
 def _require_experiment_authority() -> str:
     source = _experiment_authority_source()
-    if source == "unavailable":
+    if source != "lab":
         typer.echo(
             "experiment authority unavailable; refusing legacy fallback",
             err=True,
@@ -70,42 +68,13 @@ def list_observations(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """List registered Observations with their frozen-unit counts."""
-    if _require_experiment_authority() == "lab":
-        payload = _list_lab_observations(status=status, limit=limit)
-        if payload is None:
-            typer.echo("observation lab unavailable", err=True)
-            raise typer.Exit(code=1)
-        _render_observation_list(payload, json_output=json_output)
-        return
-    from aletheia.observation_lab.units import count_frozen_units
-    from aletheia.storage import repositories as repo
-
-    rows = repo.list_filter_shadow_experiments(status=status, limit=limit)
-    payload = [
-        {
-            "id": row["id"],
-            "filter_name": row["filter_name"],
-            "scanner_family": row["scanner_family"],
-            "horizon": row["horizon"],
-            "status": row["status"],
-            "started_at": row["started_at"],
-            "frozen_units": count_frozen_units(row["id"]),
-        }
-        for row in rows
-    ]
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-        return
-    if not payload:
-        typer.echo("(no observations)")
-        return
-    for entry in payload:
-        typer.echo(
-            f"{entry['id'][:12]}… "
-            f"{entry['filter_name']}/{entry['scanner_family']}/{entry['horizon']} "
-            f"status={entry['status']} frozen_units={entry['frozen_units']} "
-            f"started={entry['started_at'][:19]}"
-        )
+    _require_experiment_authority()
+    payload = _list_lab_observations(status=status, limit=limit)
+    if payload is None:
+        typer.echo("observation lab unavailable", err=True)
+        raise typer.Exit(code=1)
+    _render_observation_list(payload, json_output=json_output)
+    return
 
 
 def _render_observation_list(payload: list[dict], *, json_output: bool) -> None:
@@ -187,19 +156,14 @@ def observation_status(
     generation: int | None = typer.Option(None, "--generation", min=1),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Show a durable Observation Window, falling back to legacy Shadow status."""
+    """Show a durable canonical Observation Window."""
     from aletheia.config.loader import get_data_dir
     from aletheia.observation_lab.db import get_lab_db
     from aletheia.observation_lab.kernel import status_window
-    from aletheia.observation_lab.units import count_frozen_units
-    from aletheia.storage import repositories as repo
     from aletheia.observation_lab.runner import register_builtin_handlers
 
-    authority = _require_experiment_authority()
-    if (
-        authority == "lab"
-        and not (get_data_dir() / "observation-lab" / "lab.db").is_file()
-    ):
+    _require_experiment_authority()
+    if not (get_data_dir() / "observation-lab" / "lab.db").is_file():
         typer.echo("observation lab unavailable", err=True)
         raise typer.Exit(code=1)
 
@@ -247,34 +211,8 @@ def observation_status(
                 typer.echo(f"{key}={durable.get(key)}")
         return
 
-    if authority == "lab":
-        typer.echo("observation is not available in the canonical Lab ledger", err=True)
-        raise typer.Exit(code=1)
-
-    row = _find_observation(observation_id)
-    if row is None:
-        raise typer.Exit(code=1)
-    latest = repo.latest_filter_shadow_evaluation(row["id"])
-    frozen = count_frozen_units(row["id"])
-    if json_output:
-        typer.echo(json.dumps(
-            {"spec": row, "frozen_units": frozen, "latest_evaluation": latest},
-            indent=2,
-            default=str,
-        ))
-        return
-    typer.echo(f"id={row['id']}")
-    typer.echo(f"scope={row['filter_name']}/{row['scanner_family']}/{row['horizon']}")
-    typer.echo(f"status={row['status']} frozen_units={frozen}")
-    typer.echo(f"control={row['control_parameter']}")
-    typer.echo(f"treatment={row['treatment_parameter']}")
-    if row.get("adapter_identity_hash"):
-        typer.echo(f"adapter_identity_hash={row['adapter_identity_hash'][:16]}…")
-    if latest:
-        typer.echo(f"latest.disposition={latest['disposition']}")
-        typer.echo(f"latest.control_settled_n={latest.get('control_settled_n')}")
-        typer.echo(f"latest.treatment_settled_n={latest.get('treatment_settled_n')}")
-        typer.echo(f"latest.edge_delta_pct={latest.get('edge_delta_pct')}")
+    typer.echo("observation is not available in the canonical Lab ledger", err=True)
+    raise typer.Exit(code=1)
 
 
 @observe_app.command("overview")
@@ -692,49 +630,30 @@ def sync_all(
     Same body as the controller's periodic cycle for the Lab; convenient when
     an operator wants an immediate refresh without waiting for the next cycle.
     """
-    if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.runner import settle_observation_continuity
+    _require_experiment_authority()
+    from aletheia.observation_lab.runner import settle_observation_continuity
 
-        settled = settle_observation_continuity(advance_windows=True)
-        payload = {
-            "delivery_import": settled.get("delivery_import"),
-            "audit_mirror": settled.get("audit_mirror"),
-            "windows": settled.get("windows"),
-            "compaction": settled.get("compaction"),
-            "ok": settled.get("ok"),
-            "reason": settled.get("reason"),
-        }
-        if json_output:
-            typer.echo(json.dumps(payload, indent=2, default=str))
-        else:
-            typer.echo(f"delivery import: {payload['delivery_import']}")
-            typer.echo(f"audit mirror: {payload['audit_mirror']}")
-            typer.echo(f"windows: {payload['windows']}")
-            typer.echo(f"compaction: {payload['compaction']}")
-            if not settled.get("ok"):
-                typer.echo(f"sync failed: {payload['reason']}", err=True)
-        if not settled.get("ok"):
-            raise typer.Exit(code=1)
-        return
-
-    from aletheia.counterfactual.filter_experiments import (
-        capture_frozen_units_for,
-        evaluate_active_shadow_experiments,
-    )
-    from aletheia.storage import repositories as repo
-
-    captured = 0
-    for exp in repo.list_filter_shadow_experiments(status="collecting"):
-        captured += capture_frozen_units_for(exp)
-    summary = evaluate_active_shadow_experiments()
+    settled = settle_observation_continuity(advance_windows=True)
+    payload = {
+        "delivery_import": settled.get("delivery_import"),
+        "audit_mirror": settled.get("audit_mirror"),
+        "windows": settled.get("windows"),
+        "compaction": settled.get("compaction"),
+        "ok": settled.get("ok"),
+        "reason": settled.get("reason"),
+    }
     if json_output:
-        typer.echo(json.dumps(
-            {"frozen_units_captured": captured, "evaluation": summary},
-            indent=2,
-        ))
-        return
-    typer.echo(f"captured {captured} new frozen units")
-    typer.echo(f"evaluation: {summary}")
+        typer.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        typer.echo(f"delivery import: {payload['delivery_import']}")
+        typer.echo(f"audit mirror: {payload['audit_mirror']}")
+        typer.echo(f"windows: {payload['windows']}")
+        typer.echo(f"compaction: {payload['compaction']}")
+        if not settled.get("ok"):
+            typer.echo(f"sync failed: {payload['reason']}", err=True)
+    if not settled.get("ok"):
+        raise typer.Exit(code=1)
+    return
 
 
 @observe_app.command("migrate-learning-ledger")
@@ -809,8 +728,8 @@ def migrate_learning_ledger(
 
 @observe_app.command("set-experiment-authority")
 def set_experiment_authority(
-    source: str = typer.Argument(..., help="Canonical source: legacy or lab."),
-    reason: str = typer.Option(..., "--reason", help="Audited cutover/rollback reason."),
+    source: str = typer.Argument(..., help="Canonical source: lab (one-way cutover)."),
+    reason: str = typer.Option(..., "--reason", help="Audited cutover reason."),
     runtime_commit: str | None = typer.Option(
         None, "--runtime-commit", help="Runtime commit included in a Lab cutover proof."
     ),
@@ -821,36 +740,24 @@ def set_experiment_authority(
     ),
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
-    """Atomically select exactly one durable Experiment authority source."""
+    """Atomically cut over to the sole Lab Experiment authority."""
     from aletheia.observation_lab.canonical import (
         build_authority_cutover_proof,
-        get_authority_source,
         set_authority_source,
     )
 
     try:
-        proof = None
-        rollback_proof = None
-        if source == "lab":
-            proof = build_authority_cutover_proof(
-                runtime_commit=runtime_commit,
-                rollback_backup_identity=rollback_backup_identity,
-            )
-        elif get_authority_source().source == "lab":
-            # Rollback uses the same immutable cut identity as cutover.  The
-            # canonical setter still validates the recorded proof, legacy
-            # tables, checkpoint, and backup identity before re-enabling the
-            # compatibility authority.
-            rollback_proof = build_authority_cutover_proof(
-                runtime_commit=runtime_commit,
-                rollback_backup_identity=rollback_backup_identity,
-            )
+        if source != "lab":
+            raise ValueError("authority_source_must_be_lab")
+        proof = build_authority_cutover_proof(
+            runtime_commit=runtime_commit,
+            rollback_backup_identity=rollback_backup_identity,
+        )
         state = set_authority_source(
             source,
             actor="operator",
             reason=reason,
             cutover_proof=proof,
-            rollback_proof=rollback_proof,
         )
     except (RuntimeError, ValueError) as exc:
         typer.echo(f"authority change refused: {exc}", err=True)
@@ -874,48 +781,28 @@ def evaluate_observation(
     json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Run one evaluation pass for a specific Observation."""
-    if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.evaluator import evaluate_observation as evaluate_lab
+    _require_experiment_authority()
+    from aletheia.observation_lab.evaluator import evaluate_observation as evaluate_lab
 
-        lookup_generation = None
-        lookup_id = observation_id
-        if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
-            lookup_id, raw_generation = observation_id.rsplit(":g", 1)
-            lookup_generation = int(raw_generation)
-        result = evaluate_lab(lookup_id, lookup_generation)
-        if not result.get("available"):
-            typer.echo(
-                f"canonical Lab evaluation unavailable: {result.get('reason', 'unknown')}",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        if json_output:
-            typer.echo(json.dumps(result, indent=2, default=str))
-            return
-        typer.echo("disposition=evaluated")
-        typer.echo(f"verdict={result.get('verdict')}")
-        typer.echo(f"source_cutoff={result.get('source_cutoff')}")
-        return
-    from aletheia.counterfactual.filter_experiments import evaluate_one_experiment
-
-    row = _find_observation(observation_id)
-    if row is None:
+    lookup_generation = None
+    lookup_id = observation_id
+    if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
+        lookup_id, raw_generation = observation_id.rsplit(":g", 1)
+        lookup_generation = int(raw_generation)
+    result = evaluate_lab(lookup_id, lookup_generation)
+    if not result.get("available"):
+        typer.echo(
+            f"canonical Lab evaluation unavailable: {result.get('reason', 'unknown')}",
+            err=True,
+        )
         raise typer.Exit(code=1)
-    try:
-        result = evaluate_one_experiment(row["id"])
-    except ValueError as exc:
-        typer.echo(f"evaluation failed: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
     if json_output:
         typer.echo(json.dumps(result, indent=2, default=str))
         return
-    typer.echo(f"disposition={result.get('disposition')}")
-    for key in (
-        "control_settled_n", "treatment_settled_n",
-        "treatment_raw_avg_net_pct", "edge_delta_pct",
-    ):
-        if key in result:
-            typer.echo(f"{key}={result[key]}")
+    typer.echo("disposition=evaluated")
+    typer.echo(f"verdict={result.get('verdict')}")
+    typer.echo(f"source_cutoff={result.get('source_cutoff')}")
+    return
 
 
 def _latest_lab_evaluation(observation_id: str) -> dict | None:
@@ -974,38 +861,8 @@ def register(
     """
     import yaml  # local — CLI-only path, keeps import cost off hot startup
 
-    if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.canonical import register_observation_spec
-
-        try:
-            spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            typer.echo(f"cannot parse YAML: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-        if not isinstance(spec, dict):
-            typer.echo("spec file must contain a YAML mapping", err=True)
-            raise typer.Exit(code=1)
-        try:
-            row = register_observation_spec(spec)
-        except (KeyError, ValueError, TypeError) as exc:
-            typer.echo(f"failed to register: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-        payload = {
-            "observation_id": row["observation_id"],
-            "generation": row["generation"],
-            "status": row["status"],
-            "authority_mode": row["authority_mode"],
-        }
-        if json_output:
-            typer.echo(json.dumps(payload, indent=2))
-        else:
-            typer.echo(
-                f"registered canonical Lab observation {row['observation_id']} "
-                f"generation {row['generation']}"
-            )
-        return
-
-    from aletheia.counterfactual.filter_experiments import register_observation_from_spec
+    _require_experiment_authority()
+    from aletheia.observation_lab.canonical import register_observation_spec
 
     try:
         spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
@@ -1016,14 +873,24 @@ def register(
         typer.echo("spec file must contain a YAML mapping", err=True)
         raise typer.Exit(code=1)
     try:
-        observation_id = register_observation_from_spec(spec)
-    except (KeyError, ValueError) as exc:
+        row = register_observation_spec(spec)
+    except (KeyError, ValueError, TypeError) as exc:
         typer.echo(f"failed to register: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    payload = {
+        "observation_id": row["observation_id"],
+        "generation": row["generation"],
+        "status": row["status"],
+        "authority_mode": row["authority_mode"],
+    }
     if json_output:
-        typer.echo(json.dumps({"observation_id": observation_id}, indent=2))
+        typer.echo(json.dumps(payload, indent=2))
     else:
-        typer.echo(f"registered observation {observation_id}")
+        typer.echo(
+            f"registered canonical Lab observation {row['observation_id']} "
+            f"generation {row['generation']}"
+        )
+    return
 
 
 @observe_app.command("publish-manifest")
@@ -1093,21 +960,19 @@ def publish_manifest_cmd(
         raise typer.Exit(code=1) from exc
 
     try:
-        if _require_experiment_authority() == "lab":
-            from aletheia.observation_lab.canonical import publish_manifest_with_lifecycle
-            from aletheia.observation_lab.runner import register_builtin_handlers
+        _require_experiment_authority()
+        from aletheia.observation_lab.canonical import publish_manifest_with_lifecycle
+        from aletheia.observation_lab.runner import register_builtin_handlers
 
-            register_builtin_handlers()
-            publication = publish_manifest_with_lifecycle(
-                manifest,
-                actor="operator",
-                reason="cli_manifest_publish",
-                inference_plan=inference_plan,
-                no_manifest_reason=no_manifest_reason,
-            )
-            newly_inserted = bool(publication["published"])
-        else:
-            newly_inserted = publish_manifest(manifest)
+        register_builtin_handlers()
+        publication = publish_manifest_with_lifecycle(
+            manifest,
+            actor="operator",
+            reason="cli_manifest_publish",
+            inference_plan=inference_plan,
+            no_manifest_reason=no_manifest_reason,
+        )
+        newly_inserted = bool(publication["published"])
     except ManifestGenerationConflict as exc:
         typer.echo(f"generation conflict: {exc}", err=True)
         typer.echo(
@@ -1123,12 +988,11 @@ def publish_manifest_cmd(
         "generation": manifest.generation,
         "newly_inserted": newly_inserted,
     }
-    if _experiment_authority_source() == "lab":
-        payload.update({
-            "lifecycle_event_id": publication["lifecycle_event_id"],
-            "inference_plan_id": publication["inference_plan_id"],
-            "no_manifest_reason": publication["no_manifest_reason"],
-        })
+    payload.update({
+        "lifecycle_event_id": publication["lifecycle_event_id"],
+        "inference_plan_id": publication["inference_plan_id"],
+        "no_manifest_reason": publication["no_manifest_reason"],
+    })
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -1152,59 +1016,36 @@ def close_observation(
     Owner review §7: stopping preserves all evidence/lifecycle history — this
     only halts further collection. Historical evaluations remain queryable.
     """
-    if _require_experiment_authority() == "lab":
-        from aletheia.observation_lab.canonical import record_owner_action
+    _require_experiment_authority()
+    from aletheia.observation_lab.canonical import record_owner_action
 
-        target = _find_lab_generation(observation_id)
-        if target is None:
-            typer.echo("canonical Lab observation unavailable or ambiguous", err=True)
-            raise typer.Exit(code=1)
-        receipt_id = record_owner_action(
-            action="close",
-            actor="operator",
-            reason=reason,
-            observation_id=target["observation_id"],
-            generation=int(target["generation"]),
-            dedup_key=f"cli-close:{target['observation_id']}:{target['generation']}:{reason[:200]}",
-        )
-        payload = {
-            "observation_id": target["observation_id"],
-            "generation": int(target["generation"]),
-            "receipt_id": receipt_id,
-            "status": "pending_lab_application",
-            "reason": reason,
-        }
-        if json_output:
-            typer.echo(json.dumps(payload, indent=2))
-        else:
-            typer.echo(
-                f"close requested for {target['observation_id']} generation "
-                f"{target['generation']} (receipt={receipt_id})"
-            )
-        return
-
-    from aletheia.storage import repositories as repo
-
-    row = _find_observation(observation_id)
-    if row is None:
+    target = _find_lab_generation(observation_id)
+    if target is None:
+        typer.echo("canonical Lab observation unavailable or ambiguous", err=True)
         raise typer.Exit(code=1)
-    if row["status"] != "collecting":
-        typer.echo(f"observation is not collecting (status={row['status']}); no-op")
-        return
-    now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
-    repo.update_filter_shadow_experiment(
-        row["id"],
-        status="invalidated",
-        last_evaluated_at=now,
-        completed_at=now,
-        invalidation_reason=f"operator_closed:{reason[:200]}",
+    receipt_id = record_owner_action(
+        action="close",
+        actor="operator",
+        reason=reason,
+        observation_id=target["observation_id"],
+        generation=int(target["generation"]),
+        dedup_key=f"cli-close:{target['observation_id']}:{target['generation']}:{reason[:200]}",
     )
+    payload = {
+        "observation_id": target["observation_id"],
+        "generation": int(target["generation"]),
+        "receipt_id": receipt_id,
+        "status": "pending_lab_application",
+        "reason": reason,
+    }
     if json_output:
-        typer.echo(json.dumps(
-            {"id": row["id"], "closed_at": now, "reason": reason}, indent=2,
-        ))
+        typer.echo(json.dumps(payload, indent=2))
     else:
-        typer.echo(f"closed {row['id']} at {now}: {reason}")
+        typer.echo(
+            f"close requested for {target['observation_id']} generation "
+            f"{target['generation']} (receipt={receipt_id})"
+        )
+    return
 
 
 def _find_lab_generation(observation_id: str) -> dict | None:

@@ -1421,7 +1421,7 @@ def get_exchange_account():
     _ensure_db()
     from aletheia.portfolio import exchange_sync
 
-    state = exchange_sync.get_cached_state()
+    state = exchange_sync.get_unified_cached_state()
     status = exchange_sync.status_for(state)
     return {"status": status, "state": state}
 
@@ -3048,23 +3048,11 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
 
 @router.post("/serenity/themes/{theme_id}/promote")
 def promote_serenity_theme(theme_id: str):
-    """Promote a Serenity theme's opportunities into the PI evaluation queue.
-
-    Phase 3 (Option A, D5): Replaces the old StrategyRecord(state='draft') dead-record
-    path. For each active opportunity under the theme:
-      1. Set action_intent='pi_evaluate' on the opportunity
-      2. Write a signal_pending PiDecision with signal_source='serenity' and
-         opportunity_id=<serenity_opportunities.id>
-      3. Wake the PI daemon so the new signals are evaluated promptly
-
-    System Operator remains the sole trade-decision maker — these rows are inputs, not orders.
-    """
+    """Publish the theme through the canonical Candidate planning path."""
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
         raise HTTPException(404, "Theme not found")
-    if theme["status"] == "promoted":
-        raise HTTPException(400, "Theme already promoted")
 
     # Research generation currently caps this far below 10k; use a deliberately
     # complete business working set rather than the old display-sized 200-row page.
@@ -3079,13 +3067,12 @@ def promote_serenity_theme(theme_id: str):
             "Theme has no active opportunities to submit; it remains active and retryable.",
         )
 
-    # The repository owns the all-or-nothing handoff. Theme state, opportunity
-    # intent, and every durable pending carrier become visible together; a failed
-    # insert propagates as an error and leaves the theme retryable.
-    queued_ids = repo.enqueue_serenity_theme_for_pi(
-        theme_id,
-        [str(opp["id"]) for opp in opps],
-    )
+    try:
+        candidate_ids = repo.publish_serenity_candidates(
+            theme_id, [str(opp["id"]) for opp in opps],
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
     try:
         from aletheia.agent_runtime.pi_daemon import notify_pi_daemon
@@ -3096,13 +3083,10 @@ def promote_serenity_theme(theme_id: str):
 
     return {
         "theme_id": theme_id,
-        "queued": len(queued_ids),
-        "opportunity_ids": queued_ids,
-        "status": "submitted_to_pi",
-        "message": (
-            f"Theme promoted: {len(queued_ids)} "
-            f"opportunit{'y' if len(queued_ids) == 1 else 'ies'} enqueued for PI evaluation."
-        ),
+        "candidate_count": len(candidate_ids),
+        "candidate_ids": candidate_ids,
+        "status": "submitted_to_planning",
+        "message": f"Theme promoted: {len(candidate_ids)} Candidates published for planning.",
     }
 
 

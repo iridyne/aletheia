@@ -82,20 +82,6 @@ def test_event_and_artifact_stores_exist():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "PR-S04", "persistence_recovery_contract",
-        "Entry points — deterministic adapter identity", "L2b",
-        "bitget broker submits orders with a deterministic client_oid so the "
-        "identity reaches the supported adapter boundary",
-    ),
-)
-def test_bitget_broker_uses_client_oid():
-    src = (_ROOT / "aletheia" / "execution" / "bitget_broker.py").read_text(encoding="utf-8")
-    assert "client_oid=" in src, (
-        "bitget_broker.py must pass client_oid for idempotent submission (persistence §3)"
-    )
-
 
 # ---------------------------------------------------------------------------
 # L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)

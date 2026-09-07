@@ -277,10 +277,13 @@ def _build_exchange_upnl_index() -> dict[tuple, float | None]:
     try:
         from aletheia.data.symbols import to_canonical
         from aletheia.portfolio import exchange_sync
-        from aletheia.portfolio.uta.registry import available_brokers
+        from aletheia.uta.manager import build_uta_registry
 
         candidates: dict[tuple[str, str, str, str], list[dict]] = {}
-        exchange_broker_ids = frozenset(available_brokers())
+        exchange_broker_ids = frozenset(
+            identity.execution_mode
+            for identity in build_uta_registry().configured_identities()
+        )
         cached = exchange_sync.get_unified_cached_state()
         if exchange_sync.status_for(cached) != "ok":
             return {}
@@ -1537,13 +1540,13 @@ def _compute_portfolio(
         try:
             from aletheia.portfolio import exchange_sync
 
-            cached = exchange_sync.get_cached_state()
+            cached = (
+                exchange_sync.get_unified_cached_state(execution_modes=(execution_mode,))
+                if execution_mode and execution_mode.endswith("_live_limited")
+                else exchange_sync.get_unified_cached_state()
+            )
             sync_status = exchange_sync.status_for(cached)
             if cached is not None and sync_status in ("ok", "stale"):
-                # get_cached_state() default path may now return the unified (multi-broker)
-                # cache, which uses total_equity_usdt instead of the Bitget-specific
-                # equity_usdt. Fall back so exchange_equity_usdt isn't null on non-Bitget
-                # accounts (mirrors trading_context.py:64-65).
                 exchange_equity_usdt = exchange_sync.account_equity_value(cached)
                 exchange_state_age_sec = cached.get("age_seconds")
                 # Real account equity is the authoritative total value when present.
@@ -1567,10 +1570,7 @@ def _compute_portfolio(
                 exchange_asset_breakdown = cached.get("asset_breakdown") or []
 
                 # Override PnL/exposure metrics with real exchange data when available.
-                # Unified cache uses total_unrealized_pnl; Bitget cache uses futures_unrealized_pnl.
-                exc_upnl = cached.get("futures_unrealized_pnl")
-                if exc_upnl is None:
-                    exc_upnl = cached.get("total_unrealized_pnl")
+                exc_upnl = cached.get("total_unrealized_pnl")
                 if exc_upnl is not None:
                     final_unrealized = float(exc_upnl)
                     final_today_pnl = float(exc_upnl) + total_today_realized

@@ -83,55 +83,6 @@ def _setup_live_workspace(tmp_path, monkeypatch, *, broker: str = "okx", unlock:
 
 
 # ---------------------------------------------------------------------------
-# Layer 1 — new-Proposal mode selection consumes live-unlock state
-# ---------------------------------------------------------------------------
-
-def test_no_unlock_keeps_new_proposal_on_paper_mode(tmp_path, monkeypatch):
-    """Case 1: no unlock → new-Proposal mode stays on paper. Fail-closed."""
-    _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=False)
-    from aletheia.agent_shell.commands import _configured_paper_execution_mode
-
-    assert _configured_paper_execution_mode() == "okx_demo"
-
-
-def test_valid_unlock_routes_new_proposal_to_live_mode(tmp_path, monkeypatch):
-    """Case 2: valid unlock → selected broker's *_live_limited mode."""
-    _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
-    from aletheia.agent_shell.commands import _configured_paper_execution_mode
-
-    assert _configured_paper_execution_mode() == "okx_live_limited"
-
-
-def test_expired_evidence_falls_back_to_paper_mode(tmp_path, monkeypatch):
-    """Case 3: unlock_evidence past expires_at → paper mode. No live routing."""
-    cfg, trust = _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=True)
-    from aletheia.config.loader import load_config, save_config
-
-    cfg = load_config()
-    cfg.live.unlock_evidence["expires_at"] = "2020-01-01T00:00:00+00:00"
-    save_config(cfg)
-
-    from aletheia.agent_shell.commands import _configured_paper_execution_mode
-
-    assert _configured_paper_execution_mode() == "okx_demo"
-
-
-def test_paper_only_config_never_touches_live_routing(tmp_path, monkeypatch):
-    """paper_internal deployments are unaffected by any of the new plumbing."""
-    _setup_live_workspace(tmp_path, monkeypatch, broker="okx", unlock=False)
-    from aletheia.config.loader import load_config, save_config
-
-    cfg = load_config()
-    cfg.exchange.mode = "paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-
-    from aletheia.agent_shell.commands import _configured_paper_execution_mode
-
-    assert _configured_paper_execution_mode() == "paper_internal"
-
-
-# ---------------------------------------------------------------------------
 # Layer 2 — Proposal creation stamps the opaque authorization ref
 # ---------------------------------------------------------------------------
 
@@ -246,8 +197,8 @@ def test_execution_rejects_scope_mismatch_after_reunlock(tmp_path, monkeypatch):
         lambda mode, sym, mt, q, p: (q, None),
     )
     monkeypatch.setattr(
-        "aletheia.execution.gateway._qualified_uta_mutation_selected",
-        lambda *_args: pytest.fail("qualification selection ran before live authorization"),
+        "aletheia.execution.coordinator.execute_order",
+        lambda **_kwargs: pytest.fail("external submission ran before live authorization"),
     )
 
     result = execute_existing_proposal(proposal.id, "okx_live_limited")
@@ -285,8 +236,8 @@ def test_execution_rejects_when_authorization_missing_at_dispatch(tmp_path, monk
     cfg2.live.unlock_evidence = None
     save_config(cfg2)
     monkeypatch.setattr(
-        "aletheia.execution.gateway._qualified_uta_mutation_selected",
-        lambda *_args: pytest.fail("qualification selection ran while live was disabled"),
+        "aletheia.execution.coordinator.execute_order",
+        lambda **_kwargs: pytest.fail("external submission ran while live was disabled"),
     )
 
     result = execute_existing_proposal(proposal.id, "okx_live_limited")
@@ -343,9 +294,8 @@ def test_execution_rejects_stale_live_evidence_before_uta_selection(
     monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda *_args: (0.001, None))
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
     monkeypatch.setattr(
-        gateway,
-        "_qualified_uta_mutation_selected",
-        lambda *_args: pytest.fail("stale live evidence reached UTA selection"),
+        "aletheia.execution.coordinator.execute_order",
+        lambda **_kwargs: pytest.fail("stale live evidence reached external submission"),
     )
 
     result = gateway.execute_existing_proposal(
@@ -396,26 +346,16 @@ def test_qualified_live_entry_selects_coordinator_after_all_live_gates(
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
     selected = []
     monkeypatch.setattr(
-        gateway,
-        "_qualified_uta_mutation_selected",
-        lambda _cfg, mode: selected.append(("qualification", mode)) or True,
-    )
-    monkeypatch.setattr(
         "aletheia.execution.coordinator.execute_order",
         lambda **kwargs: selected.append(("coordinator", kwargs))
         or {"order_id": "missing-local-order", "exchange_order_id": "venue-live-1"},
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.okx_broker.execute_live_order",
-        lambda **_kwargs: pytest.fail("qualified live entry used the legacy broker"),
     )
 
     gateway.execute_existing_proposal(
         proposal.id, execution_mode="okx_live_limited"
     )
 
-    assert selected[0] == ("qualification", "okx_live_limited")
-    channel, command = selected[1]
+    channel, command = selected[0]
     assert channel == "coordinator"
     assert command["execution_mode"] == "okx_live_limited"
     assert command["stop_price"] == 59000.0

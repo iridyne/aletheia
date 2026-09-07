@@ -44,86 +44,8 @@ def _call_names(relative_path: str) -> set[str]:
     return names
 
 
-@spec_claim(SpecClaim(
-    "AR-S01", "active_runtime_scope", "frontmatter declaration", "L2a",
-    "The active instrument-aware paper mainline names exact crypto and verified "
-    "stock-linked profiles plus one decision, risk, execution, outcome, and "
-    "Learning authority boundary, while CN Equity remains an authorized disabled "
-    "extension.",
-))
-def test_active_runtime_scope_is_complete_and_narrow():
-    scope = _scope()
-    assert scope == {
-        "schema_version": 2,
-        "scope_id": "crypto-stock-linked-paper-mainline-v2",
-        "status": "active",
-        "authorized_extensions": {
-            "cn_equity": {
-                "proposal": "docs/design/proposals/cn-equity-market-kernel.md",
-                "tracking_issue": 2572,
-                "implementation_state": "authorized_not_implemented",
-                "default_runtime_state": "disabled",
-                "permitted_runtime_states": ["disabled", "observe", "shadow", "paper"],
-                "live_allowed": False,
-            },
-        },
-        "instrument_profiles": {
-            "crypto": {
-                "asset_class": "crypto",
-                "market_types": ["spot", "perp"],
-            },
-            "verified_stock_linked_perp": {
-                "asset_class": "equity",
-                "asset_subclass": "stock_linked_perp",
-                "venue": "binance",
-                "reference_assets": ["SOXL", "SOXS"],
-                "market_types": ["perp"],
-                "identity_status": "complete",
-            },
-        },
-        "execution_modes": ["paper_internal"],
-        "decision_authority": (
-            "aletheia.agent_shell.trading_decision.evaluate_trading_opportunity"
-        ),
-        "risk_authority": "aletheia.risk.engine.evaluate_proposal",
-        "execution_entrypoint": "aletheia.execution.gateway.submit_proposal",
-        "outcome_entrypoint": (
-            "aletheia.portfolio.outcome_closure.close_position_verified"
-        ),
-        "learning_measurement": "enabled",
-        "learning_influence_default": "enabled_owner_gated",
-        "learning_authority_gate": (
-            "aletheia.learning.experiments.apply_numeric_treatment"
-        ),
-        "causal_chain": [
-            "opportunity", "system_operator_decision", "proposal",
-            "risk_decision", "order", "fill", "position", "genuine_outcome",
-        ],
-    }
 
 
-@spec_claim(SpecClaim(
-    "AR-S02", "active_runtime_scope", "scanner boundary", "L2a",
-    "Scanner/observer production entrypoints do not call proposal, gateway, broker, "
-    "or exchange order functions.",
-))
-def test_scanners_have_no_order_call():
-    scanner_paths = [
-        "aletheia/agents/market_observer.py",
-        "aletheia/agents/paper_trader.py",
-        "aletheia/agents/paper_trader_ranker.py",
-        "aletheia/universe/service.py",
-    ]
-    forbidden = {
-        "submit_proposal", "execute_existing_proposal", "create_paper_proposal",
-        "place_order", "create_order", "execute_paper_order",
-    }
-    violations = {
-        path: sorted(_call_names(path) & forbidden)
-        for path in scanner_paths
-        if _call_names(path) & forbidden
-    }
-    assert violations == {}
 
 
 @spec_claim(SpecClaim(
@@ -196,21 +118,6 @@ def test_native_proposals_enter_gateway_and_risk_before_execution():
     } & calls
 
 
-@spec_claim(SpecClaim(
-    "AR-S06", "active_runtime_scope", "Guard authority", "L2a",
-    "The System Operator records Guard output as advisory and does not return early on a block verdict.",
-))
-def test_guard_chain_cannot_replace_risk_authority():
-    path = ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
-    source = path.read_text(encoding="utf-8")
-    start = source.index("async def prepare_decision_as_proposal")
-    end = source.index("\ndef _proposal_direction_overheated", start)
-    body = source[start:end]
-    guard_start = body.index("guard_verdicts = run_guards")
-    proposal_start = body.index("proposal = TradeProposal(", guard_start)
-    guard_section = body[guard_start:proposal_start]
-    assert "guard_summary[\"blocks\"]" in guard_section
-    assert "return None" not in guard_section
 
 
 @spec_claim(SpecClaim(

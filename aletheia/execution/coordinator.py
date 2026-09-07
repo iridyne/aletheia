@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -36,6 +37,7 @@ from aletheia.uta.models import (
     ModifyOrderCommand,
     OrderLifecycle,
     SubmitOrderCommand,
+    UTAAccountIdentity,
 )
 
 
@@ -65,9 +67,11 @@ def _close_adapter(adapter) -> None:
         pass
 
 
-def _create_qualified_adapter(execution_mode: str):
+def _create_qualified_adapter(execution_mode: str, expected_account: UTAAccountIdentity | None = None):
     adapter = create_uta_adapter(execution_mode)
     try:
+        if expected_account is not None and adapter.identity != expected_account:
+            raise ValueError("uta_account_identity_mismatch")
         require_uta_mutation_qualification(execution_mode, adapter=adapter)
     except Exception:
         _close_adapter(adapter)
@@ -76,7 +80,7 @@ def _create_qualified_adapter(execution_mode: str):
 
 
 async def _command(execution_mode: str, method: str, command):
-    adapter = _create_qualified_adapter(execution_mode)
+    adapter = _create_qualified_adapter(execution_mode, command.expected_account)
     try:
         return await getattr(adapter, method)(command)
     finally:
@@ -130,9 +134,13 @@ def _status(report, *, close_position_id: str | None = None) -> tuple[str, str |
 
 def _apply_report(order: Order, report, *, close_position_id: str | None = None) -> dict:
     status, reason = _status(report, close_position_id=close_position_id)
-    pending_close_status = (
-        "submission_rejected" if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED else status
-    )
+    pending_close_status = status
+    if close_position_id and report.evidence is CommandEvidence.VENUE_REJECTED:
+        pending_close_status = (
+            "position_absence_unverified"
+            if report.reason_code == "close_position_absence_unverified"
+            else "submission_rejected"
+        )
     try:
         acknowledgement = finalize_exchange_acknowledgement(
             order.id,
@@ -194,6 +202,12 @@ def execute_order(
     if market_type != "spot" and leverage is None:
         raise ValueError("futures UTA order requires leverage")
     require_uta_mutation_qualification(execution_mode)
+    from aletheia.storage.repositories import get_trade_proposal
+    proposal = get_trade_proposal(proposal_id)
+    if proposal is None:
+        raise ValueError("UTA order requires an approved Proposal")
+    if stop_price != proposal["stop_price"] or take_profit_price != proposal["take_profit"]:
+        raise ValueError("UTA protection must exactly match the approved Proposal")
     order = Order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
@@ -238,6 +252,23 @@ def execute_order(
             error_reason="uta_adapter_unavailable_before_submission",
         )
         raise
+    try:
+        placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
+        rows = get_db().execute(
+            f"SELECT uta_account_identity_json FROM orders WHERE execution_mode=? AND id<>? AND status IN ({placeholders}) "
+            "UNION ALL SELECT o.uta_account_identity_json FROM positions p LEFT JOIN orders o ON o.id=p.order_id "
+            "WHERE p.execution_mode=? AND p.status='open'",
+            (execution_mode, order.id, *_RETRY_SUPPRESSING_ORDER_STATES, execution_mode),
+        ).fetchall()
+        for existing in rows:
+            if UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "") != adapter.identity:
+                raise ValueError("uta_account_identity_mismatch")
+        order.uta_account_identity_json = adapter.identity.model_dump_json()
+        update_order(order.id, uta_account_identity_json=order.uta_account_identity_json)
+    except Exception:
+        _close_adapter(adapter)
+        finalize_exchange_acknowledgement(order.id, exchange_order_id=None, status="error", error_reason="uta_account_identity_unavailable")
+        raise
     command = SubmitOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
@@ -249,6 +280,7 @@ def execute_order(
         quantity=Decimal(str(quantity)),
         order_type=order_type,
         limit_price=Decimal(str(price)) if order_type == "limit" else None,
+        reference_price=Decimal(str(price)) if price is not None else None,
         stop_loss_price=(
             Decimal(str(stop_price))
             if stop_price is not None
@@ -299,6 +331,73 @@ def _fallback_report(adapter, command, evidence):
         profile_version="1",
     )
 
+_CLOSE_CLIP_MIN_FRACTION = 1.0 / 64.0
+_VENUE_MATCH_CAP_CANCEL_REASONS = frozenset(
+    {
+        "trade_too_many_times_cancel",
+        "operator_authorized_cleanup_trade_rate_limited",
+    }
+)
+# Marketable-limit fallback bound through the last price once a symbol's demo
+# market path is confirmed broken (XRPUSDT 2026-08-22: every market order at
+# any size — including a 5-unit diagnostic entry — was zero-fill cancelled with
+# trade_too_many_times_cancel while limit orders filled normally).
+_MARKETABLE_LIMIT_TOLERANCE = 0.01
+
+
+def _venue_match_cap_cancel_count(position_id: str) -> int:
+    from aletheia.storage import repositories as repo
+
+    row = (
+        repo.get_db()
+        .execute(
+            "SELECT COUNT(*) AS n FROM orders "
+            "WHERE position_id = ? AND close_reason IS NOT NULL "
+            "AND status = 'cancelled' AND error_reason IN (?, ?)",
+            (position_id, *_VENUE_MATCH_CAP_CANCEL_REASONS),
+        )
+        .fetchone()
+    )
+    return int(row["n"] or 0) if row else 0
+
+
+def _quantize_to_reference_precision(bound: float, reference: float, *, up: bool) -> float:
+    """Quantize a price bound onto the reference price's own tick precision."""
+    text = f"{reference:.10f}".rstrip("0")
+    decimals = len(text.split(".")[1]) if "." in text else 0
+    scale = 10**decimals
+    scaled = bound * scale
+    scaled = math.ceil(scaled - 1e-9) if up else math.floor(scaled + 1e-9)
+    return scaled / scale
+
+
+def _quantize_quantity_to_precision(clip: float, reference: float) -> float:
+    """Floor a clip quantity onto the reference quantity's lot precision."""
+    text = f"{reference:.10f}".rstrip("0")
+    decimals = len(text.split(".")[1]) if "." in text else 0
+    scale = 10**decimals
+    return math.floor(clip * scale + 1e-9) / scale
+
+
+def _clipped_close_quantity(position_id: str, remaining: float) -> float:
+    """Clip the next close order below sizes the venue has already refused."""
+    clip = float(remaining)
+    for _ in range(_venue_match_cap_cancel_count(position_id)):
+        clip /= 2.0
+    clip = max(clip, remaining * _CLOSE_CLIP_MIN_FRACTION)
+    return round(clip, 8)
+
+
+def _position_account(position: dict) -> UTAAccountIdentity:
+    from aletheia.storage import repositories as repo
+
+    entry = repo.get_order(position["order_id"]) if position.get("order_id") else None
+    if entry is None or any(entry[key] != position[key] for key in ("execution_mode", "symbol", "market_type", "proposal_id")):
+        raise ValueError("uta_position_account_unavailable")
+    identity = UTAAccountIdentity.model_validate_json(entry.get("uta_account_identity_json") or "")
+    if identity.execution_mode != position["execution_mode"]:
+        raise ValueError("uta_account_identity_mismatch")
+    return identity
 
 def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
     from aletheia.storage import repositories as repo
@@ -312,6 +411,7 @@ def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
         if has_unresolved_close_claim(row):
             return row, None
         close_order = Order(
+            uta_account_identity_json=_position_account(row).model_dump_json(),
             proposal_id=row.get("proposal_id"),
             client_order_id=f"close-{position_id}",
             position_id=position_id,
@@ -364,7 +464,7 @@ def close_position(
             "already_pending": True,
         }
     try:
-        adapter = _create_qualified_adapter(row["execution_mode"])
+        adapter = _create_qualified_adapter(row["execution_mode"], UTAAccountIdentity.model_validate_json(order.uta_account_identity_json))
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -375,6 +475,26 @@ def close_position(
             pending_close_status="error",
         )
         raise
+    quantity = float(row["quantity"])
+    order_type = "market"
+    limit_price = None
+    if row["execution_mode"] in {"bitget_demo", "bitget_live_limited"} and _venue_match_cap_cancel_count(position_id):
+        from aletheia.data.ccxt_provider import get_market_data_provider
+        from aletheia.data.symbols import InstrumentId
+
+        try:
+            provider = get_market_data_provider(exchange="bitget", native_ccxt=True, fallback_exchange="bitget")
+            ticker = _run(provider.get_ticker(InstrumentId.from_parts(
+                "bitget", row["symbol"], "spot" if row["market_type"] == "spot" else "perp",
+            )))
+            reference = ticker.last_price
+            venue_buy = row["direction"] not in {"long", "buy"}
+            factor = 1.0 + _MARKETABLE_LIMIT_TOLERANCE if venue_buy else 1.0 - _MARKETABLE_LIMIT_TOLERANCE
+            limit_price = _quantize_to_reference_precision(reference * factor, reference, up=not venue_buy)
+            order_type = "limit"
+        except Exception:
+            quantity = _quantize_quantity_to_precision(_clipped_close_quantity(position_id, quantity), quantity)
+        update_order(order.id, quantity=quantity, order_type=order_type, price=limit_price or order.price)
     command = SubmitOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
@@ -383,8 +503,9 @@ def close_position(
         position_id=position_id,
         client_order_id=order.client_order_id,
         side="sell" if row["direction"] in {"long", "buy"} else "buy",
-        quantity=Decimal(str(row["quantity"])),
-        order_type="market",
+        quantity=Decimal(str(quantity)),
+        order_type=order_type,
+        limit_price=Decimal(str(limit_price)) if limit_price is not None else None,
         reduce_only=True,
     )
     try:
@@ -405,8 +526,10 @@ def cancel_order(command: CancelOrderCommand):
 
 def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -> str:
     """Persist one protection child before submitting it through the selected UTA."""
+    identity = _position_account(position)
     suffix = "sl" if purpose == "protective_stop" else "tp"
     order = Order(
+        uta_account_identity_json=identity.model_dump_json(),
         proposal_id=position.get("proposal_id"),
         client_order_id=f"protect-{position['id']}-{suffix}",
         position_id=position["id"],
@@ -424,7 +547,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
     adapter = None
     command = None
     try:
-        adapter = _create_qualified_adapter(position["execution_mode"])
+        adapter = _create_qualified_adapter(position["execution_mode"], identity)
         command = SubmitOrderCommand(
             command_id=str(uuid4()),
             expected_account=adapter.identity,
@@ -495,7 +618,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
     if not old_stop:
         return False
-    adapter = _create_qualified_adapter(position["execution_mode"])
+    adapter = _create_qualified_adapter(position["execution_mode"], _position_account(position))
     command = CancelOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,

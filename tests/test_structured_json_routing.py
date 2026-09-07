@@ -72,8 +72,6 @@ class _ObjectSchema:
 def test_prefers_json_reliable_models_only_for_trade_json_callers():
     from aletheia.agents.helpers import _prefers_json_reliable_models
 
-    assert _prefers_json_reliable_models("system_operator.assess_opportunity") is True
-    assert _prefers_json_reliable_models("system_operator.debate_bull") is True
     assert _prefers_json_reliable_models("risk_critic.review") is True
     assert _prefers_json_reliable_models("agent_shell.entry_planner") is True
     assert _prefers_json_reliable_models("news_analyzer.analysis") is False
@@ -349,7 +347,7 @@ async def test_llm_structured_requests_json_schema_and_skips_all_failed_models(t
         "sys",
         "user",
         schema=_ObjectSchema,
-        caller="system_operator.assess_opportunity",
+        caller="agent_shell.entry_planner",
     )
 
     assert err is None
@@ -536,35 +534,6 @@ async def test_llm_structured_propagates_semantic_callback_exception_without_ret
     assert calls == 1
 
 
-def test_portable_schema_keeps_conditional_skip_sparse_and_locally_valid():
-    from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA
-    from aletheia.agents.helpers import _validate_structured_payload
-
-    class DecisionSchema:
-        @staticmethod
-        def model_json_schema():
-            return _DECISION_SCHEMA
-
-    portable = portable_json_schema_payload(DecisionSchema)
-    assert set(portable["required"]) == set(portable["properties"])
-    assert portable["properties"]["symbol"]["type"] == ["string", "null"]
-
-    data = {name: None for name in portable["properties"]}
-    data.update(
-        {
-            "action": "skip",
-            "conviction": 0,
-            "reasoning": "insufficient evidence",
-            "bear_case": "missing confirmation",
-        }
-    )
-    _validate_structured_payload(data, DecisionSchema, _DECISION_SCHEMA)
-    assert data == {
-        "action": "skip",
-        "conviction": 0,
-        "reasoning": "insufficient evidence",
-        "bear_case": "missing confirmation",
-    }
 
 
 class _FakeHttpResponse:

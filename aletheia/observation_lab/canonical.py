@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Literal, Mapping, Protocol, runtime_checkable
 
 from aletheia.observation_lab.db import (
     lab_transaction,
@@ -561,6 +561,11 @@ def register_observation_spec(
     missing = [key for key in required if not value.get(key)]
     if missing:
         raise ValueError(f"spec_is_missing:{','.join(missing)}")
+    from aletheia.counterfactual.filter_experiments import _ADAPTER_CAUSAL_IDENTITY
+
+    adapter_identity = _ADAPTER_CAUSAL_IDENTITY.get(str(value["filter_name"]))
+    if adapter_identity is not None:
+        value["adapter_identity_hash"] = _hash(adapter_identity)
     started = _utc_text(started_at, "started_at") if started_at else _now()
     collect_end = _utc_text(collect_until, "collect_until") if collect_until else "9999-12-31T00:00:00+00:00"
     finalize_at = _utc_text(finalize_not_before, "finalize_not_before") if finalize_not_before else collect_end
@@ -1246,93 +1251,17 @@ def _assert_lab_cutover_ready(
     return proof
 
 
-def _assert_legacy_rollback_ready(
-    connection: sqlite3.Connection,
-    *,
-    rollback_proof: Mapping[str, Any] | None,
-) -> dict[str, str]:
-    """Allow legacy authority only from an explicitly proven same cut.
-
-    A Lab-to-legacy flip is not a recovery mechanism: it would re-enable the
-    frozen Main ledger.  Keep the safe default (Lab baseline) unless the
-    caller presents the exact predeclared cutover proof and the legacy rows
-    still exist for an equivalent rollback target.
-    """
-    proof = _normalise_cutover_proof(rollback_proof)
-    from aletheia.observation_lab.checkpoint import (
-        latest_joint_checkpoint,
-        verify_joint_checkpoint,
-    )
-    from aletheia.observation_lab.db import readonly_lab_db
-    from aletheia.observation_lab.migration import plan_legacy_learning_migration
-    from aletheia.storage.migrations import _LEGACY_EXPERIMENT_TABLES
-
-    missing = [
-        table for table in _LEGACY_EXPERIMENT_TABLES
-        if connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-        ).fetchone() is None
-    ]
-    if missing:
-        raise RuntimeError("authority_rollback_legacy_tables_unavailable")
-    plan = plan_legacy_learning_migration()
-    if not plan.get("available") or proof["migration_plan_fingerprint"] != str(
-        plan.get("plan_fingerprint") or ""
-    ):
-        raise RuntimeError("authority_rollback_migration_equivalence_mismatch")
-    if any(
-        str(item.get("table")) != "strategy_experiments"
-        for item in plan.get("unprovable_rows", ())
-    ):
-        raise RuntimeError("authority_rollback_unprovable_legacy_evidence")
-    with readonly_lab_db(allow_missing=True) as lab:
-        cursor = None if lab is None else lab.execute(
-            "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
-            "WHERE source_name='legacy_learning'"
-        ).fetchone()
-    if cursor is None or str(cursor[0] or "") != proof["migration_plan_fingerprint"]:
-        raise RuntimeError("authority_rollback_import_checkpoint_mismatch")
-    latest = latest_joint_checkpoint()
-    try:
-        verdict = verify_joint_checkpoint()
-    except Exception as exc:
-        raise RuntimeError("authority_rollback_checkpoint_unavailable") from exc
-    if latest is None or not verdict.ok or proof["checkpoint_fingerprint"] != str(
-        latest.joint_fingerprint
-    ):
-        raise RuntimeError("authority_rollback_checkpoint_mismatch")
-    if proof["retention_claim_fingerprint"] != _retention_claim_fingerprint():
-        raise RuntimeError("authority_rollback_retention_mismatch")
-    observed_runtime = _runtime_commit()
-    if observed_runtime and proof["runtime_commit"] != observed_runtime:
-        raise RuntimeError("authority_rollback_runtime_commit_mismatch")
-    if plan.get("source_commit") and proof["runtime_commit"] != str(plan["source_commit"]):
-        raise RuntimeError("authority_rollback_source_commit_mismatch")
-    recorded = connection.execute(
-        "SELECT proof_id FROM observation_authority_cutover_proofs "
-        "WHERE authority_source='lab' AND migration_plan_fingerprint=? "
-        "AND retention_claim_fingerprint=? AND checkpoint_fingerprint=? "
-        "AND runtime_commit=? AND rollback_backup_identity=? "
-        "ORDER BY recorded_at DESC, proof_id DESC LIMIT 1",
-        tuple(proof[field] for field in _CUTOVER_PROOF_FIELDS),
-    ).fetchone()
-    if recorded is None:
-        raise RuntimeError("authority_rollback_proof_unrecorded")
-    return {**proof, "proof_id": str(recorded[0])}
-
-
 def set_authority_source(
-    source: str,
+    source: Literal["lab"],
     *,
     actor: str,
     reason: str,
     cutover_proof: Mapping[str, Any] | None = None,
-    rollback_proof: Mapping[str, Any] | None = None,
     db: sqlite3.Connection | None = None,
 ) -> AuthoritySource:
-    """Record one durable ``legacy``/``lab`` source; there is no dual mode."""
-    if source not in {"legacy", "lab"}:
-        raise ValueError("authority_source_must_be_legacy_or_lab")
+    """Record the one-way cutover to durable Lab Experiment authority."""
+    if source != "lab":
+        raise ValueError("authority_source_must_be_lab")
     actor = _text(actor, "actor")
     reason = _text(reason, "reason")
 
@@ -1340,14 +1269,7 @@ def set_authority_source(
         current = get_authority_source(db=connection)
         if current.source == source:
             return current
-        proof = None
-        rollback = None
-        if source == "lab":
-            proof = _assert_lab_cutover_ready(connection, cutover_proof=cutover_proof)
-        elif current.source == "lab":
-            rollback = _assert_legacy_rollback_ready(
-                connection, rollback_proof=rollback_proof,
-            )
+        proof = _assert_lab_cutover_ready(connection, cutover_proof=cutover_proof)
         epoch = f"{source}:{uuid.uuid4().hex}"
         proof_id = None
         if proof is not None:
@@ -1376,7 +1298,6 @@ def set_authority_source(
                     "authority_epoch": epoch,
                     "reason": reason,
                     "cutover_proof_id": proof_id,
-                    "rollback_proof_id": rollback.get("proof_id") if rollback else None,
                 }), reason,
             ),
         )
@@ -2608,13 +2529,6 @@ def resolve_observation_treatment(
     authority_unavailable = False
     try:
         authority = get_authority_source(db=main_db)
-    except sqlite3.OperationalError as exc:
-        # Pre-V2 databases have no cutover row and remain on legacy behavior;
-        # any other storage error is an unavailable authority, not legacy truth.
-        authority_unavailable = "no such table: observation_authority_state" not in str(exc)
-        authority = AuthoritySource(
-            "legacy", "legacy-v1", "system", "state_unavailable", ""
-        )
     except (FileNotFoundError, sqlite3.Error, RuntimeError):
         # An unavailable or malformed cutover row cannot grant either authority.
         authority_unavailable = True

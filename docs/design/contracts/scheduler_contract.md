@@ -1,7 +1,7 @@
 # Scheduler Contract
 
 **Contract path**: `docs/design/contracts/scheduler_contract.md`
-**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01, AC-S08), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
+**Spec**: `tests/specs/spec_agent_contracts.py` (AC-S01), `tests/specs/spec_pi_decision_chain.py` (PI-S06, PI-S07), `tests/specs/spec_pipeline_tpsl_private_materialization.py` (PL-TPSL-05)
 **Impl**: `aletheia/agent_runtime/scheduler.py`
 **Related**: `docs/design/contracts/agent_contracts.md` (§8 区别)
 
@@ -26,7 +26,7 @@
 
 **暂停所有权**：`runtime.paused` 是活动 lease 的兼容投影，不再是可由任一恢复循环独占清除的单一事实；`pause_blockers` 才表示当前 execution pool 的有效 blocker。人工操作、Exchange Connectivity、Startup Behavior Gate 与 LLM Startup Gate 各持有带 `reason`、`generation`、`acquired_at`、`source` 的 durable lease；global/demo/live trading brakes 也进入同一 owner map，并保留各自 `scope`，但 Risk 的 mode 语义仍独立决定适用池。一个恢复路径只能释放自身在异步检查开始前观察到的匹配 generation；新 generation、其他 owner 或 required dependency 未验证都会 fail closed。仅最后一个有效 owner 成功释放时才调用一次 `resume_scheduler()`；公开 `resume_scheduler()` 会在同一进程级 pause-transition `RLock` 内重新读取 durable blockers，并在任一适用 owner/brake 存在时拒绝修改 APScheduler，因此 Settings 的 `scheduler_enabled=true` 也不能旁路所有权。若调度器恢复调用失败，原 lease 会恢复到配置中并保持 fail-closed。旧配置中的 `paused_by_connectivity`/generation/timestamp 会迁移为 `exchange_connectivity` owner，旧 brake boolean 会迁移为 scope owner；无法归因的旧 `paused=true` 则诚实迁移为时间与 generation 均未知的 `manual` owner。`GET /api/status`、`GET /api/risk/status`、`aletheia control status --json` 与 Doctor 的 `config.paused` 项是该状态的只读观测面；它们同时暴露 active owner 的 `reason`、`generation`、`acquired_at`、`age_seconds`、`source`、`scope`、blocked reason，并明确 exchange recovery 不等于 scheduler resumed。
 
-当前 essential 集合：`market_data`、`data_collectors`、`data_collector_context`、`connectivity_monitor`、`portfolio_snapshot`、`price_feed`、`position_manager`、`position_path_observer`、`ohlcv_nightly_backfill`、`ohlcv_active_backfill`、`exchange_sync`、`health_check`、`cleanup`、`news_fetch`、`okx_demo_symbols`、`reconciliation`、`position_reconcile`、`tpsl_fill_check`、`outcome_settler`、`paper_funding_settler`、`broker_funding_settler`、`funding_audit_reconciler`、`outcome_hook_replay`、`shadow_resolver`、`learning_contribution_evaluator`、`learning_measurement_startup_catchup`、`learning_lifecycle_audit_reconciler`、`universe_scanner_audit_reconciler`。
+当前 essential 集合以 scheduler 的实际注册为准，覆盖行情、账户、持仓保护、对账、结算、健康、维护及 Lab 证据交付。旧 learning_contribution_evaluator、learning_measurement_startup_catchup、learning_lifecycle_audit_reconciler 已退役，不再属于在线集合。
 
 ---
 
@@ -130,40 +130,17 @@ cleanup 的 incremental reclaim 是有界 maintenance write：正常最多 16 Mi
 达到配置预算 80% 后最多 64 MiB。它必须持有 SQLite process/cross-process writer permit，
 只能回收 freelist，不得改变 retention window 或删除额外业务行。
 
-**注**：`ohlcv_nightly_backfill`（#27）仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册（`scheduler.py:456`）。无论该开关状态，总 `add_job` 调用数为 30，其中条件分支使实际运行时 job 数为 29 或 30，均满足 AC-S08 ≥28 的下限。
+**注**：`ohlcv_nightly_backfill` 仅当 `cfg.historical_data.nightly_backfill_enabled` 为真时注册。任务总数随配置和实际职责变化，不设源码调用数量下限。
 
-### 3.1 Learning contribution scheduling (A1 alignment)
+### 3.1 Observation Lab experiment scheduling
 
-This subsection corrects only the Learning contribution lane; the older broad registry above is
-not otherwise re-audited here.
-
-- `learning_contribution_evaluator` is the sole recurring contribution evaluator. It runs at
-  `learning.evaluation_interval_minutes` (minimum 15, default 60), with `max_instances=1`,
-  `coalesce=True`, the serial `learning_measurement` executor, and a 60-second timeout. Gateway restart preserves an earlier
-  future durable `next_due_at` instead of resetting the first run to boot plus a full interval; an
-  already-overdue deadline receives one bounded run after 60 seconds.
-- `learning_measurement_startup_catchup` remains a one-shot at boot plus two minutes. It checks and,
-  only when due, invokes the same evaluator; after an overdue direct recovery succeeds, its updated
-  watermark makes the one-shot a no-op, while a failed recovery leaves it available as a retry. It
-  shares the one-worker `learning_measurement` lane with the recurring evaluator, preserving mutual
-  serialization while avoiding starvation behind the general `io` queue.
-  Executable continuity claim: `LE-B31`.
-- `learning_verdict_runner` is not registered and has no timeout entry. Existing
-  `learning_job_health` rows with that historical id are retained as history, not deleted or
-  interpreted as an active schedule.
-- Measurement remains essential under layered pause and independent of autonomous Learning.
-  `learning_lifecycle_controller` is separate; its capability defaults on, but its
-  experiment authority remains owner-gated. It cannot cross `shadow -> paper_10`,
-  and may only recommend explicit owner admission.
-- A lifecycle-controller cycle with one or more isolated experiment failures completes the remaining
-  experiments but persists `degraded`, advances only `next_due_at`, and does not record a successful
-  watermark. A later fully successful cycle may recover current health while preserving durable
-  `last_failed_at` and `last_failure_reason`.
-- `learning_lifecycle_audit_reconciler` is an essential, non-behavioral 5-minute IO job with
-  `max_instances=1`, `coalesce=True`, and a 30-second timeout. It retries at most 100 pending/failed
-  lifecycle JSONL mirrors by stable event id and never reruns a lifecycle transition.
-- Job recovery clears current `last_error` and resets consecutive failures, but preserves durable
-  `last_failed_at` and `last_failure_reason` for the most recent failure.
+Observation Lab is the sole online Experiment authority. The existing Lab runner and
+delivery bridge retain their pause, checkpoint and outbox boundaries.
+`learning_contribution_evaluator`, `learning_measurement_startup_catchup`,
+`learning_lifecycle_controller` and `learning_lifecycle_audit_reconciler` are retired:
+they are not registered and their historical health rows do not imply active jobs.
+An unavailable Lab never starts a legacy evaluator or lifecycle writer. Legacy
+evidence migration remains an explicit offline, proof-gated operation.
 
 ### 3.2 Paper funding settlement
 
@@ -377,7 +354,6 @@ sync worker 同样是 daemon，非协作调用不会产生第二条替代线程�
 | ID | 不变量 | 来源 | Spec |
 |---|---|---|---|
 | INV-SCH-1 | 所有 APScheduler 命名池 `max_workers` 均 ≤ 3；timeout 层固定为 1 条 async lane + 2 条相互隔离的 sync lane（ordinary + Universe audit），每条 outstanding ≤ 16 | `_EXECUTOR_WORKERS`、`_PersistentAsyncTimeoutWorker`、`_PersistentSyncTimeoutWorker` | AC-S01；`test_scheduler_timeouts.py` |
-| INV-SCH-2 | `init_scheduler()` 注册 ≥ 28 个 job | `init_scheduler()` 内 `_scheduler.add_job()` 注册 | AC-S08 |
 | INV-SCH-3 | 任何 job 函数抛出的异常不得终止调度器线程 | 各 `_run_xxx()` 顶层 `try/except Exception`；APScheduler 内部也兜底捕获 | — |
 | INV-SCH-4 | job 执行前后，本线程泄漏的 SQLite 事务必须被回滚 | `_run_job_guarded()`（`scheduler.py:110`）；async/sync timeout wrapper `finally` 块 | — |
 | INV-SCH-5 | 任务抛异常或显式报告失败时，连续失败 ≥ 3 次必须触发 infra_event；外层不得在同轮清零 | `_run_job_guarded()` + `_record_job_failure()` | — |

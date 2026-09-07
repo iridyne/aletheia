@@ -23,6 +23,7 @@ class BinanceTestnetProfile(CCXTProfile):
     mutation_post_only = True
     mutation_client_order_id = True
     integer_leverage = True
+    client_order_lookup_param = "origClientOrderId"
 
     def __init__(self, *, api_key: str, secret: str) -> None:
         super().__init__(
@@ -30,6 +31,33 @@ class BinanceTestnetProfile(CCXTProfile):
             secret=secret,
             options={"defaultType": "future"},
         )
+    async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
+        # Binance forbids fromId with time bounds; empty windows do not end history.
+        rows = []
+        window_start = since
+        while window_start < end_ms:
+            window_end = min(window_start + 7 * 86400 * 1000, end_ms)
+            from_id = None
+            for _ in range(100):
+                request = {**params, "startTime": window_start, "endTime": window_end} if from_id is None else {**params, "fromId": from_id}
+                page = await exchange.fetch_my_trades(symbol, None, limit, request)
+                if not isinstance(page, list):
+                    raise ValueError("Binance private trade history malformed")
+                rows.extend(row for row in page if not isinstance(row, dict) or int(row["timestamp"]) <= window_end)
+                if len(page) < limit:
+                    break
+                ids = [str(row.get("id") or "") for row in page]
+                if not all(value.isdigit() for value in ids):
+                    return rows, True
+                next_id = str(max(int(value) for value in ids) + 1)
+                if from_id is not None and int(next_id) <= int(from_id):
+                    return rows, True
+                from_id = next_id
+            else:
+                return rows, True
+            window_start = window_end
+        return rows, False
+
 
     def account_values(self, balances):
         values, normalized, reason = super().account_values(balances)

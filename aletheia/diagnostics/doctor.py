@@ -152,17 +152,20 @@ def _trading_diagnostics() -> dict:
         "funnel": _safe_funnel_diagnostic(),
         "sizing": _safe_sizing_diagnostic(),
         "thesis": _safe_thesis_diagnostic(),
-        "candidate_market_facts": _safe_candidate_market_facts_diagnostic(),
+        "candidate_planning": _safe_candidate_planning_diagnostic(),
     }
 
 
-def _safe_candidate_market_facts_diagnostic() -> dict:
+def _safe_candidate_planning_diagnostic() -> dict:
     try:
-        from aletheia.data.candidate_market_facts import (
-            build_pending_candidate_market_report,
-        )
+        from aletheia.storage import repositories as repo
 
-        return build_pending_candidate_market_report()
+        return {
+            "status": "available",
+            "summary": repo.get_entry_workbench_summary(),
+            "candidates": repo.list_entry_workbench_candidates(),
+            "refresh_assets": repo.list_candidate_planning_refresh_assets(),
+        }
     except Exception as exc:
         return {"status": "unavailable", "reason": str(exc)}
 
@@ -1242,62 +1245,26 @@ def _probe_universe_market_coverage(report: Report) -> None:
     report.add("data.universe_market_coverage", "ok", detail)
 
 
-def _probe_pending_candidate_market_coverage(report: Report) -> None:
-    """Judge exact pending-carrier facts instead of one global newest row."""
-    try:
-        from aletheia.data.candidate_market_facts import (
-            build_pending_candidate_market_report,
-        )
-
-        state = build_pending_candidate_market_report()
-    except Exception as e:
-        report.add(
-            "data.pending_candidate_market_coverage",
-            "info",
-            f"candidate coverage unavailable: {type(e).__name__}",
-            "inspect the read-only candidate market-facts diagnostic",
-        )
+def _probe_candidate_planning(report: Report) -> None:
+    """Report canonical planning state without inferring market-data health."""
+    state = _safe_candidate_planning_diagnostic()
+    if state["status"] == "unavailable":
+        report.add("data.candidate_planning", "info",
+                   f"planning unavailable: {state["reason"]}")
         return
-
-    total = int(state.get("pending_total") or 0)
-    if state.get("status") == "no_pending" or total == 0:
-        report.add(
-            "data.pending_candidate_market_coverage",
-            "info",
-            "no active pending carriers — no denominator",
+    summary = state["summary"]
+    blocked = [row for row in state["candidates"] if row.get("status") == "unavailable"]
+    detail = (f"needs_planning={summary["needs_planning"]}; "
+              f"active_entry_plans={summary["active_entry_plans"]}; "
+              f"refresh_assets={len(state["refresh_assets"])}")
+    if blocked:
+        detail += "; " + ", ".join(
+            f"{row["venue"]}:{row["symbol"]}:{row["market_type"]}"
+            f"[{row.get("outcome_reason") or "unavailable"}]"
+            for row in blocked[:3]
         )
-        return
-
-    complete = int(state.get("complete_count") or 0)
-    partial = int(state.get("partial_count") or 0)
-    unavailable = int(state.get("unavailable_count") or 0)
-    detail = (
-        f"pending={total}; complete={complete}; partial={partial}; "
-        f"unavailable={unavailable}"
-    )
-    affected = [
-        item for item in (state.get("items") or [])
-        if item.get("availability") != "complete"
-    ][:3]
-    if affected:
-        samples = ", ".join(
-            f"{item.get('venue') or 'unknown'}:{item.get('symbol') or 'unknown'}:"
-            f"{item.get('physical_market_type') or 'unknown'}"
-            f"[{','.join((item.get('reasons') or ['unknown'])[:2])}]"
-            for item in affected
-        )
-        detail += f"; affected sample={samples}"
-
-    if state.get("status") == "complete":
-        report.add("data.pending_candidate_market_coverage", "ok", detail)
-        return
-    report.add(
-        "data.pending_candidate_market_coverage",
-        "warn",
-        detail,
-        "inspect `aletheia doctor --deep --json` candidate_market_facts; "
-        "do not relax freshness or exact venue/market constraints",
-    )
+    report.add("data.candidate_planning", "warn" if blocked else "info", detail,
+               "inspect canonical planning evidence; do not relax exact identity or freshness")
 
 
 def _probe_orderbook(report: Report) -> None:
@@ -1772,189 +1739,6 @@ def _probe_trading_loop(report: Report) -> None:
         report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
 
 
-def _probe_profit_loop(report: Report) -> None:
-    """Proposal-flow liveness for the trading pipeline.
-
-    The loop is: opportunities -> (paper_trader ranks) -> signal_pending pi_decisions
-    -> System Operator LLM decides -> trade_proposals -> risk -> orders -> positions.
-
-    This probe does not measure profitability. A silent stall here is still a
-    dangerous failure class: the observe stage
-    keeps producing opportunities (so loop.newest_opportunity stays green) while
-    NO new proposals are created for hours — the system looks alive but earns and
-    learns nothing. This probe catches that decoupling directly by comparing the
-    age of the newest opportunity against the age of the newest proposal, and by
-    inspecting the recent PI-decision action mix for an all-skip pattern.
-
-    Root precedent: 2026-06-23 the System Operator saw a phantom $167 balance (wrong
-    broker cache) and skipped every signal for 20h. This probe exists so that
-    class of stall surfaces in `aletheia doctor` instead of reaching the user.
-    """
-    try:
-        from aletheia.config.loader import load_config
-        from aletheia.storage.sqlite import get_db
-        cfg = load_config()
-        db = get_db()
-
-        def _newest(table: str) -> str | None:
-            try:
-                row = db.execute(
-                    f"SELECT created_at FROM {table} ORDER BY created_at DESC LIMIT 1"
-                ).fetchone()
-                return row[0] if row else None
-            except Exception:
-                return None
-
-        opp_age = _age_minutes(_newest("opportunities"))
-        prop_age = _age_minutes(_newest("trade_proposals"))
-    except Exception as e:
-        report.add("loop.profit", "info", f"could not read loop tables: {e}")
-        return
-
-    # No opportunities at all → upstream handles it (loop.newest_opportunity).
-    if opp_age is None:
-        report.add("loop.profit", "info", "no opportunities yet — loop not started")
-        return
-
-    # The stall signature: opportunities are flowing (< 60min) but proposals are
-    # stale (> 6h) or absent. This is the decoupling that looks alive but isn't.
-    PROPOSAL_STALL_MIN = 360  # 6h — well beyond the 5min paper_trader cadence
-    # Day-0 grace: if no proposals have EVER been created AND the oldest
-    # opportunity is itself < 6h old, the pipeline simply hasn't had time to
-    # complete its first cycle — report info, not warn (avoids false STALLED).
-    if prop_age is None and opp_age < 60:
-        oldest_opp = _age_minutes(db.execute(
-            "SELECT created_at FROM opportunities ORDER BY created_at ASC LIMIT 1"
-        ).fetchone()[0]) if db.execute("SELECT 1 FROM opportunities LIMIT 1").fetchone() else 0
-        if oldest_opp is not None and oldest_opp < PROPOSAL_STALL_MIN:
-            report.add("loop.profit", "info",
-                       f"pipeline warming up — opportunities flowing ({_fmt_age(opp_age)}) "
-                       f"but no proposals yet (first opp {_fmt_age(oldest_opp)} ago)")
-            return
-    if opp_age < 60 and (prop_age is None or prop_age > PROPOSAL_STALL_MIN):
-        # Attribute the stall using the shared opportunity-progress aggregator
-        # so old-commit skips can never be blamed on the currently-running code.
-        # Six-bucket classification: direct_model_skip / conviction_gate_skip /
-        # debate_not_confirmed / operator_defer / context_unavailable / ranker_cooldown.
-        attribution = ""
-        self_protecting = False
-        try:
-            from aletheia.diagnostics.pipeline_progress import summarize as _op_summarize
-            snapshot = _op_summarize(hours=12)
-            operator = snapshot.get("operator") or {}
-            epoch = snapshot.get("epoch") or {}
-            section_status = snapshot.get("section_status") or {}
-            commit_short = (epoch.get("producer_commit") or "unknown")[:7]
-            epoch_short = (epoch.get("policy_epoch_id") or "none")[:12]
-
-            # Check availability before treating numeric zeros as measured facts
-            op_available = (section_status.get("operator") or {}).get("status") == "available"
-            defer_available = (section_status.get("defer_events") or {}).get("status") == "available"
-            active_defer_available = (section_status.get("active_defer") or {}).get("status") == "available"
-
-            if not op_available:
-                reason_short = (section_status.get("operator") or {}).get("reason", "unknown error")[:60]
-                attribution = (
-                    f" — epoch commit={commit_short} policy={epoch_short}"
-                    f"; operator diagnostics unavailable ({reason_short})"
-                )
-            else:
-                direct_skip = int(operator.get("direct_model_skip") or 0)
-                conviction_skip = int(operator.get("conviction_gate_skip") or 0)
-                debate_reject = int(operator.get("debate_not_confirmed") or 0)
-                defer_raw = operator.get("operator_defer")
-                defer = int(defer_raw) if defer_raw is not None else None
-                trade_intent = int(operator.get("operator_trade_intent") or 0)
-                direction_brake = int(operator.get("direction_brake") or 0)
-                total_skip = direct_skip + conviction_skip + debate_reject
-
-                # Optional distress bypass — only meaningful against the current
-                # epoch's direct model skips, so read reasons scoped to the current
-                # producer_commit rather than the raw 12h window.
-                commit_full = epoch.get("producer_commit")
-                if total_skip > 0 and commit_full:
-                    reason_rows = db.execute(
-                        "SELECT reasoning FROM pi_decisions "
-                        "WHERE action='skip' AND producer_commit = ? "
-                        "AND COALESCE(signal_source, 'market_observer') != 'system_cascade' "
-                        "AND julianday(created_at) >= julianday('now','-12 hours') "
-                        "ORDER BY julianday(created_at) DESC LIMIT 10",
-                        (commit_full,),
-                    ).fetchall()
-                    distress_kws = ("structural distress", "acute distress", "systematic distress")
-                    for r in reason_rows:
-                        if any(k in (r[0] or "").lower() for k in distress_kws):
-                            self_protecting = True
-                            break
-                    if not self_protecting and cfg.agent.bypass_distress_gate:
-                        for r in reason_rows:
-                            if "suppressed" in (r[0] or "").lower():
-                                self_protecting = True
-                                break
-
-                # Defer breakdown — market_quiet vs candidate_specific + oldest age +
-                # 12h defer_rate. Populated by pipeline_progress._active_defer_stats
-                # over live rows (defer_until > now); best-effort so an older running
-                # gateway with no active defers renders defer×N unmodified.
-                if defer is not None and active_defer_available:
-                    mq_raw = operator.get("operator_defer_market_quiet")
-                    cs_raw = operator.get("operator_defer_candidate_specific")
-                    mq = int(mq_raw) if mq_raw is not None else 0
-                    cs = int(cs_raw) if cs_raw is not None else 0
-                    defer_rate_raw = operator.get("defer_rate")
-                    defer_rate = float(defer_rate_raw) if defer_rate_raw is not None else 0.0
-                    oldest_seconds = operator.get("oldest_active_defer_age_seconds")
-                    if defer > 0 and (mq or cs or oldest_seconds is not None):
-                        age_min = (
-                            int(oldest_seconds // 60) if isinstance(oldest_seconds, int) else None
-                        )
-                        age_part = f",age={age_min}m" if age_min is not None else ""
-                        rate_part = f",rate={int(round(defer_rate * 100))}%"
-                        defer_suffix = f"/defer×{defer}(mq={mq}/cs={cs}{age_part}{rate_part})"
-                    else:
-                        defer_suffix = f"/defer×{defer}"
-                elif defer is None and not defer_available:
-                    defer_suffix = "/defer(unavailable)"
-                elif defer is None:
-                    # operator says defer is None but defer_events section succeeded —
-                    # this is the transitional case; treat as zero for compatibility
-                    defer_suffix = "/defer×0"
-                else:
-                    defer_suffix = f"/defer×{defer}"
-
-                attribution = (
-                    f" — epoch commit={commit_short} policy={epoch_short}"
-                    f"; operator (12h) direct_skip×{direct_skip}"
-                    f"/conviction_gate×{conviction_skip}"
-                    f"/debate_reject×{debate_reject}"
-                    f"{defer_suffix}"
-                    f"/direction_brake×{direction_brake}"
-                    f"/trade_intent×{trade_intent}"
-                )
-        except Exception:
-            pass
-        prop_desc = "none ever" if prop_age is None else _fmt_age(prop_age)
-        if self_protecting:
-            bypass_note = " (bypass_distress_gate active — deliberate skip)" if cfg.agent.bypass_distress_gate else ""
-            report.add("loop.profit", "info",
-                       f"System Operator self-protecting{bypass_note}: opportunities fresh ({_fmt_age(opp_age)});"
-                       f" newest proposal {prop_desc}{attribution}",
-                       "deliberate protective behavior — not a pipeline failure; "
-                       "System Operator sees adverse trading_context (low WR / recent SL streak)")
-        else:
-            report.add("loop.profit", "warn",
-                       f"PROPOSAL FLOW STALLED: opportunities fresh ({_fmt_age(opp_age)}) but "
-                       f"newest proposal {prop_desc}{attribution}",
-                       "opportunities flow but produce no proposals — inspect "
-                       "paper_trader_ranker scoring + System Operator decision inputs "
-                       "(see docs/archive/legacy/issues/archive/audits/MINIMUM_PROFIT_LOOP_AUDIT.md)")
-    elif prop_age is not None and prop_age < PROPOSAL_STALL_MIN:
-        report.add("loop.profit", "ok",
-                   f"proposal flow healthy — newest proposal {_fmt_age(prop_age)}; "
-                   "profitability not assessed")
-    else:
-        report.add("loop.profit", "info",
-                   f"opportunities {_fmt_age(opp_age)}, proposals {_fmt_age(prop_age) if prop_age else 'none'}")
 
 
 def _probe_skip_halt(report: Report) -> None:
@@ -3266,20 +3050,10 @@ def _probe_content_proposal_bias(report: Report) -> None:
     top_pct = top_n / total
     detail = f"24h proposals={total}, top: {top_dir}={top_n} ({top_pct:.0%})"
     if top_pct > 0.80:
-        try:
-            from aletheia.agent_shell.trading_decision import _proposal_direction_overheated
-            brake = _proposal_direction_overheated(top_dir, 70)
-        except Exception:
-            brake = None
-        if brake:
-            report.add("content.proposal_bias", "info",
-                       f"proposal-layer directional bias mitigated: {detail}; direction brake active",
-                       brake)
-        else:
-            report.add("content.proposal_bias", "warn",
-                       f"proposal-layer directional bias: {detail}",
-                       "System Operator proposes almost exclusively one direction (pre-risk) — check trading_decision "
-                       "for a stuck regime read or one-sided signal inputs")
+        report.add("content.proposal_bias", "warn",
+                   f"proposal-layer directional bias: {detail}",
+                   "Inspect Candidate source directions and compiled Entry Plans; "
+                   "historical proposal counts do not prove an active direction brake.")
     else:
         report.add("content.proposal_bias", "ok", detail)
 
@@ -4325,7 +4099,7 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_market_data_venue_health,
         _probe_collector_health,
         _probe_universe_market_coverage,
-        _probe_pending_candidate_market_coverage,
+        _probe_candidate_planning,
         _probe_orderbook,
         _probe_perp_structure,
         _probe_macro_signals,
@@ -4339,7 +4113,6 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_filter_evidence,
         _probe_signal_effectiveness,
         _probe_trading_loop,
-        _probe_profit_loop,
         _probe_skip_halt,
         _probe_round1,
         _probe_knowledge_flood,

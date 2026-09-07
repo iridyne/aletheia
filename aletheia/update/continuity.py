@@ -929,6 +929,10 @@ def capture_update_continuity_until_settled(
 
 def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dict[str, Any]:
     """Run the existing source updater with Observer pre/postflight verification."""
+    from aletheia.update import applier
+
+    if sys.platform == "linux" and not applier._is_packaged():
+        return {"applied": False, "mode": "source_release", "reason": "source_update_requires_auto"}
     total_started = time.monotonic()
     phase_name: str | None = None
     phase_started = total_started

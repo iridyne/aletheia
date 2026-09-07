@@ -166,7 +166,7 @@ def _build_audit_view(
     if clean_view == "funnel":
         from aletheia.analytics.trade_funnel import build_trade_funnel_audit, render_trade_funnel_audit
 
-        report = build_trade_funnel_audit(hours=hours, include_ranker_snapshot=False)
+        report = build_trade_funnel_audit(hours=hours)
         return report, render_trade_funnel_audit(report)
     if clean_view == "sizing":
         from aletheia.analytics.sizing_trace import build_sizing_trace_audit, render_sizing_trace_audit

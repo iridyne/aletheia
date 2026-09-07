@@ -32,8 +32,9 @@ from aletheia.storage.repositories import update_order
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 from aletheia.uta.compat import instrument_from_local, scope_from_local
-from aletheia.uta.manager import query_uta
+from aletheia.uta.manager import build_uta_registry, query_uta
 from aletheia.uta.models import (
+    UTAAccountIdentity,
     FillQuery,
     FundingLedgerQuery,
     OrderLifecycle,
@@ -823,8 +824,9 @@ def _write_filled_gap_event(
 class _UTAReconciliationProjection:
     """Temporary raw-row projection for the existing atomic materializer."""
 
-    def __init__(self, execution_mode: str) -> None:
+    def __init__(self, execution_mode: str, expected_account: UTAAccountIdentity) -> None:
         self.execution_mode = execution_mode
+        self.expected_account = expected_account
 
     @staticmethod
     def _fill_row(fill) -> dict:
@@ -854,6 +856,7 @@ class _UTAReconciliationProjection:
             self.execution_mode,
             "get_open_orders",
             OrderQuery(scope=scope_from_local("BTC/USDT", market_type or "usdt_futures").model_copy(update={"instrument": None})),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_open_orders_incomplete")
@@ -881,6 +884,7 @@ class _UTAReconciliationProjection:
             self.execution_mode,
             "get_fills",
             FillQuery(scope=scope),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_fills_incomplete")
@@ -907,6 +911,7 @@ class _UTAReconciliationProjection:
                 venue_order_id=order_id,
                 client_order_id=client_order_id,
             ),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
@@ -929,6 +934,7 @@ class _UTAReconciliationProjection:
                 venue_order_id=order_id,
                 client_order_id=client_order_id,
             ),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
@@ -944,6 +950,7 @@ class _UTAReconciliationProjection:
                 scope=scope_from_local(symbol, "usdt_futures"),
                 client_order_id=client_order_id,
             ),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_exact_order_incomplete")
@@ -968,6 +975,7 @@ class _UTAReconciliationProjection:
                     symbol, market_type, start_at=start, end_at=end
                 )
             ),
+            expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_funding_incomplete")
@@ -1001,7 +1009,7 @@ class _UTAReconciliationProjection:
 def _fetch_multibroker_evidence(order: dict):
     """Read normalized UTA fills and adapt them to the existing materializer."""
     mode = str(order.get("execution_mode") or "")
-    client = _UTAReconciliationProjection(mode)
+    client = _UTAReconciliationProjection(mode, UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]))
     return client.get_order_fills(
         order_id=str(order.get("exchange_order_id") or "") or None,
         client_order_id=str(order.get("client_order_id") or "") or None,
@@ -1014,7 +1022,8 @@ def _fetch_multibroker_evidence(order: dict):
 async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
     """Read the exact normalized UTA funding ledger for a complete close."""
     return await _UTAReconciliationProjection(
-        str(order.get("execution_mode") or "")
+        str(order.get("execution_mode") or ""),
+        UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]),
     ).get_funding_ledger(
         broker_id=str(order.get("execution_mode") or ""),
         symbol=str(request["position"]["symbol"]),
@@ -1023,45 +1032,6 @@ async def _fetch_multibroker_funding(order: dict, request: dict) -> dict:
         end_time_ms=int(request["end_time_ms"]),
     )
 
-def _ccxt_client_for_mode(mode: str):
-    """Compatibility projection over normalized UTA reports."""
-    return _UTAReconciliationProjection(mode)
-
-
-def _reconcile_ccxt_broker(mode: str, all_orders: list[dict]) -> dict:
-    """Legacy open-list diagnostic; absence never establishes a terminal state.
-
-    Exact order and Fill reports are consumed by :func:`reconcile`; this helper
-    remains only for its existing monitoring/tests and never mutates storage.
-    """
-    live = [
-        o for o in all_orders
-        if o.get("execution_mode") == mode
-        and o.get("status") in _OPEN_LOCAL_STATES
-        and o.get("exchange_order_id")
-    ]
-    if not live:
-        return {"checked": 0, "filled": 0, "errors": [], "unreconciled": []}
-    try:
-        rows = _run_coro(_ccxt_client_for_mode(mode).get_open_orders())
-    except Exception as e:
-        logger.warning("reconcile: %s get_open_orders failed: %s", mode, e)
-        return {"checked": len(live), "filled": 0, "errors": [f"{mode}: {e}"], "unreconciled": live}
-
-    open_ids = {
-        str(r.get("orderId") or r.get("id"))
-        for r in (rows or [])
-        if r.get("orderId") or r.get("id")
-    }
-    unresolved = [
-        order for order in live if str(order["exchange_order_id"]) not in open_ids
-    ]
-    return {
-        "checked": len(live),
-        "filled": 0,
-        "errors": [],
-        "unreconciled": unresolved,
-    }
 
 def reconcile() -> dict:
     """Reconcile unresolved exchange Orders and materialize proven fills."""
@@ -1088,7 +1058,25 @@ def reconcile() -> dict:
     materialized_fills = 0
     filled_gap_recovered = 0
     filled_gap_inconclusive = 0
-
+    checked = len(bitget_orders) + len(multibroker_orders) + len(filled_gap_orders)
+    filled_gap_checked = len(filled_gap_orders)
+    configured = {identity.execution_mode: identity for identity in build_uta_registry().configured_identities()}
+    for orders in (bitget_orders, multibroker_orders, filled_gap_orders):
+        verified = []
+        for order in orders:
+            try:
+                identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
+                if identity != configured.get(order["execution_mode"]):
+                    raise ValueError("uta_account_identity_mismatch")
+            except ValueError:
+                inconclusive += 1
+                if orders is filled_gap_orders:
+                    filled_gap_inconclusive += 1
+                errors.append(f"{order['id']}:uta_account_identity_unavailable")
+                _write_reconcile_event(order, state=str(order["status"]), reason="uta_account_identity_unavailable")
+                continue
+            verified.append(order)
+        orders[:] = verified
     # OKX and Binance expose actual per-fill economics through broker-owned
     # account-explicit private history readers. Native entry and close Orders
     # share the atomic materializer after normalization.
@@ -1259,7 +1247,7 @@ def reconcile() -> dict:
             continue
         try:
             if filled_gap_client is None:
-                filled_gap_client = _UTAReconciliationProjection("bitget_demo")
+                filled_gap_client = _UTAReconciliationProjection("bitget_demo", configured["bitget_demo"])
             rows = _response_rows(
                 _run_coro(
                     filled_gap_client.get_order_fills(
@@ -1359,7 +1347,7 @@ def reconcile() -> dict:
         ]
         if not mode_orders:
             continue
-        client = _UTAReconciliationProjection(execution_mode)
+        client = _UTAReconciliationProjection(execution_mode, configured[execution_mode])
         markets = sorted({str(order.get("market_type") or "spot") for order in mode_orders})
         open_rows: dict[str, list[dict]] = {}
         fill_rows: dict[str, list[dict]] = {}
@@ -1748,16 +1736,12 @@ def reconcile() -> dict:
             )
 
     return {
-        "checked": (
-            len(bitget_orders)
-            + len(multibroker_orders)
-            + len(filled_gap_orders)
-        ),
+        "checked": checked,
         "filled": filled,
         "partially_filled": partially_filled,
         "materialized_fills": materialized_fills,
         "inconclusive": inconclusive,
-        "filled_gap_checked": len(filled_gap_orders),
+        "filled_gap_checked": filled_gap_checked,
         "filled_gap_recovered": filled_gap_recovered,
         "filled_gap_inconclusive": filled_gap_inconclusive,
         "pending_close_cleared": len(pending_close_cleared_ids),

@@ -38,7 +38,7 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _authority(proposal_id: str, risk_id: str, *, order_type: str = "market"):
+def _authority(proposal_id: str, risk_id: str, *, order_type: str = "market", stop_price=None, take_profit=None):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 
@@ -51,6 +51,7 @@ def _authority(proposal_id: str, risk_id: str, *, order_type: str = "market"):
         quantity=0.01,
         price=100.0,
         execution_mode="binance_testnet",
+        stop_price=stop_price, take_profit=take_profit,
         status="approved",
     )
     repo.insert_trade_proposal(proposal)
@@ -66,22 +67,31 @@ def _authority(proposal_id: str, risk_id: str, *, order_type: str = "market"):
     ))
 
 
-def _identity():
+def _identity(mode="binance_testnet"):
+    venue = mode.split("_")[0]
     return UTAAccountIdentity(
-        account_id="binance_testnet",
-        execution_mode="binance_testnet",
-        venue="binance",
-        environment="testnet",
-        profile="binance_testnet",
-        credential_generation=1,
-        adapter_implementation="CCXTUTAAdapter",
-        adapter_version="1",
+        account_id=mode, execution_mode=mode, venue=venue,
+        environment="live" if mode.endswith("live_limited") else "testnet" if venue == "binance" else "demo",
+        profile=mode, credential_generation=1, adapter_implementation="CCXTUTAAdapter", adapter_version="1",
     )
 
 
+def _insert_bound_position(position):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+
+    entry = Order(symbol=position.symbol, market_type=position.market_type, direction=position.direction,
+                  order_type="market", quantity=position.quantity, price=position.entry_price,
+                  execution_mode=position.execution_mode, status="filled", source="adopted",
+                  uta_account_identity_json=_identity(position.execution_mode).model_dump_json())
+    repo.insert_order(entry)
+    position.order_id = entry.id
+    repo.insert_position(position)
+
+
 class _Adapter:
-    def __init__(self, submit):
-        self.identity = _identity()
+    def __init__(self, submit, mode="binance_testnet"):
+        self.identity = _identity(mode)
         self._submit = submit
         self.calls = 0
 
@@ -194,7 +204,7 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
         lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
     )
     proposal_id, risk_id = "proposal-protected", "risk-protected"
-    _authority(proposal_id, risk_id, order_type="limit")
+    _authority(proposal_id, risk_id, order_type="limit", stop_price=95.0, take_profit=110.0)
     captured = []
 
     async def submit(command):
@@ -403,7 +413,7 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
         execution_mode="binance_testnet",
         status="open",
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
     entered = threading.Event()
     release = threading.Event()
 
@@ -430,7 +440,7 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(close_position, position.id, "stop_loss")
         assert entered.wait(timeout=5)
-        [pending] = repo.list_orders(limit=10)
+        [pending] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
         winner = materialize_bitget_close(
             pending["id"], [_fill("venue-close", pending["client_order_id"])]
         )
@@ -464,7 +474,7 @@ def test_venue_rejected_close_stays_claimed_and_is_not_resubmitted(
         execution_mode="binance_testnet",
         status="open",
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
     async def reject(command):
         return SubmissionReport(
@@ -487,7 +497,7 @@ def test_venue_rejected_close_stays_claimed_and_is_not_resubmitted(
     with pytest.raises(RuntimeError, match="invalid_position_mode"):
         close_position(position.id, "stop_loss")
 
-    [stored_order] = repo.list_orders(limit=10)
+    [stored_order] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
     stored_position = repo.get_position(position.id)
     assert stored_order["status"] == "submission_rejected"
     assert stored_order["error_reason"] == "invalid_position_mode"
@@ -518,7 +528,7 @@ def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatc
         execution_mode="binance_testnet",
         status="open",
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
     async def reject(command):
         return SubmissionReport(
@@ -540,7 +550,7 @@ def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatc
     with pytest.raises(RuntimeError, match="invalid_position_mode"):
         close_position(position.id, "stop_loss")
 
-    [stored_order] = repo.list_orders(limit=10)
+    [stored_order] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
     stored_position = repo.get_position(position.id)
     assert stored_order["status"] == "error"
     assert stored_order["exchange_order_id"] is None
@@ -554,184 +564,37 @@ def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatc
     assert adapter.calls == 1
 
 
-def test_gateway_close_selector_requires_current_qualification(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
+def test_external_gateway_close_uses_qualified_account(tmp_path, monkeypatch, mode):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        execution_mode="binance_testnet",
-        status="open",
-    )
-    repo.insert_position(position)
-    selected = []
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.close_position",
-        lambda position_id, **_kwargs: selected.append(("uta", position_id))
-        or {"status": "submitted"},
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.binance_broker.close_testnet_position",
-        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
-        or {"status": "submitted"},
-    )
     from aletheia.execution import gateway
-
-    qualification_checks = []
-    monkeypatch.setattr(
-        gateway,
-        "_qualified_uta_mutation_selected",
-        lambda _cfg, mode: qualification_checks.append(mode) or True,
-    )
-
-    monkeypatch.setattr(
-        gateway,
-        "load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(
-                uta_read_boundary_for=lambda _mode: "uta_v1"
-            )
-        ),
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False,
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-
-    assert selected == [("uta", position.id), ("legacy", position.id)]
-    assert qualification_checks == ["binance_testnet"]
-
-
-def test_gateway_okx_close_selector_uses_same_qualified_coordinator(
-    tmp_path, monkeypatch
-):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        execution_mode="okx_demo",
-        status="open",
-    )
-    repo.insert_position(position)
-    selected = []
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.close_position",
-        lambda position_id, **_kwargs: selected.append(("uta", position_id))
-        or {"status": "submitted"},
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.okx_broker.close_okx_position",
-        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
-        or {"status": "submitted"},
-    )
-    from aletheia.execution import gateway
-
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-
-    assert selected == [("uta", position.id), ("legacy", position.id)]
-
-
-def test_gateway_bitget_close_selector_uses_same_qualified_coordinator(
-    tmp_path, monkeypatch
-):
-    _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
+    from aletheia.trust.uta_qualification import UTAQualificationError
 
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        execution_mode="bitget_demo",
-        status="open",
-    )
-    repo.insert_position(position)
-    selected = []
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.close_position",
-        lambda position_id, **_kwargs: selected.append(("uta", position_id))
-        or {"status": "submitted"},
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.bitget_broker.close_demo_position",
-        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
-        or {"status": "submitted"},
-    )
-    from aletheia.execution import gateway
+    position = Position(symbol="BTC/USDT", market_type="spot", direction="long", quantity=0.01,
+                        entry_price=100.0, execution_mode=mode, status="open")
+    _insert_bound_position(position)
+    async def submit(command):
+        assert command.expected_account == _identity(mode)
+        return _ack(command)
+    adapter = _Adapter(submit)
+    adapter.identity = _identity(mode)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter)
+    def reject(*_args, **_kwargs):
+        raise UTAQualificationError("qualification_identity_mismatch")
+    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", reject)
+    with pytest.raises(UTAQualificationError):
+        gateway.close_exchange_position(position.id, "operator_close")
+    assert adapter.calls == 0
+    assert repo.get_position(position.id)["pending_close_order_id"] is None
+    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
+    result = gateway.close_exchange_position(position.id, "operator_close")
+    assert result["closed"] is False
+    assert adapter.calls == 1
+    assert gateway.close_exchange_position(position.id, "operator_close")["already_pending"] is True
+    assert adapter.calls == 1
 
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-
-    assert selected == [("uta", position.id), ("legacy", position.id)]
-
-
-def test_gateway_live_close_selector_uses_same_qualified_coordinator(
-    tmp_path, monkeypatch
-):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        execution_mode="okx_live_limited",
-        status="open",
-    )
-    repo.insert_position(position)
-    selected = []
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.close_position",
-        lambda position_id, **_kwargs: selected.append(("uta", position_id))
-        or {"status": "submitted"},
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.okx_broker.close_okx_position",
-        lambda position_id, **_kwargs: selected.append(("legacy", position_id))
-        or {"status": "submitted"},
-    )
-    from aletheia.execution import gateway
-
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: True
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-    monkeypatch.setattr(
-        gateway, "_qualified_uta_mutation_selected", lambda _cfg, _mode: False
-    )
-    gateway.close_exchange_position(position.id, "operator_close")
-
-    assert selected == [("uta", position.id), ("legacy", position.id)]
 
 
 def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypatch):
@@ -751,7 +614,7 @@ def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypa
         execution_mode="okx_demo",
         status="open",
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
     calls = []
 
     async def submit(command):
@@ -761,7 +624,7 @@ def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypa
         calls.append(command.purpose)
         return _ack(command, f"venue-{command.purpose}")
 
-    adapter = _Adapter(submit)
+    adapter = _Adapter(submit, "okx_demo")
     monkeypatch.setattr(
         "aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter
     )
@@ -777,7 +640,7 @@ def test_okx_protection_commits_children_before_each_uta_send(tmp_path, monkeypa
         "sl": "venue-protective_stop",
         "tp": "venue-take_profit",
     }
-    assert {row["status"] for row in repo.list_orders(limit=10)} == {"submitted"}
+    assert {row["status"] for row in repo.list_orders(limit=10) if row["position_id"] == position.id} == {"submitted"}
 
 
 def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkeypatch):
@@ -792,7 +655,7 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
         execution_mode="okx_demo", status="open",
         exchange_tpsl_order_id='{"sl":"old-sl","tp":"old-tp"}',
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
     events = []
 
     class Adapter(_Adapter):
@@ -811,7 +674,7 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
 
     monkeypatch.setattr(
         "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: Adapter(submit),
+        lambda _mode: Adapter(submit, "okx_demo"),
     )
 
     assert replace_protective_stop(position.id, 95.0) is True
@@ -819,45 +682,94 @@ def test_okx_stop_replacement_cancels_old_before_persisting_new(tmp_path, monkey
     assert repo.get_position(position.id)["exchange_tpsl_order_id"] == '{"sl": "new-sl", "tp": "old-tp"}'
 
 
-def test_gateway_stale_close_qualification_calls_no_backend(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
+def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, monkeypatch, mode):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import coordinator, gateway
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import CancelOrderCommand
+    from aletheia.uta.profiles import (BinanceTestnetProfile, BinanceLiveProfile, OKXDemoProfile,
+                                     OKXLiveProfile, BitgetUTAV3Profile, BitgetUTAV3LiveProfile)
+    from tests.uta.test_ccxt_adapter import FakeExchange, _identity as profile_identity, _install
+    from tests.execution_authority import seed_order_authority
+
+    profile_type = dict(binance_testnet=BinanceTestnetProfile, binance_live_limited=BinanceLiveProfile,
+                        okx_demo=OKXDemoProfile, okx_live_limited=OKXLiveProfile,
+                        bitget_demo=BitgetUTAV3Profile, bitget_live_limited=BitgetUTAV3LiveProfile)[mode]
+    credentials = dict(api_key="key", secret="secret")
+    if not mode.startswith("binance"):
+        credentials["passphrase"] = "passphrase"
+    profile = profile_type(**credentials)
+    identity = profile_identity(profile).model_copy(update={"execution_mode": mode})
+    exchange = FakeExchange()
+    async def create_order(symbol, order_type, side, amount, price, params):
+        exchange.events.append(("create_order", side, params))
+        return dict(id=f"venue-{len(exchange.events)}", symbol=symbol, side=side, type=order_type,
+                    amount=amount, filled="0", remaining=amount, status="open")
+    exchange.create_order = create_order
+    exchange.cancel_response = {"id": "entry-venue", "status": "canceled"}
+    _install(monkeypatch, exchange)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: CCXTUTAAdapter(identity, profile))
+    proposal, decision = seed_order_authority(
+        proposal_id="six-entry", risk_decision_id="six-risk", symbol="BTC/USDT",
+        market_type="usdt_futures", direction="long", order_type="market", quantity=0.01,
+        price=100.0, execution_mode=mode,
+    )
+    result = coordinator.execute_order(proposal_id=proposal.id, risk_decision_id=decision.id,
+                                      symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+                                      order_type="market", quantity=0.01, price=100.0, execution_mode=mode,
+                                      leverage=2)
+    order = repo.get_order(result["order_id"])
+    assert order["status"] == "submitted"
+    assert order["proposal_id"] == proposal.id and order["risk_decision_id"] == decision.id
+    assert UTAAccountIdentity.model_validate_json(order["uta_account_identity_json"]) == identity
+    cancel = CancelOrderCommand(command_id="cancel-six", expected_account=identity,
+                                instrument=instrument_from_local("BTC/USDT", "usdt_futures"),
+                                purpose="entry", target_venue_order_id=order["exchange_order_id"], reason="test")
+    assert coordinator.cancel_order(cancel).evidence is CommandEvidence.ACKNOWLEDGED
+    materialized = materialize_bitget_entry(order["id"], [_fill(order["exchange_order_id"], proposal.id)])
+    assert materialized.state == "filled"
+    [position] = repo.list_positions(status="open")
+    repo.update_position(position["id"], stop_price=90.0, take_profit_price=120.0)
+    protection = gateway.place_exchange_protection(position["id"])
+    if mode.startswith("binance"):
+        assert protection == {}  # existing profile explicitly lacks trigger orders
+    else:
+        assert set(protection) == {"sl", "tp"}
+        assert gateway.replace_exchange_protective_stop(position["id"], 95.0) is True
+    closed = gateway.close_exchange_position(position["id"], "operator_close")
+    assert closed["closed"] is False
+    assert repo.get_position(position["id"])["status"] == "open"
+    assert repo.get_order(closed["order_id"])["uta_account_identity_json"] == order["uta_account_identity_json"]
+    previous_events = list(exchange.events)
+    drifted = identity.model_copy(update={"credential_generation": identity.credential_generation + 1})
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: CCXTUTAAdapter(drifted, profile))
+    with pytest.raises(ValueError, match="uta_account_identity_mismatch"):
+        coordinator.cancel_order(cancel)
+    assert exchange.events == previous_events
+
+@pytest.mark.parametrize("exposure", ["unresolved_order", "open_position"])
+def test_unbound_historical_exposure_blocks_new_entry_without_rebinding(tmp_path, monkeypatch, exposure):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-    from aletheia.trust.uta_qualification import UTAQualificationError
-
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.01,
-        entry_price=100.0,
-        execution_mode="binance_testnet",
-        status="open",
-    )
-    repo.insert_position(position)
-    from aletheia.execution import gateway
-
-    monkeypatch.setattr(
-        gateway,
-        "_qualified_uta_mutation_selected",
-        lambda _cfg, _mode: (_ for _ in ()).throw(
-            UTAQualificationError("qualification_identity_mismatch")
-        ),
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.close_position",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("UTA backend must not be called")
-        ),
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.binance_broker.close_testnet_position",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("legacy backend must not be called")
-        ),
-    )
-
-    with pytest.raises(UTAQualificationError) as caught:
-        gateway.close_exchange_position(position.id, "operator_close")
-
-    assert caught.value.reason_code == "qualification_identity_mismatch"
+    from aletheia.storage.models import Order, Position
+    if exposure == "unresolved_order":
+        historical = Order(symbol="ETH/USDT", market_type="spot", direction="long", order_type="market", quantity=1, execution_mode="binance_testnet", source="adopted", status="submission_unknown")
+        repo.insert_order(historical)
+        before = repo.get_order(historical.id)
+    else:
+        historical = Position(symbol="ETH/USDT", market_type="spot", direction="long", quantity=1, entry_price=100, execution_mode="binance_testnet", source="adopted")
+        repo.insert_position(historical)
+        before = repo.get_position(historical.id)
+    _authority("new-proposal", "new-risk")
+    async def submit(command):
+        pytest.fail("unbound historical exposure permitted external submission")
+    adapter = _Adapter(submit)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter)
+    with pytest.raises(ValueError):
+        _execute("new-proposal", "new-risk")
+    assert adapter.calls == 0
+    assert (repo.get_order(historical.id) if exposure == "unresolved_order" else repo.get_position(historical.id)) == before

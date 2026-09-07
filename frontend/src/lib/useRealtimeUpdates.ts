@@ -83,10 +83,6 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   heartbeats: [
     ['operator-status'],
   ],
-  runtime_events: [
-    ['operator-runtime'],
-    ['operator-runtime-events'],
-  ],
 
   // ── Research / signals ────────────────────────────────────────────────────
   serenity_runs: [

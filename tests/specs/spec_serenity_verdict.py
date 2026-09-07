@@ -23,8 +23,6 @@ _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 _MODELS = _ROOT / "aletheia" / "storage" / "models.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_TRADING_CONTEXT = _ROOT / "aletheia" / "agent_shell" / "trading_context.py"
-_TRADING_DECISION = _ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
 
 
 # ---------------------------------------------------------------------------
@@ -68,43 +66,6 @@ def test_research_worker_prompt_includes_verdict():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "SV-S03", _CONTRACT, "§3 TradingDecision.bear_case field exists", "L2a",
-        "trading_decision.py TradingDecision dataclass has bear_case field (str) "
-        "so System Operator decisions carry explicit counter-arguments",
-    ),
-)
-def test_trading_decision_bear_case_field():
-    from aletheia.agent_shell.trading_decision import (
-        TradingDecision,
-        _DECISION_SCHEMA,
-        _build_assessment_prompt,
-        _parse_decision,
-    )
-
-    assert "bear_case" in TradingDecision.__dataclass_fields__
-    assert "bear_case" in _DECISION_SCHEMA["properties"]
-    assert "bear_case" in _DECISION_SCHEMA["required"]
-    parsed = _parse_decision({
-        "action": "trade",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "market_type": "spot",
-        "conviction": 70,
-        "reasoning": "breakout",
-        "bear_case": "failed breakout traps late buyers",
-        "stop_price": 98.0,
-        "take_profit": 104.0,
-        "parameter_rationale": {
-            key: f"reason for {key}"
-            for key in (
-                "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage"
-            )
-        },
-    })
-    assert parsed.bear_case == "failed breakout traps late buyers"
-    assert "bear_case" in _build_assessment_prompt({})
 
 
 # ---------------------------------------------------------------------------
@@ -216,55 +177,8 @@ def test_pipeline_persists_verdict():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "SV-C01", _CONTRACT, "§5 trading_context Layer 3 exposes verdict", "L2c",
-        "agent_shell/trading_context.py Layer 3 serenity_opps block includes "
-        "'verdict' key (parsed from verdict_json) so System Operator can read it",
-    ),
-)
-def test_trading_context_exposes_verdict():
-    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    assert "verdict" in src, (
-        "trading_context.py Layer 3 serenity block does not include 'verdict' field — "
-        "System Operator cannot see forced verdict output"
-    )
 
 
 # ---------------------------------------------------------------------------
 # P1 (2026-06-28, AI Berkshire belief decomposition): key_assumptions
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "SV-S04", _CONTRACT, "§6 TradingDecision.key_assumptions field exists", "L2a",
-        "TradingDecision dataclass in trading_decision.py has key_assumptions field "
-        "(list[str]) so the PI decision carries the critical assumptions it depends on",
-        status="implemented",
-    ),
-)
-def test_trading_decision_key_assumptions_field():
-    import inspect
-    from aletheia.agent_shell.trading_decision import TradingDecision
-    fields = {f.name for f in TradingDecision.__dataclass_fields__.values()}
-    assert "key_assumptions" in fields, (
-        "TradingDecision missing key_assumptions field — PI decisions cannot carry "
-        "structured assumption list (P1 AI Berkshire belief decomposition)"
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "SV-B02", _CONTRACT, "§6 PI decision schema includes key_assumptions", "L2b",
-        "trading_decision.py _DECISION_SCHEMA includes 'key_assumptions' array property "
-        "so the LLM is instructed to produce it, and _parse_decision reads it",
-        status="implemented",
-    ),
-)
-def test_pi_schema_includes_key_assumptions():
-    src = _TRADING_DECISION.read_text(encoding="utf-8")
-    assert "key_assumptions" in src, (
-        "trading_decision.py does not include key_assumptions in _DECISION_SCHEMA — "
-        "PI LLM will not produce structured assumptions"
-    )

@@ -70,8 +70,6 @@ def uta_profile_qualified(execution_mode: str, cfg, *, adapter=None) -> tuple[bo
 
 def require_uta_mutation_qualification(execution_mode: str, cfg=None, *, adapter=None) -> None:
     cfg = cfg or load_config()
-    if cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1":
-        raise UTAQualificationError("uta_mutation_boundary_inactive")
     if adapter is None:
         qualified, reason = uta_profile_qualified(execution_mode, cfg)
     else:

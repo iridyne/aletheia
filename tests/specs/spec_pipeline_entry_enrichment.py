@@ -32,7 +32,7 @@ from tests.specs.spec_pipeline_stop_propagation import (
     _patch_private_fill_history,
     _materialize_exchange_result,
     _setup_db,
-    _stub_exchange_secrets,
+    _stub_uta_execution,
 )
 
 
@@ -70,21 +70,18 @@ def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
         "entry_fee and slippage_cost onto the new Position (okx/binance/bitget) — none NULL",
     ),
 )
-@pytest.mark.parametrize("label,broker_path,client_path,exec_mode", _BROKERS)
-def test_broker_open_stamps_entry_metadata(
-    tmp_path, monkeypatch, label, broker_path, client_path, exec_mode
-):
+@pytest.mark.parametrize("exec_mode", _BROKERS)
+def test_broker_open_stamps_entry_metadata(tmp_path, monkeypatch, exec_mode):
+    label = exec_mode
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, client_path, fill_price=60000.0)
-    _patch_private_fill_history(
-        monkeypatch, broker_path, client_path, fill_price=60000.0
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=60000.0)
+    _patch_private_fill_history(monkeypatch, fill_price=60000.0)
     _patch_enrichment_lookups(monkeypatch, btc=60000.0, regime="risk_on")
 
     from aletheia.storage import repositories as repo
 
-    broker = __import__(broker_path, fromlist=["execute_live_order"])
+    from aletheia.execution import coordinator
     proposal_id = f"p-enrich-{label}"
     risk_decision_id = f"rd-enrich-{label}"
     seed_order_authority(
@@ -105,18 +102,16 @@ def test_broker_open_stamps_entry_metadata(
         }),
     )
     # requested price 59950 vs fill 60000 → slippage_cost = 50 * 0.01 = 0.5
-    result = broker.execute_live_order(
-        proposal_id=proposal_id,
-        risk_decision_id=risk_decision_id,
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        order_type="market",
-        quantity=0.01,
-        price=59950.0,
-        execution_mode=exec_mode,
-        leverage=10,
-    )
+    result = coordinator.execute_order(proposal_id=proposal_id,
+    risk_decision_id=risk_decision_id,
+    symbol="BTC/USDT",
+    market_type="usdt_futures",
+    direction="long",
+    order_type="market",
+    quantity=0.01,
+    price=59950.0,
+    execution_mode=exec_mode,
+    leverage=10,)
 
     position_id = _materialize_exchange_result(result)
     pos = repo._select_one("positions", position_id)
@@ -150,14 +145,9 @@ def test_broker_open_stamps_entry_metadata(
 )
 def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=1551.57)
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.okx_broker",
-        "aletheia.exchanges.okx.client",
-        fill_price=1551.57,
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=1551.57)
+    _patch_private_fill_history(monkeypatch, fill_price=1551.57,)
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.execution.gateway import submit_proposal
@@ -205,11 +195,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
 # local-only close that would desync the demo exchange + fabricate the exit price).
 # okx_demo is the active experiment path. (paper_internal is the only mode allowed to
 # close purely locally; *_live_limited is human-only — covered separately in -04.)
-_CLOSE_ROUTED = [
-    ("bitget_demo", "aletheia.execution.bitget_broker", "aletheia.exchanges.bitget.client", "bitget_demo"),
-    ("binance_testnet", "aletheia.execution.binance_broker", "aletheia.exchanges.binance.client", "binance_testnet"),
-    ("okx_demo", "aletheia.execution.okx_broker", "aletheia.exchanges.okx.client", "okx_demo"),
-]
+_CLOSE_ROUTED = ["bitget_demo", "binance_testnet", "okx_demo"]
 
 
 @spec_claim(
@@ -219,23 +205,20 @@ _CLOSE_ROUTED = [
         "order (not a local-only close), so the exchange book never desyncs",
     ),
 )
-@pytest.mark.parametrize("label,broker_path,client_path,exec_mode", _CLOSE_ROUTED)
-def test_close_routes_through_exchange(
-    tmp_path, monkeypatch, label, broker_path, client_path, exec_mode
-):
+@pytest.mark.parametrize("exec_mode", _CLOSE_ROUTED)
+def test_close_routes_through_exchange(tmp_path, monkeypatch, exec_mode):
+    label = exec_mode
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, client_path, fill_price=100.0)
-    _patch_private_fill_history(
-        monkeypatch, broker_path, client_path, fill_price=100.0
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=100.0)
+    _patch_private_fill_history(monkeypatch, fill_price=100.0)
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.position_manager import close_position_routed
 
-    broker = __import__(broker_path, fromlist=["execute_live_order"])
+    from aletheia.execution import coordinator
     proposal_id = f"p-close-{label}"
     risk_decision_id = f"rd-close-{label}"
     seed_order_authority(
@@ -249,12 +232,10 @@ def test_close_routes_through_exchange(
         price=100.0,
         execution_mode=exec_mode,
     )
-    opened = broker.execute_live_order(
-        proposal_id=proposal_id, risk_decision_id=risk_decision_id,
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-        order_type="market", quantity=0.01, price=100.0,
-        execution_mode=exec_mode, leverage=10,
-    )
+    opened = coordinator.execute_order(proposal_id=proposal_id, risk_decision_id=risk_decision_id,
+    symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+    order_type="market", quantity=0.01, price=100.0,
+    execution_mode=exec_mode, leverage=10,)
     position_id = _materialize_exchange_result(opened)
 
     # Route the close. A local-only close would NOT create a second (close) order row.
@@ -295,20 +276,15 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
     chokepoint; an autonomous caller (allow_live=False default) must NOT place a real
     live exchange order (CLAUDE.md: never place live orders autonomously)."""
     _setup_db(tmp_path, monkeypatch)
-    _stub_exchange_secrets(monkeypatch)
-    _patch_filled_place_order(monkeypatch, "aletheia.exchanges.okx.client", fill_price=100.0)
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.okx_broker",
-        "aletheia.exchanges.okx.client",
-        fill_price=100.0,
-    )
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=100.0)
+    _patch_private_fill_history(monkeypatch, fill_price=100.0,)
     _patch_enrichment_lookups(monkeypatch)
 
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.execution.okx_broker import execute_live_order
+    from aletheia.execution.coordinator import execute_order
 
     seed_order_authority(
         proposal_id="p-live-guard",
@@ -321,12 +297,10 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
         price=100.0,
         execution_mode="okx_live_limited",
     )
-    opened = execute_live_order(
-        proposal_id="p-live-guard", risk_decision_id="rd-live-guard",
-        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-        order_type="market", quantity=0.01, price=100.0,
-        execution_mode="okx_live_limited", leverage=10,
-    )
+    opened = execute_order(proposal_id="p-live-guard", risk_decision_id="rd-live-guard",
+    symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+    order_type="market", quantity=0.01, price=100.0,
+    execution_mode="okx_live_limited", leverage=10,)
     position_id = _materialize_exchange_result(opened)
 
     # Default (autonomous) path MUST refuse — no exchange close order placed.

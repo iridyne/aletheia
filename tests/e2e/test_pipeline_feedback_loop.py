@@ -59,58 +59,6 @@ class TestClosedTradeToKnowledge:
         assert win_rate == 0.5  # 2 wins out of 4
 
 
-class TestKnowledgeRankerBoundary:
-    """Knowledge proposals stay neutral until their Learning path is measurable."""
-
-    def test_unmeasured_lesson_penalty_remains_at_zero_delta(self, monkeypatch):
-        """A proposed negative lesson is traced but cannot silently change ranker score."""
-        from aletheia.agents import paper_trader_ranker as ranker
-        from aletheia.regime.detector import MarketRegime
-
-        opp = {
-            "id": "opp-learning-boundary",
-            "symbol": "SOL/USDT",
-            "direction_bias": "long",
-            "confidence": "high",
-            "confidence_score": 78,
-            "scanner_family": "momentum",
-        }
-        monkeypatch.setattr(
-            ranker,
-            "get_current_regime",
-            lambda: MarketRegime(state="bull", confidence=0.8),
-        )
-        monkeypatch.setattr(
-            ranker,
-            "_ranker_entry_mark",
-            lambda _opp: {
-                "price": 100.0,
-                "observed_at": datetime.now(timezone.utc).isoformat(),
-                "venue": "bitget",
-            },
-        )
-        monkeypatch.setattr(ranker, "_memo_scoring", lambda *_: 0.0)
-
-        monkeypatch.setattr(ranker, "_lesson_penalty", lambda *_: -12.0)
-        trace = []
-        proposed_score = ranker._compute_trade_score(
-            opp, None, {"status": "watch"}, "high",
-            direction="long", learning_trace=trace,
-        )
-
-        monkeypatch.setattr(ranker, "_lesson_penalty", lambda *_: 0.0)
-        baseline_score = ranker._compute_trade_score(
-            opp, None, {"status": "watch"}, "high", direction="long",
-        )
-        assert proposed_score == baseline_score
-        case_trace = next(
-            row for row in trace
-            if row["path_id"] == "ranker_case_score"
-        )
-        assert case_trace["proposed_delta"] == -12.0
-        assert case_trace["actual_delta"] == 0.0
-        assert case_trace["authority_applied"] is False
-        assert case_trace["reason"] == "baseline:experiment_stage_not_paper"
 
 
 class TestFamilyScorecardAccumulates:

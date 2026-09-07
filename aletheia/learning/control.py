@@ -39,7 +39,6 @@ AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
     "filter_controller_observe",
     "persona_rollout",
     "learning_startup_catchup",
-    "learning_lifecycle_controller",
 })
 
 DAILY_LEARNING_SCHEDULES: dict[str, tuple[int, int]] = {
@@ -59,9 +58,6 @@ _SCHEDULE_KEYS: dict[str, str] = {
     "filter_controller_observe": "config:controller.observe_interval_hours",
     "persona_rollout": "interval:8h",
     "learning_startup_catchup": "startup:retry",
-    "learning_contribution_evaluator": "interval:config.learning.evaluation_interval_minutes",
-    "learning_lifecycle_controller": "interval:config.learning.evaluation_interval_minutes",
-    "learning_lifecycle_audit_reconciler": "interval:5m",
 }
 
 _INTERVAL_HOURS = {
@@ -207,14 +203,6 @@ def job_health_view(
 
 
 def _next_due(job_id: str, now: datetime) -> str | None:
-    if job_id == "learning_lifecycle_audit_reconciler":
-        return (now + timedelta(minutes=5)).isoformat()
-    if job_id in {"learning_contribution_evaluator", "learning_lifecycle_controller"}:
-        try:
-            minutes = max(15, int(load_config().learning.evaluation_interval_minutes))
-        except Exception:
-            minutes = 60
-        return (now + timedelta(minutes=minutes)).isoformat()
     if job_id in DAILY_LEARNING_SCHEDULES:
         hour, minute = DAILY_LEARNING_SCHEDULES[job_id]
         local_now = now.astimezone(_CST)
@@ -237,38 +225,6 @@ def current_daily_window(job_id: str, *, now: datetime | None = None) -> str | N
     due = datetime.combine(current.date(), time(hour, minute), tzinfo=_CST)
     window_date = current.date() if current >= due else current.date() - timedelta(days=1)
     return f"{job_id}:{window_date.isoformat()}"
-
-
-def current_measurement_window(job_id: str, *, now: datetime | None = None) -> str:
-    """Return a bounded UTC-hour identity for a successful measurement."""
-    current = (now or utc_now()).astimezone(timezone.utc)
-    return f"{job_id}:{current.strftime('%Y-%m-%dT%H')}"
-
-
-def measurement_catchup_due(
-    job_id: str,
-    *,
-    now: datetime | None = None,
-    persist_config_migrations: bool = True,
-) -> bool:
-    """Use the durable cadence deadline for restart recovery when enabled."""
-    try:
-        cfg = (
-            load_config()
-            if persist_config_migrations
-            else load_config(persist_migrations=False)
-        )
-        if not bool(cfg.learning.contribution_evaluation_enabled):
-            return False
-    except Exception:
-        return False
-    health = get_learning_job_health(job_id)
-    if not health.input_watermark:
-        return True
-    next_due = _parse_timestamp(health.next_due_at)
-    if next_due is None:
-        return True
-    return (now or utc_now()).astimezone(timezone.utc) >= next_due
 
 
 def daily_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
@@ -462,93 +418,3 @@ def record_learning_job_skipped(job_id: str, reason: str) -> None:
         "last_error": None,
         "updated_at": now.isoformat(),
     }))
-
-
-def record_measurement_job_started(job_id: str) -> None:
-    """Persist health for a read-only measurement job outside autonomous gates."""
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    upsert_job_health(health.model_copy(update={
-        "last_started_at": now.isoformat(), "status": "running", "last_error": None,
-        "updated_at": now.isoformat(),
-    }))
-
-
-def record_measurement_job_success(job_id: str) -> None:
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    upsert_job_health(health.model_copy(update={
-        "last_succeeded_at": now.isoformat(),
-        "next_due_at": _next_due(job_id, now),
-        "input_watermark": current_measurement_window(job_id, now=now),
-        "consecutive_failures": 0, "status": "healthy", "last_error": None,
-        "updated_at": now.isoformat(),
-    }))
-
-
-def record_measurement_job_partial(job_id: str, error: str) -> None:
-    """Persist a completed cycle that failed for one or more experiments."""
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    upsert_job_health(health.model_copy(update={
-        "next_due_at": _next_due(job_id, now),
-        "consecutive_failures": health.consecutive_failures + 1,
-        "status": "degraded", "last_error": str(error)[:1000],
-        "last_failed_at": now.isoformat(),
-        "last_failure_reason": str(error)[:1000],
-        "updated_at": now.isoformat(),
-    }))
-
-
-def record_measurement_job_failure(job_id: str, error: str) -> None:
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    upsert_job_health(health.model_copy(update={
-        "consecutive_failures": health.consecutive_failures + 1,
-        "status": "failed", "last_error": str(error)[:1000],
-        "last_failed_at": now.isoformat(),
-        "last_failure_reason": str(error)[:1000],
-        "updated_at": now.isoformat(),
-    }))
-
-
-def record_measurement_job_skipped(job_id: str, reason: str) -> None:
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    upsert_job_health(health.model_copy(update={
-        "status": reason, "last_error": None, "updated_at": now.isoformat(),
-    }))
-
-
-def record_lifecycle_audit_result(*, pending: int, failed: int) -> None:
-    """Persist the lifecycle JSONL outbox state without claiming a watermark."""
-    job_id = "learning_lifecycle_audit_reconciler"
-    now = utc_now()
-    health = get_learning_job_health(job_id)
-    if pending > 0:
-        reason = (
-            f"audit_append_failed:{failed};pending:{pending}"
-            if failed > 0
-            else f"audit_backlog_pending:{pending}"
-        )
-        updates = {
-            "backlog_count": pending,
-            "next_due_at": _next_due(job_id, now),
-            "consecutive_failures": health.consecutive_failures + 1,
-            "status": "degraded",
-            "last_error": reason,
-            "last_failed_at": now.isoformat(),
-            "last_failure_reason": reason,
-            "updated_at": now.isoformat(),
-        }
-    else:
-        updates = {
-            "backlog_count": 0,
-            "last_succeeded_at": now.isoformat(),
-            "next_due_at": _next_due(job_id, now),
-            "consecutive_failures": 0,
-            "status": "healthy",
-            "last_error": None,
-            "updated_at": now.isoformat(),
-        }
-    upsert_job_health(health.model_copy(update=updates))

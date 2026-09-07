@@ -12,8 +12,6 @@ from aletheia.data.symbols import InstrumentId
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     AuditEvent,
-    ConditionalEntryAuthorization,
-    UniverseSetup,
 )
 from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
 from aletheia.trading.entry_plan import EntryPlan
@@ -25,7 +23,6 @@ from aletheia.universe.fast_stream import (
 from aletheia.universe.fast_trigger import (
     TriggerEngine,
     TriggerPolicy,
-    materialize_trigger,
     validate_fast_trigger_stream,
 )
 _MOMENTUM_TRIGGER = "momentum-retrace-reclaim"
@@ -317,90 +314,6 @@ async def reconfigure_fast_trigger_watch(cfg, loop: asyncio.AbstractEventLoop) -
     status["configured_mode"] = cfg.fast_trigger.mode
     status["task_started"] = task is not None
     return status
-
-
-async def _load_watchers(
-    cfg,
-    existing: dict[str, TriggerEngine] | None = None,
-) -> tuple[dict[str, UniverseSetup], dict[str, TriggerEngine]]:
-    if cfg.fast_trigger.mode == "off":
-        return {}, {}
-    await asyncio.to_thread(repo.expire_universe_setups)
-    rows = await asyncio.to_thread(repo.list_watchable_universe_setups, int(cfg.fast_trigger.max_setups))
-    setups: dict[str, UniverseSetup] = {}
-    engines: dict[str, TriggerEngine] = {}
-    for row in rows:
-        setup = UniverseSetup.model_validate(row)
-        if await asyncio.to_thread(
-            repo.has_current_entry_plan_for_instrument,
-            setup.venue,
-            setup.symbol,
-            setup.market_type,
-            setup.direction,
-        ):
-            continue
-        authorization_row = await asyncio.to_thread(repo.get_conditional_entry_authorization, setup.id)
-        if authorization_row is None:
-            continue
-        authorization = ConditionalEntryAuthorization.model_validate(authorization_row)
-        if datetime.fromisoformat(authorization.valid_until.replace("Z", "+00:00")).astimezone(
-            timezone.utc
-        ) <= datetime.now(timezone.utc):
-            await asyncio.to_thread(
-                repo.transition_universe_setup,
-                setup.id,
-                expected_states=(setup.state,),
-                state="expired",
-            )
-            continue
-        if authorization.trigger_spec_hash != setup.trigger_spec_hash:
-            await asyncio.to_thread(
-                repo.transition_universe_setup,
-                setup.id,
-                expected_states=(setup.state,),
-                state="invalidated",
-            )
-            continue
-        if (
-            authorization.authorized_mode != cfg.fast_trigger.mode
-            or authorization.direction != setup.direction
-            or authorization.entry_zone != setup.entry_zone
-            or authorization.invalidation_price != setup.invalidation_price
-            or fast_market_data_unavailability_reason(
-                cfg,
-                setup.venue,
-                setup.market_type,
-            )
-            is not None
-        ):
-            await asyncio.to_thread(
-                repo.transition_universe_setup,
-                setup.id,
-                expected_states=(setup.state,),
-                state="invalidated",
-            )
-            continue
-        instrument = InstrumentId.from_parts(setup.venue, setup.symbol, setup.market_type)
-        if existing is not None and setup.id in existing:
-            setups[setup.id] = setup
-            engines[setup.id] = existing[setup.id]
-            continue
-        engine = TriggerEngine(
-            instrument=instrument,
-            direction=setup.direction,
-            breakout_level=setup.breakout_level,
-            pullback_band=tuple(json.loads(setup.pullback_band)),
-            entry_zone=tuple(json.loads(setup.entry_zone)),
-            policy=TriggerPolicy(
-                max_spread_bps=authorization.max_spread_bps,
-                min_depth_10bps_usd=authorization.min_depth_10bps_usd,
-            ),
-        )
-        await _prewarm_market_structure(engine, instrument)
-        engine.state = setup.state
-        setups[setup.id] = setup
-        engines[setup.id] = engine
-    return setups, engines
 
 
 async def _handle_entry_plan_integrity_failure(
@@ -743,11 +656,10 @@ async def _load_entry_plan_watchers(
 
 
 def _watched_instruments(
-    setup_engines: dict[str, TriggerEngine],
     plan_engines: dict[str, TriggerEngine | MomentumTriggerEngine],
     plans: dict[str, EntryPlan],
 ) -> set[InstrumentId]:
-    instruments = {engine.instrument for engine in (*setup_engines.values(), *plan_engines.values())}
+    instruments = {engine.instrument for engine in plan_engines.values()}
     instruments.update(
         InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
         for plan in plans.values()
@@ -815,10 +727,7 @@ def _monitoring_ready(stream, instrument: InstrumentId, channels: tuple[str, ...
     return stream.monitoring_state(instrument, channels)["state"] == "ready"
 
 
-def _confirm_ready_engines(stream, engines, plan_engines, plans) -> None:
-    for engine in engines.values():
-        if _monitoring_ready(stream, engine.instrument, ("quote", "trade", "depth")):
-            engine.confirm_subscription()
+def _confirm_ready_engines(stream, plan_engines, plans) -> None:
     for plan_id, engine in plan_engines.items():
         plan = plans.get(plan_id)
         if plan is not None and _monitoring_ready(
@@ -890,15 +799,14 @@ async def _watch_loop(cfg) -> None:
         stream = fast_market_stream_for_config(cfg)
         event_task: asyncio.Task | None = None
         try:
-            setups, engines = await _load_watchers(cfg)
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
-            instruments = _watched_instruments(engines, plan_engines, plans)
+            instruments = _watched_instruments(plan_engines, plans)
             await stream.connect(instruments)
             await stream.set_instruments(instruments)
             _status = {
                 "running": True,
                 "reason": None,
-                "watched_setups": len(setups) + len(plans),
+                "watched_setups": len(plans),
                 "watched_entry_plan_ids": list(plans.keys()),
                 "watched_instruments": len(instruments),
                 "monitoring_queued": 0,
@@ -922,10 +830,8 @@ async def _watch_loop(cfg) -> None:
                         break
                     next_config_check = now + 2.0
                 if now >= next_watcher_reload:
-                    fresh_setups, fresh_engines = await _load_watchers(cfg, engines)
                     fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg, plan_engines)
                     fresh_instruments = _watched_instruments(
-                        fresh_engines,
                         fresh_plan_engines,
                         fresh_plans,
                     )
@@ -948,12 +854,10 @@ async def _watch_loop(cfg) -> None:
                         subscribed = fresh_instruments
                         # A subscription generation change invalidates every
                         # rolling quote/trade/depth window; re-warm from empty.
-                        fresh_setups, fresh_engines = await _load_watchers(cfg)
                         fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg)
-                    setups, engines = fresh_setups, fresh_engines
                     plans, plan_engines = fresh_plans, fresh_plan_engines
-                    _confirm_ready_engines(stream, engines, plan_engines, plans)
-                    _status["watched_setups"] = len(setups) + len(plans)
+                    _confirm_ready_engines(stream, plan_engines, plans)
+                    _status["watched_setups"] = len(plans)
                     _status["watched_entry_plan_ids"] = list(plans.keys())
                     _status["watched_instruments"] = len(fresh_instruments)
                     _status["monitoring_queued"] = 0
@@ -999,7 +903,7 @@ async def _watch_loop(cfg) -> None:
                     from aletheia.execution.gateway import observe_paper_entry_order_event
 
                     await asyncio.to_thread(observe_paper_entry_order_event, event)
-                _confirm_ready_engines(stream, engines, plan_engines, plans)
+                _confirm_ready_engines(stream, plan_engines, plans)
                 if event.event_type == "quote" and _monitoring_ready(
                     stream,
                     event.instrument,
@@ -1135,33 +1039,6 @@ async def _watch_loop(cfg) -> None:
                             depth_sequence=ready.depth_sequence,
                             trigger_evidence=ready.entry_trigger,
                         )
-                for setup_id, engine in tuple(engines.items()):
-                    if engine.instrument != event.instrument:
-                        continue
-                    before = engine.state
-                    ready = engine.observe(event)
-                    if before == "armed" and engine.state == "pullback_seen":
-                        await asyncio.to_thread(
-                            repo.transition_universe_setup,
-                            setup_id,
-                            expected_states=("armed",),
-                            state="pullback_seen",
-                        )
-                    if ready is not None:
-                        current_cfg = await asyncio.to_thread(load_config, persist_migrations=False)
-                        result = await asyncio.to_thread(
-                            materialize_trigger,
-                            setup_id,
-                            ready,
-                            cfg=current_cfg,
-                        )
-                        logger.info(
-                            "fast trigger setup=%s result=%s",
-                            setup_id,
-                            result.get("status"),
-                        )
-                        engines.pop(setup_id, None)
-                        setups.pop(setup_id, None)
                 backoff = 1.0
         except asyncio.CancelledError:
             raise

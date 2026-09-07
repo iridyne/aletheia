@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
-from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
+from aletheia.learning.ledger import insert_hypothesis
 from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
+
+
+def _seed_legacy_row(table, record):
+    """Load historical SQLite evidence without reviving retired runtime writers."""
+    from aletheia.storage.sqlite import get_db
+
+    values = record.model_dump(mode="json")
+    columns = ", ".join(values)
+    placeholders = ", ".join("?" for _ in values)
+    get_db().execute(
+        f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
+        tuple(values.values()),
+    )
 
 
 def test_plan_is_read_only_and_apply_is_idempotent():
@@ -38,8 +49,8 @@ def test_plan_is_read_only_and_apply_is_idempotent():
         started_at="2026-01-01T00:00:00+00:00",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(experiment)
-    insert_exposure(LearningExposure(
+    _seed_legacy_row("learning_experiments", experiment)
+    _seed_legacy_row("learning_exposures", LearningExposure(
         exposure_id="legacy-exposure",
         dedup_key="legacy-exposure-dedup",
         experiment_id=experiment.experiment_id,
@@ -100,7 +111,7 @@ def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="changed-source-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         assignment_salt="source-v1",
@@ -124,6 +135,11 @@ def test_migration_refuses_to_replace_an_imported_legacy_snapshot():
         "SELECT source_checkpoint_fingerprint FROM observation_import_cursors "
         "WHERE source_name='legacy_learning'"
     ).fetchone()[0] == old_fingerprint
+    from aletheia.observation_lab.canonical import get_authority_source, set_authority_source
+
+    with pytest.raises(RuntimeError, match="authority_cutover_legacy_import_checkpoint_missing"):
+        set_authority_source("lab", actor="owner", reason="changed source")
+    assert get_authority_source().source == "legacy"
 
 
 def test_filter_shadow_history_is_imported_and_closed_rows_are_archived(tmp_path):
@@ -183,7 +199,7 @@ def test_legacy_retirement_rejects_corrupt_generation_archive(tmp_path):
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="archive-proof-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         status="completed_no_support",
@@ -225,7 +241,7 @@ def test_explicit_retirement_requires_import_proof_and_drops_legacy_tables():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="retire-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         assignment_salt="retire-salt",
@@ -269,8 +285,8 @@ def test_legacy_exposure_import_preserves_explicit_manifest_effect_identity():
         assignment_salt="manifest-salt",
         started_at="2026-01-01T00:00:00+00:00",
     )
-    insert_experiment(experiment)
-    insert_exposure(LearningExposure(
+    _seed_legacy_row("learning_experiments", experiment)
+    _seed_legacy_row("learning_exposures", LearningExposure(
         exposure_id="manifest-exposure",
         dedup_key="manifest-exposure-dedup",
         experiment_id=experiment.experiment_id,
@@ -328,7 +344,7 @@ def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="refrozen-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         stage="paper_10",
@@ -362,7 +378,7 @@ def test_retired_strategy_and_refrozen_history_cannot_reopen_authority():
 
 
 def test_lab_cutover_refuses_unimported_legacy_rows():
-    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.ledger import insert_hypothesis
     from aletheia.learning.models import LearningExperiment, LearningHypothesis
     from aletheia.observation_lab.canonical import set_authority_source
 
@@ -379,7 +395,7 @@ def test_lab_cutover_refuses_unimported_legacy_rows():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="cutover-block-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         stage="shadow",
@@ -437,7 +453,7 @@ def test_nonempty_lab_cutover_requires_and_records_complete_proof():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="proof-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         stage="shadow",
@@ -470,12 +486,13 @@ def test_nonempty_lab_cutover_requires_and_records_complete_proof():
     )
 
 
-def test_authority_cli_passes_the_same_proof_for_validated_rollback():
+def test_authority_cli_refuses_legacy_even_with_the_recorded_cutover_proof():
     from typer.testing import CliRunner
 
     from aletheia.cli.observe_cmd import observe_app
     from aletheia.observation_lab.canonical import (
         build_authority_cutover_proof,
+        get_authority_source,
         set_authority_source,
     )
     from aletheia.observation_lab.checkpoint import (
@@ -497,7 +514,7 @@ def test_authority_cli_passes_the_same_proof_for_validated_rollback():
         target_horizon="24h",
     )
     insert_hypothesis(hypothesis)
-    insert_experiment(LearningExperiment(
+    _seed_legacy_row("learning_experiments", LearningExperiment(
         experiment_id="cli-rollback-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
         stage="shadow",
@@ -520,5 +537,6 @@ def test_authority_cli_passes_the_same_proof_for_validated_rollback():
         ],
     )
 
-    assert result.exit_code == 0, result.stdout + result.stderr
-    assert json.loads(result.stdout)["authority_source"] == "legacy"
+    assert result.exit_code == 1
+    assert "authority_source_must_be_lab" in result.stderr
+    assert get_authority_source().source == "lab"

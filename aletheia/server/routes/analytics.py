@@ -450,20 +450,6 @@ def _rolling_cutoff(hours: int) -> tuple[int, str]:
     return hours_i, cutoff.isoformat()
 
 
-def _lab_experiment_authority() -> bool:
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        return get_authority_source().source == "lab"
-    except FileNotFoundError:
-        return False
-    except (AttributeError, TypeError):
-        # Read-only test doubles can lack ``fetchone``; preserve their legacy
-        # projection semantics without treating that as Lab authority.
-        return False
-    except Exception as exc:
-        return "no such table: observation_authority_state" not in str(exc)
-
 
 def _decision_policy_context(db) -> tuple[dict | None, list[dict]]:
     rows = [
@@ -1524,47 +1510,20 @@ def _compute_current_snapshot_payload(
     Optional `phases` dict receives `cohort` and `build_current` timings
     for Server-Timing emission.
     """
-    from aletheia.config.loader import load_config
     from aletheia.universe.allocator import _FAMILY_TTL
     from aletheia.analytics.opportunity_progress import build_current_entry_status
-    cfg = load_config()
 
     if phases is not None:
         with _PhaseTimer(phases, "cohort"):
             inp = _funnel_cohort_inputs(db, hours)
         with _PhaseTimer(phases, "build_current"):
-            current = build_current_entry_status(
-                db,
-                now=inp["now"],
-                window_hours=inp["hours_i"],
-                emitted_count=inp["emitted_count"],
-                open_opportunities=inp["still_open"],
-                proposed_count=inp["proposed_count"],
-                setup_count=inp["setup_count"],
-                active_setup_count=inp["active_setup_count"],
-                terminal_breakdown=inp["terminal_breakdown"],
-                universe_enabled=bool(cfg.universe.enabled),
-            )
+            current = build_current_entry_status(now=inp["now"])
     else:
         inp = _funnel_cohort_inputs(db, hours)
-        current = build_current_entry_status(
-            db,
-            now=inp["now"],
-            window_hours=inp["hours_i"],
-            emitted_count=inp["emitted_count"],
-            open_opportunities=inp["still_open"],
-            proposed_count=inp["proposed_count"],
-            setup_count=inp["setup_count"],
-            active_setup_count=inp["active_setup_count"],
-            terminal_breakdown=inp["terminal_breakdown"],
-            universe_enabled=bool(cfg.universe.enabled),
-        )
+        current = build_current_entry_status(now=inp["now"])
     return {
         "window_hours": inp["hours_i"],
         "current": current,
-        "config": {
-            "min_confidence_to_trade": getattr(cfg.trading, "min_confidence_to_trade", "medium"),
-        },
         "family_ttl_sec": dict(_FAMILY_TTL),
     }
 
@@ -1768,7 +1727,6 @@ def get_opportunity_funnel_current_snapshot(hours: int = 24, response: Response 
     Response shape:
       - window_hours: echoed
       - current: build_current_entry_status(...) — the important payload
-      - config: { min_confidence_to_trade }
       - family_ttl_sec: dict from allocator._FAMILY_TTL
     """
     from aletheia.storage.sqlite import get_db
@@ -1918,23 +1876,10 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
         except (TypeError, ValueError):
             candidate_snapshot_freshness = "unavailable"
 
-    cfg = load_config()
-    min_confidence = getattr(cfg.trading, "min_confidence_to_trade", "medium")
     from aletheia.analytics.opportunity_progress import build_current_entry_status
 
     with _PhaseTimer(phases, "build_current"):
-        current = build_current_entry_status(
-            db,
-            now=now,
-            window_hours=hours_i,
-            emitted_count=emitted,
-            open_opportunities=still_open,
-            proposed_count=proposed,
-            setup_count=setup_count,
-            active_setup_count=active_setup_count,
-            terminal_breakdown=terminal_breakdown,
-            universe_enabled=bool(cfg.universe.enabled),
-        )
+        current = build_current_entry_status(now=now)
     # Close the total timer + attach the Server-Timing header before returning.
     total_timer.__exit__(None, None, None)
     if response is not None:
@@ -1965,9 +1910,6 @@ def get_opportunity_funnel(hours: int = 24, response: Response = None):
             "freshness": candidate_snapshot_freshness,
             "age_sec": candidate_snapshot_age_sec,
             "stale_after_sec": candidate_snapshot_stale_after_sec,
-        },
-        "config": {
-            "min_confidence_to_trade": min_confidence,
         },
         "family_ttl_sec": dict(_FAMILY_TTL),
         "universe_snapshot_age_sec": snapshot_age_sec,
@@ -2495,215 +2437,61 @@ def get_learning_funnel():
 
 
 def _compute_learning_contribution():
-    """Read-only measured contribution plus compatibility activity aggregates.
+    """Read current contribution exclusively from canonical Lab evidence."""
+    from aletheia.learning.read_models import build_learning_contribution_projection
+    from aletheia.observation_lab.canonical import observation_bridge_health
 
-    The ``lco-v1`` fields distinguish current measurement, integrity, operations
-    and authority. Legacy aggregate fields remain temporarily for existing
-    consumers and are activity context, not evidence of contribution.
-    """
-    from aletheia.storage.sqlite import get_db
-    from aletheia.learning.control import get_learning_job_health, job_health_view
-
-    if _lab_experiment_authority():
-        from aletheia.learning.read_models import build_learning_contribution_projection
-        from aletheia.observation_lab.canonical import observation_bridge_health
-
-        projection = build_learning_contribution_projection(limit=100)
-        items = projection.get("items", []) if projection.get("availability") != "unavailable" else []
-        exposures_by_path = [
-            {
-                "path_id": item.get("path_id"),
-                "exposure_n": item.get("samples", {}).get("raw_exposures"),
-                "experiment_count": 1,
-                "latest_exposed_at": item.get("data_freshness", {}).get("last_evaluated_at"),
-            }
-            for item in items
-        ]
-        by_verdict: dict[str, int] = {}
-        for item in items:
-            verdict = item.get("measurement", {}).get("state")
-            if verdict in {"positive", "negative", "neutral", "invalid", "insufficient_data"}:
-                by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
-        lab_available = projection.get("availability") != "unavailable"
-        return {
-            "exposures_by_path": exposures_by_path,
-            "verdicts": {
-                "total": sum(by_verdict.values()) if lab_available else None,
-                "by_verdict": [
-                    {"verdict": verdict, "n": count}
-                    for verdict, count in sorted(by_verdict.items())
-                ],
-                **({"query_error": "canonical_lab_projection_unavailable"} if not lab_available else {}),
-            },
-            "experiments_by_stage": [
-                {"stage": item.get("stage"), "n": 1}
-                for item in items
-            ],
-            "lifecycle_event_n": sum(
-                1 for item in items
-                if item.get("lifecycle", {}).get("latest_event")
-            ) if lab_available else None,
-            "authority_applied": {
-                "treatment_n": sum(
-                    item.get("samples", {}).get("exposed_treatment_units", 0) for item in items
-                ) if lab_available else None,
-                "applied_n": sum(
-                    item.get("samples", {}).get("exposed_authority_applied_treatment_units", 0) for item in items
-                ) if lab_available else None,
-                "applied_rate": None,
-            },
-            "job_health": projection.get("operations", {}).get("job_health", {}) if lab_available else {},
-            "legacy_query_errors": {
-                "canonical_lab_authority": "legacy_experiment_projection_disabled",
-            },
-            "bridge": observation_bridge_health(),
-            **projection,
+    projection = build_learning_contribution_projection(limit=100)
+    items = projection.get("items", []) if projection.get("availability") != "unavailable" else []
+    exposures_by_path = [
+        {
+            "path_id": item.get("path_id"),
+            "exposure_n": item.get("samples", {}).get("raw_exposures"),
+            "experiment_count": 1,
+            "latest_exposed_at": item.get("data_freshness", {}).get("last_evaluated_at"),
         }
-
-    db = get_db()
-    legacy_query_errors: dict[str, str] = {}
-
-    # Exposure counts by path_id
-    exposures_by_path: list[dict] = []
-    try:
-        for r in db.execute(
-            "SELECT path_id, COUNT(*) n, "
-            "COUNT(DISTINCT experiment_id) experiment_count, "
-            "MAX(exposed_at) latest_exposed_at "
-            "FROM learning_exposures GROUP BY path_id ORDER BY n DESC"
-        ):
-            exposures_by_path.append({
-                "path_id": r["path_id"],
-                "exposure_n": int(r["n"]),
-                "experiment_count": int(r["experiment_count"]),
-                "latest_exposed_at": r["latest_exposed_at"],
-            })
-    except Exception:
-        legacy_query_errors["exposures_by_path"] = "read_failed"
-
-    # Verdict distribution — keyed by the actual `verdict` column (not `classification`).
-    # Schema errors surface in the `error` key (not silently as total=0).
-    verdicts_by_verdict: list[dict] = []
-    total_verdicts = 0
-    verdicts_error: str | None = None
-    try:
-        for r in db.execute(
-            "SELECT verdict, COUNT(*) n, MAX(created_at) latest_at "
-            "FROM learning_contribution_verdicts "
-            "GROUP BY verdict ORDER BY n DESC"
-        ):
-            verdicts_by_verdict.append({
-                "verdict": r["verdict"],
-                "n": int(r["n"]),
-                "latest_at": r["latest_at"],
-            })
-            total_verdicts += int(r["n"])
-    except Exception:
-        verdicts_error = "read_failed"
-        total_verdicts = None  # type: ignore[assignment]
-        legacy_query_errors["verdicts"] = "read_failed"
-
-    # Experiment stage distribution
-    experiments_by_stage: list[dict] = []
-    try:
-        for r in db.execute(
-            "SELECT stage, status, COUNT(*) n "
-            "FROM learning_experiments GROUP BY stage, status ORDER BY n DESC"
-        ):
-            experiments_by_stage.append({
-                "stage": r["stage"],
-                "status": r["status"],
-                "n": int(r["n"]),
-            })
-    except Exception:
-        legacy_query_errors["experiments_by_stage"] = "read_failed"
-
-    # Lifecycle events written (non-zero = lifecycle controller is active)
-    lifecycle_event_n: int | None = 0
-    try:
-        lifecycle_event_n = int(
-            db.execute("SELECT COUNT(*) FROM learning_lifecycle_events").fetchone()[0]
-        )
-    except Exception:
-        lifecycle_event_n = None
-        legacy_query_errors["lifecycle_event_n"] = "read_failed"
-
-    # authority_applied rate (treatment applied vs total treatment exposures)
-    authority_applied_n: int | None = 0
-    total_treatment_n: int | None = 0
-    try:
-        r = db.execute(
-            "SELECT COUNT(*) total, "
-            "SUM(CASE WHEN json_extract(manifest_json,'$.authority_applied')=1 THEN 1 ELSE 0 END) applied "
-            "FROM learning_exposures WHERE assignment='treatment'"
-        ).fetchone()
-        if r:
-            total_treatment_n = int(r["total"] or 0)
-            authority_applied_n = int(r["applied"] or 0)
-    except Exception:
-        authority_applied_n = None
-        total_treatment_n = None
-        legacy_query_errors["authority_applied"] = "read_failed"
-
-    # Job health for the four key learning jobs
-    job_health: dict[str, dict] = {}
-    for job_id in (
-        "learning_contribution_evaluator",
-        "learning_lifecycle_controller",
-        "lesson_reviewer",
-        "dreaming_daily",
-    ):
-        try:
-            h = get_learning_job_health(job_id)
-            health = job_health_view(h)
-            health.pop("last_error", None)
-            health.pop("last_failure_reason", None)
-            job_health[job_id] = health
-        except Exception:
-            job_health[job_id] = {"status": "unknown"}
-
-    legacy = {
+        for item in items
+    ]
+    by_verdict: dict[str, int] = {}
+    for item in items:
+        verdict = item.get("measurement", {}).get("state")
+        if verdict in {"positive", "negative", "neutral", "invalid", "insufficient_data"}:
+            by_verdict[verdict] = by_verdict.get(verdict, 0) + 1
+    lab_available = projection.get("availability") != "unavailable"
+    return {
         "exposures_by_path": exposures_by_path,
         "verdicts": {
-            "total": total_verdicts,
-            "by_verdict": verdicts_by_verdict,
-            **({"query_error": verdicts_error} if verdicts_error else {}),
+            "total": sum(by_verdict.values()) if lab_available else None,
+            "by_verdict": [
+                {"verdict": verdict, "n": count}
+                for verdict, count in sorted(by_verdict.items())
+            ],
+            **({"query_error": "canonical_lab_projection_unavailable"} if not lab_available else {}),
         },
-        "experiments_by_stage": experiments_by_stage,
-        "lifecycle_event_n": lifecycle_event_n,
+        "experiments_by_stage": [
+            {"stage": item.get("stage"), "n": 1}
+            for item in items
+        ],
+        "lifecycle_event_n": sum(
+            1 for item in items
+            if item.get("lifecycle", {}).get("latest_event")
+        ) if lab_available else None,
         "authority_applied": {
-            "treatment_n": total_treatment_n,
-            "applied_n": authority_applied_n,
-            "applied_rate": (
-                round(authority_applied_n / total_treatment_n, 4)
-                if authority_applied_n is not None and total_treatment_n
-                else None
-            ),
+            "treatment_n": sum(
+                item.get("samples", {}).get("exposed_treatment_units", 0) for item in items
+            ) if lab_available else None,
+            "applied_n": sum(
+                item.get("samples", {}).get("exposed_authority_applied_treatment_units", 0) for item in items
+            ) if lab_available else None,
+            "applied_rate": None,
         },
-        "job_health": job_health,
-        "legacy_query_errors": legacy_query_errors,
+        "job_health": projection.get("operations", {}).get("job_health", {}) if lab_available else {},
+        "legacy_query_errors": {
+            "canonical_lab_authority": "legacy_experiment_projection_disabled",
+        },
+        "bridge": observation_bridge_health(),
+        **projection,
     }
-    try:
-        from aletheia.learning.read_models import (
-            build_learning_contribution_projection,
-        )
-
-        projection = build_learning_contribution_projection()
-    except Exception:
-        from aletheia.learning.read_models import (
-            configured_learning_stale_after_sec,
-            unavailable_learning_contribution_projection,
-        )
-
-        try:
-            stale_after_sec = configured_learning_stale_after_sec()
-        except Exception:
-            stale_after_sec = None
-        projection = unavailable_learning_contribution_projection(
-            "projection_read_failed",
-            stale_after_sec=stale_after_sec,
-        )
-    return {**legacy, **projection}
 
 
 _learning_contribution_cache: dict[tuple[str, str], tuple[float, dict]] = {}

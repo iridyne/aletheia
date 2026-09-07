@@ -46,35 +46,6 @@ class TestOpportunityToRankerSeam:
         assert found[0]["direction_bias"] == "short"
         assert found[0]["execution_eligible"] == 1
 
-    def test_ranker_filters_by_execution_mode_correctly(self, e2e_db, monkeypatch):
-        """Ranker uses min_confidence_to_trade from config — verify the gate works."""
-        opp_high = Opportunity(
-            symbol="BTC/USDT", market="spot", direction_bias="long",
-            confidence="high", confidence_score=78,
-            source_agent="divergence_scanner", scanner_family="momentum",
-        )
-        opp_spec = Opportunity(
-            symbol="SOL/USDT", market="spot", direction_bias="short",
-            confidence="speculative", confidence_score=42,
-            source_agent="divergence_scanner", scanner_family="momentum",
-        )
-        repo.insert_opportunity(opp_high)
-        repo.insert_opportunity(opp_spec)
-
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        monkeypatch.setattr(cfg.trading, "min_confidence_to_trade", "medium")
-
-        from aletheia.agents.paper_trader_ranker import build_paper_candidates
-        candidates = build_paper_candidates(limit=50)
-
-        btc_candidates = [c for c in candidates if c["symbol"] == "BTC/USDT"]
-        sol_candidates = [c for c in candidates if c["symbol"] == "SOL/USDT"]
-
-        # BTC (high confidence) should pass the gate
-        assert any(not c.get("skip_reason") for c in btc_candidates)
-        # SOL (speculative) should be skipped when min=medium
-        assert all(c.get("skip_reason") for c in sol_candidates)
 
 
 class TestRiskEngineSeam:

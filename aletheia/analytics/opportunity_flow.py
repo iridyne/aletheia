@@ -293,7 +293,7 @@ def render_flow_trace(record: dict[str, Any]) -> str:
 def _integrated_audits(hours: int) -> dict[str, Any]:
     audits: dict[str, Any] = {}
     try:
-        audits["trade_funnel"] = build_trade_funnel_audit(hours=hours, include_ranker_snapshot=False)
+        audits["trade_funnel"] = build_trade_funnel_audit(hours=hours)
     except Exception as exc:  # pragma: no cover - defensive read-only boundary
         audits["trade_funnel"] = {"error": str(exc)}
     try:

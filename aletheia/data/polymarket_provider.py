@@ -4,16 +4,14 @@ Observation-only data source for ``prediction_observer``. ``fetch_active_markets
 returns ``PolymarketMarket`` objects sorted by 24h volume descending;
 ``format_prediction_context`` renders them as a compact markdown block for the LLM.
 
-Transport: httpx (async) preferred, with a urllib fallback so the agent still works
-in environments where httpx is unavailable. Any hard failure propagates — the caller
-(prediction_observer) catches it and records an error rather than crashing the run.
+Transport: async httpx through the managed network client. Hard failures propagate
+to the caller (prediction_observer), which records an error rather than crashing.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import urllib.request
 from dataclasses import dataclass
 
 logger = logging.getLogger("aletheia.polymarket")
@@ -93,27 +91,14 @@ def _matches_categories(raw: dict, categories: list[str]) -> bool:
     return any(c.lower() in hay for c in categories)
 
 
-def _fetch_raw_urllib(params: str) -> list[dict]:
-    req = urllib.request.Request(f"{_GAMMA_URL}?{params}", headers={"User-Agent": "aletheia"})
-    # Route through the managed proxy (aletheia.net) so this sync fallback honours
-    # the configured proxy / enforce policy instead of connecting direct.
-    from aletheia.net import build_urllib_opener
-    with build_urllib_opener().open(req, timeout=_TIMEOUT) as resp:  # noqa: S310 — fixed https host
-        data = json.loads(resp.read().decode("utf-8"))
-    return data if isinstance(data, list) else data.get("data", [])
-
-
 async def _fetch_raw(params: str) -> list[dict]:
-    try:
-        from aletheia.net import httpx_client
+    from aletheia.net import httpx_client
 
-        async with httpx_client(timeout=_TIMEOUT) as client:
-            resp = await client.get(_GAMMA_URL, params=dict(p.split("=", 1) for p in params.split("&")))
-            resp.raise_for_status()
-            data = resp.json()
-            return data if isinstance(data, list) else data.get("data", [])
-    except ImportError:
-        return _fetch_raw_urllib(params)
+    async with httpx_client(timeout=_TIMEOUT) as client:
+        resp = await client.get(_GAMMA_URL, params=dict(p.split("=", 1) for p in params.split("&")))
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else data.get("data", [])
 
 
 async def fetch_active_markets(categories: list[str], limit: int = 50) -> list[PolymarketMarket]:

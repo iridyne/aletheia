@@ -17,7 +17,6 @@ from statistics import fmean
 from typing import Any
 
 from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance
-from aletheia.learning.ledger import get_record
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
 from aletheia.learning.outcomes import (
     assess_candidate_outcome,
@@ -267,16 +266,7 @@ def build_experiment_cohorts(
     resolved, so later rows cannot change an already-declared fixed look.
     """
     if _source_rows is None:
-        try:
-            from aletheia.observation_lab.canonical import get_authority_source
-
-            if get_authority_source().source == "lab":
-                return []
-        except FileNotFoundError:
-            pass
-        except Exception as exc:
-            if "no such table: observation_authority_state" not in str(exc):
-                return []
+        raise ValueError("canonical_lab_source_required")
     evaluation_as_of = (
         datetime.now(timezone.utc)
         if as_of_at is None
@@ -284,31 +274,13 @@ def build_experiment_cohorts(
     )
     if evaluation_as_of is None:
         raise ValueError("as_of_at must be a valid timestamp")
-    if _source_rows is None:
-        experiment_row = get_record("learning_experiments", experiment_id)
-        if experiment_row is None:
-            return []
-        experiment = LearningExperiment(**experiment_row)
-        hypothesis_row = get_record("learning_hypotheses", experiment.hypothesis_id)
-        if hypothesis_row is None:
-            return []
-        hypothesis = LearningHypothesis(**hypothesis_row)
-    else:
-        if _source_experiment is None or _source_hypothesis is None:
-            raise ValueError("source_experiment_and_hypothesis_required")
-        experiment = _source_experiment
-        hypothesis = _source_hypothesis
+    if _source_experiment is None or _source_hypothesis is None:
+        raise ValueError("source_experiment_and_hypothesis_required")
+    experiment = _source_experiment
+    hypothesis = _source_hypothesis
     if hypothesis.path_id not in SUPPORTED_PATH_IDS:
         return []
-
-    rows = (
-        [dict(row) for row in get_db().execute(
-            "SELECT * FROM learning_exposures WHERE experiment_id=? AND hypothesis_id=? "
-            "AND path_id=? ORDER BY datetime(exposed_at), exposure_id",
-            (experiment.experiment_id, hypothesis.hypothesis_id, hypothesis.path_id),
-        ).fetchall()]
-        if _source_rows is None else [dict(row) for row in _source_rows]
-    )
+    rows = [dict(row) for row in _source_rows]
     if assignment_unit_keys is not None:
         rows = [
             row

@@ -81,12 +81,7 @@ def build_operator_shell_command(cfg) -> list[str] | None:
 
 
 def _current_runtime_id() -> str:
-    try:
-        from aletheia.runtime_continuity.service import RuntimeContinuityService
-
-        return RuntimeContinuityService().current_runtime_id()
-    except Exception:
-        return "runtime-local-current"
+    return os.environ.get("ALETHEIA_RUNTIME_ID") or "runtime-local-current"
 
 
 def _build_operator_shell_env(

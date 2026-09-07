@@ -1588,26 +1588,7 @@ async def test_trial_admission_requires_explicit_confirmation(client):
 
 
 @pytest.mark.anyio
-async def test_trial_admission_route_passes_expected_epoch_not_owner_text(
-    client,
-    monkeypatch,
-):
-    import aletheia.learning.lifecycle as lifecycle
-
-    captured = {}
-
-    def admit(experiment_id, **kwargs):
-        captured.update({"experiment_id": experiment_id, **kwargs})
-        return lifecycle.LifecycleResult(
-            "admit_trial",
-            "admit_trial",
-            "owner_admitted:test",
-            experiment_id,
-            successor_experiment_id="successor",
-            verdict_id=kwargs["verdict_id"],
-        )
-
-    monkeypatch.setattr(lifecycle, "_execute_trial_admission", admit)
+async def test_retired_trial_admission_requires_canonical_owner_surface(client):
     response = await client.post(
         "/api/settings/learning/experiments/experiment/admit-trial",
         json={
@@ -1618,13 +1599,7 @@ async def test_trial_admission_route_passes_expected_epoch_not_owner_text(
         },
     )
 
-    assert response.status_code == 200
-    assert captured == {
-        "experiment_id": "experiment",
-        "verdict_id": "verdict",
-        "expected_policy_epoch": "epoch-current",
-        "reason": "begin bounded paper trial",
-    }
+    assert response.status_code == 409
 
 
 def test_restart_audit_actor_source_maps_automated_triggers():
@@ -1692,11 +1667,10 @@ async def test_settings_update_controls_persist_new_config_fields(client):
 
 
 @pytest.mark.anyio
-async def test_uta_read_selector_defaults_legacy_and_profile_change_advances_generation(client):
+async def test_uta_profile_change_advances_account_generation(client):
     from aletheia.config.loader import load_config
 
     before = load_config().exchange
-    assert before.uta_read_boundary_for("bitget_demo") == "legacy"
     assert before.uta_account_config_generation_for("bitget_demo") == 0
 
     response = await client.post(
@@ -1706,19 +1680,17 @@ async def test_uta_read_selector_defaults_legacy_and_profile_change_advances_gen
             "usdt_futures": True,
             "paper_execution_mode": "bitget_demo",
             "bitget_profile": "uta_v3",
-            "uta_read_boundary": "shadow_read",
             "confirm_exchange_divergence": True,
         },
     )
 
     assert response.status_code == 200
     current = load_config().exchange
-    assert current.uta_read_boundary_for("bitget_demo") == "shadow_read"
     assert current.uta_account_config_generation_for("bitget_demo") == 1
 
 
 @pytest.mark.anyio
-async def test_uta_v1_selector_rejects_unqualified_activation(client):
+async def test_retired_uta_selector_is_rejected(client):
     response = await client.post(
         "/api/settings/exchange-markets",
         json={
@@ -1728,23 +1700,8 @@ async def test_uta_v1_selector_rejects_unqualified_activation(client):
         },
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"]["code"] == "uta_profile_not_qualified"
+    assert response.status_code == 422
 
-
-@pytest.mark.anyio
-async def test_uta_selector_rejects_non_external_account_mode(client):
-    response = await client.post(
-        "/api/settings/exchange-markets",
-        json={
-            "spot": True,
-            "usdt_futures": True,
-            "paper_execution_mode": "paper_internal",
-            "uta_read_boundary": "shadow_read",
-        },
-    )
-
-    assert response.status_code == 400
 
 
 @pytest.mark.anyio

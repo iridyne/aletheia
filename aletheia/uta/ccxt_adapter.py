@@ -502,9 +502,11 @@ class CCXTUTAAdapter:
             rows: list[dict[str, object]] = []
             failed = False
             history_bound_reached = False
-            if query.venue_order_id:
+            if query.venue_order_id or self._profile.client_order_lookup_param:
                 try:
-                    raw = await self._request(exchange.fetch_order(query.venue_order_id, symbol))
+                    params = ({self._profile.client_order_lookup_param: query.client_order_id}
+                        if not query.venue_order_id else {})
+                    raw = await self._request(exchange.fetch_order(query.venue_order_id, symbol, params))
                     if not isinstance(raw, dict):
                         raise ValueError("invalid CCXT order")
                     rows.append(raw)
@@ -624,6 +626,14 @@ class CCXTUTAAdapter:
                 reason_code="private_fill_history_retention_expired",
                 profile_version=self._profile_version,
             )
+        matched_order_id = query.venue_order_id
+        client_order_id = query.client_order_id
+        if client_order_id and self._profile.client_order_lookup_param:
+            order = await self.get_order(OrderQuery(scope=query.scope, venue_order_id=matched_order_id, client_order_id=client_order_id))
+            if order.completeness is not ReadCompleteness.COMPLETE or order.found is None or not order.found.venue_order_id:
+                return FillListReport(identity=self.identity, completeness=ReadCompleteness.PARTIAL, scope=query.scope, received_at=received_at, reason_code="private_fill_order_identity_unavailable", profile_version=self._profile_version)
+            matched_order_id = order.found.venue_order_id
+            client_order_id = None
         try:
             exchange = await self._connected_exchange()
             symbol = query.scope.instrument.venue_symbol if query.scope.instrument else None
@@ -634,17 +644,11 @@ class CCXTUTAAdapter:
             page_limit = query.scope.limit or 1000
             for params in self._profile.fill_requests:
                 try:
-                    page = await self._request(
-                        exchange.fetch_my_trades(
-                            symbol,
-                            since,
-                            page_limit,
-                            self._history_params(dict(params)),
-                        )
+                    page, bound_reached = await self._request(
+                        self._profile.fetch_fills(exchange, symbol, since, page_limit, dict(params),
+                            int((query.scope.end_at or received_at).timestamp() * 1000))
                     )
-                    if not isinstance(page, list):
-                        raise ValueError("invalid CCXT fills")
-                    history_bound_reached = history_bound_reached or len(page) >= page_limit
+                    history_bound_reached = history_bound_reached or bound_reached
                     rows.extend(item for item in page if isinstance(item, dict))
                 except (Exception, TimeoutError):
                     failed_calls += 1
@@ -660,11 +664,9 @@ class CCXTUTAAdapter:
                     continue
                 if query.scope.end_at and item.executed_at > query.scope.end_at:
                     continue
-                if query.client_order_id and item.client_order_id != self._profile.external_client_order_id(
-                    query.client_order_id
-                ):
+                if client_order_id and item.client_order_id != self._profile.external_client_order_id(client_order_id):
                     continue
-                if query.venue_order_id and item.venue_order_id != query.venue_order_id:
+                if matched_order_id and item.venue_order_id != matched_order_id:
                     continue
                 previous = fills.get(item.venue_fill_id)
                 if previous is not None and previous != item:
@@ -1125,6 +1127,8 @@ class CCXTUTAAdapter:
 
     def _mutation_failure(self, command, report_type, exc, *, request_started):
         error_kind = self._command_error_kind(exc)
+        if request_started and command.purpose == "exit" and error_kind == "rejected" and self._profile.close_position_absent(exc):
+            return self._command_report(command, report_type, CommandEvidence.VENUE_REJECTED, error_code=UTAErrorCode.VENUE_REJECTED.value, reason_code="close_position_absence_unverified")
         if request_started and error_kind != "rejected":
             return self._command_report(
                 command,

@@ -55,9 +55,6 @@ class ControlLoopStateMachine(RuleBasedStateMachine):
             win_rate=win_rate, total=total, hours_since_last_fill=hours
         )
 
-    @rule(high=st.integers(min_value=0, max_value=2), medium=st.integers(min_value=0, max_value=5))
-    def seed_candidates(self, high, medium):
-        self.harness.seed_candidates(high=high, medium=medium)
 
     @rule()
     def run_operator_cycle(self):
@@ -136,10 +133,9 @@ def test_failure_replay_command_preserves_every_generation_input():
 
 
 def _replay(root: Path) -> str:
-    with ControlLoopHarness(root, initial_confidence="high", initial_sizing=100.0) as harness:
+    with ControlLoopHarness(root, initial_sizing=100.0) as harness:
         harness.change_signal_quality(win_rate=37.2, status="degraded")
         harness.change_trade_performance(win_rate=80.0, total=10, hours_since_last_fill=5.0)
-        harness.seed_candidates(high=1, medium=4)
         harness.run_operator_cycle(trigger="dcls-replay")
         harness.restart()
         harness.record_result()

@@ -420,14 +420,7 @@ def assess_position_closure(
         attribution_complete = _to_bool(row.get("_attribution_complete"))
     else:
         try:
-            try:
-                attribution_complete = attribution_chain_complete(row, db=db)
-            except TypeError as exc:
-                # Keep older test doubles/optional readers compatible with the
-                # additive read-context parameter.
-                if "unexpected keyword argument 'db'" not in str(exc):
-                    raise
-                attribution_complete = attribution_chain_complete(row)
+            attribution_complete = attribution_chain_complete(row, db=db)
         except AttributionReadError:
             return _assessment_from_closure(
                 closure, reason="attribution_read_failed"

@@ -11,7 +11,6 @@ import StatusCluster from './components/StatusCluster'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import { devPreviewLabel } from './dev-preview'
 import { useDialogFocus } from './components/ui/useDialogFocus'
-import { useTabSync } from './lib/tabSync'
 import { initWakeupGate } from './lib/wakeupGate'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 import { NAV } from './routeManifest'
@@ -90,7 +89,6 @@ export default function App() {
     (i: string) => i.startsWith('code_updated_pending_restart:'),
   ) ?? ''
   const driftRange = driftIssue.replace('code_updated_pending_restart:', '')
-  useTabSync(qc)
   useEffect(() => initWakeupGate(qc), [qc])
 
   useEffect(() => {

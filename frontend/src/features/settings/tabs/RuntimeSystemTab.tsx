@@ -37,8 +37,8 @@ export const DATA_EXPORT_SECTION = {
 
 export const SOFTWARE_UPDATES_SECTION = {
   id: 'software-updates', title: 'Software Updates', tab: 'runtime',
-  description: 'On-demand self-upgrade via git pull. Never runs automatically.',
-  searchTerms: ['git pull', 'upgrade', 'self-update'],
+  description: 'Release status and update controls for this installation. Linux source updates share the deployment timer transaction.',
+  searchTerms: ['release', 'upgrade', 'self-update'],
 } satisfies SettingsFeatureDescriptor
 
 export const NETWORK_PROXY_SECTION = {
@@ -301,24 +301,6 @@ function AppRows({ status, settings, qc, onDirty }: SettingsStatusProps & Settin
           safeRuntimeMut({ auto_reload: v })
         }} disabled={runtimeMut.isPending} />
       </Row>
-      <Row label="Runtime continuity" hint="Experimental: enables shadow gateway staging for zero-disruption upgrades. When off, updates use legacy restart.">
-        <Toggle checked={!!runtime.runtime_continuity_enabled} persistence="immediate" onChange={v => safeRuntimeMut({ runtime_continuity_enabled: v })} disabled={runtimeMut.isPending} />
-      </Row>
-      {!!runtime.runtime_continuity_enabled && (
-        <>
-          <Row label="Promote lock TTL" hint="Seconds the exclusive promote/rollback lock is held. Prevents concurrent transitions.">
-            <input type="number" min={30} max={3600} value={runtime.runtime_continuity_lock_ttl_sec ?? 300}
-              onChange={e => safeRuntimeMut({ runtime_continuity_lock_ttl_sec: Math.max(30, Math.min(3600, parseInt(e.target.value) || 300)) })}
-              disabled={runtimeMut.isPending} className="w-20" />
-            <span className="hint m-0">sec</span>
-          </Row>
-          <Row label="Shadow port offset" hint="Shadow gateway listens on dashboard_port + this offset (e.g. 8787 + 100 = 8887).">
-            <input type="number" min={1} max={10000} value={runtime.runtime_continuity_shadow_port_offset ?? 100}
-              onChange={e => safeRuntimeMut({ runtime_continuity_shadow_port_offset: Math.max(1, Math.min(10000, parseInt(e.target.value) || 100)) })}
-              disabled={runtimeMut.isPending} className="w-20" />
-          </Row>
-        </>
-      )}
     </>
   )
 }
@@ -414,14 +396,16 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     },
   })
 
+  const sourceRelease = data?.mode === "source_release"
   let badge = <span className="badge badge-yellow">not available</span>
   if (isLoading || check.isPending) badge = <span className="badge">checking…</span>
+  else if (sourceRelease) badge = <span className={`badge ${data.hold || data.status === "failed" ? "badge-red" : "badge-yellow"}`}>{data.reason || data.status || data.phase || "not available"}</span>
   else if (data?.reason === 'update_check_required') badge = <span className="badge">not checked</span>
   else if (data?.ok && data.has_update) badge = <span className="badge badge-yellow">{data.behind_count} behind</span>
   else if (data?.ok && !data.has_update) badge = <span className="badge badge-green">up to date</span>
   const updateMode = data?.mode
   const applySupported = data?.ok && data.has_update && updateMode === 'packaged'
-  const applyRequiresCli = data?.ok && data.has_update && updateMode === 'development'
+  const applyRequiresCli = sourceRelease || (data?.ok && data.has_update && updateMode === "development")
   const applyUnavailable = data?.ok && data.has_update && !applySupported && !applyRequiresCli
 
   return (
@@ -429,9 +413,14 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       {/* Status line */}
       <div className="flex items-center gap-3 mb-3 flex-wrap">
         {badge}
-        {data?.ok && (
+        {sourceRelease ? (
           <span className="hint mono m-0">
-            {data.branch} · {data.current_commit?.slice(0, 8)}{data.has_update ? ` → ${data.remote_commit?.slice(0, 8)}` : ''}
+            {data.target_tag || "no release selected"} · {data.target_sha?.slice(0, 8) || "SHA not available"}
+            {data.phase && ` · ${data.phase}`}
+          </span>
+        ) : data?.ok && (
+          <span className="hint mono m-0">
+            {data.branch} · {data.current_commit?.slice(0, 8)}{data.has_update ? ` → ${data.remote_commit?.slice(0, 8)}` : ""}
           </span>
         )}
         <button className="secondary" onClick={() => check.mutate()} disabled={check.isPending}>Re-check</button>
@@ -444,7 +433,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       </div>
       {applyRequiresCli && (
         <p className="hint mb-3">
-          Source checkout update available. Run <code>aletheia update</code> from the controlling terminal; the external CLI owns checkout mutation, restart, and continuity verification.
+          Run <code>aletheia update</code> from the controlling terminal. Linux source releases use the same deployment lock, hold, restart, and verification transaction as the timer.
         </p>
       )}
       {applyUnavailable && (
@@ -454,7 +443,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       )}
       {applyMsg && <p className="hint mb-3">{applyMsg}</p>}
 
-      {/* Config */}
+      {!sourceRelease && <>
       <div className="flex items-center gap-2 mb-3">
         <Toggle checked={enabled} persistence="staged" label="Auto-update enabled" onChange={v => { setEnabled(v); setCfgMsg(null) }} />
       </div>
@@ -468,6 +457,7 @@ function UpdateCard({ settings, qc, onDirty }: SettingsDirtyProps) {
         <button className="secondary" onClick={() => cfgMut.mutate()} disabled={cfgMut.isPending}>{cfgMut.isPending ? 'Saving…' : 'Save config'}</button>
       </div>
       <SaveMsg msg={cfgMsg} />
+      </>}
     </div>
   )
 }

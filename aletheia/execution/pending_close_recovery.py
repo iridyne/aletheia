@@ -36,7 +36,7 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
-
+from aletheia.uta.models import UTAAccountIdentity
 logger = logging.getLogger("aletheia.pending_close_recovery")
 
 # Lockstep with position_manager escalation threshold.
@@ -191,6 +191,7 @@ def _exchange_open_order_ids(order: dict) -> set[str] | None:
             OrderQuery(scope=scope_from_local(
                 str(order["symbol"]), str(order.get("market_type") or "spot")
             )),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
     except Exception as exc:
         logger.warning(
@@ -244,6 +245,7 @@ def _exchange_fill_rows(order: dict) -> list[dict] | None:
                 venue_order_id=exchange_order_id or None,
                 client_order_id=client_order_id or None,
             ),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
             return None
@@ -281,6 +283,7 @@ def _uta_history_lookup(order: dict):
                 venue_order_id=exchange_order_id or None,
                 client_order_id=client_order_id or None,
             ),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
         if report.completeness is not ReadCompleteness.COMPLETE:
             return _HISTORY_FAILED

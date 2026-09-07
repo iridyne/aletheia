@@ -8,7 +8,7 @@ def test_scheduler_snapshot_distinguishes_config_from_runtime_and_tracks_tick(mo
     monkeypatch.setattr(
         scheduler,
         "load_config",
-        lambda: SimpleNamespace(runtime=SimpleNamespace(scheduler_enabled=True)),
+        lambda **_: SimpleNamespace(runtime=SimpleNamespace(scheduler_enabled=True)),
     )
     monkeypatch.setattr(scheduler, "_scheduler", None)
     monkeypatch.setattr(scheduler, "_scheduler_last_tick", None)
@@ -23,6 +23,18 @@ def test_scheduler_snapshot_distinguishes_config_from_runtime_and_tracks_tick(mo
 
     scheduler._record_scheduler_tick(None)
     assert scheduler.status_snapshot()["last_tick"] is not None
+
+
+def test_scheduler_snapshot_reports_failed_config_read_as_unavailable(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    monkeypatch.setattr(scheduler, "load_config", Mock(side_effect=[
+        TypeError("invalid config value"),
+        SimpleNamespace(runtime=SimpleNamespace(scheduler_enabled=True)),
+    ]))
+    monkeypatch.setattr(scheduler, "_scheduler", None)
+
+    assert scheduler.status_snapshot()["enabled"] is None
 
 
 class _Job:

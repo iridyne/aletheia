@@ -588,7 +588,6 @@ export interface paths {
          *     Response shape:
          *       - window_hours: echoed
          *       - current: build_current_entry_status(...) — the important payload
-         *       - config: { min_confidence_to_trade }
          *       - family_ttl_sec: dict from allocator._FAMILY_TTL
          */
         get: operations["get_opportunity_funnel_current_snapshot_api_analytics_opportunity_funnel_current_snapshot_get"];
@@ -3032,142 +3031,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/operator/runtime": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runtime Status */
-        get: operations["runtime_status_api_operator_runtime_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/candidate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Runtime Candidate */
-        post: operations["runtime_candidate_api_operator_runtime_candidate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/drain": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Runtime Drain */
-        post: operations["runtime_drain_api_operator_runtime_drain_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runtime Events */
-        get: operations["runtime_events_api_operator_runtime_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/events/stream": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Runtime Events Stream */
-        get: operations["runtime_events_stream_api_operator_runtime_events_stream_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/promote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Runtime Promote */
-        post: operations["runtime_promote_api_operator_runtime_promote_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Runtime Rollback */
-        post: operations["runtime_rollback_api_operator_runtime_rollback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/operator/runtime/shadow": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Runtime Shadow */
-        post: operations["runtime_shadow_api_operator_runtime_shadow_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/operator/sessions": {
         parameters: {
             query?: never;
@@ -4920,16 +4783,7 @@ export interface paths {
         put?: never;
         /**
          * Promote Serenity Theme
-         * @description Promote a Serenity theme's opportunities into the PI evaluation queue.
-         *
-         *     Phase 3 (Option A, D5): Replaces the old StrategyRecord(state='draft') dead-record
-         *     path. For each active opportunity under the theme:
-         *       1. Set action_intent='pi_evaluate' on the opportunity
-         *       2. Write a signal_pending PiDecision with signal_source='serenity' and
-         *          opportunity_id=<serenity_opportunities.id>
-         *       3. Wake the PI daemon so the new signals are evaluated promptly
-         *
-         *     System Operator remains the sole trade-decision maker — these rows are inputs, not orders.
+         * @description Publish the theme through the canonical Candidate planning path.
          */
         post: operations["promote_serenity_theme_api_serenity_themes__theme_id__promote_post"];
         delete?: never;
@@ -6188,51 +6042,11 @@ export interface paths {
         };
         /**
          * Get Candidate Selection Status
-         * @description Read the configured authority and its exact prospective qualification.
+         * @description Read the configured Candidate selection authority.
          */
         get: operations["get_candidate_selection_status_api_settings_universe_candidate_selection_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/universe/candidate-selection/admit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Admit Candidate Selection
-         * @description Owner-only positive-qualification transition to target Candidate authority.
-         */
-        post: operations["admit_candidate_selection_api_settings_universe_candidate_selection_admit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/universe/candidate-selection/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Rollback Candidate Selection
-         * @description Explicitly restore legacy Candidate authority without rewriting evidence.
-         */
-        post: operations["rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6748,30 +6562,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/update/continuity": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update Continuity
-         * @description Legacy development-checkout candidate materialisation.
-         *
-         *     Installed packaged updates do not create Git worktrees. They stage signed payloads and
-         *     use the Tray host for activation. Keep this endpoint only for explicit development
-         *     continuity experiments.
-         */
-        post: operations["update_continuity_api_update_continuity_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/update/progress": {
         parameters: {
             query?: never;
@@ -6838,12 +6628,7 @@ export interface paths {
         };
         /**
          * Uta State
-         * @description Return the cached unified (multi-broker) account state.
-         *
-         *     Fast path: reads the in-memory cache written by sync_all_exchanges().
-         *     Falls back to per-broker Bitget cache when the unified cache is empty
-         *     (first run before the scheduler has fired).
-         *     Never blocks on a network call.
+         * @description Return the cached UTA projection without polling private accounts.
          */
         get: operations["uta_state_api_uta_state_get"];
         put?: never;
@@ -7109,6 +6894,8 @@ export interface components {
         };
         /** Candidate */
         Candidate: {
+            /** Admission Basis */
+            admission_basis?: string | null;
             /** All Scores */
             all_scores?: string | null;
             /** Asset Id */
@@ -7167,6 +6954,8 @@ export interface components {
             opportunity_source_component?: string | null;
             /** Opportunity Source Cutoff At */
             opportunity_source_cutoff_at?: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength?: number | null;
             /** Quote Volume 24H */
             quote_volume_24h?: number | null;
             /** Rank */
@@ -7187,10 +6976,12 @@ export interface components {
             spread_bps?: number | null;
             /** Stale */
             stale?: boolean;
+            /** Startup Reason */
+            startup_reason?: string | null;
             /** Symbol */
             symbol: string;
             /** Total Score */
-            total_score: number;
+            total_score: number | null;
             /** Tradability Score */
             tradability_score: number | null;
             /** Triggered Opportunity Id */
@@ -7202,6 +6993,8 @@ export interface components {
         };
         /** CandidateAttention */
         CandidateAttention: {
+            /** Admission Basis */
+            admission_basis?: string | null;
             /** Attempt Count */
             attempt_count: number;
             /** Attention Max Age Sec */
@@ -7274,6 +7067,8 @@ export interface components {
             outcome_reason: string | null;
             /** Owner Token */
             owner_token: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength?: number | null;
             /** Planner Input Hash */
             planner_input_hash: string | null;
             /** Planner Input Json */
@@ -7304,6 +7099,8 @@ export interface components {
             schema_fingerprint: string | null;
             /** Soft Expires At */
             soft_expires_at: string | null;
+            /** Startup Reason */
+            startup_reason?: string | null;
             /** Status */
             status: string;
             /** Symbol */
@@ -7321,6 +7118,8 @@ export interface components {
             active_entry_plan_id: string | null;
             /** Active Entry Plan Status */
             active_entry_plan_status: string | null;
+            /** Admission Basis */
+            admission_basis?: string | null;
             /** Attempt Count */
             attempt_count: number;
             /** Attention Max Age Sec */
@@ -7343,6 +7142,10 @@ export interface components {
             candidate_family: string;
             /** Candidate Id */
             candidate_id: string;
+            /** Candidate Opportunity Context Hash */
+            candidate_opportunity_context_hash: string | null;
+            /** Candidate Opportunity Context Json */
+            candidate_opportunity_context_json: string | null;
             /** Candidate Selection Policy */
             candidate_selection_policy: string | null;
             /** Candidate Selection Policy Epoch */
@@ -7381,6 +7184,8 @@ export interface components {
             entry_price_usd: number | null;
             /** Execution Eligible */
             execution_eligible: number | null;
+            /** Execution State */
+            execution_state: string;
             /** Expired Plan Count */
             expired_plan_count: number;
             /** Hard Expires At */
@@ -7431,6 +7236,8 @@ export interface components {
             outcome_reason: string | null;
             /** Owner Token */
             owner_token: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength?: number | null;
             /** Planner Contract Version */
             planner_contract_version: string | null;
             /** Planner Input Hash */
@@ -7469,6 +7276,8 @@ export interface components {
             soft_expires_at: string | null;
             /** Spread Bps */
             spread_bps: number | null;
+            /** Startup Reason */
+            startup_reason?: string | null;
             /** State Changed At */
             state_changed_at: string | null;
             /** Status */
@@ -7574,6 +7383,8 @@ export interface components {
         };
         /** CandidateRow */
         CandidateRow: {
+            /** Admission Basis */
+            admission_basis: string | null;
             /** All Scores */
             all_scores: string | null;
             /** Asset Id */
@@ -7626,6 +7437,8 @@ export interface components {
             opportunity_source_component: string | null;
             /** Opportunity Source Cutoff At */
             opportunity_source_cutoff_at: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength: number | null;
             /** Quote Volume 24H */
             quote_volume_24h: number | null;
             /** Rank */
@@ -7642,10 +7455,12 @@ export interface components {
             snapshot_id: string;
             /** Spread Bps */
             spread_bps: number | null;
+            /** Startup Reason */
+            startup_reason: string | null;
             /** Symbol */
             symbol: string;
             /** Total Score */
-            total_score: number;
+            total_score: number | null;
             /** Tradability Score */
             tradability_score: number | null;
             /** Ttl Sec */
@@ -7653,116 +7468,8 @@ export interface components {
             /** Venue */
             venue: string | null;
         };
-        /** CandidateSelectionAdmissionRequest */
-        CandidateSelectionAdmissionRequest: {
-            /**
-             * Confirm Admission
-             * @constant
-             */
-            confirm_admission: true;
-            /** Expected Policy Epoch */
-            expected_policy_epoch: string;
-            /** Reason */
-            reason: string;
-        };
-        /** CandidateSelectionHarmMetrics */
-        CandidateSelectionHarmMetrics: {
-            /** Legacy Cvar 05 Pct */
-            legacy_cvar_05_pct?: number | null;
-            /** Legacy Loss Rate */
-            legacy_loss_rate?: number | null;
-            /** Legacy Mae P95 Pct */
-            legacy_mae_p95_pct?: number | null;
-            /** Legacy Mean Cost Pct */
-            legacy_mean_cost_pct?: number | null;
-            /** Noninferiority Reasons */
-            noninferiority_reasons?: string[];
-            /** Target Cvar 05 Pct */
-            target_cvar_05_pct?: number | null;
-            /** Target Loss Rate */
-            target_loss_rate?: number | null;
-            /** Target Mae P95 Pct */
-            target_mae_p95_pct?: number | null;
-            /** Target Max Symbol Share */
-            target_max_symbol_share?: number | null;
-            /** Target Mean Cost Pct */
-            target_mean_cost_pct?: number | null;
-        };
-        /** CandidateSelectionQualification */
-        CandidateSelectionQualification: {
-            /** As Of At */
-            as_of_at?: string;
-            /** Authority */
-            authority?: string;
-            /** Blocking Reasons */
-            blocking_reasons: string[];
-            /** Complete Cluster N */
-            complete_cluster_n?: number;
-            /** Consecutive Eligible Utc Days */
-            consecutive_eligible_utc_days?: number;
-            /** Expected Cluster N */
-            expected_cluster_n?: number;
-            /** Fixed Look Cluster N */
-            fixed_look_cluster_n?: number;
-            /** Full Arm Outcome Coverage */
-            full_arm_outcome_coverage?: number;
-            harm_metrics?: components["schemas"]["CandidateSelectionHarmMetrics"];
-            /** Independent Policy Unit N */
-            independent_policy_unit_n?: number;
-            /** Invalid Reasons */
-            invalid_reasons: string[];
-            /** Legacy Cluster Utility Mean */
-            legacy_cluster_utility_mean?: number | null;
-            /** Outcome Exclusion Counts */
-            outcome_exclusion_counts?: {
-                [key: string]: number;
-            };
-            /** Owner Admission Required */
-            owner_admission_required?: boolean;
-            /** Paired Utility Delta */
-            paired_utility_delta?: number | null;
-            /** Paired Utility Lower Bound */
-            paired_utility_lower_bound?: number | null;
-            /** Policy Epoch Id */
-            policy_epoch_id: string | null;
-            /** Promotion Eligible */
-            promotion_eligible: boolean;
-            /** Qualification Eligible */
-            qualification_eligible?: boolean;
-            /** Raw Scanner Run N */
-            raw_scanner_run_n?: number;
-            runtime_provenance?: components["schemas"]["CandidateSelectionRuntimeProvenance"];
-            selection_policy?: components["schemas"]["JsonValue"];
-            /** Target Cluster Utility Mean */
-            target_cluster_utility_mean?: number | null;
-            /** Training Cutoff */
-            training_cutoff?: string | null;
-            /** Verdict */
-            verdict: string;
-            /** Version */
-            version?: string;
-        };
-        /** CandidateSelectionRollbackRequest */
-        CandidateSelectionRollbackRequest: {
-            /**
-             * Confirm Rollback
-             * @constant
-             */
-            confirm_rollback: true;
-            /** Reason */
-            reason: string;
-        };
-        /** CandidateSelectionRuntimeProvenance */
-        CandidateSelectionRuntimeProvenance: {
-            /** Behavior Fingerprints */
-            behavior_fingerprints: string[];
-            /** Producer Commits */
-            producer_commits: string[];
-        };
         /** CandidateSelectionStatusResponse */
         CandidateSelectionStatusResponse: {
-            /** Admission Block Reason */
-            admission_block_reason: string | null;
             /** Authority Block Reason */
             authority_block_reason: string | null;
             /** Authority Enabled */
@@ -7771,34 +7478,13 @@ export interface components {
             configured_policy: string;
             /** Configured Policy Epoch */
             configured_policy_epoch: string | null;
-            /** Evaluation Available */
-            evaluation_available: boolean;
-            /** Evaluation Error */
-            evaluation_error: string | null;
-            qualification: components["schemas"]["CandidateSelectionQualification"];
-        };
-        /** CandidateSelectionTransitionResponse */
-        CandidateSelectionTransitionResponse: {
-            /** Admission Block Reason */
-            admission_block_reason: string | null;
-            /** Audit Mirror Status */
-            audit_mirror_status: string;
-            /** Authority Block Reason */
-            authority_block_reason: string | null;
-            /** Authority Enabled */
-            authority_enabled: boolean;
-            /** Configured Policy */
-            configured_policy: string;
-            /** Configured Policy Epoch */
-            configured_policy_epoch: string | null;
-            /** Evaluation Available */
-            evaluation_available: boolean;
-            /** Evaluation Error */
-            evaluation_error: string | null;
-            qualification: components["schemas"]["CandidateSelectionQualification"];
+            /** Selection Bases */
+            selection_bases: string[];
         };
         /** CandidateWorkbenchRow */
         CandidateWorkbenchRow: {
+            /** Admission Basis */
+            admission_basis: string | null;
             /** All Scores */
             all_scores: string | null;
             /** Asset Id */
@@ -7849,6 +7535,8 @@ export interface components {
             estimated_cost: number | null;
             /** Execution Eligible */
             execution_eligible: number | null;
+            /** Execution State */
+            execution_state: string;
             /** Expired Plan Count */
             expired_plan_count: number;
             /** Expires At */
@@ -7893,6 +7581,8 @@ export interface components {
             outcome_class: string | null;
             /** Outcome Reason */
             outcome_reason: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength: number | null;
             /** Planning Generation Id */
             planning_generation_id: string | null;
             /** Planning Key */
@@ -7923,12 +7613,14 @@ export interface components {
             soft_expires_at: string | null;
             /** Spread Bps */
             spread_bps: number | null;
+            /** Startup Reason */
+            startup_reason: string | null;
             /** State Changed At */
             state_changed_at: string | null;
             /** Symbol */
             symbol: string;
             /** Total Score */
-            total_score: number;
+            total_score: number | null;
             /** Tradability Score */
             tradability_score: number | null;
             /** Ttl Sec */
@@ -7995,19 +7687,6 @@ export interface components {
             state: string;
         } & {
             [key: string]: unknown;
-        };
-        /** ContinuityBody */
-        ContinuityBody: {
-            /**
-             * Cause
-             * @default update_continuity_candidate
-             */
-            cause: string;
-            /**
-             * Confirm
-             * @default false
-             */
-            confirm: boolean;
         };
         /**
          * ControllerConfig
@@ -8430,6 +8109,12 @@ export interface components {
             entry_plan_status: string | null;
             /** Events */
             events: components["schemas"]["EntryLifecycleEvent"][];
+            /** Execution */
+            execution: {
+                [key: string]: unknown;
+            };
+            /** Execution State */
+            execution_state: string;
             /** Generation Id */
             generation_id: string | null;
             /** Last Stage */
@@ -8466,6 +8151,8 @@ export interface components {
             current_plan_id: string | null;
             /** Cycles */
             cycles: components["schemas"]["EntryLifecycleCycle"][];
+            /** Execution State */
+            execution_state: string;
             /** Expired Plan Count */
             expired_plan_count: number;
             /** Last Stage */
@@ -8516,6 +8203,28 @@ export interface components {
         };
         /** EntryPlanLineage */
         EntryPlanLineage: {
+            /** Availability */
+            availability: {
+                [key: string]: unknown;
+            };
+            /** Close Fills */
+            close_fills: {
+                [key: string]: unknown;
+            }[];
+            /** Close Orders */
+            close_orders: {
+                [key: string]: unknown;
+            }[];
+            /** Economics */
+            economics: {
+                [key: string]: unknown;
+            };
+            /** Entry Outcomes */
+            entry_outcomes: {
+                [key: string]: unknown;
+            }[];
+            /** Execution State */
+            execution_state: string;
             fills: components["schemas"]["EntryLineageFills"] | null;
             order: components["schemas"]["EntryLineageOrder"] | null;
             position: components["schemas"]["EntryLineagePosition"] | null;
@@ -8788,6 +8497,10 @@ export interface components {
             entry_plans: components["schemas"]["EntryPlanProjection"][] | null;
             /** Generated At */
             generated_at: string;
+            /** Progress */
+            progress: {
+                [key: string]: unknown;
+            };
             summary: components["schemas"]["WorkbenchSummary"] | null;
             universe: components["schemas"]["WorkbenchUniverse"];
         };
@@ -8980,10 +8693,6 @@ export interface components {
             uta_account_config_generations?: {
                 [key: string]: number;
             };
-            /** Uta Read Boundaries */
-            uta_read_boundaries?: {
-                [key: string]: "legacy" | "shadow_read" | "uta_v1";
-            };
         };
         /** ExchangeCredentialsRequest */
         ExchangeCredentialsRequest: {
@@ -9011,8 +8720,6 @@ export interface components {
             spot: boolean;
             /** Usdt Futures */
             usdt_futures: boolean;
-            /** Uta Read Boundary */
-            uta_read_boundary?: ("legacy" | "shadow_read" | "uta_v1") | null;
         };
         /** ExchangeModeRequest */
         ExchangeModeRequest: {
@@ -11192,6 +10899,8 @@ export interface components {
         PlanningHistoryItem: {
             /** Activation Identity */
             activation_identity: string | null;
+            /** Admission Basis */
+            admission_basis?: string | null;
             /** Attempt Count */
             attempt_count: number;
             /** Attention Max Age Sec */
@@ -11276,6 +10985,8 @@ export interface components {
             outcome_reason: string | null;
             /** Owner Token */
             owner_token: string | null;
+            /** Pessimistic Strength */
+            pessimistic_strength?: number | null;
             /** Planner Contract Version */
             planner_contract_version: string | null;
             /** Planner Input Hash */
@@ -11308,6 +11019,8 @@ export interface components {
             schema_fingerprint: string | null;
             /** Soft Expires At */
             soft_expires_at: string | null;
+            /** Startup Reason */
+            startup_reason?: string | null;
             /** Status */
             status: string;
             /** Symbol */
@@ -12468,30 +12181,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** RuntimeCandidateRequest */
-        RuntimeCandidateRequest: {
-            /** Artifact Path */
-            artifact_path?: string | null;
-            /** Build Git Sha */
-            build_git_sha?: string | null;
-            /**
-             * Cause
-             * @default operator_runtime_candidate
-             */
-            cause: string;
-            /** Code Version */
-            code_version?: string | null;
-            /** Config Version */
-            config_version?: string | null;
-            /** Metadata */
-            metadata?: {
-                [key: string]: unknown;
-            } | null;
-            /** Release Bundle Hash */
-            release_bundle_hash?: string | null;
-            /** Schema Version */
-            schema_version?: string | null;
-        };
         /** RuntimeConfig */
         RuntimeConfig: {
             /**
@@ -12543,21 +12232,6 @@ export interface components {
              */
             paused_by_connectivity: boolean;
             /**
-             * Runtime Continuity Enabled
-             * @default false
-             */
-            runtime_continuity_enabled: boolean;
-            /**
-             * Runtime Continuity Lock Ttl Sec
-             * @default 300
-             */
-            runtime_continuity_lock_ttl_sec: number;
-            /**
-             * Runtime Continuity Shadow Port Offset
-             * @default 100
-             */
-            runtime_continuity_shadow_port_offset: number;
-            /**
              * Scheduler Enabled
              * @default true
              */
@@ -12569,12 +12243,6 @@ export interface components {
             auto_reload?: boolean | null;
             /** Git Enabled */
             git_enabled?: boolean | null;
-            /** Runtime Continuity Enabled */
-            runtime_continuity_enabled?: boolean | null;
-            /** Runtime Continuity Lock Ttl Sec */
-            runtime_continuity_lock_ttl_sec?: number | null;
-            /** Runtime Continuity Shadow Port Offset */
-            runtime_continuity_shadow_port_offset?: number | null;
             /** Scheduler Enabled */
             scheduler_enabled?: boolean | null;
         };
@@ -12604,26 +12272,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** RuntimeTransitionRequest */
-        RuntimeTransitionRequest: {
-            /**
-             * Cause
-             * @default operator_runtime_transition
-             */
-            cause: string;
-            /**
-             * Confirm
-             * @default false
-             */
-            confirm: boolean;
-            /**
-             * Force
-             * @default false
-             */
-            force: boolean;
-            /** Runtime Id */
-            runtime_id?: string | null;
-        };
         /** SchedulerSnapshot */
         SchedulerSnapshot: {
             /**
@@ -12648,9 +12296,8 @@ export interface components {
          * SerenityConfig
          * @description Serenity Research school — long-horizon industrial-chain analyst lens.
          *
-         *     Phase 3 (Option A, D5): promote theme → enqueue signal_pending PiDecisions
-         *     (PI remains sole trade-decision maker). auto_promote is default OFF;
-         *     manual-only promotion preserves the human-curator workflow.
+         *     Promotion publishes Candidates to the shared Entry Planner. Auto-promotion
+         *     is disabled by default; manual promotion retains the curator workflow.
          */
         SerenityConfig: {
             /**
@@ -12673,11 +12320,6 @@ export interface components {
              * @default 72
              */
             min_score_for_pi: number;
-            /**
-             * Stop Loss Pct
-             * @default 8
-             */
-            stop_loss_pct: number;
         };
         /** SerenityConfigUpdate */
         SerenityConfigUpdate: {
@@ -12689,8 +12331,6 @@ export interface components {
             max_hold_days?: number | null;
             /** Min Score For Pi */
             min_score_for_pi?: number | null;
-            /** Stop Loss Pct */
-            stop_loss_pct?: number | null;
         };
         /** SerenityEvidenceCreate */
         SerenityEvidenceCreate: {
@@ -13814,11 +13454,6 @@ export interface components {
              */
             max_position_hold_hours: number;
             /**
-             * Min Confidence To Trade
-             * @default medium
-             */
-            min_confidence_to_trade: string;
-            /**
              * Persona Auto Advance Enabled
              * @default false
              */
@@ -13934,8 +13569,6 @@ export interface components {
             market_aware_exits?: components["schemas"]["MarketAwareExitsUpdate"] | null;
             /** Max Position Hold Hours */
             max_position_hold_hours?: number | null;
-            /** Min Confidence To Trade */
-            min_confidence_to_trade?: string | null;
             /** Persona Auto Advance Enabled */
             persona_auto_advance_enabled?: boolean | null;
             /** Persona Learning Enabled */
@@ -14033,7 +13666,7 @@ export interface components {
             candidate_max_continuous_age_sec: number;
             /**
              * Candidate Selection Policy
-             * @default legacy_total_score_v1
+             * @default candidate_selection_utility_v1
              * @enum {string}
              */
             candidate_selection_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
@@ -14127,26 +13760,12 @@ export interface components {
             blacklist?: string[] | null;
             /** Candidate Max Continuous Age Sec */
             candidate_max_continuous_age_sec?: number | null;
-            /** Core Pool Size */
-            core_pool_size?: number | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Entry Ttl Sec */
             entry_ttl_sec?: number | null;
-            /** Explore Ratio */
-            explore_ratio?: number | null;
             /** Fallback Symbols */
             fallback_symbols?: string[] | null;
-            /** Family Quota */
-            family_quota?: {
-                [key: string]: number;
-            } | null;
-            /** Family Quota By Regime */
-            family_quota_by_regime?: {
-                [key: string]: {
-                    [key: string]: number;
-                };
-            } | null;
             /** Market Type */
             market_type?: string | null;
             /** Max Candidates */
@@ -14307,6 +13926,8 @@ export interface components {
             market_type: string;
             /** Policy Id */
             policy_id: string | null;
+            /** Source Kind */
+            source_kind: string;
             /** Status */
             status: string;
             /** Summary */
@@ -18668,254 +18289,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    runtime_status_api_operator_runtime_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    runtime_candidate_api_operator_runtime_candidate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeCandidateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_drain_api_operator_runtime_drain_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeTransitionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_events_api_operator_runtime_events_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_events_stream_api_operator_runtime_events_stream_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                once?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_promote_api_operator_runtime_promote_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeTransitionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_rollback_api_operator_runtime_rollback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeTransitionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    runtime_shadow_api_operator_runtime_shadow_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RuntimeTransitionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -24049,72 +23422,6 @@ export interface operations {
             };
         };
     };
-    admit_candidate_selection_api_settings_universe_candidate_selection_admit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidateSelectionAdmissionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CandidateSelectionTransitionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    rollback_candidate_selection_api_settings_universe_candidate_selection_rollback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CandidateSelectionRollbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CandidateSelectionTransitionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     update_update_config_api_settings_update_config_post: {
         parameters: {
             query?: never;
@@ -24785,39 +24092,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    update_continuity_api_update_continuity_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: {
-            content: {
-                "application/json": components["schemas"]["ContinuityBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

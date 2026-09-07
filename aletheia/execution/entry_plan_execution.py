@@ -201,8 +201,15 @@ def _require_momentum_geometry_authority(plan: EntryPlan) -> None:
 
 
 def _require_ai_entry_authority(plan: EntryPlan) -> None:
-    if plan.entry_hypothesis_json is None:
-        return
+    from aletheia.trading.entry_contract import entry_contract_fingerprints
+    from aletheia.trading.entry_compat import historical_plan_version
+
+    if historical_plan_version(plan) is not None or (
+        plan.behavior_fingerprint, plan.schema_fingerprint
+    ) != entry_contract_fingerprints():
+        raise ValueError("ai_entry_running_contract_mismatch")
+    if plan.entry_hypothesis_json is None or plan.source_kind is None:
+        raise ValueError("ai_entry_plan_provenance_required")
     generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
     if (
         generation is None
@@ -211,8 +218,6 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         or not generation.get("schema_fingerprint")
     ):
         raise ValueError("ai_entry_generation_contract_mismatch")
-    from aletheia.trading.entry_contract import entry_contract_fingerprints
-
     if (
         generation["entry_behavior_fingerprint"], generation["schema_fingerprint"]
     ) != entry_contract_fingerprints():
@@ -239,6 +244,11 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         raise ValueError("ai_entry_context_identity_mismatch")
     candidate = repo.get_candidate(str(plan.candidate_id))
     opportunity = context.candidate_opportunity_context
+    source = opportunity.get("source", {})
+    if (plan.source_kind, plan.source_id, plan.trade_school) != (
+        source.get("kind"), source.get("id"), source.get("trade_school"),
+    ):
+        raise ValueError("ai_entry_source_identity_mismatch")
     if opportunity.get("opportunity", {}).get("capability_status") != "supported":
         raise ValueError("ai_entry_candidate_capability_unavailable")
     if (
@@ -358,7 +368,8 @@ def build_entry_plan_order_intent(
     if quantity <= 0 or risk_reward is None:
         raise ValueError("entry_order_intent_geometry_invalid")
     return TradeProposal(
-        opportunity_id=None,
+        opportunity_id=plan.source_id if plan.source_kind == "serenity" else None,
+        trade_school=plan.trade_school,
         symbol=plan.symbol,
         market_type=instrument_market_to_db_market(plan.market_type),
         direction=plan.direction,
@@ -369,13 +380,16 @@ def build_entry_plan_order_intent(
         stop_price=plan.stop_price,
         take_profit=plan.target_price,
         risk_reward=risk_reward,
-        expected_horizon_hours=plan.expected_horizon_hours,
+        expected_horizon_hours=plan.holding_horizon_hours,
         stop_source="operator",
         execution_mode=plan.execution_account_mode,
         agent_rationale=plan.thesis,
         attribution_snapshot=json.dumps(
             {
                 "entry_plan_id": plan.plan_id,
+                "source_kind": plan.source_kind,
+                "source_id": plan.source_id,
+                "trade_school": plan.trade_school,
                 "planning_generation_id": plan.planning_generation_id,
                 "treatment_exposure_id": plan.treatment_exposure_id,
                 "geometry_version": plan.trigger_params.get("geometry_version"),

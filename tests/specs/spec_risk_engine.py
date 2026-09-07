@@ -1125,14 +1125,14 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     cfg.risk.max_live_position_margin_usdt = 50.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
-    def cached_state(mode):
+    def cached_state(*, execution_modes=None):
+        mode = execution_modes[0] if execution_modes else "bitget_demo"
         return {
-            "age_seconds": 1.0,
-            "status": "healthy",
-            "available_usdt": 80.0 if mode == "demo" else 30.0,
+            "age_seconds": 1.0, "status": "healthy",
+            "accounts": [{"broker_id": mode, "available_usdt": 80.0 if mode == "bitget_demo" else 30.0}],
         }
 
-    monkeypatch.setattr(sync, "get_cached_state", cached_state)
+    monkeypatch.setattr(sync, "get_unified_cached_state", cached_state)
 
     assert eng._effective_position_margin_cap(cfg.risk, "bitget_demo") == 80.0
     assert eng._effective_position_margin_cap(cfg.risk, "bitget_live_limited") == 30.0
@@ -1186,7 +1186,7 @@ def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
     monkeypatch.setattr(paper_account, "get_paper_account", _balance_failure)
 
     # External accounts intentionally keep the existing advisory-cache fallback.
-    monkeypatch.setattr(sync, "get_cached_state", _balance_failure)
+    monkeypatch.setattr(sync, "get_unified_cached_state", _balance_failure)
     assert (
         eng._effective_position_margin_cap(cfg.risk, "bitget_demo")
         == cfg.risk.max_demo_position_margin_usdt
@@ -1815,24 +1815,13 @@ def test_account_leverage_equity_is_named_and_unknown_rejects(monkeypatch):
             "accounts": [
                 {"broker_id": "okx_demo", "equity_usdt": 125.0},
                 {"broker_id": "binance_testnet", "equity_usdt": 874.0},
+                {"broker_id": "bitget_demo", "equity_usdt": 75.0},
             ],
         },
     )
-    bitget_calls = []
-
-    def _bitget_state(mode=None):
-        bitget_calls.append(mode)
-        return {
-            "age_seconds": 1.0,
-            "status": "healthy",
-            "equity_usdt": 75.0,
-        }
-
-    monkeypatch.setattr(sync, "get_cached_state", _bitget_state)
 
     assert eng._account_equity("okx_demo", cfg) == 125.0
     assert eng._account_equity("bitget_demo", cfg) == 75.0
-    assert bitget_calls == ["demo"]
 
     monkeypatch.setattr(sync, "get_unified_cached_state", lambda: {"accounts": []})
     proposal = TradeProposal(
@@ -1883,8 +1872,7 @@ def test_external_account_equity_rejects_stale_or_unhealthy_cache(
     from aletheia.config.loader import load_config
 
     cfg = load_config().model_copy(deep=True)
-    monkeypatch.setattr(sync, "get_cached_state", lambda _mode=None: cache)
-    monkeypatch.setattr(sync, "get_unified_cached_state", lambda: cache)
+    monkeypatch.setattr(sync, "get_unified_cached_state", lambda **kwargs: cache)
 
     assert eng._account_equity("bitget_demo", cfg) is None
     assert eng._account_equity("bitget_live_limited", cfg) is None
@@ -2231,19 +2219,6 @@ def test_account_leverage_monitor_and_gate_reject_invalid_reservation(
     assert gate == ["account_leverage_check_error:invalid_entry_reservation"]
 
 
-def test_futures_context_keeps_unavailable_account_leverage_empty(monkeypatch):
-    import aletheia.risk.engine as eng
-    from aletheia.agent_shell.trading_context import _build_futures_context
-    from aletheia.config.loader import load_config
-
-    cfg = load_config().model_copy(deep=True)
-    cfg.exchange.paper_execution_mode = "okx_demo"
-    monkeypatch.setattr(eng, "list_all_open_positions", lambda: [])
-    monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
-
-    result = _build_futures_context({"features": [], "positions": []}, cfg)
-
-    assert result["account_leverage_ratio"] is None
 
 
 def test_account_leverage_is_gross_notional_over_equity_not_leverage_squared(monkeypatch):

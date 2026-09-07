@@ -46,18 +46,6 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
     sq._db_conn = conn
     run_migrations()
 
-    # Pin the okx_broker demo-symbol cache to a permissive set INCLUDING BTC/USDT.
-    # Another full-suite test can leave it populated without BTC swap (fresh TTL),
-    # which would make the okx_demo averaging-in leg reject as an unsupported symbol
-    # before it updates the position — an order-dependent failure. Pinning avoids
-    # both that and a flaky live refresh (bitget/binance params ignore this cache).
-    import time as _time
-    import aletheia.execution.okx_broker as _okxb
-    _okxb._okx_demo_symbols = {
-        "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
-        "spot": frozenset({"BTC/USDT", "ETH/USDT"}),
-    }
-    _okxb._okx_demo_symbols_loaded_at = _time.time()
 
 
 def _make_open_position(
@@ -96,7 +84,8 @@ def _make_open_position(
         entry_fee=entry_fee,
         status="open",
     )
-    insert_position(pos)
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(pos)
     return pos.id
 
 
@@ -105,34 +94,17 @@ def _make_open_position(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("execution_mode,fee_rate,broker_module,client_module", [
-    ("bitget_live_limited", 0.0006, "aletheia.execution.bitget_broker", "aletheia.exchanges.bitget.client"),
-    ("okx_demo", 0.0005, "aletheia.execution.okx_broker", "aletheia.exchanges.okx.client"),
-    ("binance_testnet", 0.0004, "aletheia.execution.binance_broker", "aletheia.exchanges.binance.client"),
-])
+@pytest.mark.parametrize("execution_mode,fee_rate", [("bitget_live_limited", 0.0006), ("okx_demo", 0.0005), ("binance_testnet", 0.0004)])
 def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidation(
-    tmp_path, monkeypatch, execution_mode, fee_rate, broker_module, client_module,
+    tmp_path, monkeypatch, execution_mode, fee_rate,
 ):
     """#140 + #141: the three live brokers now match paper_broker's averaging-in
     invariants — entry_fee accumulates across legs, liquidation_price is
     recomputed from the weighted-average entry (unchanged leverage)."""
     _setup_env(tmp_path, monkeypatch)
 
-    # The three live clients each validate credentials at __init__. Each client
-    # module did `from aletheia.config.secrets import get_secret`, so it holds its
-    # OWN module-level reference — patching only `aletheia.config.secrets.get_secret`
-    # does NOT intercept it. (This test only passed before when an earlier test left
-    # the real secrets cache primed with truthy values — an order-dependent flake.)
-    # Patch get_secret in each client's own namespace so the constructor builds
-    # deterministically regardless of collection order.
-    def _fake_get_secret(key, default=None):
-        return "test-fake-secret"
-
-    monkeypatch.setattr("aletheia.config.secrets.get_secret", _fake_get_secret)
-    for _mod in ("aletheia.exchanges.bitget.client",
-                 "aletheia.exchanges.okx.client",
-                 "aletheia.exchanges.binance.client"):
-        monkeypatch.setattr(f"{_mod}.get_secret", _fake_get_secret, raising=False)
+    from tests.specs.spec_pipeline_stop_propagation import _stub_uta_execution, _patch_filled_place_order, _patch_private_fill_history
+    _stub_uta_execution(monkeypatch)
 
     from aletheia.storage.models import RiskDecision, TradeProposal
     from aletheia.storage.repositories import (
@@ -182,63 +154,12 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
     )
     insert_risk_decision(decision)
 
-    # Stub the exchange client's async surface so no real network happens.
-    import importlib
-    _broker = importlib.import_module(broker_module)
-    _client_mod = importlib.import_module(client_module)
-
+    from aletheia.execution import coordinator
     fill_price_leg2 = 110.0
     fill_qty_leg2 = 1.0
-
-    class _FakeOrderResp:
-        status = "filled"
-        order_id = "test-order-1"
-        fill_price = fill_price_leg2
-        filled_quantity = fill_qty_leg2
-        client_oid = None
-
-    async def _fake_place_order(self, order):
-        return _FakeOrderResp()
-
-    async def _fake_set_leverage(self, *args, **kwargs):
-        return None
-
-    async def _fake_transfer(self, *args, **kwargs):
-        # The broker makes a best-effort mix-wallet top-up before submitting a
-        # Bitget futures order. This is an averaging calculation unit test, so
-        # it must not reach the real transfer endpoint just because its fake
-        # credentials made the client constructor succeed.
-        return None
-
-    async def _fake_close(self):
-        return None
-
-    # Patch each broker's client class. Each broker uses a different class name.
-    client_classes = {
-        "aletheia.exchanges.bitget.client": "BitgetClient",
-        "aletheia.exchanges.okx.client": "OKXClient",
-        "aletheia.exchanges.binance.client": "BinanceClient",
-    }
-    client_cls = getattr(_client_mod, client_classes[client_module])
-    monkeypatch.setattr(client_cls, "place_order", _fake_place_order)
-    monkeypatch.setattr(client_cls, "close", _fake_close, raising=False)
-    monkeypatch.setattr(client_cls, "transfer", _fake_transfer, raising=False)
-    if hasattr(client_cls, "set_leverage"):
-        monkeypatch.setattr(client_cls, "set_leverage", _fake_set_leverage)
-
-    from tests.specs.spec_pipeline_stop_propagation import (
-        _patch_private_fill_history,
-    )
-
-    _patch_private_fill_history(
-        monkeypatch,
-        broker_module,
-        client_module,
-        fill_price=fill_price_leg2,
-        fee_rate=fee_rate,
-    )
-
-    submission = _broker.execute_live_order(
+    _patch_filled_place_order(monkeypatch, fill_price=fill_price_leg2)
+    _patch_private_fill_history(monkeypatch, fill_price=fill_price_leg2, fee_rate=fee_rate)
+    submission = coordinator.execute_order(
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
         symbol="BTC/USDT",
@@ -249,7 +170,6 @@ def test_live_broker_averaging_in_accumulates_entry_fee_and_recomputes_liquidati
         price=fill_price_leg2,
         execution_mode=execution_mode,
         leverage=leverage,
-        fee_rate=fee_rate,
     )
     assert submission["order_status"] == "materialization_missing"
 
@@ -305,9 +225,9 @@ def test_replace_exchange_protective_stop_dispatches_to_okx_when_okx_demo(
     def fake_replace_okx(pos_id, new_stop_price):
         called["pos_id"] = pos_id
         called["new_stop_price"] = new_stop_price
-
+        return True
     monkeypatch.setattr(
-        "aletheia.execution.okx_broker.replace_okx_exchange_stop", fake_replace_okx
+        "aletheia.execution.coordinator.replace_protective_stop", fake_replace_okx
     )
 
     from aletheia.execution.stops import replace_exchange_protective_stop
@@ -336,9 +256,9 @@ def test_replace_exchange_protective_stop_still_dispatches_bitget(
     def fake_replace_bitget(pos_id, new_stop_price):
         called["pos_id"] = pos_id
         called["new_stop_price"] = new_stop_price
-
+        return True
     monkeypatch.setattr(
-        "aletheia.execution.bitget_broker.replace_exchange_stop", fake_replace_bitget
+        "aletheia.execution.coordinator.replace_protective_stop", fake_replace_bitget
     )
 
     from aletheia.execution.stops import replace_exchange_protective_stop
@@ -363,7 +283,7 @@ def test_replace_exchange_protective_stop_is_noop_when_flag_disabled(
     def _fail(*args, **kwargs):
         called.append(("bitget", args, kwargs))
 
-    monkeypatch.setattr("aletheia.execution.bitget_broker.replace_exchange_stop", _fail)
+    monkeypatch.setattr("aletheia.execution.coordinator.replace_protective_stop", _fail)
 
     from aletheia.execution.stops import replace_exchange_protective_stop
     assert replace_exchange_protective_stop(position_id, 97.5) is False
@@ -385,12 +305,12 @@ def test_replace_exchange_protective_stop_binance_logs_and_skips(
     save_config(cfg)
 
     position_id = _make_open_position(execution_mode="binance_testnet")
-
+    from tests.specs.spec_pipeline_stop_propagation import _stub_uta_execution, _patch_filled_place_order
+    _stub_uta_execution(monkeypatch)
+    calls = _patch_filled_place_order(monkeypatch, fill_price=100.0)
     from aletheia.execution.stops import replace_exchange_protective_stop
     import logging
 
     with caplog.at_level(logging.WARNING, logger="aletheia.execution.stops"):
         assert replace_exchange_protective_stop(position_id, 97.5) is False
-
-    warnings = [r for r in caplog.records if "Binance trailed-stop" in r.message]
-    assert warnings, "Binance skip must be logged so operator can see it"
+    assert calls == []

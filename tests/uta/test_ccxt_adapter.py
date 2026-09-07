@@ -134,7 +134,7 @@ class FakeExchange:
             raise response
         return response
 
-    async def fetch_order(self, order_id, symbol=None):
+    async def fetch_order(self, order_id, symbol=None, params=None):
         if isinstance(self.exact_order, Exception):
             raise self.exact_order
         return self.exact_order
@@ -568,8 +568,8 @@ async def test_exact_order_preserves_stable_cancel_reason(monkeypatch):
 async def test_client_order_history_distinguishes_complete_not_found(monkeypatch):
     profile = _profile("binance")
     exchange = FakeExchange()
-    exchange.order_responses = [[]]
-    exchange.closed_order_responses = [[]]
+    from ccxt import OrderNotFound
+    exchange.exact_order = OrderNotFound("not found")
     _install(monkeypatch, exchange)
     adapter = CCXTUTAAdapter(_identity(profile), profile)
 
@@ -650,12 +650,6 @@ async def test_fill_funding_and_verified_exit_reports_are_decimal_and_complete(
     assert funding.completeness is ReadCompleteness.COMPLETE
     assert funding.entries[0].amount == Decimal("-0.02")
     assert verified.state is VerifiedExitState.VERIFIED_FILL_EXIT
-    assert all(
-        event[1].get("paginate") is True
-        and event[1].get("paginationCalls") == 10
-        for event in exchange.events
-        if event[0] in {"fetch_my_trades", "fetch_ledger"}
-    )
     await adapter.close()
 
 
@@ -1712,3 +1706,85 @@ def test_profile_rejects_execution_mode_identity_mismatch():
     wrong = _identity(profile).model_copy(update={"execution_mode": "okx_demo"})
     with pytest.raises(ValueError, match="does not match"):
         CCXTUTAAdapter(wrong, profile)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["funded", "topup", "missing_balance", "transfer_rejected", "no_reference", "uta_v3"])
+async def test_classic_margin_preparation_uses_only_proven_account_local_funds(monkeypatch, case):
+    import ccxt.async_support as ccxt
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import SubmitOrderCommand
+    exchange = ccxt.bitget()
+    exchange.set_markets([{"id":"BTCUSDT", "symbol":"BTC/USDT:USDT", "base":"BTC", "quote":"USDT", "settle":"USDT", "type":"swap", "spot":False, "swap":True, "future":False, "option":False, "contract":True, "linear":True, "inverse":False, "contractSize":1}])
+    events = []
+    async def load(*args, **kwargs):
+        return exchange.markets
+    async def balance(params):
+        events.append(("balance", params))
+        return {"code":"00000", "data": [] if case == "missing_balance" else [{"marginCoin":"USDT", "available":"20" if case == "funded" else "2", "accountEquity":"20", "locked":"0"}]}
+    async def transfer(params):
+        events.append(("transfer", params))
+        if case == "transfer_rejected":
+            raise ccxt.InsufficientFunds("isolated transfer denied")
+        return {"code":"00000", "data":{"transferId":"same-account-transfer"}}
+    async def leverage(params):
+        events.append(("leverage", params))
+        return {"code":"00000", "data":{}}
+    async def create(symbol, order_type, side, quantity, price, params):
+        events.append(("order", {"type":order_type, "price":price}))
+        return {"id":"entry-1", "symbol":symbol, "status":"open", "type":order_type, "side":side, "amount":quantity, "filled":0}
+    exchange.load_markets = load
+    exchange.privateMixGetV2MixAccountAccounts = balance
+    exchange.privateSpotPostV2SpotWalletTransfer = transfer
+    exchange.privateMixPostV2MixAccountSetLeverage = leverage
+    exchange.privateUtaPostV3AccountSetLeverage = leverage
+    exchange.create_order = create
+    _install(monkeypatch, exchange)
+    profile = _profile("uta_v3" if case == "uta_v3" else "classic_v2")
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    try:
+        report = await adapter.submit_order(SubmitOrderCommand(command_id="margin-entry", expected_account=identity, instrument=instrument_from_local("BTC/USDT", "usdt_futures"), purpose="entry", side="buy", quantity="1", order_type="market", reference_price=None if case == "no_reference" else "100", leverage="10"))
+        names = [name for name, _ in events]
+        if case in {"missing_balance", "transfer_rejected"}:
+            assert report.evidence is CommandEvidence.NOT_SENT
+            assert "order" not in names
+            if case == "missing_balance":
+                assert report.reason_code == "classic_margin_balance_unavailable"
+                assert "transfer" not in names
+        else:
+            assert report.evidence is CommandEvidence.ACKNOWLEDGED
+            assert events[-1] == ("order", {"type":"market", "price":None})
+        if case in {"topup", "transfer_rejected"}:
+            request = next(params for name, params in events if name == "transfer")
+            assert request == {"fromType":"spot", "toType":"usdt_futures", "amount":"8.00", "coin":"USDT"}
+        else:
+            assert "transfer" not in names
+        if case in {"no_reference", "uta_v3"}:
+            assert "balance" not in names
+    finally:
+        await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,code,purpose,absent", [("classic_v2","22002","exit",True), ("classic_v2","45110","exit",False), ("uta_v3","45110","exit",True), ("uta_v3","22002","entry",False)])
+async def test_bitget_exact_close_absence_codes_preserve_profile_and_purpose(monkeypatch, kind, code, purpose, absent):
+    import ccxt
+    import json
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    response = {"code":code,"msg":"venue rejection"}
+    try:
+        ccxt.bitget().handle_errors(400,"Bad Request","url","POST",{},json.dumps(response),response,{},None)
+    except ccxt.ExchangeError as error:
+        exchange.create_response = error
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(identity, purpose=purpose, reduce_only=purpose == "exit"))
+        assert report.evidence is CommandEvidence.VENUE_REJECTED
+        assert report.reason_code == ("close_position_absence_unverified" if absent else "venue_rejected_command")
+        assert report.venue_order_id is None
+        assert report.order is None
+    finally:
+        await adapter.close()

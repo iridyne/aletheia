@@ -73,11 +73,12 @@ Fixing baseline: `master@b54ae5af48a162e3a009d0820616c9866937f58f`.
 | Protection | Binance testnet had no implemented exchange-native protection placement/replacement before this phase. | Capability remains explicitly unsupported; the default-off local protection behavior is unchanged rather than invented. |
 | Rollback/qualification | Selection remains configuration-only and defaults to legacy. Automated tests cover pending-before-I/O, no writer-lock network call, ambiguity, exact Fill materialization and late-ack barriers. | Neither macOS nor the Fedora Paper runtime had Binance testnet credentials at the dated check, so credential qualification is **not available** and `uta_v1` must remain inactive. |
 
-The repeatable secret-safe gate is:
+The table above records historical Phase 4 state, not current routing. The current
+secret-safe gate always checks canonical exact-account reads (not legacy parity):
 
 ```bash
 uv run python scripts/qualify_uta.py \
-  --execution-mode binance_testnet --read-parity --execution-probe \
+  --execution-mode binance_testnet --execution-probe \
   --confirm-testnet-order --reference-price <fresh-public-price>
 ```
 

@@ -52,7 +52,6 @@ def build_trade_funnel_audit(
     hours: int | None = 24,
     days: int | None = None,
     min_sample_size: int = 3,
-    include_ranker_snapshot: bool = True,
 ) -> dict:
     """Build a JSON-serializable opportunity-to-position funnel report."""
     import aletheia.storage.sqlite as sqlite_store
@@ -137,12 +136,6 @@ def build_trade_funnel_audit(
         persisted_ranker = _persisted_ranker_counts(db, cutoff)
         if persisted_ranker["ranker_candidates"] is not None:
             counts.update(persisted_ranker)
-        elif include_ranker_snapshot and _table_exists(db, "opportunities"):
-            snapshot = _ranker_snapshot()
-            counts["ranker_candidates"] = snapshot.get("ranker_candidates")
-            counts["ranker_eligible"] = snapshot.get("ranker_eligible")
-            if snapshot.get("error"):
-                report["ranker_snapshot_error"] = snapshot["error"]
 
         # The raw counts above are event throughput in one clock window. They are
         # useful operationally but are not a conversion cohort: downstream rows
@@ -588,17 +581,6 @@ def _orders_executed(db, cutoff: str) -> int:
     return int(row["n"] if row else 0)
 
 
-def _ranker_snapshot() -> dict:
-    try:
-        from aletheia.agents.paper_trader_ranker import build_paper_candidates
-
-        candidates = build_paper_candidates(limit=50)
-        return {
-            "ranker_candidates": len(candidates),
-            "ranker_eligible": None,
-        }
-    except Exception as exc:
-        return {"ranker_candidates": None, "ranker_eligible": None, "error": str(exc)}
 
 
 def _persisted_ranker_counts(db, cutoff: str) -> dict[str, int | None]:

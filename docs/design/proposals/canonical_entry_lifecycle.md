@@ -52,3 +52,42 @@ existing pause authority and rolls code back while retaining every new row.
 This design adds no V5 label, feature flag, Candidate/Plan ledger, scheduler,
 Risk owner, Gateway, exchange, Live authority, strategy economics, synthetic
 Trigger, or cooldown redesign.
+
+## Accepted single-mainline convergence: entry implementation
+
+The owner-approved convergence extends the same durable Candidate admission to
+Serenity research. Universe and Serenity publish source-scoped snapshots and
+freeze real source kind/ID/trade_school, evidence hash and cutoff in planning
+context at birth; renewals do not rewrite that identity. Exact venue, symbol and
+physical market retain one global current owner; refresh cannot evict another
+producer, and an unresolved order prevents transfer of ownership.
+
+Serenity reuses grounded price-action timing, not a second evaluator or a new
+catalyst profile. EntryPlan freezes source kind, source ID and trade school.
+Timing remains bounded to the existing intraday/swing windows; the separate
+holding horizon preserves Serenity long-term research and thesis exits. The
+Proposal.expected_horizon_hours inherits holding_horizon_hours (Serenity
+max_hold_days×24; short_term copies timing), and source/school remain in Plan and
+Proposal attribution. Plan entry expiry remains 60/240 minutes, distinct from
+holding and actual maker Order timeout. Risk verifies these identities against
+the immutable Plan. Structural stops and actual-stop risk sizing remain intact.
+
+Legacy Opportunity/PaperTrader pending admission, TradingDecision entry
+evaluation, PiDecision entry claims, Setup authorization/materialization and
+pending defer recovery no longer own current entry. Shared position actions and
+audit remain separate. Historical facts remain readable. Pending
+work is retired with explicit evidence, never converted to a fabricated Plan;
+unknown submissions retain Gateway reconciliation rather than a false terminal
+state. Current analytics expose candidate_attention, entry_plans and planning_history
+from the workbench, not old queues; ranker/funnel cohorts remain read-only history.
+
+## Approved future portions (not delivered by this entry cutover)
+
+The same approved design will converge external private accounts on UTA/coordinator,
+Learning on the one-way proven Lab migration, and Linux source deployment on
+the existing auto transaction. It adds no coordinator framework, source plugin
+registry, second queue or migration database. Each boundary is verified before
+the next cutover. Production deployment and qualification remain separately
+authorized, including same-SHA standard-directory migration before experimental
+runtime-registry retirement. Acceptance does not claim any of these cutovers
+has been deployed.

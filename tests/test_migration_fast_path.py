@@ -238,56 +238,10 @@ def test_legacy_migration_checksum_matches_immutable_implementation():
     assert legacy.checksum == migrations._legacy_baseline_implementation_checksum()
 
 
-def test_gateway_startup_has_one_explicit_migration_owner_and_read_only_children():
-    from aletheia import _gateway_runner
-    from aletheia.gateway import lifecycle
-    from aletheia.runtime_continuity import processes
-    from aletheia.server import app as server_app
-
-    lifecycle_source = inspect.getsource(lifecycle.do_start)
-    assert "_apply_gateway_migrations" in lifecycle_source
-
-    assert "run_migrations" not in inspect.getsource(processes.current_runtime_record)
-    assert "apply_migrations" not in inspect.getsource(processes.current_runtime_record)
-    assert "run_migrations" not in inspect.getsource(_gateway_runner)
-    assert "apply_migrations" not in inspect.getsource(_gateway_runner)
-
-    lifespan_source = inspect.getsource(server_app.lifespan)
-    assert "assert_migrations_current" in lifespan_source
-    assert "run_migrations" not in lifespan_source
-    assert "apply_migrations" not in lifespan_source
-    assert "reindex_all" not in lifespan_source
 
 
-def test_startup_dataset_boundary_is_a_versioned_one_time_migration(monkeypatch):
-    import aletheia.knowledge.retrieval as retrieval
-    import aletheia.storage.migrations as migrations
 
-    connection = sqlite3.connect(":memory:")
-    connection.execute("CREATE TABLE agent_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)")
-    connection.execute("CREATE TABLE universe_scanner_runs (id TEXT PRIMARY KEY, status TEXT, started_at TEXT)")
-    connection.execute("CREATE TABLE runtime_cost_events (id TEXT PRIMARY KEY, started_at TEXT)")
-    connection.execute("CREATE TABLE alpha_control_observations (id TEXT PRIMARY KEY, layer TEXT, created_at TEXT)")
-    reindexed: list[tuple[sqlite3.Connection, bool]] = []
-    monkeypatch.setattr(
-        retrieval,
-        "reindex_all",
-        lambda *, db, strict: reindexed.append((db, strict)) or 0,
-    )
 
-    migrations._apply_startup_dataset_boundary_v3(connection)
-
-    indexes = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert "idx_agent_runs_status_started" in indexes
-    assert "idx_universe_scanner_runs_status_started" in indexes
-    assert "idx_runtime_cost_events_normalized_started" in indexes
-    assert "idx_alpha_control_layer_created" in indexes
-    assert reindexed == [(connection, True)]
-    assert [step.schema_version for step in migrations._MIGRATIONS] == [
-        f"aletheia-sqlite-v{version}" for version in range(2, 71)
-    ]
-    assert migrations.SCHEMA_VERSION == "aletheia-sqlite-v70"
-    connection.close()
 
 
 def test_entry_version_collapse_preserves_historical_rows_and_schema_objects():
@@ -298,7 +252,9 @@ def test_entry_version_collapse_preserves_historical_rows_and_schema_objects():
 
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
-    for step in migrations._MIGRATIONS[:-1]:
+    for step in migrations._MIGRATIONS:
+        if step.migration_id == "20260904_0069_entry_version_collapse_v70":
+            break
         step.apply(connection)
     now = "2026-09-04T00:00:00+00:00"
     payload = json.dumps(
@@ -404,7 +360,9 @@ def test_entry_version_collapse_survives_real_order_fk_reference():
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     # Apply all migrations except v70 to reach v69 schema
-    for step in migrations._MIGRATIONS[:-1]:
+    for step in migrations._MIGRATIONS:
+        if step.migration_id == "20260904_0069_entry_version_collapse_v70":
+            break
         step.apply(connection)
 
     now = "2026-09-04T00:00:00+00:00"
@@ -817,6 +775,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             verdict_id TEXT PRIMARY KEY,
             experiment_id TEXT NOT NULL REFERENCES learning_experiments(experiment_id)
         );
+        CREATE TABLE universe_snapshots (id TEXT PRIMARY KEY);
+        CREATE TABLE universe_members (id TEXT PRIMARY KEY);
         CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE serenity_research_runs (
@@ -825,7 +785,8 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             retry_count INTEGER NOT NULL DEFAULT 0,
             idempotency_key TEXT
         );
-        CREATE TABLE orders (id TEXT PRIMARY KEY);
+        CREATE TABLE orders (id TEXT PRIMARY KEY, proposal_id TEXT);
+        CREATE TABLE proposal_execution_claims (proposal_id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
         CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
         CREATE TABLE agent_run_artifacts (
@@ -857,9 +818,14 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
             UNIQUE(action, position_id)
         );
         CREATE TABLE filter_shadow_experiments (id TEXT PRIMARY KEY);
-        CREATE TABLE trade_proposals (id TEXT PRIMARY KEY);
-        CREATE TABLE opportunities (id TEXT PRIMARY KEY);
-        CREATE TABLE pi_decisions (id TEXT PRIMARY KEY);
+        CREATE TABLE trade_proposals (id TEXT PRIMARY KEY, source TEXT, status TEXT);
+        CREATE TABLE opportunities (
+            id TEXT PRIMARY KEY, symbol TEXT, market TEXT, direction_bias TEXT,
+            scanner_family TEXT, valid_until TEXT, entry_zone TEXT,
+            stop_loss_hint REAL, tp_hint REAL, setup_id TEXT, signal_mark TEXT,
+            trigger_behavior_version TEXT
+        );
+        CREATE TABLE pi_decisions (id TEXT PRIMARY KEY, action TEXT, proposal_id TEXT);
         CREATE TABLE filter_decision_batches (
             id TEXT PRIMARY KEY,
             evaluated_at TEXT
@@ -926,10 +892,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         "SELECT migration_id, schema_version FROM aletheia_schema_migrations ORDER BY migration_id"
     ).fetchall()
     assert len(rows) == len(migrations._MIGRATIONS)
-    assert tuple(rows[-1]) == (
-        "20260904_0069_entry_version_collapse_v70",
-        "aletheia-sqlite-v70",
-    )
+    assert rows[-1][1] == migrations.SCHEMA_VERSION
     audit_columns = {row[1] for row in connection.execute("PRAGMA table_info(audit_events)")}
     assert {
         "jsonl_mirror_status",

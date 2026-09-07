@@ -54,14 +54,14 @@ async def _run_failed_structured_fixture(content: str) -> tuple[str, dict]:
             "synthetic system",
             "synthetic user",
             schema=_OperatorDecisionSchema,
-            caller="system_operator.assess_opportunity",
+            caller="agent_shell.entry_planner",
         )
 
     assert data is None
     assert error is not None
     row = get_db().execute(
         "SELECT * FROM llm_inference_calls "
-        "WHERE caller='system_operator.assess_opportunity' "
+        "WHERE caller='agent_shell.entry_planner' "
         "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
     assert row is not None
@@ -88,7 +88,7 @@ async def test_terminal_reasoning_empty_records_provider_failure(monkeypatch):
             "synthetic system",
             "synthetic user",
             schema=_OperatorDecisionSchema,
-            caller="system_operator.assess_opportunity",
+            caller="agent_shell.entry_planner",
         )
 
     assert data is None

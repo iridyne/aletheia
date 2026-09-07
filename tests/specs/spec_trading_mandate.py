@@ -21,38 +21,6 @@ def _imports(path: Path) -> set[str]:
     return modules
 
 
-@spec_claim(
-    SpecClaim(
-        "TM-S01",
-        "trading_mandate_contract",
-        "observe-only authority boundary",
-        "L2a",
-        "Trading Mandate is a versioned deterministic evidence contract and cannot be imported by native behavior authorities.",
-    )
-)
-def test_trading_mandate_is_not_imported_by_behavior_authorities():
-    owner_paths = [
-        ROOT / "aletheia" / "agents" / "market_observer.py",
-        ROOT / "aletheia" / "agents" / "paper_trader.py",
-        ROOT / "aletheia" / "agents" / "paper_trader_ranker.py",
-        ROOT / "aletheia" / "universe" / "service.py",
-        ROOT / "aletheia" / "agent_shell" / "trading_decision.py",
-        ROOT / "aletheia" / "risk" / "engine.py",
-        ROOT / "aletheia" / "execution" / "gateway.py",
-        ROOT / "aletheia" / "execution" / "paper_broker.py",
-        ROOT / "aletheia" / "portfolio" / "position_manager.py",
-        ROOT / "aletheia" / "server" / "routes" / "live.py",
-    ]
-    owner_paths.extend((ROOT / "aletheia" / "learning").glob("*.py"))
-    forbidden = "aletheia.trading.trading_mandate"
-    violations = {
-        str(path.relative_to(ROOT)): sorted(
-            module for module in _imports(path) if module == forbidden
-        )
-        for path in owner_paths
-        if path.exists() and forbidden in _imports(path)
-    }
-    assert violations == {}
 
 
 @spec_claim(

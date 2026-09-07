@@ -3,7 +3,8 @@
 > 状态：Stage E 证据基础已实施；交易行为调参仍关闭。
 > 目标：让每个筛选关卡的放行、拒绝和后续净结果可被真实比较，而不是用整个策略族的总收益猜测某个关卡应该放宽还是收紧。
 > 不变边界：本契约不自动改参数、不改风控上限、不启用实盘、不绕过 Execution Gateway。
-> Last updated: 2026-07-18 (Opportunity typed terminal evidence + carrier continuity)
+> Last updated: 2026-09-07 (canonical entry cutover; historical filter evidence preserved)
+> 入场边界：当前唯一入场为 Candidate → Planning Generation → Entry Planner → Compiler → Entry Plan → Risk/Gateway。下文 Ranker、PaperTrader、signal_pending、旧 Operator debate/claim 与 Opportunity 入队规则仅解释切换前的历史证据，不再授权生产、推进或恢复；其 filter ID、参数和 cohort 不得重标为当前 Planning 事实。
 
 ## 1. 为什么不能只记“最后被拒绝”
 
@@ -62,12 +63,13 @@ Opportunity 主链上的“过滤”实际包含四种不同问题：
 关闭时必须写 `not_applicable`，配置或运行异常必须写 `error`，不得把“未评估”冒充为
 `passed/guard_not_blocking`。
 
-Overview 的当前 entry 状态和 `aletheia inspect entry-status` 必须直接投影这些已提交事实：
-open Opportunity 没有本 epoch Ranker 事实时显示 `ranker_pending`；有 selection reject 时显示
-真实 `blocking_filter/reason_code`、此前 passed filter 数、`run_id` 与可计算的 retry 时间。
-诊断面不得调用 `build_paper_candidates` 重跑当前策略再冒充历史判定；`inspect candidates`
-只能标为 current-policy preview。Ranker wake 来源/结果来自 `AgentRun.trigger_type` 和有界
-process telemetry，不得伪造为 FilterDecision。
+Overview、`aletheia inspect entry-status` 与 `inspect candidates` 的当前入场事实来自
+既有 workbench：`get_entry_workbench_summary` / `list_entry_workbench_candidates`，
+并以 `candidate_attention`、`entry_plans`、`planning_history` 展示 durable generation/Plan 状态。
+读取失败必须明确 unavailable，不能回退 Ranker、重跑 admission 或用旧 pending 计数填充。
+历史 filter trace、blocker、wake telemetry 仍按原来源读取，不得冒充当前入场漏斗。
+
+**历史旧入场证据（以下至 §3.1 的旧队列/Operator 规则）**：仅约束历史解释，不恢复旧 writer。
 
 对有精确 `signal_pending` 身份的终局 System Operator `skip`，PiDecision、其本轮
 `filter_trace` 与可识别候选的固定 horizon outcome seed 必须在同一 SQLite 提交边界中写入。
@@ -112,7 +114,7 @@ administrative exclusion，不得进入 candidate skip、trace/seed 缺口或效
 独立生产者放行并新建 Opportunity 时也必须留下精确事实。Universe-linked 新路径只发布
 Candidate Planning Generation，并由 Entry Planner 产生 Entry Plan；不再发布 Setup 或 executable
 Opportunity。历史缺少或携带 `setup_id`/V2 generation 的 `universe_scanner` Opportunity 均只保留为
-legacy/observation carrier，默认不得进入新 Ranker/API 可执行路径。
+legacy/observation carrier，不得获得当前入场执行权；Ranker/API 旧入场路径已删除。
 Market Observer 不是 Universe Opportunity producer；其 pre-filter 或 assessment
 事实不能替代 emitter 的 producer pass。Universe emitter 的该类失败不是可忽略分析错误：
 当前没有 snapshot/member 级独立重试队列，因此 `UniverseService.refresh` 必须把 scanner run 标为
@@ -180,7 +182,7 @@ Operator carrier：保留原 snapshot/member 作为因果来源，由 Opportunit
 
 API 密钥、Authorization、原始 LLM prompt/context 和新闻全文禁止写入。
 
-### 3.1 B2 System Operator candidate evidence
+### 3.1 Historical B2 System Operator candidate evidence
 
 System Operator 的 B2 debate evidence 不是全量策略族胜率。它只可由同一
 `system_operator_b2_candidate_evidence` policy epoch 中、已写入
@@ -239,7 +241,9 @@ pass/reject 和最小输入。这是存储压缩，不是抽样；候选数和�
 经济公式、阈值或行为 authority。无法取得 boot commit 时 fail closed 到 open-epoch
 优先级，不猜测当前 build。
 
-## 5. 现行关卡与证据等级
+## 5. 关卡与证据等级（含历史关卡）
+
+表中的 Ranker、旧 Operator 和入队关卡已退役，仅保留原 filter 身份供历史统计；不构成当前配置或执行入口。
 
 | 关卡 | 当时是否有方向 | 要记录的事实 | 可否用于净收益负反馈 |
 |---|---:|---|---:|
@@ -321,7 +325,11 @@ shadow treatment 各自达到 20 个完整净结果和 70% 覆盖后才判定；
 后续回放波动不得并行追逐另一个阈值。`ready_for_review` 只表示可人工复核，任何状态都不得写
 生产配置或改变候选放行。
 
-## 7. 批次选择的特别规则
+## 7. 历史批次选择规则（已退役）
+
+本节记录旧 Ranker/PaperTrader 的批次与 signal_pending 原子入队语义，仅用于解释存量证据；
+当前不再运行该选择器、enqueue、claim 或 pending 恢复。当前供给与阻塞只读 §3 的
+workbench generation/Plan 投影，不把 signal_enqueue/was_selected 重标为 Candidate admission。
 
 `open_position -> active_operator_carrier -> cooldown -> batch_limit` 是不同关卡，不得先截取 Top-3 再检查前置关卡。否则 Top-1 被占用/冷却拒绝后，Top-4 永远没有补位机会，候选供给会被静默浪费。
 
@@ -385,7 +393,9 @@ Ranker 的 `limit=50` 只限制进入打分/入队选择的执行短名单，不
 - `filter_decisions` 保留 45 天，`filter_candidate_outcomes` 保留 30 天；active exposure
   clean-window guard 可以延长有效窗口。它们是分析证据，不是交易因果原件。
 
-## 9. Stage E 实施状态
+## 9. Stage E 历史实施记录
+
+下列“已完成”描述当时实现，不声明旧 Ranker/Operator/队列仍可执行；当前入场以本文开头的切换边界及 §3 为准。
 
 1. 已完成：新表、model、repository、只追加/幂等写入与有界保留。
 2. 已完成：`UniverseMember.scanner_direction` 持久化，Observer 和 Ranker 顺序轨迹。

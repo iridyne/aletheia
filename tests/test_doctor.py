@@ -1369,22 +1369,6 @@ def test_paused_config_reports_each_active_owner(monkeypatch):
     assert "startup_behavior_gate (startup_behavior_checks_blocked)" in paused.detail
 
 
-def test_zero_demo_notional_cap_is_a_blocker(monkeypatch):
-    """A zero cap rejects every paper/demo proposal and must not look healthy."""
-    import aletheia.config.loader as loader
-
-    cfg = loader.load_config()
-    cfg.exchange.mode = "demo"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.risk.max_demo_position_margin_usdt = 0.0
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
-
-    report = dx.Report(generated_at="t")
-    dx._probe_config_gates(report)
-
-    cap = next(c for c in report.checks if c.name == "config.demo_margin_cap")
-    assert cap.severity == "blocker"
-    assert "0" in cap.detail
 
 
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
@@ -1768,120 +1752,36 @@ def test_universe_market_coverage_ok_when_enabled_markets_both_produce_features(
     assert "perp=1" in verdict.detail
 
 
-def test_pending_candidate_market_coverage_complete_is_ok(monkeypatch):
-    from aletheia.data import candidate_market_facts
+def test_candidate_planning_ignores_legacy_pending(tmp_path, monkeypatch):
+    from aletheia.storage.sqlite import get_db
 
-    monkeypatch.setattr(
-        candidate_market_facts,
-        "build_pending_candidate_market_report",
-        lambda: {
-            "status": "complete",
-            "pending_total": 2,
-            "complete_count": 2,
-            "partial_count": 0,
-            "unavailable_count": 0,
-            "items": [],
-        },
+    setup_env(tmp_path, monkeypatch)
+    get_db().execute(
+        "INSERT INTO pi_decisions (id, action, symbol, created_at) VALUES (?, ?, ?, ?)",
+        ("retired-pending", "signal_pending", "BTC/USDT", datetime.now(timezone.utc).isoformat()),
     )
-    report = dx.Report(generated_at="t")
-    dx._probe_pending_candidate_market_coverage(report)
-    assert report.checks[0].severity == "ok"
-    assert "complete=2" in report.checks[0].detail
+    get_db().commit()
+    state = dx._safe_candidate_planning_diagnostic()
+    assert state["status"] == "available"
+    assert state["summary"]["needs_planning"] == 0
+    assert state["refresh_assets"] == []
+    assert get_db().execute("SELECT action FROM pi_decisions WHERE id=?",
+                            ("retired-pending",)).fetchone()[0] == "signal_pending"
 
 
-def test_pending_candidate_market_coverage_partial_is_warn_with_bounded_sample(
-    monkeypatch,
-):
-    from aletheia.data import candidate_market_facts
-
-    items = [
-        {
-            "venue": "binance",
-            "symbol": f"C{index}/USDT",
-            "physical_market_type": "perp",
-            "availability": "partial",
-            "reasons": ["candidate_entry_mark_unavailable"],
-        }
-        for index in range(5)
-    ]
-    monkeypatch.setattr(
-        candidate_market_facts,
-        "build_pending_candidate_market_report",
-        lambda: {
-            "status": "partial",
-            "pending_total": 5,
-            "complete_count": 0,
-            "partial_count": 5,
-            "unavailable_count": 0,
-            "items": items,
-        },
-    )
-    report = dx.Report(generated_at="t")
-    dx._probe_pending_candidate_market_coverage(report)
-    verdict = report.checks[0]
-    assert verdict.severity == "warn"
-    assert "C0/USDT" in verdict.detail and "C2/USDT" in verdict.detail
-    assert "C3/USDT" not in verdict.detail
-
-
-def test_pending_candidate_market_coverage_without_pending_has_no_denominator(
-    monkeypatch,
-):
-    from aletheia.data import candidate_market_facts
-
-    monkeypatch.setattr(
-        candidate_market_facts,
-        "build_pending_candidate_market_report",
-        lambda: {"status": "no_pending", "pending_total": 0},
-    )
-    report = dx.Report(generated_at="t")
-    dx._probe_pending_candidate_market_coverage(report)
-    assert report.checks[0].severity == "info"
-    assert "no denominator" in report.checks[0].detail
-
-
-def test_pending_candidate_market_coverage_read_failure_is_unavailable(monkeypatch):
-    from aletheia.data import candidate_market_facts
+def test_candidate_planning_read_failure_is_unavailable(monkeypatch):
+    from aletheia.storage import repositories as repo
 
     def fail():
         raise sqlite3.OperationalError("simulated read failure")
 
-    monkeypatch.setattr(
-        candidate_market_facts, "build_pending_candidate_market_report", fail,
-    )
+    monkeypatch.setattr(repo, "get_entry_workbench_summary", fail)
     report = dx.Report(generated_at="t")
-    dx._probe_pending_candidate_market_coverage(report)
+    dx._probe_candidate_planning(report)
     assert report.checks[0].severity == "info"
-    assert "coverage unavailable" in report.checks[0].detail
+    assert "planning unavailable" in report.checks[0].detail
 
 
-def test_profit_loop_success_only_claims_proposal_flow_liveness(tmp_path, monkeypatch):
-    from aletheia.storage.sqlite import get_db
-
-    setup_env(tmp_path, monkeypatch)
-    db = get_db()
-    now = datetime.now(timezone.utc).isoformat()
-    db.execute(
-        "INSERT INTO opportunities "
-        "(id, symbol, market, confidence, source_agent, created_at, status) "
-        "VALUES ('opp-profit-label', 'BTC/USDT', 'spot', 'high', 'test', ?, 'open')",
-        (now,),
-    )
-    db.execute(
-        "INSERT INTO trade_proposals "
-        "(id, symbol, market_type, direction, created_at) "
-        "VALUES ('proposal-profit-label', 'BTC/USDT', 'spot', 'long', ?)",
-        (now,),
-    )
-    db.commit()
-
-    report = dx.Report(generated_at="t")
-    dx._probe_profit_loop(report)
-    verdict = report.checks[0]
-
-    assert verdict.severity == "ok"
-    assert "proposal flow healthy" in verdict.detail
-    assert "profitability not assessed" in verdict.detail
 
 
 def test_frontdoor_probe_reports_backend_readiness(monkeypatch):

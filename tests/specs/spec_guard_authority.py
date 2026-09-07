@@ -246,64 +246,8 @@ def test_learned_guard_enforcement_suppressed_seed_honored():
     assert evaluate_guards(ctx, guards=[manual]).total_penalty == 15.0
 
 
-@spec_claim(SpecClaim(
-    "GA-B03", "guard_authority", "§ranker static guard independence", "L2b",
-    "Disabling autonomous Learning or paper Learning influence does not disable owner-authored seed/manual Guard enforcement."))
-def test_ranker_static_guards_remain_applicable_when_learning_is_disabled(monkeypatch):
-    from aletheia.agents import paper_trader_ranker
-    from aletheia.config.schema import AletheiaConfig
-
-    cfg = AletheiaConfig()
-    cfg.agent.autonomous_learning = False
-    cfg.learning.paper_influence_enabled = False
-    cfg.guard.enabled = True
-    cfg.guard.enforce_in_paper_ranker = True
-    monkeypatch.setattr(paper_trader_ranker, "load_config", lambda: cfg)
-    monkeypatch.setattr(
-        "aletheia.learning.control.learning_influence_enabled", lambda: False,
-    )
-
-    assert paper_trader_ranker._guard_evaluation_applicability() == (
-        "enabled", "guard_evaluation_enabled",
-    )
 
 
-def test_ranker_threads_every_real_opportunity_identity_to_guard_authority(monkeypatch):
-    from types import SimpleNamespace
-
-    from aletheia.agents import paper_trader_ranker
-    from aletheia.knowledge.guards import GuardEvaluation
-
-    captured = {}
-
-    def capture(context, *, scope):
-        captured.update(context)
-        assert scope == "paper_entry"
-        return GuardEvaluation()
-
-    monkeypatch.setattr(
-        paper_trader_ranker,
-        "load_config",
-        lambda: SimpleNamespace(guard=SimpleNamespace(
-            enabled=True, enforce_in_paper_ranker=True, max_score_penalty=40.0,
-        )),
-    )
-    monkeypatch.setattr(paper_trader_ranker, "evaluate_guards", capture)
-    result = paper_trader_ranker._evaluate_guards_safe(
-        {"id": "opp-without-universe-key", "symbol": "BTC/USDT", "scanner_family": "momentum"},
-        None,
-        None,
-        "long",
-        "high",
-        False,
-        None,
-        None,
-    )
-
-    assert result is not None
-    assert captured["_candidate_key"] == "opportunity:opp-without-universe-key"
-    assert captured["_outcome_candidate_key"] is None
-    assert captured["_opportunity_id"] == "opp-without-universe-key"
 
 
 @spec_claim(SpecClaim(
@@ -367,29 +311,15 @@ def test_learned_guard_uses_per_candidate_treatment_authority(monkeypatch):
 
 @spec_claim(SpecClaim(
     "GA-C01", "guard_authority", "§durable authorized exposure", "L2c",
-    "A real temporary-SQLite prospective experiment records linked treatment/control exposures and only its authorized treatment applies the learned Guard proposal."))
-def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypatch):
-    from datetime import datetime, timedelta, timezone
-
+    "A learned Guard cannot create legacy experiments or apply treatment without canonical authority."))
+def test_learned_guard_without_lab_authority_cannot_create_legacy_experiment():
     from aletheia.knowledge.guards import (
         GuardAppliesTo,
         GuardPredicate,
         TradingGuard,
         evaluate_guards,
     )
-    from aletheia.learning.ledger import get_record, insert_record
-    from aletheia.learning.models import (
-        LearningContributionVerdict,
-        LearningExperiment,
-    )
-    from aletheia.learning.experiments import stable_assignment
     from aletheia.storage.sqlite import get_db
-    from tests.specs.spec_learning_authority import (
-        _enable_legacy_paper_authority,
-        _insert_settled_outcome,
-    )
-
-    _enable_legacy_paper_authority(monkeypatch, "ranker_learned_guard")
     guard = TradingGuard(
         guard_id="auto_real_authority_guard",
         title="real authority guard",
@@ -412,81 +342,11 @@ def test_real_authorized_learned_guard_exposure_applies_only_treatment(monkeypat
             "_opportunity_id": candidate_key.replace(":", "-"),
         }, guards=[guard])
 
-    # First real call creates the durable shadow hypothesis/experiment.
-    assert evaluate("guard-seed").blocked is False
-    db = get_db()
-    experiment_row = db.execute(
-        "SELECT * FROM learning_experiments ORDER BY created_at DESC LIMIT 1"
-    ).fetchone()
-    assert experiment_row is not None
-    was_in_tx = db.in_transaction
-    db.execute(
-        "UPDATE learning_experiments SET stage='paper_10', status='active', "
-        "min_samples_per_arm=1 WHERE experiment_id=?",
-        (experiment_row["experiment_id"],),
-    )
-    if not was_in_tx:
-        db.commit()
-    experiment = LearningExperiment(**get_record(
-        "learning_experiments", experiment_row["experiment_id"],
-    ))
-    treatment_key = next(
-        f"guard-treatment:{i}" for i in range(1000)
-        if stable_assignment(experiment, f"guard-treatment:{i}") == "treatment"
-    )
-    control_key = next(
-        f"guard-control:{i}" for i in range(1000)
-        if stable_assignment(experiment, f"guard-control:{i}") == "control"
-    )
-    treatment_outcome = f"{treatment_key.replace(':', '_')}:4h"
-    control_outcome = f"{control_key.replace(':', '_')}:4h"
-    assert evaluate(treatment_key, treatment_outcome).blocked is False
-    assert _insert_settled_outcome(treatment_key) == treatment_outcome
-    assert evaluate(control_key, control_outcome).blocked is False
-    assert _insert_settled_outcome(control_key) == control_outcome
-
-    exposure = db.execute(
-        "SELECT concurrent_policy_epoch FROM learning_exposures "
-        "WHERE candidate_key=? ORDER BY rowid DESC LIMIT 1",
-        (treatment_key,),
-    ).fetchone()
-    now = datetime.now(timezone.utc)
-    insert_record("learning_contribution_verdicts", LearningContributionVerdict(
-        experiment_id=experiment.experiment_id,
-        hypothesis_id=experiment.hypothesis_id,
-        window_start=(now - timedelta(days=14)).isoformat(),
-        window_end=now.isoformat(),
-        unique_treatment_n=1,
-        unique_control_n=1,
-        verdict="promote",
-        reason="prospective net improvement",
-        policy_epoch=exposure["concurrent_policy_epoch"],
-        stage="paper_10",
-    ))
-
-    applied_key = next(
-        f"guard-applied:{i}" for i in range(1000)
-        if stable_assignment(experiment, f"guard-applied:{i}") == "treatment"
-    )
-    applied_outcome = f"{applied_key.replace(':', '_')}:4h"
-    applied = evaluate(applied_key, applied_outcome)
-    assert applied.blocked is True
-    assert applied.total_penalty == 9.0
-    assert _insert_settled_outcome(applied_key) == applied_outcome
-    stored = db.execute(
-        "SELECT candidate_key, opportunity_id, outcome_candidate_key, assignment, "
-        "before_json, after_json FROM learning_exposures WHERE candidate_key=? "
-        "ORDER BY rowid DESC LIMIT 1",
-        (applied_key,),
-    ).fetchone()
-    assert dict(stored) == {
-        "candidate_key": applied_key,
-        "opportunity_id": applied_key.replace(":", "-"),
-        "outcome_candidate_key": applied_outcome,
-        "assignment": "treatment",
-        "before_json": '{"value": 0.0}',
-        "after_json": '{"value": 1.0}',
-    }
+    get_db().execute("UPDATE observation_authority_state SET authority_source='legacy'")
+    result = evaluate("guard-seed")
+    assert result.blocked is False
+    assert result.total_penalty == 0.0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_experiments").fetchone()[0] == 0
 
 
 @spec_claim(SpecClaim(

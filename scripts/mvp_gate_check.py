@@ -100,9 +100,8 @@ def check_domain_2() -> list[tuple[str, bool, str]]:
 
     # 2.2 Feature snapshots
     try:
-        from aletheia.agent_shell.trading_context import build_enriched_trading_context
-        ctx = build_enriched_trading_context()
-        feat_count = len(ctx.get("layer1", {}).get("features", []))
+        cur.execute("SELECT COUNT(*) FROM feature_snapshots")
+        feat_count = cur.fetchone()[0]
         results.append(("2.2 Feature snapshots", feat_count >= 1, f"{feat_count} features"))
     except Exception as e:
         results.append(("2.2 Feature snapshots", False, str(e)))

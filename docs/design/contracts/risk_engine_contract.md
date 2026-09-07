@@ -132,9 +132,9 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 > 尚未收敛的中间状态释放新 Risk 容量。
 
 > **唯一硬门 & guard 澄清(2026-06-30)**:订单通路(`submit_proposal`→执行)上,**`evaluate_proposal()` 是唯一硬门**。另有两套也叫 "guard" 的东西**不在执行通路上裁决**:
-> (1) `trading_decision` 守卫链 → 仅写 `decision_meta['guards']`,advisory(spec PI-S02 守);
+> (1) 历史 `trading_decision` 守卫链曾只写 `decision_meta['guards']`、提供 advisory；该旧入场消费者已删除，不是当前执行入口；
 > (2) `trust/guard_chain.py:run_guards()` → **gateway 从不 import/调用**(spec `EX-C03` 锁),其 `block` 裁决无执行力,属观测性基础设施。
-> 区分:knowledge `trading_guards` 的 `blocking` 模式在**排序阶段**剔除候选(`paper_trader_ranker.py:412`,见 [knowledge_contract §4.5](knowledge_contract.md))——那是开仓前的 advisory-to-ranking,**不是**执行硬门。若未来要把某条 guard 升为硬拦,必须改本契约 + 接线 gateway + 改 EX-C03,不可静默接线。
+> 区分：knowledge `trading_guards` 曾在旧 Ranker 排序阶段剔除候选；该消费者现已退役（见 [knowledge_contract §4.5](knowledge_contract.md)），历史 guard 命中不授予当前 Entry Plan 执行权，**不是**执行硬门。若未来要把某条 guard 升为硬拦,必须改本契约 + 接线 gateway + 改 EX-C03,不可静默接线。
 
 ---
 

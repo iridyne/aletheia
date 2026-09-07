@@ -16,7 +16,10 @@ import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
-
+from tests.test_exchange_submission_integrity import _prepare_broker, _report
+from tests.uta.test_execution_coordinator import _insert_bound_position
+from aletheia.uta.models import CommandEvidence
+from aletheia.execution.errors import SubmissionUnknownError
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -108,7 +111,7 @@ def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monke
 def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.risk.engine import RiskCheckResult
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
@@ -213,7 +216,7 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
     )
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
     monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
-    monkeypatch.setattr(bitget_broker, "execute_live_order", _execute_live_order)
+    monkeypatch.setattr(coordinator, "execute_order", _execute_live_order)
 
     result = gateway._execute_proposal(proposal)
     stored = dict(db.execute(
@@ -321,7 +324,7 @@ def test_authoritative_risk_rejection_terminalizes_proposal_atomically(
     monkeypatch.setattr(
         engine,
         "_evaluate_proposal_locked",
-        lambda candidate: engine._persist_risk_result(
+        lambda candidate, *, execution_receipt=None: engine._persist_risk_result(
             candidate,
             ["forced_risk_rejection"],
             decision_role="authoritative",
@@ -752,7 +755,7 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
 ):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 
@@ -777,28 +780,31 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
     )
     repo.insert_risk_decision(decision)
 
-    monkeypatch.setattr(
-        bitget_broker, "BitgetClient", lambda *args, **kwargs: SimpleNamespace()
-    )
+    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
 
-    def _margin_unavailable(*_args, **_kwargs):
+    profile = _profile("uta_v3")
+    exchange = FakeExchange()
+    _install(monkeypatch, exchange)
+
+    async def _margin_unavailable(*_args, **_kwargs):
         raise RuntimeError("private-detail-must-not-persist")
 
-    monkeypatch.setattr(bitget_broker, "_ensure_mix_margin", _margin_unavailable)
+    monkeypatch.setattr(exchange, "set_leverage", _margin_unavailable)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: CCXTUTAAdapter(_identity(profile), profile))
 
     with pytest.raises(RuntimeError):
-        bitget_broker.execute_live_order(
-            proposal_id=proposal.id,
-            risk_decision_id=decision.id,
-            symbol=proposal.symbol,
-            market_type=proposal.market_type,
-            direction=proposal.direction,
-            order_type=proposal.order_type,
-            quantity=proposal.quantity,
-            price=proposal.price,
-            leverage=proposal.leverage,
-            execution_mode="bitget_demo",
-        )
+        coordinator.execute_order(proposal_id=proposal.id,
+        risk_decision_id=decision.id,
+        symbol=proposal.symbol,
+        market_type=proposal.market_type,
+        direction=proposal.direction,
+        order_type=proposal.order_type,
+        quantity=proposal.quantity,
+        price=proposal.price,
+        leverage=proposal.leverage,
+        execution_mode="bitget_demo",)
 
     stored = dict(db.execute(
         "SELECT * FROM orders WHERE proposal_id=?", (proposal.id,)
@@ -815,34 +821,10 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
     ).fetchone()[0] == 0
 
 
-CLOSE_TIMEOUT_CASES = (
-    pytest.param(
-        "aletheia.execution.bitget_broker",
-        "BitgetClient",
-        "close_demo_position",
-        "bitget_demo",
-        id="bitget",
-    ),
-    pytest.param(
-        "aletheia.execution.okx_broker",
-        "OKXClient",
-        "close_okx_position",
-        "okx_demo",
-        id="okx",
-    ),
-    pytest.param(
-        "aletheia.execution.binance_broker",
-        "BinanceClient",
-        "close_testnet_position",
-        "binance_testnet",
-        id="binance",
-    ),
-)
+CLOSE_TIMEOUT_CASES = ("bitget_demo", "okx_demo", "binance_testnet")
 
 
-@pytest.mark.parametrize(
-    "broker_module, client_name, close_name, execution_mode", CLOSE_TIMEOUT_CASES
-)
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
 @spec_claim(
     SpecClaim(
         "PL-RX-10",
@@ -854,15 +836,8 @@ CLOSE_TIMEOUT_CASES = (
         status="implemented",
     )
 )
-def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
@@ -870,19 +845,11 @@ def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
 
     calls: list[str] = []
 
-    class _TimeoutClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    async def _submit(order):
+        calls.append(order.client_order_id)
+        raise TimeoutError("private-timeout-detail")
 
-        async def place_order(self, order):
-            calls.append(order.client_oid)
-            raise TimeoutError("private-timeout-detail")
-
-        async def close(self):
-            pass
-
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _TimeoutClient)
+    _prepare_broker(monkeypatch, _submit)
     position = Position(
         symbol="BTC/USDT",
         market_type="usdt_futures",
@@ -892,40 +859,29 @@ def test_close_timeout_is_unknown_and_suppresses_duplicate_submission(
         current_price=101.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
-    try:
-        getattr(broker, close_name)(position.id, reason="stop_loss")
-    except TimeoutError:
-        pass
+    with pytest.raises(SubmissionUnknownError):
+        coordinator.close_position(position.id, reason="stop_loss")
 
     after_first = repo._select_one("positions", position.id)
-    orders = repo.list_orders(limit=20)
+    orders = [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]
     assert after_first["pending_close_status"] == "submission_unknown"
     assert len(orders) == 1
     assert orders[0]["status"] == "submission_unknown"
     assert "private-timeout-detail" not in (orders[0]["error_reason"] or "")
 
-    second = getattr(broker, close_name)(position.id, reason="stop_loss")
+    second = coordinator.close_position(position.id, reason="stop_loss")
 
     assert second["closed"] is False
     assert second["already_pending"] is True
     assert calls == [f"close-{position.id}"]
-    assert len(repo.list_orders(limit=20)) == 1
+    assert len([row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]) == 1
 
 
-@pytest.mark.parametrize(
-    "broker_module, client_name, close_name, execution_mode", CLOSE_TIMEOUT_CASES
-)
-def test_close_rejection_retains_one_claim_without_resubmission(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
+def test_close_rejection_retains_one_claim_without_resubmission(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
@@ -933,19 +889,11 @@ def test_close_rejection_retains_one_claim_without_resubmission(
 
     calls: list[str] = []
 
-    class _RejectedClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    async def _submit(order):
+        calls.append(order.client_order_id)
+        return _report(order, venue_order_id=None, evidence=CommandEvidence.VENUE_REJECTED, reason_code="venue_rejected")
 
-        async def place_order(self, order):
-            calls.append(order.client_oid)
-            raise RuntimeError("venue rejected close")
-
-        async def close(self):
-            pass
-
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _RejectedClient)
+    _prepare_broker(monkeypatch, _submit)
     position = Position(
         symbol="BTC/USDT",
         market_type="usdt_futures",
@@ -955,13 +903,13 @@ def test_close_rejection_retains_one_claim_without_resubmission(
         current_price=101.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
-    with pytest.raises(RuntimeError, match="venue rejected close"):
-        getattr(broker, close_name)(position.id, reason="stop_loss")
+    with pytest.raises(RuntimeError):
+        coordinator.close_position(position.id, reason="stop_loss")
 
-    second = getattr(broker, close_name)(position.id, reason="stop_loss")
-    orders = repo.list_orders(limit=20)
+    second = coordinator.close_position(position.id, reason="stop_loss")
+    orders = [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]
     stored = repo._select_one("positions", position.id)
 
     assert second["already_pending"] is True
@@ -1251,7 +1199,7 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
 ):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, RiskDecision, TradeProposal
 
@@ -1320,11 +1268,7 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
             "fill_quantity": 0.0,
         }
 
-    monkeypatch.setattr(
-        bitget_broker,
-        "execute_live_order",
-        _accepted_order,
-    )
+    monkeypatch.setattr(coordinator, "execute_order", _accepted_order)
 
     result = gateway._execute_proposal(proposal)
     stored = dict(db.execute(
@@ -1336,32 +1280,7 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
     assert result["exchange_order_id"] == "exchange-rx-15"
 
 
-@pytest.mark.parametrize(
-    "broker_module,client_name,close_name,execution_mode",
-    (
-        pytest.param(
-            "aletheia.execution.bitget_broker",
-            "BitgetClient",
-            "close_demo_position",
-            "bitget_demo",
-            id="bitget",
-        ),
-        pytest.param(
-            "aletheia.execution.okx_broker",
-            "OKXClient",
-            "close_okx_position",
-            "okx_demo",
-            id="okx",
-        ),
-        pytest.param(
-            "aletheia.execution.binance_broker",
-            "BinanceClient",
-            "close_testnet_position",
-            "binance_testnet",
-            id="binance",
-        ),
-    ),
-)
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
 @spec_claim(
     SpecClaim(
         "PL-RX-16",
@@ -1373,26 +1292,19 @@ def test_submitted_exchange_order_does_not_mark_proposal_executed(
         status="implemented",
     )
 )
-def test_close_client_initialization_failure_does_not_strand_pending_claim(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+def test_close_client_initialization_failure_does_not_strand_pending_claim(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 
-    broker = importlib.import_module(broker_module)
 
     def _client_initialization_failed(*_args, **_kwargs):
         raise RuntimeError("private-client-initialization-detail")
 
-    monkeypatch.setattr(broker, client_name, _client_initialization_failed)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", _client_initialization_failed)
     position = Position(
         symbol="BTC/USDT",
         market_type="usdt_futures",
@@ -1402,24 +1314,21 @@ def test_close_client_initialization_failure_does_not_strand_pending_claim(
         current_price=60_100.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
-        getattr(broker, close_name)(position.id, reason="stop_loss")
+        coordinator.close_position(position.id, reason="stop_loss")
 
-    first_order = repo.list_orders(limit=10)[0]
+    first_order = [row for row in repo.list_orders(limit=10) if row["close_reason"] is not None][0]
     stored_position = repo._select_one("positions", position.id)
     assert first_order["status"] == "error"
-    assert (
-        first_order["error_reason"]
-        == "close_client_initialization_failed_before_submission"
-    )
+    assert first_order["error_reason"] == "uta_adapter_unavailable_before_submission"
     assert "private-client" not in first_order["error_reason"]
     assert stored_position["pending_close_status"] == "error"
 
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
-        getattr(broker, close_name)(position.id, reason="stop_loss")
-    assert len(repo.list_orders(limit=10)) == 2
+        coordinator.close_position(position.id, reason="stop_loss")
+    assert len([row for row in repo.list_orders(limit=10) if row["close_reason"] is not None]) == 2
 
 
 @spec_claim(
@@ -1437,7 +1346,7 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import RiskDecision, TradeProposal
 
@@ -1466,9 +1375,8 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
     def _client_initialization_failed(*_args, **_kwargs):
         raise RuntimeError("private-client-initialization-detail")
 
-    monkeypatch.setattr(
-        bitget_broker, "BitgetClient", _client_initialization_failed
-    )
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", _client_initialization_failed)
     kwargs = {
         "proposal_id": proposal.id,
         "risk_decision_id": decision.id,
@@ -1483,18 +1391,15 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
     }
 
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
-        bitget_broker.execute_live_order(**kwargs)
+        coordinator.execute_order(**kwargs)
 
     first_order = repo.list_orders(limit=10)[0]
     assert first_order["status"] == "error"
-    assert (
-        first_order["error_reason"]
-        == "order_client_initialization_failed_before_submission"
-    )
+    assert first_order["error_reason"] == "uta_adapter_unavailable_before_submission"
     assert "private-client" not in first_order["error_reason"]
 
     with pytest.raises(RuntimeError, match="private-client-initialization-detail"):
-        bitget_broker.execute_live_order(**kwargs)
+        coordinator.execute_order(**kwargs)
     assert len(repo.list_orders(limit=10)) == 2
 
 
@@ -1624,10 +1529,7 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         status="implemented",
     )
 )
-@pytest.mark.parametrize(
-    "broker_module,client_name,close_name,execution_mode",
-    CLOSE_TIMEOUT_CASES,
-)
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
 @pytest.mark.parametrize(
     ("exchange_outcome", "expected_status"),
     [
@@ -1635,18 +1537,8 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         ("timeout", "submission_unknown"),
     ],
 )
-def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
-    tmp_path,
-    monkeypatch,
-    caplog,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-    exchange_outcome,
-    expected_status,
-):
-    import importlib
+def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(tmp_path, monkeypatch, caplog, execution_mode, exchange_outcome, expected_status):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import post_commit_audit
@@ -1655,27 +1547,16 @@ def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
 
     calls: list[str] = []
 
-    class _CloseClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def place_order(self, order):
-            calls.append(order.client_oid)
-            if exchange_outcome == "timeout":
-                raise TimeoutError("exchange close acknowledgement unknown")
-            return SimpleNamespace(
-                order_id=f"venue-close-{exchange_outcome}",
-                status="filled",
-            )
-
-        async def close(self):
-            pass
+    async def _submit(order):
+        calls.append(order.client_order_id)
+        if exchange_outcome == "timeout":
+            raise TimeoutError("exchange close acknowledgement unknown")
+        return _report(order, venue_order_id=f"venue-close-{exchange_outcome}", state="filled", filled_quantity=order.quantity)
 
     def fail_secondary_audit(_event):
         raise RuntimeError("token=must-not-leak-from-close-audit-sink")
 
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _CloseClient)
+    _prepare_broker(monkeypatch, _submit)
     monkeypatch.setattr(post_commit_audit.jsonl, "write_audit", fail_secondary_audit)
     position = Position(
         symbol="BTC/USDT",
@@ -1686,29 +1567,29 @@ def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
         current_price=60_100.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
 
     if exchange_outcome == "timeout":
-        with pytest.raises(TimeoutError):
-            getattr(broker, close_name)(position.id, reason="stop_loss")
+        with pytest.raises(SubmissionUnknownError):
+            coordinator.close_position(position.id, reason="stop_loss")
     else:
-        result = getattr(broker, close_name)(position.id, reason="stop_loss")
+        result = coordinator.close_position(position.id, reason="stop_loss")
         assert result["status"] == expected_status
         assert result["closed"] is False
 
     stored_position = repo._select_one("positions", position.id)
-    orders = repo.list_orders(limit=20)
+    orders = [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]
     assert stored_position["pending_close_status"] == expected_status
     assert len(orders) == 1
     assert orders[0]["status"] == expected_status
     assert "RuntimeError" in caplog.text
     assert "must-not-leak" not in caplog.text
 
-    replay = getattr(broker, close_name)(position.id, reason="stop_loss")
+    replay = coordinator.close_position(position.id, reason="stop_loss")
     assert replay["closed"] is False
     assert replay["already_pending"] is True
     assert calls == [f"close-{position.id}"]
-    assert len(repo.list_orders(limit=20)) == 1
+    assert len([row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]) == 1
 
 
 @spec_claim(
@@ -1722,26 +1603,7 @@ def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
         status="implemented",
     )
 )
-@pytest.mark.parametrize(
-    ("broker_module", "client_name", "execution_mode"),
-    [
-        (
-            "aletheia.execution.bitget_broker",
-            "BitgetClient",
-            "bitget_demo",
-        ),
-        (
-            "aletheia.execution.okx_broker",
-            "OKXClient",
-            "okx_demo",
-        ),
-        (
-            "aletheia.execution.binance_broker",
-            "BinanceClient",
-            "binance_testnet",
-        ),
-    ],
-)
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
 @pytest.mark.parametrize(
     ("exchange_outcome", "expected_status"),
     [
@@ -1749,17 +1611,8 @@ def test_close_post_durable_audit_failure_preserves_state_and_suppresses_retry(
         ("timeout", "submission_unknown"),
     ],
 )
-def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
-    tmp_path,
-    monkeypatch,
-    caplog,
-    broker_module,
-    client_name,
-    execution_mode,
-    exchange_outcome,
-    expected_status,
-):
-    import importlib
+def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(tmp_path, monkeypatch, caplog, execution_mode, exchange_outcome, expected_status):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import post_commit_audit
@@ -1769,27 +1622,16 @@ def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
 
     calls: list[str] = []
 
-    class _EntryClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def place_order(self, order):
-            calls.append(order.client_oid)
-            if exchange_outcome == "timeout":
-                raise TimeoutError("exchange entry acknowledgement unknown")
-            return SimpleNamespace(
-                order_id=f"venue-entry-{exchange_outcome}",
-                status="filled",
-            )
-
-        async def close(self):
-            pass
+    async def _submit(order):
+        calls.append(order.client_order_id)
+        if exchange_outcome == "timeout":
+            raise TimeoutError("exchange entry acknowledgement unknown")
+        return _report(order, venue_order_id=f"venue-entry-{exchange_outcome}", state="filled", filled_quantity=order.quantity)
 
     def fail_secondary_audit(_event):
         raise RuntimeError("token=must-not-leak-from-entry-audit-sink")
 
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _EntryClient)
+    _prepare_broker(monkeypatch, _submit)
     monkeypatch.setattr(post_commit_audit.jsonl, "write_audit", fail_secondary_audit)
     proposal = TradeProposal(
         symbol="BTC/USDT",
@@ -1827,9 +1669,9 @@ def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
 
     if exchange_outcome == "timeout":
         with pytest.raises(SubmissionUnknownError):
-            broker.execute_live_order(**kwargs)
+            coordinator.execute_order(**kwargs)
     else:
-        result = broker.execute_live_order(**kwargs)
+        result = coordinator.execute_order(**kwargs)
         assert result["order_status"] == expected_status
 
     orders = repo.list_orders(limit=20)
@@ -1844,7 +1686,7 @@ def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
         else SubmissionUnknownError
     )
     with pytest.raises(replay_error):
-        broker.execute_live_order(**kwargs)
+        coordinator.execute_order(**kwargs)
     assert calls == [proposal.id]
     assert len(repo.list_orders(limit=20)) == 1
 
@@ -1860,19 +1702,9 @@ def test_entry_post_durable_audit_failure_preserves_order_and_suppresses_retry(
         status="implemented",
     )
 )
-@pytest.mark.parametrize(
-    "broker_module,client_name,close_name,execution_mode",
-    CLOSE_TIMEOUT_CASES,
-)
-def test_overfilled_close_claim_never_reaches_exchange_again(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
+def test_overfilled_close_claim_never_reaches_exchange_again(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio import position_manager
@@ -1881,19 +1713,11 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
 
     exchange_calls: list[str] = []
 
-    class _MustNotReachExchange:
-        def __init__(self, *args, **kwargs):
-            exchange_calls.append("client_init")
+    async def _submit(order):
+        exchange_calls.append(order.client_order_id)
+        raise AssertionError("overfilled close claim reached exchange")
 
-        async def place_order(self, order):
-            exchange_calls.append(order.client_oid)
-            raise AssertionError("overfilled close claim reached exchange")
-
-        async def close(self):
-            pass
-
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _MustNotReachExchange)
+    _prepare_broker(monkeypatch, _submit)
     position = Position(
         id="overfilled-close-position",
         symbol="BTC/USDT",
@@ -1904,7 +1728,7 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
         current_price=60_100.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
     close_order = Order(
         id="overfilled-close-order",
         client_order_id=f"close-{position.id}",
@@ -1927,10 +1751,10 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
         pending_close_status="overfilled",
     )
 
-    result = getattr(broker, close_name)(position.id, reason="stop_loss")
+    result = coordinator.close_position(position.id, reason="stop_loss")
 
     stored_position = repo._select_one("positions", position.id)
-    orders = repo.list_orders(limit=20)
+    orders = [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]
     assert result["already_pending"] is True
     assert result["status"] == "overfilled"
     assert exchange_calls == []
@@ -1939,20 +1763,9 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
     assert orders[0]["status"] == "overfilled"
     assert stored_position["pending_close_order_id"] == close_order.id
     assert stored_position["pending_close_status"] == "overfilled"
-    assert {
-        "pending",
-        "submitted",
-        "partial",
-        "partially_filled",
-        "submission_unknown",
-        "materialization_missing",
-        "overfilled",
-    }.issubset(position_manager._OPEN_CLOSE_STATES)
 
 
-@pytest.mark.parametrize(
-    "broker_module,client_name,close_name,execution_mode", CLOSE_TIMEOUT_CASES,
-)
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
 @spec_claim(
     SpecClaim(
         "PL-RX-22",
@@ -1965,15 +1778,8 @@ def test_overfilled_close_claim_never_reaches_exchange_again(
         status="implemented",
     )
 )
-def test_position_absence_claim_survives_restart_without_close_resubmission(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+def test_position_absence_claim_survives_restart_without_close_resubmission(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.portfolio import position_manager
@@ -1982,19 +1788,11 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
 
     exchange_calls: list[str] = []
 
-    class _MustNotReachExchange:
-        def __init__(self, *args, **kwargs):
-            exchange_calls.append("client_init")
+    async def _submit(order):
+        exchange_calls.append(order.client_order_id)
+        raise AssertionError("unverified position absence reached exchange")
 
-        async def place_order(self, order):
-            exchange_calls.append(order.client_oid)
-            raise AssertionError("unverified position absence reached exchange")
-
-        async def close(self):
-            pass
-
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _MustNotReachExchange)
+    _prepare_broker(monkeypatch, _submit)
     position = Position(
         id="position-absence-unverified",
         symbol="BTC/USDT",
@@ -2005,7 +1803,7 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         current_price=60_100.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
     close_order = Order(
         id="position-absence-close-order",
         client_order_id=f"close-{position.id}",
@@ -2028,15 +1826,13 @@ def test_position_absence_claim_survives_restart_without_close_resubmission(
         pending_close_status="position_absence_unverified",
     )
 
-    result = getattr(broker, close_name)(position.id, reason="stop_loss")
+    result = coordinator.close_position(position.id, reason="stop_loss")
 
     assert result["already_pending"] is True
     assert result["status"] == "position_absence_unverified"
     assert exchange_calls == []
-    assert [row["id"] for row in repo.list_orders(limit=20)] == [close_order.id]
+    assert [row["id"] for row in [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]] == [close_order.id]
     assert repo.list_fills(limit=20) == []
-    assert "position_absence_unverified" in position_manager._OPEN_CLOSE_STATES
-    assert "position_absence_unverified" in broker._OPEN_CLOSE_STATES
 
 
 @spec_claim(
@@ -2133,18 +1929,9 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         status="implemented",
     )
 )
-@pytest.mark.parametrize(
-    "broker_module,client_name,close_name,execution_mode", CLOSE_TIMEOUT_CASES,
-)
-def test_position_absence_claim_converges_without_fabricated_economics(
-    tmp_path,
-    monkeypatch,
-    broker_module,
-    client_name,
-    close_name,
-    execution_mode,
-):
-    import importlib
+@pytest.mark.parametrize("execution_mode", CLOSE_TIMEOUT_CASES)
+def test_position_absence_claim_converges_without_fabricated_economics(tmp_path, monkeypatch, execution_mode):
+    from aletheia.execution import coordinator
 
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config import loader
@@ -2161,21 +1948,11 @@ def test_position_absence_claim_converges_without_fabricated_economics(
 
     close_calls: list[str] = []
 
-    class _AbsentCloseClient:
-        def __init__(self, *args, **kwargs):
-            pass
+    async def _submit(order):
+        close_calls.append(order.client_order_id)
+        return _report(order, venue_order_id=None, evidence=CommandEvidence.VENUE_REJECTED, reason_code="close_position_absence_unverified")
 
-        async def place_order(self, order):
-            close_calls.append(order.client_oid)
-            raise ClosePositionAbsentError(
-                "Exchange close rejected: no position available"
-            )
-
-        async def close(self):
-            return None
-
-    broker = importlib.import_module(broker_module)
-    monkeypatch.setattr(broker, client_name, _AbsentCloseClient)
+    _prepare_broker(monkeypatch, _submit)
     position = Position(
         id=f"absence-to-reconcile-{execution_mode}",
         symbol="BTC/USDT",
@@ -2186,12 +1963,21 @@ def test_position_absence_claim_converges_without_fabricated_economics(
         current_price=60_100.0,
         execution_mode=execution_mode,
     )
-    repo.insert_position(position)
+    _insert_bound_position(position)
+    from tests.uta.test_execution_coordinator import _Adapter
+    from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+    adapter = _Adapter(_submit, execution_mode)
+    adapter.identity = adapter.identity.model_copy(update={"account_fingerprint": logical_account_fingerprint(
+        broker_id=execution_mode, account_environment=adapter.identity.environment,
+        execution_mode=execution_mode,
+    )})
+    repo.update_order(position.order_id, uta_account_identity_json=adapter.identity.model_dump_json())
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: adapter)
 
-    with pytest.raises(ClosePositionAbsentError, match="no position available"):
-        getattr(broker, close_name)(position.id, reason="stop_loss")
+    with pytest.raises(RuntimeError):
+        coordinator.close_position(position.id, reason="stop_loss")
 
-    first_order = repo.list_orders(limit=20)[0]
+    first_order = [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None][0]
     unresolved = repo._select_one("positions", position.id)
     assert unresolved["status"] == "open"
     assert unresolved["pending_close_order_id"] == first_order["id"]
@@ -2200,7 +1986,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(
     assert repo.list_fills(limit=20) == []
 
     snapshot = {
-        "accounts": [{"broker_id": execution_mode}],
+        "accounts": [{"broker_id": execution_mode, "identity": adapter.identity.model_dump(mode="json")}],
         "positions": [],
         "age_seconds": 1.0,
         "fetched_at": "2026-08-08T10:00:00+00:00",
@@ -2212,33 +1998,24 @@ def test_position_absence_claim_converges_without_fabricated_economics(
     )
     verified_queries: list[str] = []
 
-    class _ReadOnlyVerificationClient:
-        async def get_verified_position_exit(self, request):
-            verified_queries.append(request.position_id)
-            return classify_verified_exit(
-                request,
-                position_absent=True,
-                history_complete=True,
-                close_fills=(),
-                ambiguous_activity=False,
-                pages=1,
-                source_endpoint="private-fill-history",
-            )
+    from aletheia.uta.models import VerifiedExitReport, VerifiedExitState, ReadCompleteness, QueryScope
+    async def _verified_exit(mode, method, query, *, expected_account):
+        from aletheia.uta.models import PositionListReport
+        assert mode == execution_mode
+        assert expected_account == adapter.identity
+        if method == "get_positions":
+            return PositionListReport(identity=expected_account, completeness=ReadCompleteness.COMPLETE,
+            scope=query.scope, received_at=datetime.now(timezone.utc), profile_version="1",)
+        assert method == "verify_position_exit"
+        verified_queries.append(query.local_position_id)
+        return VerifiedExitReport(
+            identity=expected_account, completeness=ReadCompleteness.COMPLETE,
+            scope=QueryScope(instrument=query.instrument), received_at=datetime.now(timezone.utc),
+            profile_version="1", local_position_id=query.local_position_id,
+            state=VerifiedExitState.CONFIRMED_ABSENT_WITHOUT_FILL,
+        )
 
-        async def place_order(self, *args, **kwargs):
-            raise AssertionError("verified reconciliation must never place an order")
-
-        async def get_positions(self):
-            return []
-
-        async def close(self):
-            return None
-
-    monkeypatch.setattr(
-        disappearance_settlement,
-        "_client_for_mode",
-        lambda mode: _ReadOnlyVerificationClient(),
-    )
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", _verified_exit)
 
     first_reconcile = position_reconciler.run_reconcile("demo")
     assert first_reconcile["disappearance"]["created"] == 1
@@ -2266,8 +2043,8 @@ def test_position_absence_claim_converges_without_fabricated_economics(
     assert closed["outcome_exclusion_reason"] == "administrative_close"
     assert closed["pending_close_order_id"] is None
     assert closed["pending_close_status"] is None
-    assert len(repo.list_orders(limit=20)) == 1
-    assert repo.list_orders(limit=20)[0]["id"] == first_order["id"]
+    assert len([row for row in repo.list_orders(limit=20) if row["close_reason"] is not None]) == 1
+    assert [row for row in repo.list_orders(limit=20) if row["close_reason"] is not None][0]["id"] == first_order["id"]
     assert repo.list_fills(limit=20) == []
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 

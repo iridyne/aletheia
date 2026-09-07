@@ -583,7 +583,27 @@ def _failed(
 
 
 def run() -> dict[str, Any]:
-    """Check once and, only for a new stable release tag, deploy that pinned SHA."""
+    """Deploy a stable release through the shared source transaction."""
+    return _release_transaction(deploy=True)
+
+
+def check() -> dict[str, Any]:
+    """Check stable release eligibility under the deployment lock, without activation."""
+    result = _release_transaction(deploy=False)
+    state = result.get("state") or {}
+    return {
+        **result,
+        "mode": "source_release",
+        "has_update": result.get("reason") == "release_available",
+        "current_commit": state.get("current_commit"),
+        "target_tag": state.get("target_tag"),
+        "target_sha": state.get("target_sha"),
+        "target_version": state.get("target_version"),
+    }
+
+
+def _release_transaction(*, deploy: bool) -> dict[str, Any]:
+    """Resolve the same pinned release for explicit checks and deployments."""
     if sys.platform != "linux":
         return {"ok": False, "reason": "linux_source_checkout_required"}
     if not git_ops.is_repo():
@@ -622,14 +642,14 @@ def run() -> dict[str, Any]:
         if moved:
             return _failed(state, tag=moved[0], sha=tags[moved[0]]["sha"], reason="tag_moved", blacklist=True)
         observed.update({tag: info["sha"] for tag, info in tags.items()})
-        state = _write_state(state, observed_tags=observed)
+        state = _write_state(state, observed_tags=observed, current_commit=head)
 
         current = _semver(_version_from_ref("HEAD"))
         if current is None:
             return _failed(state, tag=None, sha=head, reason="current_version_invalid")
         candidates = [(info["version"], tag, info["sha"]) for tag, info in tags.items() if info["version"] > current]
         if not candidates:
-            done = _write_state(state, phase="idle", status="up_to_date", target_tag=None, target_sha=None, reason=None, detail=None)
+            done = _write_state(state, phase="idle", status="up_to_date", target_tag=None, target_sha=None, target_version=None, reason="up_to_date", detail=None)
             return {"ok": True, "reason": "up_to_date", "state": done}
         _, tag, target = max(candidates)
         failed_tag = (state.get("failed_tags") or {}).get(tag)
@@ -642,6 +662,10 @@ def run() -> dict[str, Any]:
             version = _validate_candidate(tag, target, current)
         except AutoUpdateError as exc:
             return _failed(state, tag=tag, sha=target, reason=exc.reason, detail=exc.detail, blacklist=True)
+        if not deploy:
+            available = _write_state(state, phase="idle", status="available", target_tag=tag,
+                                     target_sha=target, target_version=version, reason="release_available")
+            return {"ok": True, "reason": "release_available", "state": available}
         baseline = _runtime_gate()
         if baseline.get("ok"):
             baseline = _doctor_healthy()
@@ -844,7 +868,8 @@ def run() -> dict[str, Any]:
                 "observation_execution_exclusive": comparison.get("observation_execution_exclusive"),
             }
         success = _write_state(state, phase="complete", status="deployed", target_tag=tag, target_sha=target,
-                               reason=None, detail=None, observer_continuity=observer_summary,
+                               current_commit=target, target_version=version, reason="deployed", detail=None,
+                               observer_continuity=observer_summary,
                                last_successful={"tag": tag, "sha": target, "at": _now()})
         _record_audit(
             "auto_update_deployed",

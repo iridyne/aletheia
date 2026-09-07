@@ -556,8 +556,7 @@ def score_short_bias(feat: dict) -> tuple[float, list[str], str | None]:
     (4h + 24h aligned), non-crowded short positioning (funding not deeply
     negative = shorts not already piled in), and RSI with room to fall (not
     already oversold). Complements the generic momentum/derivatives families
-    with a short-specific edge; the regime gate in signal_emitter filters it
-    out in bull markets, and short_enabled=False kills it globally.
+    with a short-specific edge. Candidate admission enforces trading permission.
 
     Returns (score, reasons, direction). direction is "short" or None.
     """
@@ -710,3 +709,121 @@ def run_all_scanners(feat: dict) -> dict:
         "all_scores": {k: v[0] for k, v in results.items()},
         "is_proxy": is_proxy,
     }
+
+
+def _funding_conflicts(direction: str, funding: float | None) -> bool:
+    """Check if funding rate conflicts with proposed direction.
+
+    Crowded longs (high positive funding) conflict with long direction;
+    crowded shorts (extreme negative funding) conflict with short direction.
+    """
+    if funding is None:
+        return False
+    if direction == "long" and funding > CROWDED_FUNDING_RATE:
+        return True
+    if direction == "short" and funding < -CROWDED_FUNDING_RATE:
+        return True
+    return False
+
+
+def _infer_direction(family: str | None, feat: dict) -> str | None:
+    """Deterministically infer trade direction from scanner family + feature values.
+
+    Returns "long", "short", or None (no clear signal — caller must skip).
+
+    Phase 0 improvements:
+      - 0.1: Momentum rejects when 24h already overextended (mean-reversion zone)
+      - 0.2: Rejects when 1h and 4h directions conflict
+      - 0.3: Funding rate confirmation across all families
+      - 0.4: Volatility uses 4h direction instead of noisy 1h
+    """
+    ret_1h = feat.get("return_1h")
+    ret_4h = feat.get("return_4h")
+    ret_24h = feat.get("return_24h")
+    rsi = feat.get("rsi_14")
+    funding = feat.get("funding_rate")
+
+    if family == "momentum":
+        # 0.1: 24h already overextended → mean-reversion zone, don't chase
+        if ret_24h is not None and abs(ret_24h) > 10.0:
+            return None
+
+        # 0.2: 1h vs 4h direction conflict → no clear trend
+        if ret_1h is not None and ret_4h is not None and ret_1h * ret_4h < 0:
+            return None
+
+        # Direction from 4h (more stable than 1h) with RSI confirmation
+        direction = None
+        if ret_4h is not None and ret_4h > 0:
+            if rsi is not None and rsi > 50:
+                direction = "long"
+        elif ret_4h is not None and ret_4h < 0:
+            if rsi is not None and rsi < 50:
+                direction = "short"
+
+        # 0.3: Funding conflict → reject
+        if direction and _funding_conflicts(direction, funding):
+            return None
+        return direction
+
+    if family == "mean_reversion":
+        # Mean reversion: fade extreme moves — oversold → long, overbought → short
+        direction = None
+        if rsi is not None:
+            if rsi <= 30:
+                direction = "long"
+            elif rsi >= 70:
+                direction = "short"
+        if direction is None and ret_4h is not None:
+            if ret_4h < -5.0:
+                direction = "long"
+            elif ret_4h > 5.0:
+                direction = "short"
+
+        # For MR, funding CONFIRMS (crowded side = reversion more likely)
+        # so we don't filter on funding conflict here
+        return direction
+
+    if family == "volatility":
+        # 0.4: Use 4h direction (more autocorrelation than 1h noise)
+        if ret_4h is not None and abs(ret_4h) > 1.0:
+            direction = "long" if ret_4h > 0 else "short"
+            # 0.3: Funding conflict → reject
+            if _funding_conflicts(direction, funding):
+                return None
+            return direction
+        return None
+
+    if family == "derivatives":
+        # Derivatives: fade crowded positions via funding rate signal
+        if funding is not None:
+            if funding < -ELEVATED_FUNDING_RATE:
+                return "long"
+            if funding > ELEVATED_FUNDING_RATE:
+                return "short"
+        # Fall back to 4h momentum if no funding data
+        if ret_4h is not None and ret_4h != 0:
+            direction = "long" if ret_4h > 0 else "short"
+            return direction
+        return None
+
+    # NOTE: family == "short_bias" is NOT handled here. It is a first-class
+    # scanner family whose direction is emitted intrinsically by
+    # scanners.score_short_bias() → run_all_scanners() sets scanner_direction,
+    # so _infer_direction is never the source for short_bias members. Keeping a
+    # duplicate threshold branch here would risk drift (2026-07-01: the previous
+    # duplicate was dead code + a fake-GREEN spec; removed once the scorer landed).
+
+    if family == "event":
+        # Event catalyst: follow the sharp 1h displacement. Thresholds mirror
+        # score_event (>4% long / <-4% short) so a fallback here agrees with the
+        # scanner's intrinsic direction. Only used when scanner_direction is
+        # absent — the primary path prefers the scanner's own direction.
+        if ret_1h is not None:
+            if ret_1h > 4.0:
+                return "long"
+            if ret_1h < -4.0:
+                return "short"
+        return None
+
+    return None

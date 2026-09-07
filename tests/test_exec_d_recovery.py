@@ -15,66 +15,6 @@ import pytest
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _binance_fill_row(order_id="ORD-1", trade_id="TRADE-1", client_oid="coid-abc"):
-    """Minimal CCXT-normalized Binance fill row."""
-    return {
-        "id": trade_id,
-        "order": order_id,
-        "symbol": "BTC/USDT:USDT",
-        "price": 50000.0,
-        "amount": 0.01,
-        "timestamp": 1700000000000,
-        "fee": {"cost": 0.3, "currency": "USDT"},
-        "info": {
-            "orderId": order_id,
-            "clientOrderId": client_oid,
-            "price": "50000",
-            "qty": "0.01",
-            "time": "1700000000000",
-            "commission": "0.3",
-            "commissionAsset": "USDT",
-        },
-    }
-
-
-def _make_binance_client_cls(lookup_result=None, fills=None):
-    """Return a credential-free BinanceClient drop-in for binance_broker patching."""
-    _fills = fills if fills is not None else []
-    _lookup = lookup_result
-
-    class _FakeBinanceClient:
-        def __init__(self, mode="testnet"):
-            self._mode = mode
-
-        async def get_order_by_client_order_id(self, coid, symbol):  # noqa: ARG002
-            return _lookup
-
-        def _ensure_exchange(self):
-            mock_ex = MagicMock()
-            mock_ex.load_markets = AsyncMock()
-            mock_ex.fetch_my_trades = AsyncMock(return_value=_fills)
-            return mock_ex
-
-        async def close(self):
-            pass
-
-    return _FakeBinanceClient
-
-
-def _make_binance_exchange_cls(mock_exchange):
-    """Return a BinanceClient whose _ensure_exchange returns mock_exchange."""
-
-    class _FakeBinanceClient:
-        def __init__(self, mode="testnet"):
-            self._mode = mode
-
-        def _ensure_exchange(self):
-            return mock_exchange
-
-        async def close(self):
-            pass
-
-    return _FakeBinanceClient
 
 
 def _make_bitget_client():
@@ -159,193 +99,106 @@ async def test_bitget_recovers_order_id_from_client_oid():
 # #1783 — Binance origClientOrderId → orderId recovery
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_binance_recovers_order_id_from_client_order_id():
-    """fetch_private_fill_evidence recovers exchange_order_id via client_order_id lookup."""
-    from aletheia.execution import binance_broker
-    from aletheia.execution.binance_broker import fetch_private_fill_evidence
+def _binance_adapter(monkeypatch):
+    import ccxt.async_support as ccxt
+    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import _profile, _identity, _install
+    exchange = ccxt.binanceusdm()
+    exchange.set_markets([{"id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT", "type": "swap", "spot": False, "swap": True, "future": False, "option": False, "contract": True, "linear": True, "inverse": False, "contractSize": 1}])
+    async def load(*_args, **_kwargs):
+        return exchange.markets
+    exchange.load_markets = load
+    _install(monkeypatch, exchange)
+    profile = _profile("binance")
+    return CCXTUTAAdapter(_identity(profile), profile), exchange
 
-    recovered_order_id = "BINANCE-ORD-999"
-    client_oid = "client-abc-123"
-    fill = _binance_fill_row(order_id=recovered_order_id, client_oid=client_oid)
 
-    FakeCls = _make_binance_client_cls(
-        lookup_result={"orderId": recovered_order_id, "clientOrderId": client_oid, "status": "filled"},
-        fills=[fill],
-    )
-    order = {
-        "execution_mode": "binance_testnet",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "exchange_order_id": "",
-        "client_order_id": client_oid,
-        "created_at": "2024-01-01T00:00:00+00:00",
-    }
-
-    with patch.object(binance_broker, "BinanceClient", FakeCls):
-        result = await fetch_private_fill_evidence(order)
-
-    assert isinstance(result, list)
-    assert any(r["orderId"] == recovered_order_id for r in result)
+def _raw_trade(timestamp, *, trade_id=1, order_id=99):
+    return {"id": trade_id, "orderId": order_id, "symbol": "BTCUSDT", "price": "50000", "qty": "0.01", "quoteQty": "500", "commission": "0.3", "commissionAsset": "USDT", "time": timestamp, "buyer": True, "maker": False, "side": "BUY", "positionSide": "LONG"}
 
 
 @pytest.mark.asyncio
-async def test_binance_returns_empty_when_client_order_id_not_found():
-    """fetch_private_fill_evidence returns [] when orderId recovery fails (fail-closed)."""
-    from aletheia.execution import binance_broker
-    from aletheia.execution.binance_broker import fetch_private_fill_evidence
-
-    FakeCls = _make_binance_client_cls(lookup_result=None)
-    order = {
-        "execution_mode": "binance_testnet",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "exchange_order_id": "",
-        "client_order_id": "no-such-coid",
-        "created_at": "2024-01-01T00:00:00+00:00",
-    }
-
-    with patch.object(binance_broker, "BinanceClient", FakeCls):
-        result = await fetch_private_fill_evidence(order)
-
-    assert result == []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# #1785 — Binance window partitioning and pagination rules
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_binance_window_under_7_days_single_request():
-    """Recent order (<7 days): single fetch_my_trades call with startTime+endTime, no fromId."""
-    from aletheia.execution import binance_broker
-    from aletheia.execution.binance_broker import fetch_private_fill_evidence
-
-    calls: list[dict] = []
-    order_id = "ORD-RECENT"
-    fill = _binance_fill_row(order_id=order_id)
-
-    async def _mock_trades(symbol, limit=1000, params=None):  # noqa: ARG001
-        calls.append(dict(params or {}))
-        return [fill]
-
-    mock_exchange = MagicMock()
-    mock_exchange.load_markets = AsyncMock()
-    mock_exchange.fetch_my_trades = _mock_trades
-
-    FakeCls = _make_binance_exchange_cls(mock_exchange)
-    recent_ts = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    order = {
-        "execution_mode": "binance_testnet",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "exchange_order_id": order_id,
-        "client_order_id": "",
-        "created_at": recent_ts,
-    }
-
-    with patch.object(binance_broker, "BinanceClient", FakeCls):
-        await fetch_private_fill_evidence(order)
-
-    assert len(calls) == 1, f"Expected 1 call for recent order, got {len(calls)}"
-    assert "startTime" in calls[0], "First call must have startTime"
-    assert "endTime" in calls[0], "First call must have endTime"
-    assert "fromId" not in calls[0], "No fromId on first call"
+async def test_binance_recovers_order_id_from_client_order_id(monkeypatch):
+    from aletheia.uta.models import FillQuery, ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    adapter, exchange = _binance_adapter(monkeypatch)
+    now = datetime.now(timezone.utc)
+    order_requests = []
+    async def order(params):
+        order_requests.append(params)
+        return {"orderId": 99, "clientOrderId": "client-abc-123", "symbol": "BTCUSDT", "status": "FILLED", "side": "BUY", "type": "MARKET", "origQty": "0.01", "executedQty": "0.01", "avgPrice": "50000", "price": "0", "time": int(now.timestamp()*1000)}
+    async def trades(params):
+        return [_raw_trade(int(now.timestamp()*1000))]
+    exchange.fapiPrivateGetOrder = order
+    exchange.fapiPrivateGetUserTrades = trades
+    try:
+        report = await adapter.get_fills(FillQuery(scope=scope_from_local("BTC/USDT", "usdt_futures", start_at=now-timedelta(hours=1)), client_order_id="client-abc-123"))
+        assert report.completeness is ReadCompleteness.COMPLETE
+        assert [(fill.venue_order_id, fill.client_order_id) for fill in report.fills] == [("99", None)]
+        assert order_requests[0]["origClientOrderId"] == "client-abc-123"
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio
-async def test_binance_window_partitioning_no_endtime_with_from_id():
-    """After a full 1000-row page, pagination uses fromId only — never fromId+endTime."""
-    from aletheia.execution import binance_broker
-    from aletheia.execution.binance_broker import fetch_private_fill_evidence
-
-    calls: list[dict] = []
-    order_id = "ORD-PAGINATE"
-
-    def _make_page(start_id: int, count: int) -> list[dict]:
-        rows = []
-        for i in range(count):
-            r = _binance_fill_row(order_id=order_id, trade_id=str(start_id + i))
-            r["id"] = str(start_id + i)
-            r["info"]["orderId"] = order_id
-            rows.append(r)
-        return rows
-
-    page1 = _make_page(1, 1000)
-    page2 = _make_page(1001, 1)
-    call_count = 0
-
-    async def _mock_trades(symbol, limit=1000, params=None):  # noqa: ARG001
-        nonlocal call_count
-        calls.append(dict(params or {}))
-        call_count += 1
-        return page1 if call_count == 1 else page2
-
-    mock_exchange = MagicMock()
-    mock_exchange.load_markets = AsyncMock()
-    mock_exchange.fetch_my_trades = _mock_trades
-
-    FakeCls = _make_binance_exchange_cls(mock_exchange)
-    recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    order = {
-        "execution_mode": "binance_testnet",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "exchange_order_id": order_id,
-        "client_order_id": "",
-        "created_at": recent_ts,
-    }
-
-    with patch.object(binance_broker, "BinanceClient", FakeCls):
-        await fetch_private_fill_evidence(order)
-
-    assert len(calls) >= 2, "Expected at least 2 pages"
-    # First call: startTime + endTime, no fromId
-    assert "startTime" in calls[0]
-    assert "endTime" in calls[0]
-    assert "fromId" not in calls[0], "First call must not have fromId"
-    # Pagination call: fromId only — endTime and startTime absent
-    assert "fromId" in calls[1], "Pagination call must have fromId"
-    assert "endTime" not in calls[1], "Pagination call must NOT have endTime"
-    assert "startTime" not in calls[1], "Pagination call must NOT have startTime"
+async def test_binance_missing_client_order_identity_is_unavailable_not_empty_complete(monkeypatch):
+    import ccxt
+    from aletheia.uta.models import FillQuery, ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    adapter, exchange = _binance_adapter(monkeypatch)
+    async def order(params):
+        raise ccxt.OrderNotFound("not found")
+    exchange.fapiPrivateGetOrder = order
+    try:
+        report = await adapter.get_fills(FillQuery(scope=scope_from_local("BTC/USDT", "usdt_futures", start_at=datetime.now(timezone.utc)-timedelta(hours=1)), client_order_id="missing"))
+        assert report.completeness is ReadCompleteness.PARTIAL
+        assert report.reason_code == "private_fill_order_identity_unavailable"
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.asyncio
-async def test_binance_window_over_7_days_splits_into_chunks():
-    """Order older than 7 days results in multiple fetch_my_trades window calls,
-    each with startTime+endTime ≤7 days and no fromId."""
-    from aletheia.execution import binance_broker
-    from aletheia.execution.binance_broker import fetch_private_fill_evidence
+@pytest.mark.parametrize("days", [1/24, 20])
+async def test_binance_history_queries_every_bounded_window_including_empty_ones(monkeypatch, days):
+    from aletheia.uta.models import FillQuery, ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    adapter, exchange = _binance_adapter(monkeypatch)
+    now = datetime.now(timezone.utc)
+    start = now-timedelta(days=days)
+    calls = []
+    async def trades(params):
+        calls.append(params)
+        return [_raw_trade(int(start.timestamp()*1000)+1000)] if len(calls) == 1 else []
+    exchange.fapiPrivateGetUserTrades = trades
+    try:
+        report = await adapter.get_fills(FillQuery(scope=scope_from_local("BTC/USDT", "usdt_futures", start_at=start), venue_order_id="99"))
+        assert report.completeness is ReadCompleteness.COMPLETE
+        assert [fill.venue_order_id for fill in report.fills] == ["99"]
+        assert len(calls) == (1 if days < 7 else 3)
+        assert all(0 <= call["endTime"]-call["startTime"] <= 7*86400000 for call in calls)
+        assert all("fromId" not in call for call in calls)
+        assert calls[-1]["endTime"] >= int(now.timestamp()*1000)
+    finally:
+        await adapter.close()
 
-    calls: list[dict] = []
 
-    async def _mock_trades(symbol, limit=1000, params=None):  # noqa: ARG001
-        calls.append(dict(params or {}))
-        return []
-
-    mock_exchange = MagicMock()
-    mock_exchange.load_markets = AsyncMock()
-    mock_exchange.fetch_my_trades = _mock_trades
-
-    FakeCls = _make_binance_exchange_cls(mock_exchange)
-    old_ts = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
-    order = {
-        "execution_mode": "binance_testnet",
-        "market_type": "usdt_futures",
-        "symbol": "BTC/USDT",
-        "exchange_order_id": "ORD-OLD",
-        "client_order_id": "",
-        "created_at": old_ts,
-    }
-
-    with patch.object(binance_broker, "BinanceClient", FakeCls):
-        await fetch_private_fill_evidence(order)
-
-    assert len(calls) >= 3, f"20-day window should produce >=3 calls, got {len(calls)}"
-    max_ms = 7 * 24 * 60 * 60 * 1000
-    for i, p in enumerate(calls):
-        assert "startTime" in p, f"Call {i} missing startTime"
-        assert "endTime" in p, f"Call {i} missing endTime"
-        assert "fromId" not in p, f"Call {i} must not have fromId"
-        window_ms = p["endTime"] - p["startTime"]
-        assert window_ms <= max_ms, f"Call {i} window {window_ms}ms exceeds 7 days"
+@pytest.mark.asyncio
+async def test_binance_full_page_uses_from_id_without_time_bounds(monkeypatch):
+    from aletheia.uta.models import FillQuery, ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    adapter, exchange = _binance_adapter(monkeypatch)
+    now = datetime.now(timezone.utc)
+    timestamp = int((now-timedelta(minutes=1)).timestamp()*1000)
+    calls = []
+    async def trades(params):
+        calls.append(params)
+        return [_raw_trade(timestamp, trade_id=i) for i in range(1, 1001)] if len(calls)==1 else [_raw_trade(timestamp, trade_id=1001)]
+    exchange.fapiPrivateGetUserTrades = trades
+    try:
+        report = await adapter.get_fills(FillQuery(scope=scope_from_local("BTC/USDT", "usdt_futures", start_at=now-timedelta(hours=1)), venue_order_id="99"))
+        assert report.completeness is ReadCompleteness.COMPLETE
+        assert {fill.venue_fill_id for fill in report.fills} == {str(i) for i in range(1, 1002)}
+        assert calls[1]["fromId"] == "1001"
+        assert "startTime" not in calls[1] and "endTime" not in calls[1]
+    finally:
+        await adapter.close()

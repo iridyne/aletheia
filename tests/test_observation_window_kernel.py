@@ -295,7 +295,7 @@ def test_finalization_publishes_immutable_lab_result_with_source_cut(tmp_path, m
 
 
 def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+    from aletheia.observation_lab.checkpoint import CheckpointVerification
 
     import aletheia.config.loader as loader
     import aletheia.observation_lab.checkpoint as checkpoint
@@ -317,15 +317,12 @@ def test_runner_checkpoint_mismatch_is_diagnostic_only(tmp_path, monkeypatch):
         slot_key="restore-slot", authority_mode="observe_only", spec={"contract": "v1"},
         started_at=_utc(), collect_until=_utc(2), finalize_not_before=_utc(3),
     )
-    current = SimpleNamespace(
-        joint_fingerprint="new", active_manifest_count=0, app_migration_count=1,
-    )
     monkeypatch.setattr(
         checkpoint, "verify_joint_checkpoint",
-        lambda: SimpleNamespace(ok=False, reason="joint_fingerprint_mismatch", last=None),
+        lambda **_: CheckpointVerification(
+            ok=False, reason="joint_fingerprint_mismatch", last=None, current_fingerprint="new",
+        ),
     )
-    monkeypatch.setattr(checkpoint, "compute_joint_checkpoint", lambda: current)
-    monkeypatch.setattr(checkpoint, "save_joint_checkpoint", lambda _current: None)
 
     summary = runner._pass_checkpoint()
 

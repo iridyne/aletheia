@@ -287,51 +287,6 @@ def requeue_unobserved_settlements(
     ))
 
 
-@data_app.command("archive-unmeasurable-learning-experiments")
-def archive_unmeasurable_learning_experiments(
-    apply: bool = typer.Option(
-        False, "--apply",
-        help="Archive open experiments without a measurement adapter. Default is dry-run.",
-    ),
-):
-    """Soft-terminalize historical experiments that cannot produce verdicts."""
-    from aletheia.learning.maintenance import archive_unmeasurable_experiments
-    from aletheia.storage.migrations import assert_migrations_current
-
-    assert_migrations_current()
-    typer.echo(json.dumps(
-        archive_unmeasurable_experiments(dry_run=not apply),
-        indent=2, ensure_ascii=False, sort_keys=True,
-    ))
-
-
-@data_app.command("consolidate-ufc-learning-experiments")
-def consolidate_ufc_learning_experiments(
-    keep_experiment_id: str = typer.Option(
-        ..., "--keep-experiment-id",
-        help="Exact active UFC Paper experiment that remains open.",
-    ),
-    apply: bool = typer.Option(
-        False, "--apply",
-        help="Refreeze all other open UFC Shadow experiments. Default is dry-run.",
-    ),
-):
-    """Keep one UFC Paper loop and durably refreeze its redundant Shadow scopes."""
-    from aletheia.learning.maintenance import (
-        refreeze_redundant_universe_family_shadows,
-    )
-    from aletheia.storage.migrations import assert_migrations_current
-
-    assert_migrations_current()
-    typer.echo(json.dumps(
-        refreeze_redundant_universe_family_shadows(
-            keep_experiment_id=keep_experiment_id,
-            dry_run=not apply,
-        ),
-        indent=2, ensure_ascii=False, sort_keys=True,
-    ))
-
-
 @data_app.command("reconcile-paper-funding")
 def reconcile_paper_funding(
     position_ids: list[str] = typer.Option([], "--position-id"),
