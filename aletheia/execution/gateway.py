@@ -2056,10 +2056,10 @@ def _execute_proposal(
                         "message": msg,
                     }
                 )
-                # #8 fix: don't leak raw exception text to the API — some CCXT
-                # errors carry request URLs / partial headers. Route through
-                # clean_error_message (already used by broker error paths) and
-                # cap length so the API response stays a summary.
+                # Neither the API response nor the audit record carries venue
+                # exception text: it can embed request URLs and partial headers.
+                # Both keep the exception type name only, and the API adds a
+                # structured reason_code when the broker supplied one.
                 response = {
                     "status": "error",
                     "proposal_id": proposal.id,
@@ -2241,10 +2241,9 @@ def _execute_proposal(
                         "message": msg,
                     }
                 )
-                # #8 fix: don't leak raw exception text to the API — some CCXT
-                # errors carry request URLs / partial headers. Route through
-                # clean_error_message (already used by broker error paths) and
-                # cap length so the API response stays a summary.
+                # Neither the API response nor the audit record carries venue
+                # exception text: it can embed request URLs and partial headers.
+                # Both keep the exception type name only.
                 return {
                     "status": "error",
                     "proposal_id": proposal.id,
