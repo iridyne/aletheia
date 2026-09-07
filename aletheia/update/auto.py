@@ -432,6 +432,7 @@ def _candidate_preflight(target: str, backup: Path) -> Path:
             raise AutoUpdateError("preflight_restore_failed", "; ".join(restored.errors))
         env = _safe_env()
         env["ALETHEIA_DATA_DIR"] = str(data_copy)
+        env["ALETHEIA_BACKUP_PATH"] = str(backup.resolve())
         env["PYTHONPATH"] = f"{worktree}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep)
         check = (
             "def _require(value, detail):\n"

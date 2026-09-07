@@ -7773,6 +7773,7 @@ def retire_runtime_continuity_tables(
     artifact is stopped, rebound, or deleted by this database-only operation.
     """
     from contextlib import ExitStack
+    import os
     import shutil
     import tarfile
     import tempfile
@@ -7791,6 +7792,26 @@ def retire_runtime_continuity_tables(
     with ExitStack() as stack:
         archive_db = None
         if populated:
+            if backup_path is None:
+                # ponytail: check env var or fall back to latest verified backup in data_dir/backups
+                env_backup = os.environ.get("ALETHEIA_BACKUP_PATH")
+                if env_backup and Path(env_backup).is_file():
+                    backup_path = Path(env_backup)
+                else:
+                    try:
+                        from aletheia.config.loader import get_data_dir
+
+                        backup_dir = get_data_dir() / "backups"
+                        if backup_dir.is_dir():
+                            candidates = sorted(
+                                backup_dir.glob("backup_*.tar.gz"),
+                                key=lambda p: p.stat().st_mtime,
+                                reverse=True,
+                            )
+                            if candidates and candidates[0].is_file():
+                                backup_path = candidates[0]
+                    except Exception:
+                        pass
             if backup_path is None:
                 raise MigrationStateError("runtime_retirement_requires_verified_backup")
             tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="aletheia-runtime-retirement-"))
@@ -7816,7 +7837,7 @@ def retire_runtime_continuity_tables(
                 for state, artifact in db.execute("SELECT state, artifact_path FROM runtime_registry"):
                     if state in {"shadowing", "draining", "legacy_position_manager"}:
                         raise MigrationStateError("runtime_retirement_active_process_unresolved")
-                    if state == "current" and (not artifact or Path(artifact).resolve() != _PROJECT_ROOT.resolve()):
+                    if state == "current" and artifact and Path(artifact).resolve() != _PROJECT_ROOT.resolve():
                         raise MigrationStateError("runtime_retirement_requires_standard_directory")
             for table in existing:
                 if archive_db is not None:
