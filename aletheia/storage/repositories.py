@@ -10730,7 +10730,7 @@ def insert_filter_candidate_outcomes_batch(
     connection = db or get_db()
     statement = (
         f"INSERT INTO filter_candidate_outcomes ({', '.join(columns)}) VALUES ({placeholders})"
-        " ON CONFLICT(id) DO UPDATE SET"
+        " ON CONFLICT(outcome_candidate_key, horizon) DO UPDATE SET"
         " allocation_selected = COALESCE(excluded.allocation_selected,"
         "                                filter_candidate_outcomes.allocation_selected)"
     )
