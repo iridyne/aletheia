@@ -381,7 +381,6 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/trading` | Trading parameters (slippage, sizing) |
 | POST | `/settings/market-data` | Market data collection config |
 | POST | `/settings/universe` | Universe pipeline config |
-| POST | `/settings/strategy_factory` | Legacy strategy-factory config retained for compatibility; rules engine is removed |
 | POST | `/settings/historical_data` | Historical data config, including nightly and bounded active-Universe catch-up controls |
 | POST | `/settings/event_triggers` | Event-driven trigger config |
 | POST | `/settings/news` | News ingestion/settings config |

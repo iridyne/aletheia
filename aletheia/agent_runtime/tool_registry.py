@@ -25,16 +25,6 @@ PAPER_TOOLS = [
     "update_paper_strategy_config",
 ]
 
-# System tools — modify playbooks/prompts/strategy config
-# DEPRECATED: no handler implementation exists for these tools.
-# They remain registered so permission lookups don't KeyError;
-# actual blocking is done by TOOL_CLASSES["system"] = {"Full"}.
-SYSTEM_TOOLS = [
-    "create_playbook_draft",
-    "create_prompt_draft",
-    "create_code_change_proposal",
-]
-
 # Restricted tools — never callable by agent
 RESTRICTED_TOOLS = [
     "unlock_live",
@@ -51,7 +41,5 @@ def init_tool_registry() -> None:
         register_tool(t, "observe")
     for t in PAPER_TOOLS:
         register_tool(t, "paper")
-    for t in SYSTEM_TOOLS:
-        register_tool(t, "system")
     for t in RESTRICTED_TOOLS:
         register_tool(t, "restricted")

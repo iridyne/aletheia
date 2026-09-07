@@ -1526,15 +1526,6 @@ class PSPosition(BaseModel):
     raw_json: str | None = None
 
 
-class PSCheckpoint(BaseModel):
-    checkpoint_id: str = Field(default_factory=new_id)
-    run_id: str
-    step_name: str
-    state_json: str = "{}"
-    artifact_path: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-
-
 class PSLesson(BaseModel):
     lesson_id: str = Field(default_factory=new_id)
     source_type: str
