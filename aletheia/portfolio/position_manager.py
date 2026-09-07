@@ -780,16 +780,16 @@ def _maybe_update_trailing_stop(
                 position["id"],
                 persisted_plan,
                 provenance="deterministic_trailing_v2",
-                extra_position_updates={
+                exit_plan_updates={
                     key: value for key, value in updates.items() if key != "stop_price"
                 },
                 effective_at=effective_at,
             )
             position["stop_price"] = float(new_stop)
         else:
-            from aletheia.storage.repositories import update_position
+            from aletheia.storage.repositories import update_open_position_exit_plan
 
-            update_position(position["id"], **updates)
+            update_open_position_exit_plan(position["id"], **updates)
         return True
     return False
 
@@ -1100,7 +1100,9 @@ def _rearm_due_horizon_review(
                 f"{current.get('opened_at')}\0{horizon}"
             ).encode()
         ).hexdigest()
-        repo.update_position(current["id"], horizon_wake_sent_at=None)
+        repo.update_open_position_observation(
+            current["id"], horizon_wake_sent_at=None
+        )
         repo.insert_audit_event_once(AuditEvent(
             id=f"horizon-review-rearmed-{event_digest}",
             actor="system",
@@ -1213,12 +1215,14 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
     extension acknowledgement is scoped to the completed review and is re-armed
     when the newly authored horizon becomes due.
     """
-    from aletheia.storage.repositories import update_position
+    from aletheia.storage.repositories import update_open_position_observation
 
     acknowledged: list[str] = []
     acknowledged_at = datetime.now(timezone.utc).isoformat()
     for position_id in dict.fromkeys(str(pid) for pid in position_ids if pid):
-        update_position(position_id, horizon_wake_sent_at=acknowledged_at)
+        update_open_position_observation(
+            position_id, horizon_wake_sent_at=acknowledged_at
+        )
         acknowledged.append(position_id)
     return acknowledged
 
@@ -1422,7 +1426,9 @@ def evaluate_open_positions() -> dict:
                                 source="market_adverse_signal",
                                 priority=adverse_signal_priority(score),
                             )
-                            from aletheia.storage.repositories import update_position
+                            from aletheia.storage.repositories import (
+                                update_open_position_observation,
+                            )
                             if delivered:
                                 market_signal_wakes += 1
                                 evidence = _market_signal_evidence(
@@ -1432,7 +1438,7 @@ def evaluate_open_positions() -> dict:
                                     delivery="scheduled",
                                     evaluated_at=evaluated_at,
                                 )
-                                update_position(
+                                update_open_position_observation(
                                     p["id"],
                                     last_market_signal_action=f"wake:{action.action}",
                                     last_market_signal_reason=action.reason[:200],
@@ -1453,7 +1459,7 @@ def evaluate_open_positions() -> dict:
                                     delivery="operator_daemon_unavailable",
                                     evaluated_at=evaluated_at,
                                 )
-                                update_position(
+                                update_open_position_observation(
                                     p["id"],
                                     last_market_signal_action=f"wake_failed:{action.action}",
                                     last_market_signal_reason="operator_daemon_unavailable",
@@ -1512,7 +1518,7 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     """Update the stop-loss price for an open position.
 
     PI instruction 'adjust stop to X' lands here (RE-S05). Writes stop_price to
-    DB via update_position and syncs the exchange TPSL bracket when applicable.
+    DB through the ExitPlan owner and syncs the exchange TPSL bracket when applicable.
     Returns {"updated": True} on success, {"error": str} on failure.
     """
     from aletheia.storage.repositories import get_position
@@ -1902,7 +1908,7 @@ def apply_operator_adjustment(
             new_plan,
             provenance="system_operator_adjustment_v1",
             expected_version=plan.version,
-            extra_position_updates=(
+            observation_updates=(
                 {"horizon_wake_sent_at": None} if horizon_changed else None
             ),
         )
@@ -2008,7 +2014,7 @@ def proactive_exit(
                 ),
             }
         # Parse once, guarded: a non-numeric or non-finite level must never reach
-        # update_position and rest on the Position as an unexecutable exit trigger.
+        # the ExitPlan writer and rest on the Position as an unexecutable trigger.
         try:
             level = float(limit_price)  # type: ignore[arg-type]
         except (TypeError, ValueError):

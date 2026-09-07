@@ -262,7 +262,7 @@ def close_position_administrative(
             )),
         }
         updates.update(_close_provenance())
-        repo.update_position(position_id, **updates)
+        repo.finalize_position_close(position_id, updates)
         repo.insert_audit_event(AuditEvent(
             actor=actor,
             source=source,
@@ -447,7 +447,7 @@ def close_position_verified(
         })
         updates.update(_close_provenance())
         closed_row = {**current, **updates}
-        repo.update_position(position_id, **updates)
+        repo.finalize_position_close(position_id, updates)
         if outcome_eligible or outcome_reason == "attribution_read_failed":
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 

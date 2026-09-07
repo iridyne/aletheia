@@ -2758,16 +2758,11 @@ def finalize_exchange_acknowledgement(
             )
             applied = True
             if applied and close_position_id:
-                position_cursor = execute_write(
-                    """
-                    UPDATE positions
-                    SET pending_close_status=?
-                    WHERE id=? AND status='open' AND pending_close_order_id=?
-                    """,
-                    (pending_close_status, close_position_id, order_id),
+                update_position_close_claim(
+                    close_position_id,
+                    order_id=order_id,
+                    status=str(pending_close_status or status),
                 )
-                if position_cursor.rowcount != 1:
-                    raise RuntimeError("close acknowledgement lost its Position claim")
 
         order = get_order(order_id)
         position_id = order.get("position_id") if order else close_position_id
@@ -3122,8 +3117,189 @@ def insert_position(p: Position) -> None:
     _insert("positions", _stamp_provenance(p.model_dump()))
 
 
-def update_position(pid: str, **kwargs) -> None:
-    _update("positions", pid, kwargs)
+class PositionClaimConflict(RuntimeError):
+    pass
+
+
+def _update_owned_position_fields(
+    position_id: str,
+    fields: Mapping[str, object],
+    *,
+    allowed: frozenset[str],
+    owner: str,
+    required_status: str,
+) -> None:
+    unknown = set(fields) - allowed
+    if unknown or not fields:
+        detail = ",".join(sorted(unknown)) if unknown else "empty"
+        raise ValueError(f"invalid_{owner}_position_fields:{detail}")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status=?",
+        (*fields.values(), position_id, required_status),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"{owner}_position_conflict:{position_id}")
+
+
+_POSITION_MATERIALIZATION_FIELDS = frozenset({
+    "quantity", "entry_price", "current_price", "entry_fee", "slippage_cost",
+    "liquidation_price", "entry_fill_verified", "entry_price_source", "leverage",
+    "trade_school", "reconciliation_identity", "reconciliation_evidence",
+})
+
+
+def update_open_position_materialization(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_MATERIALIZATION_FIELDS,
+        owner="materialization",
+        required_status="open",
+    )
+
+
+_POSITION_EXIT_PLAN_FIELDS = frozenset({
+    "stop_price", "take_profit_price", "expected_horizon_hours", "trailing_json",
+    "thesis_invalidation_json", "stop_source", "exit_plan_version",
+    "exit_plan_effective_at", "exit_limit_price", "exit_limit_source",
+    "exchange_tpsl_order_id", "trail_high_water", "exit_reasoning",
+})
+
+
+def update_open_position_exit_plan(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_EXIT_PLAN_FIELDS,
+        owner="exit_plan",
+        required_status="open",
+    )
+
+
+_POSITION_OBSERVATION_FIELDS = frozenset({
+    "current_price", "unrealized_pnl", "unrealized_pnl_source",
+    "horizon_wake_sent_at", "last_market_signal_action",
+    "last_market_signal_reason", "last_market_signal_at",
+    "last_market_signal_evidence",
+})
+
+
+def update_open_position_observation(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_OBSERVATION_FIELDS,
+        owner="observation",
+        required_status="open",
+    )
+
+
+_POSITION_SETTLEMENT_FIELDS = frozenset({
+    "realized_pnl", "funding_cost", "funding_source", "exit_reasoning",
+    "exit_price_source", "exit_fill_verified", "outcome_eligible",
+    "outcome_exclusion_reason", "reconciliation_evidence",
+})
+
+
+def update_closed_position_settlement(position_id: str, **fields: object) -> None:
+    _update_owned_position_fields(
+        position_id,
+        fields,
+        allowed=_POSITION_SETTLEMENT_FIELDS,
+        owner="settlement",
+        required_status="closed",
+    )
+
+
+_POSITION_CLOSE_FIELDS = frozenset({
+    "status", "current_price", "realized_pnl", "unrealized_pnl",
+    "close_reason", "closed_at", "btc_exit_price", "entry_fee", "exit_fee",
+    "funding_cost", "funding_source", "slippage_cost", "exit_reasoning",
+    "close_category", "exit_price_source", "exit_fill_verified",
+    "reconciliation_identity", "reconciliation_evidence",
+    "outcome_semantics_version", "outcome_eligible", "outcome_exclusion_reason",
+    "closed_runtime_session_id", "closed_producer_commit",
+    "closed_behavior_fingerprint", "pending_close_order_id",
+    "pending_close_status", "pending_close_requested_at",
+})
+
+
+def finalize_position_close(position_id: str, fields: Mapping[str, object]) -> None:
+    """Persist one complete close snapshot with an open-state CAS."""
+
+    unknown = set(fields) - _POSITION_CLOSE_FIELDS
+    if unknown or fields.get("status") != "closed":
+        detail = ",".join(sorted(unknown)) if unknown else "status"
+        raise ValueError(f"invalid_position_close_fields:{detail}")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status='open'",
+        (*fields.values(), position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_conflict:{position_id}")
+
+
+def reopen_position_for_verified_repair(
+    position_id: str,
+    fields: Mapping[str, object],
+) -> None:
+    """Explicit repair-only closed-to-open CAS before replaying verified evidence."""
+
+    if fields.get("status") != "open" or set(fields) - _POSITION_CLOSE_FIELDS:
+        raise ValueError("invalid_position_reopen_fields")
+    sets = ", ".join(f"{name}=?" for name in fields)
+    updated = execute_write(
+        f"UPDATE positions SET {sets} WHERE id=? AND status='closed'",
+        (*fields.values(), position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_reopen_conflict:{position_id}")
+
+
+def claim_position_close(
+    position_id: str,
+    *,
+    order_id: str,
+    status: str,
+    requested_at: str,
+) -> None:
+    """Claim one open Position for exactly one durable close Order."""
+
+    updated = execute_write(
+        "UPDATE positions SET pending_close_order_id=?, pending_close_status=?, "
+        "pending_close_requested_at=? WHERE id=? AND status='open' "
+        "AND (pending_close_order_id IS NULL OR pending_close_status='error')",
+        (order_id, status, requested_at, position_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_claim_conflict:{position_id}")
+
+
+def update_position_close_claim(
+    position_id: str,
+    *,
+    order_id: str,
+    status: str,
+) -> None:
+    updated = execute_write(
+        "UPDATE positions SET pending_close_status=? "
+        "WHERE id=? AND status='open' AND pending_close_order_id=?",
+        (status, position_id, order_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_claim_lost:{position_id}")
+
+
+def release_position_close_claim(position_id: str, *, order_id: str) -> None:
+    updated = execute_write(
+        "UPDATE positions SET pending_close_order_id=NULL, pending_close_status=NULL, "
+        "pending_close_requested_at=NULL WHERE id=? AND pending_close_order_id=?",
+        (position_id, order_id),
+    )
+    if updated.rowcount != 1:
+        raise PositionClaimConflict(f"position_close_release_conflict:{position_id}")
 
 
 def get_position(position_id: str) -> dict | None:

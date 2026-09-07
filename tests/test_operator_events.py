@@ -6,6 +6,8 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from tests.position_fixture import force_update_position
 from httpx import ASGITransport, AsyncClient
 
 from aletheia.agent_shell.runtime import CommandResponse
@@ -112,7 +114,7 @@ def _insert_eligible_closed_position(*, position_id: str, strategy_id: str) -> N
         fill_price=60010.0, fill_quantity=0.1, fee=0.0,
         filled_at=closed_at,
     ))
-    repo.update_position(
+    force_update_position(
         position_id,
         current_price=60010.0,
         unrealized_pnl=0.0,

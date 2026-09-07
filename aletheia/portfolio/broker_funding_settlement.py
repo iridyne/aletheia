@@ -364,7 +364,7 @@ def materialize_broker_funding_economics(
             "funding_accounting_version": "broker-funding-v1",
         })
 
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             realized_pnl=realized,
             funding_cost=float(funding_cost),
@@ -575,7 +575,7 @@ def _terminalize_funding_history_expired(
             raise ValueError("funding terminal evidence conflict")
         evidence_root["funding_terminal"] = terminal
 
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             funding_source="unavailable",
             outcome_eligible=False,

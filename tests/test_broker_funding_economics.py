@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
@@ -241,7 +243,7 @@ def test_broker_funding_rejects_stale_position_snapshot(
     position_id, stale, funding, ledger = _seed_pending_broker_funding_close(
         tmp_path, monkeypatch,
     )
-    repo.update_position(position_id, **{field: value})
+    force_update_position(position_id, **{field: value})
     before = _broker_funding_state(position_id)
     from aletheia.portfolio.broker_funding_settlement import (
         materialize_broker_funding_economics,
@@ -1364,7 +1366,7 @@ async def test_expired_funding_terminalization_stale_owner_is_noop(
     real_contract = uta_manager.funding_history_retention_contract
 
     def change_owner(execution_mode, *, cfg):
-        repo.update_position(
+        force_update_position(
             "expired-owner-conflict",
             outcome_exclusion_reason="manual_owner_state",
         )
@@ -1407,7 +1409,7 @@ async def test_malformed_funding_window_remains_retryable_and_rotates(
         opened_at=now - timedelta(hours=2),
         closed_at=now - timedelta(hours=1),
     )
-    repo.update_position("malformed-window", opened_at="not-a-timestamp")
+    force_update_position("malformed-window", opened_at="not-a-timestamp")
 
     from aletheia.portfolio import broker_funding_settlement as settlement
 

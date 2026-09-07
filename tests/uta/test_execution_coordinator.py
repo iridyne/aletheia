@@ -733,7 +733,7 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     materialized = materialize_bitget_entry(order["id"], [_fill(order["exchange_order_id"], proposal.id)])
     assert materialized.state == "filled"
     [position] = repo.list_positions(status="open")
-    repo.update_position(position["id"], stop_price=90.0, take_profit_price=120.0)
+    repo.update_open_position_exit_plan(position["id"], stop_price=90.0, take_profit_price=120.0)
     protection = gateway.place_exchange_protection(position["id"])
     if mode.startswith("binance"):
         assert protection == {}  # existing profile explicitly lacks trigger orders

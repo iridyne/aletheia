@@ -19,13 +19,13 @@ from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.execution.post_commit_audit import write_post_commit_audit
 from aletheia.storage.models import Order
 from aletheia.storage.repositories import (
+    claim_position_close,
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
     transition_entry_plan,
     transition_order,
     update_order_metadata,
-    update_position,
 )
 from aletheia.storage.sqlite import get_db
 from aletheia.trust.uta_qualification import require_uta_mutation_qualification
@@ -428,11 +428,11 @@ def _claim_close(position_id: str, reason: str, close_reasoning: str | None):
             status="pending",
         )
         insert_order(close_order)
-        update_position(
+        claim_position_close(
             position_id,
-            pending_close_order_id=close_order.id,
-            pending_close_status="pending",
-            pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
+            order_id=close_order.id,
+            status="pending",
+            requested_at=datetime.now(timezone.utc).isoformat(),
         )
         return row, close_order
 
@@ -599,7 +599,7 @@ def place_protection(position_id: str) -> dict[str, str]:
         except Exception:
             continue
     if placed:
-        repo.update_position(
+        repo.update_open_position_exit_plan(
             position_id,
             exchange_tpsl_order_id=json.dumps(placed, sort_keys=True),
         )
@@ -642,7 +642,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     except Exception:
         return False
     identifiers["sl"] = new_stop
-    repo.update_position(
+    repo.update_open_position_exit_plan(
         position_id,
         exchange_tpsl_order_id=json.dumps(identifiers, sort_keys=True),
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from datetime import datetime, timezone
 import json
 
@@ -113,7 +115,7 @@ def _close(
     realized_pnl: float = -1.0,
     close_reason: str | None = None,
 ) -> dict:
-    repo.update_position(
+    force_update_position(
         position_id,
         status="closed",
         current_price=99.0,
