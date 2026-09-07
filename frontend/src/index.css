@@ -1723,6 +1723,21 @@ button.market-instrument-group-title { font-family: inherit; }
 .market-chart-toolbar .seg-toggle { flex: 0 1 auto; min-width: 0; }
 .market-chart-toolbar .seg-btn { min-width: 0; padding-inline: var(--space-2); }
 .market-chart-settings-button { flex: 0 0 auto; white-space: nowrap; }
+.r20-workbench-wrapper { flex: 0 1 auto; }
+.indicator-dropdown-container { position: relative; }
+.indicator-dropdown-menu {
+  animation: r20-dropdown-pop 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes r20-dropdown-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.candle-countdown-wrap {
+  font-feature-settings: 'tnum' 1;
+}
+.sim-console {
+  animation: r20-dropdown-pop 0.2s ease-out;
+}
 .market-chart-stage {
   position: relative; flex: 1 1 auto; min-height: 0;
   display: grid; grid-template-rows: var(--market-chart-grid-rows, minmax(0, 1fr));

@@ -19,6 +19,7 @@ import { useDialogFocus } from '../components/ui/useDialogFocus'
 import { fmtCompact, fmtDelta, fmtNum, fmtSigned, fmtSymbol, fmtTimestamp, humanize } from '../lib/format'
 import type { Candidate, CandidateDetail, EntryPlan, MarketMicrostructure, MarketSnapshot, Opportunity, Position, PredictionMarket } from '../types'
 import { searchInstruments } from '../charts/instrumentCatalog'
+import R20IndicatorWorkbench from '../charts/R20IndicatorWorkbench'
 
 const PINNED_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d']
 const OVERFLOW_TIMEFRAME_GROUPS: Array<{ title: string; items: string[] }> = [
@@ -372,14 +373,21 @@ function TimeframeMenu({ open, anchorRef, current, onSelect, onClose }: {
 const CHART_SETTINGS_STORAGE_KEY = 'aletheia.charts.settings.v1'
 
 const MAIN_INDICATOR_LABELS: Record<MainIndicatorId, string> = {
+  vwap: 'VWAP',
+  ma: 'MA 5/10/20',
   ema20: 'EMA 20',
   ema50: 'EMA 50',
   bollinger: 'Bollinger Bands 20/2',
+  sar: 'SAR',
+  bbi: 'BBI',
 }
 const SUBCHART_INDICATOR_LABELS: Record<SubchartIndicatorId, string> = {
-  rsi: 'RSI 14',
+  vol: 'Volume',
   macd: 'MACD 12/26/9',
+  rsi: 'RSI 14',
   stochastic: 'Stochastic 14/3/3',
+  obv: 'OBV',
+  wr: 'Williams %R 14',
   atr: 'ATR 14',
 }
 
@@ -632,6 +640,8 @@ export default function Charts() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dataMeta, setDataMeta] = useState<OhlcvResult['meta'] | null>(null)
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false)
+  const [simMode, setSimMode] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const clearEntryPlanOnNextSync = useRef(false)
   const [collapsedGroupIds, setCollapsedGroupIds] = useState<ReadonlySet<string>>(() => new Set<string>())
   const toggleGroupCollapse = useCallback((id: string) => {
@@ -861,6 +871,95 @@ export default function Charts() {
       return { ...prev, indicators: { ...prev.indicators, main: next } }
     })
   }, [])
+  const activeR20Indicators = useMemo<Record<string, boolean>>(() => {
+    const main = chartSettings.indicators.main
+    const sub = chartSettings.indicators.subcharts
+    return {
+      VWAP: main.includes('vwap'),
+      MA: main.includes('ma'),
+      EMA: main.includes('ema20') || main.includes('ema50'),
+      BOLL: main.includes('bollinger'),
+      SAR: main.includes('sar'),
+      BBI: main.includes('bbi'),
+      VOL: chartSettings.overlays.volume || sub.includes('vol'),
+      MACD: sub.includes('macd'),
+      RSI: sub.includes('rsi'),
+      KDJ: sub.includes('stochastic'),
+      OBV: sub.includes('obv'),
+      WR: sub.includes('wr'),
+    }
+  }, [chartSettings])
+
+  const handleToggleR20Indicator = useCallback((key: string) => {
+    setChartSettings(prev => {
+      const main = [...prev.indicators.main]
+      const sub = [...prev.indicators.subcharts]
+      const overlays = { ...prev.overlays }
+
+      if (key === 'VWAP') {
+        const idx = main.indexOf('vwap')
+        if (idx >= 0) main.splice(idx, 1)
+        else if (main.length < MAX_INDICATORS_PER_ZONE) main.push('vwap')
+      } else if (key === 'MA') {
+        const idx = main.indexOf('ma')
+        if (idx >= 0) main.splice(idx, 1)
+        else if (main.length < MAX_INDICATORS_PER_ZONE) main.push('ma')
+      } else if (key === 'EMA') {
+        const has = main.includes('ema20') || main.includes('ema50')
+        if (has) {
+          const m1 = main.filter(id => id !== 'ema20' && id !== 'ema50')
+          return { ...prev, indicators: { ...prev.indicators, main: m1 } }
+        } else if (main.length < MAX_INDICATORS_PER_ZONE) {
+          main.push('ema20')
+        }
+      } else if (key === 'BOLL') {
+        const idx = main.indexOf('bollinger')
+        if (idx >= 0) main.splice(idx, 1)
+        else if (main.length < MAX_INDICATORS_PER_ZONE) main.push('bollinger')
+      } else if (key === 'SAR') {
+        const idx = main.indexOf('sar')
+        if (idx >= 0) main.splice(idx, 1)
+        else if (main.length < MAX_INDICATORS_PER_ZONE) main.push('sar')
+      } else if (key === 'BBI') {
+        const idx = main.indexOf('bbi')
+        if (idx >= 0) main.splice(idx, 1)
+        else if (main.length < MAX_INDICATORS_PER_ZONE) main.push('bbi')
+      } else if (key === 'VOL') {
+        overlays.volume = !overlays.volume
+      } else if (key === 'MACD') {
+        const idx = sub.indexOf('macd')
+        if (idx >= 0) sub.splice(idx, 1)
+        else if (sub.length < MAX_INDICATORS_PER_ZONE) sub.push('macd')
+      } else if (key === 'RSI') {
+        const idx = sub.indexOf('rsi')
+        if (idx >= 0) sub.splice(idx, 1)
+        else if (sub.length < MAX_INDICATORS_PER_ZONE) sub.push('rsi')
+      } else if (key === 'KDJ') {
+        const idx = sub.indexOf('stochastic')
+        if (idx >= 0) sub.splice(idx, 1)
+        else if (sub.length < MAX_INDICATORS_PER_ZONE) sub.push('stochastic')
+      } else if (key === 'OBV') {
+        const idx = sub.indexOf('obv')
+        if (idx >= 0) sub.splice(idx, 1)
+        else if (sub.length < MAX_INDICATORS_PER_ZONE) sub.push('obv')
+      } else if (key === 'WR') {
+        const idx = sub.indexOf('wr')
+        if (idx >= 0) sub.splice(idx, 1)
+        else if (sub.length < MAX_INDICATORS_PER_ZONE) sub.push('wr')
+      }
+
+      return {
+        ...prev,
+        overlays,
+        indicators: { main, subcharts: sub },
+      }
+    })
+  }, [])
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true)
+    setTimeout(() => setIsRefreshing(false), 800)
+  }, [])
 
   const currentSnapshot = snapshotFor(active)
   const selectInstrument = useCallback((instrument: MarketInstrument) => {
@@ -990,35 +1089,19 @@ export default function Charts() {
               >{PINNED_TIMEFRAMES.includes(timeframe) ? '⋯' : timeframe}</Button>
             </div>
 
-            <div className="seg-toggle" aria-label="Indicators">
-              <Button
-                type="button"
-                variant="ghost"
-                className={`seg-btn${chartSettings.indicators.main.includes('ema20') ? ' active' : ''}`}
-                onClick={() => toggleQuickIndicator('ma')}
-                title="Toggle Moving Averages (EMA 20/50)"
-              >
-                MA
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className={`seg-btn${chartSettings.indicators.main.includes('bollinger') ? ' active' : ''}`}
-                onClick={() => toggleQuickIndicator('boll')}
-                title="Toggle Bollinger Bands (20/2)"
-              >
-                BOLL
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className={`seg-btn${chartSettings.overlays.volume ? ' active' : ''}`}
-                onClick={() => setChartSettings(prev => ({ ...prev, overlays: { ...prev.overlays, volume: !prev.overlays.volume } }))}
-                title="Toggle Volume Overlay"
-              >
-                VOL
-              </Button>
-            </div>
+            <R20IndicatorWorkbench
+              timeframe={timeframe}
+              activeIndicators={activeR20Indicators}
+              onToggleIndicator={handleToggleR20Indicator}
+              onRefresh={handleRefresh}
+              isRefreshing={isRefreshing}
+              currentPrice={currentSnapshot?.price ?? 0}
+              currentAtr={microstructure?.spread_bps ? (currentSnapshot?.price ?? 0) * 0.015 : 0}
+              symbol={active.symbol}
+              simMode={simMode}
+              onToggleSimMode={setSimMode}
+              onResetSimulation={() => {}}
+            />
           </div>
 
           <div className="flex items-center gap-1.5">

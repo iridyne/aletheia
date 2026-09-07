@@ -7,7 +7,8 @@ import { api, type OhlcvResult } from '../api/client'
 import { chartTheme } from './theme'
 import {
   bucketChartMarkers, calculateAtr, calculateBollingerBands, calculateEma, calculateMacd,
-  calculateRsi, calculateStochastic, DEFAULT_CHART_SETTINGS, estimateVisibleVolumeProfile,
+  calculateRsi, calculateStochastic, calculateVwap, calculateSma, calculateBbi,
+  calculateSar, calculateObv, calculateWr, DEFAULT_CHART_SETTINGS, estimateVisibleVolumeProfile,
   MAIN_INDICATOR_IDS, MAX_INDICATORS_PER_ZONE, SUBCHART_INDICATOR_IDS,
   type Bar, type ChartMarker, type ChartMarkerBucket, type ChartSettings, type MainIndicatorId,
   type MarkerKind, type PositionLevel, type SubchartIndicatorId, type VisibleVolumeProfile, type VolumeProfileBin,
@@ -20,7 +21,8 @@ export type {
 }
 export {
   bucketChartMarkers, calculateAtr, calculateBollingerBands, calculateEma, calculateMacd,
-  calculateRsi, calculateStochastic, DEFAULT_CHART_SETTINGS, estimateVisibleVolumeProfile,
+  calculateRsi, calculateStochastic, calculateVwap, calculateSma, calculateBbi,
+  calculateSar, calculateObv, calculateWr, DEFAULT_CHART_SETTINGS, estimateVisibleVolumeProfile,
   MAIN_INDICATOR_IDS, MAX_INDICATORS_PER_ZONE, SUBCHART_INDICATOR_IDS,
 }
 
@@ -47,10 +49,22 @@ const CROSSHAIR_MODE: Record<ChartSettings['view']['crosshair'], CrosshairMode> 
 }
 
 const MAIN_INDICATOR_LEGEND: Record<MainIndicatorId, string> = {
-  ema20: 'EMA 20', ema50: 'EMA 50', bollinger: 'BB 20/2',
+  vwap: 'VWAP',
+  ma: 'MA 5/10/20',
+  ema20: 'EMA 20',
+  ema50: 'EMA 50',
+  bollinger: 'BB 20/2',
+  sar: 'SAR',
+  bbi: 'BBI',
 }
 const SUBCHART_PANE_LABEL: Record<SubchartIndicatorId, string> = {
-  rsi: 'RSI 14', macd: 'MACD 12/26/9', stochastic: 'Stochastic 14/3/3', atr: 'ATR 14',
+  vol: 'VOL',
+  macd: 'MACD 12/26/9',
+  rsi: 'RSI 14',
+  stochastic: 'KDJ 9/3/3',
+  obv: 'OBV',
+  wr: 'WR 14',
+  atr: 'ATR 14',
 }
 
 export function marketDataMetaState(
@@ -191,6 +205,28 @@ function IndicatorPane({
       seriesRef.current.line = chart.addLineSeries({
         color: chartTheme.indicatorBlue, lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'ATR 14',
       })
+    } else if (id === 'vol') {
+      seriesRef.current.volume = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' }, priceLineVisible: false, lastValueVisible: true, title: 'VOL',
+      })
+    } else if (id === 'obv') {
+      seriesRef.current.line = chart.addLineSeries({
+        color: '#EAB308', lineWidth: 1, priceLineVisible: false, lastValueVisible: true, title: 'OBV',
+      })
+    } else if (id === 'wr') {
+      const wrAutoscale = () => ({ priceRange: { minValue: -100, maxValue: 0 } })
+      seriesRef.current.line = chart.addLineSeries({
+        color: '#6366F1', lineWidth: 1, priceLineVisible: false, lastValueVisible: true,
+        title: 'WR 14', autoscaleInfoProvider: wrAutoscale,
+      })
+      seriesRef.current.overbought = chart.addLineSeries({
+        color: chartTheme.markerSell, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: wrAutoscale,
+      })
+      seriesRef.current.oversold = chart.addLineSeries({
+        color: chartTheme.markerBuy, lineWidth: 1, lineStyle: LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: wrAutoscale,
+      })
     }
 
     const onRange = (range: LogicalRange | null) => {
@@ -269,6 +305,19 @@ function IndicatorPane({
     } else if (id === 'atr') {
       const points = calculateAtr(bars, 14)
       ;(seriesRef.current.line as ISeriesApi<'Line'> | undefined)?.setData(points.map(point => ({ time: point.time as Time, value: point.value })))
+    } else if (id === 'vol') {
+      ;(seriesRef.current.volume as ISeriesApi<'Histogram'> | undefined)?.setData(bars.map(bar => ({
+        time: bar.time as Time, value: bar.volume,
+        color: bar.close >= bar.open ? `${chartTheme.upColor}80` : `${chartTheme.downColor}80`,
+      })))
+    } else if (id === 'obv') {
+      const points = calculateObv(bars)
+      ;(seriesRef.current.line as ISeriesApi<'Line'> | undefined)?.setData(points.map(point => ({ time: point.time as Time, value: point.value })))
+    } else if (id === 'wr') {
+      const points = calculateWr(bars, 14)
+      ;(seriesRef.current.line as ISeriesApi<'Line'> | undefined)?.setData(points.map(point => ({ time: point.time as Time, value: point.value })))
+      ;(seriesRef.current.overbought as ISeriesApi<'Line'> | undefined)?.setData(guide.map(row => ({ time: row.time, value: -20 })))
+      ;(seriesRef.current.oversold as ISeriesApi<'Line'> | undefined)?.setData(guide.map(row => ({ time: row.time, value: -80 })))
     }
   }, [id, barRevision, barsRef])
 
@@ -299,6 +348,12 @@ export default function PriceChart({
   const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null)
   const bbMiddleRef = useRef<ISeriesApi<'Line'> | null>(null)
   const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const vwapRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const ma5Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ma10Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const ma20Ref = useRef<ISeriesApi<'Line'> | null>(null)
+  const sarRef = useRef<ISeriesApi<'Line'> | null>(null)
+  const bbiRef = useRef<ISeriesApi<'Line'> | null>(null)
   const barsRef = useRef<Bar[]>([])
   const timesRef = useRef<Set<number>>(new Set())
   const bucketsRef = useRef<ChartMarkerBucket[]>([])
@@ -481,16 +536,28 @@ export default function PriceChart({
   const applyMainIndicators = useCallback(() => {
     const bars = barsRef.current
     const active = new Set(settingsRef.current.indicators.main)
+    const vwapPoints = active.has('vwap') ? calculateVwap(bars) : []
+    const ma5Points = active.has('ma') ? calculateSma(bars, 5) : []
+    const ma10Points = active.has('ma') ? calculateSma(bars, 10) : []
+    const ma20Points = active.has('ma') ? calculateSma(bars, 20) : []
+    const sarPoints = active.has('sar') ? calculateSar(bars) : []
+    const bbiPoints = active.has('bbi') ? calculateBbi(bars) : []
     const ema20Points = active.has('ema20') ? calculateEma(bars, 20) : []
     const ema50Points = active.has('ema50') ? calculateEma(bars, 50) : []
     const bbPoints = active.has('bollinger') ? calculateBollingerBands(bars, 20, 2) : []
+
+    vwapRef.current?.setData(vwapPoints.map(point => ({ time: point.time as Time, value: point.value })))
+    ma5Ref.current?.setData(ma5Points.map(point => ({ time: point.time as Time, value: point.value })))
+    ma10Ref.current?.setData(ma10Points.map(point => ({ time: point.time as Time, value: point.value })))
+    ma20Ref.current?.setData(ma20Points.map(point => ({ time: point.time as Time, value: point.value })))
+    sarRef.current?.setData(sarPoints.map(point => ({ time: point.time as Time, value: point.value })))
+    bbiRef.current?.setData(bbiPoints.map(point => ({ time: point.time as Time, value: point.value })))
     ema20Ref.current?.setData(ema20Points.map(point => ({ time: point.time as Time, value: point.value })))
     ema50Ref.current?.setData(ema50Points.map(point => ({ time: point.time as Time, value: point.value })))
     bbUpperRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.upper })))
     bbMiddleRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.middle })))
     bbLowerRef.current?.setData(bbPoints.map(point => ({ time: point.time as Time, value: point.lower })))
   }, [])
-
   useEffect(() => {
     const priceContainer = priceContainerRef.current
     if (!priceContainer) return
@@ -540,6 +607,24 @@ export default function PriceChart({
     })
     bbLowerRef.current = chart.addLineSeries({
       color: chartTheme.indicatorBlue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'BB lower',
+    })
+    vwapRef.current = chart.addLineSeries({
+      color: '#06B6D4', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: MAIN_INDICATOR_LEGEND.vwap,
+    })
+    ma5Ref.current = chart.addLineSeries({
+      color: '#F59E0B', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'MA 5',
+    })
+    ma10Ref.current = chart.addLineSeries({
+      color: '#38BDF8', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'MA 10',
+    })
+    ma20Ref.current = chart.addLineSeries({
+      color: '#A855F7', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'MA 20',
+    })
+    sarRef.current = chart.addLineSeries({
+      color: '#EC4899', lineWidth: 2, lineStyle: LineStyle.Dotted, priceLineVisible: false, lastValueVisible: false, title: MAIN_INDICATOR_LEGEND.sar,
+    })
+    bbiRef.current = chart.addLineSeries({
+      color: '#10B981', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: MAIN_INDICATOR_LEGEND.bbi,
     })
 
     barsRef.current = []
@@ -658,6 +743,12 @@ export default function PriceChart({
       bbUpperRef.current = null
       bbMiddleRef.current = null
       bbLowerRef.current = null
+      vwapRef.current = null
+      ma5Ref.current = null
+      ma10Ref.current = null
+      ma20Ref.current = null
+      sarRef.current = null
+      bbiRef.current = null
     }
   }, [applyLevels, applyMainIndicators, applyMarkers, applyProfile, drawVpCanvas, exchange, marketType, symbol, timeframe])
 
@@ -777,7 +868,7 @@ export default function PriceChart({
       ref={stageRef}
       className="market-chart-stage"
       aria-busy={status === 'loading'}
-      data-chart-engine="tradingview-lite"
+      data-chart-engine="terminal-workbench"
       data-subchart-count={subcharts.length}
     >
       <div className="market-price-chart-wrap" style={{ position: 'relative' }}>

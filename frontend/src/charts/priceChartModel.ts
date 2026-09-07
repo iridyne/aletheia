@@ -312,15 +312,134 @@ export function calculateAtr(bars: Bar[], period = 14): IndicatorPoint[] {
   return output
 }
 
+export function calculateVwap(bars: Bar[]): IndicatorPoint[] {
+  if (bars.some(bar => !Number.isFinite(bar.high) || !Number.isFinite(bar.low)
+    || !Number.isFinite(bar.close) || !Number.isFinite(bar.volume) || bar.volume < 0)) return []
+  const output: IndicatorPoint[] = []
+  let cumulativeVolume = 0
+  let cumulativeValue = 0
+  let lastDay = -1
+  for (const bar of bars) {
+    const d = new Date(bar.time * 1000)
+    const day = d.getUTCDate()
+    if (lastDay !== -1 && day !== lastDay) {
+      cumulativeVolume = 0
+      cumulativeValue = 0
+    }
+    lastDay = day
+    const typicalPrice = (bar.high + bar.low + bar.close) / 3
+    cumulativeVolume += bar.volume
+    cumulativeValue += typicalPrice * bar.volume
+    output.push({ time: bar.time, value: cumulativeVolume > 0 ? cumulativeValue / cumulativeVolume : typicalPrice })
+  }
+  return output
+}
+
+export function calculateSma(bars: Bar[], period: number): IndicatorPoint[] {
+  if (!Number.isInteger(period) || period < 1 || bars.length < period || !closesAllFinite(bars)) return []
+  const output: IndicatorPoint[] = []
+  let sum = 0
+  for (let index = 0; index < bars.length; index += 1) {
+    sum += bars[index].close
+    if (index >= period) sum -= bars[index - period].close
+    if (index >= period - 1) output.push({ time: bars[index].time, value: sum / period })
+  }
+  return output
+}
+
+export function calculateBbi(bars: Bar[]): IndicatorPoint[] {
+  const periods = [3, 6, 12, 24] as const
+  if (bars.length < 24 || !closesAllFinite(bars)) return []
+  const sums = [0, 0, 0, 0]
+  const output: IndicatorPoint[] = []
+  for (let index = 0; index < bars.length; index += 1) {
+    for (let slot = 0; slot < periods.length; slot += 1) {
+      sums[slot] += bars[index].close
+      if (index >= periods[slot]) sums[slot] -= bars[index - periods[slot]].close
+    }
+    if (index >= 23) {
+      const total = periods.reduce((acc, period, slot) => acc + sums[slot] / period, 0)
+      output.push({ time: bars[index].time, value: total / periods.length })
+    }
+  }
+  return output
+}
+
+export function calculateSar(bars: Bar[], step = 0.02, maxStep = 0.2): IndicatorPoint[] {
+  if (bars.length < 2 || !ohlcAllFinite(bars) || !Number.isFinite(step) || !Number.isFinite(maxStep)
+    || step <= 0 || maxStep < step) return []
+  let bullish = bars[1].close >= bars[0].close
+  let sar = bullish ? Math.min(bars[0].low, bars[1].low) : Math.max(bars[0].high, bars[1].high)
+  let extreme = bullish ? Math.max(bars[0].high, bars[1].high) : Math.min(bars[0].low, bars[1].low)
+  let acceleration = step
+  const output: IndicatorPoint[] = [{ time: bars[1].time, value: sar }]
+  for (let index = 2; index < bars.length; index += 1) {
+    let next = sar + acceleration * (extreme - sar)
+    if (bullish) {
+      next = Math.min(next, bars[index - 1].low, bars[index - 2].low)
+      if (bars[index].low < next) {
+        bullish = false
+        next = extreme
+        extreme = bars[index].low
+        acceleration = step
+      } else if (bars[index].high > extreme) {
+        extreme = bars[index].high
+        acceleration = Math.min(maxStep, acceleration + step)
+      }
+    } else {
+      next = Math.max(next, bars[index - 1].high, bars[index - 2].high)
+      if (bars[index].high > next) {
+        bullish = true
+        next = extreme
+        extreme = bars[index].high
+        acceleration = step
+      } else if (bars[index].low < extreme) {
+        extreme = bars[index].low
+        acceleration = Math.min(maxStep, acceleration + step)
+      }
+    }
+    sar = next
+    output.push({ time: bars[index].time, value: sar })
+  }
+  return output
+}
+
+export function calculateObv(bars: Bar[]): IndicatorPoint[] {
+  if (!bars.length || bars.some(bar => !Number.isFinite(bar.close) || !Number.isFinite(bar.volume) || bar.volume < 0)) return []
+  let value = 0
+  const output: IndicatorPoint[] = [{ time: bars[0].time, value }]
+  for (let index = 1; index < bars.length; index += 1) {
+    if (bars[index].close > bars[index - 1].close) value += bars[index].volume
+    else if (bars[index].close < bars[index - 1].close) value -= bars[index].volume
+    output.push({ time: bars[index].time, value })
+  }
+  return output
+}
+
+export function calculateWr(bars: Bar[], period = 14): IndicatorPoint[] {
+  if (!Number.isInteger(period) || period < 2 || bars.length < period || !ohlcAllFinite(bars)) return []
+  const output: IndicatorPoint[] = []
+  for (let index = period - 1; index < bars.length; index += 1) {
+    let high = -Infinity
+    let low = Infinity
+    for (let offset = 0; offset < period; offset += 1) {
+      high = Math.max(high, bars[index - offset].high)
+      low = Math.min(low, bars[index - offset].low)
+    }
+    output.push({ time: bars[index].time, value: high === low ? 0 : ((high - bars[index].close) / (high - low)) * -100 })
+  }
+  return output
+}
+
 export type ChartScaleMode = 'normal' | 'logarithmic' | 'percent' | 'indexed100'
 export type CrosshairPreference = 'magnet' | 'normal' | 'hidden'
 export type ChartTimezone = 'UTC' | 'local'
 
-export type MainIndicatorId = 'ema20' | 'ema50' | 'bollinger'
-export type SubchartIndicatorId = 'rsi' | 'macd' | 'stochastic' | 'atr'
-export const MAX_INDICATORS_PER_ZONE = 3
-export const MAIN_INDICATOR_IDS: readonly MainIndicatorId[] = ['ema20', 'ema50', 'bollinger']
-export const SUBCHART_INDICATOR_IDS: readonly SubchartIndicatorId[] = ['rsi', 'macd', 'stochastic', 'atr']
+export type MainIndicatorId = 'vwap' | 'ma' | 'ema20' | 'ema50' | 'bollinger' | 'sar' | 'bbi'
+export type SubchartIndicatorId = 'vol' | 'macd' | 'rsi' | 'stochastic' | 'obv' | 'wr' | 'atr'
+export const MAX_INDICATORS_PER_ZONE = 6
+export const MAIN_INDICATOR_IDS: readonly MainIndicatorId[] = ['vwap', 'ma', 'ema20', 'ema50', 'bollinger', 'sar', 'bbi']
+export const SUBCHART_INDICATOR_IDS: readonly SubchartIndicatorId[] = ['vol', 'macd', 'rsi', 'stochastic', 'obv', 'wr', 'atr']
 
 export interface ChartSettings {
   view: {
@@ -338,5 +457,5 @@ export const DEFAULT_CHART_SETTINGS: ChartSettings = {
   view: { chartType: 'candlestick', crosshair: 'magnet', grid: { horizontal: true, vertical: true }, timezone: 'UTC' },
   scale: { mode: 'normal', autoScale: true, priceLabels: true },
   overlays: { volume: true, profile: true, levels: true, signals: true },
-  indicators: { main: [], subcharts: ['rsi'] },
+  indicators: { main: ['vwap'], subcharts: [] },
 }

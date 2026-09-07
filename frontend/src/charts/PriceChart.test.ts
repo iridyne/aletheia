@@ -1,7 +1,8 @@
 import { expect, it } from 'vitest'
 import {
   bucketChartMarkers, calculateAtr, calculateBollingerBands, calculateEma, calculateMacd,
-  calculateRsi, calculateStochastic, estimateVisibleVolumeProfile, marketDataMetaState,
+  calculateRsi, calculateStochastic, calculateVwap, calculateSma, calculateBbi,
+  calculateSar, calculateObv, calculateWr, estimateVisibleVolumeProfile, marketDataMetaState,
   type Bar, type ChartMarker,
 } from './PriceChart'
 import SRC from './PriceChart.tsx?raw'
@@ -215,4 +216,41 @@ it('rejects ATR when samples are insufficient or high/low are non-finite', () =>
   const bars: Bar[] = Array.from({ length: 30 }, (_, index) => ohlcBar(index, 0, 1, 0, 0.5))
   bars[5] = ohlcBar(5, 0, Number.NaN, 0, 0.5)
   expect(calculateAtr(bars, 14)).toEqual([])
+})
+it('computes VWAP accurately with volume weighting and daily resets', () => {
+  const bars: Bar[] = [
+    { time: 1000, open: 10, high: 12, low: 9, close: 11, volume: 100 },
+    { time: 2000, open: 11, high: 13, low: 10, close: 12, volume: 200 },
+  ]
+  const vwap = calculateVwap(bars)
+  expect(vwap).toHaveLength(2)
+  expect(vwap[0].value).toBeCloseTo((12 + 9 + 11) / 3, 5)
+})
+
+it('computes SMA and BBI correctly for simple series', () => {
+  const bars = constCloseBars(30, 10)
+  const sma = calculateSma(bars, 5)
+  expect(sma).toHaveLength(26)
+  expect(sma[0].value).toBeCloseTo(10, 5)
+
+  const bbi = calculateBbi(bars)
+  expect(bbi).toHaveLength(7)
+  expect(bbi[0].value).toBeCloseTo(10, 5)
+})
+
+it('computes OBV, WR, and SAR without NaN', () => {
+  const bars: Bar[] = Array.from({ length: 20 }, (_, i) => ({
+    time: i * 60, open: 10 + i, high: 12 + i, low: 9 + i, close: 11 + i, volume: 100,
+  }))
+  const obv = calculateObv(bars)
+  expect(obv.length).toBe(20)
+  expect(obv[1].value).toBeGreaterThan(0)
+
+  const wr = calculateWr(bars, 14)
+  expect(wr.length).toBe(7)
+  for (const p of wr) expect(p.value).toBeLessThanOrEqual(0)
+
+  const sar = calculateSar(bars)
+  expect(sar.length).toBeGreaterThan(0)
+  for (const p of sar) expect(Number.isFinite(p.value)).toBe(true)
 })

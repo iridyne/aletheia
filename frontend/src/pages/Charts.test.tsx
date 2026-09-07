@@ -221,12 +221,12 @@ describe('Markets workbench', () => {
     expect([...modal.querySelectorAll('input[type="checkbox"]')].map(input => input.closest('label')?.textContent?.trim())).toEqual([
       'Horizontal grid', 'Vertical grid', 'Auto scale', 'Show right-axis labels',
       'Volume', 'Estimated profile', 'Position levels', 'Signals',
-      'EMA 20', 'EMA 50', 'Bollinger Bands 20/2',
-      'RSI 14', 'MACD 12/26/9', 'Stochastic 14/3/3', 'ATR 14',
+      'VWAP', 'MA 5/10/20', 'EMA 20', 'EMA 50', 'Bollinger Bands 20/2', 'SAR', 'BBI',
+      'Volume', 'MACD 12/26/9', 'RSI 14', 'Stochastic 14/3/3', 'OBV', 'Williams %R 14', 'ATR 14',
     ])
     const titles = [...modal.querySelectorAll('.chart-settings-section-title')].map(node => node.textContent?.trim())
-    expect(titles).toContain('Main chart indicators · 0/3')
-    expect(titles).toContain('Subcharts · 1/3')
+    expect(titles).toContain('Main chart indicators · 1/6')
+    expect(titles).toContain('Subcharts · 0/6')
     expect(buttonContaining(modal, 'Restore defaults')).toBeTruthy()
   })
 
@@ -235,41 +235,34 @@ describe('Markets workbench', () => {
       input => input.closest('label')?.textContent?.trim() === label,
     ) as HTMLInputElement | undefined
 
-  it('drives the two-zone indicator selector, enforces the 3/3 cap, and persists arrays through localStorage', () => {
+  it('drives the two-zone indicator selector, enforces the 6/6 cap, and persists arrays through localStorage', () => {
     window.localStorage.removeItem('aletheia.charts.settings.v1')
     const node = renderCharts()
     const chart = node.querySelector('[data-testid="price-chart"]')!
-    expect(chart.getAttribute('data-main-indicators')).toBe('')
-    expect(chart.getAttribute('data-subchart-indicators')).toBe('rsi')
+    expect(chart.getAttribute('data-main-indicators')).toBe('vwap')
+    expect(chart.getAttribute('data-subchart-indicators')).toBe('')
     click(buttonContaining(node, 'Chart settings'))
     const modal = node.querySelector('.chart-settings-modal') as HTMLElement
 
-    // Subcharts: RSI already on; add MACD then Stochastic to reach 3/3; ATR disabled.
+    // Subcharts: add MACD, RSI, Stochastic
     act(() => modalCheckbox(modal, 'MACD 12/26/9')!.click())
-    act(() => modalCheckbox(modal, 'Stochastic 14/3/3')!.click())
-    expect(chart.getAttribute('data-subchart-indicators')).toBe('rsi,macd,stochastic')
-    expect(modalCheckbox(modal, 'ATR 14')!.disabled).toBe(true)
-
-    // Remove RSI → ATR becomes enabled; enabling ATR gives macd,stochastic,atr in insertion order.
     act(() => modalCheckbox(modal, 'RSI 14')!.click())
-    expect(modalCheckbox(modal, 'ATR 14')!.disabled).toBe(false)
-    act(() => modalCheckbox(modal, 'ATR 14')!.click())
-    expect(chart.getAttribute('data-subchart-indicators')).toBe('macd,stochastic,atr')
+    act(() => modalCheckbox(modal, 'Stochastic 14/3/3')!.click())
+    expect(chart.getAttribute('data-subchart-indicators')).toBe('macd,rsi,stochastic')
 
-    // Main indicators are an independent 3/3 zone.
+    // Main indicators: toggle EMA 20, EMA 50, Bollinger Bands
     act(() => modalCheckbox(modal, 'EMA 20')!.click())
     act(() => modalCheckbox(modal, 'EMA 50')!.click())
     act(() => modalCheckbox(modal, 'Bollinger Bands 20/2')!.click())
-    expect(chart.getAttribute('data-main-indicators')).toBe('ema20,ema50,bollinger')
-    expect(chart.getAttribute('data-subchart-indicators')).toBe('macd,stochastic,atr')
+    expect(chart.getAttribute('data-main-indicators')).toBe('vwap,ema20,ema50,bollinger')
 
     const stored = JSON.parse(window.localStorage.getItem('aletheia.charts.settings.v1') || '{}')
-    expect(stored.indicators.main).toEqual(['ema20', 'ema50', 'bollinger'])
-    expect(stored.indicators.subcharts).toEqual(['macd', 'stochastic', 'atr'])
+    expect(stored.indicators.main).toEqual(['vwap', 'ema20', 'ema50', 'bollinger'])
+    expect(stored.indicators.subcharts).toEqual(['macd', 'rsi', 'stochastic'])
 
     click(buttonContaining(modal, 'Restore defaults'))
-    expect(chart.getAttribute('data-main-indicators')).toBe('')
-    expect(chart.getAttribute('data-subchart-indicators')).toBe('rsi')
+    expect(chart.getAttribute('data-main-indicators')).toBe('vwap')
+    expect(chart.getAttribute('data-subchart-indicators')).toBe('')
   })
 
   it('migrates legacy rsi.enabled localStorage into the new subcharts array', () => {
@@ -399,6 +392,37 @@ describe('Markets workbench', () => {
     expect(document.querySelector('[role="menu"]')).toBeNull()
     expect(node.querySelector('[data-testid="price-chart"]')?.getAttribute('data-timeframe')).toBe('1m')
     expect((node.querySelector('.market-tf-overflow') as HTMLElement).textContent).toBe('1m')
+  })
+  it('renders R20 indicator workbench dropdown, toggles indicators, renders countdown and opens sim console', () => {
+    const node = renderCharts()
+    // 1. R20 指标按钮存在且默认激活 VWAP 与 VOL（徽标 2）
+    const trigger = node.querySelector('button[aria-haspopup="true"]') as HTMLButtonElement
+    expect(trigger).toBeTruthy()
+    expect(trigger.textContent).toContain('指标')
+    expect(trigger.textContent).toContain('2')
+
+    // 2. K 线结线倒计时存在
+    expect(node.querySelector('.candle-countdown-wrap')?.textContent).toContain('倒计时:')
+
+    // 3. 点击弹出 R20 指标下拉面板
+    click(trigger)
+    const menu = node.querySelector('.indicator-dropdown-menu')
+    expect(menu).toBeTruthy()
+    expect(menu?.textContent).toContain('主图叠加指标')
+    expect(menu?.textContent).toContain('副图震荡指标')
+
+    // 4. 点击外部关闭面板
+    act(() => {
+      document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    })
+    expect(node.querySelector('.indicator-dropdown-menu')).toBeNull()
+
+    // 5. 点击试算按钮开启风控测算控制台
+    const simBtn = buttonContaining(node, '试算')
+    expect(simBtn).toBeTruthy()
+    click(simBtn!)
+    expect(node.querySelector('.sim-console')?.textContent).toContain('科学预期盈亏比测算控制台')
+    expect(node.querySelector('.sim-console')?.textContent).toContain('期望盈亏比 (R:R)')
   })
 
 })
