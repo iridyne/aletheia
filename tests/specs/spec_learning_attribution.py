@@ -206,24 +206,13 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     assert repeated["hypothesis_id"] == routed["hypothesis_id"]
     assert repeated["guard_candidate_id"] == "candidate-item"
     assert len(list_records("learning_hypotheses")) == 1
-    from aletheia.learning.experiments import _ensure_experiment
-
-    consumed_hypothesis, experiment = _ensure_experiment(
-        path_id="ranker_learned_guard",
-        scope={"guard_id": routed["guard_id"]},
-        action={
-            "type": "candidate_guard",
-            "guard_id": routed["guard_id"],
-            "block_candidate": True,
-            "score_penalty": 0,
-        },
-        source_cohort=f"learned_guard:{routed['guard_id']}:v1",
-        target_horizon="4h",
-        consumer="paper_trader_ranker",
-    )
-    assert consumed_hypothesis.hypothesis_id == routed["hypothesis_id"]
-    assert experiment is not None
-    assert len(list_records("learning_experiments")) == 1
+    # Contract Delta (2026-09-07, learning_contract.md preamble): "Observation Lab
+    # is the only online Experiment authority. Legacy ledgers remain
+    # migration/history inputs, never an executable fallback." Routing a guard
+    # shadow candidate therefore records the hypothesis and NOTHING in the legacy
+    # executable ledgers — the retired `_ensure_experiment` seam is gone, and this
+    # inverted assertion locks it out.
+    assert list_records("learning_experiments") == []
     assert list_records("learning_exposures") == []
     assert list_records("learning_contribution_verdicts") == []
     assert captured["status"] == "candidate"

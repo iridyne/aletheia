@@ -59,8 +59,13 @@ def test_pi_trading_decision_fallback_decoupled_from_heartbeat():
     SpecClaim("PI-S03", "agent_contracts", "§operator_loop ⇄ TS convergence", "L2a",
               "Python operator_loop.decide_actions no longer EMITS the operator actions that "
               "converged to the TS operator-shell (retire_strategy / demote_strategy / "
-              "request_backfill); it keeps only dynamic config tuning. Prevents the dead-write / "
-              "no-op-stub mechanisms from re-appearing as a parallel operator path"),
+              "request_backfill); it keeps only dynamic config tuning over knobs that still "
+              "exist. Prevents the dead-write / no-op-stub mechanisms from re-appearing as a "
+              "parallel operator path. "
+              "Contract Delta (2026-09-07): `trading.min_confidence_to_trade` is retired — "
+              "`config/loader.py` actively deletes the key on load — so BOTH confidence "
+              "actions are now locked out. Emitting either would be precisely the dead write "
+              "this claim exists to prevent."),
 )
 def test_operator_loop_converged_actions_not_emitted():
     src = _src("aletheia/agent_shell/operator_loop.py")
@@ -84,11 +89,23 @@ def test_operator_loop_converged_actions_not_emitted():
         "the TS operator-shell now (retire/demote via command registry, backfill via Auto "
         "Repair). Python operator_loop must keep only config tuning (owner decision 2026-06-28)."
     )
-    # Aggregate outcome quality is diagnosis-only; the retained Python mutation is
-    # the bounded recovery from a previously automatic tightening.
-    assert "tighten_confidence" not in emitted
-    assert "loosen_confidence" in emitted and "notify_operator" in emitted, (
-        "Python must retain bounded confidence recovery and aggregate-quality diagnosis"
+    # Aggregate outcome quality stays diagnosis-only.
+    assert "notify_operator" in emitted, (
+        "Python must retain aggregate-quality diagnosis"
+    )
+    # The confidence knob itself is retired: `config/loader.py` deletes
+    # `trading.min_confidence_to_trade` from raw config on every load, so neither
+    # direction has anything to write. An emitted confidence action would be a
+    # dead write against a key the loader removes — the exact failure mode this
+    # claim guards.
+    assert not {"tighten_confidence", "loosen_confidence"} & emitted, (
+        "decide_actions emits a confidence action, but trading.min_confidence_to_trade "
+        "is retired and stripped by config/loader.py — this is a dead write"
+    )
+    loader_src = _src("aletheia/config/loader.py")
+    assert 'del trading["min_confidence_to_trade"]' in loader_src, (
+        "the confidence-knob retirement migration is gone; if the key is live again, "
+        "PI-S03 must be revisited rather than silently keeping both actions locked"
     )
 
 
