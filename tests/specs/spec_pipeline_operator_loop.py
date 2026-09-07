@@ -95,7 +95,6 @@ def _make_healthy_assessment():
         kill_switch_active=False,
         daily_loss_pct=0.5,
         open_positions=2,
-        min_confidence="medium",
         default_stop_loss_pct=2.0,
         max_demo_notional=200.0,
         param_drift={"min_confidence_to_trade": "neutral",

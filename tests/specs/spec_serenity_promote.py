@@ -119,7 +119,7 @@ def test_promote_does_not_write_draft_strategy_record():
 )
 def test_promote_writes_signal_pending_pi_decision():
     body = _promote_fn_body()
-    assert "enqueue_serenity_theme_for_pi" in body, (
+    assert "publish_serenity_candidates" in body, (
         "promote_serenity_theme does not call the repository's atomic pending "
         "handoff — theme state and PI carriers could diverge"
     )
@@ -451,7 +451,7 @@ def test_research_worker_auto_promote_block_exists():
     assert "score_serenity_opportunity" in repo_src, (
         "atomic Serenity handoff does not re-score current evidence and gates"
     )
-    assert "enqueue_serenity_theme_for_pi" in src, (
+    assert "publish_serenity_candidates" in src, (
         "research_worker does not use the atomic PI handoff — auto-promote can "
         "diverge from manual promotion"
     )
