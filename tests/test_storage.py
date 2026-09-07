@@ -1,6 +1,7 @@
 """Tests for storage layer: SQLite, JSONL, Markdown, repositories."""
 
 import json
+import sqlite3
 import pytest
 from unittest.mock import patch
 from pathlib import Path
@@ -55,13 +56,48 @@ def test_audit_event_crud(tmp_path):
     reset_db()
 
 
-def test_agent_run_crud(tmp_path):
+def test_agent_run_lifecycle_cas_and_db_constraints(tmp_path):
     setup_test_db(tmp_path)
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
-    repo.update_agent_run(run.id, status="completed", ended_at="2026-01-01T00:00:00")
+    assert repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="completed",
+        ended_at="2026-01-01T00:00:00",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
     result = repo.get_agent_run(run.id)
     assert result["status"] == "completed"
+
+    assert not repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="failed",
+        ended_at="2026-01-01T00:00:01",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
+
+    with pytest.raises(ValueError, match="invalid_agent_run_transition"):
+        repo.finish_agent_run(
+            run.id,
+            expected_status="queued",
+            status="completed",
+            ended_at="2026-01-01T00:00:01",
+            outputs_created="[]",
+            errors="[]",
+            tools_called="[]",
+            cost_estimate=None,
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        get_db().execute("UPDATE agent_runs SET status='invented' WHERE id=?", (run.id,))
     reset_db()
 
 
@@ -341,7 +377,16 @@ def test_update_commits_and_releases_lock(tmp_path, monkeypatch):
 
     run = AgentRun(agent_name="market_observer", permission_mode="Observe")
     repo.insert_agent_run(run)
-    repo.update_agent_run(run.id, status="completed")
+    assert repo.finish_agent_run(
+        run.id,
+        expected_status="running",
+        status="completed",
+        ended_at="2026-01-01T00:00:00",
+        outputs_created="[]",
+        errors="[]",
+        tools_called="[]",
+        cost_estimate=None,
+    )
 
     other = sqlite3.connect(str(db_path()), timeout=2)
     try:

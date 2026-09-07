@@ -239,6 +239,7 @@ def trigger_prediction_refresh():
         raise HTTPException(400 if blocked_reason != "prediction_observer_config_unavailable" else 503, message)
 
     from aletheia.agent_runtime.job_queue import (
+        AgentJobAlreadyQueued,
         AgentJobManagerClosed,
         AgentJobQueueFull,
         get_agent_job_manager,
@@ -247,6 +248,14 @@ def trigger_prediction_refresh():
     manager = get_agent_job_manager()
     try:
         run = manager.enqueue("prediction_observer")
+    except AgentJobAlreadyQueued as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "prediction_refresh_in_progress",
+                "job_id": exc.run_id,
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except AgentJobQueueFull as exc:

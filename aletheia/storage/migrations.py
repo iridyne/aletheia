@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v74"
+SCHEMA_VERSION = "aletheia-sqlite-v75"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -6337,6 +6337,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260904_0068_legacy_entry_updated_at_v69": (
         "restore the last pre-cutover Candidate refresh timestamp on legacy false no-plan rows"
     ),
+    "20260907_0074_agent_run_lifecycle_v75": (
+        "closed AgentRun lifecycle and one durable active claim per Agent"
+    ),
 }
 
 
@@ -7833,6 +7836,143 @@ def retire_runtime_continuity_tables(
 
 
 
+_AGENT_RUN_LIFECYCLE_CHECKSUM = hashlib.sha256(
+    b"agent-run-lifecycle-v75"
+).hexdigest()
+
+
+def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
+    """Close AgentRun states and make SQLite the cross-trigger admission owner."""
+
+    table_row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_runs'"
+    ).fetchone()
+    if table_row is None or not table_row[0]:
+        raise MigrationStateError("agent_run_lifecycle_missing_table")
+    table_sql = str(table_row[0])
+    active_index = db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='index' "
+        "AND name='idx_agent_runs_one_active_per_agent'"
+    ).fetchone()
+    if "CHECK(status IN" in table_sql and active_index is not None:
+        return
+
+    columns = [str(row[1]) for row in db.execute("PRAGMA table_info(agent_runs)")]
+    expected_columns = [
+        "id",
+        "agent_name",
+        "trigger_type",
+        "permission_mode",
+        "started_at",
+        "ended_at",
+        "status",
+        "model_provider",
+        "model_name",
+        "tools_called",
+        "outputs_created",
+        "errors",
+        "cost_estimate",
+    ]
+    if columns != expected_columns:
+        raise MigrationStateError(
+            "agent_run_lifecycle_schema_mismatch:" + ",".join(columns)
+        )
+    allowed = (
+        "queued",
+        "running",
+        "completed",
+        "completed_with_errors",
+        "failed",
+        "timed_out",
+        "stale",
+        "cancelled",
+        "rejected_queue_full",
+        # Historical terminals the read paths still classify (run_view.py,
+        # health.py). Rejecting them here would fail-close a real upgrade.
+        "error",
+        "cancel_requested",
+        "success",
+    )
+    placeholders = ",".join("?" for _ in allowed)
+    invalid = db.execute(
+        f"SELECT status FROM agent_runs WHERE status NOT IN ({placeholders}) LIMIT 1",
+        allowed,
+    ).fetchone()
+    if invalid is not None:
+        raise MigrationStateError(f"agent_run_lifecycle_invalid_status:{invalid[0]}")
+    indexes = [
+        str(row[0])
+        for row in db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' "
+            "AND tbl_name='agent_runs' AND sql IS NOT NULL "
+            "AND name!='idx_agent_runs_one_active_per_agent'"
+        )
+    ]
+    row_count = int(db.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0])
+
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT agent_run_lifecycle_v75")
+    try:
+        # Migration runs before scheduler/manual workers start. Any active row is
+        # therefore owned by the previous process and must not retain its lease.
+        db.execute(
+            "UPDATE agent_runs SET status='stale', "
+            "ended_at=COALESCE(ended_at, datetime('now')) "
+            "WHERE status IN ('queued','running')"
+        )
+        db.execute(
+            """
+            CREATE TABLE agent_runs_v71 (
+                id TEXT PRIMARY KEY,
+                agent_name TEXT NOT NULL,
+                trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+                permission_mode TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                status TEXT NOT NULL DEFAULT 'running' CHECK(status IN (
+                    'queued','running','completed','completed_with_errors','failed',
+                    'timed_out','stale','cancelled','rejected_queue_full',
+                    'error','cancel_requested','success'
+                )),
+                model_provider TEXT,
+                model_name TEXT,
+                tools_called TEXT DEFAULT '[]',
+                outputs_created TEXT DEFAULT '[]',
+                errors TEXT DEFAULT '[]',
+                cost_estimate REAL
+            )
+            """
+        )
+        quoted_columns = ",".join(f'"{name}"' for name in columns)
+        db.execute(
+            f"INSERT INTO agent_runs_v71 ({quoted_columns}) "
+            f"SELECT {quoted_columns} FROM agent_runs"
+        )
+        db.execute("DROP TABLE agent_runs")
+        db.execute("ALTER TABLE agent_runs_v71 RENAME TO agent_runs")
+        for sql in indexes:
+            db.execute(sql)
+        db.execute(
+            "CREATE UNIQUE INDEX idx_agent_runs_one_active_per_agent "
+            "ON agent_runs(agent_name) WHERE status IN ('queued','running')"
+        )
+        if int(db.execute("SELECT COUNT(*) FROM agent_runs").fetchone()[0]) != row_count:
+            raise MigrationStateError("agent_run_lifecycle_row_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("agent_run_lifecycle_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("RELEASE SAVEPOINT agent_run_lifecycle_v75")
+        db.execute("PRAGMA foreign_keys=ON")
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        raise
+    db.execute("PRAGMA optimize")
+
 
 _MIGRATIONS = (
     MigrationStep(
@@ -8272,6 +8412,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"runtime_control_retirement_v74:verified_backup:standard_directory").hexdigest(),
         schema_version="aletheia-sqlite-v74",
         apply=retire_runtime_continuity_tables,
+    ),
+    MigrationStep(
+        migration_id="20260907_0074_agent_run_lifecycle_v75",
+        checksum=_AGENT_RUN_LIFECYCLE_CHECKSUM,
+        schema_version="aletheia-sqlite-v75",
+        apply=_apply_agent_run_lifecycle_v75,
     ),
 )
 

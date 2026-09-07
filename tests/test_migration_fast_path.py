@@ -404,6 +404,51 @@ def test_entry_version_collapse_survives_real_order_fk_reference():
     connection.close()
 
 
+def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
+    import aletheia.storage.migrations as migrations
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys=ON")
+    for step in migrations._MIGRATIONS:
+        if step.schema_version == "aletheia-sqlite-v71":
+            break
+        step.apply(connection)
+
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+        "VALUES ('run-1','research_agent','manual','Observe',datetime('now'),'running')"
+    )
+    connection.execute(
+        "INSERT INTO agent_run_artifacts (run_id,artifact_type,artifact_id) "
+        "VALUES ('run-1','knowledge_item','item-1')"
+    )
+
+    migrations._apply_agent_run_lifecycle_v75(connection)
+
+    assert connection.execute(
+        "SELECT status FROM agent_runs WHERE id='run-1'"
+    ).fetchone()[0] == "stale"
+    assert not connection.execute("PRAGMA foreign_key_check").fetchall()
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "UPDATE agent_runs SET status='invented' WHERE id='run-1'"
+        )
+    connection.execute(
+        "INSERT INTO agent_runs "
+        "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+        "VALUES ('run-2','research_agent','manual','Observe',datetime('now'),'queued')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO agent_runs "
+            "(id,agent_name,trigger_type,permission_mode,started_at,status) "
+            "VALUES ('run-3','research_agent','scheduled','Observe',datetime('now'),'running')"
+        )
+    connection.close()
+
+
 def test_candidate_mechanism_handoff_v65_is_additive_and_idempotent():
     import aletheia.storage.migrations as migrations
 
@@ -788,7 +833,21 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE orders (id TEXT PRIMARY KEY, proposal_id TEXT);
         CREATE TABLE proposal_execution_claims (proposal_id TEXT PRIMARY KEY);
         CREATE TABLE shadow_trades (id TEXT PRIMARY KEY);
-        CREATE TABLE agent_runs (id TEXT PRIMARY KEY);
+        CREATE TABLE agent_runs (
+            id TEXT PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            trigger_type TEXT NOT NULL DEFAULT 'scheduled',
+            permission_mode TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            status TEXT NOT NULL DEFAULT 'running',
+            model_provider TEXT,
+            model_name TEXT,
+            tools_called TEXT DEFAULT '[]',
+            outputs_created TEXT DEFAULT '[]',
+            errors TEXT DEFAULT '[]',
+            cost_estimate REAL
+        );
         CREATE TABLE agent_run_artifacts (
             run_id TEXT NOT NULL,
             artifact_type TEXT NOT NULL,

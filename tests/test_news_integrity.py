@@ -767,7 +767,6 @@ def test_sync_blocked_analyzer_does_not_block_rss_timeout_lane(monkeypatch):
         await asyncio.sleep(0)
         return "rss"
 
-    monkeypatch.setattr(scheduler, "_ensure_agent_run_ended", lambda *_args: None)
     monkeypatch.setitem(scheduler._ASYNC_JOB_TIMEOUT_SEC, "news_analyze", 2.0)
     monkeypatch.setitem(scheduler._ASYNC_JOB_TIMEOUT_SEC, "news_fetch", 0.2)
 

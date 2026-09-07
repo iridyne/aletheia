@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from aletheia.agent_runtime.job_queue import AgentJobManager, AgentJobQueueFull
-from aletheia.agent_runtime.run_logger import begin_queued_run, end_run
+from aletheia.agent_runtime.job_queue import (
+    AgentJobAlreadyQueued,
+    AgentJobManager,
+    AgentJobQueueFull,
+)
+from aletheia.agent_runtime.run_logger import (
+    AgentRunAlreadyActive,
+    begin_queued_run,
+    end_run,
+    queue_run,
+)
 from aletheia.server.app import app
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
@@ -51,6 +61,58 @@ def test_manual_agent_manager_persists_queued_then_runs(tmp_path, monkeypatch):
         time.sleep(0.01)
     assert manager.snapshot()["completed"] == 1
     manager.stop()
+    reset_db()
+
+
+def test_manual_and_scheduled_admission_share_one_db_claim(tmp_path, monkeypatch):
+    _setup_process_db(tmp_path, monkeypatch)
+    active = threading.Event()
+    release = threading.Event()
+
+    async def blocking_runner(agent_name, *, trigger_type, existing_run):
+        begin_queued_run(existing_run, permission_mode="Observe", model_provider=None)
+        active.set()
+        await asyncio.to_thread(release.wait, 3)
+        end_run(existing_run, status="completed")
+        return {"status": "completed"}
+
+    manager = AgentJobManager(capacity=1, runner=blocking_runner)
+    manual_run = manager.enqueue("research_agent")
+    assert active.wait(timeout=3)
+
+    with pytest.raises(AgentJobAlreadyQueued) as exc_info:
+        manager.enqueue("research_agent", idempotency_key="different-click")
+    assert exc_info.value.run_id == manual_run.id
+
+    from aletheia.agent_runtime.orchestrator import run_agent
+
+    scheduled = asyncio.run(run_agent("research_agent", trigger_type="scheduled"))
+    assert scheduled["status"] == "already_active"
+    assert scheduled["run_id"] == manual_run.id
+
+    release.set()
+    manager.stop()
+    reset_db()
+
+
+def test_concurrent_manual_admission_has_one_durable_winner(tmp_path, monkeypatch):
+    _setup_process_db(tmp_path, monkeypatch)
+    barrier = threading.Barrier(2)
+
+    def admit() -> tuple[str, str]:
+        barrier.wait(timeout=3)
+        try:
+            run = queue_run("research_agent", "manual", "Observe")
+            return "created", run.id
+        except AgentRunAlreadyActive as exc:
+            return "existing", exc.run_id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _index: admit(), range(2)))
+
+    assert sorted(kind for kind, _run_id in outcomes) == ["created", "existing"]
+    assert len({run_id for _kind, run_id in outcomes}) == 1
+    assert len(repo.list_agent_runs()) == 1
     reset_db()
 
 
