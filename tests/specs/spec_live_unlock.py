@@ -594,7 +594,7 @@ def test_ui_warning_wall_three_elements():
     SpecClaim(
         "LU-C07",
         "live_unlock_contract",
-        "§4b selected-mode resolution",
+        "§4b-2 selected-mode resolution",
         "L2c",
         "With live requested and live_limited authority present, the canonical "
         "selected-mode resolver returns the selected broker's exact *_live_limited "

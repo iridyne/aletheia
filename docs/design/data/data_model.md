@@ -214,12 +214,22 @@ A metric-version change appends new verdicts; it does not rewrite or delete olde
 | `llm_context_pair_reviews` | Aggregate-only blinded Learning B review | pair/fixture IDs, control/treatment call IDs, quality/grounded-use/harm scores, verdict |
 | `audit_events` | System-wide SQLite audit authority plus opt-in funding/Candidate-authority JSONL delivery state | actor, source, event_type, entity_id, before/after (JSON), nullable jsonl_mirror_status/jsonl_attempt_count/jsonl_last_error_class/jsonl_mirrored_at |
 | `settings` | Runtime configuration store | key, value |
-| `runtime_registry` | Service/process registry | service_name, pid, started_at, health |
-| `runtime_checkpoints` | Long-running task progress | task_id, checkpoint_data (JSON), progress_pct |
-| `runtime_events` | Event bus persistence | event_type, payload (JSON), emitted_at |
-| `runtime_exclusive_lock` | Distributed lock (single-writer) | lock_name, holder, acquired_at, expires_at |
-| `runtime_ownership` | Task ownership tracking | task_id, owner, claimed_at |
+| ~~`runtime_registry`~~ | **RETIRED** (Runtime Continuity control plane) — no longer installed on a fresh database | — |
+| ~~`runtime_checkpoints`~~ | **RETIRED** (Runtime Continuity control plane) | — |
+| ~~`runtime_events`~~ | **RETIRED** (Runtime Continuity control plane) | — |
+| ~~`runtime_exclusive_lock`~~ | **RETIRED** (Runtime Continuity control plane) | — |
+| ~~`runtime_ownership`~~ | **RETIRED** (Runtime Continuity control plane) | — |
 | `runtime_sessions` | One row per Gateway PROCESS lifecycle (session_id under a runtime_id). Core trading facts reference `session_id` via `runtime_session_id` | session_id, runtime_id, boot_commit, config_hash, behavior_fingerprint, schema_version, active_scope_id, execution_mode, nullable `economics_tracing_enabled` boot snapshot, started_at, ended_at, shutdown_clean |
+
+> **Runtime Continuity retirement.** `migrations.py` rebinds `SCHEMA_SQL` to slice
+> the `-- Runtime Continuity (PI runtime lifecycle)` block out of the imported
+> baseline, commented "never install its retired control plane", and
+> `retire_runtime_continuity_tables` drops the five tables from existing
+> databases. `runtime_sessions` is NOT part of that block and remains current.
+> The DDL text still exists in the source file, so a textual grep finds it; only
+> the runtime constant excludes it. Pinned by `spec_data_model.py` DM-S06, which
+> asserts the five stay absent.
+
 | `aletheia_schema_migrations` | Immutable per-database proof that one named migration implementation completed successfully | migration_id, checksum, schema_version, applied_at, duration_ms |
 
 `audit_events` 的四个 JSONL delivery 字段是 nullable opt-in 状态：`NULL`

@@ -193,8 +193,8 @@ def test_causal_tables_in_schema():
 @spec_claim(
     SpecClaim(
         "DM-S06", "data_model", "§2 runtime tables", "L2a",
-        "The retired Runtime Continuity control plane is not installed on a fresh DB, "
-        "while runtime_sessions — the surviving operator provenance table — is.",
+        "None of the five retired Runtime Continuity tables is installed on a fresh DB, "
+        "while runtime_sessions — the surviving Gateway-lifecycle table — is.",
     ),
 )
 def test_retired_runtime_control_plane_is_not_installed():
@@ -214,10 +214,16 @@ def test_retired_runtime_control_plane_is_not_installed():
     """
     from aletheia.storage.migrations import SCHEMA_SQL
 
-    for table in ("runtime_registry", "runtime_checkpoints", "runtime_events"):
+    # All five tables in the sliced block, not just the three the old claim named.
+    for table in (
+        "runtime_registry", "runtime_checkpoints", "runtime_events",
+        "runtime_exclusive_lock", "runtime_ownership",
+    ):
         assert f"CREATE TABLE IF NOT EXISTS {table}" not in SCHEMA_SQL, (
             f"retired Runtime Continuity table '{table}' is back in SCHEMA_SQL"
         )
+    # The one runtime table that survives: Gateway process lifecycle, referenced by
+    # core trading facts through runtime_session_id.
     assert "CREATE TABLE IF NOT EXISTS runtime_sessions" in SCHEMA_SQL
 
 

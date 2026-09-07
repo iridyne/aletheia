@@ -3127,7 +3127,7 @@ def test_position_cap_still_rejects_margin_beyond_available_cash(monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "RE-S99", "risk_engine", "§17 account leverage monitor parity", "L2a",
+        "RE-S09", "risk_engine", "§17 account leverage monitor parity", "L2a",
         "The monitor's reported cap tracks a nested-only policy write, so the dashboard "
         "cannot show a different account-leverage limit than the gate enforces.",
     ),
