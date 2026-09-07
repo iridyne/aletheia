@@ -11,7 +11,8 @@ from aletheia.storage.models import Order, Fill, Position
 from aletheia.storage.repositories import (
     find_compatible_open_position,
     insert_order,
-    update_order,
+    transition_order,
+    update_order_metadata,
     insert_fill,
     insert_position,
     update_position,
@@ -452,7 +453,7 @@ def _materialize_paper_entry(
     filled_take_profit: float | None = None
     with repo.transaction(immediate=True):
         if existing_order:
-            update_order(
+            transition_order(
                 order.id,
                 status=existing_order_status,
                 filled_at=fill.filled_at if existing_order_status == "filled" else None,
@@ -600,7 +601,7 @@ def _materialize_paper_entry(
         # Every entry leg, including an averaging leg, retains a direct backlink
         # to the Position it materialized. The Position.order_id remains the
         # original opening leg, while later Orders no longer become orphan facts.
-        update_order(order.id, position_id=position_id)
+        update_order_metadata(order.id, position_id=position_id)
     return position_id, filled_take_profit
 
 

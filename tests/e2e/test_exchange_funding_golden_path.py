@@ -173,7 +173,7 @@ _PROCESS_REPLAY = textwrap.dedent(
             opened_at=OPENED_AT,
         )
         repo.insert_position(position)
-        repo.update_order(entry_order.id, position_id=position.id)
+        repo.update_order_metadata(entry_order.id, position_id=position.id)
         close_order = Order(
             id=f"close-order-{suffix}",
             proposal_id=proposal.id,

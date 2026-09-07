@@ -2,6 +2,8 @@
 
 import json
 import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import pytest
 from unittest.mock import patch
 from pathlib import Path
@@ -148,6 +150,41 @@ def test_trade_proposal_to_order_flow(tmp_path):
     fills = repo.list_fills()
     assert len(fills) == 1
     assert fills[0]["fill_price"] == 3000.0
+    reset_db()
+
+
+@pytest.mark.parametrize(
+    ("current", "target", "allowed"),
+    [
+        ("pending", "submitted", True),
+        ("submitted", "partially_filled", True),
+        ("partially_filled", "filled", True),
+        ("cancelled", "filled", True),
+        ("filled", "cancelled", False),
+        ("error", "pending", False),
+    ],
+)
+def test_order_transition_table(tmp_path, current, target, allowed):
+    setup_test_db(tmp_path)
+    order = Order(
+        symbol="ETH/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=0.01,
+        price=3000.0,
+        execution_mode="paper_internal",
+        status=current,
+        source="adopted",
+    )
+    repo.insert_order(order)
+    if allowed:
+        repo.transition_order(order.id, status=target)
+        assert repo.get_order(order.id)["status"] == target
+    else:
+        with pytest.raises(ValueError, match="invalid_order_transition"):
+            repo.transition_order(order.id, status=target)
+        assert repo.get_order(order.id)["status"] == current
     reset_db()
 
 
@@ -340,6 +377,75 @@ def _real_db_env(tmp_path, monkeypatch):
     sq.reset_db()
     sq._db_conn = None
     run_migrations()  # runs on the real per-thread connection
+
+
+@pytest.mark.real_db
+def test_fill_wins_real_db_race_against_cancel(tmp_path, monkeypatch):
+    _real_db_env(tmp_path, monkeypatch)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1,
+        price=100,
+        execution_mode="paper_internal",
+        source="adopted",
+    )
+    repo.insert_order(order)
+    barrier = threading.Barrier(2)
+
+    def apply(status):
+        barrier.wait(timeout=3)
+        try:
+            repo.transition_order(order.id, status=status)
+        except ValueError:
+            pass
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(apply, ("cancelled", "filled")))
+    assert repo.get_order(order.id)["status"] == "filled"
+    reset_db()
+
+
+@pytest.mark.real_db
+def test_private_materialization_wins_real_db_race_against_ack(tmp_path, monkeypatch):
+    _real_db_env(tmp_path, monkeypatch)
+    order = Order(
+        symbol="BTC/USDT",
+        market_type="spot",
+        direction="long",
+        order_type="market",
+        quantity=1,
+        price=100,
+        execution_mode="paper_internal",
+        source="adopted",
+    )
+    repo.insert_order(order)
+    barrier = threading.Barrier(2)
+
+    def acknowledge():
+        barrier.wait(timeout=3)
+        repo.finalize_exchange_acknowledgement(
+            order.id,
+            exchange_order_id="venue-1",
+            status="submitted",
+            error_reason=None,
+        )
+
+    def materialize():
+        barrier.wait(timeout=3)
+        repo.transition_order(
+            order.id,
+            exchange_order_id="venue-1",
+            status="filled",
+            filled_at="2026-09-06T00:00:00+00:00",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(lambda fn: fn(), (acknowledge, materialize)))
+    assert repo.get_order(order.id)["status"] == "filled"
+    reset_db()
 
 
 @pytest.mark.real_db

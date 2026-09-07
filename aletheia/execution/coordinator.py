@@ -23,7 +23,8 @@ from aletheia.storage.repositories import (
     insert_order,
     transaction,
     transition_entry_plan,
-    update_order,
+    transition_order,
+    update_order_metadata,
     update_position,
 )
 from aletheia.storage.sqlite import get_db
@@ -264,7 +265,7 @@ def execute_order(
             if UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "") != adapter.identity:
                 raise ValueError("uta_account_identity_mismatch")
         order.uta_account_identity_json = adapter.identity.model_dump_json()
-        update_order(order.id, uta_account_identity_json=order.uta_account_identity_json)
+        update_order_metadata(order.id, uta_account_identity_json=order.uta_account_identity_json)
     except Exception:
         _close_adapter(adapter)
         finalize_exchange_acknowledgement(order.id, exchange_order_id=None, status="error", error_reason="uta_account_identity_unavailable")
@@ -494,7 +495,9 @@ def close_position(
             order_type = "limit"
         except Exception:
             quantity = _quantize_quantity_to_precision(_clipped_close_quantity(position_id, quantity), quantity)
-        update_order(order.id, quantity=quantity, order_type=order_type, price=limit_price or order.price)
+        update_order_metadata(
+            order.id, quantity=quantity, order_type=order_type, price=limit_price or order.price
+        )
     command = SubmitOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
@@ -565,7 +568,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
         report = _run(_call_and_close(adapter, "submit_order", command))
     except Exception:
         if adapter is None or command is None:
-            update_order(order.id, status="error", error_reason="protection_not_sent")
+            transition_order(order.id, status="error", error_reason="protection_not_sent")
             raise
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)
     acknowledgement = _apply_report(order, report)

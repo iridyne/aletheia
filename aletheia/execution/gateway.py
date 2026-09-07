@@ -602,7 +602,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
                 return {"status": "filled", "entry_plan_id": plan_id}
             if fresh_order.get("status") not in {"open", "partially_filled"}:
                 return {"status": fresh_order["status"], "entry_plan_id": plan_id}
-            repo.update_order(order["id"], status="cancelled", error_reason=reason)
+            repo.transition_order(order["id"], status="cancelled", error_reason=reason)
             release_entry_risk_reservation(str(order["proposal_id"]))
         return {"status": "cancelled", "entry_plan_id": plan_id}
 
@@ -728,7 +728,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             "submission_unknown",
             "materialization_missing",
         }:
-            repo.update_order(order["id"], status="cancelled", error_reason=reason)
+            repo.transition_order(order["id"], status="cancelled", error_reason=reason)
         if fresh_plan:
             repo.transition_entry_plan(
                 plan_id,
@@ -898,7 +898,7 @@ def rebind_open_paper_orders_to_monitoring(instrument, monitoring: dict) -> int:
                     "partially_filled",
                 }:
                     continue
-                repo.update_order(
+                repo.update_order_metadata(
                     str(order["id"]),
                     matching_stream_generation_id=stream_generation_id,
                     matching_subscription_generation_id=subscription_generation_id,

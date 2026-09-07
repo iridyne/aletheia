@@ -30,6 +30,7 @@ from aletheia.storage.models import (
     OpportunityEntryValidityAssessment,
     OpportunityGenerationV2,
     Order,
+    OrderStatus,
     OutcomeHookJob,
     PaperAccountEvent,
     Position,
@@ -2587,39 +2588,145 @@ def insert_order(o: Order) -> None:
     _insert("orders", _stamp_provenance(o.model_dump()))
 
 
-def update_order(oid: str, **kwargs) -> None:
+_ORDER_METADATA_FIELDS = frozenset({
+    "exchange_order_id",
+    "position_id",
+    "quantity",
+    "order_tactic",
+    "time_in_force",
+    "matching_stream_generation_id",
+    "matching_subscription_generation_id",
+    "monitoring_gap_started_at",
+    # Submission intent and account identity, stamped before the venue call.
+    # These describe what is being sent, never where the Order is in its
+    # lifecycle — status/error_reason/filled_at stay with transition_order().
+    "uta_account_identity_json",
+    "order_type",
+    "price",
+})
+_ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    "pending": frozenset({
+        "submitted", "submission_unknown", "submission_rejected", "materialization_missing",
+        "partial", "partially_filled", "filled", "overfilled", "cancelled", "error",
+    }),
+    "open": frozenset({
+        "materialization_missing", "partial", "partially_filled", "filled",
+        "overfilled", "cancelled", "error",
+    }),
+    "submitted": frozenset({
+        "submission_unknown", "materialization_missing", "partial",
+        "partially_filled", "filled", "overfilled", "cancelled", "error",
+    }),
+    "submission_unknown": frozenset({
+        "submitted", "submission_rejected", "materialization_missing", "partial", "partially_filled",
+        "filled", "overfilled", "cancelled", "error",
+    }),
+    "submission_rejected": frozenset(),
+    "materialization_missing": frozenset({
+        "submitted", "partial", "partially_filled", "filled", "overfilled",
+        "cancelled", "error",
+    }),
+    "partial": frozenset({
+        "materialization_missing", "partially_filled", "filled", "overfilled",
+        "cancelled", "error",
+    }),
+    "partially_filled": frozenset({
+        "materialization_missing", "filled", "overfilled", "cancelled", "error",
+    }),
+    # A venue cancellation can race already-executed private fills. Durable fill
+    # evidence wins, while all other terminal states remain monotonic.
+    "cancelled": frozenset({"partially_filled", "filled", "overfilled"}),
+    "filled": frozenset(),
+    "overfilled": frozenset(),
+    "error": frozenset(),
+    # Historical terminals: reachable in stored rows, never a transition target.
+    "executed": frozenset(),
+    "failed": frozenset(),
+    "rejected": frozenset(),
+}
+_ORDER_ENTRY_PLAN_STATUS = {
+    "partial": "partially_filled",
+    "partially_filled": "partially_filled",
+    "filled": "filled",
+    "cancelled": "cancelled",
+    "error": "failed",
+}
+
+
+class OrderTransitionConflict(RuntimeError):
+    pass
+
+
+def update_order_metadata(oid: str, **kwargs: object) -> None:
+    unknown = set(kwargs) - _ORDER_METADATA_FIELDS
+    if unknown:
+        raise ValueError("invalid_order_metadata_fields:" + ",".join(sorted(unknown)))
     _update("orders", oid, kwargs)
-    lifecycle_status = {
-        "partially_filled": "partially_filled",
-        "partial": "partially_filled",
-        "filled": "filled",
-        "cancelled": "cancelled",
-        "error": "failed",
-    }.get(kwargs.get("status"))
-    if lifecycle_status is None:
-        return
-    order = get_order(oid)
-    plan_id = order.get("entry_plan_id") if order else None
-    if not plan_id:
-        return
-    plan = get_entry_plan(plan_id)
+
+
+def transition_order(
+    order_id: str,
+    *,
+    status: OrderStatus,
+    exchange_order_id: str | None = None,
+    position_id: str | None = None,
+    error_reason: str | None = None,
+    filled_at: str | None = None,
+) -> dict:
+    """Apply one legal Order transition and its reachable EntryPlan transition."""
+
     from aletheia.trading.entry_plan import entry_plan_transition_allowed
 
-    if plan and entry_plan_transition_allowed(plan["status"], lifecycle_status):
-        transition_entry_plan(
-            plan_id,
-            expected_status=plan["status"],
-            status=lifecycle_status,
-            order_id=oid,
-            reason=kwargs.get("error_reason"),
+    with transaction(immediate=True):
+        order = get_order(order_id)
+        if order is None:
+            raise ValueError(f"order not found: {order_id}")
+        current = cast(OrderStatus, order["status"])
+        if current != status and status not in _ORDER_TRANSITIONS.get(current, ()):
+            raise ValueError(f"invalid_order_transition:{current}->{status}")
+        updated = execute_write(
+            "UPDATE orders SET exchange_order_id=COALESCE(?,exchange_order_id), "
+            "position_id=COALESCE(?,position_id), status=?, error_reason=?, filled_at=? "
+            "WHERE id=? AND status=?",
+            (
+                exchange_order_id,
+                position_id,
+                status,
+                error_reason,
+                filled_at,
+                order_id,
+                current,
+            ),
         )
+        if updated.rowcount != 1:
+            raise OrderTransitionConflict(f"order_transition_conflict:{order_id}")
+
+        plan_status = _ORDER_ENTRY_PLAN_STATUS.get(status)
+        plan_id = order.get("entry_plan_id")
+        plan = get_entry_plan(plan_id) if plan_id and plan_status else None
+        if current != status and plan and plan["status"] != plan_status:
+            if not entry_plan_transition_allowed(plan["status"], plan_status):
+                raise OrderTransitionConflict(
+                    f"order_entry_plan_transition_invalid:{order_id}"
+                )
+            if not transition_entry_plan(
+                plan_id,
+                expected_status=plan["status"],
+                status=plan_status,
+                order_id=order_id,
+                reason=error_reason,
+            ):
+                raise OrderTransitionConflict(
+                    f"order_entry_plan_transition_conflict:{order_id}"
+                )
+        return get_order(order_id) or {}
 
 
 def finalize_exchange_acknowledgement(
     order_id: str,
     *,
     exchange_order_id: str | None,
-    status: str,
+    status: OrderStatus,
     error_reason: str | None,
     close_position_id: str | None = None,
     pending_close_status: str | None = None,
@@ -2643,20 +2750,13 @@ def finalize_exchange_acknowledgement(
         )
         applied = False
         if order.get("status") in {"pending", "submission_unknown"} and owns_close_claim:
-            cursor = execute_write(
-                """
-                UPDATE orders
-                SET exchange_order_id=?, status=?, error_reason=?, filled_at=NULL
-                WHERE id=? AND status IN ('pending', 'submission_unknown')
-                """,
-                (
-                    current_exchange_id or incoming_exchange_id,
-                    status,
-                    error_reason,
-                    order_id,
-                ),
+            transition_order(
+                order_id,
+                exchange_order_id=current_exchange_id or incoming_exchange_id,
+                status=status,
+                error_reason=error_reason,
             )
-            applied = cursor.rowcount == 1
+            applied = True
             if applied and close_position_id:
                 position_cursor = execute_write(
                     """
