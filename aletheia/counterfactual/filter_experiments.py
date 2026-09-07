@@ -65,8 +65,9 @@ _ADAPTER_CAUSAL_IDENTITY: dict[str, dict[str, Any]] = {
         ),
     },
     # Phase 2 (Issue #1072 §"Phase 2 — only after POC success"): ``family_ttl``
-    # and ``observer_pre_filter`` remain on the legacy ``_production_version_changed``
-    # invalidation until the ranker POC is validated in the field. Adding them
+    # and ``observer_pre_filter`` remain on the legacy
+    # ``production_filter_version_changed`` invalidation until the ranker POC is
+    # validated in the field. Adding them
     # here without also porting their multi-horizon / bootstrap evaluators to
     # frozen units would silently change their invalidation semantics, which is
     # what the owner review explicitly warned against.
