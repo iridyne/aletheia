@@ -14,6 +14,7 @@ cancellation.
 from __future__ import annotations
 
 from tests.position_fixture import force_update_position
+from tests.specs.uta_private_history import _identity
 
 from datetime import datetime, timezone
 import json
@@ -116,6 +117,7 @@ def _seed_entry(
         exchange_order_id=f"EX-HISTORICAL-{suffix}",
         status=status,
         filled_at=_FILL_TIME if status == "filled" else None,
+        uta_account_identity_json=_identity("bitget_demo").model_dump_json(),
     )
     repo.insert_order(order)
     return proposal, decision, order

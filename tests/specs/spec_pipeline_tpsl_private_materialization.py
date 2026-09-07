@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.specs.uta_private_history import _identity
+
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -68,6 +70,7 @@ def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
         exchange_order_id=f"ENTRY-TPSL-{suffix}",
         status="filled",
         filled_at="2026-07-13T00:00:00+00:00",
+        uta_account_identity_json=_identity(execution_mode).model_dump_json(),
     )
     repo.insert_order(entry_order)
     repo.insert_fill(Fill(
@@ -194,6 +197,12 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
     assert close_order["exchange_order_id"] == "EXEC-SL"
     assert close_order["status"] == "filled"
     assert close_order["close_reason"] == "stop_loss"
+    # The TPSL close claim must carry the same proven account identity as the entry
+    # Order it closes. Without it reconcile() rejects the order every 2 minutes with
+    # uta_account_identity_unavailable and paints its job red.
+    entry_order = repo.get_order(stored_position["order_id"])
+    assert close_order["uta_account_identity_json"] == entry_order["uta_account_identity_json"]
+    assert close_order["uta_account_identity_json"]
     assert close_fill["fill_price"] == pytest.approx(59_000.0)
     assert close_fill["fee"] == pytest.approx(0.2)
     assert stored_position["status"] == "closed"
