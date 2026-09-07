@@ -597,6 +597,14 @@ OrderStatus = Literal[
     "overfilled",
     "cancelled",
     "error",
+    # Historical terminals with no writer left. analytics/trade_stats.py
+    # classifies all three when reading orders: completed_fill_statuses has
+    # "executed", definitive_failure_statuses has "failed" and "rejected".
+    # Legal values with no incoming transition, so stored rows stay readable
+    # while new writes cannot produce them.
+    "executed",
+    "failed",
+    "rejected",
 ]
 
 

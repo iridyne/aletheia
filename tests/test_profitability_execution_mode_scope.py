@@ -211,7 +211,12 @@ def test_order_stats_conserves_every_lifecycle_status(tmp_path, monkeypatch):
         "materialization_missing",
         "partially_filled",
         "overfilled",
-        "future_status",
+        # A legal status that trade_stats classifies into none of its five
+        # buckets, so it lands in "unclassified". Replaces a synthetic
+        # "future_status": orders.status now has a DB CHECK, so an unknown value
+        # can no longer reach the table, while the conservation invariant this
+        # test guards — every stored status is still counted — is unchanged.
+        "submission_rejected",
     ]
     db = get_db()
     for idx, status in enumerate(statuses):
