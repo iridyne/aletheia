@@ -297,10 +297,19 @@ Critic 说「~13 个 spec 失败从未 triage」，依据是计划文档里的 5
 | `2ddb93198` | settings 路由不再能持久化导致全停的执行模式 | 41 |
 | `681e7debe` | TPSL 平仓 claim 带上被证明的账户身份 + fixture 配对（**含 Fedora 前置闸门**） | 41→36 |
 | `fc6c71ece` | nested 风控策略镜像回 flat 别名 | 36 |
-| `569af8f4c` | 六个 spec 重新指向 #2945 之后的现实 | 36→29 |
+| `569af8f4c` | 六个 spec 重新指向 #2945 之后的现实 | 36→26 |
+| `5429f7b46` | 裸 `UPDATE positions` 收拢到拥有该表的模块 + 加宽守卫 | 26 |
 
-spec **42 → 29**，16 个修复，**0 新增失败**（逐条 diff 过）。
-全量 **141 →（计划文档记录的 master 数）→ 119 failed / 9635 passed** 于三 commit 处。
+spec **42 → 26**，16 个修复，**0 新增失败**（对起始列表逐条 diff）。
+
+**基线更正**：计划文档记的 master 全量 141/9594 是旧值。我自己在 worktree 里实测
+当前 master（`8e2cf4a09`，已前进过我的 base `50f902316`）：**125 failed / 9629 passed**。
+本分支五 commit 处：**109 failed / 9646 passed** → **−16 failed / +17 passed**，
+与 spec 层数出的 16 个修复吻合。
+
+**如实记录两处测量问题**：① 并发跑两个全量 pytest 会因共享 data dir 崩溃，必须串行；
+② spec 有约 3 个测试跑间不稳定——同一 commit 上先测得 29、随后四次都是 26，
+无代码变化。所以"26"是稳定值，波动约 3。
 
 ### 刻意没做的（每一条都会「变绿但掩盖真问题」）
 
@@ -314,9 +323,11 @@ spec **42 → 29**，16 个修复，**0 新增失败**（逐条 diff 过）。
 
 ## 剩余排序（按 生产风险 × 证据强度 ÷ 修复体量）
 
-1. D1 —— 改掉 2 处活体裸 SQL、删 `_update_position_economics`、把守卫测试从「禁字符串
-   `update_position(`」扩到「禁 `storage/` 之外的 `UPDATE positions`」。守卫是持久的那半
-2. `_ORDER_TRANSITIONS["filled"] |= {"overfilled"}` —— 一行，先验可达性；可达则升到第 1
+> D1 已完成（`5429f7b46`）。`maintenance/outcome_integrity.py` 保留裸 SQL 并带理由列入豁免：
+> 它的幂等键是 `outcome_semantics_version IS NULL` 而非状态 CAS，为一次性补数批次
+> 永久放宽 settlement owner 的白名单不值得。
+
+1. `_ORDER_TRANSITIONS["filled"] |= {"overfilled"}` —— 一行，先验可达性；可达则升到第 1
 3. D5 —— 六份读侧词表派生自 `config/exchanges.py`（−25/+6）。写侧已在 `2ddb93198` 封堵，
    所以这条现在只是整理
 4. D9 —— 删 63 行确证死代码 + 它的一个测试。零风险
