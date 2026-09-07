@@ -42,11 +42,45 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _patch_bitget_history(monkeypatch, fill_rows, *, open_ids=()):
+def _spec_identity():
+    from tests.specs.uta_private_history import _identity
+
+    return _identity("bitget_live_limited")
+
+
+def _patch_bitget_history(
+    monkeypatch,
+    fill_rows,
+    *,
+    open_ids=(),
+    calls=None,
+    unscoped_fill_rows=None,
+):
+    """Single patch path for private history in this spec.
+
+    Every test goes through here so the configured-identity registry is always
+    patched alongside the private-history fake. Patching one without the other
+    makes reconcile() skip orders it should have matched.
+    """
+    from types import SimpleNamespace
+
     from aletheia.execution import reconciliation
     from tests.specs.uta_private_history import patch_private_history
 
-    patch_private_history(monkeypatch, reconciliation, fill_rows, open_ids=open_ids)
+    identity = _spec_identity()
+    patch_private_history(
+        monkeypatch,
+        reconciliation,
+        fill_rows,
+        open_ids=open_ids,
+        calls=calls,
+        unscoped_fill_rows=unscoped_fill_rows,
+    )
+    monkeypatch.setattr(
+        reconciliation,
+        "build_uta_registry",
+        lambda: SimpleNamespace(configured_identities=lambda: (identity,)),
+    )
 
 
 def _private_fill(
@@ -91,7 +125,12 @@ def _seed_native_chain(
 ):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
-        Opportunity, Order, RiskDecision, SerenityOpportunity, SerenityTheme, TradeProposal,
+        Opportunity,
+        Order,
+        RiskDecision,
+        SerenityOpportunity,
+        SerenityTheme,
+        TradeProposal,
     )
 
     if trade_school == "serenity":
@@ -156,6 +195,7 @@ def _seed_native_chain(
         exchange_order_id=exchange_order_id,
         client_order_id=proposal.id,
         status=order_status,
+        uta_account_identity_json=_spec_identity().model_dump_json(),
     )
     repo.insert_order(order)
     return opportunity, proposal, decision, order
@@ -173,9 +213,7 @@ def _seed_native_chain(
         status="implemented",
     )
 )
-def test_delayed_futures_fill_preserves_leverage_and_liquidation_estimate(
-    tmp_path, monkeypatch
-):
+def test_delayed_futures_fill_preserves_leverage_and_liquidation_estimate(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.position_enrichment import liquidation_price_for
     from aletheia.execution.reconciliation import reconcile
@@ -202,11 +240,7 @@ def test_delayed_futures_fill_preserves_leverage_and_liquidation_estimate(
     )
 
     result = reconcile()
-    position = dict(
-        db.execute(
-            "SELECT * FROM positions WHERE order_id=?", (order.id,)
-        ).fetchone()
-    )
+    position = dict(db.execute("SELECT * FROM positions WHERE order_id=?", (order.id,)).fetchone())
 
     assert result["filled"] == 1
     assert position["leverage"] == 5
@@ -229,12 +263,9 @@ def test_delayed_futures_fill_preserves_leverage_and_liquidation_estimate(
         status="implemented",
     )
 )
-def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
-    tmp_path, monkeypatch
-):
+def test_symbol_scoped_history_recovers_fill_missing_from_default_page(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation
-    from tests.specs.uta_private_history import patch_private_history
 
     private_fill = _private_fill(
         "EX-XM-AGED-OUT",
@@ -245,9 +276,8 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
         filled_at_ms=1_784_075_000_000,
     )
     calls = []
-    patch_private_history(
+    _patch_bitget_history(
         monkeypatch,
-        reconciliation,
         [private_fill],
         calls=calls,
         unscoped_fill_rows=[],
@@ -262,12 +292,8 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
         for method, _, query in calls
         if method == "get_fills"
     ] == [None, "BTC/USDT"]
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 1
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)).fetchone()[0] == 1
 
 
 @spec_claim(
@@ -282,9 +308,7 @@ def test_symbol_scoped_history_recovers_fill_missing_from_default_page(
         status="implemented",
     )
 )
-def test_base_asset_fee_is_converted_before_position_cost(
-    tmp_path, monkeypatch
-):
+def test_base_asset_fee_is_converted_before_position_cost(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
 
@@ -303,14 +327,8 @@ def test_base_asset_fee_is_converted_before_position_cost(
     _, _, _, order = _seed_native_chain(exchange_order_id="EX-XM-BASE-FEE")
 
     result = reconcile()
-    fill = dict(
-        db.execute("SELECT * FROM fills WHERE order_id=?", (order.id,)).fetchone()
-    )
-    position = dict(
-        db.execute(
-            "SELECT * FROM positions WHERE order_id=?", (order.id,)
-        ).fetchone()
-    )
+    fill = dict(db.execute("SELECT * FROM fills WHERE order_id=?", (order.id,)).fetchone())
+    position = dict(db.execute("SELECT * FROM positions WHERE order_id=?", (order.id,)).fetchone())
 
     assert result["filled"] == 1
     assert fill["fee"] == pytest.approx(0.001)
@@ -318,9 +336,7 @@ def test_base_asset_fee_is_converted_before_position_cost(
     assert position["entry_fee"] == pytest.approx(0.1)
 
 
-def test_third_currency_entry_keeps_fill_but_withholds_quote_entry_cost(
-    tmp_path, monkeypatch
-):
+def test_third_currency_entry_keeps_fill_but_withholds_quote_entry_cost(tmp_path, monkeypatch):
     """#2041: an entry Position can exist without claiming an unknown fee value."""
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
@@ -338,18 +354,12 @@ def test_third_currency_entry_keeps_fill_but_withholds_quote_entry_cost(
         )
     ]
     _patch_bitget_history(monkeypatch, fill_rows)
-    _, proposal, _, order = _seed_native_chain(
-        exchange_order_id="EX-XM-THIRD-ENTRY-FEE"
-    )
+    _, proposal, _, order = _seed_native_chain(exchange_order_id="EX-XM-THIRD-ENTRY-FEE")
 
     result = reconcile()
     stored_order = repo.get_order(order.id)
-    stored_position = dict(
-        db.execute("SELECT * FROM positions WHERE order_id=?", (order.id,)).fetchone()
-    )
-    stored_fill = dict(
-        db.execute("SELECT * FROM fills WHERE order_id=?", (order.id,)).fetchone()
-    )
+    stored_position = dict(db.execute("SELECT * FROM positions WHERE order_id=?", (order.id,)).fetchone())
+    stored_fill = dict(db.execute("SELECT * FROM fills WHERE order_id=?", (order.id,)).fetchone())
 
     assert result["filled"] == 1
     assert stored_order["status"] == "filled"
@@ -373,9 +383,7 @@ def test_third_currency_entry_keeps_fill_but_withholds_quote_entry_cost(
         status="implemented",
     )
 )
-def test_complete_private_fill_atomically_materializes_causal_chain(
-    tmp_path, monkeypatch
-):
+def test_complete_private_fill_atomically_materializes_causal_chain(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -400,16 +408,11 @@ def test_complete_private_fill_atomically_materializes_causal_chain(
     stored_order = repo.get_order(order.id)
     stored_proposal = repo.get_trade_proposal(proposal.id)
     fills = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)
-        ).fetchall()
+        dict(row) for row in db.execute("SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)).fetchall()
     ]
     positions = [
         dict(row)
-        for row in db.execute(
-            "SELECT * FROM positions WHERE order_id=? ORDER BY rowid", (order.id,)
-        ).fetchall()
+        for row in db.execute("SELECT * FROM positions WHERE order_id=? ORDER BY rowid", (order.id,)).fetchall()
     ]
 
     assert result["filled"] == 1
@@ -474,16 +477,10 @@ def test_complete_private_fill_atomically_materializes_causal_chain(
     except sqlite3.DatabaseError:
         pass
 
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (rollback_order.id,)
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE order_id=?", (rollback_order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (rollback_order.id,)).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (rollback_order.id,)).fetchone()[0] == 0
     assert repo.get_order(rollback_order.id)["status"] == "materialization_missing"
-    assert repo.get_trade_proposal(rollback_proposal.id)["status"] == (
-        "materialization_missing"
-    )
+    assert repo.get_trade_proposal(rollback_proposal.id)["status"] == ("materialization_missing")
 
     # A fill status without private price/quantity/fee evidence must not fall
     # back to the request and fabricate economics.
@@ -504,16 +501,10 @@ def test_complete_private_fill_atomically_materializes_causal_chain(
         )
     )
     reconcile()
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (missing_order.id,)
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE order_id=?", (missing_order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (missing_order.id,)).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (missing_order.id,)).fetchone()[0] == 0
     assert repo.get_order(missing_order.id)["status"] == "materialization_missing"
-    assert repo.get_trade_proposal(missing_proposal.id)["status"] == (
-        "materialization_missing"
-    )
+    assert repo.get_trade_proposal(missing_proposal.id)["status"] == ("materialization_missing")
 
 
 @spec_claim(
@@ -528,9 +519,7 @@ def test_complete_private_fill_atomically_materializes_causal_chain(
         status="implemented",
     )
 )
-def test_partial_local_chain_adds_only_exchange_delta_and_replay_is_idempotent(
-    tmp_path, monkeypatch
-):
+def test_partial_local_chain_adds_only_exchange_delta_and_replay_is_idempotent(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -599,14 +588,9 @@ def test_partial_local_chain_adds_only_exchange_delta_and_replay_is_idempotent(
 
     first = reconcile()
     first_fills = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)
-        ).fetchall()
+        dict(row) for row in db.execute("SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)).fetchall()
     ]
-    first_position = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    first_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
 
     assert first["filled"] == 1
     assert len(first_fills) == 2
@@ -621,20 +605,19 @@ def test_partial_local_chain_adds_only_exchange_delta_and_replay_is_idempotent(
     assert first_position["entry_fee"] == pytest.approx(0.106)
     assert first_position["entry_fill_verified"] == 1
     assert first_position["entry_price_source"] == "broker_fill"
-    assert first_position["opened_at"] == datetime.fromtimestamp(
-        1_784_100_000_000 / 1000,
-        tz=timezone.utc,
-    ).isoformat()
+    assert (
+        first_position["opened_at"]
+        == datetime.fromtimestamp(
+            1_784_100_000_000 / 1000,
+            tz=timezone.utc,
+        ).isoformat()
+    )
     assert repo.get_order(order.id)["status"] == "filled"
     assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
 
     second = reconcile()
-    second_fills = db.execute(
-        "SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)
-    ).fetchall()
-    second_position = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    second_fills = db.execute("SELECT * FROM fills WHERE order_id=? ORDER BY rowid", (order.id,)).fetchall()
+    second_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
     assert second["filled"] == 0
     assert len(second_fills) == 2
     assert sum(row["fill_quantity"] for row in second_fills) == pytest.approx(1.0)
@@ -693,9 +676,7 @@ def test_private_fill_delta_rejects_splitting_one_remote_fill():
         status="implemented",
     )
 )
-def test_old_unresolved_order_is_materialized_beyond_500_newer_orders(
-    tmp_path, monkeypatch
-):
+def test_old_unresolved_order_is_materialized_beyond_500_newer_orders(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -733,12 +714,8 @@ def test_old_unresolved_order_is_materialized_beyond_500_newer_orders(
     assert result["filled"] == 1
     assert repo.get_order(old_order.id)["status"] == "filled"
     assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (old_order.id,)
-    ).fetchone()[0] == 1
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE order_id=?", (old_order.id,)
-    ).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (old_order.id,)).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (old_order.id,)).fetchone()[0] == 1
 
 
 @spec_claim(
@@ -753,9 +730,7 @@ def test_old_unresolved_order_is_materialized_beyond_500_newer_orders(
         status="implemented",
     )
 )
-def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(
-    tmp_path, monkeypatch
-):
+def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import runtime_session
     from aletheia.storage import repositories as repo
@@ -800,10 +775,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(
         finally:
             close_db()
 
-    threads = [
-        threading.Thread(target=_insert, args=(candidate,))
-        for candidate in candidates
-    ]
+    threads = [threading.Thread(target=_insert, args=(candidate,)) for candidate in candidates]
     for thread in threads:
         thread.start()
     barrier.wait(timeout=5)
@@ -814,8 +786,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(
     rows = [
         dict(row)
         for row in db.execute(
-            "SELECT id, parent_hash, commit_hash FROM trade_proposals "
-            "WHERE id IN (?, ?)",
+            "SELECT id, parent_hash, commit_hash FROM trade_proposals WHERE id IN (?, ?)",
             (candidates[0].id, candidates[1].id),
         ).fetchall()
     ]
@@ -859,9 +830,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(
         status="implemented",
     )
 )
-def test_native_order_insert_rejects_invalid_authoritative_snapshot(
-    tmp_path, monkeypatch, invalid_field
-):
+def test_native_order_insert_rejects_invalid_authoritative_snapshot(tmp_path, monkeypatch, invalid_field):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, RiskDecision, TradeProposal
@@ -881,30 +850,20 @@ def test_native_order_insert_rejects_invalid_authoritative_snapshot(
         approved=invalid_field != "rejected_authoritative",
         risk_score=0.0,
         allowed_execution_mode=(
-            "paper_internal"
-            if invalid_field == "execution_mode_mismatch"
-            else proposal.execution_mode
+            "paper_internal" if invalid_field == "execution_mode_mismatch" else proposal.execution_mode
         ),
         proposal_execution_mode=proposal.execution_mode,
-        decision_role=(
-            "preflight" if invalid_field == "approved_preflight" else "authoritative"
-        ),
-        evaluated_quantity=(
-            0.5 if invalid_field == "evaluated_quantity_mismatch" else proposal.quantity
-        ),
+        decision_role=("preflight" if invalid_field == "approved_preflight" else "authoritative"),
+        evaluated_quantity=(0.5 if invalid_field == "evaluated_quantity_mismatch" else proposal.quantity),
         proposal_commit_hash=(
-            "stale-proposal-hash"
-            if invalid_field == "proposal_hash_mismatch"
-            else proposal.commit_hash
+            "stale-proposal-hash" if invalid_field == "proposal_hash_mismatch" else proposal.commit_hash
         ),
         message="invalid authority fixture",
     )
     repo.insert_risk_decision(decision)
     order = Order(
         proposal_id=proposal.id,
-        risk_decision_id=(
-            None if invalid_field == "missing_authoritative" else decision.id
-        ),
+        risk_decision_id=(None if invalid_field == "missing_authoritative" else decision.id),
         symbol=proposal.symbol,
         market_type=proposal.market_type,
         direction=proposal.direction,
@@ -914,15 +873,14 @@ def test_native_order_insert_rejects_invalid_authoritative_snapshot(
         execution_mode=proposal.execution_mode,
         client_order_id=proposal.id,
         status="pending",
+        uta_account_identity_json=_spec_identity().model_dump_json(),
         source="native",
     )
 
     with pytest.raises((ValueError, sqlite3.IntegrityError)):
         repo.insert_order(order)
 
-    assert db.execute(
-        "SELECT COUNT(*) FROM orders WHERE id=?", (order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM orders WHERE id=?", (order.id,)).fetchone()[0] == 0
 
 
 @spec_claim(
@@ -937,9 +895,7 @@ def test_native_order_insert_rejects_invalid_authoritative_snapshot(
         status="implemented",
     )
 )
-def test_submission_unknown_recovers_exchange_id_from_client_oid(
-    tmp_path, monkeypatch
-):
+def test_submission_unknown_recovers_exchange_id_from_client_oid(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -969,12 +925,8 @@ def test_submission_unknown_recovers_exchange_id_from_client_oid(
     assert stored_order["client_order_id"] == proposal.id
     assert stored_order["status"] == "filled"
     assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 1
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)).fetchone()[0] == 1
 
 
 def _seed_pending_close(
@@ -1043,6 +995,7 @@ def _seed_pending_close(
         close_reason="take_profit",
         close_reasoning=close_reasoning,
         status="submitted",
+        uta_account_identity_json=_spec_identity().model_dump_json(),
     )
     repo.insert_order(close_order)
     repo.update_position(
@@ -1054,9 +1007,7 @@ def _seed_pending_close(
     return proposal, entry_order, position, close_order
 
 
-def test_third_currency_close_keeps_lifecycle_but_withholds_quote_economics(
-    tmp_path, monkeypatch
-):
+def test_third_currency_close_keeps_lifecycle_but_withholds_quote_economics(tmp_path, monkeypatch):
     """#2041: raw BNB fee is durable, but quote PnL stays explicitly unavailable."""
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
@@ -1073,17 +1024,11 @@ def test_third_currency_close_keeps_lifecycle_but_withholds_quote_economics(
         )
     ]
     _patch_bitget_history(monkeypatch, fill_rows)
-    _, _, position, close_order = _seed_pending_close(
-        exchange_order_id="EX-XM-THIRD-FEE"
-    )
+    _, _, position, close_order = _seed_pending_close(exchange_order_id="EX-XM-THIRD-FEE")
 
     result = reconcile()
-    stored_position = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
-    stored_fill = dict(
-        db.execute("SELECT * FROM fills WHERE order_id=?", (close_order.id,)).fetchone()
-    )
+    stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
+    stored_fill = dict(db.execute("SELECT * FROM fills WHERE order_id=?", (close_order.id,)).fetchone())
     close_event = dict(
         db.execute(
             "SELECT * FROM position_close_events WHERE position_id=?",
@@ -1119,9 +1064,7 @@ def test_third_currency_close_keeps_lifecycle_but_withholds_quote_economics(
         status="implemented",
     )
 )
-def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
-    tmp_path, monkeypatch, lifecycle
-):
+def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(tmp_path, monkeypatch, lifecycle):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -1136,9 +1079,7 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
     else:
         proposal, _, position, order = _seed_pending_close(
             exchange_order_id=exchange_order_id,
-            market_type=(
-                "usdt_futures" if lifecycle == "futures_close" else "spot"
-            ),
+            market_type=("usdt_futures" if lifecycle == "futures_close" else "spot"),
         )
 
     good = _private_fill(
@@ -1174,11 +1115,7 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
     initial_order_status = repo.get_order(order.id)["status"]
     initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
     initial_position = (
-        dict(
-            db.execute(
-                "SELECT * FROM positions WHERE id=?", (position.id,)
-            ).fetchone()
-        )
+        dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
         if position is not None
         else None
     )
@@ -1189,19 +1126,11 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
     assert first["materialized_fills"] == 0
     assert repo.get_order(order.id)["status"] == initial_order_status
     assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
     if position is None:
-        assert db.execute(
-            "SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)
-        ).fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM positions WHERE order_id=?", (order.id,)).fetchone()[0] == 0
     else:
-        stored_position = dict(
-            db.execute(
-                "SELECT * FROM positions WHERE id=?", (position.id,)
-            ).fetchone()
-        )
+        stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
         assert stored_position == initial_position
 
     second = reconcile()
@@ -1210,15 +1139,9 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
     assert funding_queries == []
     assert repo.get_order(order.id)["status"] == initial_order_status
     assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
     if position is not None:
-        assert dict(
-            db.execute(
-                "SELECT * FROM positions WHERE id=?", (position.id,)
-            ).fetchone()
-        ) == initial_position
+        assert dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()) == initial_position
 
 
 @pytest.mark.parametrize("lifecycle", ["averaging_entry", "complete_close"])
@@ -1234,9 +1157,7 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(
         status="implemented",
     )
 )
-def test_private_derived_economic_overflow_never_mutates_position(
-    tmp_path, monkeypatch, lifecycle
-):
+def test_private_derived_economic_overflow_never_mutates_position(tmp_path, monkeypatch, lifecycle):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -1297,9 +1218,7 @@ def test_private_derived_economic_overflow_never_mutates_position(
         filled_at_ms=1_784_700_002_000,
     )
     _patch_bitget_history(monkeypatch, [fill])
-    before = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    before = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
     initial_order_status = repo.get_order(order.id)["status"]
     initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
 
@@ -1309,12 +1228,8 @@ def test_private_derived_economic_overflow_never_mutates_position(
     assert first["materialized_fills"] == 0
     assert repo.get_order(order.id)["status"] == initial_order_status
     assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 0
-    after = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
+    after = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
     assert after == before
 
     second = reconcile()
@@ -1322,12 +1237,8 @@ def test_private_derived_economic_overflow_never_mutates_position(
     assert second["materialized_fills"] == 0
     assert repo.get_order(order.id)["status"] == initial_order_status
     assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 0
-    assert dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    ) == before
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
+    assert dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()) == before
 
 
 @spec_claim(
@@ -1341,9 +1252,7 @@ def test_private_derived_economic_overflow_never_mutates_position(
         status="implemented",
     )
 )
-def test_complete_private_close_fill_closes_linked_position_once(
-    tmp_path, monkeypatch
-):
+def test_complete_private_close_fill_closes_linked_position_once(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
@@ -1391,14 +1300,9 @@ def test_complete_private_close_fill_closes_linked_position_once(
 
     first = reconcile()
     stored_order = repo.get_order(close_order.id)
-    stored_position = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
     close_fills = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM fills WHERE order_id=?", (close_order.id,)
-        ).fetchall()
+        dict(row) for row in db.execute("SELECT * FROM fills WHERE order_id=?", (close_order.id,)).fetchall()
     ]
 
     assert first["filled"] == 1
@@ -1441,24 +1345,16 @@ def test_complete_private_close_fill_closes_linked_position_once(
 
     second = reconcile()
     assert second["filled"] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
-    ).fetchone()[0] == 1
-    assert repo._select_one("positions", position.id)["exit_reasoning"] == (
-        exit_reasoning_before_replay
-    )
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 1
+    assert repo._select_one("positions", position.id)["exit_reasoning"] == (exit_reasoning_before_replay)
 
 
-def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(
-    tmp_path, monkeypatch
-):
+def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import materialize_bitget_close
     from aletheia.storage import repositories as repo
 
-    _, _, position, close_order = _seed_pending_close(
-        exchange_order_id="EX-XM-CLOSE-LEGACY-NULL"
-    )
+    _, _, position, close_order = _seed_pending_close(exchange_order_id="EX-XM-CLOSE-LEGACY-NULL")
     result = materialize_bitget_close(
         close_order.id,
         [
@@ -1482,9 +1378,7 @@ def test_legacy_null_pending_close_reasoning_keeps_generic_final_provenance(
     assert exit_reasoning["actor"] == "system"
     assert exit_reasoning["source"] == "position_lifecycle"
     assert exit_reasoning["is_ai_judgment"] is False
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
-    ).fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 1
 
 
 @spec_claim(
@@ -1513,9 +1407,7 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
             filled_at_ms=1_784_500_000_000,
         )
     ]
-    _patch_bitget_history(
-        monkeypatch, fill_rows, open_ids=("EX-XM-CLOSE-PARTIAL",)
-    )
+    _patch_bitget_history(monkeypatch, fill_rows, open_ids=("EX-XM-CLOSE-PARTIAL",))
     close_reasoning = json.dumps(
         {
             "version": "trade_decision_rationale.v1",
@@ -1536,9 +1428,7 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
 
     result = reconcile()
     stored_order = repo.get_order(close_order.id)
-    stored_position = dict(
-        db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone()
-    )
+    stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (position.id,)).fetchone())
 
     assert result["filled"] == 0
     assert stored_order["status"] == "partially_filled"
@@ -1550,11 +1440,7 @@ def test_partial_private_close_fill_keeps_position_open(tmp_path, monkeypatch):
     assert stored_position["closed_at"] is None
     assert stored_position["exit_reasoning"] is None
     assert stored_order["close_reasoning"] == close_reasoning
-    close_fill = dict(
-        db.execute(
-            "SELECT * FROM fills WHERE order_id=?", (close_order.id,)
-        ).fetchone()
-    )
+    close_fill = dict(db.execute("SELECT * FROM fills WHERE order_id=?", (close_order.id,)).fetchone())
     assert close_fill["fill_quantity"] == pytest.approx(0.4)
     assert close_fill["fee_source"] == "reconciled"
 
@@ -1657,9 +1543,7 @@ def test_invalid_pending_close_reasoning_blocks_verified_materialization(
     assert stored_position["status"] == "open"
     assert stored_position["pending_close_status"] == "materialization_missing"
     assert stored_position["exit_reasoning"] is None
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 0
 
 
 def test_pending_close_reasoning_accepts_existing_verified_exit_identity():
@@ -1674,18 +1558,19 @@ def test_pending_close_reasoning_accepts_existing_verified_exit_identity():
         "is_ai_judgment": False,
         "trigger": {},
     }
-    assert _close_reasoning_for_order(
-        {
-            "close_reason": "take_profit",
-            "close_reasoning": json.dumps(payload),
-        }
-    ) == payload
+    assert (
+        _close_reasoning_for_order(
+            {
+                "close_reason": "take_profit",
+                "close_reasoning": json.dumps(payload),
+            }
+        )
+        == payload
+    )
 
 
 @pytest.mark.parametrize("mutation", ("close_reasoning", "source"))
-def test_close_order_authority_change_blocks_verified_materialization(
-    tmp_path, monkeypatch, mutation
-):
+def test_close_order_authority_change_blocks_verified_materialization(tmp_path, monkeypatch, mutation):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
@@ -1754,14 +1639,10 @@ def test_close_order_authority_change_blocks_verified_materialization(
     assert stored_position["status"] == "open"
     assert stored_position["pending_close_status"] == "materialization_missing"
     assert stored_position["exit_reasoning"] is None
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 0
 
 
-def test_invalid_pending_close_reasoning_blocks_partial_fill_write(
-    tmp_path, monkeypatch
-):
+def test_invalid_pending_close_reasoning_blocks_partial_fill_write(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
@@ -1793,9 +1674,7 @@ def test_invalid_pending_close_reasoning_blocks_partial_fill_write(
     assert stored_position["status"] == "open"
     assert stored_position["pending_close_status"] == "materialization_missing"
     assert stored_position["exit_reasoning"] is None
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order.id,)).fetchone()[0] == 0
 
 
 @spec_claim(
@@ -1809,9 +1688,7 @@ def test_invalid_pending_close_reasoning_blocks_partial_fill_write(
         status="implemented",
     )
 )
-def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(
-    tmp_path, monkeypatch
-):
+def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import (
         MaterializationIntegrityError,
@@ -1850,16 +1727,10 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(
     with pytest.raises(MaterializationIntegrityError, match="linked Position"):
         materialize_bitget_entry(order.id, fill_rows)
 
-    stored_position = dict(
-        db.execute(
-            "SELECT * FROM positions WHERE id=?", (wrong_position.id,)
-        ).fetchone()
-    )
+    stored_position = dict(db.execute("SELECT * FROM positions WHERE id=?", (wrong_position.id,)).fetchone())
     assert stored_position["quantity"] == pytest.approx(2.0)
     assert stored_position["entry_price"] == pytest.approx(50.0)
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)
-    ).fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
 
 
 @spec_claim(
@@ -1899,14 +1770,8 @@ def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
     )
     reconcile()
 
-    row = dict(
-        repo.get_db().execute(
-            "SELECT * FROM positions WHERE proposal_id=?", (proposal.id,)
-        ).fetchone()
-    )
-    assert row["expected_horizon_hours"] == pytest.approx(24.0), (
-        "expected_horizon_hours missing on exchange position"
-    )
+    row = dict(repo.get_db().execute("SELECT * FROM positions WHERE proposal_id=?", (proposal.id,)).fetchone())
+    assert row["expected_horizon_hours"] == pytest.approx(24.0), "expected_horizon_hours missing on exchange position"
     assert row["stop_source"] == "operator", "stop_source missing on exchange position"
     assert row["exit_plan_version"] == 1, "exit_plan_version not stamped on exchange position"
 
@@ -1986,14 +1851,10 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
 
     # The serenity leg must have created a NEW position, not merged.
     positions = [
-        dict(row)
-        for row in db.execute(
-            "SELECT * FROM positions WHERE symbol='BTC/USDT' ORDER BY rowid"
-        ).fetchall()
+        dict(row) for row in db.execute("SELECT * FROM positions WHERE symbol='BTC/USDT' ORDER BY rowid").fetchall()
     ]
     assert len(positions) == 2, (
-        f"expected 2 positions (one per school) but got {len(positions)}: "
-        f"{[p['trade_school'] for p in positions]}"
+        f"expected 2 positions (one per school) but got {len(positions)}: {[p['trade_school'] for p in positions]}"
     )
     schools = {p["trade_school"] for p in positions}
     assert schools == {"short_term", "serenity"}, f"unexpected schools: {schools}"
