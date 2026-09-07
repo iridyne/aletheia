@@ -393,7 +393,7 @@ def invalidate_paper_position_economics(
             "invalidated_shadow_rows": invalidated_shadows,
             "invalidated_serenity_post_mortems": invalidated_mortems,
         }
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             realized_pnl=None,
             exit_price_source="unavailable",
@@ -610,7 +610,7 @@ def materialize_position_economics(
                 "accounting_version", "local-paper-funding-v2",
             ),
         })
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             realized_pnl=realized,
             funding_cost=funding,

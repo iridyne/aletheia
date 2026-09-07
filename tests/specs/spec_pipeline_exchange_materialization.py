@@ -6,6 +6,8 @@ prove that an exchange-confirmed fill becomes one durable, replay-safe chain.
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from collections import Counter
 from datetime import datetime, timezone
 import json
@@ -451,7 +453,7 @@ def test_complete_private_fill_atomically_materializes_causal_chain(tmp_path, mo
     # intentionally averaged into one Position in production, which would turn
     # the trigger below into an UPDATE test instead of the intended INSERT
     # rollback proof.
-    repo.update_position(position["id"], status="closed")
+    force_update_position(position["id"], status="closed")
     fill_rows.append(
         _private_fill(
             "EX-XM-ROLLBACK",
@@ -998,7 +1000,7 @@ def _seed_pending_close(
         uta_account_identity_json=_spec_identity().model_dump_json(),
     )
     repo.insert_order(close_order)
-    repo.update_position(
+    force_update_position(
         position.id,
         pending_close_order_id=close_order.id,
         pending_close_status="submitted",

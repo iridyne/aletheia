@@ -205,7 +205,7 @@ def _activate_paper_position(
     )
     with repo.transaction(immediate=True):
         repo.append_position_exit_plan_version(plan, expected_effective_at=None)
-        repo.update_position(
+        repo.update_open_position_exit_plan(
             position_id,
             stop_price=resolved.stop_price,
             take_profit_price=resolved.target_price,
@@ -285,7 +285,9 @@ def persist_position_exit_plan(
     expected_version: int | None = None,
     exit_limit_price: object = _UNSET,
     exit_limit_source: object = _UNSET,
-    extra_position_updates: dict | None = None,
+    materialization_updates: dict | None = None,
+    exit_plan_updates: dict | None = None,
+    observation_updates: dict | None = None,
     effective_at: str | None = None,
 ):
     """Update intent, rejecting a protected caller whose base version is stale."""
@@ -297,15 +299,21 @@ def persist_position_exit_plan(
         raise ValueError("ExitPlan update requires an open Position")
     state = repo.get_position_protection_state(position_id)
     if state is None:
-        updates = dict(extra_position_updates or {})
+        updates = dict(exit_plan_updates or {})
         if exit_limit_price is not _UNSET:
             updates["exit_limit_price"] = exit_limit_price
         if exit_limit_source is not _UNSET:
             updates["exit_limit_source"] = exit_limit_source
         with repo.transaction(immediate=True):
             save_exit_plan(position_id, plan)
+            if materialization_updates:
+                repo.update_open_position_materialization(
+                    position_id, **materialization_updates
+                )
             if updates:
-                repo.update_position(position_id, **updates)
+                repo.update_open_position_exit_plan(position_id, **updates)
+            if observation_updates:
+                repo.update_open_position_observation(position_id, **observation_updates)
         return plan
     if state["status"] not in {"active", "gap"}:
         raise ValueError(f"ExitPlan cannot change after protection {state['status']}")
@@ -366,14 +374,20 @@ def persist_position_exit_plan(
             immutable,
             expected_effective_at=position.get("exit_plan_effective_at"),
         )
-        repo.update_position(position_id, **stored_plan.to_columns())
-        updates = dict(extra_position_updates or {})
+        repo.update_open_position_exit_plan(position_id, **stored_plan.to_columns())
+        if materialization_updates:
+            repo.update_open_position_materialization(
+                position_id, **materialization_updates
+            )
+        updates = dict(exit_plan_updates or {})
         if exit_limit_price is not _UNSET:
             updates["exit_limit_price"] = resolved_limit
         if exit_limit_source is not _UNSET:
             updates["exit_limit_source"] = resolved_source
         if updates:
-            repo.update_position(position_id, **updates)
+            repo.update_open_position_exit_plan(position_id, **updates)
+        if observation_updates:
+            repo.update_open_position_observation(position_id, **observation_updates)
     return stored_plan
 
 

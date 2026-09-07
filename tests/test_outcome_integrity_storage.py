@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import sqlite3
 
 import pytest
@@ -41,7 +43,7 @@ def test_position_outcome_defaults_fail_closed_and_round_trip():
     assert stored["reconciliation_evidence"] is None
     assert stored["outcome_semantics_version"] is None
 
-    repo.update_position(
+    force_update_position(
         position.id,
         close_category="strategy",
         exit_price_source="broker_fill",

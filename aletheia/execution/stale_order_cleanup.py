@@ -242,15 +242,8 @@ def _apply(order: dict, reason_code: str, kind: str) -> str | None:
             position_id = _stale_pending_close_position_id(fresh)
             if position_id is None:
                 return None  # no longer a stale close carrier
-            cursor = db.execute(
-                "UPDATE positions "
-                "SET pending_close_order_id=NULL, pending_close_status=NULL, "
-                "    pending_close_requested_at=NULL "
-                "WHERE id=? AND status='closed' AND pending_close_order_id=?",
-                (position_id, oid),
-            )
-            if cursor.rowcount == 1:
-                cleared_position_id = position_id
+            repo.release_position_close_claim(position_id, order_id=oid)
+            cleared_position_id = position_id
 
         # The network verification for a plain cancel already happened in _decide
         # (outside any lock); we deliberately do not re-query the venue while

@@ -36,7 +36,7 @@ from aletheia.storage.repositories import (
     release_proposal_execution_claim,
     replace_proposal_execution_claim,
     transaction,
-    update_position,
+    update_open_position_exit_plan,
     update_trade_proposal,
 )
 from aletheia.files.jsonl import write_audit
@@ -1055,7 +1055,7 @@ def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
         updates["stop_source"] = proposal.stop_source
     if updates:
         updates["exit_plan_version"] = 1
-        update_position(pid, **updates)
+        update_open_position_exit_plan(pid, **updates)
 
 
 def _exchange_order_matches_proposal(
