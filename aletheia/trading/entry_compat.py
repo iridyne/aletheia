@@ -17,19 +17,6 @@ class LegacyPlanningOutcome:
     economic_no_plan: bool
 
 
-@dataclass(frozen=True)
-class LegacyEntryRecord:
-    planner_contract_version: str
-    result: dict[str, Any] | None
-    planner_input: dict[str, Any] | None
-    plan: dict[str, Any] | None
-    result_json: str | None
-    planner_input_json: str | None
-    plan_json: str | None
-    planner_input_hash_valid: bool | None
-    plan_hash_valid: bool | None
-
-
 _BLOCKED_REASONS = {"AI_ENTRY_RUNTIME_UNSUPPORTED", "EXECUTION_VENUE_UNAVAILABLE"}
 _FAILED_REASONS = {
     "PLANNER_SCHEMA_INVALID",
@@ -44,50 +31,6 @@ _LEGACY_PLANNER_FORMATS = {
     "entry-planner/v3",
     "entry-planner/v4",
 }
-
-
-def _read_json_object(raw: object, field: str) -> tuple[str | None, dict[str, Any] | None]:
-    if raw is None:
-        return None, None
-    source = str(raw)
-    try:
-        value = json.loads(source)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"legacy_entry_json_invalid:{field}") from exc
-    if not isinstance(value, dict):
-        raise ValueError(f"legacy_entry_json_not_object:{field}")
-    return source, value
-
-
-def read_legacy_entry_record(
-    generation: dict[str, Any],
-    plan: dict[str, Any] | None = None,
-) -> LegacyEntryRecord:
-    """Decode immutable legacy payloads without granting current writer authority."""
-
-    version = str(generation.get("planner_contract_version") or "")
-    if version not in _LEGACY_PLANNER_FORMATS:
-        raise ValueError("legacy_entry_format_unrecognized")
-    result_json, result = _read_json_object(generation.get("result_json"), "result_json")
-    input_json, planner_input = _read_json_object(generation.get("planner_input_json"), "planner_input_json")
-    plan_json, plan_payload = _read_json_object(plan.get("plan_json") if plan else None, "plan_json")
-
-    def hash_valid(source: str | None, expected: object) -> bool | None:
-        if source is None or not expected:
-            return None
-        return hashlib.sha256(source.encode()).hexdigest() == str(expected)
-
-    return LegacyEntryRecord(
-        planner_contract_version=version,
-        result=result,
-        planner_input=planner_input,
-        plan=plan_payload,
-        result_json=result_json,
-        planner_input_json=input_json,
-        plan_json=plan_json,
-        planner_input_hash_valid=hash_valid(input_json, generation.get("planner_input_hash")),
-        plan_hash_valid=hash_valid(plan_json, plan.get("plan_hash") if plan else None),
-    )
 
 
 def classify_legacy_planning_outcome(row: dict) -> LegacyPlanningOutcome:
