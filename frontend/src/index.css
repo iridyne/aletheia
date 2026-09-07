@@ -146,17 +146,13 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
-  /* Firefox: thin dark scrollbars everywhere — matches the webkit
-     ::-webkit-scrollbar rule further down. Without this, Firefox
-     falls back to the OS's light-mode scrollbar on any element
-     without an explicit scrollbar-color, notably horizontal
-     overflow at the document level. */
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-2) transparent;
+  scrollbar-width: none;
   /* Tell the UA to render its remaining native chrome (form control
      accents, focus rings on default styling paths) with dark defaults. */
   color-scheme: dark;
 }
+
+html::-webkit-scrollbar { display: none; }
 
 body {
   font-family: var(--sans);
