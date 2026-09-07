@@ -1263,21 +1263,6 @@ def _exposure_fingerprint(exposure: dict[str, Any]) -> tuple[Any, ...]:
     ))
 
 
-def _exact_outcome(
-    outcome_candidate_key: str,
-    horizon: str,
-) -> tuple[
-    dict[str, Any] | None,
-    str | None,
-    int,
-    int,
-    str | None,
-    dict[str, Any] | None,
-]:
-    """Compatibility wrapper around the batched exact resolver."""
-    return _load_exact_outcomes({outcome_candidate_key}, horizon)[outcome_candidate_key]
-
-
 def _outcome_fingerprint(outcome: dict[str, Any]) -> tuple[Any, ...]:
     return tuple(outcome.get(field) for field in (
         "outcome_candidate_key", "horizon", "status", "entry_ts", "due_at",

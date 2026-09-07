@@ -197,24 +197,3 @@ def capture_attribution_snapshot(
         pass
     snapshot["market_context"] = market_context
     return snapshot
-
-
-def capture_attribution_snapshot_json(
-    symbol: str,
-    *,
-    exchange: str = "",
-    market_type: str = "",
-    opportunity_id: str | None = None,
-) -> str | None:
-    try:
-        return json.dumps(
-            capture_attribution_snapshot(
-                symbol,
-                exchange=exchange,
-                market_type=market_type,
-                opportunity_id=opportunity_id,
-            ),
-            default=str,
-        )
-    except Exception:
-        return None

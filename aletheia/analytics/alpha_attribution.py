@@ -1421,19 +1421,6 @@ def _control_observation_return(db, row, as_of_at: str) -> float | None:
     return None
 
 
-def _exit_price_from_ohlcv(db, symbol: str, due_at: str) -> float | None:
-    due_dt = _parse_dt(due_at)
-    if due_dt is None:
-        return None
-    target_ms = int(due_dt.timestamp() * 1000)
-    row = db.execute(
-        "SELECT close FROM market_ohlcv "
-        "WHERE symbol = ? AND ts >= ? ORDER BY ts ASC LIMIT 1",
-        (symbol, target_ms),
-    ).fetchone()
-    return float(row["close"]) if row and row["close"] is not None else None
-
-
 def _baseline_symbols(db, *, exclude_symbol: str, equity_like: bool) -> list[str]:
     registry = db.execute(
         "SELECT DISTINCT symbol FROM universe_registry "

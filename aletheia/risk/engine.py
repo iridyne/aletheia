@@ -2424,27 +2424,6 @@ def _family_live_edge(
     return None
 
 
-def _symbol_family(symbol: str, positions: list[dict]) -> str | None:
-    """Look up scanner_family for a symbol via its open position's opportunity_id."""
-    for pos in positions:
-        if pos.get("symbol") != symbol:
-            continue
-        opp_id = pos.get("opportunity_id")
-        if not opp_id:
-            continue
-        try:
-            from aletheia.storage.sqlite import get_db
-            db = get_db()
-            row = db.execute(
-                "SELECT scanner_family FROM opportunities WHERE id = ?", (opp_id,)
-            ).fetchone()
-            if row and row[0]:
-                return row[0]
-        except Exception:
-            pass
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Check #17: Account-level leverage ratio
 # ---------------------------------------------------------------------------
