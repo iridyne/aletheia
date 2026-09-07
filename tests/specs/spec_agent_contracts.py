@@ -497,28 +497,59 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
 
 @spec_claim(
     SpecClaim(
-        "AC-S13", "agent_contracts", "§3 paper_trader trigger", "L2a",
-        "Every committed Ranker work source has an on-demand wake and the scheduled fallback remains.",
+        "AC-S13", "agent_contracts", "§3 entry trigger ownership", "L2a",
+        "The Ranker/paper_trader wake fan-out is retired and cannot be reintroduced. "
+        "Entry work is triggered through the canonical Planner: a new Universe snapshot "
+        "notifies the operator feature refresh, and the scheduled durable Entry Planner "
+        "batch remains the fallback. "
+        "Contract Delta (2026-09-07, learning_contract.md preamble): 'Candidate → "
+        "Planning Generation → Planner → Compiler → Entry Plan → Risk/Gateway is the "
+        "sole entry path; legacy Ranker and entry-decision consumers are retired.'",
         status="implemented",
     ),
 )
-def test_paper_trader_on_demand_sources_and_fallback_are_wired():
+def test_entry_trigger_is_owned_by_the_canonical_planner():
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    expected = {
-        "aletheia/universe/service.py": "universe_refresh_new_snapshot",
-        "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
-        "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
-        "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
-        "aletheia/server/routes/settings.py": "ranker_config_changed",
-        "aletheia/analytics/guard_promotion.py": "guard_set_changed",
-        "aletheia/agent_shell/commands.py": "operator_queue_slot_released",
-    }
-    for relative, source in expected.items():
-        assert source in (root / relative).read_text(encoding="utf-8")
+
+    # The surviving producer-side wake: a new Universe snapshot is real work for
+    # the Planner, so it still notifies.
+    assert "universe_refresh_new_snapshot" in (
+        root / "aletheia/universe/service.py"
+    ).read_text(encoding="utf-8")
 
     scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
-    assert '_guarded("paper_trader", _run_paper_trader)' in scheduler
-    assert '"interval", minutes=3, id="paper_trader"' in scheduler
-    assert "on_demand:" in scheduler
+    assert "run_entry_planner_batch" in scheduler, (
+        "the durable Entry Planner batch is the scheduled fallback for entry work"
+    )
+
+    # Retirement lock. Each token below was a Ranker-era wake signal or the job
+    # that consumed them; none may come back, because a second entry trigger is a
+    # second entry authority.
+    #
+    # Deliberately NOT locked: the bare string `paper_trader`. It survives as an
+    # agent ROLE name (`economics/agent_roles.py`) and as the Learning consumer
+    # identity `paper_trader_ranker` (`trust/behavior_authority.py`) — neither
+    # triggers entry work. Locking it would fail on 26 unrelated files and teach
+    # the next reader that the lock is noise.
+    retired_tokens = (
+        "_run_paper_trader",
+        '_guarded("paper_trader"',
+        'id="paper_trader"',
+        "equity_observer_opportunity",
+        "prediction_observer_opportunity",
+        "divergence_scanner_opportunity",
+        "ranker_config_changed",
+        "guard_set_changed",
+        "operator_queue_slot_released",
+    )
+    reintroduced = {
+        path.relative_to(root).as_posix(): token
+        for path in (root / "aletheia").rglob("*.py")
+        for token in retired_tokens
+        if token in path.read_text(encoding="utf-8")
+    }
+    assert not reintroduced, (
+        f"retired Ranker/paper_trader entry triggers reintroduced: {reintroduced}"
+    )
