@@ -1,0 +1,308 @@
+"""Pipeline: exchange-mode position → protective trigger → broker close → PnL.
+
+This is the exchange-mode counterpart of `test_pipeline_position_to_close.py`,
+which runs entirely on `paper_internal` and therefore disappears with the
+paper_broker retirement (see #2993). The close segment of the minimum profitable
+loop must keep end-to-end coverage on the modes it will actually run on.
+
+Offline by construction, following the established e2e convention: the autouse
+`_mock_exchange` fixture blocks `net.make_ccxt`, and the venue is represented by
+the same UTA adapter double the coordinator tests use
+(`tests/uta/test_execution_coordinator._Adapter`). No network, no recorded
+fixtures, no credentials.
+
+Routing under test — `bitget_demo`, NOT paper:
+
+    evaluate_open_positions()
+      → close_position_routed()            # single source of truth for routing
+      → gateway.close_exchange_position()  # exchange modes only
+      → coordinator.close_position()       # claims, submits, materializes
+"""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from aletheia.storage import repositories as repo
+from aletheia.storage.models import Position
+
+_MODE = "bitget_demo"
+
+
+def _prepare_venue(monkeypatch, *, fill_price: float):
+    """Wire an adapter double that accepts the close and reports one exact fill."""
+    from datetime import datetime as _dt
+
+    from aletheia.execution import coordinator
+    from aletheia.uta.models import CommandEvidence, SubmissionReport
+    from tests.uta.test_execution_coordinator import _Adapter, _identity
+
+    submitted: list[object] = []
+
+    async def submit(command):
+        submitted.append(command)
+        return SubmissionReport(
+            identity=command.expected_account,
+            command_id=command.command_id,
+            # ACKNOWLEDGED is the only evidence value that means "the venue took
+            # it and gave us a stable identity". ACCEPTED belongs to
+            # OrderLifecycle, not CommandEvidence — using it would leave the claim
+            # at `submission_unknown` with no exchange_order_id, and the private
+            # fill could then never be matched to the order.
+            evidence=CommandEvidence.ACKNOWLEDGED,
+            received_at=_dt.now(timezone.utc),
+            client_order_id=command.client_order_id,
+            venue_order_id=f"venue-close-{len(submitted)}",
+            profile_version="1",
+        )
+
+    adapter = _Adapter(submit, _MODE)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(
+        coordinator, "require_uta_mutation_qualification", lambda *a, **k: None
+    )
+    monkeypatch.setattr(
+        "aletheia.execution.order_constraints.prepare_exchange_quantity",
+        lambda mode, symbol, market, qty, price: qty,
+    )
+
+    def private_fill(order_row: dict) -> dict:
+        return {
+            "orderId": order_row["exchange_order_id"],
+            "clientOid": order_row["client_order_id"],
+            "tradeId": f"private-fill-{order_row['id']}",
+            "fillPrice": str(fill_price),
+            "fillQuantity": str(order_row["quantity"]),
+            "fee": "0.01",
+            "feeCoin": "USDT",
+            "cTime": str(int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000),
+        }
+
+    return adapter, submitted, private_fill, _identity
+
+
+def _seed_exchange_position(
+    *,
+    direction: str,
+    entry_price: float,
+    stop_price: float | None = None,
+    take_profit_price: float | None = None,
+    opened_hours_ago: float = 2.0,
+) -> Position:
+    """Seed an open exchange position bound to a filled, account-proven entry Order.
+
+    The entry Order must carry `uta_account_identity_json`: the coordinator
+    derives the close's account from the entry, and reconciliation fail-closes an
+    Order that cannot prove its account
+    (execution_contract.md — 提交前持久化 exact `uta_account_identity_json`).
+    """
+    from aletheia.storage.models import Order
+    from tests.uta.test_execution_coordinator import _identity
+
+    entry = Order(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction=direction,
+        order_type="market",
+        quantity=1.0,
+        price=entry_price,
+        execution_mode=_MODE,
+        status="filled",
+        source="adopted",
+        uta_account_identity_json=_identity(_MODE).model_dump_json(),
+    )
+    repo.insert_order(entry)
+    position = Position(
+        order_id=entry.id,
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction=direction,
+        quantity=1.0,
+        entry_price=entry_price,
+        current_price=entry_price,
+        execution_mode=_MODE,
+        status="open",
+        stop_price=stop_price,
+        take_profit_price=take_profit_price,
+        opened_at=(
+            datetime.now(timezone.utc) - timedelta(hours=opened_hours_ago)
+        ).isoformat(),
+    )
+    repo.insert_position(position)
+    return position
+
+
+def _patch_protective_mark(monkeypatch, price: float):
+    """Inject the fresh mark at the seam the close path actually reads.
+
+    `position_manager` resolves the protective mark through
+    `get_fresh_mark_for_protective_close`, which returns a provenance DICT. The
+    paper-era e2e tests patch `get_fresh_price_for_protective_close` (a float
+    wrapper) and therefore never influence the decision — that stale seam is why
+    all four `test_pipeline_position_to_close.py` tests assert `closed == 1` and
+    get `0`.
+    """
+    import aletheia.data.price_feed as price_feed
+    import aletheia.portfolio.position_manager as pm
+
+    def mark(symbol, market_type, *, venue, not_before=None):
+        return {
+            "price": price,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "age_seconds": 0.0,
+            "source": "e2e_stub",
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market_type,
+        }
+
+    for module in (price_feed, pm):
+        monkeypatch.setattr(
+            module, "get_fresh_mark_for_protective_close", mark, raising=False
+        )
+        monkeypatch.setattr(
+            module,
+            "get_fresh_price_for_protective_close",
+            lambda symbol, market_type, *, venue: price,
+            raising=False,
+        )
+
+
+def _settle_pending_close(position_id: str, private_fill) -> None:
+    """Materialize the claimed close from exact private fill evidence."""
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+
+    pending = [
+        row for row in repo.list_orders(limit=50)
+        if row["position_id"] == position_id and row.get("close_reason")
+    ]
+    assert len(pending) == 1, f"expected exactly one close claim, got {pending}"
+    result = materialize_bitget_close(pending[0]["id"], [private_fill(pending[0])])
+    assert result.state == "filled", result
+
+
+@pytest.mark.parametrize(
+    ("direction", "entry", "stop", "mark", "reason"),
+    (
+        pytest.param("long", 100.0, 98.0, 97.5, "stop_loss", id="long-stop-loss"),
+        pytest.param("short", 100.0, 102.0, 102.5, "stop_loss", id="short-stop-loss"),
+    ),
+)
+def test_exchange_stop_loss_closes_through_the_broker(
+    e2e_db, monkeypatch, direction, entry, stop, mark, reason
+):
+    """A breached stop on an exchange position closes via the broker, not locally.
+
+    The local-only path would leave a dangling real venue position and fabricate
+    the exit from a local mark; `close_position_routed` exists to make that
+    impossible. This asserts the routing actually holds for `bitget_demo`.
+    """
+    _, submitted, private_fill, _ = _prepare_venue(monkeypatch, fill_price=mark)
+    position = _seed_exchange_position(
+        direction=direction, entry_price=entry, stop_price=stop
+    )
+    _patch_protective_mark(monkeypatch, mark)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    result = evaluate_open_positions()
+
+    # The broker was asked to reduce the real position — the whole point of
+    # routing exchange modes away from the local close.
+    assert submitted, (
+        "no close command reached the venue adapter — the exchange position would "
+        f"be left dangling. result={result}"
+    )
+    claim = repo.get_position(position.id)
+    assert claim["pending_close_order_id"], "close was not claimed durably"
+
+    _settle_pending_close(position.id, private_fill)
+
+    closed = repo.get_position(position.id)
+    assert closed["status"] == "closed"
+    assert closed["close_reason"] == reason
+    # Exit economics come from the venue fill, never from the local mark.
+    assert closed["exit_price_source"] == "broker_fill"
+    assert closed["exit_fill_verified"] == 1
+    assert closed["current_price"] == pytest.approx(mark)
+
+
+def test_exchange_take_profit_closes_through_the_broker(e2e_db, monkeypatch):
+    _, submitted, private_fill, _ = _prepare_venue(monkeypatch, fill_price=110.0)
+    position = _seed_exchange_position(
+        direction="long", entry_price=100.0, stop_price=95.0, take_profit_price=108.0
+    )
+    _patch_protective_mark(monkeypatch, 110.0)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    evaluate_open_positions()
+    assert submitted, "take-profit did not reach the venue adapter"
+
+    _settle_pending_close(position.id, private_fill)
+
+    closed = repo.get_position(position.id)
+    assert closed["status"] == "closed"
+    assert closed["close_reason"] == "take_profit"
+    assert closed["exit_price_source"] == "broker_fill"
+    assert closed["current_price"] == pytest.approx(110.0)
+    # The exit fee is a real venue fact and is recorded.
+    assert closed["exit_fee"] == pytest.approx(0.01)
+    # A usdt_futures close with no funding ledger keeps `realized_pnl` NULL rather
+    # than treating unknown funding as zero. This is the contracted honesty rule
+    # (DECISIONS.md 2026-07-10, "Opportunity 结果以固定时点净收益为学习事实":
+    # 永续合约缺入场时资金费时，会显示证据不完整，而不是把资金费当成 0), and it is
+    # why this test does NOT assert a positive PnL — doing so would demand the
+    # fabrication the rule forbids.
+    assert closed["funding_source"] == "unavailable"
+    assert closed["realized_pnl"] is None, (
+        "realized_pnl was computed without funding evidence — unknown funding must "
+        "not be settled as zero"
+    )
+
+
+def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
+    """The autonomous loop must refuse a live position even when the stop is breached.
+
+    `close_position_routed` is the chokepoint for this guard (`allow_live=False`
+    by default), so the auto-exit loop can never place a REAL order. Locking it
+    here because the exchange-mode close path above is the code that would
+    otherwise carry the live close through.
+    """
+    from aletheia.storage.models import Order
+    from tests.uta.test_execution_coordinator import _identity
+
+    live_mode = "bitget_live_limited"
+    entry = Order(
+        symbol="SOL/USDT", market_type="usdt_futures", direction="long",
+        order_type="market", quantity=1.0, price=100.0,
+        execution_mode=live_mode, status="filled", source="adopted",
+        uta_account_identity_json=_identity(live_mode).model_dump_json(),
+    )
+    repo.insert_order(entry)
+    position = Position(
+        order_id=entry.id, symbol="SOL/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, entry_price=100.0, current_price=100.0,
+        execution_mode=live_mode, status="open", stop_price=98.0,
+        opened_at=(datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+    )
+    repo.insert_position(position)
+    _patch_protective_mark(monkeypatch, 97.0)
+
+    submitted: list[object] = []
+
+    from aletheia.execution import coordinator
+
+    def forbidden(_mode):
+        submitted.append(_mode)
+        raise AssertionError("autonomous loop must never reach a live venue")
+
+    monkeypatch.setattr(coordinator, "create_uta_adapter", forbidden)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    result = evaluate_open_positions()
+
+    assert submitted == [], "a live close command reached the venue"
+    assert repo.get_position(position.id)["status"] == "open"
+    assert result["closed"] == 0
