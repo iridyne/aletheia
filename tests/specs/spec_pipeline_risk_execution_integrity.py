@@ -1971,7 +1971,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(tmp_path,
         broker_id=execution_mode, account_environment=adapter.identity.environment,
         execution_mode=execution_mode,
     )})
-    repo.update_order(position.order_id, uta_account_identity_json=adapter.identity.model_dump_json())
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=adapter.identity.model_dump_json())
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: adapter)
 
     with pytest.raises(RuntimeError):
