@@ -231,13 +231,15 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
     )
 )
 def test_unqualified_legacy_private_io_is_explicitly_contained():
+    # This set IS the legacy-client migration ledger (#2994), asserted exactly in
+    # both directions so it shrinks only alongside a real migration and can never
+    # grow silently.
     allowed = {
         "aletheia/agent_runtime/scheduler.py",
         "aletheia/agent_runtime/startup_behavior_gate.py",
         "aletheia/cli/bitget_cmd.py",
         "aletheia/cli/secrets_cmd.py",
         "aletheia/execution/venue_capabilities.py",
-        "aletheia/maintenance/repair_administrative_close.py",
         "aletheia/server/routes/bitget.py",
     }
     actual = set()

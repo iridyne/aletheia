@@ -35,7 +35,7 @@ def _find_native_close_order(position_id: str) -> dict | None:
     row = (
         repo.get_db()
         .execute(
-            "SELECT id, exchange_order_id, price, quantity, filled_at, close_reason "
+            "SELECT id, exchange_order_id, price, quantity, created_at, filled_at, close_reason "
             "FROM orders "
             "WHERE position_id = ? AND source = 'native' "
             "AND close_reason IS NOT NULL AND close_reason <> '' "
@@ -97,38 +97,74 @@ def _query_exchange_fill(
     symbol: str,
     *,
     execution_mode: str,
+    start_at: str | None,
 ) -> dict | None:
-    """Fetch complete private-fill evidence; unavailable evidence fails closed."""
+    """Fetch complete private-fill evidence; unavailable evidence fails closed.
+
+    Reads through the shared UTA projection instead of the hand-rolled Bitget
+    client. Three behavioural gains over the previous path:
+
+    * **the account is verified.** `_UTAReconciliationProjection` passes
+      ``expected_account`` on every read. The old code constructed
+      ``BitgetClient(mode="demo", ...)`` with the mode HARDCODED, so repairing a
+      ``bitget_live_limited`` Position queried the demo account and would have
+      aggregated another account's fills.
+    * **incompleteness is explicit.** The projection raises on any
+      ``ReadCompleteness`` other than ``COMPLETE``, which the ``except`` below
+      turns into "evidence unavailable, repair unchanged" — the fail-closed
+      behaviour this function already promised. A partial page previously looked
+      like a short-but-valid fill list.
+    * **profile-aware.** Bitget's classic_v2 (``/api/v2/``) and uta_v3
+      (``/api/v3/``) surfaces are selected by the UTA profile rather than routed
+      by hand.
+
+    ``start_at`` is REQUIRED, not optional. `CCXTUTAAdapter.get_fills` answers a
+    query with ``scope.start_at is None`` as ``PARTIAL`` /
+    ``private_fill_history_start_required`` — so omitting it makes this function
+    return None unconditionally, i.e. silently disables the repair. An earlier
+    version of this migration did exactly that and every test still passed,
+    because all three DB-level tests monkeypatch this function away.
+    """
+    if not start_at:
+        logger.warning(
+            "close Order has no created_at; private fill history needs a lower bound, "
+            "so administrative repair remains unchanged"
+        )
+        return None
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.async_utils import run_coro_from_sync
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection
+        from aletheia.uta.manager import build_uta_registry
 
-        client = BitgetClient(mode="demo", profile=configured_bitget_profile())
-        try:
-            from aletheia.data.symbols import to_bitget
-            from aletheia.async_utils import run_coro_from_sync
-
-            rows = run_coro_from_sync(
-                client.get_order_fills(
-                    order_id=str(exchange_order_id),
-                    symbol=to_bitget(symbol),
-                    market_type="usdt_futures",
-                ),
-                timeout=30,
+        identity = next(
+            (
+                candidate
+                for candidate in build_uta_registry().configured_identities()
+                if candidate.execution_mode == execution_mode
+            ),
+            None,
+        )
+        if identity is None:
+            logger.warning(
+                "no configured UTA account for %s; administrative repair remains unchanged",
+                execution_mode,
             )
-            return _aggregate_exchange_fills(
-                rows,
-                exchange_order_id=str(exchange_order_id),
+            return None
+        rows = run_coro_from_sync(
+            _UTAReconciliationProjection(execution_mode, identity).get_order_fills(
+                order_id=str(exchange_order_id),
                 symbol=symbol,
-                execution_mode=execution_mode,
-            )
-        finally:
-            from aletheia.async_utils import run_coro_from_sync
-
-            try:
-                run_coro_from_sync(client.close(), timeout=10)
-            except Exception:
-                pass
+                market_type="usdt_futures",
+                start_at=start_at,
+            ),
+            timeout=30,
+        )
+        return _aggregate_exchange_fills(
+            rows,
+            exchange_order_id=str(exchange_order_id),
+            symbol=symbol,
+            execution_mode=execution_mode,
+        )
     except Exception as exc:
         logger.warning("exchange fill query failed (%s); administrative repair remains unchanged", exc)
         return None
@@ -222,6 +258,7 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
         str(order["exchange_order_id"]),
         str(pos["symbol"]),
         execution_mode=execution_mode,
+        start_at=order.get("created_at"),
     )
     if fill is None:
         raise ValueError("complete private fill evidence is unavailable; administrative close preserved")

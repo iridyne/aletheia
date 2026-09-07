@@ -173,3 +173,169 @@ def test_repair_uses_vwap_and_aggregated_fee(tmp_path, monkeypatch):
     assert stored["exit_fee"] == pytest.approx(0.1)
     assert stored["realized_pnl"] == pytest.approx(1.4)
     assert stored["closed_at"] == "2026-08-27T00:00:01+00:00"
+
+
+# ---------------------------------------------------------------------------
+# _query_exchange_fill itself — the three tests above monkeypatch it away, so
+# without these its body is never executed by the suite. An earlier migration of
+# this function shipped permanently broken (it omitted the required `start_at`,
+# so every call returned None) and every test still passed.
+# ---------------------------------------------------------------------------
+
+
+def _projection_double(monkeypatch, *, rows, capture: dict):
+    """Replace the UTA projection with a double that records the query it received."""
+    from types import SimpleNamespace
+
+    from aletheia.maintenance import repair_administrative_close as repair
+    import aletheia.execution.reconciliation as reconciliation
+    import aletheia.uta.manager as uta_manager
+
+    identity = SimpleNamespace(execution_mode="bitget_demo")
+    monkeypatch.setattr(
+        uta_manager,
+        "build_uta_registry",
+        lambda *a, **k: SimpleNamespace(configured_identities=lambda: (identity,)),
+    )
+
+    class _Projection:
+        def __init__(self, execution_mode, expected_account):
+            capture["execution_mode"] = execution_mode
+            capture["expected_account"] = expected_account
+
+        async def get_order_fills(self, *, order_id, symbol, market_type, start_at=None):
+            capture["order_id"] = order_id
+            capture["symbol"] = symbol
+            capture["market_type"] = market_type
+            capture["start_at"] = start_at
+            return rows
+
+    monkeypatch.setattr(reconciliation, "_UTAReconciliationProjection", _Projection)
+    return repair
+
+
+def test_query_exchange_fill_passes_the_required_history_lower_bound(monkeypatch):
+    """`start_at` is mandatory: without it the UTA fills read answers PARTIAL.
+
+    `CCXTUTAAdapter.get_fills` rejects `scope.start_at is None` with
+    `private_fill_history_start_required`, so an omitted bound silently disables
+    the repair instead of failing loudly. This asserts the bound reaches the query.
+    """
+    capture: dict = {}
+    repair = _projection_double(monkeypatch, rows=_private_rows(), capture=capture)
+
+    result = repair._query_exchange_fill(
+        "exchange-close-order",
+        "BTC/USDT",
+        execution_mode="bitget_demo",
+        start_at="2026-06-01T00:00:00+00:00",
+    )
+
+    assert result is not None, "complete private evidence should aggregate"
+    assert capture["start_at"] == "2026-06-01T00:00:00+00:00"
+    assert capture["order_id"] == "exchange-close-order"
+    assert capture["market_type"] == "usdt_futures"
+    # The account is resolved from the Position's own mode, not hardcoded to demo.
+    assert capture["execution_mode"] == "bitget_demo"
+    assert capture["expected_account"].execution_mode == "bitget_demo"
+
+
+def test_query_exchange_fill_fails_closed_without_a_lower_bound(monkeypatch):
+    capture: dict = {}
+    repair = _projection_double(monkeypatch, rows=_private_rows(), capture=capture)
+
+    assert repair._query_exchange_fill(
+        "exchange-close-order", "BTC/USDT",
+        execution_mode="bitget_demo", start_at=None,
+    ) is None
+    assert capture == {}, "no venue query may be issued without a history bound"
+
+
+def test_query_exchange_fill_fails_closed_when_the_account_is_not_configured(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.uta.manager as uta_manager
+    from aletheia.maintenance import repair_administrative_close as repair
+
+    monkeypatch.setattr(
+        uta_manager, "build_uta_registry",
+        lambda *a, **k: SimpleNamespace(configured_identities=lambda: ()),
+    )
+    assert repair._query_exchange_fill(
+        "exchange-close-order", "BTC/USDT",
+        execution_mode="bitget_live_limited", start_at="2026-06-01T00:00:00+00:00",
+    ) is None
+
+
+def test_query_exchange_fill_fails_closed_when_the_read_raises(monkeypatch):
+    from types import SimpleNamespace
+
+    import aletheia.execution.reconciliation as reconciliation
+    import aletheia.uta.manager as uta_manager
+    from aletheia.maintenance import repair_administrative_close as repair
+
+    identity = SimpleNamespace(execution_mode="bitget_demo")
+    monkeypatch.setattr(
+        uta_manager, "build_uta_registry",
+        lambda *a, **k: SimpleNamespace(configured_identities=lambda: (identity,)),
+    )
+
+    class _Raising:
+        def __init__(self, *a, **k):
+            pass
+
+        async def get_order_fills(self, **kwargs):
+            raise RuntimeError("uta_exact_fills_incomplete")
+
+    monkeypatch.setattr(reconciliation, "_UTAReconciliationProjection", _Raising)
+    assert repair._query_exchange_fill(
+        "exchange-close-order", "BTC/USDT",
+        execution_mode="bitget_demo", start_at="2026-06-01T00:00:00+00:00",
+    ) is None
+
+
+def test_query_exchange_fill_resolves_the_positions_own_account_not_demo(monkeypatch):
+    """The identity must come from the Position's execution_mode.
+
+    The pre-migration code constructed `BitgetClient(mode="demo", ...)` with the
+    mode HARDCODED, so repairing a `bitget_live_limited` Position queried the demo
+    account and would have aggregated another account's fills into a live position's
+    realized PnL. Parametrising over demo alone cannot catch that, so this asserts
+    the live mode explicitly.
+    """
+    from types import SimpleNamespace
+
+    import aletheia.execution.reconciliation as reconciliation
+    import aletheia.uta.manager as uta_manager
+    from aletheia.maintenance import repair_administrative_close as repair
+
+    capture: dict = {}
+    identities = (
+        SimpleNamespace(execution_mode="bitget_demo"),
+        SimpleNamespace(execution_mode="bitget_live_limited"),
+    )
+    monkeypatch.setattr(
+        uta_manager, "build_uta_registry",
+        lambda *a, **k: SimpleNamespace(configured_identities=lambda: identities),
+    )
+
+    class _Projection:
+        def __init__(self, execution_mode, expected_account):
+            capture["execution_mode"] = execution_mode
+            capture["expected_account"] = expected_account
+
+        async def get_order_fills(self, **kwargs):
+            return _private_rows()
+
+    monkeypatch.setattr(reconciliation, "_UTAReconciliationProjection", _Projection)
+
+    repair._query_exchange_fill(
+        "exchange-close-order", "BTC/USDT",
+        execution_mode="bitget_live_limited",
+        start_at="2026-06-01T00:00:00+00:00",
+    )
+
+    assert capture["execution_mode"] == "bitget_live_limited"
+    assert capture["expected_account"].execution_mode == "bitget_live_limited", (
+        "the live Position was repaired against a different account"
+    )
