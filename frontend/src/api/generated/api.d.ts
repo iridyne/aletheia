@@ -860,40 +860,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/binance-testnet/credentials-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Binance Testnet Credentials Status */
-        get: operations["binance_testnet_credentials_status_api_binance_testnet_credentials_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/binance-testnet/test-connection": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Binance Testnet Test Connection */
-        post: operations["binance_testnet_test_connection_api_binance_testnet_test_connection_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/binance/credentials-status": {
         parameters: {
             query?: never;
@@ -4871,23 +4837,6 @@ export interface paths {
         put?: never;
         /** Set Binance Credentials */
         post: operations["set_binance_credentials_api_settings_binance_credentials_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/binance-testnet-credentials": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Binance Testnet Credentials Legacy */
-        post: operations["set_binance_testnet_credentials_legacy_api_settings_binance_testnet_credentials_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -15112,46 +15061,6 @@ export interface operations {
             };
         };
     };
-    binance_testnet_credentials_status_api_binance_testnet_credentials_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    binance_testnet_test_connection_api_binance_testnet_test_connection_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     binance_credentials_status_api_binance_credentials_status_get: {
         parameters: {
             query?: never;
@@ -21393,39 +21302,6 @@ export interface operations {
         };
     };
     set_binance_credentials_api_settings_binance_credentials_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BinanceCredentialsRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_binance_testnet_credentials_legacy_api_settings_binance_testnet_credentials_post: {
         parameters: {
             query?: never;
             header?: never;

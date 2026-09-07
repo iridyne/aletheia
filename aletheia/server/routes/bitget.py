@@ -144,13 +144,6 @@ async def binance_credentials_status():
     return _binance_cred_status()
 
 
-# Legacy endpoint — keep for backward compat during transition
-@router.get("/binance-testnet/credentials-status")
-async def binance_testnet_credentials_status():
-    full = _binance_cred_status()
-    return full["testnet"]
-
-
 class BinanceCredentialsRequest(BaseModel):
     profile: str = "testnet"
     api_key: str | None = None
@@ -185,13 +178,6 @@ async def set_binance_credentials(req: BinanceCredentialsRequest):
     return {"updated": fields_set, "status": _binance_cred_status()}
 
 
-# Legacy endpoint
-@router.post("/settings/binance-testnet-credentials")
-async def set_binance_testnet_credentials_legacy(req: BinanceCredentialsRequest):
-    req.profile = "testnet"
-    return await set_binance_credentials(req)
-
-
 class BinanceTestRequest(BaseModel):
     mode: str = "testnet"
 
@@ -223,12 +209,6 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
                 await client.close()
             except Exception:
                 pass
-
-
-# Legacy endpoint
-@router.post("/binance-testnet/test-connection")
-async def binance_testnet_test_connection():
-    return await binance_test_connection(BinanceTestRequest(mode="testnet"))
 
 
 class BinanceCandidateRequest(BaseModel):

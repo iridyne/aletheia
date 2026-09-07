@@ -1472,27 +1472,6 @@ export const api = {
 			body,
 		),
 
-	// Legacy aliases (keep for any remaining callers)
-	setExchangeCredentials: (body: {
-		profile: string;
-		api_key?: string;
-		api_secret?: string;
-		passphrase?: string;
-	}) => post("/settings/exchange-credentials", body),
-	getBinanceTestnetCredStatus: () =>
-		fetchJson<{ api_key: any; api_secret: any }>(
-			"/binance-testnet/credentials-status",
-		),
-	setBinanceTestnetCredentials: (body: {
-		api_key?: string;
-		api_secret?: string;
-	}) => post("/settings/binance-testnet-credentials", body),
-	testBinanceTestnet: () =>
-		post<{ connected: boolean; positions_count?: number; error?: string }>(
-			"/binance-testnet/test-connection",
-			{},
-		),
-
 	// Telegram bot reachability (facet A — never returns the token)
 	getTelegramHealth: () =>
 		fetchJson<{ reachable: boolean; username?: string; error?: string }>(
