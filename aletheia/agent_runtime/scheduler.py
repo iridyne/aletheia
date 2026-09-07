@@ -2754,7 +2754,7 @@ def _run_equity_observer():
     cfg = load_config()
     if cfg.runtime.paused:
         return
-    tickers = cfg.market_data.observed_equities or cfg.market_data.observed_stocks
+    tickers = cfg.market_data.observed_equities
     if not tickers:
         return
     try:
