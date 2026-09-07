@@ -180,3 +180,62 @@ def test_unimplemented_system_tools_are_not_registered():
         "the system tool class has no members; an empty permission class invites "
         "a future tool to be added without deciding its real class"
     )
+
+
+# ---------------------------------------------------------------------------
+# market_data.observed_stocks retirement
+# ---------------------------------------------------------------------------
+
+
+def test_retired_observed_stocks_is_merged_into_observed_equities(tmp_path, monkeypatch):
+    """A config carrying only the retired name keeps working, with its values kept.
+
+    Every consumer read `observed_equities or observed_stocks`, so dropping the field
+    without merging would silently blank an existing user's ticker list. And because
+    `load_config` validates with a runtime `extra="forbid"`, dropping it without a
+    migration would make the file fail to LOAD outright.
+    """
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"market_data": {"observed_stocks": ["SPY", "QQQ"]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    assert not hasattr(cfg.market_data, "observed_stocks")
+    assert cfg.market_data.observed_equities == ["SPY", "QQQ"]
+
+
+def test_retired_observed_stocks_merge_is_order_preserving_and_deduplicated(
+    tmp_path, monkeypatch
+):
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "market_data": {
+                "observed_equities": ["NVDA", "SPY"],
+                "observed_stocks": ["SPY", "QQQ"],
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    # Current values first, legacy appended, SPY not duplicated.
+    assert cfg.market_data.observed_equities == ["NVDA", "SPY", "QQQ"]

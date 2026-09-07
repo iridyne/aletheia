@@ -393,8 +393,6 @@ class MarketDataConfig(BaseModel):
     # exchange stock tokens (r-series + ON-series on Bitget; future OKX SWAP).
     # Runs Mon–Fri 14:30–21:00 UTC (US market hours). Empty = disabled.
     observed_equities: list[str] = Field(default_factory=list)
-    # Deprecated: use observed_equities instead. Kept for backwards compat.
-    observed_stocks: list[str] = Field(default_factory=list)
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
     # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
     # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.

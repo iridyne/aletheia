@@ -9536,8 +9536,6 @@ export interface components {
             observed_prediction_markets?: string[];
             /** Observed Stock Tokens */
             observed_stock_tokens?: string[];
-            /** Observed Stocks */
-            observed_stocks?: string[];
             /** Observed Symbols */
             observed_symbols?: string[];
             /** Observed Xstocks */
@@ -9605,8 +9603,6 @@ export interface components {
             observed_prediction_markets?: string[] | null;
             /** Observed Stock Tokens */
             observed_stock_tokens?: string[] | null;
-            /** Observed Stocks */
-            observed_stocks?: string[] | null;
             /** Observed Xstocks */
             observed_xstocks?: string[] | null;
             /** Ohlcv Cache Ttl Min */
