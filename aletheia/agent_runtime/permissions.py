@@ -3,7 +3,6 @@
 TOOL_CLASSES = {
     "observe": {"Observe", "Paper", "Full"},
     "paper": {"Paper", "Full"},
-    "system": {"Full"},
     "restricted": set(),
 }
 

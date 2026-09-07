@@ -1736,29 +1736,6 @@ class EventTriggerConfig(BaseModel):
     strategy_design_min_move_pct: float = 5.0
 
 
-class StrategyFactoryConfig(BaseModel):
-    """DEPRECATED — strategy FSM / backtest-orchestrator removed with Position C (2026-07-02).
-
-    All fields are compatibility-only: they load from existing config.yaml files without
-    error but have no production consumer. No scheduler, ranker, System Operator or
-    execution path reads these values. Do not add new consumers; the current authority
-    chain is scanner-family opportunities → ranker / System Operator → Proposal → Risk.
-    """
-    backtest_gate_enabled: bool = True
-    sweep_enabled: bool = True
-    sweep_max_variants: int = 100
-    sweep_n_trials: int = 60
-    sweep_top_k: int = 10
-    event_driven_enabled: bool = True
-    event_cooldown_minutes: int = 30
-    event_min_score: float = 60.0
-    walk_forward_enabled: bool = True
-    walk_forward_folds: int = 3
-    walk_forward_min_bars: int = 150
-    high_trade_count_threshold: int = 30
-    min_runtime_days_relaxed: int = 3
-
-
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
@@ -2068,7 +2045,6 @@ class AletheiaConfig(BaseModel):
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     fast_trigger: FastTriggerConfig = Field(default_factory=FastTriggerConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
-    strategy_factory: StrategyFactoryConfig = Field(default_factory=StrategyFactoryConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     remote_control: RemoteControlConfig = Field(default_factory=RemoteControlConfig)
