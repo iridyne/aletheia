@@ -6,6 +6,8 @@ unhealthy state (de-duped), and never fabricate a positive "healthy" push.
 
 import sqlite3
 
+from tests.position_fixture import force_update_position
+
 
 def test_candidate_progress_observe_only_and_missing_profiles_are_not_stalls(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
@@ -366,7 +368,7 @@ def test_funding_recovery_states_degrade_health_and_doctor(
             current_price=110.0,
             execution_mode="bitget_demo",
         ))
-        repo.update_position(
+        force_update_position(
             position_id,
             status="closed",
             realized_pnl=None,

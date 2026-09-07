@@ -64,6 +64,9 @@ def test_pi_artifacts_rebind_to_final_decisions_before_or_after_run_end():
     insert_pi_decision(final)
     assert rebind_agent_run_pi_decision_artifacts(pending.id, final.id) == 1
 
+    # One agent holds at most one active run, so the first run ends before the
+    # next one is admitted — the same order the scheduler produces.
+    end_run(run)
     late_run = start_run("paper_trader", "scheduled", "Observe")
     end_run(
         late_run,

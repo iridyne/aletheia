@@ -11,6 +11,8 @@ from datetime import datetime, timezone, timedelta
 
 import pytest
 
+from tests.position_fixture import force_update_position
+
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, MarketSnapshot
@@ -391,7 +393,7 @@ def test_stale_pending_close_is_escalated_without_resubmission(tmp_path, monkeyp
                  if event["event_type"] == "pending_close_reconciliation_required"]
     assert len(incidents) == 1
 
-    repo.update_position(
+    force_update_position(
         p.id,
         pending_close_order_id="second-unresolved-close",
         pending_close_status="submission_unknown",

@@ -146,21 +146,28 @@ def _reopen_position(position_id: str, *, exit_price: float, evidence: dict) -> 
         # These columns are NOT NULL (no usable DEFAULT); supply the same
         # placeholder values an administratively-open Position carries so the
         # replay can overwrite them with real economics.
-        repo.update_position(
+        repo.reopen_position_for_verified_repair(
             position_id,
-            status="open",
-            current_price=exit_price,
-            unrealized_pnl=0.0,
-            close_reason=None,
-            closed_at=None,
-            close_category="unknown",
-            exit_price_source="unavailable",
-            exit_fill_verified=False,
-            realized_pnl=None,
-            outcome_exclusion_reason="unclassified",
-            outcome_eligible=False,
-            exit_fee=None,
-            reconciliation_evidence=json.dumps(evidence, sort_keys=True, separators=(",", ":"), default=str),
+            {
+                "status": "open",
+                "current_price": exit_price,
+                "unrealized_pnl": 0.0,
+                "close_reason": None,
+                "closed_at": None,
+                "close_category": "unknown",
+                "exit_price_source": "unavailable",
+                "exit_fill_verified": False,
+                "realized_pnl": None,
+                "outcome_exclusion_reason": "unclassified",
+                "outcome_eligible": False,
+                "exit_fee": None,
+                "reconciliation_evidence": json.dumps(
+                    evidence,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ),
+            },
         )
         repo.insert_audit_event(
             AuditEvent(

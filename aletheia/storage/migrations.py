@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v76"
+SCHEMA_VERSION = "aletheia-sqlite-v77"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -6343,6 +6343,9 @@ _MIGRATION_DESCRIPTIONS = {
     "20260907_0075_order_lifecycle_v76": (
         "closed Order states behind one aggregate transition owner"
     ),
+    "20260907_0076_position_lifecycle_v77": (
+        "closed Position states behind aggregate lifecycle owners"
+    ),
 }
 
 
@@ -7890,6 +7893,13 @@ def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
         "stale",
         "cancelled",
         "rejected_queue_full",
+        # Historical terminals the read paths still classify:
+        # run_view.FAILED_AGENT_RUN_STATUSES has "error",
+        # run_view.SUCCESS_AGENT_RUN_STATUSES has "success",
+        # health._FAILED_STATUSES adds "cancel_requested".
+        "error",
+        "cancel_requested",
+        "success",
     )
     placeholders = ",".join("?" for _ in allowed)
     invalid = db.execute(
@@ -7931,7 +7941,8 @@ def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
                 ended_at TEXT,
                 status TEXT NOT NULL DEFAULT 'running' CHECK(status IN (
                     'queued','running','completed','completed_with_errors','failed',
-                    'timed_out','stale','cancelled','rejected_queue_full'
+                    'timed_out','stale','cancelled','rejected_queue_full',
+                    'error','cancel_requested','success'
                 )),
                 model_provider TEXT,
                 model_name TEXT,
@@ -7992,6 +8003,8 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
         "pending", "open", "submitted", "submission_unknown", "submission_rejected",
         "materialization_missing", "partial", "partially_filled", "filled",
         "overfilled", "cancelled", "error",
+        # Historical terminals still present in stored rows.
+        "executed", "failed", "rejected",
     )
     placeholders = ",".join("?" for _ in allowed)
     invalid = db.execute(
@@ -8000,12 +8013,13 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
     ).fetchone()
     if invalid is not None:
         raise MigrationStateError(f"order_lifecycle_invalid_status:{invalid[0]}")
-    create_sql = table_sql.replace("CREATE TABLE orders", "CREATE TABLE orders_v72", 1)
+    create_sql = table_sql.replace("CREATE TABLE orders", "CREATE TABLE orders_v76", 1)
     status_column = "status TEXT NOT NULL DEFAULT 'pending'"
     checked_status = (
         "status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ("
         "'pending','open','submitted','submission_unknown','submission_rejected','materialization_missing',"
-        "'partial','partially_filled','filled','overfilled','cancelled','error'))"
+        "'partial','partially_filled','filled','overfilled','cancelled','error',"
+        "'executed','failed','rejected'))"
     )
     if create_sql.count(status_column) != 1:
         raise MigrationStateError("order_lifecycle_schema_mismatch:status")
@@ -8028,11 +8042,11 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
         db.execute(create_sql)
         quoted_columns = ",".join(f'"{name}"' for name in columns)
         db.execute(
-            f"INSERT INTO orders_v72 ({quoted_columns}) "
+            f"INSERT INTO orders_v76 ({quoted_columns}) "
             f"SELECT {quoted_columns} FROM orders"
         )
         db.execute("DROP TABLE orders")
-        db.execute("ALTER TABLE orders_v72 RENAME TO orders")
+        db.execute("ALTER TABLE orders_v76 RENAME TO orders")
         for sql in objects:
             db.execute(sql)
         if int(db.execute("SELECT COUNT(*) FROM orders").fetchone()[0]) != row_count:
@@ -8043,6 +8057,82 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
     except Exception:
         db.execute("ROLLBACK TO SAVEPOINT order_lifecycle_v76")
         db.execute("RELEASE SAVEPOINT order_lifecycle_v76")
+        raise
+    finally:
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        if foreign_keys:
+            db.execute("PRAGMA foreign_keys=ON")
+    db.execute("PRAGMA optimize")
+
+
+_POSITION_LIFECYCLE_CHECKSUM = hashlib.sha256(
+    b"position-lifecycle-v77"
+).hexdigest()
+
+
+def _apply_position_lifecycle_v77(db: sqlite3.Connection) -> None:
+    """Close Position status values while preserving its wide evidence schema."""
+
+    row = db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='positions'"
+    ).fetchone()
+    if row is None or not row[0]:
+        raise MigrationStateError("position_lifecycle_missing_table")
+    table_sql = str(row[0])
+    if "CHECK(status IN ('open','closed'))" in table_sql:
+        return
+    columns = [str(item[1]) for item in db.execute("PRAGMA table_info(positions)")]
+    if "status" not in columns:
+        raise MigrationStateError("position_lifecycle_schema_mismatch:columns")
+    invalid = db.execute(
+        "SELECT status FROM positions WHERE status NOT IN ('open','closed') LIMIT 1"
+    ).fetchone()
+    if invalid is not None:
+        raise MigrationStateError(f"position_lifecycle_invalid_status:{invalid[0]}")
+    create_sql = table_sql.replace(
+        "CREATE TABLE positions", "CREATE TABLE positions_v73", 1
+    )
+    status_column = "status TEXT NOT NULL DEFAULT 'open'"
+    if create_sql.count(status_column) != 1:
+        raise MigrationStateError("position_lifecycle_schema_mismatch:status")
+    create_sql = create_sql.replace(
+        status_column,
+        "status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed'))",
+        1,
+    )
+    objects = [
+        str(item[0])
+        for item in db.execute(
+            "SELECT sql FROM sqlite_master WHERE tbl_name='positions' "
+            "AND type IN ('index','trigger') AND sql IS NOT NULL"
+        )
+    ]
+    row_count = int(db.execute("SELECT COUNT(*) FROM positions").fetchone()[0])
+    foreign_keys = bool(db.execute("PRAGMA foreign_keys").fetchone()[0])
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    if foreign_keys:
+        db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT position_lifecycle_v77")
+    try:
+        db.execute(create_sql)
+        quoted_columns = ",".join(f'"{name}"' for name in columns)
+        db.execute(
+            f"INSERT INTO positions_v73 ({quoted_columns}) "
+            f"SELECT {quoted_columns} FROM positions"
+        )
+        db.execute("DROP TABLE positions")
+        db.execute("ALTER TABLE positions_v73 RENAME TO positions")
+        for sql in objects:
+            db.execute(sql)
+        if int(db.execute("SELECT COUNT(*) FROM positions").fetchone()[0]) != row_count:
+            raise MigrationStateError("position_lifecycle_row_count_mismatch")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("position_lifecycle_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT position_lifecycle_v77")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT position_lifecycle_v77")
+        db.execute("RELEASE SAVEPOINT position_lifecycle_v77")
         raise
     finally:
         db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
@@ -8501,6 +8591,12 @@ _MIGRATIONS = (
         checksum=_ORDER_LIFECYCLE_CHECKSUM,
         schema_version="aletheia-sqlite-v76",
         apply=_apply_order_lifecycle_v76,
+    ),
+    MigrationStep(
+        migration_id="20260907_0076_position_lifecycle_v77",
+        checksum=_POSITION_LIFECYCLE_CHECKSUM,
+        schema_version="aletheia-sqlite-v77",
+        apply=_apply_position_lifecycle_v77,
     ),
 )
 

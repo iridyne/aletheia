@@ -619,7 +619,7 @@ def test_recent_failures_filters_active_rows_before_limit(tmp_path, monkeypatch)
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
 
-    active_statuses = ["queued", "running", "waiting_retry", "cancel_requested"]
+    active_statuses = ["queued", "running", "queued", "cancel_requested"]
     for index in range(20):
         insert_agent_run(
             AgentRun(

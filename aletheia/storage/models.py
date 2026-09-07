@@ -115,6 +115,13 @@ AgentRunStatus = Literal[
     "stale",
     "cancelled",
     "rejected_queue_full",
+    # Historical terminals with no writer left. agent_runtime/health.py counts
+    # both in _FAILED_STATUSES when reading list_agent_runs(), so stored rows can
+    # carry them; keeping them legal lets the CHECK migration run on real data
+    # while no transition can produce them.
+    "error",
+    "cancel_requested",
+    "success",
 ]
 
 
@@ -589,6 +596,14 @@ OrderStatus = Literal[
     "overfilled",
     "cancelled",
     "error",
+    # Historical terminal statuses. Production no longer writes these, but rows
+    # carrying them exist and analytics/trade_stats.py classifies them
+    # (completed_fill_statuses includes "executed"; definitive_failure_statuses
+    # includes "failed" and "rejected"). They are legal values with no outgoing
+    # transitions, so history stays readable and new writes cannot produce them.
+    "executed",
+    "failed",
+    "rejected",
 ]
 
 
@@ -667,6 +682,9 @@ class Fill(_Provenanced):
     filled_at: str = Field(default_factory=_utcnow)
 
 
+PositionStatus = Literal["open", "closed"]
+
+
 class Position(_Provenanced):
     id: str = Field(default_factory=new_id)
     symbol: str
@@ -702,7 +720,7 @@ class Position(_Provenanced):
     # sector-concentration check (#16), which resolves scanner_family per open
     # position via its opportunity_id — without it that check is silenced.
     opportunity_id: str | None = None
-    status: str = "open"
+    status: PositionStatus = "open"
     stop_price: float | None = None
     take_profit_price: float | None = None
     close_reason: str | None = None

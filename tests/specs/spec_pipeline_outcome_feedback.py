@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import sqlite3
 from datetime import datetime, timezone
 
@@ -568,7 +570,7 @@ def test_mismatched_entry_order_identity_blocks_outcome_hooks(tmp_path, monkeypa
         status="filled",
     )
     repo.insert_order(unrelated_order)
-    repo.update_position(opened["position_id"], order_id=unrelated_order.id)
+    force_update_position(opened["position_id"], order_id=unrelated_order.id)
 
     result = close_position(
         opened["position_id"], exit_price=110.0, reason="take_profit"
@@ -848,7 +850,7 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
     repo.insert_position(position)
     monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
-    repo.update_position(
+    force_update_position(
         position.id,
         outcome_eligible=False,
         outcome_exclusion_reason="not_marked_eligible",

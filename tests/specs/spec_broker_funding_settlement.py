@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import asyncio
 
 import pytest
@@ -63,7 +65,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode: Client())
     task = asyncio.create_task(settlement.settle_unsettled_exchange_closes(limit=1))
     await reader_started.wait()
-    repo.update_position(position_id, current_price=999.0)
+    force_update_position(position_id, current_price=999.0)
     before = funding_tests._broker_funding_state(position_id)
     release_reader.set()
 
