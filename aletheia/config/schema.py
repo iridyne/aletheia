@@ -804,6 +804,90 @@ def _merge_policy(base: dict, override: dict) -> dict:
     return merged
 
 
+
+# Flat legacy risk field -> (mode, group, field) in the nested v2 policy.
+# Hoisted out of RiskConfig.__setattr__ so one table drives BOTH directions:
+# __setattr__ pushes a flat write down into nested, and validate_mode_policies
+# mirrors nested back up into flat so a nested-only write cannot leave a flat
+# reader stale.  Only these mode-suffixed names are mirrored -- see
+# validate_mode_policies for why the shared table is not.
+_RISK_MODE_PATHS = {
+    "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
+    "starting_capital_usdt": ("demo", "capital", "base_usdt"),
+    "max_live_position_notional_usdt": (
+        "live", "capital", "max_position_margin_usdt",
+    ),
+    "max_demo_position_notional_usdt": (
+        "demo", "capital", "max_position_margin_usdt",
+    ),
+    "max_live_position_margin_usdt": (
+        "live", "capital", "max_position_margin_usdt",
+    ),
+    "max_demo_position_margin_usdt": (
+        "demo", "capital", "max_position_margin_usdt",
+    ),
+    "max_total_live_exposure_pct": (
+        "live", "capital", "max_total_exposure_pct",
+    ),
+    "max_single_trade_risk_pct": (
+        "live", "loss", "max_single_trade_risk_pct",
+    ),
+    "max_demo_single_trade_risk_pct": (
+        "demo", "loss", "max_single_trade_risk_pct",
+    ),
+    "max_open_positions_live": (
+        "live", "positions", "max_open_positions",
+    ),
+    "max_open_positions_demo": (
+        "demo", "positions", "max_open_positions",
+    ),
+    "allow_short_live": ("live", "positions", "allow_short"),
+    "allow_short_demo": ("demo", "positions", "allow_short"),
+    "max_futures_leverage_live": (
+        "live", "leverage", "futures_cap",
+    ),
+    "max_futures_leverage_demo": (
+        "demo", "leverage", "futures_cap",
+    ),
+    "max_leverage_major_live": ("live", "leverage", "major_cap"),
+    "max_leverage_major_demo": ("demo", "leverage", "major_cap"),
+    "max_leverage_mid_live": ("live", "leverage", "mid_cap"),
+    "max_leverage_mid_demo": ("demo", "leverage", "mid_cap"),
+    "max_leverage_alt_live": ("live", "leverage", "alt_cap"),
+    "max_leverage_alt_demo": ("demo", "leverage", "alt_cap"),
+    "max_account_leverage_live": (
+        "live", "leverage", "account_cap",
+    ),
+    "max_account_leverage_demo": (
+        "demo", "leverage", "account_cap",
+    ),
+    "kill_switch_enabled_live": (
+        "live", None, "auto_trip_mode_brake_on_daily_loss",
+    ),
+    "kill_switch_enabled_demo": (
+        "demo", None, "auto_trip_mode_brake_on_daily_loss",
+    ),
+    "live_family_min_samples": (
+        "live", "eligibility", "family_min_samples",
+    ),
+    "live_family_min_win_rate_pct": (
+        "live", "eligibility", "family_min_win_rate_pct",
+    ),
+    "demo_sideways_standdown": (
+        "demo", "eligibility", "sideways_standdown",
+    ),
+    "demo_min_regime_confidence_to_enter": (
+        "demo", "eligibility", "min_regime_confidence_to_enter",
+    ),
+    "demo_family_min_samples": (
+        "demo", "eligibility", "family_min_samples",
+    ),
+    "demo_family_min_expectancy": (
+        "demo", "eligibility", "family_min_expectancy",
+    ),
+}
+
+
 class RiskConfig(BaseModel):
     schema_version: int = 4
     demo: ModeRiskPolicy
@@ -879,88 +963,67 @@ class RiskConfig(BaseModel):
     def validate_mode_policies(self):
         validate_mode_risk_policy("demo", self.demo)
         validate_mode_risk_policy("live", self.live)
+        self._mirror_nested_into_flat()
         return self
+
+    def _mirror_nested_into_flat(self) -> None:
+        """Refresh the flat legacy aliases from the nested policies they alias.
+
+        `__setattr__` syncs flat -> nested, but nothing synced the other way, and
+        five writers persist a nested block with no flat write: the autonomous
+        operator loop's `reduce_sizing` (`operator_loop.py:590`, `:621`) and the
+        copy / replace / reset-defaults risk-policy routes (`settings.py:2201`,
+        `:2237`, `:2273`).  `_save_config_locked` dumps the full model, and
+        `migrate_flat_policies` lets the nested override win on the next load, so
+        the flat attribute kept its stale default forever after.
+
+        Three production readers take a flat field off a RAW config with no
+        `legacy_view`, plus `GET /settings` which hands the whole flat dump to the
+        33-field Risk-Limits editor:
+          - `risk/engine.py:2971` `check_account_leverage`, served to the dashboard
+            by `server/routes/risk.py:197` -- reported cap 1.5 while the admission
+            gate correctly enforced a nested 3.0
+          - `diagnostics/doctor.py:762` -- the demo margin-cap blocker check could
+            never fire once the operator loop had reduced the nested cap
+          - `trust/guard_chain.py:173` -- shared field, and that module has no
+            production callers
+
+        Enforcement was never wrong: the admission tree rebinds
+        `cfg.risk = resolved_policy.legacy_view(cfg.risk)` (`engine.py:1026`), so
+        every check inside it already read nested.  This was a monitoring and
+        diagnostics divergence, which is why it survived 31 green account-leverage
+        specs -- every one of them writes the FLAT key.
+
+        Only `_RISK_MODE_PATHS` is mirrored.  The shared table (`max_daily_loss_pct`,
+        the margin ratios, the catastrophic-stop fields) has ONE flat name per pair
+        of nested values, so a nested-only write that makes demo and live disagree
+        has no correct single flat answer.  Picking a side silently would be a new
+        bug wearing the old bug's clothes; its only raw reader is the caller-less
+        `guard_chain`.  Deleting those flat names is the real fix and is its own
+        change.
+
+        `object.__setattr__` bypasses the flat -> nested hook, so this cannot
+        recurse.  It also bypasses `validate_assignment`, which is safe here
+        because `validate_mode_risk_policy` above has already bounded the nested
+        value being copied up.
+        """
+        declared = type(self).model_fields
+        for flat, (mode, group, field) in _RISK_MODE_PATHS.items():
+            if flat not in declared:
+                continue
+            target = getattr(self, mode)
+            if group is not None:
+                target = getattr(target, group, None)
+            if target is None:
+                continue
+            object.__setattr__(self, flat, getattr(target, field))
 
     def __setattr__(self, name: str, value) -> None:
         """Keep one-release legacy assignments synchronized with v2 policies."""
         super().__setattr__(name, value)
         if "demo" not in self.__dict__ or "live" not in self.__dict__:
             return
-        mode_paths = {
-            "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
-            "starting_capital_usdt": ("demo", "capital", "base_usdt"),
-            "max_live_position_notional_usdt": (
-                "live", "capital", "max_position_margin_usdt",
-            ),
-            "max_demo_position_notional_usdt": (
-                "demo", "capital", "max_position_margin_usdt",
-            ),
-            "max_live_position_margin_usdt": (
-                "live", "capital", "max_position_margin_usdt",
-            ),
-            "max_demo_position_margin_usdt": (
-                "demo", "capital", "max_position_margin_usdt",
-            ),
-            "max_total_live_exposure_pct": (
-                "live", "capital", "max_total_exposure_pct",
-            ),
-            "max_single_trade_risk_pct": (
-                "live", "loss", "max_single_trade_risk_pct",
-            ),
-            "max_demo_single_trade_risk_pct": (
-                "demo", "loss", "max_single_trade_risk_pct",
-            ),
-            "max_open_positions_live": (
-                "live", "positions", "max_open_positions",
-            ),
-            "max_open_positions_demo": (
-                "demo", "positions", "max_open_positions",
-            ),
-            "allow_short_live": ("live", "positions", "allow_short"),
-            "allow_short_demo": ("demo", "positions", "allow_short"),
-            "max_futures_leverage_live": (
-                "live", "leverage", "futures_cap",
-            ),
-            "max_futures_leverage_demo": (
-                "demo", "leverage", "futures_cap",
-            ),
-            "max_leverage_major_live": ("live", "leverage", "major_cap"),
-            "max_leverage_major_demo": ("demo", "leverage", "major_cap"),
-            "max_leverage_mid_live": ("live", "leverage", "mid_cap"),
-            "max_leverage_mid_demo": ("demo", "leverage", "mid_cap"),
-            "max_leverage_alt_live": ("live", "leverage", "alt_cap"),
-            "max_leverage_alt_demo": ("demo", "leverage", "alt_cap"),
-            "max_account_leverage_live": (
-                "live", "leverage", "account_cap",
-            ),
-            "max_account_leverage_demo": (
-                "demo", "leverage", "account_cap",
-            ),
-            "kill_switch_enabled_live": (
-                "live", None, "auto_trip_mode_brake_on_daily_loss",
-            ),
-            "kill_switch_enabled_demo": (
-                "demo", None, "auto_trip_mode_brake_on_daily_loss",
-            ),
-            "live_family_min_samples": (
-                "live", "eligibility", "family_min_samples",
-            ),
-            "live_family_min_win_rate_pct": (
-                "live", "eligibility", "family_min_win_rate_pct",
-            ),
-            "demo_sideways_standdown": (
-                "demo", "eligibility", "sideways_standdown",
-            ),
-            "demo_min_regime_confidence_to_enter": (
-                "demo", "eligibility", "min_regime_confidence_to_enter",
-            ),
-            "demo_family_min_samples": (
-                "demo", "eligibility", "family_min_samples",
-            ),
-            "demo_family_min_expectancy": (
-                "demo", "eligibility", "family_min_expectancy",
-            ),
-        }
+        mode_paths = _RISK_MODE_PATHS
         shared_paths = {
             "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
             "max_daily_loss_pct": ("loss", "max_daily_loss_pct"),
