@@ -17,6 +17,13 @@ from aletheia.config.execution_costs import (
 
 _logger = logging.getLogger("aletheia.config")
 
+# The recognized Bitget endpoint-family identities. Declared here because the set
+# of VALID profile names is a configuration fact, not a venue-client fact:
+# `bitget_profile` is validated on load, and asking "is this a known profile?" must
+# not require importing a concrete exchange client. `exchanges/bitget/` reads this
+# rather than keeping a parallel copy.
+KNOWN_BITGET_PROFILES = frozenset({"classic_v2", "uta_v3"})
+
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
@@ -315,9 +322,10 @@ class ExchangeConfig(BaseModel):
     @field_validator("bitget_profile")
     @classmethod
     def _validate_bitget_profile(cls, v: str) -> str:
-        allowed = {"classic_v2", "uta_v3"}
-        if v not in allowed:
-            raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
+        if v not in KNOWN_BITGET_PROFILES:
+            raise ValueError(
+                f"bitget_profile must be one of {sorted(KNOWN_BITGET_PROFILES)}, got {v!r}"
+            )
         return v
 
     @field_validator("uta_account_config_generations")

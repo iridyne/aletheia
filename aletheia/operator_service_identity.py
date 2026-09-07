@@ -24,6 +24,7 @@ from aletheia.config.secrets import _file_get, set_secret
 OPERATOR_SERVICE_SECRET_KEY = "operator_service_token"
 OPERATOR_SERVICE_ENV = "ALETHEIA_OPERATOR_SERVICE_TOKEN"
 OPERATOR_SERVICE_HEADER = "X-Aletheia-Operator-Service"
+OWNER_AUTH_HEADER = "x-aletheia-token"
 
 _lock = threading.Lock()
 _active_session_tokens: set[str] = set()

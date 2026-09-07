@@ -61,7 +61,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # Operator surface (cfg.operator.permission_mode: ReadOnly/Research/PaperAuto/
 # AllowEditing/Auto) — this endpoint correctly governs only the worker side, so
 # the 3-value allowlist is intentional, not a bug (CR-AR-02 was a false positive).
-VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
+from aletheia.agent_shell.permissions import VALID_WORKER_MODES as VALID_PERMISSION_MODES
 
 
 def _mutate_config_with_candidate_publication_permit(mutator):

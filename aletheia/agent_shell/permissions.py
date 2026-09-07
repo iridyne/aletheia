@@ -2,25 +2,31 @@
 
 from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
 
-# Config modes in ascending privilege order for worker-surface commands.
-_WORKER_MODE_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
-_WORKER_REQUIRED_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
+# Config modes in ascending privilege order for worker-surface commands. This is
+# the single source of truth: `trading/entry_authority`, `cli/permission` and
+# `server/routes/settings` all read it rather than keeping parallel copies, so a
+# rank or a valid-mode set can never drift between the surfaces that gate on it.
+WORKER_MODE_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
+VALID_WORKER_MODES: frozenset[str] = frozenset(WORKER_MODE_RANK)
 
 # Operator-surface permission ladder from the design package.
-_OPERATOR_MODE_RANK = {
+OPERATOR_MODE_RANK = {
     "ReadOnly": 0,
     "Research": 1,
     "PaperAuto": 2,
     "AllowEditing": 3,
     "Auto": 4,
 }
-_OPERATOR_REQUIRED_RANK = {
-    "ReadOnly": 0,
-    "Research": 1,
-    "PaperAuto": 2,
-    "AllowEditing": 3,
-    "Auto": 4,
-}
+VALID_OPERATOR_MODES: frozenset[str] = frozenset(OPERATOR_MODE_RANK)
+
+# A command's REQUIRED rank is read from the same ladder as the caller's CURRENT
+# rank. They were previously two separate literals per surface — four dicts for
+# two ladders — so a new mode inserted mid-ladder had to be added twice or the
+# comparison would silently mis-rank it.
+_WORKER_MODE_RANK = WORKER_MODE_RANK
+_WORKER_REQUIRED_RANK = WORKER_MODE_RANK
+_OPERATOR_MODE_RANK = OPERATOR_MODE_RANK
+_OPERATOR_REQUIRED_RANK = OPERATOR_MODE_RANK
 
 
 def _permission_context(permission_scope: str) -> tuple[str, dict[str, int], dict[str, int], str]:
