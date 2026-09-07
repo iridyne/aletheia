@@ -7998,6 +7998,8 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
         "pending", "open", "submitted", "submission_unknown", "submission_rejected",
         "materialization_missing", "partial", "partially_filled", "filled",
         "overfilled", "cancelled", "error",
+        # Historical terminals trade_stats.py still classifies on read.
+        "executed", "failed", "rejected",
     )
     placeholders = ",".join("?" for _ in allowed)
     invalid = db.execute(
@@ -8006,12 +8008,13 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
     ).fetchone()
     if invalid is not None:
         raise MigrationStateError(f"order_lifecycle_invalid_status:{invalid[0]}")
-    create_sql = table_sql.replace("CREATE TABLE orders", "CREATE TABLE orders_v72", 1)
+    create_sql = table_sql.replace("CREATE TABLE orders", "CREATE TABLE orders_v76", 1)
     status_column = "status TEXT NOT NULL DEFAULT 'pending'"
     checked_status = (
         "status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ("
         "'pending','open','submitted','submission_unknown','submission_rejected','materialization_missing',"
-        "'partial','partially_filled','filled','overfilled','cancelled','error'))"
+        "'partial','partially_filled','filled','overfilled','cancelled','error',"
+        "'executed','failed','rejected'))"
     )
     if create_sql.count(status_column) != 1:
         raise MigrationStateError("order_lifecycle_schema_mismatch:status")
@@ -8034,11 +8037,11 @@ def _apply_order_lifecycle_v76(db: sqlite3.Connection) -> None:
         db.execute(create_sql)
         quoted_columns = ",".join(f'"{name}"' for name in columns)
         db.execute(
-            f"INSERT INTO orders_v72 ({quoted_columns}) "
+            f"INSERT INTO orders_v76 ({quoted_columns}) "
             f"SELECT {quoted_columns} FROM orders"
         )
         db.execute("DROP TABLE orders")
-        db.execute("ALTER TABLE orders_v72 RENAME TO orders")
+        db.execute("ALTER TABLE orders_v76 RENAME TO orders")
         for sql in objects:
             db.execute(sql)
         if int(db.execute("SELECT COUNT(*) FROM orders").fetchone()[0]) != row_count:

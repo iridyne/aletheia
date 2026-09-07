@@ -2639,6 +2639,10 @@ _ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
     "filled": frozenset(),
     "overfilled": frozenset(),
     "error": frozenset(),
+    # Historical terminals: reachable in stored rows, never a transition target.
+    "executed": frozenset(),
+    "failed": frozenset(),
+    "rejected": frozenset(),
 }
 _ORDER_ENTRY_PLAN_STATUS = {
     "partial": "partially_filled",
