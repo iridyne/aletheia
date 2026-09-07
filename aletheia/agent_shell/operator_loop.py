@@ -229,20 +229,6 @@ def _maybe_escalate(action: OperatorAction, param: str, direction: str) -> Opera
     return action
 
 
-# ─── Legacy helpers (delegate to persistent versions) ────────────────────────
-
-def _count_actions_today(action_type: str) -> int:
-    return _count_actions_today_persistent(action_type)
-
-
-def _last_action_time(action_type: str, param: str | None = None) -> datetime | None:
-    return _last_action_time_persistent(action_type, param)
-
-
-def _record_action(action_type: str, param: str | None = None, detail: str = "") -> None:
-    _persist_action(action_type, param=param, before="", after=detail, reason=detail)
-
-
 # ─── Action Definitions ──────────────────────────────────────────────────────
 
 @dataclass
@@ -571,11 +557,11 @@ def _execute_level1_action(action: OperatorAction) -> dict:
 
 def _action_reduce_sizing(action: OperatorAction) -> dict:
     param_name = "max_demo_position_margin_usdt"
-    last = _last_action_time("config_patch", param_name)
+    last = _last_action_time_persistent("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "reduce_sizing", "status": "cooldown",
                 "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+    if _count_actions_today_persistent("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
         return {"action": "reduce_sizing", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
@@ -601,11 +587,11 @@ def _action_reduce_sizing(action: OperatorAction) -> dict:
 def _action_increase_sizing(action: OperatorAction) -> dict:
     """Restore sizing toward neutral (Level 1). Never exceeds neutral."""
     param_name = "max_demo_position_margin_usdt"
-    last = _last_action_time("config_patch", param_name)
+    last = _last_action_time_persistent("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "increase_sizing", "status": "cooldown",
                 "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+    if _count_actions_today_persistent("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
         return {"action": "increase_sizing", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
@@ -631,11 +617,11 @@ def _action_increase_sizing(action: OperatorAction) -> dict:
 
 def _action_tighten_stop_loss(action: OperatorAction) -> dict:
     param_name = "default_stop_loss_pct"
-    last = _last_action_time("config_patch", param_name)
+    last = _last_action_time_persistent("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "tighten_stop_loss", "status": "cooldown",
                 "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+    if _count_actions_today_persistent("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
         return {"action": "tighten_stop_loss", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
@@ -659,11 +645,11 @@ def _action_tighten_stop_loss(action: OperatorAction) -> dict:
 def _action_widen_stop_loss(action: OperatorAction) -> dict:
     """Loosen stop loss back toward neutral (Level 2 proposal)."""
     param_name = "default_stop_loss_pct"
-    last = _last_action_time("config_patch", param_name)
+    last = _last_action_time_persistent("config_patch", param_name)
     if last and (datetime.now(timezone.utc) - last).total_seconds() < _COOLDOWN_SECONDS:
         return {"action": "widen_stop_loss", "status": "cooldown",
                 "reason": "same param adjusted < 2h ago"}
-    if _count_actions_today("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
+    if _count_actions_today_persistent("config_patch") >= _MAX_CONFIG_PATCHES_PER_DAY:
         return {"action": "widen_stop_loss", "status": "rate_limited",
                 "reason": f"config patches exhausted ({_MAX_CONFIG_PATCHES_PER_DAY}/day)"}
 
@@ -751,10 +737,12 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
             "error_type": type(e).__name__,
         }
 
-    _record_action(
+    _persist_action(
         "adjust_scanner_weight",
         param=family,
-        detail=f"{current}->{new_value}",
+        before="",
+        after=f"{current}->{new_value}",
+        reason=f"{current}->{new_value}",
     )
     logger.info("operator: adjusted scanner weight %s by %.2f — %s", family, delta, action.reason)
     return {"action": "adjust_scanner_weight", "status": "executed",
@@ -762,10 +750,13 @@ def _action_adjust_scanner_weight(action: OperatorAction) -> dict:
 
 
 def _action_notify(action: OperatorAction) -> dict:
-    if _count_actions_today("notify_operator") >= _MAX_NOTIFICATIONS_PER_DAY:
+    if _count_actions_today_persistent("notify_operator") >= _MAX_NOTIFICATIONS_PER_DAY:
         return {"action": "notify_operator", "status": "rate_limited"}
     message = action.params.get("message", action.reason)
-    _record_action("notify_operator", detail=message[:100])
+    _persist_action(
+        "notify_operator", param=None, before="",
+        after=message[:100], reason=message[:100],
+    )
     logger.info("operator: notify — %s", message[:200])
     try:
         from aletheia.notifications import notify_operator as _notify
