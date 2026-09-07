@@ -1,7 +1,6 @@
 """Anthropic-compatible model provider."""
 
 import asyncio
-import json
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
@@ -11,7 +10,7 @@ from aletheia.model_provider.base import (
     ModelResponse,
     StructuredModelRequest,
     health_from_model_catalogue,
-    portable_json_schema_payload,
+    structured_via_complete,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
 
@@ -87,16 +86,7 @@ class AnthropicCompatibleProvider(ModelProvider):
         )
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        mr = ModelRequest(
-            messages=list(request.messages),
-            system=request.system,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            response_format="json_schema",
-            structured_schema=portable_json_schema_payload(schema),
-        )
-        resp = await self.complete(mr)
-        return json.loads(resp.content)
+        return await structured_via_complete(self, request, schema)
 
     async def list_models(self) -> list[dict]:
         """Fetch available models from the gateway's /v1/models endpoint."""
