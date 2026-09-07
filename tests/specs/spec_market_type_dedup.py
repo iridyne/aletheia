@@ -236,7 +236,6 @@ async def test_e2e_observer_dedups(tmp_path, monkeypatch):
 
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT", "ETH/USDT"]
-    cfg.market_data.observed_xstocks = []
     cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
     cfg.exchange.preferred_market_type = "auto"
     save_config(cfg)
@@ -280,7 +279,6 @@ async def test_observer_rejection_evidence_failure_is_retryable(tmp_path, monkey
 
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
     cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     cfg.universe.enabled = False
     save_config(cfg)
@@ -338,7 +336,6 @@ async def test_observer_emitted_evidence_failure_rolls_back_opportunity(
     cfg = load_config()
     cfg.agent.permission_mode = "Paper"
     cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
     cfg.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     cfg.exchange.preferred_market_type = "spot"
     cfg.universe.enabled = False

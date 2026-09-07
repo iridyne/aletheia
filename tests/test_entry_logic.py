@@ -215,7 +215,6 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_symbols = ["BTC/USDT"]
-    cfg.market_data.observed_xstocks = []
     save_config(cfg)
     repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
 

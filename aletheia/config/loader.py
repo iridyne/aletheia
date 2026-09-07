@@ -460,6 +460,31 @@ def load_config(
         removed_serenity_stop = isinstance(serenity, dict) and "stop_loss_pct" in serenity
         if removed_serenity_stop:
             del serenity["stop_loss_pct"]
+        # `market_data.observed_xstocks` was superseded by the broader
+        # `observed_stock_tokens`. Three production sites merged the two as
+        # `dict.fromkeys(new + legacy)`; this migration performs the identical merge
+        # once at load time so the field itself can go away. Required, not cosmetic:
+        # `load_config` validates with a runtime `extra="forbid"`, so a removed field
+        # must be dropped from the raw mapping or the file fails to load.
+        market_data = raw.get("market_data")
+        removed_observed_xstocks = (
+            isinstance(market_data, dict) and "observed_xstocks" in market_data
+        )
+        if removed_observed_xstocks:
+            legacy_tokens = [
+                str(item).strip()
+                for item in (market_data.pop("observed_xstocks") or [])
+                if str(item).strip()
+            ]
+            if legacy_tokens:
+                current_tokens = [
+                    str(item).strip()
+                    for item in (market_data.get("observed_stock_tokens") or [])
+                    if str(item).strip()
+                ]
+                market_data["observed_stock_tokens"] = list(
+                    dict.fromkeys([*current_tokens, *legacy_tokens])
+                )
         exchange = raw.get("exchange")
         removed_uta_boundary = isinstance(exchange, dict) and "uta_read_boundaries" in exchange
         if removed_uta_boundary:
@@ -514,7 +539,8 @@ def load_config(
             raise
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
         changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
-                   or removed_serenity_stop or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
+                   or removed_serenity_stop or removed_observed_xstocks
+                   or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))

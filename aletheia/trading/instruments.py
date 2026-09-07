@@ -65,8 +65,7 @@ def observed_symbols_from_config(cfg) -> list[str]:
 def stock_tokens_from_config(cfg) -> list[InstrumentId]:
     """Return all configured tokenized equity/ETF instruments as InstrumentId list.
 
-    Reads ``observed_stock_tokens`` (new field) and falls back to the deprecated
-    ``observed_xstocks`` so existing configs continue to work.
+    Reads ``observed_stock_tokens``.
 
     Exchange is inferred via ``stock_token_exchange()`` — Bitget r-series and
     ON-series resolve to "bitget"; future OKX SWAP entries resolve to "okx".
@@ -77,11 +76,9 @@ def stock_tokens_from_config(cfg) -> list[InstrumentId]:
     not break the entire collection run.
     """
     tokens = list(getattr(cfg.market_data, "observed_stock_tokens", None) or [])
-    # Backward-compat: merge observed_xstocks into the list (deduplicated).
-    legacy = list(getattr(cfg.market_data, "observed_xstocks", None) or [])
     seen: set[str] = set()
     merged: list[str] = []
-    for s in tokens + legacy:
+    for s in tokens:
         key = to_canonical(s)
         if key and key not in seen:
             seen.add(key)

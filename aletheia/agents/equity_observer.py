@@ -268,7 +268,7 @@ async def _analyze_equity(
     permission_mode: str,
     run_id: str | None,
     linked_strategy_id: str | None,
-    observed_xstocks: list[str],
+    stock_tokens: list[str],
 ) -> tuple[str | None, str | None]:
     """Fetch indicators + optional xstock price + LLM read for one equity ticker.
 
@@ -302,7 +302,7 @@ async def _analyze_equity(
     xstock_price: float | None = None
     deviation_pct: float | None = None
 
-    observed_tokens = set(observed_xstocks or [])
+    observed_tokens = set(stock_tokens or [])
     for token_sym in candidate_tokens:
         if token_sym not in observed_tokens:
             continue
@@ -486,11 +486,9 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
         outputs.append("no_equities_configured")
         return {"outputs": outputs, "errors": errors}
 
-    # Merge new observed_stock_tokens (r-series + ON-series + future OKX) with the
-    # legacy observed_xstocks so existing configs continue to work without changes.
-    _new = list(cfg.market_data.observed_stock_tokens or [])
-    _legacy = list(cfg.market_data.observed_xstocks or [])
-    observed_xstocks: list[str] = list(dict.fromkeys(_new + _legacy))  # dedup, order-preserving
+    # `config/loader.py` already merged the retired `observed_xstocks` into this
+    # field at load time, so there is one list to read.
+    stock_tokens: list[str] = list(dict.fromkeys(cfg.market_data.observed_stock_tokens or []))
 
     linked_strategy_id = None
     for s in list_strategies(limit=50):
@@ -508,7 +506,7 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
                 permission_mode=permission_mode,
                 run_id=run_id,
                 linked_strategy_id=linked_strategy_id,
-                observed_xstocks=observed_xstocks,
+                stock_tokens=stock_tokens,
             )
             if opp_id:
                 outputs.append(f"opportunity:{opp_id}")

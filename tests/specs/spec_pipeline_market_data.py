@@ -295,10 +295,11 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     # Build a minimal config with one xstock symbol
     from aletheia.config.schema import AletheiaConfig, MarketDataConfig
     cfg = AletheiaConfig()
+    # `observed_xstocks` is retired; `config/loader.py` merges it into
+    # `observed_stock_tokens` at load time, so the token lives in the current field.
     cfg.market_data = MarketDataConfig(
         observed_symbols=[],
-        observed_stock_tokens=[],
-        observed_xstocks=["AAPLON/USDT"],
+        observed_stock_tokens=["AAPLON/USDT"],
         ccxt_exchange="binance",
     )
     monkeypatch.setattr(md_mod, "load_config", lambda: cfg)
@@ -347,8 +348,8 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     assert len(audit_rows) == 1
     assert md_mod._xstock_failure_counts["AAPLON/USDT"] == 5
     assert saved_configs == []
-    assert cfg.market_data.observed_stock_tokens == []
-    assert cfg.market_data.observed_xstocks == ["AAPLON/USDT"]
+    # Below the removal threshold nothing is pruned — the token is still configured.
+    assert cfg.market_data.observed_stock_tokens == ["AAPLON/USDT"]
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +386,6 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     cfg.market_data = MarketDataConfig(
         observed_symbols=[],
         observed_stock_tokens=["AAPLON/USDT", "TSLAON/USDT"],
-        observed_xstocks=["AAPLON/USDT", "TSLAON/USDT"],
         ccxt_exchange="binance",
     )
 
@@ -439,11 +439,12 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     )
     from aletheia.data.symbols import to_canonical
     removed = {"AAPLON/USDT", "TSLAON/USDT"}
-    for field in ("observed_stock_tokens", "observed_xstocks"):
-        tokens = list(getattr(saved_configs[-1].market_data, field) or [])
-        assert not removed.intersection({to_canonical(t) for t in tokens}), (
-            f"confirmed-absent tokens remain in {field}: {tokens}"
-        )
+    # One list now, not two: the retired `observed_xstocks` was merged away, so the
+    # prune has a single place to remove from and cannot leave a stale legacy copy.
+    tokens = list(saved_configs[-1].market_data.observed_stock_tokens or [])
+    assert not removed.intersection({to_canonical(t) for t in tokens}), (
+        f"confirmed-absent tokens remain in observed_stock_tokens: {tokens}"
+    )
     assert listing_calls == ["bitget"]
     assert {event["entity_id"] for event in audit_events} == removed
     assert all(event["actor"] == "system" for event in audit_events)

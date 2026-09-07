@@ -331,7 +331,6 @@ class TestP3FlowContextBlock:
         # (the code has try/except ImportError)
         with patch("aletheia.config.loader.load_config") as mock_cfg:
             mock_cfg.return_value.market_data.observed_stock_tokens = ["rNVDA/USDT"]
-            mock_cfg.return_value.market_data.observed_xstocks = []
             result = _get_equity_context_block()
             # Even without yfinance, the ticker list should be present
             if result:

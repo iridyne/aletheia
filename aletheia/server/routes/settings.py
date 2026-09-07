@@ -2523,9 +2523,8 @@ class MarketDataConfigUpdate(SettingsRequest):
     enable_yfinance_macro: Optional[bool] = None
     observed_stocks: Optional[list[str]] = None
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget r-series,
-    # Bitget ON-series, future OKX SWAP).  Replaces the narrower observed_xstocks.
+    # Bitget ON-series, future OKX SWAP).
     observed_stock_tokens: Optional[list[str]] = None
-    observed_xstocks: Optional[list[str]] = None  # deprecated alias, still accepted
     observed_prediction_markets: Optional[list[str]] = None
     # Round 2 macro signals (Step 1-4 zero-cost data integration).
     enable_long_short_ratio: Optional[bool] = None
@@ -2588,7 +2587,7 @@ def update_market_data_config(req: MarketDataConfigUpdate):
             value = str(value).strip().lower()
             if value not in _MARKET_DATA_PROVIDERS:
                 raise HTTPException(400, f"'provider' must be one of: {sorted(_MARKET_DATA_PROVIDERS)}")
-        if field in {"observed_stocks", "observed_stock_tokens", "observed_xstocks", "observed_prediction_markets", "observed_equities"}:
+        if field in {"observed_stocks", "observed_stock_tokens", "observed_prediction_markets", "observed_equities"}:
             value = list(dict.fromkeys(str(s).strip() for s in value if str(s).strip()))
         validated_updates[field] = value
 

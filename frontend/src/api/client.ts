@@ -2653,7 +2653,6 @@ export const api = {
 			enable_yfinance_macro: boolean;
 			observed_stocks: string[];
 			observed_stock_tokens: string[];
-			observed_xstocks: string[];
 			observed_prediction_markets: string[];
 			// Round 2 macro signals
 			enable_long_short_ratio: boolean;

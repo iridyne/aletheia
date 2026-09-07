@@ -252,7 +252,6 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     # r-series instruments to the collect run.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -300,7 +299,6 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "binance"
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -330,7 +328,6 @@ async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, m
     from aletheia.data.providers import Ticker
 
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 

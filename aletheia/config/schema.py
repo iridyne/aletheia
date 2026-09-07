@@ -398,7 +398,6 @@ class MarketDataConfig(BaseModel):
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
     # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
     # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.
-    # Replaces the narrower observed_xstocks (which remains a backward-compat alias).
     # Default covers the major r-series + ON-series starters; edit in Settings UI.
     observed_stock_tokens: list[str] = Field(
         default_factory=lambda: [
@@ -407,8 +406,6 @@ class MarketDataConfig(BaseModel):
             "AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT",
         ]
     )
-    # Deprecated: use observed_stock_tokens instead.
-    observed_xstocks: list[str] = Field(default_factory=list)
     # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
     enable_crypto_fallback: bool = True
     # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).

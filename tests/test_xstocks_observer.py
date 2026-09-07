@@ -56,11 +56,10 @@ def test_xstocks_instruments_from_config(tmp_path, monkeypatch):
 
 
 def test_xstocks_instruments_empty_when_not_configured(tmp_path, monkeypatch):
-    """No crash when both observed_xstocks and observed_stock_tokens are empty."""
+    """No crash when observed_stock_tokens is empty."""
     _setup(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
     xs = xstocks_instruments_from_config(cfg)
@@ -78,7 +77,6 @@ def test_equity_observer_creates_equity_opportunity(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["AAPL"]
-    cfg.market_data.observed_xstocks = []  # no xStocks cross-validation in this test
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -124,7 +122,6 @@ def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_p
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.observed_equities = ["MSFT"]
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 

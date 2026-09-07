@@ -201,3 +201,59 @@ def test_strategy_factory_fields_have_no_production_consumer():
             "allowed_consumer_files and remove the DEPRECATED marker.\n"
             + "\n".join(violations)
         )
+
+
+# ---------------------------------------------------------------------------
+# market_data.observed_xstocks retirement
+# ---------------------------------------------------------------------------
+
+
+def test_retired_observed_xstocks_is_merged_into_stock_tokens(tmp_path, monkeypatch):
+    """Three production sites merged `new + legacy`; the loader now does it once.
+
+    Dropping the field without the merge would silently shrink a user's token list,
+    and — because `load_config` validates with a runtime `extra="forbid"` — an
+    existing config carrying the key would fail to LOAD at all.
+    """
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "market_data": {
+                "observed_stock_tokens": ["rNVDA/USDT"],
+                "observed_xstocks": ["rNVDA/USDT", "AAPLON/USDT"],
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    assert not hasattr(cfg.market_data, "observed_xstocks")
+    # Same result the deleted `dict.fromkeys(new + legacy)` produced.
+    assert cfg.market_data.observed_stock_tokens == ["rNVDA/USDT", "AAPLON/USDT"]
+
+
+def test_config_with_only_the_retired_xstocks_key_still_loads(tmp_path, monkeypatch):
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"market_data": {"observed_xstocks": ["TSLAON/USDT"]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    assert "TSLAON/USDT" in cfg.market_data.observed_stock_tokens
