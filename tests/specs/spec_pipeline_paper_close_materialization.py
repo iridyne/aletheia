@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -193,7 +195,7 @@ def test_paper_close_uses_frozen_net_balance_cost_contract(tmp_path, monkeypatch
     _, position = _seed_open_position(
         direction="long", stop_price=95.0, take_profit_price=120.0
     )
-    repo.update_position(
+    force_update_position(
         position.id,
         trailing_json=json.dumps({
             "cost_model_version": "paper-net-balance-v1",
@@ -251,7 +253,7 @@ def test_paper_close_rejects_incomplete_net_balance_cost_contract(
     _, position = _seed_open_position(
         direction="long", stop_price=95.0, take_profit_price=120.0
     )
-    repo.update_position(
+    force_update_position(
         position.id,
         trailing_json=json.dumps(trailing),
     )
@@ -446,7 +448,7 @@ def test_manual_bulk_close_routes_through_paper_execution_chain(
         direction="long", stop_price=95.0, take_profit_price=120.0
     )
     # Position.current_price is a display/projection value, not close authority.
-    repo.update_position(position.id, current_price=110.0)
+    force_update_position(position.id, current_price=110.0)
     _seed_market_snapshot(symbol="BTC/USDT", price=105.0)
     monkeypatch.setattr(settings, "_require_local_paper_mode", lambda: None)
     monkeypatch.setattr(
@@ -2498,7 +2500,7 @@ def test_overview_hero_unblocks_when_all_unsettled_closes_are_terminal(
     # state. `economics_complete` must return False and the hero must
     # re-freeze. This pins the direction of the fix — if the guard were
     # inverted, the negative case would also unblock and mask the bug.
-    repo.update_position(
+    force_update_position(
         "pos-terminal-1",
         outcome_exclusion_reason="incomplete_funding_economics",
     )

@@ -221,7 +221,7 @@ def _load_eligible_position(position_id: str) -> tuple[dict | None, str]:
                     ),
                 }
                 assessment = assess_reportable_outcome(prospective)
-                repo.update_position(
+                repo.update_closed_position_settlement(
                     position_id,
                     outcome_eligible=assessment.eligible,
                     outcome_exclusion_reason=assessment.reason,

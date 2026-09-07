@@ -482,7 +482,7 @@ def _apply_funding_identity_repair(item: dict[str, Any]) -> dict[str, Any]:
         }
         evidence_root["funding_accounting_version"] = ACCOUNTING_VERSION
         evidence_root["funding_economics_fingerprint"] = expected_fingerprint
-        repo.update_position(
+        repo.update_closed_position_settlement(
             position_id,
             reconciliation_evidence=json.dumps(
                 evidence_root,

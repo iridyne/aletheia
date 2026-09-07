@@ -52,6 +52,7 @@ _PYTEST_MARKERS = [
     "real_network: test needs real network calls - opt out of the market-data guard.",
     "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
     "- opt out of the in-memory DB injection.",
+    "production_parity: deterministic production migration, writer, authority, and planning composition gate.",
     "spec: spec-driven development test",
     "L2a: structural spec check (static, fast)",
     "L2b: behavioral spec check (needs fixtures)",

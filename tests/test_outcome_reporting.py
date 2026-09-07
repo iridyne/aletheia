@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -79,7 +81,7 @@ def _insert_mixed_cohort() -> None:
         outcome_eligible=False, outcome_exclusion_reason="administrative_close",
         outcome_semantics_version="oi-v1",
     ))
-    repo.update_position("administrative", realized_pnl=None)
+    force_update_position("administrative", realized_pnl=None)
     repo.insert_position(Position(
         **common, id="legacy", realized_pnl=-999.0, close_reason="manual",
     ))

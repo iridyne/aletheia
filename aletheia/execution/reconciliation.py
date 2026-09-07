@@ -551,17 +551,10 @@ def _clear_verified_closed_pending() -> list[str]:
             ]
             if not _closed_pending_chain_complete(position, order, fill_rows):
                 continue
-            cursor = db.execute(
-                """
-                UPDATE positions
-                SET pending_close_order_id=NULL,
-                    pending_close_status=NULL,
-                    pending_close_requested_at=NULL
-                WHERE id=? AND status='closed' AND pending_close_order_id=?
-                """,
-                (position_id, close_order_id),
+            repo.release_position_close_claim(
+                position_id, order_id=close_order_id
             )
-            cleared = cursor.rowcount == 1
+            cleared = True
             if cleared:
                 repo.insert_audit_event(AuditEvent(
                     actor="system",

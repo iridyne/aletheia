@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import json
 import sqlite3
 
@@ -439,7 +441,7 @@ def test_close_order_and_fill_linkage_are_exact_and_write_once():
             close_order_id="different-close-order",
         )
 
-    repo.update_position(position.id, status="closed")
+    force_update_position(position.id, status="closed")
     assert repo.materialize_position_protection_close(
         position.id,
         trigger_id=trigger.trigger_id,
@@ -509,7 +511,7 @@ def test_paper_close_timestamp_recovery_is_offline_bounded_and_idempotent(monkey
             trigger_id=trigger.trigger_id,
             close_order_id=order.id,
         )
-        repo.update_position(position.id, status="closed")
+        force_update_position(position.id, status="closed")
         return order, fill
 
     eligible_order, eligible_fill = seed(

@@ -48,7 +48,7 @@ class ExitPlan:
     invalid_reasons: tuple[str, ...] = ()
 
     def to_columns(self) -> dict[str, Any]:
-        """Serialize to the flat ``positions`` columns for ``update_position(**cols)``."""
+        """Serialize to the flat columns owned by the Position ExitPlan writer."""
         return {
             "stop_price": self.stop_price,
             "take_profit_price": self.target_price,
@@ -126,9 +126,9 @@ def load_exit_plan(position: dict) -> ExitPlan:
 
 def save_exit_plan(position_id: str, plan: ExitPlan) -> None:
     """Persist an ExitPlan to its position's flat columns."""
-    from aletheia.storage.repositories import update_position
+    from aletheia.storage.repositories import update_open_position_exit_plan
 
-    update_position(position_id, **plan.to_columns())
+    update_open_position_exit_plan(position_id, **plan.to_columns())
 
 
 def _resolve_stop(position: dict, cfg) -> tuple[float | None, bool]:

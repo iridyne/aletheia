@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.position_fixture import force_update_position
+
 import importlib
 import json
 
@@ -136,7 +138,7 @@ def test_stale_or_wrong_account_view_never_advances_candidate(tmp_path, monkeypa
 
     # An OKX local compared with a fresh Bitget-only unified view is incomplete,
     # not a second absence observation.
-    repo.update_position("position-under-test", execution_mode="okx_demo")
+    force_update_position("position-under-test", execution_mode="okx_demo")
     import aletheia.config.loader as loader
     cfg = loader.load_config()
     cfg.exchange.paper_execution_mode = "okx_demo"
