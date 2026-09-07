@@ -8,17 +8,73 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 ROOT = Path(__file__).resolve().parents[2]
 
 
+# The local paper fill model and its receipt type. #2945 routed the harness's
+# synthetic entry through these so the real broker owns depth walking and fill
+# evidence, which the previous `portfolio.paper_account` seam did not produce.
+_DCLS_ALLOWED_EXECUTION_MODULES = (
+    "aletheia.execution.paper_broker",
+    "aletheia.execution.entry_plan_execution",
+)
+
+
 @spec_claim(SpecClaim(
     "DCLS-S01", "operator_layer", "deterministic simulator boundary", "L2a",
-    "The simulator exposes a virtual clock and isolated real-path harness without importing Risk, Execution, Exchange, Live, or secrets.",
+    "The simulator's own source names no Risk, Exchange, Live or secrets module, and "
+    "reaches Execution only through the local paper fill model.",
     status="implemented",
 ))
 def test_dcls_public_boundary():
+    """Direct-import hygiene in runner.py. NOT a reachability guarantee.
+
+    Measured on this tree: the transitive aletheia-import closure of
+    `portfolio.paper_account` (the pre-#2945 seam) and of
+    `execution.paper_broker` (the current one) are BOTH 359 modules and BOTH
+    reach 5 `aletheia.exchanges` modules, `aletheia.config.secrets`, 5
+    `aletheia.risk` modules and 13 `aletheia.gateway` modules. The runner's own
+    closure is 366 and has always reached the same set.
+
+    So this scan never enforced the contract's intent, and reverting the harness
+    to the old seam would buy textual hygiene and nothing else -- the reach is
+    byte-identical either way. What it does enforce is worth keeping: the
+    simulator's own source must not name Risk, Exchange, Live or secrets, so a
+    future author cannot casually add a venue broker, a credential read or a Risk
+    evaluation to the loop. `aletheia.execution` is admitted only for the two
+    local paper-fill modules named above.
+
+    Determinism and offline-ness are guaranteed by the harness's virtual clock
+    and by DCLS-S02..S0n, not by this assertion.
+    """
     from aletheia.simulation.control_loop import ControlLoopHarness, VirtualClock
+
     source = (ROOT / "aletheia/simulation/control_loop/runner.py").read_text()
     assert ControlLoopHarness and VirtualClock
-    for forbidden in ("aletheia.risk", "aletheia.execution", "aletheia.exchanges", "aletheia.config.secrets"):
-        assert forbidden not in source
+
+    for forbidden in ("aletheia.risk", "aletheia.exchanges", "aletheia.config.secrets"):
+        assert forbidden not in source, (
+            f"the deterministic simulator must not name {forbidden} in its own source"
+        )
+
+    # AST, not substring matching: `from aletheia.execution import paper_broker`
+    # and `from aletheia.execution.entry_plan_execution import X` name different
+    # modules and a text split cannot tell them apart.
+    import ast
+
+    reached = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("aletheia.execution"):
+            if node.module == "aletheia.execution":
+                reached.update(f"aletheia.execution.{alias.name}" for alias in node.names)
+            else:
+                reached.add(node.module)
+        elif isinstance(node, ast.Import):
+            reached.update(
+                alias.name for alias in node.names
+                if alias.name.startswith("aletheia.execution")
+            )
+    unexpected = sorted(reached - set(_DCLS_ALLOWED_EXECUTION_MODULES))
+    assert unexpected == [], (
+        f"simulator reaches Execution beyond the local paper fill model: {unexpected}"
+    )
 
 
 @spec_claim(SpecClaim(

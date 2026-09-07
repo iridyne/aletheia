@@ -594,18 +594,19 @@ def test_ui_warning_wall_three_elements():
     SpecClaim(
         "LU-C07",
         "live_unlock_contract",
-        "§4b new-proposal live mode join",
+        "§4b selected-mode resolution",
         "L2c",
-        "With live requested and live_limited authority present, the production "
-        "new-Proposal selector resolves the selected broker's exact "
-        "*_live_limited mode before Proposal persistence.",
+        "With live requested and live_limited authority present, the canonical "
+        "selected-mode resolver returns the selected broker's exact *_live_limited "
+        "mode; without valid authority it falls back to the configured paper mode.",
         status="implemented",
     ),
 )
 def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.agent_shell import commands
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    from aletheia.config import loader as config_loader
     from aletheia.trust import live_unlock as live_unlock_mod
 
     cfg = SimpleNamespace(
@@ -616,7 +617,7 @@ def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
         ),
         live=SimpleNamespace(state="live_limited", unlock_evidence={"ok": True}),
     )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(config_loader, "load_config", lambda: cfg)
     # `current_authorization_ref` is unit-under-test's proof of authority.
     # The join itself is what LU-C07 asserts; the ref's internal derivation is
     # covered by evidence_matches_config's own tests.
@@ -624,7 +625,15 @@ def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
         live_unlock_mod, "current_authorization_ref", lambda _cfg: "sha256:live-ok"
     )
 
-    assert commands._configured_paper_execution_mode() == "okx_live_limited"
+    # NOTE: LU-C07 asserts the resolver, not new-Proposal routing. The contract is
+    # explicit that the join does not exist yet — live_unlock_contract.md:45 and
+    # :106-114 record that "当前 System Operator Proposal 仍不会路由到
+    # `*_live_limited`", keep the capability Experimental, and track the missing
+    # proposal-mode join as GitHub #418. The old assertion called
+    # `commands._configured_paper_execution_mode`, which #2945 deleted with the
+    # 1430-line proposal-creation command; `resolve_selected_execution_mode` is the
+    # surviving implementation of the same selection rule.
+    assert resolve_selected_execution_mode() == "okx_live_limited"
 
 
 def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
@@ -632,7 +641,8 @@ def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
     keep the configured paper mode. Fail-closed by default (#1004 EX-04)."""
     from types import SimpleNamespace
 
-    from aletheia.agent_shell import commands
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    from aletheia.config import loader as config_loader
     from aletheia.trust import live_unlock as live_unlock_mod
 
     cfg = SimpleNamespace(
@@ -643,9 +653,9 @@ def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
         ),
         live=SimpleNamespace(state="live_limited", unlock_evidence=None),
     )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(config_loader, "load_config", lambda: cfg)
     monkeypatch.setattr(
         live_unlock_mod, "current_authorization_ref", lambda _cfg: None
     )
 
-    assert commands._configured_paper_execution_mode() == "okx_demo"
+    assert resolve_selected_execution_mode() == "okx_demo"
