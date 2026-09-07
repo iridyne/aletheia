@@ -65,6 +65,12 @@ export function parseHealthIssue(raw: string): ParsedIssue {
   if (raw === 'trading_paused') {
     return { key: raw, severity: 'yellow', label: 'Trading loop', value: 'paused', detail: '', hint: 'Use the Resume control in the top bar to continue.' }
   }
+  if (raw === 'candidate_refresh_failed' || raw === 'candidate_refresh_stalled') {
+    return { key: raw, severity: 'yellow', label: 'Candidate refresh', value: raw === 'candidate_refresh_failed' ? 'failed' : 'stalled', detail: 'Universe candidate scanner run failed or stalled.', hint: 'Check logs; the scanner will automatically retry on the next cycle.' }
+  }
+  if (raw === 'candidate_progress_unavailable') {
+    return { key: raw, severity: 'yellow', label: 'Candidate pipeline', value: 'warming up', detail: 'Scanner progress is initializing after restart.', hint: 'Warmup completes automatically within 1–2 minutes.' }
+  }
   return { key: raw, severity: 'yellow', label: 'Health issue', value: 'attention', detail: raw, hint: 'Review the system health details.' }
 }
 
