@@ -8,8 +8,10 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from aletheia.data.symbols import to_canonical
+from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
     AccountBalance,
+    CommandEvidence,
     FillReport,
     InstrumentIdentity,
     OrderLifecycle,
@@ -32,6 +34,38 @@ def decimal_value(value: object) -> Decimal | None:
     if not result.is_finite():
         raise ValueError("non-finite decimal")
     return result
+
+
+def venue_contract_quantity(command, *, instrument=None) -> Decimal:
+    """Convert a UTA quantity into venue contracts for a contract-sized market.
+
+    Spot passes through untouched. A contract market requires an exact whole
+    multiple of ``contract_size``: a fractional or non-positive result is a
+    caller error, not something to round, so it fails before the order is sent.
+
+    Not a ``CCXTProfile`` method — Binance submits ``command.quantity`` directly
+    and must not inherit contract conversion. Profiles that need it bind it
+    explicitly.
+    """
+    selected = instrument or command.instrument
+    quantity = Decimal(command.quantity)
+    if selected.market_type == "spot":
+        return quantity
+    contract_size = selected.contract_size
+    if contract_size is None or contract_size <= 0:
+        raise UTAError(
+            UTAErrorCode.INVALID_ORDER,
+            "contract_size_unavailable",
+            command_evidence=CommandEvidence.NOT_SENT,
+        )
+    contracts = quantity / contract_size
+    if contracts != contracts.to_integral_value() or contracts <= 0:
+        raise UTAError(
+            UTAErrorCode.INVALID_ORDER,
+            "quantity_not_exact_contract_multiple",
+            command_evidence=CommandEvidence.NOT_SENT,
+        )
+    return contracts
 
 
 def utc_from_milliseconds(value: object, received_at: datetime) -> datetime | None:
