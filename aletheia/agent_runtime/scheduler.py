@@ -671,29 +671,6 @@ def _run_sync_with_timeout(
         raise TimeoutError(f"job {job_id} hung after {thread_timeout}s")
 
 
-def _ensure_agent_run_ended(job_id: str, target_status: str) -> None:
-    """Safety-net: mark any still-running agent_run row as ended from caller thread.
-
-    Handles the case where asyncio.run() teardown hangs (IOCP drain) after the
-    coroutine already completed successfully — the daemon thread's finally block
-    never reaches its DB update, leaving a ghost 'running' row that the periodic
-    cleanup later marks as 'stale'.
-    """
-    try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        was_in_tx = db.in_transaction
-        db.execute(
-            "UPDATE agent_runs SET status = ?, ended_at = datetime('now') "
-            "WHERE agent_name = ? AND status = 'running'",
-            (target_status, job_id),
-        )
-        if not was_in_tx:
-            db.commit()
-    except Exception as e:
-        logger.debug("_ensure_agent_run_ended(%s, %s) failed: %s", job_id, target_status, e)
-
-
 def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object:
     """Run an async job with a hard wall-clock bound.
 
@@ -736,12 +713,10 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
     try:
         result = future.result(timeout=timeout + 5.0)
         _bump_timeout_metric("async_completed")
-        _ensure_agent_run_ended(job_id, "completed")
         return result
     except _AsyncJobDeadline as exc:
         # asyncio.wait_for enforced the actual job deadline on the worker loop.
         _bump_timeout_metric("async_timed_out")
-        _ensure_agent_run_ended(job_id, "timed_out")
         raise TimeoutError(f"job {job_id} timed out after {timeout}s") from exc
     except concurrent.futures.TimeoutError:
         # The persistent loop itself did not respond to cancellation in time.
@@ -755,7 +730,6 @@ def _run_async_with_timeout(job_id: str, awaitable: Awaitable[object]) -> object
             "future cancelled and worker capacity remains bounded",
             job_id, timeout + 5.0,
         )
-        _ensure_agent_run_ended(job_id, "timed_out")
         raise TimeoutError(f"job {job_id} worker unresponsive after {timeout + 5.0}s")
 
 
@@ -2498,7 +2472,11 @@ def _run_position_reconcile():
     # new risk). Like position_manager it manages existing state and must run even
     # when paused. Invariant: execution_contract §10 (aligned with kill_switch).
     try:
-        from aletheia.agent_runtime.run_logger import start_run, end_run
+        from aletheia.agent_runtime.run_logger import (
+            AgentRunAlreadyActive,
+            end_run,
+            start_run,
+        )
         from aletheia.portfolio.position_reconciler import run_reconcile
 
         run = start_run("position_reconciler", "scheduled", cfg.agent.permission_mode)
@@ -2522,6 +2500,11 @@ def _run_position_reconcile():
         except Exception as e:
             end_run(run, status="failed", errors=[str(e)])
             raise
+    except AgentRunAlreadyActive as exc:
+        logger.info(
+            "position_reconcile skipped: active run %s already owns the lifecycle",
+            exc.run_id,
+        )
     except Exception as e:
         logger.warning("position_reconcile job failed: %s", e)
         _record_job_failure("position_reconcile", str(e))
@@ -3637,19 +3620,15 @@ def _cleanup_stale_agent_runs():
     timeout (5 min) + grace (15 s) so we only clean genuinely orphaned rows.
     """
     try:
-        from aletheia.storage.sqlite import get_db
-        db = get_db()
-        was_in_tx = db.in_transaction
-        result = db.execute(
-            "UPDATE agent_runs SET status = 'stale', ended_at = datetime('now') "
-            "WHERE status = 'running' "
-            "AND datetime(started_at) < datetime('now', '-20 minutes')",
+        from aletheia.agent_runtime.run_logger import mark_stale_running_runs
+
+        rows = mark_stale_running_runs(
+            max_age_minutes=20,
+            reason="scheduler health reconciled an abandoned active run",
+            source="scheduler_health",
         )
-        rows = result.rowcount if result else 0
         if rows:
             logger.info("Marked %d stale agent run(s) as stale during health check", rows)
-        if not was_in_tx:
-            db.commit()
     except Exception as e:
         logger.debug("Failed to cleanup stale agent runs: %s", e)
 
