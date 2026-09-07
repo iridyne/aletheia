@@ -1,6 +1,5 @@
 """Secrets management CLI commands (secondary surface — dashboard is primary)."""
 
-import asyncio
 import typer
 
 from aletheia.config.secrets import set_secret, get_secret, redact
@@ -77,15 +76,14 @@ def test(service: str = typer.Argument(..., help="Service to test, e.g. bitget")
     """Test secrets connectivity for a service."""
     if service == "bitget":
         from aletheia.config.loader import load_config
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-        cfg = load_config()
-        client = BitgetClient(mode=cfg.exchange.mode, profile=configured_bitget_profile())
-        result = asyncio.run(client.test_connection())
+        from aletheia.uta.manager import probe_account_reachable, venue_execution_mode
+
+        mode = venue_execution_mode("bitget", load_config().exchange.mode)
+        result = probe_account_reachable(mode)
         if result["connected"]:
-            typer.echo(f"✓ Bitget {result['mode']} connection successful")
+            typer.echo(f"✓ Bitget {mode} connection successful")
         else:
-            typer.echo(f"✗ Bitget {result['mode']} connection failed: {result['error']}", err=True)
+            typer.echo(f"✗ Bitget {mode} connection failed: {result['error']}", err=True)
             raise typer.Exit(1)
     else:
         typer.echo(f"Unknown service '{service}'. Supported: bitget", err=True)

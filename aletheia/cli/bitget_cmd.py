@@ -1,6 +1,5 @@
 """Bitget CLI commands."""
 
-import asyncio
 import typer
 
 bitget_app = typer.Typer(no_args_is_help=True)
@@ -12,16 +11,14 @@ def test():
     from aletheia.cli._deprecated import warn_deprecated
     warn_deprecated("Settings → Credentials (Test connection)")
     from aletheia.config.loader import load_config
-    from aletheia.exchanges.bitget.client import BitgetClient
-    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+    from aletheia.uta.manager import probe_account_reachable, venue_execution_mode
 
-    cfg = load_config()
-    client = BitgetClient(mode=cfg.exchange.mode, profile=configured_bitget_profile())
-    result = asyncio.run(client.test_connection())
+    mode = venue_execution_mode("bitget", load_config().exchange.mode)
+    result = probe_account_reachable(mode)
     if result["connected"]:
-        typer.echo(f"✓ Bitget {result['mode']} connection successful")
+        typer.echo(f"✓ Bitget {mode} connection successful")
     else:
-        typer.echo(f"✗ Bitget {result['mode']} connection failed: {result['error']}", err=True)
+        typer.echo(f"✗ Bitget {mode} connection failed: {result['error']}", err=True)
         raise typer.Exit(1)
 
 
@@ -33,7 +30,9 @@ def sync():
     from aletheia.portfolio.exchange_sync import sync_all_exchanges, status_for
 
     assert_migrations_current()
-    mode = "bitget_live_limited" if load_config().exchange.mode == "live" else "bitget_demo"
+    from aletheia.uta.manager import venue_execution_mode
+
+    mode = venue_execution_mode("bitget", load_config().exchange.mode)
     state = sync_all_exchanges(execution_modes=(mode,))
     if state is None or status_for(state) != "ok":
         typer.echo(f"UTA account unavailable: {state}", err=True)
