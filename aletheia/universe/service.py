@@ -246,31 +246,6 @@ async def _compute_twin_shadow_allocation_nonfatal(
         return marker(records, reason)
 
 
-async def _compute_relative_rank_allocation_nonfatal(
-    replay,
-    annotator,
-    batch,
-    inputs: tuple,
-    *,
-    authority_selected: list[dict],
-    **kwargs,
-):
-    if not batch:
-        return None
-    try:
-        replayed = await asyncio.wait_for(
-            asyncio.to_thread(replay, batch, inputs, **kwargs),
-            timeout=_TWIN_SHADOW_TIMEOUT_SEC,
-        )
-        return annotator(replayed, authority_selected)
-    except Exception as shadow_exc:
-        logger.warning(
-            "Universe relative-rank Shadow replay unavailable without authority impact: %s",
-            type(shadow_exc).__name__,
-        )
-        return None
-
-
 async def _persist_twin_shadow_nonfatal(
     builder,
     persist,

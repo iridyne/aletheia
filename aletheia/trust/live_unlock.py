@@ -157,32 +157,6 @@ def _environment(raw: Any) -> str:
     return "live"
 
 
-def _permission(raw: Any) -> str:
-    for key, value in _walk_values(raw):
-        normalized = key.replace("-", "_")
-        if normalized not in {
-            "cantrade", "can_trade", "trade", "trading", "order_permission",
-            "order_permissions", "orderpermission", "tradepermission",
-            "permissions", "permission", "perm", "authorities",
-        }:
-            continue
-        if isinstance(value, dict):
-            continue
-        if isinstance(value, bool):
-            return "granted" if value else "denied"
-        values = value if isinstance(value, (list, tuple, set)) else [value]
-        text = " ".join(str(item).lower() for item in values)
-        if text in {"true", "1", "yes"}:
-            return "granted"
-        if text in {"false", "0", "no"}:
-            return "denied"
-        if any(token in text for token in ("trade", "trading", "write", "order")):
-            return "granted"
-        if any(token in text for token in ("read_only", "readonly", "read-only", "read")):
-            return "denied"
-    return "unknown"
-
-
 async def _private_account_probe(identity: dict[str, Any], cfg=None):
     """Read selected live authority only through the UTA account boundary."""
     from aletheia.uta.manager import create_uta_adapter
