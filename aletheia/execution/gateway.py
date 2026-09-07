@@ -2225,6 +2225,7 @@ def _execute_proposal(
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
+                    _fail_entry_plan(proposal, "live_order_failed")
                 msg = f"live_order_failed: broker execution failed ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
