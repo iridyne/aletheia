@@ -1977,35 +1977,6 @@ class ConditionalEntryAuthorization(_Provenanced):
     valid_until: str
 
 
-class FastTriggerMarketSnapshot(BaseModel):
-    """Immutable same-venue T0 evidence captured before Risk/Gateway I/O."""
-
-    id: str = Field(default_factory=new_id)
-    setup_id: str
-    authorization_id: str
-    opportunity_id: str
-    proposal_id: str
-    venue: str
-    symbol: str
-    market_type: str
-    observed_at: str
-    bid: float = Field(gt=0)
-    ask: float = Field(gt=0)
-    spread_bps: float = Field(ge=0)
-    depth_10bps_usd: float = Field(ge=0)
-    taker_buy_ratio: float = Field(ge=0, le=1)
-    quote_exchange_timestamp_ms: int = Field(ge=0)
-    quote_received_timestamp_ms: int = Field(ge=0)
-    trade_exchange_timestamp_ms: int = Field(ge=0)
-    trade_received_timestamp_ms: int = Field(ge=0)
-    depth_exchange_timestamp_ms: int = Field(ge=0)
-    depth_received_timestamp_ms: int = Field(ge=0)
-    quote_sequence: int = Field(ge=0)
-    trade_sequence: int = Field(ge=0)
-    depth_sequence: int = Field(ge=0)
-    created_at: str = Field(default_factory=_utcnow)
-
-
 class OpportunityEntryValidityAssessment(BaseModel):
     """Append-only hard or counterfactual entry-validity evidence."""
 
