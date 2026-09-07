@@ -936,3 +936,59 @@ spec 套件的版本敏感性）已长期高于其收益。local preflight（`sc
   新专用函数，间接保留旧路径。发现时应视为技术债提 Issue，不应任其积累。
 - 向后兼容胶水（re-export、shim、alias）只允许在跨服务 API 边界存在，且必须有明确的
   删除计划（Issue + 里程碑）；repo 内部模块间禁止。
+
+---
+
+## 2026-09-08 — paper_internal 的缺陷判定按模块归属，不按 bug 严重度
+
+**Decision:** `paper_internal`（本地模拟撮合，`paper_broker` / paper fill model 一线）已进入
+退役状态：不再修复其缺陷，不为它补测试，不为它做迁移。判定依据是**模块归属**——只要缺陷落在
+`paper_internal` 专属路径上就不动，与缺陷的严重度、修复成本、是否只需一行无关。所有模拟盘
+（Demo）与实盘（Live）统一走真实交易所，本地不再自建撮合。
+
+**Reason:** 本轮清扫中曾确证一个真实缺陷：市价入场路径没有写 `paper_fill_model_version`，
+导致所有 `paper_internal` 持仓永久停留在 `unverified_paper_fill_model`。修复只需一行，因此
+被判定为"值得顺手修"。这个判断是错的——owner 的退役决定已经作出，为一个将被整体删除的模块
+增加正确性投资，等于把它重新拉回维护面，并让后续删除多背一份 diff。**修复成本低不构成修复
+理由；模块是否还在维护面才是唯一判据。**
+
+**Guardrail:**
+- 发现 `paper_internal` 缺陷：不修，不提 Issue 追踪修复，可在退役 Issue 下记一句"删除时一并消失"。
+- 交易所优先级：OKX 优先，其次 Bitget，Binance 不急。
+- 新能力优先复用现成轮子（官方 SDK / CCXT），不自建第二套 venue 客户端。
+- 反向也成立：`bitget_demo` / `okx_demo` 是**真实交易所的 demo 环境**，属于维护面，
+  不要因为名字里有 "demo" 就归入 paper_internal 一起停维护。
+
+---
+
+## 2026-09-08 — 零调用者判定必须排除四类假信号
+
+**Decision:** 用 AST + grep 判定"某定义无人调用、可删"时，必须显式排除四类假信号，
+否则会产出错误结论——既有假阳性（删掉活代码）也有假阴性（漏掉死代码）。检测器落在
+`scripts/find_zero_caller_definitions.py`，判定规则记录于此。
+
+**Reason:** 本轮四类都真实踩到过：
+1. **框架注册的可调用体**（假阳性）：`@router.get`、`@app.command`、`register_agent`、
+   pytest `fixture`、pydantic `validator` 等由框架按名字调用，源码里没有调用点。
+   不过滤时检测器报 427 个定义 / 9013 行，其中绝大多数是 HTTP 端点；过滤后 129 个 / 2073 行。
+2. **同模块内部调用者**（假阳性）：A 调 B，若 A 自己有活调用者则 B 是活的。必须递归判定
+   到根，不能只看"B 在别的文件里有没有出现"。
+3. **仅出现在契约/测试散文里的名字**（不是机械问题，是决策问题）：例如
+   `knowledge_hash_exists` 只在 `docs/design/contracts/knowledge_contract.md` 被点名。
+   这类删除是**退役决定**，不是死代码清理，必须先回契约层判断机制是否已被取代。
+4. **注释里的名字会被 grep 当成引用**（假阴性）：`clean_error_message`（48 行）零代码调用者，
+   但 `gateway.py` 有两条注释写着"route through clean_error_message (already used by broker
+   error paths)"。grep 把注释行算作引用，于是它躲过了检测。更糟的是这两条注释本身已经失效——
+   它们描述的 `_safe_error_message()` 转发+截断方案早已被更严的设计取代（API 只回固定文案 +
+   结构化 `reason_code`，venue 异常文本完全丢弃）。**过期注释会让死代码看起来是活的。**
+
+**Guardrail:**
+- 删除时必须连装饰器一起删（切 `node.decorator_list[0].lineno`，不是 `node.lineno`）。
+  只从 `def` 行开始切会把 `@contextmanager` 悬空到下一个函数上——本轮此错导致 4 个无关模块
+  19 个测试 `ProgrammingError`。
+- grep 核验时要剔除纯注释行（`lstrip().startswith("#")`），否则注释会掩盖死代码。
+- 声称"已收敛/已删除"前，grep 验证旧实现真的不存在了；**改名不是收敛**（同名 `def` 会遮蔽
+  import，import 变死代码，什么都没收敛）。
+- 声称零回归必须跑完整 `tests/` 并与基线做**失败名集合差**；选择性 `-k` 曾让 24 个真回归漏网。
+- 环境陷阱：沙箱内不要用 `uv run`（触发重建、无 PyPI，pytest 会以 `0 failed` 假绿退出），
+  直接用 `.venv/bin/python -m pytest`。
