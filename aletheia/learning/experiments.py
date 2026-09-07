@@ -75,6 +75,18 @@ def _resolve_numeric_via_observation_lab(
     treatment_value = float(treatment)
     if not math.isfinite(baseline_value) or not math.isfinite(treatment_value):
         raise ValueError("numeric Learning treatment values must be finite")
+    # A measurement-unsupported path can never attach a hypothesis, experiment or
+    # exposure, so it never needs Lab authority. Probing authority first would
+    # report `authority_source_unavailable` — a transient, actionable-looking
+    # reason — for what is a permanent design state. The Learning Observability
+    # contract requires the declared static fallback with `measurement_unsupported`
+    # (docs/design/proposals/learning_observability.md §8.3).
+    # `get_learning_path` raises on an undeclared path — that is a programming
+    # error the allowlist must surface, not a reason code to swallow.
+    if not get_learning_path(path_id).measurement_supported:
+        return InfluenceDecision(
+            baseline_value, False, "unassigned", "measurement_unsupported",
+        )
     try:
         authority = get_authority_source(db=runtime_db)
     except (FileNotFoundError, RuntimeError, sqlite3.Error):
