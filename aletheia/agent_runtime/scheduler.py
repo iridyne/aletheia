@@ -2396,8 +2396,11 @@ def _run_pi_trading_decision():
             if notify_pi_daemon(source="heartbeat"):
                 return
             _record_job_failure("pi_trading_heartbeat", "daemon_notify_failed")
-    except Exception:
-        pass
+    except Exception as exc:
+        # Fall through to the inline planner (see docstring), but never silently:
+        # a daemon path that keeps raising must be visible in the failure counter.
+        logger.warning("pi_trading_heartbeat daemon path failed: %s", exc)
+        _record_job_failure("pi_trading_heartbeat", str(exc))
 
     # The heartbeat and daemon use the same durable planner.
     try:
