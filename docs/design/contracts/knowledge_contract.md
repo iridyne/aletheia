@@ -4,7 +4,8 @@
 > 改动信任不变量前必须 change control (§5)。
 > Source files: `aletheia/knowledge/manager.py` · `retrieval.py` · `guards.py` · `router.py`
 > Cross-references: `docs/governance/policies/trust_and_change_control.md §4` · `docs/design/contracts/agent_contracts.md` · `docs/design/data/data_model.md §3.C`
-> Last updated: 2026-07-03
+> Last updated: 2026-09-07 (entry consumer retirement)
+> 当前入场只走 Candidate → Planning Generation → Planner → Compiler → Entry Plan → Risk/Gateway。旧 Ranker、trading_context/trading_decision 与入场 reflection 注入已退役；下文标明历史的知识路径只解释存量证据，不自动转接到 Planner。
 
 ---
 
@@ -135,8 +136,7 @@ advisory 标签是**负载关键**的——标明这些是建议而非指令，�
 上层路由，为每个 agent role 组合检索上下文：
 - 按 role 过滤 `item_types`（`router.py:22-29`）：
   - `market_observer`: trade_case_study / research_note / dreaming_log / trading_guard
-  - `equity_observer`: research_note / trade_case_study
-  - `paper_trader`: trade_case_study / trading_guard
+  - 当前仅 `market_observer` 调用该 router；旧 paper_trader 角色不是消费者。
   - (#176) `post_trade_review` is DELIBERATELY excluded from every retrieval role — it
     is medium_confidence LLM narrative that once flooded retrieval ~1900:16; `router.py`
     forbids it and a test locks that. Do NOT re-add it here.
@@ -190,7 +190,7 @@ Guard 的生产路径由 `trust_and_change_control.md §4.2` 定义：
 
 ### 4.5 Guard 在决策流中的位置
 
-- **硬阻断**（`paper_trader_ranker`）: `evaluate_guards(context, scope="paper_entry")` 若 `blocked=True` → 候选从排名中剔除（`paper_trader_ranker.py:412`）
+- **历史排序阻断（已退役）**：旧 `paper_trader_ranker` 曾按 `evaluate_guards(..., scope="paper_entry")` 剔除候选。该消费者已删除；历史命中不能授予或阻断当前入场，不为 Planner 新造替代消费者。
 - **软 advisory**（LLM prompt）: `build_advisory_context()` 注入 advisory-only guard 块，不硬阻断 (`router.py:90-101`)
 
 ---
@@ -229,11 +229,13 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 ## §6 当前 Learning 管线状态
 
-### A1. ps_lessons ↔ System Operator prompt
+### A1. ps_lessons 当前诊断/Risk 消费与历史入场注入
 
-**现状**: `trading_context.py` 读取 `LessonStore().list_all(status="applied", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
+当前 `agent_shell/context.py::_curated_learning_context` 只为 Operator 只读诊断提供已应用、未过期且已过 dry-run 的 lessons；Risk 继续独立执行既有 lesson constraints。以下 trading_context/trading_decision 链为已退役的历史入场注入，不是当前消费者。
 
-`ps_lessons` 的消费路径：`dreaming_agent` 提炼 → `LessonStore` → `lesson_reviewer` 审核并 `mark_applied()` → `trading_context` Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（`status="applied"` 且未过期的 lesson）。
+**历史实现（已退役）**: `trading_context.py` 读取 `LessonStore().list_all(status="applied", limit=5)` → 注入 `layer["ps_lessons"]`；`trading_decision.py` 将其渲染为 `## Recent Post-trade Lessons` 进入 System Operator prompt。
+
+`ps_lessons` 的历史入场消费路径（已退役）：`dreaming_agent` 提炼 → `LessonStore` → `lesson_reviewer` 审核并 `mark_applied()` → `trading_context` Layer3 → System Operator prompt → risk engine `_check_lesson_constraints()`（`status="applied"` 且未过期的 lesson）。
 
 **历史缺陷（Round 1）**: `ps_lessons` 写入但无消费者，dreaming 工作进死路。该断点已修复；`accepted` 现在只是短暂中间态，稳定消费态是 `applied`。
 
@@ -314,9 +316,8 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 | 消费方 | 检索方式 | 代码锚点 |
 |--------|---------|---------|
-| `paper_trader_ranker` | `retrieve_lessons(query, k=3, item_types=["trade_case_study"])` | `agents/paper_trader_ranker.py:398-405` |
 | `market_observer` | `build_advisory_context(role="market_observer", guard_context=..., ...)` | `agents/market_observer.py:386-393` |
-| System Operator (trading_context Layer 3) | `trade_case_study` + `guard_candidate` + applied `ps_lessons` | `agent_shell/trading_context.py` Layer 3 |
+| Operator 只读诊断 | applied、未过期且已过 dry-run 的 `ps_lessons`，advisory-only | `agent_shell/context.py::_curated_learning_context` |
 | `dreaming_agent` | `list_knowledge_items(item_type="trade_case_study", ...)` → proposed `ps_lessons` | `agents/dreaming_agent.py` |
 
 ### 7.3 promotion_gates_contract 中的 knowledge 依赖
@@ -327,7 +328,9 @@ FTS 移除（`_unindex()`）与 DB status 更新分离执行（`manager.py:276`�
 
 知识子系统的学习产出在早期可以影响以下两个范围（由浅入深，风控阈值不在其中）：
 
-### 8.1 Ranker 权重调整（低风险）
+### 8.1 历史 Ranker 权重调整（消费者已退役）
+
+以下为历史测量语义；Ranker 不再运行，这些实验 ID 或历史 exposure 不会自动接入当前 Planner。
 
 `paper_trader_ranker.py` 只检索可信的 `trade_case_study`，并另行读取最新的
 `trading_memo`。`ranker_case_score` 现在有独立的 candidate-level 4h
@@ -339,7 +342,9 @@ hypothesis/experiment/exposure；它仍是 Shadow-only，实际 Ranker delta 固
 - Ranker trace 可记录原始建议与实际零增量，但不得伪造实验/exposure id，也不得让两个来源互相冒领贡献；
 - **边界**：Ranker 调整只影响机会排序，不影响 risk_engine 关卡，不影响 sizing。
 
-### 8.2 System Operator system prompt 片段（中风险）
+### 8.2 历史 System Operator 入场 prompt 片段（已退役）
+
+以下三路 trading_context/trading_decision 注入及其旧 LP-S14 枚举属于历史契约，不再是当前入场路径；不得恢复旧 prompt 或据此为 Planner 新增消费权。当前 Operator 诊断 lesson 消费见 §7.2。
 
 System Operator 的 system prompt 分为两层：
 - **基础层**（宪法约束，人类专有）：角色定义、FORBIDDEN_INTENTS 提示、风格约定
@@ -353,7 +358,7 @@ System Operator 的 system prompt 分为两层：
 | 2. 推理质量反馈 | `reasoning_feedback` item_type（Reasoning feedback tracker 写入） | `trading_context.py:425-430` → `trading_decision.py:724-727` |
 | 3. 建议性事后教训 | `LessonStore` 的 applied 行（dreaming_agent 写入、lesson_reviewer 审核并应用） | `trading_context.py` Layer3 → `trading_decision.py` prompt |
 
-学习不能直接修改 prompt 基础层文件。上述三条是当前完整的学习→推理注入路径；新增路径须同步更新 LP-S14 spec claim 和本表。
+学习不能直接修改 prompt 基础层文件。上述三条仅为历史学习→入场推理注入路径；新增当前消费者须另行证明并更新对应契约，不继承旧 LP-S14 权威。
 
 > **历史修正**：本节原文写"这是'学习影响 System Operator 推理'的唯一合法路径"（指 `trading_memo`），
 > 实际代码同时存在 `reasoning_feedback` 和 `ps_lessons` 两条并行路径
@@ -368,8 +373,8 @@ System Operator 的 system prompt 分为两层：
 ### 8.4 推翻机制（部分已实现，仍可扩展）
 
 三路融合方案中，时间 half-life 已实现：`trading_memo` 的 regime guidance 通过
-`memo_half_life_weight()` 7 天半衰期降权，并在 System Operator prompt 中显示
-`Memo time weight`。`evaluate_prior_memo()` 也能把后续交易结果对旧 memo 的推翻写回
+`memo_half_life_weight()` 7 天半衰期降权；旧 System Operator 入场 prompt 曾显示
+`Memo time weight`，该注入已退役。`evaluate_prior_memo()` 也能把后续交易结果对旧 memo 的推翻写回
 memo tags。
 
 仍可扩展的部分：更完整的置信度更新模型，以及决策时更细粒度的主动过滤策略。
@@ -396,8 +401,8 @@ memo tags。
 | item_type | 生产者 | 消费方式 | FTS 必要性 |
 |-----------|--------|---------|-----------|
 | `system_action` | `commands._emit_self_heal_action` | 结构化 JSON，operator 直接 SQL 查询 | ✗ 不需要 |
-| `trading_memo` | `insight_synthesizer._persist_memo` | `trading_context.py` 直接 `get_latest_trading_memo()` | ✗ 不需要 |
-| `reasoning_feedback` | `reasoning_feedback._persist_feedback` | `trading_context.py` 直接 `get_latest_reasoning_feedback()` | ✗ 不需要 |
+| `trading_memo` | `insight_synthesizer._persist_memo` | Observer 直接读取 memo；旧 `trading_context.py` 入场消费已退役 | ✗ 不需要 |
+| `reasoning_feedback` | `reasoning_feedback._persist_feedback` | 历史直接查询 `get_latest_reasoning_feedback()`；旧 `trading_context.py` 入场消费已退役 | ✗ 不需要 |
 | `calibration_report` | `confidence_calibration._persist_report` | `analytics_routes` 直接 `get_latest_calibration_report()` | ✗ 不需要 |
 
 **规则**：如果新增 item_type 需要走 FTS 检索（即需要被 `retrieve_lessons()` 或 `build_advisory_context()` 找到），**必须**通过 `manager.py` 的 `create_*()` 函数写入，不得直接调 `insert_knowledge_item()`。如果消费路径是直接查询而非 FTS，则直接写入合理，但须在 §2 表中注明"FTS不需要"。

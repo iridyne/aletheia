@@ -1,6 +1,14 @@
 """Focused tests for #1206 (uv sync --locked) and #1207 (rollback completeness)."""
 import sqlite3
 
+import pytest
+
+@pytest.fixture(autouse=True)
+def _development_checkout(monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+
 
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader

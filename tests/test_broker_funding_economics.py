@@ -771,13 +771,7 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
     from tests.specs.spec_pipeline_stop_propagation import (
         _patch_private_fill_history,
     )
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
-        fill_price=61000.0,
-    )
-    from aletheia.exchanges.bitget.client import BitgetClient
+    _patch_private_fill_history(monkeypatch, fill_price=61000.0,)
 
     async def _funding(self, *, broker_id, start_time_ms, end_time_ms, **kwargs):
         return make_complete_ledger(
@@ -789,7 +783,6 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
             events=[],
         )
 
-    monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
     monkeypatch.setattr(
         "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
         _funding,
@@ -805,8 +798,9 @@ def test_bitget_reconciliation_materializes_zero_funding_pnl(
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
     )
-    repo.insert_position(position)
-    from aletheia.execution.bitget_broker import close_demo_position
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(position)
+    from aletheia.execution.coordinator import close_position as close_demo_position
     from aletheia.execution.reconciliation import reconcile
 
     close_demo_position(position.id, reason="take_profit")
@@ -832,13 +826,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         _patch_private_fill_history,
     )
 
-    _patch_private_fill_history(
-        monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
-        fill_price=61000.0,
-    )
-    from aletheia.exchanges.bitget.client import BitgetClient
+    _patch_private_fill_history(monkeypatch, fill_price=61000.0,)
 
     async def _funding(self, *, broker_id, start_time_ms, end_time_ms, **_kwargs):
         event = normalize_bitget_funding_rows([{
@@ -858,7 +846,6 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
             events=[event],
         )
 
-    monkeypatch.setattr(BitgetClient, "get_funding_ledger", _funding)
     monkeypatch.setattr(
         "aletheia.execution.reconciliation._UTAReconciliationProjection.get_funding_ledger",
         _funding,
@@ -884,7 +871,8 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         execution_mode="bitget_demo",
         opened_at="2026-07-14T00:00:00+00:00",
     )
-    repo.insert_position(target)
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+    _insert_bound_position(target)
     initial = repo._select_one("positions", target.id)
     from aletheia.execution import broker_funding
 
@@ -904,7 +892,7 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
         "compute_stored_broker_funding",
         _compute_with_racing_candidate,
     )
-    from aletheia.execution.bitget_broker import close_demo_position
+    from aletheia.execution.coordinator import close_position as close_demo_position
     from aletheia.execution.reconciliation import reconcile
 
     close_result = close_demo_position(target.id, reason="take_profit")

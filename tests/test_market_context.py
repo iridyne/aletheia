@@ -592,11 +592,6 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     assert manifest["t1"]["technical_context"]["source_id"] == technical_id
     assert manifest["t1"]["sources"]["technical_context"][0]["stable_id"] == technical_id
 
-    from aletheia.agent_shell.trading_context import _observer_assessment_from_metadata
-
-    rendered_assessment = _observer_assessment_from_metadata(opp["metadata"])
-    assert rendered_assessment["inference_call_id"] == "llm-call-frozen"
-    assert rendered_assessment["technical_context"]["source_id"] == technical_id
 
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-mo-2")

@@ -370,6 +370,8 @@ def test_context_uses_snapshot_time_and_normalized_point_in_time_facts():
         opportunity={"primary_mechanism": "continuation", "mechanism_version": "continuation/v1", "mechanism_source": "target_authority", "source_component_id": "momentum", "direction": "long", "horizon": "4h", "economic_utility_pct": 1.0, "capability_status": "supported", "capability_gaps": (), "primary_evidence_refs": (), "secondary_mechanisms": ()},
         context={},
     )
+    generation["candidate_id"] = opportunity.candidate_id
+    generation["requalification_source_json"] = json.dumps({"candidate_opportunity_context": opportunity.model_dump(mode="json")})
     candidate = {
         "id": "c1", "snapshot_id": "s1", "asset_id": "asset-btc", "venue": "bitget",
         "symbol": "BTC/USDT", "market_type": "perp", "scanner_family": "momentum",

@@ -208,7 +208,6 @@ def test_operator_strategy_performance_ignores_administrative_rows():
 
 
 def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows():
-    from aletheia.agent_shell.trading_context import _build_layer2_short_term
     from aletheia.analytics.family_scorecard import compute_family_scorecard
     from aletheia.analytics.go_live_scorecard import _genuine_closed_pnls
 
@@ -221,9 +220,6 @@ def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows():
     assert families[0]["win_rate"] == 100.0
     assert families[0]["outcome_semantics_version"] == "oi-v1"
 
-    layer = _build_layer2_short_term()
-    assert layer["outcome_stats"]["total_trades"] == 1
-    assert layer["outcome_stats"]["total_pnl"] == 7.0
     assert _genuine_closed_pnls() == [7.0]
 
 

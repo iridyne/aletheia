@@ -30,28 +30,6 @@ def test_guard_clean_rows_drops_synthetic_and_pre_floor():
     assert len(kept) == 2
 
 
-def test_memo_scoring_fades_with_age(monkeypatch):
-    """#131: a stale memo must move ranker scoring far less than a fresh one."""
-    from datetime import datetime, timedelta, timezone
-
-    import aletheia.agents.paper_trader_ranker as ranker
-    from aletheia.regime.detector import MarketRegime
-
-    rule = {"regime": "bull", "direction": "long", "edge": "strong"}
-
-    def _memo(days_old):
-        gen = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
-        return {"regime_playbook": [rule], "symbol_affinity": [], "anti_patterns": [], "generated_at": gen}
-
-    regime = MarketRegime(state="bull", confidence=0.8)
-
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: _memo(0))
-    fresh = ranker._memo_scoring("BTC/USDT", "long", regime)
-    monkeypatch.setattr("aletheia.analytics.insight_synthesizer.get_latest_memo", lambda **_: _memo(30))
-    stale = ranker._memo_scoring("BTC/USDT", "long", regime)
-
-    assert fresh > 5                    # fresh "strong" rule adds ~+12
-    assert 0 <= stale < fresh / 2       # 30-day-old memo (7-day half-life) is heavily faded
 
 
 def test_case_builder_windows_on_close_time():

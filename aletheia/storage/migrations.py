@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v70"
+SCHEMA_VERSION = "aletheia-sqlite-v74"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -7660,6 +7660,180 @@ def _apply_entry_version_collapse_v70(db: sqlite3.Connection) -> None:
         db.execute("RELEASE SAVEPOINT entry_version_collapse_v70")
         raise
     db.execute("PRAGMA optimize")
+
+def _apply_entry_source_scope_v71(db: sqlite3.Connection) -> None:
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='candidate_planning_generations'").fetchone()[0]
+    old = "('legacy_total_score_v1','candidate_selection_utility_v1')"
+    if sql.count(old) != 1:
+        raise MigrationStateError("entry_source_policy_schema_mismatch")
+    sql = sql.replace(old, "('legacy_total_score_v1','candidate_selection_utility_v1','serenity_research_v1')")
+    sql = sql.replace("candidate_planning_generations", "candidate_planning_generations_v71", 1)
+    objects = db.execute("SELECT type,name,sql FROM sqlite_master WHERE sql IS NOT NULL AND "
+                         "(type='trigger' OR (type='index' AND tbl_name='candidate_planning_generations'))").fetchall()
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("SAVEPOINT entry_source_scope_v71")
+    try:
+        for kind, name, _ in objects:
+            if kind == "trigger":
+                db.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+        db.execute(sql)
+        db.execute("INSERT INTO candidate_planning_generations_v71 SELECT * FROM candidate_planning_generations")
+        db.execute("DROP TABLE candidate_planning_generations")
+        db.execute("ALTER TABLE candidate_planning_generations_v71 RENAME TO candidate_planning_generations")
+        for _, _, statement in objects:
+            db.execute(statement)
+        db.execute("ALTER TABLE universe_snapshots ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'universe' CHECK(source_kind IN ('universe','serenity'))")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("entry_source_scope_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT entry_source_scope_v71")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT entry_source_scope_v71")
+        db.execute("RELEASE SAVEPOINT entry_source_scope_v71")
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys=ON")
+
+
+def _apply_retired_entry_authority_v72(db: sqlite3.Connection) -> None:
+    """Retire unsubmitted legacy entry authority without touching exchange evidence."""
+    db.execute("SAVEPOINT retired_entry_authority_v72")
+    try:
+        for table, field, terminal, predicate in (
+            ("trade_proposals", "status", "rejected",
+             "entry_plan_id IS NULL AND source='native' AND status IN ('pending','approved') "
+             "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=trade_proposals.id) "
+             "AND NOT EXISTS (SELECT 1 FROM proposal_execution_claims c WHERE c.proposal_id=trade_proposals.id)"),
+            ("pi_decisions", "action", "entry_path_retired",
+             "action='signal_pending' AND proposal_id IS NULL"),
+            ("universe_setups", "state", "invalidated",
+             "state IN ('pending_authorization','armed','pullback_seen','triggering') "
+             "AND (proposal_id IS NULL OR EXISTS (SELECT 1 FROM trade_proposals p "
+             "WHERE p.id=universe_setups.proposal_id AND p.status='rejected' "
+             "AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id) "
+             "AND NOT EXISTS (SELECT 1 FROM proposal_execution_claims c WHERE c.proposal_id=p.id)))"),
+        ):
+            db.execute(
+                f"INSERT INTO audit_events "
+                "(id,actor,source,event_type,entity_type,entity_id,before_state,after_state,message) "
+                f"SELECT lower(hex(randomblob(16))),'schema_migration','entry_cutover',"
+                f"'entry_path_retired',?,id,json_object(?,{field}),json_object(?,?),"
+                f"'entry_path_retired' FROM {table} WHERE {predicate}",
+                (table, field, field, terminal),
+            )
+            db.execute(f"UPDATE {table} SET {field}=? WHERE {predicate}", (terminal,))
+        db.execute("RELEASE SAVEPOINT retired_entry_authority_v72")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT retired_entry_authority_v72")
+        db.execute("RELEASE SAVEPOINT retired_entry_authority_v72")
+        raise
+
+
+def _apply_uta_order_identity_v73(db: sqlite3.Connection) -> None:
+    db.execute("ALTER TABLE orders ADD COLUMN uta_account_identity_json TEXT")
+
+
+# Keep the imported baseline byte-for-byte verifiable, but never install its retired control plane.
+SCHEMA_SQL = SCHEMA_SQL[:SCHEMA_SQL.index("-- Runtime Continuity (PI runtime lifecycle)")] + SCHEMA_SQL[SCHEMA_SQL.index("-- Agent Shell (Pi Agent, Operator Layer Track B)"):]
+
+
+def _ensure_runtime_baseline(db) -> None:
+    """Backfill only missing historical operator provenance, never registry state."""
+    for table in (
+        "agent_shell_sessions", "agent_shell_commands", "agent_shell_messages",
+        "agent_shell_tasks", "agent_shell_artifacts", "agent_shell_events", "agent_shell_heartbeats",
+    ):
+        columns = {row[1] for row in db.execute(f"PRAGMA table_info({table})")}
+        if "runtime_id" in columns:
+            db.execute(f"UPDATE {table} SET runtime_id='runtime-local-current' WHERE runtime_id IS NULL OR runtime_id=''")
+    for column in ("runtime_mode", "runtime_state"):
+        db.execute(f"UPDATE agent_shell_heartbeats SET {column}='current' WHERE {column} IS NULL OR {column}=''")
+
+
+_RETIRED_RUNTIME_TABLES = (
+    "runtime_registry", "runtime_checkpoints", "runtime_events",
+    "runtime_exclusive_lock", "runtime_ownership",
+)
+
+
+def retire_runtime_continuity_tables(
+    db: sqlite3.Connection, *, backup_path: Path | None = None,
+) -> None:
+    """Retire old control tables only with an exact, authoritative archived copy.
+
+    Call offline after the same-SHA standard-directory migration. No service or
+    artifact is stopped, rebound, or deleted by this database-only operation.
+    """
+    from contextlib import ExitStack
+    import shutil
+    import tarfile
+    import tempfile
+
+    from aletheia.backup.verify import verify_backup
+    from aletheia.config.loader import _PROJECT_ROOT
+
+    if db.in_transaction:
+        raise MigrationStateError("runtime_retirement_requires_transaction_boundary")
+    existing = [table for table in _RETIRED_RUNTIME_TABLES if db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,),
+    ).fetchone()]
+    if not existing:
+        return
+    populated = any(db.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone() for table in existing)
+    with ExitStack() as stack:
+        archive_db = None
+        if populated:
+            if backup_path is None:
+                raise MigrationStateError("runtime_retirement_requires_verified_backup")
+            tmp = stack.enter_context(tempfile.TemporaryDirectory(prefix="aletheia-runtime-retirement-"))
+            copied = Path(tmp) / "backup.tar.gz"
+            shutil.copyfile(backup_path, copied)
+            checked = verify_backup(copied)
+            if not checked.valid or not checked.recovery_eligible:
+                raise MigrationStateError("runtime_retirement_backup_unverified")
+            with tarfile.open(copied, "r:gz") as archive:
+                members = [m for m in archive.getmembers() if len(Path(m.name).parts) == 2 and Path(m.name).name == "app.db" and m.isfile()]
+                if len(members) != 1:
+                    raise MigrationStateError("runtime_retirement_backup_database_missing")
+                archived = archive.extractfile(members[0])
+                assert archived is not None
+                database_path = Path(tmp) / "app.db"
+                with database_path.open("wb") as destination:
+                    shutil.copyfileobj(archived, destination)
+                archive_db = sqlite3.connect(f"{database_path.as_uri()}?mode=ro&immutable=1", uri=True)
+                stack.callback(archive_db.close)
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            if "runtime_registry" in existing:
+                for state, artifact in db.execute("SELECT state, artifact_path FROM runtime_registry"):
+                    if state in {"shadowing", "draining", "legacy_position_manager"}:
+                        raise MigrationStateError("runtime_retirement_active_process_unresolved")
+                    if state == "current" and (not artifact or Path(artifact).resolve() != _PROJECT_ROOT.resolve()):
+                        raise MigrationStateError("runtime_retirement_requires_standard_directory")
+            for table in existing:
+                if archive_db is not None:
+                    source_schema = db.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()
+                    archived_schema = archive_db.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()
+                    if archived_schema is None or source_schema[0] != archived_schema[0]:
+                        raise MigrationStateError("runtime_retirement_backup_source_changed")
+                    columns = len(db.execute(f'PRAGMA table_info("{table}")').fetchall())
+                    order = ",".join(str(i + 1) for i in range(columns))
+                    source_rows = db.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+                    archived_rows = archive_db.execute(f'SELECT * FROM "{table}" ORDER BY {order}')
+                    from itertools import zip_longest
+                    if any(a is None or b is None or tuple(a) != tuple(b) for a, b in zip_longest(source_rows, archived_rows)):
+                        raise MigrationStateError("runtime_retirement_backup_source_changed")
+                elif db.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
+                    raise MigrationStateError("runtime_retirement_requires_verified_backup")
+            for table in existing:
+                db.execute(f'DROP TABLE "{table}"')
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8074,6 +8248,30 @@ _MIGRATIONS = (
         checksum=_ENTRY_VERSION_COLLAPSE_CHECKSUM,
         schema_version="aletheia-sqlite-v70",
         apply=_apply_entry_version_collapse_v70,
+    ),
+    MigrationStep(
+        migration_id="20260907_0070_entry_source_scope_v71",
+        checksum=hashlib.sha256(b"entry_source_scope_v71:universe_snapshots.source_kind").hexdigest(),
+        schema_version="aletheia-sqlite-v71",
+        apply=_apply_entry_source_scope_v71,
+    ),
+    MigrationStep(
+        migration_id="20260907_0071_retired_entry_authority_v72",
+        checksum=hashlib.sha256(b"retired_entry_authority_v72:unsubmitted_only:audit").hexdigest(),
+        schema_version="aletheia-sqlite-v72",
+        apply=_apply_retired_entry_authority_v72,
+    ),
+    MigrationStep(
+        migration_id="20260907_0072_uta_order_identity_v73",
+        checksum=hashlib.sha256(b"uta_order_identity_v73:orders.uta_account_identity_json:nullable_no_backfill").hexdigest(),
+        schema_version="aletheia-sqlite-v73",
+        apply=_apply_uta_order_identity_v73,
+    ),
+    MigrationStep(
+        migration_id="20260907_0073_runtime_control_retirement_v74",
+        checksum=hashlib.sha256(b"runtime_control_retirement_v74:verified_backup:standard_directory").hexdigest(),
+        schema_version="aletheia-sqlite-v74",
+        apply=retire_runtime_continuity_tables,
     ),
 )
 

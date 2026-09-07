@@ -8,6 +8,10 @@ their own independent versions.
 
 ### Changed
 
+* **entry:** make Candidate/PlanningGeneration/EntryPlan the sole new-entry authority, including source-scoped Serenity publication and separate timing/holding horizons; retain historical decisions and unresolved execution evidence.
+* **uta:** route all six external account modes through UTA and the execution coordinator, retire the legacy/shadow selector, and bind private order recovery to durable exact account identity; unproven historical mappings block new entry without rewriting old orders.
+* **learning:** make Observation Lab the sole online experiment authority; retire legacy evaluation/lifecycle writers while preserving proof-gated imports and historical evidence. Missing canonical qualifications remain unavailable.
+* **deployment:** route Linux manual updates through the existing auto release transaction; remove experimental runtime controls and require verified backup plus standard-directory migration before retiring registry tables.
 * **maintenance:** remove obsolete internal/test-double fallbacks and the unused cross-tab listener; preserve configured log retention and read-only scheduler failures, and replace implementation-bound UI checks with rendered behavior coverage.
 * **entry:** persist Discovery closed candles for exact-instrument planning; establish missing legacy candle provenance only on a real refetch, preserving existing timestamps on unchanged observations.
 * **candidate:** persist each runtime selection evidence bundle and its outcome labels atomically with publication so subsequent economic estimation can load the produced evidence.

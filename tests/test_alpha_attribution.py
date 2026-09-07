@@ -804,324 +804,81 @@ def test_two_measured_negative_layers_are_not_ranked_by_raw_delta():
     assert bottleneck["suspected_modules"] == []
 
 
-def test_learning_alpha_detects_same_pattern_improvement_after_lesson():
+@pytest.mark.parametrize("authority", ["legacy", "missing", "lab"])
+def test_learning_alpha_does_not_infer_current_contribution_from_old_lessons(authority):
     from aletheia.analytics.alpha_attribution import build_alpha_attribution_audit
+    from aletheia.observation_lab.db import reset_lab_db
     from aletheia.storage.sqlite import get_db
 
+    reset_lab_db()
     db = get_db()
+    if authority == "missing":
+        db.execute("DELETE FROM observation_authority_state")
+    else:
+        db.execute("UPDATE observation_authority_state SET authority_source=?", (authority,))
     event_at = _iso(days_ago=10)
     for i in range(5):
         _insert_trade_chain(db, 100 + i, pnl_pct=-2.0, closed_at=_iso(days_ago=15))
-    for i in range(5):
         _insert_trade_chain(db, 200 + i, pnl_pct=2.0, closed_at=_iso(days_ago=5))
     db.execute(
         "INSERT INTO ps_lessons "
-        "(lesson_id, source_type, source_id, category, severity, summary, evidence_json, status, created_at, activated_at) "
-        "VALUES ('lesson-alpha', 'trade_case_study', 'case-1', 'risk', 'warn', 'momentum improved', "
-        "?, 'accepted', ?, ?)",
+        "(lesson_id,source_type,source_id,category,severity,summary,evidence_json,status,created_at,activated_at) "
+        "VALUES ('lesson-alpha','trade_case_study','case-1','risk','warn','improved',?, 'accepted',?,?)",
         ('{"scanner_family":"momentum","direction":"long","symbol":"BTC/USDT"}', event_at, event_at),
     )
     db.commit()
-
-    report = build_alpha_attribution_audit(days=30)
-    learning = report["verdicts"]["learning"]
-
-    assert learning["verdict"] == "positive"
-    assert learning["sample_size"] == 5
-    assert learning["baseline"] == -2.0
-    assert learning["observed"] == 2.0
+    learning = build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
+    assert learning["verdict"] == learning["contribution_verdict"] == "insufficient_data"
+    assert learning["delta"] is None
+    assert learning["details"]["unavailable_reason"]
+    assert db.execute("SELECT status FROM ps_lessons WHERE lesson_id='lesson-alpha'").fetchone()[0] == "accepted"
 
 
-def test_learning_alpha_surfaces_current_paper_monitoring_without_authority(monkeypatch):
-    import aletheia.analytics.alpha_attribution as alpha_attribution
-    import aletheia.learning.read_models as learning_read_models
+def test_learning_alpha_exposes_persisted_lab_result_without_granting_qualification():
+    from aletheia.analytics.alpha_attribution import _learning_alpha
+    from aletheia.observation_lab.canonical import register_observation_spec, record_observation_result
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
     from aletheia.storage.sqlite import get_db
-    from tests.test_learning_verdict_runtime import _experiment, _exposure
 
-    monkeypatch.setattr(
-        alpha_attribution,
-        "_utcnow",
-        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
+    reset_lab_db()
+    main = get_db()
+    main.execute("UPDATE observation_authority_state SET authority_source='lab'")
+    main.commit()
+    root = register_observation_spec({
+        "observation_id": "alpha-lab", "path_id": "universe_family_calibration",
+        "filter_name": "alpha-test", "stage": "shadow", "scanner_family": "momentum",
+        "direction": "long", "market_type": "perp", "horizon": "4h",
+        "control": {"value": 1.0}, "treatment": {"value": 2.0},
+        "behavior_policy_epoch_ref": "epoch-lab",
+    })
+    result_id = record_observation_result(
+        observation_id=root["observation_id"], generation=1, spec_hash=root["spec_hash"],
+        source_cutoff='{"main_import_contiguous_sequence":0}', verdict="positive",
+        disposition="evaluated", result={"domain_result": {
+            "baseline": 0.0, "observed": 1.0, "delta": 1.0, "reason": "descriptive evidence",
+        }},
     )
-    hypothesis, experiment = _experiment(min_samples=50, min_days=7)
-    db = get_db()
-    db.execute(
-        "UPDATE learning_experiments SET created_at=?, started_at=? WHERE experiment_id=?",
-        ("2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00", experiment.experiment_id),
-    )
-    db.commit()
-    _exposure(
-        experiment,
-        hypothesis,
-        candidate="paper-monitoring-current",
-        assignment="control",
-        exposed_at="2026-08-09T09:00:00+00:00",
-    )
-    item = {
-        "path_id": hypothesis.path_id,
-        "experiment_id": experiment.experiment_id,
-        "stage": "paper_10",
-        "availability": "available",
-        "data_freshness": {"state": "fresh"},
-        "allocation_pct": 0.1,
-        "current_identity": {"policy_epoch": "epoch-a", "matches_running_cohort": True},
-        "measurement": {
-            "state": "insufficient_data",
-            "reason": "insufficient unique prospective treatment/control samples",
-            "baseline": None,
-            "observed": None,
-            "delta": None,
-            "authority_eligible": False,
-            "window_start": "1970-01-01T00:00:00+00:00",
-            "window_end": "1970-01-01T00:00:00+00:00",
-        },
-        "samples": {
-            "raw_exposures": 21,
-            "exposed_treatment_units": 1,
-            "exposed_authority_applied_treatment_units": 1,
-            "exposed_actual_intervention_treatment_units": 1,
-            "exposed_control_units": 5,
-            "treatment_assignment_units": 0,
-            "control_assignment_units": 0,
-            "actual_intervention_treatment_units": 0,
-            "treatment_members": 6,
-            "treatment_selected_members": 1,
-            "control_members": 25,
-            "control_selected_members": 4,
-        },
-        "integrity": {
-            "actual_intervention_state": "none",
-            "exclusion_reasons": {"unsettled": 21},
-        },
-        "inference": {"status": "collecting"},
-    }
-    projection = {
-        "availability": "partial",
-        "unavailable_reason": None,
-        "data_freshness": {"state": "fresh"},
-        "operations": {
-            "availability": "available",
-            "query_errors": {},
-            "evaluator": {
-                "current_status": "healthy",
-                "consecutive_failures": 0,
-                "overdue": False,
-                "catchup_due": False,
-            },
-        },
-        "items": [
-            {
-                "path_id": hypothesis.path_id,
-                "experiment_id": "newer-shadow-experiment",
-                "stage": "shadow",
-                "availability": "partial",
-                "data_freshness": {"state": "stale"},
-            },
-            item,
-        ],
-    }
-    requested_limits = []
-    monkeypatch.setattr(
-        learning_read_models,
-        "build_learning_contribution_projection",
-        lambda *, limit: requested_limits.append(limit) or projection,
-    )
-
-    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-
-    assert learning["verdict"] == "insufficient_data"
-    assert learning["contribution_verdict"] == "insufficient_data"
-    assert learning["measurement_status"] == "not_measured"
-    assert learning["evidence_type"] == "dedicated_learning_contribution_monitoring"
-    assert learning["details"]["experiment_id"] == experiment.experiment_id
-    assert learning["details"]["raw_exposures"] == 21
-    assert learning["details"]["exposed_actual_intervention_treatment_units"] == 1
-    assert learning["details"]["exclusion_reasons"] == {"unsettled": 21}
-    assert learning["details"]["window_start"] == "1970-01-01T00:00:00+00:00"
-    assert requested_limits == [100]
-    rendered = alpha_attribution.render_alpha_audit(
-        alpha_attribution.build_alpha_attribution_audit(days=30)
-    )
-    assert f"Learning experiment: id={experiment.experiment_id} stage=paper_10" in rendered
-    assert "exposed_interventions=1 settled_interventions=0" in rendered
-    assert 'exclusions={"unsettled": 21}' in rendered
-    assert "Learning selection: treatment=1/6 control=4/25" in rendered
-
-    item["measurement"].update(
-        state="positive",
-        baseline=0.0,
-        observed=1.0,
-        delta=1.0,
-        window_start="2026-08-09T09:00:00+00:00",
-        window_end="2026-08-09T09:10:00+00:00",
-    )
-    item["samples"].update(treatment_assignment_units=50, control_assignment_units=50)
-    monitoring_positive = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-
-    assert monitoring_positive["verdict"] == "positive"
-    assert monitoring_positive["contribution_verdict"] == "insufficient_data"
-    assert monitoring_positive["measurement_status"] == "directional_evidence_only"
-    assert monitoring_positive["details"]["projection_availability"] == "partial"
-    assert monitoring_positive["details"]["monitoring_unavailable_reason"] is None
-
-    projection["availability"] = "unavailable"
-    projection["unavailable_reason"] = "projection_unavailable"
-    unavailable_envelope = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert unavailable_envelope["verdict"] == "insufficient_data"
-    assert unavailable_envelope["measurement_status"] == "not_measured"
-    assert unavailable_envelope["details"]["monitoring_unavailable_reason"] == "projection_unavailable"
-    projection["availability"] = "partial"
-    projection["unavailable_reason"] = None
-
-    projection["operations"]["availability"] = "partial"
-    partial_operations = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert partial_operations["verdict"] == "insufficient_data"
-    assert partial_operations["measurement_status"] == "not_measured"
-    assert partial_operations["delta"] is None
-    assert partial_operations["details"]["monitoring_unavailable_reason"] == "operations_unavailable"
-    projection["operations"]["availability"] = "available"
-
-    projection["operations"]["evaluator"]["current_status"] = "overdue"
-    overdue_evaluator = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert overdue_evaluator["verdict"] == "insufficient_data"
-    assert overdue_evaluator["details"]["monitoring_unavailable_reason"] == "evaluator_unhealthy"
-    projection["operations"]["evaluator"]["current_status"] = "healthy"
-
-    item["availability"] = "partial"
-    partial_item = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert partial_item["verdict"] == "insufficient_data"
-    assert partial_item["details"]["monitoring_unavailable_reason"] == "partial"
-    item["availability"] = "available"
-
-    item["data_freshness"]["state"] = "stale"
-    stale_item = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert stale_item["verdict"] == "insufficient_data"
-    assert stale_item["details"]["monitoring_unavailable_reason"] == "stale"
-    item["data_freshness"]["state"] = "fresh"
-
-    item["measurement"]["window_start"] = None
-    missing_window = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert missing_window["verdict"] == "insufficient_data"
-    assert missing_window["details"]["audit_window_compatible"] is False
-
-    def unavailable_projection(*, limit):
-        raise RuntimeError("projection failed")
-
-    monkeypatch.setattr(
-        learning_read_models,
-        "build_learning_contribution_projection",
-        unavailable_projection,
-    )
-    unavailable = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-
-    assert unavailable["verdict"] == "insufficient_data"
-    assert unavailable["evidence_type"] == "dedicated_learning_contribution_monitoring"
-    assert "projection is unavailable" in unavailable["reason"]
+    lab = get_lab_db()
+    before = (main.total_changes, lab.total_changes)
+    alpha = _learning_alpha("2000-01-01T00:00:00+00:00")
+    assert alpha["contribution_verdict"] == "insufficient_data"
+    assert alpha["delta"] is None
+    item, = alpha["details"]["measurements"]
+    assert item["experiment_id"] == "alpha-lab:g1"
+    assert item["measurement"]["state"] == "positive"
+    assert item["measurement"]["delta"] == 1.0
+    assert item["integrity"]["result_id"] == result_id
+    assert item["current_identity"]["matches_running_cohort"] is None
+    assert (main.total_changes, lab.total_changes) == before
+    outside = _learning_alpha("9999-01-01T00:00:00+00:00")
+    assert outside["details"]["measurements"][0]["audit_window_compatible"] is False
+    assert outside["contribution_verdict"] == "insufficient_data"
 
 
-def test_learning_alpha_consumes_exact_confirmatory_authority_verdict(monkeypatch):
-    import aletheia.analytics.alpha_attribution as alpha_attribution
-    from aletheia.learning.contribution_runner import evaluate_experiment
-    from aletheia.learning.fixed_look import register_fixed_look_decision
-    from tests.test_learning_verdict_runtime import (
-        _experiment,
-        _exposure,
-        _outcome,
-    )
-    from tests.test_learning_verdict_runtime import (
-        _iso as learning_iso,
-    )
-
-    monkeypatch.setattr(
-        alpha_attribution,
-        "_utcnow",
-        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
-    )
-
-    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
-    register_fixed_look_decision(
-        experiment,
-        hypothesis,
-        policy_epoch="epoch-a",
-        behavior_contract_hash="behavior-v1",
-    )
-    for index in range(50):
-        for assignment, net, offset in (("treatment", 1.0, 0), ("control", 0.0, 1)):
-            candidate = f"alpha-{assignment}-{index:02d}"
-            _exposure(
-                experiment,
-                hypothesis,
-                candidate=candidate,
-                assignment=assignment,
-                exposed_at=learning_iso(minutes=index * 2 + offset),
-            )
-            _outcome(
-                candidate,
-                net=net,
-                entry_at=learning_iso(minutes=index * 2 + offset + 1),
-            )
-    evaluate_experiment(experiment.experiment_id)
-
-    learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-
-    assert learning["verdict"] == "positive"
-    assert learning["contribution_verdict"] == "positive"
-    assert learning["measurement_status"] == "measured_contribution"
-    assert learning["causal_grade"] == "strong_prospective_control"
-    assert learning["evidence_type"] == "dedicated_learning_contribution_verdict"
-    assert learning["details"]["path_id"] == "universe_family_calibration"
-    assert learning["details"]["unique_treatment_n"] == 50
-    assert learning["details"]["unique_control_n"] == 50
 
 
-def test_learning_alpha_rejects_authority_verdict_spanning_before_audit_window(monkeypatch):
-    import aletheia.analytics.alpha_attribution as alpha_attribution
-    from aletheia.learning.contribution_runner import evaluate_experiment
-    from aletheia.learning.fixed_look import register_fixed_look_decision
-    from tests.test_learning_verdict_runtime import (
-        _experiment,
-        _exposure,
-        _outcome,
-    )
-    from tests.test_learning_verdict_runtime import (
-        _iso as learning_iso,
-    )
 
-    monkeypatch.setattr(
-        alpha_attribution,
-        "_utcnow",
-        lambda: datetime(2026, 8, 9, 10, tzinfo=timezone.utc),
-    )
 
-    hypothesis, experiment = _experiment(min_samples=50, min_days=0)
-    register_fixed_look_decision(
-        experiment,
-        hypothesis,
-        policy_epoch="epoch-a",
-        behavior_contract_hash="behavior-v1",
-    )
-    for index in range(50):
-        for assignment, net, offset in (("treatment", 1.0, 0), ("control", 0.0, 1)):
-            candidate = f"old-alpha-{assignment}-{index:02d}"
-            exposed_at = (
-                learning_iso(days=-1, minutes=offset)
-                if index == 0
-                else learning_iso(minutes=index * 2 + offset)
-            )
-            _exposure(
-                experiment,
-                hypothesis,
-                candidate=candidate,
-                assignment=assignment,
-                exposed_at=exposed_at,
-            )
-            _outcome(candidate, net=net, entry_at=learning_iso(minutes=index * 2 + offset + 1))
-    evaluate_experiment(experiment.experiment_id)
-
-    learning = alpha_attribution.build_alpha_attribution_audit(days=27)["verdicts"]["learning"]
-
-    assert learning["contribution_verdict"] == "insufficient_data"
-    assert learning["measurement_status"] == "not_measured"
 
 
 def test_weak_negative_keeps_diagnostics_without_prescriptive_rendering():

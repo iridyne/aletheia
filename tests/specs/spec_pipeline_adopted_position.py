@@ -686,10 +686,6 @@ def test_non_bitget_stale_unified_never_orphans(tmp_path, monkeypatch):
     # No fresh unified (multi-broker) view...
     from aletheia.portfolio import position_reconciler as pr
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
-    # ...but the legacy Bitget "demo" cache is fresh-but-EMPTY (the trap):
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
-                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
-                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
     monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
 
     r = pr.classify_positions("demo")
@@ -757,9 +753,6 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
 
     from aletheia.portfolio import position_reconciler as pr
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
-                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
-                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
     monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
 
     summary = pr.run_reconcile()
@@ -778,23 +771,6 @@ def test_run_reconcile_non_bitget_no_orphan_close(tmp_path, monkeypatch):
 # ===========================================================================
 
 
-class _FakeOKXClient:
-    """Network-boundary stub: returns bracket ids without touching OKX."""
-    placed: list = []
-
-    def __init__(self, mode="demo"):
-        self.mode = mode
-
-    async def place_algo_order(self, symbol, market_type, close_side, quantity,
-                               stop_price=None, take_profit_price=None):
-        _FakeOKXClient.placed.append({
-            "symbol": symbol, "close_side": close_side, "quantity": quantity,
-            "stop_price": stop_price, "take_profit_price": take_profit_price,
-        })
-        return {"sl": "algo-sl-1", "tp": "algo-tp-1"}
-
-    async def close(self):
-        return None
 
 
 @spec_claim(
@@ -812,38 +788,46 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
 
     from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
-    from aletheia.execution import okx_broker
+    from aletheia.execution import coordinator
+    from tests.uta.test_execution_coordinator import _Adapter, _insert_bound_position, _ack
+    from aletheia.uta.models import UTACapabilities, CapabilitySupport
+    captured = []
+    async def submit(command):
+        captured.append(command)
+        suffix = "sl" if command.purpose == "protective_stop" else "tp"
+        return _ack(command).model_copy(update={"venue_order_id": f"algo-{suffix}-1"})
+    adapter = _Adapter(submit, "okx_demo")
+    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
     def _insert_okx_short():
         p = Position(symbol="BNB/USDT", market_type="usdt_futures", direction="short",
                      quantity=0.03, entry_price=562.73, execution_mode="okx_demo",
                      status="open", stop_price=573.98, take_profit_price=540.22)
-        repo.insert_position(p)
+        _insert_bound_position(p)
         return p
 
-    monkeypatch.setattr(okx_broker, "OKXClient", _FakeOKXClient)
     from aletheia.execution.stops import place_exchange_protective_orders
 
     # 1. flag OFF → dormant no-op (even okx_demo)
     _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=False)
     p1 = _insert_okx_short()
-    _FakeOKXClient.placed = []
     assert place_exchange_protective_orders({
         "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
         "direction": "short", "quantity": 0.03, "stop_price": 573.98,
         "take_profit_price": 540.22, "execution_mode": "okx_demo",
     }) == {}, "flag OFF must be a dormant no-op"
-    assert _FakeOKXClient.placed == [], "no exchange call when flag off"
+    assert captured == [], "no exchange call when flag off"
 
     # 2. flag ON + LIVE mode → never an autonomous live order
     _write_config(tmp_path, monkeypatch, "okx_demo", exchange_tpsl_enabled=True)
-    _FakeOKXClient.placed = []
     assert place_exchange_protective_orders({
         "id": p1.id, "symbol": "BNB/USDT", "market_type": "usdt_futures",
         "direction": "short", "quantity": 0.03, "stop_price": 573.98,
         "take_profit_price": 540.22, "execution_mode": "bitget_live_limited",
     }) == {}, "live mode must never place an autonomous exchange order"
-    assert _FakeOKXClient.placed == [], "no exchange call for live mode"
+    assert captured == [], "no exchange call for live mode"
 
     # 3. flag ON + okx_demo → places bracket + persists id (RESULT, not just call)
     ids = place_exchange_protective_orders({
@@ -853,7 +837,7 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
     })
     assert ids == {"sl": "algo-sl-1", "tp": "algo-tp-1"}
     # short → close side is BUY (reduce the short)
-    assert _FakeOKXClient.placed and _FakeOKXClient.placed[-1]["close_side"] == "buy"
+    assert [command.side for command in captured] == ["buy", "buy"]
     import json
     row = conn.execute("SELECT exchange_tpsl_order_id FROM positions WHERE id=?", (p1.id,)).fetchone()
     assert json.loads(row["exchange_tpsl_order_id"]) == {"sl": "algo-sl-1", "tp": "algo-tp-1"}, (
@@ -1094,10 +1078,10 @@ def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
     repo.insert_position(orphan)
 
     # Exchange view: fresh but empty → SOL orphaned (were it not for the breaker).
-    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
-                        lambda mode=None: {"positions": [], "age_seconds": 5.0,
-                                           "fetched_at": "2026-07-01T00:00:00+00:00"})
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state",
+                        lambda: {"accounts": [{"broker_id": "bitget_demo"}],
+                                 "positions": [], "age_seconds": 5.0,
+                                 "fetched_at": "2026-07-01T00:00:00+00:00"})
     monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
 
     summary = pr.run_reconcile()
@@ -1179,9 +1163,6 @@ def test_fresh_but_incomplete_unified_never_orphans(tmp_path, monkeypatch):
         "positions": [], "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 167.0}],
         "age_seconds": 5.0, "fetched_at": "2026-07-02T00:00:00+00:00",
     })
-    # Even if the legacy bitget cache were readable, it must not be used for okx.
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
-                        lambda mode=None: {"positions": [], "age_seconds": 5.0, "fetched_at": "x"})
     monkeypatch.setattr(pr.exchange_sync, "status_for", lambda state, max_age_sec=600: "ok")
 
     r = pr.classify_positions("demo")
@@ -1620,8 +1601,8 @@ def test_reconcile_surfaces_invalid_leverage_as_degraded_owner_warning(
         leverage_source="unavailable",
         broker_id="bitget_demo",
     )
-    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: None)
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state", lambda *_: {
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
+        "accounts": [{"broker_id": "bitget_demo"}],
         "positions": [exchange_position],
         "age_seconds": 1.0,
         "fetched_at": "2026-08-07T00:00:00+00:00",

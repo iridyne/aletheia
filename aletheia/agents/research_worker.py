@@ -96,7 +96,7 @@ def _auto_promote_serenity_opportunities(
     *,
     run_id: str | None = None,
 ) -> int:
-    """Atomically hand score-qualified Serenity opportunities to PI by theme."""
+    """Atomically publish score-qualified Serenity Candidates by theme."""
     theme_ids: set[str] = set()
     for opportunity_id in opportunity_ids:
         opp = repo.get_serenity_opportunity(opportunity_id)
@@ -115,11 +115,11 @@ def _auto_promote_serenity_opportunities(
     newly_queued_themes: set[str] = set()
     for theme_id, active_ids in active_ids_by_theme.items():
         try:
-            queued_ids = repo.enqueue_serenity_theme_for_pi(
+            queued_ids = repo.publish_serenity_candidates(
                 theme_id,
                 active_ids,
                 min_score_for_pi=cfg.serenity.min_score_for_pi,
-                new_carriers_only=True,
+                new_candidates_only=True,
             )
         except Exception as exc:
             # A theme is one atomic unit. Keep it retryable while allowing an

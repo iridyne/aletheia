@@ -56,7 +56,6 @@ def test_uta_generation_mismatch_revokes_risk_equity_and_available(monkeypatch):
     from aletheia.risk import engine
 
     cfg = AletheiaConfig()
-    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
     stale_generation = {
         "age_seconds": 1.0,
         "sync_status": "generation_mismatch",
@@ -72,11 +71,6 @@ def test_uta_generation_mismatch_revokes_risk_equity_and_available(monkeypatch):
     monkeypatch.setattr(
         exchange_sync, "get_unified_cached_state", lambda: stale_generation
     )
-    monkeypatch.setattr(
-        exchange_sync,
-        "get_cached_state",
-        lambda *_args: pytest.fail("UTA v1 must not read the legacy Bitget cache"),
-    )
 
     assert engine.account_equity_for_execution("bitget_demo", cfg) is None
     assert engine.account_available_for_execution("bitget_demo", cfg) is None
@@ -88,7 +82,6 @@ def test_uta_complete_zero_remains_authoritative_for_risk(monkeypatch):
     from aletheia.risk import engine
 
     cfg = AletheiaConfig()
-    cfg.exchange.uta_read_boundaries = {"bitget_demo": "uta_v1"}
     complete_zero = {
         "age_seconds": 1.0,
         "sync_status": "ok",
@@ -105,3 +98,21 @@ def test_uta_complete_zero_remains_authoritative_for_risk(monkeypatch):
 
     assert engine.account_equity_for_execution("bitget_demo", cfg) == 0.0
     assert engine.account_available_for_execution("bitget_demo", cfg) == 0.0
+
+@pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo",
+                                 "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
+def test_external_mode_uses_only_matching_uta_balance(monkeypatch, mode):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync
+    from aletheia.risk import engine
+
+    account = {"broker_id": mode, "equity_usdt": 100.0, "available_usdt": 30.0}
+    cache = {"age_seconds": 1.0, "sync_status": "ok", "accounts": [account,
+             {"broker_id": "unrelated", "equity_usdt": 9999.0, "available_usdt": 9999.0}]}
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda **kwargs: cache)
+    cfg = AletheiaConfig()
+    assert engine.account_equity_for_execution(mode, cfg) == 100.0
+    assert engine.account_available_for_execution(mode, cfg) == 30.0
+    cache["accounts"].remove(account)
+    assert engine.account_available_for_execution(mode, cfg) is None
+    assert engine.account_equity_for_execution(mode, cfg) is None

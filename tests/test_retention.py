@@ -188,7 +188,7 @@ def test_prune_universe_forward_outcomes(tmp_path, monkeypatch):
 
 def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path, monkeypatch):
     conn = setup_env(tmp_path, monkeypatch)
-    from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
+    conn.execute("UPDATE observation_authority_state SET authority_source='legacy'")
     from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
 
     hypothesis = LearningHypothesis(
@@ -206,11 +206,9 @@ def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path
     experiment = LearningExperiment(
         experiment_id="retention-experiment",
         hypothesis_id=hypothesis.hypothesis_id,
-        assignment_salt="test",
+        assignment_salt="test", status="active",
     )
-    assert insert_hypothesis(hypothesis)
-    assert insert_experiment(experiment)
-    assert insert_exposure(LearningExposure(
+    exposure = LearningExposure(
         dedup_key="retention-exposure",
         experiment_id=experiment.experiment_id,
         hypothesis_id=hypothesis.hypothesis_id,
@@ -225,7 +223,13 @@ def test_prune_universe_forward_outcomes_keeps_open_experiment_fallback(tmp_path
         outcome_source="fixed_horizon_candidate",
         concurrent_policy_epoch="epoch-a",
         exposed_at=_old(70),
-    ))
+    )
+    for table, record in (("learning_hypotheses", hypothesis), ("learning_experiments", experiment), ("learning_exposures", exposure)):
+        values = record.model_dump()
+        conn.execute(
+            f"INSERT INTO {table} ({','.join(values)}) VALUES ({','.join('?' for _ in values)})",
+            tuple(values.values()),
+        )
     conn.execute(
         "INSERT INTO universe_registry (id, venue, symbol, market_type) VALUES (?,?,?,?)",
         ("asset-1", "test", "BTC/USDT", "perp"),

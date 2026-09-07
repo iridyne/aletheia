@@ -70,29 +70,3 @@ def test_stamp_noop_without_intent():
     row = _select_one("positions", "p2")
     assert row["expected_horizon_hours"] is None
     assert row["stop_source"] is None
-
-
-def test_context_surfaces_exit_provenance():
-    """M5 reback: the Operator's context shows stop provenance + horizon per position,
-    so a position still on config-default risk is visible for re-authoring."""
-    from aletheia.agent_shell.trading_context import _build_layer1_snapshot
-    from aletheia.storage.sqlite import get_db
-
-    get_db().execute(
-        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-        "execution_mode,status,stop_source,expected_horizon_hours,stop_price) VALUES "
-        "('p1','BTC/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open',"
-        "'operator',12.0,97.0)"
-    )
-    # legacy row: no stop_source → surfaced as 'default'
-    get_db().execute(
-        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
-        "execution_mode,status) VALUES "
-        "('p2','ETH/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open')"
-    )
-
-    positions = {p["id"]: p for p in _build_layer1_snapshot().get("positions", [])}
-    assert positions["p1"]["stop_source"] == "operator"
-    assert positions["p1"]["expected_horizon_hours"] == 12.0
-    assert positions["p1"]["stop_price"] == 97.0
-    assert positions["p2"]["stop_source"] == "default"  # NULL → default (needs review)

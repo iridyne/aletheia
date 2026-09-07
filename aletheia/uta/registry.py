@@ -12,11 +12,6 @@ from aletheia.uta.models import UTAAccountIdentity
 @dataclass(frozen=True)
 class UTAAdapterConfig:
     identity: UTAAccountIdentity
-    boundary: str = "legacy"
-
-    def __post_init__(self) -> None:
-        if self.boundary not in {"legacy", "uta_v1", "shadow_read"}:
-            raise ValueError(f"unsupported UTA boundary selector: {self.boundary}")
 
 
 UTAAdapterFactory = Callable[[UTAAdapterConfig], UTAAdapter]

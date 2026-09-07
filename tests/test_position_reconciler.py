@@ -42,10 +42,12 @@ def setup_env(tmp_path, monkeypatch):
 def _stub_cache(monkeypatch, positions, status="ok"):
     """Patch exchange_sync so classify_positions reads our fake exchange view."""
     from aletheia.portfolio import position_reconciler as pr
-    cached = {"positions": positions, "open_positions_count": len(positions),
+    mode = pr._execution_mode_for("live" if pr.exchange_sync.load_config().exchange.mode == "live" else "demo")
+    cached = {"positions": [{"broker_id": mode, **row} for row in positions],
+              "accounts": [{"broker_id": mode}],
               "age_seconds": 1.0, "fetched_at": "2026-06-12T00:00:00+00:00"}
-    monkeypatch.setattr(pr.exchange_sync, "get_cached_state",
-                        lambda mode=None: cached if status not in ("unconfigured",) else None)
+    monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state",
+                        lambda **kwargs: cached if status != "unconfigured" else None)
     monkeypatch.setattr(pr.exchange_sync, "status_for",
                         lambda state, max_age_sec=600: status)
 

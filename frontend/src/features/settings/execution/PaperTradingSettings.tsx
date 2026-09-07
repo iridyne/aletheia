@@ -12,7 +12,6 @@ import {
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
 import type { SettingsDirtyProps } from '../types'
 
-const CONFIDENCE_LEVELS = ['high', 'medium', 'speculative'] as const
 type PaperCashAction = 'credit' | 'debit' | 'set'
 type CapitalEventCursor = { detected_at: string; id: string }
 type CapitalEventPage = {
@@ -286,7 +285,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
   const [holdHours, setHoldHours] = useState('')
   const [slippageBps, setSlippageBps] = useState('')
   const [executionFeePct, setExecutionFeePct] = useState('')
-  const [confidence, setConfidence] = useState('medium')
   const [autoAdopt, setAutoAdopt] = useState(true)
   const [trailEnabled, setTrailEnabled] = useState(false)
   const [exchangeTpslEnabled, setExchangeTpslEnabled] = useState(false)
@@ -321,7 +319,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       max_position_hold_hours: parseFloat(holdHours),
       slippage_bps: parseFloat(slippageBps),
       execution_fee_pct: parseFloat(executionFeePct),
-      min_confidence_to_trade: confidence,
       auto_adopt_enabled: autoAdopt,
       trail_enabled: trailEnabled,
       exchange_tpsl_enabled: exchangeTpslEnabled,
@@ -360,7 +357,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
     || holdHours !== String(trading.max_position_hold_hours ?? 72)
     || slippageBps !== String(trading.slippage_bps ?? 5)
     || executionFeePct !== String(trading.execution_fee_pct ?? 0.1)
-    || confidence !== (trading.min_confidence_to_trade ?? 'medium')
     || autoAdopt !== (trading.auto_adopt_enabled !== false)
     || trailEnabled !== !!trading.trail_enabled
     || exchangeTpslEnabled !== !!trading.exchange_tpsl_enabled
@@ -399,7 +395,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
       setHoldHours(String(trading.max_position_hold_hours ?? 72))
       setSlippageBps(String(trading.slippage_bps ?? 5))
       setExecutionFeePct(String(trading.execution_fee_pct ?? 0.1))
-      setConfidence(trading.min_confidence_to_trade ?? 'medium')
       setAutoAdopt(trading.auto_adopt_enabled !== false)
       setTrailEnabled(!!trading.trail_enabled)
       setExchangeTpslEnabled(!!trading.exchange_tpsl_enabled)
@@ -462,12 +457,6 @@ export function TradingParamsCard({ settings, qc, onDirty }: SettingsDirtyProps)
           <input type="number" min={0} max={5} step={0.01} value={executionFeePct}
             onChange={e => { setExecutionFeePct(e.target.value); setMsg(null) }}
             className="mono" />
-        </label>
-        <label>
-          <span>Min confidence to trade</span>
-          <select value={confidence} onChange={e => { setConfidence(e.target.value); setMsg(null) }}>
-            {CONFIDENCE_LEVELS.map(c => <option key={c}>{c}</option>)}
-          </select>
         </label>
       </div>
       <div className="settings-inline-note">

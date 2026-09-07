@@ -16,7 +16,6 @@ from statistics import mean
 from typing import Any
 
 from aletheia.analytics.learning_window import outcome_window_metadata
-from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.learning.outcomes import assess_candidate_outcome
 from aletheia.storage.repositories import (
     SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
@@ -110,7 +109,7 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
             "System Operator Alpha",
             lambda: _system_operator_alpha(db, cutoff, generated_at, min_sample_size),
         ),
-        "learning": _safe_layer("Learning Alpha", lambda: _learning_alpha(db, cutoff, days, min_sample_size)),
+        "learning": _safe_layer("Learning Alpha", lambda: _learning_alpha(cutoff)),
         "serenity": _safe_layer(
             "Serenity Alpha",
             lambda: _serenity_alpha(db, cutoff, generated_at, min_sample_size),
@@ -1181,472 +1180,48 @@ def _system_operator_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int)
     )
 
 
-def _dedicated_learning_alpha(db, cutoff: str, min_sample_size: int) -> dict | None:
-    from aletheia.learning.cohorts import SUPPORTED_PATH_IDS
-    from aletheia.learning.fixed_look import (
-        get_consumed_fixed_look_verdict,
-        get_fixed_look_decision,
+def _learning_alpha(cutoff: str) -> dict:
+    """Expose persisted Lab evidence without promoting it to current qualification."""
+    from aletheia.learning.read_models import build_learning_contribution_projection
+
+    projection = build_learning_contribution_projection(limit=100)
+    cutoff_at = _parse_dt(cutoff)
+    measurements = []
+    for item in projection["items"]:
+        measurement = item["measurement"]
+        window_start = _parse_dt(measurement["window_start"])
+        window_end = _parse_dt(measurement["window_end"])
+        measurements.append({
+            "path_id": item["path_id"],
+            "experiment_id": item["experiment_id"],
+            "stage": item["stage"],
+            "experiment_status": item["experiment_status"],
+            "availability": item["availability"],
+            "data_freshness": item["data_freshness"],
+            "measurement": measurement,
+            "samples": item["samples"],
+            "current_identity": item["current_identity"],
+            "inference": item["inference"],
+            "integrity": item["integrity"],
+            "audit_window_compatible": (
+                cutoff_at is not None and window_start is not None
+                and window_end is not None and cutoff_at <= window_start <= window_end
+            ),
+        })
+    reason = projection["unavailable_reason"] or (
+        "current_consumed_settled_proof_unavailable"
+        if measurements else "no_persisted_lab_measurement"
     )
-
-    path_ids = sorted(SUPPORTED_PATH_IDS)
-    if not path_ids:
-        return None
-    placeholders = ",".join("?" for _ in path_ids)
-    rows = db.execute(
-        "SELECT e.experiment_id, e.hypothesis_id, e.stage, e.min_samples_per_arm, "
-        "(SELECT MIN(x.exposed_at) FROM learning_exposures x "
-        " WHERE x.experiment_id=e.experiment_id) AS first_exposed_at, "
-        "h.path_id, h.target_horizon FROM learning_experiments e "
-        "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
-        f"WHERE e.ended_at IS NULL AND h.path_id IN ({placeholders}) "
-        "ORDER BY datetime(e.created_at) DESC, e.experiment_id DESC",
-        tuple(path_ids),
-    ).fetchall()
-    valid: list[tuple[dict, dict]] = []
-    invalid: list[dict] = []
-    required_identity = (
-        "policy_epoch",
-        "stage",
-        "target_horizon",
-        "outcome_contract_version",
-        "metric_version",
-        "code_commit",
-        "behavior_contract_hash",
-        "inference_contract_version",
-        "inference_plan_hash",
-        "inference_cutoff_fingerprint",
-    )
-    for raw in rows:
-        experiment = dict(raw)
-        decision = get_fixed_look_decision(experiment["experiment_id"])
-        if decision is None or decision.status != "consumed":
-            continue
-        verdict = get_consumed_fixed_look_verdict(experiment["experiment_id"])
-        if verdict is None:
-            invalid.append({"experiment_id": experiment["experiment_id"], "reason": "consumed_verdict_invalid"})
-            continue
-        mismatch = next(
-            (
-                reason
-                for reason, matches in (
-                    ("hypothesis_mismatch", verdict.get("hypothesis_id") == experiment["hypothesis_id"]),
-                    ("stage_mismatch", verdict.get("stage") == experiment["stage"]),
-                    ("horizon_mismatch", verdict.get("target_horizon") == experiment["target_horizon"]),
-                    ("identity_incomplete", all(verdict.get(field) not in {None, ""} for field in required_identity)),
-                    ("sample_contract_unmet", min(int(verdict.get("unique_treatment_n") or 0), int(verdict.get("unique_control_n") or 0)) >= int(experiment["min_samples_per_arm"] or min_sample_size)),
-                    ("economic_result_incomplete", all(verdict.get(field) is not None for field in ("baseline", "observed", "delta"))),
-                )
-                if not matches
-            ),
-            None,
-        )
-        if mismatch:
-            invalid.append({"experiment_id": experiment["experiment_id"], "reason": mismatch})
-            continue
-        window_start = _parse_dt(verdict.get("window_start"))
-        window_end = _parse_dt(verdict.get("window_end"))
-        cutoff_at = _parse_dt(cutoff)
-        if (
-            window_start is None
-            or window_end is None
-            or cutoff_at is None
-            or window_start < cutoff_at
-            or window_end < window_start
-        ):
-            continue
-        valid.append((experiment, verdict))
-
-    if len(valid) > 1 or invalid:
-        reason = (
-            "Several current Learning estimands have authority verdicts and cannot be aggregated."
-            if len(valid) > 1
-            else "A consumed Learning verdict failed its exact identity contract."
-        )
-        return _verdict(
-            "Learning Alpha",
-            "insufficient_data",
-            0,
-            None,
-            None,
-            None,
-            "insufficient",
-            reason,
-            {
-                "valid_verdict_count": len(valid),
-                "invalid_verdicts": invalid,
-                "path_ids": sorted({row[0]["path_id"] for row in valid}),
-            },
-            evidence_type="dedicated_learning_contribution_verdict",
-            causal_grade="insufficient",
-        )
-    if not valid:
-        cutoff_at = _parse_dt(cutoff)
-        experiment_rows = {row["experiment_id"]: dict(row) for row in rows}
-        paper_experiment_ids = {
-            experiment_id
-            for experiment_id, experiment in experiment_rows.items()
-            if str(experiment.get("stage") or "").startswith("paper_")
-            and cutoff_at is not None
-            and (first_exposed_at := _parse_dt(experiment.get("first_exposed_at")))
-            is not None
-            and first_exposed_at >= cutoff_at
-        }
-        if not paper_experiment_ids:
-            return None
-        try:
-            from aletheia.learning.read_models import build_learning_contribution_projection
-
-            projection = build_learning_contribution_projection(limit=100)
-        except Exception:
-            return _verdict(
-                "Learning Alpha",
-                "insufficient_data",
-                0,
-                None,
-                None,
-                None,
-                "insufficient",
-                "A current Paper Learning experiment exists, but its contribution projection is unavailable.",
-                {"experiment_ids": sorted(paper_experiment_ids)},
-                evidence_type="dedicated_learning_contribution_monitoring",
-                causal_grade="insufficient",
-            )
-        current_paper = [
-            item
-            for item in projection.get("items", [])
-            if item.get("experiment_id") in paper_experiment_ids
-        ]
-        if not current_paper:
-            return _verdict(
-                "Learning Alpha",
-                "insufficient_data",
-                0,
-                None,
-                None,
-                None,
-                "insufficient",
-                "A current Paper Learning experiment exists, but no current exact measurement projection is available.",
-                {"experiment_ids": sorted(paper_experiment_ids)},
-                evidence_type="dedicated_learning_contribution_monitoring",
-                causal_grade="insufficient",
-            )
-        if len(current_paper) > 1:
-            return _verdict(
-                "Learning Alpha",
-                "insufficient_data",
-                0,
-                None,
-                None,
-                None,
-                "insufficient",
-                "Several current Paper Learning estimands are collecting and cannot be aggregated.",
-                {
-                    "experiment_ids": [row["experiment_id"] for row in current_paper],
-                    "path_ids": [row["path_id"] for row in current_paper],
-                },
-                evidence_type="dedicated_learning_contribution_monitoring",
-                causal_grade="insufficient",
-            )
-
-        item = current_paper[0]
-        monitoring_unavailable_reason = _learning_monitoring_unavailable_reason(
-            projection,
-            item,
-        )
-        measurement = item.get("measurement") or {}
-        samples = item.get("samples") or {}
-        integrity = item.get("integrity") or {}
-        state = str(measurement.get("state") or "not_measured")
-        state_has_delta = state in {"positive", "neutral", "negative"}
-        status = state if state_has_delta else "insufficient_data"
-        window_start = measurement.get("window_start")
-        window_end = measurement.get("window_end")
-        window_start_at = _parse_dt(window_start)
-        window_end_at = _parse_dt(window_end)
-        window_compatible = not (
-            cutoff_at is None
-            or window_start_at is None
-            or window_end_at is None
-            or window_start_at < cutoff_at
-            or window_end_at < window_start_at
-        )
-        if state_has_delta and not window_compatible:
-            status = "insufficient_data"
-        if monitoring_unavailable_reason is not None:
-            status = "insufficient_data"
-        sample_size = min(
-            int(samples.get("treatment_assignment_units") or 0),
-            int(samples.get("control_assignment_units") or 0),
-        )
-        return _verdict(
-            "Learning Alpha",
-            status,
-            sample_size,
-            measurement.get("baseline"),
-            measurement.get("observed"),
-            measurement.get("delta") if status != "insufficient_data" else None,
-            _confidence_label(sample_size, min_sample_size),
-            (
-                "Current Paper Learning monitoring evidence is not currently available."
-                if monitoring_unavailable_reason is not None
-                else "Current Paper Learning monitoring window is unavailable or outside the audit window."
-                if state_has_delta and not window_compatible
-                else f"Current Paper Learning monitoring verdict is {state}, but only a consumed "
-                "confirmatory verdict can establish contribution."
-            ),
-            {
-                "path_id": item.get("path_id"),
-                "experiment_id": item.get("experiment_id"),
-                "stage": item.get("stage"),
-                "projection_availability": projection.get("availability"),
-                "projection_unavailable_reason": projection.get("unavailable_reason"),
-                "operations_availability": (projection.get("operations") or {}).get(
-                    "availability"
-                ) if isinstance(projection.get("operations"), dict) else None,
-                "evaluator_status": (
-                    ((projection.get("operations") or {}).get("evaluator") or {}).get(
-                        "current_status"
-                    )
-                    if isinstance((projection.get("operations") or {}).get("evaluator"), dict)
-                    else None
-                ),
-                "item_availability": item.get("availability"),
-                "item_freshness": (item.get("data_freshness") or {}).get("state")
-                if isinstance(item.get("data_freshness"), dict)
-                else None,
-                "monitoring_unavailable_reason": monitoring_unavailable_reason,
-                "allocation_pct": item.get("allocation_pct"),
-                "measurement_reason": measurement.get("reason"),
-                "measurement_authority_eligible": bool(measurement.get("authority_eligible")),
-                "window_start": window_start,
-                "window_end": window_end,
-                "audit_window_compatible": window_compatible,
-                "raw_exposures": int(samples.get("raw_exposures") or 0),
-                "unique_treatment_n": int(samples.get("treatment_assignment_units") or 0),
-                "unique_control_n": int(samples.get("control_assignment_units") or 0),
-                "treatment_members": samples.get("treatment_members"),
-                "treatment_selected_members": samples.get(
-                    "treatment_selected_members"
-                ),
-                "control_members": samples.get("control_members"),
-                "control_selected_members": samples.get("control_selected_members"),
-                "actual_intervention_treatment_units": int(
-                    samples.get("actual_intervention_treatment_units") or 0
-                ),
-                "exposed_actual_intervention_treatment_units": int(
-                    samples.get("exposed_actual_intervention_treatment_units") or 0
-                ),
-                "actual_intervention_state": integrity.get("actual_intervention_state"),
-                "exclusion_reasons": integrity.get("exclusion_reasons") or {},
-                "current_identity": item.get("current_identity") or {},
-                "inference_status": (item.get("inference") or {}).get("status"),
-            },
-            evidence_type="dedicated_learning_contribution_monitoring",
-            causal_grade=(
-                "moderate_prospective_monitoring"
-                if status != "insufficient_data"
-                else "insufficient"
-            ),
-        )
-
-    experiment, verdict = valid[0]
-    status = str(verdict["verdict"])
-    if status not in {"positive", "neutral", "negative"}:
-        return _verdict(
-            "Learning Alpha",
-            "insufficient_data",
-            min(int(verdict["unique_treatment_n"]), int(verdict["unique_control_n"])),
-            verdict.get("baseline"),
-            verdict.get("observed"),
-            None,
-            "insufficient",
-            f"The exact confirmatory Learning verdict is {status}, so it cannot establish contribution.",
-            {"verdict_id": verdict["verdict_id"], "path_id": experiment["path_id"]},
-            evidence_type="dedicated_learning_contribution_verdict",
-            causal_grade="insufficient",
-        )
-    sample_size = min(int(verdict["unique_treatment_n"]), int(verdict["unique_control_n"]))
     return _verdict(
-        "Learning Alpha",
-        status,
-        sample_size,
-        verdict["baseline"],
-        verdict["observed"],
-        verdict["delta"],
-        _confidence_label(sample_size, min_sample_size),
-        f"Learning path {experiment['path_id']} has a consumed exact confirmatory contribution verdict: {verdict['reason']}",
+        "Learning Alpha", "insufficient_data", 0, None, None, None, "insufficient",
+        reason,
         {
-            "path_id": experiment["path_id"],
-            "experiment_id": experiment["experiment_id"],
-            "hypothesis_id": experiment["hypothesis_id"],
-            "verdict_id": verdict["verdict_id"],
-            "unique_treatment_n": int(verdict["unique_treatment_n"]),
-            "unique_control_n": int(verdict["unique_control_n"]),
-            "window_start": verdict["window_start"],
-            "window_end": verdict["window_end"],
-            "policy_epoch": verdict["policy_epoch"],
-            "target_horizon": verdict["target_horizon"],
-            "outcome_contract_version": verdict["outcome_contract_version"],
-            "metric_version": verdict["metric_version"],
-            "code_commit": verdict["code_commit"],
-            "behavior_contract_hash": verdict["behavior_contract_hash"],
-            "inference_contract_version": verdict["inference_contract_version"],
-            "inference_plan_hash": verdict["inference_plan_hash"],
-            "inference_cutoff_fingerprint": verdict["inference_cutoff_fingerprint"],
-            "harm_metrics": _parse_json(verdict.get("harm_metrics_json")),
+            "availability": projection["availability"],
+            "unavailable_reason": reason,
+            "measurements": measurements,
         },
-        evidence_type="dedicated_learning_contribution_verdict",
-        causal_grade="strong_prospective_control",
-    )
-
-
-def _learning_monitoring_unavailable_reason(projection: dict, item: dict) -> str | None:
-    if projection.get("availability") == "unavailable":
-        return str(projection.get("unavailable_reason") or "projection_unavailable")
-    operations = projection.get("operations")
-    if not isinstance(operations, dict) or operations.get("availability") != "available":
-        return "operations_unavailable"
-    evaluator = operations.get("evaluator")
-    if not isinstance(evaluator, dict):
-        return "evaluator_unavailable"
-    if evaluator.get("current_status") != "healthy":
-        return "evaluator_unhealthy"
-    if int(evaluator.get("consecutive_failures") or 0) > 0:
-        return "evaluator_unhealthy"
-    if bool(evaluator.get("overdue")) or bool(evaluator.get("catchup_due")):
-        return "evaluator_stale"
-    if item.get("availability") != "available":
-        return str(item.get("availability") or "item_unavailable")
-    freshness = item.get("data_freshness")
-    if not isinstance(freshness, dict):
-        return "item_stale"
-    if freshness.get("state") != "fresh":
-        return str(freshness.get("state") or "item_stale")
-    return None
-
-
-def _learning_alpha(db, cutoff: str, days: int, min_sample_size: int) -> dict:
-    dedicated = _dedicated_learning_alpha(db, cutoff, min_sample_size)
-    if dedicated is not None:
-        return dedicated
-    raw_events = _learning_events(db, cutoff)
-    events = _dedupe_learning_events(raw_events)
-    if not raw_events:
-        return _verdict(
-            "Learning Alpha",
-            "insufficient_data",
-            0,
-            None,
-            None,
-            None,
-            "insufficient",
-            "No structured learning/memo/guard events in the audit window.",
-            {"event_count": 0, "raw_event_count": 0, "unique_event_count": 0},
-        )
-
-    before_avgs: list[float] = []
-    after_avgs: list[float] = []
-    raw_after_count = 0
-    unique_after: dict[str, float] = {}
-    unique_before: dict[str, float] = {}
-    unique_control_after: dict[str, float] = {}
-    unique_control_before: dict[str, float] = {}
-    after_membership: dict[str, int] = defaultdict(int)
-    usable_events = 0
-    did_events = 0
-    total_events_with_group = 0
-
-    for event in events:
-        group = event["group"]
-        if not group:
-            continue
-        total_events_with_group += 1
-        before, after, control_before, control_after = _trade_pnl_before_after(db, event["event_at"], days, group)
-        raw_after_count += len(after)
-        for key, value in before.items():
-            unique_before.setdefault(key, value)
-        for key, value in after.items():
-            unique_after.setdefault(key, value)
-            after_membership[key] += 1
-        for key, value in control_before.items():
-            unique_control_before.setdefault(key, value)
-        for key, value in control_after.items():
-            unique_control_after.setdefault(key, value)
-        if len(before) < min_sample_size or len(after) < min_sample_size:
-            continue
-        before_avgs.append(mean(before.values()))
-        after_avgs.append(mean(after.values()))
-        usable_events += 1
-        if len(control_before) >= min_sample_size and len(control_after) >= min_sample_size:
-            did_events += 1
-
-    if usable_events == 0:
-        return _verdict(
-            "Learning Alpha",
-            "insufficient_data",
-            len(unique_after),
-            _safe_mean(before_avgs),
-            _safe_mean(after_avgs),
-            None,
-            "insufficient",
-            "Learning events exist, but there are not enough before/after same-pattern closed trades to judge behavior change.",
-            {
-                "event_count": len(events),
-                "raw_event_count": len(raw_events),
-                "unique_event_count": len(events),
-                "duplicate_event_count": len(raw_events) - len(events),
-                "events_with_group": total_events_with_group,
-                "usable_events": 0,
-                "raw_after_sample_size": raw_after_count,
-                "unique_after_sample_size": len(unique_after),
-            },
-            evidence_type="same_pattern_before_after",
-            causal_grade="insufficient",
-        )
-
-    if (
-        len(unique_control_before) >= min_sample_size
-        and len(unique_control_after) >= min_sample_size
-    ):
-        observed = mean(unique_after.values()) - mean(unique_before.values())
-        base = mean(unique_control_after.values()) - mean(unique_control_before.values())
-        reason_basis = "difference-in-differences against contemporaneous non-matching trade controls"
-        evidence_type = "difference_in_differences"
-        causal_grade = "moderate_quasi_causal"
-    else:
-        observed = mean(unique_after.values())
-        base = mean(unique_before.values())
-        reason_basis = "same-pattern before/after comparison without enough controls"
-        evidence_type = "same_pattern_before_after"
-        causal_grade = "weak_before_after"
-    delta = observed - base
-    status = _status_from_delta(delta)
-    return _verdict(
-        "Learning Alpha",
-        status,
-        len(unique_after),
-        base,
-        observed,
-        delta,
-        _confidence_label(len(unique_after), min_sample_size),
-        f"Learning-treated patterns {'improved' if delta > 0 else 'worsened' if delta < 0 else 'matched'} using {reason_basis}.",
-        {
-            "event_count": len(events),
-            "raw_event_count": len(raw_events),
-            "unique_event_count": len(events),
-            "duplicate_event_count": len(raw_events) - len(events),
-            "events_with_group": total_events_with_group,
-            "usable_events": usable_events,
-            "did_events": did_events,
-            "raw_after_sample_size": raw_after_count,
-            "unique_after_sample_size": len(unique_after),
-            "unique_before_sample_size": len(unique_before),
-            "unique_control_after_sample_size": len(unique_control_after),
-            "unique_control_before_sample_size": len(unique_control_before),
-            "overlapping_after_sample_size": sum(1 for count in after_membership.values() if count > 1),
-        },
-        evidence_type=evidence_type,
-        causal_grade=causal_grade,
+        evidence_type="canonical_lab_measurements",
+        causal_grade="insufficient",
     )
 
 
@@ -1725,166 +1300,6 @@ def _serenity_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dic
     )
 
 
-def _learning_events(db, cutoff: str) -> list[dict]:
-    events: list[dict] = []
-    lesson_rows = db.execute(
-        "SELECT lesson_id AS id, source_type, source_id, evidence_json, recommendation_json, "
-        "COALESCE(activated_at, created_at) AS event_at "
-        "FROM ps_lessons "
-        "WHERE status IN ('accepted', 'applied') "
-        "AND datetime(COALESCE(activated_at, created_at)) >= datetime(?)",
-        (cutoff,),
-    ).fetchall()
-    for row in lesson_rows:
-        evidence = _parse_json(row["evidence_json"])
-        recommendation = _parse_json(row["recommendation_json"])
-        events.append({
-            "id": row["id"],
-            "event_kind": "lesson",
-            "source_type": row["source_type"],
-            "source_id": row["source_id"],
-            "event_at": row["event_at"],
-            "group": _extract_learning_group(evidence, recommendation),
-            "action": recommendation.get("action"),
-        })
-
-    knowledge_rows = db.execute(
-        "SELECT id, item_type, tags, created_at AS event_at FROM knowledge_items "
-        "WHERE item_type IN ('trading_memo', 'trading_guard') "
-        "AND datetime(created_at) >= datetime(?)",
-        (cutoff,),
-    ).fetchall()
-    for row in knowledge_rows:
-        tags = _parse_json(row["tags"])
-        events.append({
-            "id": row["id"],
-            "event_kind": row["item_type"],
-            "source_type": row["item_type"],
-            "source_id": row["id"],
-            "event_at": row["event_at"],
-            "group": _extract_learning_group(tags),
-            "action": tags.get("action") if isinstance(tags, dict) else None,
-        })
-    return events
-
-
-def _dedupe_learning_events(events: list[dict]) -> list[dict]:
-    """Collapse repeated artifact rows into one scope/action cohort.
-
-    Prose, artifact ids, and retry timestamps are intentionally excluded. The
-    earliest activation anchors the weak before/after window; later duplicates
-    cannot reset the clock or multiply the same closed positions.
-    """
-    by_fingerprint: dict[str, dict] = {}
-    for event in events:
-        payload = {
-            "event_kind": event.get("event_kind"),
-            "source_type": event.get("source_type"),
-            "group": event.get("group") or {},
-            "action": event.get("action"),
-        }
-        fingerprint = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
-        current = by_fingerprint.get(fingerprint)
-        if current is None or str(event.get("event_at") or "") < str(current.get("event_at") or ""):
-            by_fingerprint[fingerprint] = event
-    return sorted(by_fingerprint.values(), key=lambda row: str(row.get("event_at") or ""))
-
-
-def _trade_pnl_before_after(db, event_at: str, days: int, group: dict) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
-    event_dt = _parse_dt(event_at)
-    if event_dt is None:
-        return {}, {}, {}, {}
-    before_start = (event_dt - timedelta(days=days)).isoformat()
-    after_end = _utcnow().isoformat()
-    rows = []
-    for position in eligible_strategy_outcomes(
-        closed_after=before_start, closed_before=after_end,
-    ):
-        scanner_family = None
-        proposal_id = position.get("proposal_id")
-        if proposal_id:
-            metadata = db.execute(
-                "SELECT o.scanner_family FROM trade_proposals tp "
-                "LEFT JOIN opportunities o ON o.id = tp.opportunity_id "
-                "WHERE tp.id = ?",
-                (proposal_id,),
-            ).fetchone()
-            scanner_family = metadata["scanner_family"] if metadata else None
-        rows.append({
-            **position,
-            "position_id": position["id"],
-            "scanner_family": scanner_family,
-        })
-
-    before: dict[str, float] = {}
-    after: dict[str, float] = {}
-    control_before: dict[str, float] = {}
-    control_after: dict[str, float] = {}
-    for row in rows:
-        notional = float(row.get("entry_price") or 0) * float(row.get("quantity") or 0)
-        if notional <= 0:
-            continue
-        pnl_pct = float(row["realized_pnl"]) / notional * 100.0
-        closed_at = _parse_dt(row.get("closed_at"))
-        if closed_at is None:
-            continue
-        matches = _matches_learning_group(row, group)
-        position_id = f"position:{row['position_id']}"
-        if matches and closed_at < event_dt:
-            before[position_id] = pnl_pct
-        elif matches:
-            after[position_id] = pnl_pct
-        elif closed_at < event_dt:
-            control_before[position_id] = pnl_pct
-        else:
-            control_after[position_id] = pnl_pct
-    return before, after, control_before, control_after
-
-
-def _matches_learning_group(row, group: dict) -> bool:
-    for key in ("scanner_family", "direction", "symbol"):
-        expected = group.get(key)
-        if expected and str(row[key] or "").lower() != str(expected).lower():
-            return False
-    bucket = group.get("failure_bucket") or group.get("close_reason")
-    if bucket and str(row["close_reason"] or "").lower() != str(bucket).lower():
-        return False
-    return True
-
-
-def _extract_learning_group(*objects: Any) -> dict:
-    group = {
-        "scanner_family": None,
-        "direction": None,
-        "symbol": None,
-        "failure_bucket": None,
-        "close_reason": None,
-    }
-    for key in list(group):
-        for obj in objects:
-            value = _find_key(obj, key)
-            if value is not None:
-                group[key] = value
-                break
-    if group["close_reason"] and not group["failure_bucket"]:
-        group["failure_bucket"] = group["close_reason"]
-    return {k: v for k, v in group.items() if v not in (None, "")}
-
-
-def _find_key(obj: Any, key: str) -> Any:
-    if isinstance(obj, dict):
-        if key in obj:
-            return obj[key]
-        for value in obj.values():
-            found = _find_key(value, key)
-            if found is not None:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _find_key(item, key)
-            if found is not None:
-                return found
-    return None
 
 
 def _deterministic_baseline_returns(

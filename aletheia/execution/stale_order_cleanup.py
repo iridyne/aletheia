@@ -145,7 +145,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
     try:
         from aletheia.uta.compat import scope_from_local
         from aletheia.uta.manager import query_uta
-        from aletheia.uta.models import OrderLifecycle, ReadCompleteness, ReconciliationQuery
+        from aletheia.uta.models import OrderLifecycle, ReadCompleteness, ReconciliationQuery, UTAAccountIdentity
 
         client_id = str(order.get("client_order_id") or "").strip()
         venue_id = str(order.get("exchange_order_id") or "").strip()
@@ -161,6 +161,7 @@ def _exchange_order_absent_unfilled(order: dict) -> bool | None:
                 client_order_ids=(client_id,) if client_id else (),
                 venue_order_ids=(venue_id,) if venue_id else (),
             ),
+            expected_account=UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or ""),
         ))
     except Exception as exc:
         logger.warning(

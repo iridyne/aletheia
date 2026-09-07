@@ -2,149 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
+from tests.test_learning_verdict_runtime import _historical_record
 
-import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
-
-@spec_claim(SpecClaim(
-    "LE-S01", "learning_evolution", "§4 durable ledger", "L2a",
-    "Hypothesis, experiment, exposure, verdict, lifecycle-event, job-health, and policy-epoch stores exist with stable ids.",
-    status="implemented",
-))
-def test_learning_ledger_tables_and_models_exist():
-    from aletheia.learning.models import (
-        LearningContributionVerdict, LearningExperiment, LearningExposure,
-        LearningHypothesis, LearningJobHealth, LearningLifecycleEvent, LearningPolicyEpoch,
-    )
-    from aletheia.storage.sqlite import get_db
-
-    expected = {
-        "learning_hypotheses", "learning_experiments", "learning_exposures",
-        "learning_contribution_verdicts", "learning_lifecycle_events", "learning_job_health", "learning_policy_epochs",
-    }
-    tables = {row[0] for row in get_db().execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert expected <= tables
-    for model, field in (
-        (LearningHypothesis, "hypothesis_id"), (LearningExperiment, "experiment_id"),
-        (LearningExposure, "exposure_id"), (LearningContributionVerdict, "verdict_id"),
-        (LearningLifecycleEvent, "event_id"), (LearningJobHealth, "job_id"), (LearningPolicyEpoch, "epoch_id"),
-    ):
-        assert field in model.model_fields
-    assert "assignment_unit_key" in LearningExposure.model_fields
-    assert "behavior_contract_hash" in LearningExposure.model_fields
-    assert "behavior_contract_hash" in LearningContributionVerdict.model_fields
-    assert LearningLifecycleEvent.model_fields["audit_mirror_status"].default == "pending"
-
-
-def test_a1_additive_columns_are_present_after_migration():
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    columns = {
-        table: {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
-        for table in (
-            "learning_exposures",
-            "learning_contribution_verdicts",
-            "learning_job_health",
-            "learning_lifecycle_events",
-            "filter_candidate_outcomes",
-        )
-    }
-
-    assert "assignment_unit_key" in columns["learning_exposures"]
-    assert "behavior_contract_hash" in columns["learning_exposures"]
-    assert "behavior_contract_hash" in columns["learning_contribution_verdicts"]
-    assert {"last_failed_at", "last_failure_reason"} <= columns["learning_job_health"]
-    assert {
-        "audit_actor",
-        "audit_source",
-        "audit_mirror_status",
-        "audit_mirrored_at",
-        "audit_failure_reason",
-    } <= columns["learning_lifecycle_events"]
-    lifecycle_info = {
-        row[1]: row for row in db.execute(
-            "PRAGMA table_info(learning_lifecycle_events)"
-        ).fetchall()
-    }
-    assert lifecycle_info["audit_mirror_status"][4] == "'mirrored'"
-    indexes = {
-        row[1] for row in db.execute(
-            "PRAGMA index_list(learning_lifecycle_events)"
-        ).fetchall()
-    }
-    assert "idx_learning_lifecycle_audit_pending" in indexes
-    assert "allocation_selected" in columns["filter_candidate_outcomes"]
-
-
-def test_lifecycle_event_atomically_creates_stable_structured_audit():
-    from aletheia.learning.ledger import insert_lifecycle_event
-    from aletheia.learning.models import LearningLifecycleEvent
-    from aletheia.storage.sqlite import get_db
-
-    event = LearningLifecycleEvent(
-        event_id="lifecycle-structured-audit",
-        dedup_key="structured-audit",
-        hypothesis_id="hypothesis-structured-audit",
-        experiment_id="experiment-structured-audit",
-        from_stage="shadow",
-        action="hold",
-        reason="structured_audit_proof",
-        audit_actor="human",
-        audit_source="dashboard",
-    )
-
-    assert insert_lifecycle_event(event) is True
-    assert insert_lifecycle_event(event) is False
-    rows = get_db().execute(
-        "SELECT id,actor,source,event_type,entity_id,message FROM audit_events "
-        "WHERE id=?",
-        (f"learning-lifecycle:{event.event_id}",),
-    ).fetchall()
-    assert [tuple(row) for row in rows] == [(
-        f"learning-lifecycle:{event.event_id}",
-        "human",
-        "dashboard",
-        "learning_lifecycle_transition",
-        event.experiment_id,
-        event.reason,
-    )]
-
-
-def test_lifecycle_event_rolls_back_on_structured_audit_id_conflict():
-    from aletheia.learning.ledger import get_record, insert_lifecycle_event
-    from aletheia.learning.models import LearningLifecycleEvent
-    from aletheia.storage.sqlite import get_db
-
-    event = LearningLifecycleEvent(
-        event_id="lifecycle-audit-conflict",
-        dedup_key="audit-conflict",
-        hypothesis_id="hypothesis-audit-conflict",
-        experiment_id="experiment-audit-conflict",
-        from_stage="shadow",
-        action="hold",
-        reason="expected_message",
-    )
-    get_db().execute(
-        "INSERT INTO audit_events "
-        "(id,timestamp,actor,source,event_type,message) VALUES (?,?,?,?,?,?)",
-        (
-            f"learning-lifecycle:{event.event_id}",
-            event.created_at,
-            "wrong_actor",
-            "wrong_source",
-            "wrong_event",
-            "wrong_message",
-        ),
-    )
-
-    with pytest.raises(sqlite3.IntegrityError):
-        insert_lifecycle_event(event)
-    assert get_record("learning_lifecycle_events", event.event_id) is None
 
 
 @spec_claim(SpecClaim(
@@ -174,106 +35,8 @@ def test_hypothesis_fingerprint_is_stable_and_excludes_prose():
     assert changed_contract != first
 
 
-@spec_claim(SpecClaim(
-    "LE-B23", "learning_evolution", "§6 idempotent exposure storage", "L2b",
-    "Retrying the same exposure dedup key stores one immutable influence record.",
-    status="implemented",
-))
-def test_hypothesis_and_exposure_inserts_are_idempotent():
-    from aletheia.learning.hypotheses import hypothesis_fingerprint
-    from aletheia.learning.ledger import insert_experiment, insert_exposure, insert_hypothesis
-    from aletheia.learning.models import LearningExperiment, LearningExposure, LearningHypothesis
-    from aletheia.storage.sqlite import get_db
-
-    fingerprint = hypothesis_fingerprint(
-        path_id="ranker_case_score", scope={"scanner": "momentum"},
-        action={"delta": -5}, target_horizon="4h", source_cohort="case:v1",
-    )
-    hypothesis = LearningHypothesis(
-        fingerprint=fingerprint, cohort_id="cohort-1", path_id="ranker_case_score",
-        overlap_group="ranker", source_type="trade_case", scope_json='{"scanner":"momentum"}',
-        action_json='{"delta":-5}', consumer="ranker", target_horizon="4h",
-    )
-    assert insert_hypothesis(hypothesis)
-    duplicate = hypothesis.model_copy(update={"hypothesis_id": "different-id", "source_artifact_ids_json": '["other"]'})
-    assert not insert_hypothesis(duplicate)
-
-    experiment = LearningExperiment(hypothesis_id=hypothesis.hypothesis_id, assignment_salt="salt")
-    assert insert_experiment(experiment)
-    exposure = LearningExposure(
-        dedup_key="exp:candidate-1", experiment_id=experiment.experiment_id,
-        hypothesis_id=hypothesis.hypothesis_id, assignment="treatment", consumer="ranker",
-        consumer_stage="score", path_id="ranker_case_score", overlap_group="ranker",
-        candidate_key="candidate-1", concurrent_policy_epoch="epoch-1",
-    )
-    assert insert_exposure(exposure)
-    assert not insert_exposure(exposure.model_copy(update={"exposure_id": "retry-id"}))
-    db = get_db()
-    assert db.execute("SELECT COUNT(*) FROM learning_hypotheses").fetchone()[0] == 1
-    assert db.execute("SELECT COUNT(*) FROM learning_exposures").fetchone()[0] == 1
-
-
-def test_expected_paper_exposure_insert_fails_atomically_after_close():
-    from aletheia.learning.ledger import (
-        insert_experiment,
-        insert_exposure,
-        insert_hypothesis,
-    )
-    from aletheia.learning.models import (
-        LearningExperiment,
-        LearningExposure,
-        LearningHypothesis,
-    )
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    assert insert_hypothesis(LearningHypothesis(
-        hypothesis_id="atomic-h",
-        fingerprint="atomic-fp",
-        cohort_id="atomic-c",
-        path_id="universe_family_calibration",
-        overlap_group="universe",
-        source_type="source",
-        scope_json="{}",
-        action_json="{}",
-        consumer="universe_allocator",
-        target_horizon="4h",
-    ))
-    assert insert_experiment(LearningExperiment(
-        experiment_id="atomic-paper",
-        hypothesis_id="atomic-h",
-        stage="paper_10",
-        assignment_salt="salt",
-        allocation_pct=0.1,
-    ))
-    db.execute(
-        "UPDATE learning_experiments SET status='closed', ended_at='now' "
-        "WHERE experiment_id='atomic-paper'"
-    )
-    db.commit()
-    exposure = LearningExposure(
-        dedup_key="atomic-paper:candidate",
-        experiment_id="atomic-paper",
-        hypothesis_id="atomic-h",
-        assignment="control",
-        consumer="universe_allocator",
-        consumer_stage="opportunity_score",
-        path_id="universe_family_calibration",
-        overlap_group="universe",
-        concurrent_policy_epoch="epoch",
-    )
-
-    assert insert_exposure(
-        exposure,
-        require_open_experiment_id="atomic-paper",
-    ) is None
-    assert db.execute(
-        "SELECT COUNT(*) FROM learning_exposures WHERE experiment_id='atomic-paper'"
-    ).fetchone()[0] == 0
-
-
 def _registered_experiment(token: str):
-    from aletheia.learning.ledger import insert_experiment, insert_hypothesis
+    from aletheia.learning.ledger import insert_hypothesis
     from aletheia.learning.models import LearningExperiment, LearningHypothesis
 
     hypothesis = LearningHypothesis(
@@ -296,7 +59,7 @@ def _registered_experiment(token: str):
         started_at=None,
     )
     assert insert_hypothesis(hypothesis)
-    assert insert_experiment(experiment)
+    assert _historical_record("learning_experiments", experiment)
     return hypothesis, experiment
 
 
@@ -322,77 +85,8 @@ def _exposure(hypothesis, experiment, *, token: str, exposed_at: str):
     )
 
 
-def test_first_exposure_activates_registered_experiment_at_earliest_exposure():
-    from aletheia.learning.ledger import get_record, insert_exposure
-
-    hypothesis, experiment = _registered_experiment("activation")
-    later = _exposure(
-        hypothesis,
-        experiment,
-        token="activation-later",
-        exposed_at="2026-07-18T12:00:00+00:00",
-    )
-    earlier = _exposure(
-        hypothesis,
-        experiment,
-        token="activation-earlier",
-        exposed_at="2026-07-18T11:00:00+00:00",
-    )
-
-    assert insert_exposure(later)
-    first_state = get_record("learning_experiments", experiment.experiment_id)
-    assert first_state["status"] == "active"
-    assert first_state["started_at"] == later.exposed_at
-
-    assert insert_exposure(earlier)
-    final_state = get_record("learning_experiments", experiment.experiment_id)
-    assert final_state["status"] == "active"
-    assert final_state["started_at"] == earlier.exposed_at
-
-
-def test_exposure_and_required_outcome_seed_roll_back_together(monkeypatch):
-    from aletheia.learning import ledger
-
-    hypothesis, experiment = _registered_experiment("outcome-seed-atomic")
-    exposure = _exposure(
-        hypothesis,
-        experiment,
-        token="outcome-seed-atomic",
-        exposed_at="2026-07-18T12:00:00+00:00",
-    )
-
-    def fail_seed(_outcomes):
-        raise RuntimeError("outcome_seed_failed")
-
-    monkeypatch.setattr(ledger, "insert_filter_candidate_outcomes_batch", fail_seed)
-    with pytest.raises(RuntimeError, match="outcome_seed_failed"):
-        ledger.insert_exposure(exposure, outcome_seeds=[object()])
-
-    assert ledger.get_record("learning_exposures", exposure.exposure_id) is None
-    assert ledger.get_record("learning_experiments", experiment.experiment_id)["status"] == "registered"
-
-
-def test_exposure_retry_repairs_partially_registered_experiment():
-    from aletheia.learning.ledger import get_record, insert_exposure, insert_record
-
-    hypothesis, experiment = _registered_experiment("repair")
-    exposure = _exposure(
-        hypothesis,
-        experiment,
-        token="repair",
-        exposed_at="2026-07-18T10:00:00+00:00",
-    )
-    assert insert_record("learning_exposures", exposure)
-    assert get_record("learning_experiments", experiment.experiment_id)["status"] == "registered"
-
-    assert not insert_exposure(exposure)
-    repaired = get_record("learning_experiments", experiment.experiment_id)
-    assert repaired["status"] == "active"
-    assert repaired["started_at"] == exposure.exposed_at
-
-
 def test_migration_repair_activates_legacy_registered_experiment_with_exposure():
-    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.ledger import get_record
     from aletheia.storage.migrations import _repair_learning_experiment_activation
     from aletheia.storage.sqlite import get_db
 
@@ -403,7 +97,7 @@ def test_migration_repair_activates_legacy_registered_experiment_with_exposure()
         token="migration-repair",
         exposed_at="2026-07-18T08:00:00+00:00",
     )
-    assert insert_record("learning_exposures", exposure)
+    assert _historical_record("learning_exposures", exposure)
 
     _repair_learning_experiment_activation(get_db())
 
@@ -413,7 +107,7 @@ def test_migration_repair_activates_legacy_registered_experiment_with_exposure()
 
 
 def test_previous_schema_upgrades_additively_and_idempotently():
-    from aletheia.learning.ledger import get_record, insert_record
+    from aletheia.learning.ledger import get_record
     from aletheia.storage.migrations import run_migrations
     from aletheia.storage.sqlite import get_db
 
@@ -424,7 +118,7 @@ def test_previous_schema_upgrades_additively_and_idempotently():
         token="upgrade",
         exposed_at="2026-07-18T07:00:00+00:00",
     )
-    assert insert_record("learning_exposures", exposure)
+    assert _historical_record("learning_exposures", exposure)
     db = get_db()
     db.execute(
         "UPDATE learning_experiments SET status='registered', started_at=NULL "
@@ -466,30 +160,23 @@ def test_previous_schema_upgrades_additively_and_idempotently():
     ).fetchone()[0] == 1
 
 
-def test_failed_first_exposure_does_not_partially_activate_experiment():
-    from aletheia.learning.ledger import get_record, insert_exposure
+def test_hypothesis_inserts_are_idempotent():
+    from aletheia.learning.hypotheses import hypothesis_fingerprint
+    from aletheia.learning.ledger import insert_hypothesis
+    from aletheia.learning.models import LearningHypothesis
     from aletheia.storage.sqlite import get_db
 
-    hypothesis, experiment = _registered_experiment("atomic")
-    exposure = _exposure(
-        hypothesis,
-        experiment,
-        token="atomic",
-        exposed_at="2026-07-18T09:00:00+00:00",
+    fingerprint = hypothesis_fingerprint(
+        path_id="ranker_case_score", scope={"scanner": "momentum"},
+        action={"delta": -5}, target_horizon="4h", source_cohort="case:v1",
     )
-    db = get_db()
-    db.execute(
-        "CREATE TRIGGER reject_test_exposure BEFORE INSERT ON learning_exposures "
-        "BEGIN SELECT RAISE(ABORT, 'simulated exposure failure'); END"
+    hypothesis = LearningHypothesis(
+        fingerprint=fingerprint, cohort_id="cohort-1", path_id="ranker_case_score",
+        overlap_group="ranker", source_type="trade_case", scope_json='{"scanner":"momentum"}',
+        action_json='{"delta":-5}', consumer="ranker", target_horizon="4h",
     )
+    assert insert_hypothesis(hypothesis)
+    duplicate = hypothesis.model_copy(update={"hypothesis_id": "different-id", "source_artifact_ids_json": '["other"]'})
+    assert not insert_hypothesis(duplicate)
 
-    with pytest.raises(Exception, match="simulated exposure failure"):
-        insert_exposure(exposure)
-
-    persisted = get_record("learning_experiments", experiment.experiment_id)
-    assert persisted["status"] == "registered"
-    assert persisted["started_at"] is None
-    assert db.execute(
-        "SELECT COUNT(*) FROM learning_exposures WHERE experiment_id=?",
-        (experiment.experiment_id,),
-    ).fetchone()[0] == 0
+    assert get_db().execute("SELECT COUNT(*) FROM learning_hypotheses").fetchone()[0] == 1

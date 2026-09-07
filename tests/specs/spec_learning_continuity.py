@@ -311,27 +311,3 @@ def test_lesson_reviewer_restart_and_boundary_keep_attempt_truth(monkeypatch):
     assert control.get_learning_job_health("lesson_reviewer").input_watermark == (
         "lesson_reviewer:2026-08-10"
     )
-
-
-@spec_claim(SpecClaim(
-    "LE-B31", "learning_evolution", "§10 evaluator restart deadline", "L2b",
-    "Gateway restart preserves the sole contribution evaluator's durable future "
-    "deadline, while an already-overdue deadline recovers before the legacy "
-    "startup catch-up without changing Learning authority.",
-    status="implemented",
-))
-def test_contribution_evaluator_restart_preserves_or_recovers_deadline(monkeypatch):
-    from aletheia.agent_runtime import scheduler
-    from aletheia.learning import control
-
-    now = datetime(2026, 8, 7, 20, 49, tzinfo=timezone.utc)
-    durable_due = now + timedelta(minutes=17)
-    health = SimpleNamespace(next_due_at=durable_due.isoformat())
-    monkeypatch.setattr(control, "get_learning_job_health", lambda _job_id: health)
-
-    assert scheduler._initial_learning_evaluator_run_time(60, now=now) == durable_due
-
-    health.next_due_at = (now - timedelta(minutes=4)).isoformat()
-    assert scheduler._initial_learning_evaluator_run_time(60, now=now) == (
-        now + timedelta(seconds=scheduler._LEARNING_EVALUATOR_RESTART_DELAY_SEC)
-    )

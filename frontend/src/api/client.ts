@@ -20,16 +20,29 @@ type RemoteControlTokenStorageResult =
 	| { ok: true }
 	| { ok: false; error: string };
 
-export interface SoftwareUpdateStatus {
+export type SoftwareUpdateStatus = {
+    mode: "source_release";
+    ok?: boolean;
+    reason?: string;
+    has_update?: boolean;
+    current_commit?: string;
+    target_tag?: string;
+    target_sha?: string;
+    phase?: string;
+    status?: string;
+    hold?: boolean;
+    detail?: string;
+    updated_at?: string;
+} | {
 	ok: boolean;
 	reason?: string;
-	mode?: string;
+    mode?: "development" | "packaged";
 	has_update?: boolean;
 	behind_count?: number;
 	current_commit?: string;
 	remote_commit?: string;
 	branch?: string;
-}
+};
 
 export interface CandidateSelectionStatus {
 	configured_policy: "legacy_total_score_v1" | "candidate_selection_utility_v1";
@@ -984,44 +997,6 @@ export const api = {
 			"/infra/events?limit=12&min_severity=info",
 		),
 	getOperatorStatus: () => fetchJson<any>("/operator/status"),
-	getRuntimeStatus: () => fetchJson<any>("/operator/runtime"),
-	createRuntimeCandidate: (body: {
-		code_version?: string;
-		config_version?: string;
-		schema_version?: string;
-		build_git_sha?: string;
-		release_bundle_hash?: string;
-		artifact_path?: string;
-		cause?: string;
-	}) => post<any>("/operator/runtime/candidate", body),
-	startRuntimeShadow: (runtimeId?: string) =>
-		post<any>("/operator/runtime/shadow", {
-			runtime_id: runtimeId,
-			cause: "command_center_shadow",
-		}),
-	// #83 fix: promote/rollback/forced-drain now require an explicit confirm=true.
-	// The Command Center already surfaces these as human-driven pivots, so we can
-	// hardcode confirm=true here; a follow-up UI batch can lift it into a modal.
-	promoteRuntime: (runtimeId?: string) =>
-		post<any>("/operator/runtime/promote", {
-			runtime_id: runtimeId,
-			cause: "command_center_promote",
-			confirm: true,
-		}),
-	drainRuntime: (runtimeId?: string, force = true) =>
-		post<any>("/operator/runtime/drain", {
-			runtime_id: runtimeId,
-			force,
-			cause: "command_center_drain",
-			confirm: force,
-		}),
-	rollbackRuntime: () =>
-		post<any>("/operator/runtime/rollback", {
-			cause: "command_center_rollback",
-			confirm: true,
-		}),
-	getRuntimeEvents: (limit = 100) =>
-		fetchJson<any[]>(`/operator/runtime/events?limit=${limit}`),
 	getSettings: () =>
 		fetchJson<SettingsResponse>("/settings"),
 
@@ -1698,144 +1673,13 @@ export const api = {
 			};
 			proposed_count: number;
 			cohort_basis: "opportunities_emitted_in_window";
-			current: {
-				state:
-					| "position_open"
-					| "human_approval_required"
-					| "operator_deferred"
-					| "operator_queued"
-					| "ranker_pending"
-					| "ranker_cooldown"
-					| "ranker_backpressure"
-					| "ranker_batch_limit"
-					| "ranker_position_duplicate"
-					| "ranker_carrier_active"
-					| "ranker_duplicate"
-					| "ranker_already_evaluated"
-					| "ranker_filter_wait"
-					| "ranker_evidence_unavailable"
-					| "no_active_candidate"
-					| "no_candidates";
-				headline: string;
-				primary_stage: string;
-				reason_code: string;
-				reason: string;
-				next_trigger: string;
-				as_of: string;
-				policy_epoch_id: string | null;
-				counts: {
-					open_positions: number;
-					open_opportunities: number;
-					queued_candidates: number;
-					deferred_candidates: number;
-					pending_proposals: number;
-					discovered_generations: number;
-					unique_setups: number;
-					active_setups: number;
-					superseded_generations: number;
-					ttl_expired: number;
-					// Layer-1 observability: reason-class breakdown over LIVE defers
-					// (defer_until > now), 12h defer_rate, oldest live-defer age in
-					// seconds, and the (currently static) queue capacity from
-					// paper_trader._PENDING_SIGNAL_QUEUE_CAPACITY.  These fields are
-					// null when the backing query fails, never zero.
-					market_quiet_defers: number | null;
-					candidate_specific_defers: number | null;
-					defer_rate: number | null;
-					oldest_defer_age_seconds: number | null;
-					queue_capacity: number | null;
-				};
-				ranker: {
-					delivery_epoch: string;
-					carrier_epoch: string;
-					counts: {
-						open: number;
-						not_evaluated: number;
-						cooldown: number;
-						backpressure: number;
-						batch_limit: number;
-						carrier_active: number;
-						other_wait: number;
-					};
-					displayed_candidates: number;
-					undisplayed_candidates: number;
-					last_run: {
-						run_id: string;
-						trigger_type: string;
-						started_at: string;
-						ended_at: string | null;
-						status: string;
-						outputs: unknown[];
-						errors: unknown[];
-					} | null;
-					wake: {
-						scheduler_active: boolean;
-						pending: boolean;
-						pending_sources: string[];
-						burst_count?: number;
-						last_requested_at?: string | null;
-						last_dispatched_at?: string | null;
-						last_completed_at?: string | null;
-						last_result?: Record<string, unknown> | null;
-						next_run_at: string | null;
-					};
-				};
-				candidates: Array<{
-					opportunity_id: string | null;
-					symbol: string | null;
-					direction: string | null;
-					market_type: string | null;
-					scanner_family: string | null;
-					trade_score: number | null;
-					confidence_score: number | null;
-					status:
-						| "queued"
-						| "deferred"
-						| "ranker_pending"
-						| "ranker_cooldown"
-						| "ranker_backpressure"
-						| "ranker_batch_limit"
-						| "ranker_position_duplicate"
-						| "ranker_carrier_active"
-						| "ranker_duplicate"
-						| "ranker_already_evaluated"
-						| "ranker_filter_wait"
-						| "ranker_evidence_unavailable";
-					stage: string;
-					reason_code: string | null;
-					reason: string;
-					next_trigger: string;
-					queued_at: string | null;
-					valid_until: string | null;
-					expires_in_sec: number | null;
-					defer_until: string | null;
-					latest_event_at: string | null;
-					policy_epoch_id: string | null;
-					blocking_filter: string | null;
-					passed_filters: string[];
-					passed_filter_count: number | null;
-					latest_ranker_run_id: string | null;
-					retry_at: string | null;
-					retry_in_sec: number | null;
-					source: string | null;
-				}>;
-				pipeline: Array<{
-					stage: string;
-					label: string;
-					state:
-						| "active"
-						| "idle"
-						| "passed"
-						| "working"
-						| "waiting"
-						| "action_required"
-						| "reached"
-						| "not_reached"
-						| "not_available"
-						| "position_open";
-					count: number | null;
-				}>;
-			};
+            current: {
+                as_of: string;
+                summary: { active_entry_plans: number; needs_planning: number; expiring_soon: number };
+                candidate_attention: import("../types").CandidateAttention[];
+                entry_plans: import("../types").EntryPlan[];
+                planning_history: Record<string, unknown>[];
+            };
 			snapshot: {
 				executable_count: number;
 				excluded_by_reason: Array<{
@@ -1861,7 +1705,6 @@ export const api = {
 				age_sec: number | null;
 				stale_after_sec: number;
 			};
-			config: { min_confidence_to_trade: string };
 			family_ttl_sec: Record<string, number>;
 			universe_snapshot_age_sec: number | null;
 		}>(`/analytics/opportunity-funnel?hours=${hours}`),
@@ -1878,7 +1721,6 @@ export const api = {
 			// rich candidate/ranker sub-shape) are inherited from the full type
 			// via structural typing at call sites.
 			current: Awaited<ReturnType<typeof api.getOpportunityFunnel>>["current"];
-			config: { min_confidence_to_trade: string };
 			family_ttl_sec: Record<string, number>;
 		}>(`/analytics/opportunity-funnel/current-snapshot?hours=${hours}`),
 
@@ -1995,7 +1837,6 @@ export const api = {
 			max_position_hold_hours: number;
 			slippage_bps: number;
 			execution_fee_pct: number;
-			min_confidence_to_trade: string;
 			auto_adopt_enabled: boolean;
 			trail_enabled: boolean;
 			trail_atr_mult: number;
@@ -2054,7 +1895,6 @@ export const api = {
 		spot: boolean;
 		usdt_futures: boolean;
 		paper_execution_mode?: string;
-		uta_read_boundary?: "legacy" | "shadow_read" | "uta_v1";
 		confirm_exchange_divergence?: boolean;
 	}) => post<Record<string, any>>("/settings/exchange-markets", body),
 	setPrimaryExchange: (exchange_id: string) =>
@@ -2070,9 +1910,6 @@ export const api = {
 			scheduler_enabled: boolean;
 			git_enabled: boolean;
 			auto_reload: boolean;
-			runtime_continuity_enabled: boolean;
-			runtime_continuity_lock_ttl_sec: number;
-			runtime_continuity_shadow_port_offset: number;
 		}>,
 	) => post<{ updated: Record<string, any> }>("/settings/runtime", body),
 	updateEconomicsConfig: (
@@ -2139,7 +1976,6 @@ export const api = {
 			enabled: boolean;
 			auto_promote: boolean;
 			min_score_for_pi: number;
-			stop_loss_pct: number;
 			max_hold_days: number;
 		}>,
 	) => post<{ updated: Record<string, any> }>("/settings/serenity", body),

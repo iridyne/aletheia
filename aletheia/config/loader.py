@@ -452,6 +452,23 @@ def load_config(
     if CONFIG_PATH.exists():
         raw = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         removed_agent_keys = _migrate_removed_agent_config_keys(raw)
+        trading = raw.get("trading")
+        removed_confidence_key = isinstance(trading, dict) and "min_confidence_to_trade" in trading
+        if removed_confidence_key:
+            del trading["min_confidence_to_trade"]
+        serenity = raw.get("serenity")
+        removed_serenity_stop = isinstance(serenity, dict) and "stop_loss_pct" in serenity
+        if removed_serenity_stop:
+            del serenity["stop_loss_pct"]
+        exchange = raw.get("exchange")
+        removed_uta_boundary = isinstance(exchange, dict) and "uta_read_boundaries" in exchange
+        if removed_uta_boundary:
+            del exchange["uta_read_boundaries"]
+        runtime = raw.get("runtime")
+        retired_runtime_keys = {"runtime_continuity_enabled", "runtime_continuity_lock_ttl_sec", "runtime_continuity_shadow_port_offset"}
+        removed_runtime_keys = retired_runtime_keys.intersection(runtime) if isinstance(runtime, dict) else set()
+        for key in removed_runtime_keys:
+            del runtime[key]
         operator_section_present = isinstance(raw.get("operator"), dict)
         webhook = raw.get("webhook")
         webhook_migrated = (
@@ -496,7 +513,8 @@ def load_config(
                 ) from None
             raise
         candidate_selection_migrated = _normalize_candidate_selection(cfg)
-        changed = webhook_migrated or removed_agent_keys or candidate_selection_migrated
+        changed = (webhook_migrated or removed_agent_keys or removed_confidence_key
+                   or removed_serenity_stop or removed_uta_boundary or removed_runtime_keys or candidate_selection_migrated)
         # If RiskConfig migration bumped schema_version (e.g. v3→v4), write back
         # so the corrected values are persisted and the migration does not re-run.
         raw_risk_version = int((raw.get("risk") or {}).get("schema_version", 0))

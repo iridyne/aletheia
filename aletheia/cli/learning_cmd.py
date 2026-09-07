@@ -55,16 +55,16 @@ def inspect_nomination(nomination_id: str):
 @economic_knowledge_app.command("list")
 def list_economic_knowledge():
     """List current read-only Economic Knowledge qualifications."""
-    from aletheia.learning.economic_knowledge import project_current_economic_knowledge
+    from aletheia.learning.economic_knowledge import assess_economic_knowledge
 
-    facts = project_current_economic_knowledge()
+    assessment = assess_economic_knowledge("")
     _echo({
         "contract_version": "economic-knowledge/v1",
-        "current_qualified_n": len(facts),
-        "items": facts,
-        "production_economic_contribution_state": (
-            "qualified_current_paper_evidence" if facts else "none"
-        ),
+        "availability": assessment.status,
+        "unavailable_reasons": assessment.reasons,
+        "current_qualified_n": None,
+        "items": [],
+        "production_economic_contribution_state": "unavailable",
         "fixture_evidence_is_not_production_proof": True,
     })
 
@@ -72,29 +72,15 @@ def list_economic_knowledge():
 @economic_knowledge_app.command("inspect")
 def inspect_economic_knowledge(hypothesis_id: str):
     """Inspect current and historical qualification for one hypothesis."""
-    from aletheia.learning.economic_knowledge import (
-        assess_economic_knowledge,
-        current_disqualification_reasons,
-    )
-    from aletheia.storage.sqlite import get_db
+    from aletheia.learning.economic_knowledge import assess_economic_knowledge
 
-    rows = get_db().execute(
-        "SELECT verdict_id FROM learning_contribution_verdicts "
-        "WHERE hypothesis_id=? AND verdict='positive' AND inference_role='confirmatory' "
-        "ORDER BY created_at, verdict_id",
-        (hypothesis_id,),
-    ).fetchall()
-    history = [assess_economic_knowledge(str(row["verdict_id"])) for row in rows]
-    current = [
-        item.fact for item in history
-        if item.fact is not None and not current_disqualification_reasons(item.verdict_id)
-    ]
+    assessment = assess_economic_knowledge("")
     _echo({
         "hypothesis_id": hypothesis_id,
-        "availability": "available" if rows else "unavailable",
-        "unavailable_reason": None if rows else "confirmatory_verdict_not_found",
-        "current": current,
-        "history": history,
+        "availability": assessment.status,
+        "unavailable_reasons": assessment.reasons,
+        "current": [],
+        "history": [],
     })
 
 

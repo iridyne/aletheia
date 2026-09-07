@@ -364,6 +364,38 @@ def _assert_identity(existing: Mapping[str, Any], expected: Mapping[str, Any], f
         raise sqlite3.IntegrityError("filter_shadow_canonical_identity_conflict")
 
 
+def _causal_invalidation(spec, root, as_of_at):
+    from aletheia.counterfactual.filter_experiments import _ADAPTER_CAUSAL_IDENTITY
+    from aletheia.counterfactual.filter_replay import _ranker_parameter_minimum
+
+    name = str(spec["filter_name"])
+    identity = _ADAPTER_CAUSAL_IDENTITY.get(name)
+    if identity is not None and spec.get("adapter_identity_hash") != _hash(identity):
+        return "adapter_causal_identity_changed"
+    db = get_db()
+    register_instant_us(db)
+    rows = db.execute(
+        "SELECT DISTINCT filter_version, parameter_snapshot FROM filter_decisions "
+        "WHERE filter_name=? AND stage=? AND COALESCE(scanner_family,'unknown')=? "
+        "AND direction=? AND market_type=? AND decision IN ('passed','rejected') "
+        "AND outcome_candidate_key IS NOT NULL "
+        "AND aletheia_instant_us(evaluated_at)>aletheia_instant_us(?) "
+        "AND aletheia_instant_us(evaluated_at)<=aletheia_instant_us(?) "
+        "AND aletheia_instant_us(evaluated_at)<aletheia_instant_us(?)",
+        (name, spec["stage"], spec["scanner_family"], spec["direction"],
+         spec["market_type"], root["started_at"], as_of_at, root["collect_until"]),
+    )
+    for row in rows:
+        if name in _VERSIONED_FILTERS and row["filter_version"] != spec["filter_version"]:
+            return "production_filter_version_changed"
+        if name == "ranker_confidence_gate":
+            minimum = _ranker_parameter_minimum(row["parameter_snapshot"])
+            if minimum is not None and minimum == _ranker_parameter_minimum(spec["control"]):
+                continue
+            return "adapter_causal_input_changed"
+    return None
+
+
 def capture_filter_shadow_exposures(
     observation_id: str,
     generation: int | None = None,
@@ -418,6 +450,38 @@ def capture_filter_shadow_exposures(
             "reason": "observation_lab_authority_required",
             "observation_id": observation_id,
             "generation": actual_generation,
+        }
+    causal_reason = _causal_invalidation(spec, root, source_at.isoformat())
+    if causal_reason:
+        from aletheia.observation_lab.canonical import (
+            record_observation_evaluation, record_observation_result,
+            apply_evaluation_safety_disposition,
+        )
+
+        payload = {"disposition": "invalidated", "reason": causal_reason, "verdict": "invalid"}
+        fingerprint = _hash({"spec_hash": root["spec_hash"], "reason": causal_reason})
+        cutoff = _json({"source_name": "main", "main_import_contiguous_sequence": None})
+        with lab_transaction(immediate=True) as lab:
+            evaluation_id = record_observation_evaluation(
+                observation_id=observation_id, generation=actual_generation,
+                evaluation_kind="monitoring", source_cutoff=cutoff,
+                input_fingerprint=fingerprint, exposure_fingerprint=_hash([]),
+                outcome_fingerprint=_hash([]), result=payload, verdict="invalid",
+                disposition="invalidated", db=lab,
+            )
+            record_observation_result(
+                observation_id=observation_id, generation=actual_generation,
+                spec_hash=root["spec_hash"], source_cutoff=cutoff, verdict="invalid",
+                disposition="invalidated", result=payload, evaluation_id=evaluation_id, db=lab,
+            )
+            safety_action = apply_evaluation_safety_disposition(
+                observation_id=observation_id, generation=actual_generation,
+                evaluation_id=evaluation_id, verdict="invalid", reason=causal_reason, db=lab,
+            )
+        return {
+            "available": False, "observation_id": observation_id,
+            "generation": actual_generation, "evaluations": [{"evaluation_id": evaluation_id, **payload}],
+            "safety_action": safety_action, **payload,
         }
     try:
         rows, capped = _source_rows(

@@ -120,13 +120,13 @@ async def test_disable_prevents_evaluation_after_complete():
     """After reconfigure(enabled=False) returns, no new evaluation can run."""
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         eval_count += 1
         return {"action": "skip"}
 
     loop = asyncio.get_running_loop()
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+    with patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config", return_value=_paused_cfg(paused=True)):
         start_pi_daemon(loop=loop, debounce_sec=0.0, cooldown_sec=0.0, heartbeat_sec=999.0)
         await asyncio.sleep(0.02)  # let loop initialise _signal_event

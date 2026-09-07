@@ -102,11 +102,6 @@ def test_proactive_missing_position():
     assert pm.proactive_exit("nope").get("error") == "position_not_found_or_not_open"
 
 
-def test_schema_has_order_type_and_limit():
-    from aletheia.agent_shell.trading_decision import _DECISION_SCHEMA
-    props = _DECISION_SCHEMA["properties"]
-    assert "order_type" in props and "limit_price" in props
-    assert props["order_type"]["enum"] == ["market", "limit"]
 
 
 # ── end-to-end: a resting limit exit fires through the main loop ─────────────

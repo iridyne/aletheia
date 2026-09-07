@@ -124,15 +124,6 @@ def test_register_window_rejects_duplicate_names(clean_registry):
         register_window(LabWindow(name="dup", kind="test", fn=lambda: {}))
 
 
-def test_default_registry_contains_two_shipped_windows():
-    """The module-level defaults must land the two Cluster 2 windows."""
-    from aletheia.observation_lab.runner import registered_windows
-
-    names = {w.name for w in registered_windows()}
-    assert "filter_shadow_evaluate" in names
-    assert "ufc_shadow_equivalence" in names
-
-
 def test_run_lab_windows_normalises_non_dict_return(clean_registry):
     from aletheia.observation_lab.runner import (
         LabWindow,

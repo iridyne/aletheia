@@ -60,18 +60,10 @@ def test_risk_distinguishes_zero_exchange_equity_from_unavailable(
     cfg.exchange.mode = "demo"
     cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
-    exchange_sync._store(exchange_sync.ExchangeAccountState(
-        mode="demo",
-        equity_usdt=0.0,
-        available_usdt=0.0,
-        frozen_usdt=0.0,
-        futures_unrealized_pnl=0.0,
-        open_positions_count=0,
-        open_orders_count=0,
-        fetched_at=datetime.now(timezone.utc).isoformat(),
-        asset_breakdown=[],
-        positions=[],
-    ))
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
+        "age_seconds": 1.0, "sync_status": "ok",
+        "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 0.0, "available_usdt": 0.0}],
+    })
 
     policy = resolve_risk_policy(cfg, "bitget_demo").policy
 

@@ -573,19 +573,6 @@ def _assert_candidate_selection_publication_authority(
         raise RuntimeError("candidate_selection_authority_changed_before_publication")
 
 
-def _persist_attempt_learning_exposures(writes: list[dict]) -> None:
-    """Join deferred scoring evidence to the Universe publication transaction."""
-    from aletheia.learning.ledger import insert_exposure
-    from aletheia.observation_lab.canonical import append_delivery_receipt
-
-    for write in writes:
-        canonical_receipt = write.get("canonical_receipt")
-        if canonical_receipt is not None:
-            append_delivery_receipt(**canonical_receipt, db=repo.get_db())
-            continue
-        inserted = insert_exposure(**write)
-        if inserted is None:
-            raise RuntimeError("learning_experiment_closed_before_publication")
 
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
@@ -1091,8 +1078,7 @@ class UniverseService:
         )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
         from aletheia.universe.registry import sync_registry
-        from aletheia.universe.scanners import run_all_scanners
-        from aletheia.universe.signal_emitter import _infer_direction
+        from aletheia.universe.scanners import _infer_direction, run_all_scanners
 
         from aletheia.universe.candidate_selection_authority import (
             recover_candidate_selection_authority_transition,
@@ -1231,7 +1217,6 @@ class UniverseService:
 
             # Scan all coarsely-filtered candidates to get family + direction assignments.
             pre_scored = []
-            deferred_exposure_writes: list[dict] = []
             for feat in coarse_filtered:
                 scanner_result = run_all_scanners(feat)
                 pre_scored.append({**feat, **scanner_result})
@@ -1358,53 +1343,6 @@ class UniverseService:
                     prev_age_sec,
                     prev_snapshot_id,
                 )
-                # Slide member plus linked open/queued opportunity expiries. A
-                # queued row is revalidated only because this exact source
-                # snapshot remains active and semantically unchanged. Without this,
-                # a stable-allocation window longer than the family TTL causes
-                # every carrier to be ttl_expired on the next ranker scan even
-                # though we just re-confirmed the same working set is valid.
-                # See repositories.refresh_active_snapshot_ttls for semantics.
-                refreshed_members = refreshed_opps = 0
-                if candidate_selection_authority_bundle is None:
-                    try:
-                        refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
-                            prev_snapshot_id,
-                            now,
-                        )
-                    except Exception as _e:
-                        # Legacy TTL renewal remains best-effort; target renewal
-                        # joins the required evidence transaction below.
-                        logger.warning(
-                            "Universe refresh: TTL slide failed (non-fatal): %s",
-                            _e,
-                        )
-                # Nudge ranker only when the slide made previously-expired
-                # opportunities eligible again. Without this the operator has
-                # to wait up to 3 min for the next tick to re-see them.
-                if refreshed_opps:
-                    try:
-                        from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-                        notify_paper_trader(source="universe_refresh_ttl_slide")
-                    except Exception as _e:
-                        logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
-                # Even on reuse, sweep unclaimed open generations left over from
-                # earlier snapshots that became superseded before the cascade
-                # existed. Idempotent — a no-op once the pool is clean.
-                try:
-                    cascaded = repo.expire_opportunities_from_superseded_snapshots(market_type)
-                    if cascaded:
-                        logger.info(
-                            "Universe refresh (suppressed): cascaded expiry — %d orphan "
-                            "open generation(s) from superseded snapshots marked expired",
-                            cascaded,
-                        )
-                except Exception as _e:
-                    logger.warning(
-                        "Universe refresh (suppressed): cascade expiry failed (non-fatal): %s",
-                        _e,
-                    )
                 experiment_outcomes = _build_experiment_candidate_outcomes(
                     pre_scored,
                     entry_ts=entry_ts,
@@ -1425,11 +1363,10 @@ class UniverseService:
                             min_interval_sec=0,
                         )
                     if candidate_selection_authority_bundle is not None:
-                        refreshed_members, refreshed_opps = repo.refresh_active_snapshot_ttls(
+                        refreshed_members = repo.refresh_active_snapshot_ttls(
                             prev_snapshot_id,
                             now,
                         )
-                    _persist_attempt_learning_exposures(deferred_exposure_writes)
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
                             previous_members,
@@ -1441,6 +1378,7 @@ class UniverseService:
                     )
                     repo.reconcile_candidate_attention(
                         selected_generation_ids,
+                        producer_scope="universe",
                         eligible_identity_keys=eligible_attention_identities,
                         refresh_source={
                             "scanner_run_id": run.id,
@@ -1460,20 +1398,10 @@ class UniverseService:
                         snapshot_id=prev_snapshot_id,
                         metrics=json.dumps({"candidate_path": path_metrics}),
                     )
-                if refreshed_members or refreshed_opps:
-                    logger.info(
-                        "Universe refresh (suppressed): TTL slid forward — members=%d opps=%d snapshot=%s",
-                        refreshed_members,
-                        refreshed_opps,
-                        prev_snapshot_id,
-                    )
-                if candidate_selection_authority_bundle is not None and refreshed_opps:
-                    try:
-                        from aletheia.agent_runtime.scheduler import notify_paper_trader
-
-                        notify_paper_trader(source="universe_refresh_ttl_slide")
-                    except Exception as _e:
-                        logger.debug("paper_trader nudge skipped (non-fatal): %s", _e)
+                logger.info(
+                    "Universe refresh: renewed %d Candidate leases on snapshot %s",
+                    refreshed_members, prev_snapshot_id,
+                )
                 if experiment_outcomes:
                     logger.info(
                         "Registered %d experiment candidate outcome row(s) across full arms",
@@ -1661,7 +1589,6 @@ class UniverseService:
                         outcomes=candidate_selection_authority_bundle.outcomes,
                         min_interval_sec=0,
                     )
-                _persist_attempt_learning_exposures(deferred_exposure_writes)
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
 
@@ -1677,6 +1604,7 @@ class UniverseService:
 
                 repo.reconcile_candidate_attention(
                     selected_generation_ids,
+                    producer_scope="universe",
                     eligible_identity_keys=eligible_attention_identities,
                     refresh_source={
                         "scanner_run_id": run.id,

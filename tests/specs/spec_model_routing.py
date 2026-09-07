@@ -134,31 +134,6 @@ def test_get_provider_for_tier_exists_and_resolves():
 # MR-S04 — Deep-tier agents pass provider= to llm helpers
 # ---------------------------------------------------------------------------
 
-@spec_claim(
-    SpecClaim(
-        "MR-S04", _CONTRACT, "§deep-tier-call-sites", "L2b",
-        "The five deep-tier agents (trading_decision, risk_critic, market_observer, "
-        "dreaming_agent, lesson_reviewer) call get_provider_for_tier and pass its "
-        "result as provider= to llm_complete / llm_structured. "
-        "(strategy_designer was removed with the rules engine, Position C 2026-07-02.)",
-    ),
-)
-def test_deep_tier_agents_use_provider_routing():
-    deep_files = [
-        _ROOT / "aletheia" / "agent_shell" / "trading_decision.py",
-        _ROOT / "aletheia" / "agents" / "risk_critic.py",
-        _ROOT / "aletheia" / "agents" / "market_observer.py",
-        _ROOT / "aletheia" / "agents" / "dreaming_agent.py",
-        _ROOT / "aletheia" / "agents" / "lesson_reviewer.py",
-    ]
-    for path in deep_files:
-        src = path.read_text(encoding="utf-8")
-        assert "get_provider_for_tier" in src, (
-            f"{path.name} must import and call get_provider_for_tier (deep tier routing)"
-        )
-        assert 'provider=' in src, (
-            f"{path.name} must pass provider= keyword arg to llm_complete/llm_structured"
-        )
 
 
 # ---------------------------------------------------------------------------

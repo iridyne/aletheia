@@ -45,6 +45,10 @@ def _safe_env() -> dict:
 def update_progress() -> dict:
     if _is_packaged():
         return _packaged_module().read_update_state()
+    if sys.platform == "linux":
+        from aletheia.update import auto
+
+        return {**auto.status(), "mode": "source_release"}
     cfg = load_config()
     return {
         "schema_version": 1,
@@ -62,6 +66,10 @@ def check_for_update() -> dict:
     if _is_packaged():
         return _packaged_module().check_for_update()
 
+    if sys.platform == "linux":
+        from aletheia.update import auto
+
+        return auto.check()
     cfg = load_config()
     if not cfg.update.enabled:
         return {"ok": False, "reason": "update_disabled", "mode": "development"}
@@ -639,6 +647,8 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
         )
         return {"mode": "packaged", **result}
 
+    if sys.platform == "linux":
+        return {"applied": False, "mode": "source_release", "reason": "source_update_requires_auto"}
     # This object is PRE-PULL ONLY. It is used for eligibility and branch
     # selection, then deliberately never written after source switches.
     cfg = load_config()

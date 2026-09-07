@@ -644,9 +644,8 @@ def _maybe_update_trailing_stop(
     effective params (operator override / global default / off). When a position has
     no trailing spec and the global default is on, behavior is identical to before.
 
-    Serenity school skips trailing/breakeven entirely: long-horizon holdings rely
-    on the wider fixed stop_loss_pct and a multi-month max_hold, not on intra-day
-    ATR trails that would shake the position out of a research-grade entry.
+    Serenity holdings keep their authored protection and long holding horizon;
+    intraday ATR trailing must not replace the research entry's stop geometry.
     """
     if position.get("trade_school") == "serenity":
         return False

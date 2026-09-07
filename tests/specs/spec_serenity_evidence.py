@@ -18,8 +18,6 @@ _CONTRACT = "serenity_evidence_quality"
 _ROOT = Path(__file__).parent.parent.parent
 _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 _PRED_OBS = _ROOT / "aletheia" / "agents" / "prediction_observer.py"
-_TRADING_CONTEXT = _ROOT / "aletheia" / "agent_shell" / "trading_context.py"
-_TRADING_DECISION = _ROOT / "aletheia" / "agent_shell" / "trading_decision.py"
 
 
 # ---------------------------------------------------------------------------
@@ -72,34 +70,8 @@ def test_prediction_observer_routes_through_evaluator():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "SE-S04", _CONTRACT, "§2 PI consumes the assessed tier", "L2a",
-        "trading_context.py surfaces the independently assessed_tier (not just the "
-        "generator's self-graded evidence_tier) into the Serenity opportunities the "
-        "System Operator consumes",
-    ),
-)
-def test_pi_context_surfaces_assessed_tier():
-    src = _TRADING_CONTEXT.read_text(encoding="utf-8")
-    assert '"assessed_tier"' in src, (
-        "trading_context.py does not surface assessed_tier — PI would judge on the "
-        "generator's self-grade, making the D2 split cosmetic"
-    )
 
 
-@spec_claim(
-    SpecClaim(
-        "SE-S05", _CONTRACT, "§2 System Operator prompt renders the assessed tier", "L2a",
-        "trading_decision.py renders the assessed_tier into the Serenity block of the "
-        "PI decision prompt (falling back to evidence_tier only when unassessed)",
-    ),
-)
-def test_pi_prompt_renders_assessed_tier():
-    src = _TRADING_DECISION.read_text(encoding="utf-8")
-    assert "assessed_tier" in src, (
-        "trading_decision.py does not render assessed_tier into the System Operator prompt"
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-08-30 (durable funding-audit JSONL delivery)
+> Last updated: 2026-09-07 (D2 canonical entry; other domains unchanged)
 
 ---
 
@@ -15,9 +15,7 @@
 | 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
 | 3 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 5 | paper_trader | 3min + on-demand | agents | Collect signals → signal_pending PiDecisions (System Operator submits proposals — Phase 4a). `scheduler.notify_paper_trader(source)` coalesces committed Opportunity, eligibility-config, Guard-set, Universe refresh/TTL-slide, and Operator queue-slot-release events into an immediate run. The source list is persisted in `AgentRun.trigger_type`; 3min remains the safety fallback. |
-| 5a | fast_trigger_authorizer | 1min | agents | When Fast Trigger is enabled, review at most one highest-ranked pending Momentum Setup; provider failure leaves it unarmed. |
-| 6 | pi_trading_decision | ~15min (configurable) | agents | System Operator heartbeat (daemon fallback) |
+| 6 | pi_trading_decision | ~15min (configurable) | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
 | 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
 | 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
@@ -53,26 +51,15 @@
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
 | 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
 | 36b | broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
-| 37 | learning_contribution_evaluator | interval `learning.evaluation_interval_minutes` (default 60) | learning_measurement | Sole scheduled contribution evaluator. Measure only: append deterministic cluster-based contribution verdicts and evaluator health even when autonomous Learning is off or runtime is paused |
-| 38 | learning_lifecycle_controller | interval `learning.evaluation_interval_minutes` (default 60) | io | Apply at most one owner-gated paper lifecycle action per current experiment; requires autonomous Learning, no pause/integrity incident, lifecycle automation, paper influence, and path allowlist |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 41 | learning_measurement_startup_catchup | once, 2min after gateway boot | learning_measurement | Before the first regular evaluator interval, re-run `learning_contribution_evaluator` only when its successful watermark/deadline is missing or invalid, or its persisted cadence deadline is reached; shares its serial non-starving lane and remains independent of autonomous Learning and paper influence |
-| 42 | learning_lifecycle_audit_reconciler | every 5min | io | Retry bounded pending lifecycle JSONL mirrors by stable event id; never replay a transition and continue during layered pause |
 | 42a | funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in paper/broker funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
 
-Learning behavior jobs (rows 10–15, 26, 30–31, 38 and the Learning behavior catch-up) share
-`agent.autonomous_learning` as one backend gate. When disabled, no automatic producer,
-reviewer, promoter, controller, or learned rollout runs. Measurement-only
-`outcome_settler`, `paper_funding_settler`, `funding_audit_reconciler`,
-`outcome_hook_replay`, `shadow_resolver`, and
-`learning_contribution_evaluator` continue so disabling
-Learning does not erase or delay outcome truth. The evaluator never changes stages or authority;
-the lifecycle controller is a separate gated consumer. Successful, partial/degraded, failed and
-skipped runs plus reviewer backlog health are persisted in `learning_job_health`. A controller cycle
-with one failed experiment continues the others but cannot be recorded as healthy. There is no
-scheduled
-`learning_verdict_runner`; any historical health row under that id remains audit history only.
+Learning behavior producers remain gated by `agent.autonomous_learning`.
+Outcome settlement, funding, durable outcome replay and the Observation Lab runner/bridge
+retain their independent safety and measurement boundaries. The legacy contribution
+evaluator, measurement catch-up and lifecycle controller/reconciler are retired.
+Historical job-health rows are evidence only, never active schedules.
 After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
 `last_failure_reason` preserve the most recent failure.
 
@@ -149,11 +136,11 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 - **LLM**: Yes (analysis of market conditions)
 - **Outputs**: namespaced `metadata.observer_assessment` on an existing open
   Opportunity; producer-owned direction, confidence, thesis, identity and expiry
-  remain unchanged. Legacy `universe_scanner` Opportunity rows remain audit-only
-  unless they carry setup-linked V2 trigger evidence.
+  remain unchanged. Legacy `universe_scanner` Opportunity rows remain audit-only;
+  setup-linked evidence never grants current entry authority.
 - **Side effects**: Enriches only the exact snapshot/member/instrument carrier whose
   `signal_emitter` pass fact is durable. It does not create an Opportunity or gate the
-  scanner → Ranker handoff.
+  canonical Candidate admission. Historical emitter attestation authorizes only enrichment, not a new entry.
 - **Error behavior**: Missing Universe state, missing/conflicting emitter evidence, or
   LLM unavailability skips enrichment; it never falls back to standalone signal creation
 - **Prompt contract** (2026-07-01, spec UP-08): the per-symbol LLM prompt names the `scanner_family` that surfaced the symbol so the read VALIDATES that family rather than doing a generic scan (MO-4).
@@ -184,9 +171,7 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 - **Inputs**: yfinance daily bars + Bitget xStocks real-time price cross-validation
 - **LLM**: Yes
 - **Outputs**: opportunities table (equity-linked symbols)
-- **Side effects**: Same as market_observer but for equity-linked tokens; the
-  committed observation-only Opportunity wakes Ranker so its terminal exclusion
-  is not delayed.
+- **Side effects**: Writes observation-only research evidence; does not wake Ranker or publish executable Candidate authority.
 - **Condition**: config.market_data.observed_equities non-empty
 
 #### stock_observer (removed 2026-06-17 — superseded by equity_observer)
@@ -203,8 +188,7 @@ configuration fallback remain readable.
 - **LLM**: Yes (structured event interpretation; the chained divergence scanner is deterministic)
 - **Outputs**: prediction_runs, prediction_markets, prediction_probability_snapshots,
   and observation-only prediction Opportunities
-- **Side effects**: Chains divergence_scanner on completion and wakes Ranker after
-  each committed Opportunity so its exclusion is terminalized promptly.
+- **Side effects**: Chains divergence_scanner on completion; research Opportunities do not wake a retired entry queue.
 
 #### divergence_scanner (chained from prediction_observer)
 
@@ -212,47 +196,26 @@ configuration fallback remain readable.
 - **Inputs**: prediction market prices vs spot prices
 - **LLM**: No
 - **Outputs**: divergence alerts → opportunities table
-- **Side effects**: A newly committed tradeable divergence Opportunity wakes Ranker.
+- **Side effects**: Persists research evidence only; a divergence Opportunity is not a Candidate entry owner.
 - **Direction contract**: YES probability change is combined with deterministic
   bullish/bearish question polarity. Unknown, negated, or mixed polarity fails closed;
   probability direction alone never decides crypto direction.
 
-#### paper_trader_ranker (internal to paper_trader)
+#### Historical Ranker / PaperTrader (retired entry)
 
-- **Trigger**: called within paper_trader job
-- **Inputs**: opportunities + universe_scores + trading_guards + PiDecision
-- **LLM**: No (deterministic ranking, 8-dimension scoring)
-- **Outputs**: ranked + filtered opportunity list → PI daemon signal
-- **Side effects**: None
-- **Contract**: Must NEVER call LLM directly
-- **Admission/backpressure**: at most 5 unresolved market-observer carriers may be
-  queued at once. Overflow remains `open` and is retried; stale carriers are
-  pruned only after source expiry/review and never while proposal submission is
-  recovering.
-- **Carrier continuity** (`DL-INV-25`, `DL-S52..54`): Universe snapshot supersede expires only still-open
-  analytical generations. Once `signal_pending` commits, the queued source remains
-  Operator authority until its own `valid_until` or a terminal decision. A fixed
-  30-minute queue age is legacy fallback only. New generations of the same physical
-  symbol/market/direction/scanner-family record `active_operator_carrier` instead of
-  creating another pending carrier.
-- **TTL soft filter** (`paper_trader_ranker._ttl_soft_penalty_factor`): a carrier
-  past its `valid_until` is no longer hard-rejected. Its `trade_score` is
-  multiplied by `0.5 ** (expired_sec / family_ttl_sec)` — half-life = family
-  TTL — so an aged signal ranks lower without disappearing. Only past
-  `_TTL_SOFT_HARD_CAP_MULT × ttl_sec` (3× family TTL) does the ranker hard-reject
-  with `skip_reason=ttl_expired` so `paper_trader._settle_permanent_skips` can
-  clean it up. `filter_trace` records `passed_with_penalty` /
-  `opportunity_ttl_soft_penalty` / `universe_member_ttl_soft_penalty` reason
-  codes for the soft branch. Family TTL lookup: `allocator._FAMILY_TTL`.
+The former deterministic ranker scored Opportunities, bounded a five-carrier
+pending queue and applied family TTL penalties. PaperTrader then wrote
+`signal_pending` PiDecisions and woke the Operator. These are historical semantics
+only: neither job, queue admission, TTL writer nor on-demand notification remains
+an executable entry path. Old ranker/funnel outcomes remain read-only evidence.
 
 #### research_agent / research_worker
 
 - **Trigger**: enqueued by dreaming_agent or manual
-- **Inputs**: topic query + knowledge context; Serenity promotion hydrates the exact
-  pending opportunity by id rather than relying on the global active top-five display
+- **Inputs**: topic query + knowledge context; Serenity publication reads exact research opportunity IDs and evidence, independent of display limits
 - **LLM**: Yes (research_worker makes LLM calls)
 - **Outputs**: knowledge_items(research_note), serenity_profile_snapshots
-- **Side effects**: FTS index update
+- **Side effects**: FTS index update; eligible Serenity research can publish durable Candidates via `publish_serenity_candidates`, sharing the manual publication implementation. Auto-promotion retains its score gate; manual publication still requires real PA/eligibility evidence. Source identity is frozen at birth, not inferred from pending. See [Serenity contract](serenity_contract.md).
 
 #### portfolio_agent
 
@@ -266,95 +229,56 @@ configuration fallback remain readable.
 
 ### B. Trading Agents
 
-#### paper_trader (refactored: signal collector)
+#### Canonical Entry Planner / daemon / heartbeat
 
-- **Trigger**: scheduler every 3min plus a debounced on-demand nudge via
-  `scheduler.notify_paper_trader(source)`. Sources are Universe snapshot/TTL-slide,
-  Market/Equity/Prediction/Divergence Opportunity commit, Ranker eligibility config
-  save, active Guard-set mutation, and Operator queue-slot release. Bursts within 3s
-  produce one scheduler modification but retain all sources. Notifications arriving
-  during a run arm one follow-up run. `AgentRun.trigger_type` is
-  `on_demand:<sorted_sources>` for dispatched wakes and `scheduled` for the fallback.
-  Tier 3 daemon remains deferred in the upgrade plan.
-- **Inputs**: opportunities, universe features, System Operator decisions
-- **LLM**: No (pure rule evaluation)
-- **Outputs**: signal_pending PiDecisions (Phase 4a: System Operator is the **sole** proposal submitter — paper_trader no longer creates proposals directly)
-- **Side effects**: Writes signal_pending decisions for System Operator consumption. RuleSet exit auto-close was removed with the rules engine; paper_trader must not close positions directly.
-- **Inspection contract**: `/analytics/opportunity-funnel.current` and
-  `aletheia inspect entry-status` read durable Opportunity, filter-decision,
-  PiDecision and AgentRun facts. They never invoke `paper_trader_ranker`. The
-  process-local wake state is diagnostic only and is labelled unavailable when
-  the scheduler is outside the serving process.
-- **Lifecycle accounting** (`FE-S21`, `API-S09`): the funnel reports unique setups separately from
-  per-snapshot generated rows and splits `universe_snapshot_superseded` from true
-  `ttl_expired`; raw `status='expired'` is never sufficient to claim TTL expiry.
-- **Key invariant**: Never calls LLM; never executes orders directly; never submits proposals (signal collector only)
-- **Learning authority**: factor history and raw case/memo scores are diagnostic proposals only. Their experiment hooks are currently measurement-unsupported, so they create no formal exposure and score/filter influence stays at the static baseline. Any future measured implementation must retain the same venue, eligibility, static-risk-flag, learned-guard, and downstream Risk Engine checks for control candidates.
+- **Trigger**: durable Candidate planning wake through the event-driven daemon;
+  the scheduled `pi_trading_decision` heartbeat wakes that daemon or calls the
+  identical `run_entry_planner_batch()` inline when it is unavailable.
+- **Inputs**: current active PlanningGeneration, immutable Candidate source
+  context, exact causal market windows/Anchors and typed capability/Profile facts.
+  Universe and Serenity publish the same Candidate/current-generation authority;
+  producer refresh is scoped, exact instrument ownership is global.
+- **LLM**: one qualitative EntryHypothesis path. The model owns no execution
+  price, size, leverage, stop, target or trigger parameter. Compiler owns geometry.
+- **Outputs**: durable typed planning outcome and immutable EntryPlan. The Plan
+  freezes source kind/ID/school and holding horizon; Proposal attribution preserves
+  them, and Serenity opportunity_id remains the real research source.
+- **Execution**: Plan execution/watcher → Risk → Gateway only. Watcher never
+  invokes AI; registered TriggerSpec determines triggered release. Resting plans
+  may execute immediately through the same canonical implementation.
+- **Timing/holding**: INTRADAY/SWING timing and 60/240-minute entry expiry do not
+  shorten Serenity's max_hold_days×24 holding; Proposal.expected_horizon_hours
+  receives Plan.holding_horizon_hours. Structural stop geometry determines sizing.
+- **Availability**: missing/stale exact facts or capability are typed unavailable,
+  not an economic NO_PLAN. Idle remains idle. There is no old evaluator, debate,
+  PiDecision entry claim, pending defer/wake or orphan-Proposal reconstruction.
+- **Concurrency**: existing durable claim/retry/CAS and Plan execution uniqueness
+  prevent duplicate model ownership and duplicate Proposal/Order submission.
+  Urgent portfolio work may preempt planning without creating another entry owner.
+- **Current truth**: `candidate_attention`, `entry_plans`, `planning_history` and
+  summary come from the canonical workbench; old queues and ranker/funnel cohorts
+  are history only. `pi_reflection.json` is historical entry evidence, not current state.
+- **Position authority**: independent portfolio review retains explicit Position
+  identity and hold/adjust_position/close_one behavior. HORIZON_DUE requires a
+  real future extension or close; invalid labels cannot become a silent full close.
+  Shared close/reduce/adjust and their audit remain supported, never as new entry.
+- **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes remain observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. Read-only comparisons reject retrospective imports, mixed epochs and mixed feature contracts; cost-aware evidence stays unavailable. No automatic source/scheduler or promotion authority is introduced, and this evidence never changes Agent, Risk or Execution authority.
+- **Safety/recovery**: Risk approval precedes Gateway. Existing Orders, partial
+  Fills, Positions and unknown submissions keep canonical reconciliation/cancel/
+  settlement; retirement records evidence and does not fabricate exchange outcomes.
 
-#### System Operator — Trading Decision Daemon (pi_trading_decision / pi_daemon)
+See [Entry Plan contract](entry-plan-contract.md) and
+[Decision lifecycle](decision_lifecycle_contract.md) for the current contract.
 
-- **Trigger**: Event-driven daemon (debounce 8s, cooldown 60s, heartbeat 5min)
-- **Inputs**: 
-  - Layer 1: market context (opportunities, factor_feedback, regime, positions), plus exact-instrument candidate technical snapshots (15m/1h/4h) and freshness-qualified Hyperliquid funding/OI evidence. The pending candidate is hydrated by `asset_id` independently of the bounded global feature display, including its queued/reviewed source Opportunity context.
-  - Layer 2: strategy context (ranker candidates, pending signals, universe features)
-  - Layer 3: reflection (previous decisions, outcomes, Serenity research). Each
-    Serenity opportunity surfaces `id`/`score`/`bucket`/`evidence_count`/`key_evidence`
-    + the independently `assessed_tier` (D2), annotated as long-horizon analyst input —
-    NOT a same-day setup and NOT to be rubber-stamped (PI remains sole decision maker).
-- **LLM**: Yes (structured decision with Bull/Bear debate)
-- **Outputs**: an exact-candidate PiDecision (action, symbol, conviction, reasoning JSON, opportunity_id, signal_source) with `evidence_manifest_json` preserving Opportunity T0, Observer T1 and System Operator T1 identities under `operator-candidate-v3`. Operator T1 direct identities are limited to the exact technical snapshot and Position X block rendered in its prompt; Observer news/macro/on-chain/prediction/Hyperliquid identities remain only in upstream `opportunity_t1` and are labelled as summary-mediated, never copied as direct Operator evidence. Serenity resolves its separate id namespace and records only the exact Layer 3 evidence ids that belong to its persisted theme. A zero-pending wake instead writes one non-trading `operator_evaluation_event` and does not call the LLM
-- **Structured trade motivation**: every new entry decision builds one
-  object with `schema_version=structured-trade-motivation/v1`, containing
-  `action_intent` (`long`/`short` for entry, `hold` for no-trade, with
-  `close`/`reduce` reserved for their existing actions), `thesis`,
-  `observed_facts` with source refs, `interpretations`, supporting/opposing
-  evidence, assumptions, invalidation conditions, expected horizon, confidence,
-  uncertainty reason, and the exact evidence manifest. The identical object is
-  stored in the Proposal `agent_rationale.decision_meta.trade_motivation` and in
-  the owning PiDecision `evidence_manifest_json.trade_motivation`; Thesis Lineage
-  reads PiDecision first and Proposal second. Missing fields remain
-  `unavailable`, empty, or `null`; readers never derive a structured object from
-  legacy prose. This reuses existing JSON carriers and requires no table migration.
-  `observed_facts` retains only refs that resolve to identities in that exact
-  decision manifest; facts with no valid ref are omitted rather than presented as observed.
-  The B-class behavior is part of the Opportunity Information policy epoch via
-  `structured_trade_motivation=structured-trade-motivation/v1`, so pre/post-change
-  decisions cannot share an epoch.
-- **Side effects**: Candidate path writes `pi_decisions`; zero-pending path appends only an observation event; neither path bypasses paper_trader queue authority
-- **Attribution**: `_attach_opportunity_context` backfills `opportunity_id` + `signal_source`
-  (`market_observer` Layer 1 wins on tie; `serenity` Layer 3 is the fallback). `signal_source`
-  disambiguates the two bare-uuid id spaces. Phase 2 of Serenity Option A.
-- **Inference attribution**: the daemon binds one content-free `evaluation_id`; after the
-  queue selects one carrier, every assessment/reassessment/debate attempt also records that
-  exact Opportunity. The existing `signal_pending` PiDecision is recorded only when that
-  source identity resolves to exactly one row; zero, duplicate, or unavailable telemetry reads
-  leave it absent. A not-yet-created final decision or Proposal remains absent, and a daemon
-  call never fabricates an `AgentRun` link.
-- **Learning attribution**: reflection, memo, reasoning, calibration, trade cases, and structured
-  lessons are declared as one `operator_learning_bundle`, but the path is currently
-  measurement-unsupported and the static no-Learning prompt baseline applies. The existing
-  Opportunity 4h market outcome is created before Operator prompt exposure and cannot measure the
-  resulting trade/skip decision utility. Mixed/Serenity queues also fail closed. A future measured
-  path requires a decision-linked causal outcome contract before any exposure or authority.
-- **Actions**: active entry decision only `trade` / `skip`. The separate portfolio review exposes only `hold` / `adjust_position` / `close_one` for an explicit Position. An open `HORIZON_DUE` review cannot terminate with `hold`; it must either close or set an absolute `new_horizon_hours` strictly beyond current position age.
-- **Unsupported legacy outputs**: `close` / `reduce` / `watch` / `scale_in` / `flip` on the entry surface are normalized to an evidenced `skip` and never execute. `reduce_exposure` on portfolio review is treated as `hold`, never as a silent full close.
-- **Availability semantics**: missing/incomplete/stale exact candidate technical context is detected before model inference. For `trade`, the structured schema conditionally requires an explicit `market_type`, `stop_price` / `take_profit`, and all five entry-parameter reasons; the parser further requires `market_type` to be `spot` or `usdt_futures` and both prices to be finite and positive. Schema failure uses bounded structured retries and remains a content-free typed output defer; semantic, prompt-mark geometry, or price-derived reward:risk outside the inclusive `[1.00, 10.00]` plausibility envelope uses the existing single repair. A repaired first draft is retained as `operator_entry_plan_output_repair/error`, outside passed/rejected learning cohorts; the final authoritative entry-plan exposure is therefore `passed`, while an unrepaired second draft remains a real `rejected`. The fresh exact local-paper mark remains entry authority and validates instrument identity, long/short geometry, and `round(abs(tp-entry)/abs(entry-stop), 2)` against that envelope; invalid model protection is never silently replaced by config. A new Operator `spot+short` cannot be relabelled downstream as futures: it must repair to a valid decision or defer. The legacy coercion remains only for programmatic/historical recovery objects. If the submission-time refresh becomes stale/unavailable, crosses a protection level, or moves reward:risk outside the envelope, Proposal preparation returns a typed entry-plan defer with its gate trace. No final PiDecision is written and no pending signal is consumed. A newly persisted exact feature snapshot or entry-mark availability change changes the candidate fingerprint and reopens evaluation.
-- **Serenity availability semantics**: an exact Serenity carrier whose source row is
-  missing or whose research hydration fails receives a typed unavailable reason and
-  defers before model inference. Full thesis/evidence remain persisted and fingerprinted;
-  only their prompt display is bounded.
-- **Position X authority**: explicit owner aggregate-row or sanitized holder-batch imports and their 1h/4h/24h outcomes are observation-only. Holder batches are reduced to aggregate snapshots and never persist holder identities. The read-only evaluator compares gross weighted/equal/individual/no-structure baselines and rejects retrospective imports, mixed epochs, or mixed feature contracts; cost-aware evidence remains unavailable. No automatic source or scheduler is claimed, `ready_for_research_review` grants no promotion, and the evidence never changes Agent, Risk, or Execution authority.
-- **Safety**: Never executes orders directly. A complete `trade` prepares one immutable Proposal for the Gateway; `close_one` uses the central close router with an exact fresh mark.
+#### Historical TradingDecision / Momentum Setup (nonexecuting history)
 
-#### Historical Momentum Setup adapter (superseded)
-
-- **Scope**: retained only to read/recover pre-#2288 Setup rows when no current Entry Plan owns the exact instrument and direction. It is not an active producer and cannot run beside a current plan.
-- **Historical slow trigger**: `fast_trigger_authorizer` read a pending Momentum Setup and made one structured `arm/refuse` call. New Candidate work is owned by the on-demand Entry Planner and durable Planning Generation claim.
-- **Output**: `arm` atomically writes `PiDecision(action='arm', setup_id)` plus one bounded `ConditionalEntryAuthorization`; it freezes TriggerSpec/direction/structure/entry zone and risk envelope, never future entry, quantity or TP.
-- **Hot path**: lifecycle-owned `fast_trigger_watch` consumes credential-free exact-venue public quote/trade/books5/candle1m data for at most ten armed setups. It performs no LLM/provider call and writes SQLite only on state/subscription generation/trigger transitions.
-- **Failure behavior**: missing ACK, stale/absent/sequence-anomalous data, TTL/fingerprint/authorization mismatch, runtime pause/kill switch, or unavailable venue adapter blocks materialization. Local `paper_internal` follows normalized `market_data.ccxt_exchange` and supports credential-free Bitget or Binance Spot/USD-M public fast data while still executing only through the local paper broker. Exchange-backed execution keeps its execution venue; an unregistered venue returns `fast_trigger_stream_unavailable:<venue>`. Live remains forbidden.
-- **Default**: `fast_trigger.mode=shadow` observes and prewarms without Gateway order authority; `execute` remains an explicit opt-in and `off` explicitly disables the watcher.
-- **Historical side effects**: the adapter may recover its existing T0/Opportunity/Proposal chain only under the compatibility guard. New execution uses Entry Plan → internal Order Intent → canonical Risk/Gateway.
+The former Three-layer Context, Bull/Bear debate, final PiDecision and reflection
+claim chain is retired for entry. Its old rationale/provenance remains readable;
+new plans never write or recover that entry state. The former Setup arm/refuse,
+ConditionalAuthorization and materialization path likewise has no adapter
+exception when a current Plan is absent. Fast Monitoring watches EntryPlans, not
+old Setups; historical arm/trigger rows cannot create a new Proposal. Existing
+order identity is recovered by Gateway, not by reviving Setup execution.
 
 #### position_path_observer
 
@@ -400,8 +324,9 @@ configuration fallback remain readable.
 ### C. Strategy Agents — REMOVED (Position C, 2026-07-02)
 
 The rules engine (`strategy_designer` + `backtest_orchestrator`) was **deleted**.
-Strategy generation / DSL / backtesting no longer exist; the System Operator
-(`evaluate_trading_opportunity`) is the sole decision path. Legacy
+Strategy generation / DSL / backtesting no longer exist. The historical replacement
+was `evaluate_trading_opportunity`; that entry evaluator is now also retired.
+Current entry is Candidate → PlanningGeneration → Planner/Compiler → EntryPlan. Legacy
 `strategy_records` / `backtest_runs` / `backtest_trades` tables are kept read-only
 for historical attribution (not written to). The deterministic `guard_promotion`
 job (candidate trading guards → active; a learning task) was re-homed from the
@@ -530,9 +455,8 @@ All agents share the same SQLite DB. Invariants that MUST hold (full detail in [
 |-----|---------|-----|---------|
 | market_data | 90s | dreaming_agent | 300s |
 | market_observer | 240s | risk_critic | 300s |
-| paper_trader | 300s | pi_trading_decision | 300s |
+| pi_trading_decision | 300s | — | — |
 | post_trade_reviewer | 300s | exchange_sync | 60s |
-| learning_contribution_evaluator | 60s | learning_lifecycle_controller | 60s |
 
 Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_sync_with_timeout` (`:141`). `misfire_grace_time` 60-300s per `add_job`.
 
@@ -541,7 +465,7 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 - **Per-job degradation**: each job wrapped in catch-all; one failure logs a warning and does NOT cascade (`scheduler.py:708-793`). Agents coupled only through shared SQLite tables (blackboard), never direct calls — so an upstream failure cannot crash a downstream agent.
 - **Leaked-tx cleanup**: scheduler rolls back any leaked transaction before/after each job.
 - **Consecutive-failure alert**: ≥3 consecutive failures → `infra_event` (dashboard-visible), `_record_job_failure` (`scheduler.py:67-79`). Non-cascading.
-- **Stale-input expiry**: if paper_trader stalls, its opportunities expire after 48h rather than blocking reviewers (`repositories.py:1632`).
+- **Entry stale-input expiry**: canonical attention deadlines, planning retry/claim and Plan expiry bound current work; old pending cannot extend market-data refresh demand or wake a retired evaluator.
 
 ### LLM Fallback (request-level, unified — `model_provider/fallback.py:215-299`)
 
@@ -568,56 +492,34 @@ Async jobs use `_run_async_with_timeout` (`scheduler.py:204`), sync jobs `_run_s
 
 ## 4. Data Flow Summary
 
+```text
+Universe discovery ──────┐
+                        ├─ durable Candidate / current PlanningGeneration
+Serenity research + PA ──┘               │
+                                Entry Planner / Hypothesis
+                                        │
+                                Deterministic Compiler
+                                        │
+                                Immutable EntryPlan
+                                        │
+                              Plan execution / watcher
+                                        │
+                                    Proposal
+                                        │
+                                  Risk → Gateway
+                                        │
+                                 Order → Fill → Position
+                                                    │
+                              position_manager / portfolio review
+                                                    │
+                                       Gateway close / adjust
+                                                    │
+                                  closed-trade review → knowledge
 ```
-             market_data (5min)
-                   |
-                   v
-        +-------------------+
-        | market_snapshots  |
-        +-------------------+
-                   |
-                   v
-         market_observer (15min)
-                   |
-                   v
-        +-------------------+
-        |   opportunities   |------> risk_critic (6h)
-        +-------------------+              |
-                   |                       v
-                   v               risk_decisions
-         paper_trader (3min)              |
-         (signal collection)              |
-                   |                      |
-                   v                      v
-        +-------------------+    +------------------+
-        | signal_pending    |--->| System Operator  |
-        +-------------------+    +------------------+
-                                          |
-                                          v
-                                  +---------------+
-                                  | pi_decisions  |
-                                  +---------------+
-                                          |
-                          +---------------+---------------+
-                          v                               v
-                  trade_proposals              position_manager (5min)
-                          |                               |
-                          v                               v
-                  risk engine                    close positions
-                          |                               |
-                          v                               v
-                  orders -> fills            portfolio_snapshots
-                          |                               |
-                          v                               v
-                     positions             post_trade_reviewer (4h)
-                                                          |
-                                                          v
-                                                  knowledge_items
-                                                          |
-                                                          v
-                                              dreaming_daily (02:00)
-                                                          |
-                                                          v
-                          System Operator decision context (evaluate_trading_opportunity)
-                          [strategy_designer removed — Position C, 2026-07-02]
-```
+
+Other observers add research evidence, not a second admission path. Research
+feedback can inform later source publication but cannot bypass PA, Planner,
+Compiler, Risk or Gateway. UTA-only external accounts, one-way Lab authority and
+unique auto.run deployment are approved future portions, not delivered claims
+of this entry-contract update; unrelated agent/measurement contracts above are
+not changed by the entry cutover.

@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError
 
@@ -21,11 +21,9 @@ from aletheia.storage.models import (
     AgentRun,
     AgentRunArtifact,
     AuditEvent,
-    ConditionalEntryAuthorization,
     ExitBreakevenShadowAssignment,
     ExitBreakevenShadowOutcome,
     Fill,
-    FastTriggerMarketSnapshot,
     KnowledgeItem,
     Opportunity,
     OpportunityEntryValidityAssessment,
@@ -50,7 +48,6 @@ from aletheia.storage.models import (
     SerenityTheme,
     StrategyRecord,
     TradeProposal,
-    UniverseSetup,
     UniverseDiscoveryBenchmark,
     decode_strategy_parameters,
 )
@@ -885,118 +882,12 @@ def get_opportunity_by_setup(setup_id: str) -> dict | None:
 # --- Universe setups / conditional entry authority ---
 
 
-def insert_universe_setup(setup: UniverseSetup) -> dict:
-    """Insert one material setup generation, returning its idempotent owner."""
-
-    data = _stamp_provenance(setup.model_dump())
-    db = get_db()
-    was_in_tx = db.in_transaction
-    columns = ", ".join(data)
-    placeholders = ", ".join("?" for _ in data)
-    execute_write(
-        f"INSERT OR IGNORE INTO universe_setups ({columns}) VALUES ({placeholders})",
-        tuple(data.values()),
-    )
-    row = db.execute(
-        "SELECT * FROM universe_setups WHERE venue=? AND symbol=? AND market_type=? "
-        "AND direction=? AND material_fingerprint=?",
-        (
-            setup.venue,
-            setup.symbol,
-            setup.market_type,
-            setup.direction,
-            setup.material_fingerprint,
-        ),
-    ).fetchone()
-    if not was_in_tx:
-        db.commit()
-    if row is None:
-        raise RuntimeError("universe setup insert did not persist")
-    return dict(row)
 
 
 def get_universe_setup(setup_id: str) -> dict | None:
     return _select_one("universe_setups", setup_id)
 
 
-def list_watchable_universe_setups(limit: int = 10) -> list[dict]:
-    now = datetime.now(timezone.utc).isoformat()
-    return _select_all(
-        "universe_setups",
-        where=(
-            "state IN ('armed','pullback_seen') AND valid_until>? "
-            "AND trigger_spec_version='momentum-retrace-reclaim/v1'"
-        ),
-        params=(now,),
-        order="rank ASC, created_at ASC",
-        limit=limit,
-    )
-
-
-def list_pending_authorization_setups(limit: int = 1) -> list[dict]:
-    now = datetime.now(timezone.utc).isoformat()
-    return _select_all(
-        "universe_setups",
-        where="state='pending_authorization' AND valid_until>?",
-        params=(now,),
-        order="rank ASC, created_at ASC",
-        limit=limit,
-    )
-
-
-def expire_universe_setups(now: datetime | None = None) -> int:
-    """Terminalize expired, not-yet-claimed setup generations."""
-
-    instant = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
-    with transaction(immediate=True):
-        cur = execute_write(
-            "UPDATE universe_setups SET state='expired', updated_at=? "
-            "WHERE valid_until<=? AND state IN "
-            "('pending_authorization','armed','pullback_seen')",
-            (instant, instant),
-        )
-    return max(0, cur.rowcount or 0)
-
-
-def transition_universe_setup(
-    setup_id: str,
-    *,
-    expected_states: Sequence[str],
-    state: str,
-    **fields,
-) -> bool:
-    """Compare-and-swap one setup state without widening its authority."""
-
-    allowed = {
-        "pending_authorization",
-        "armed",
-        "pullback_seen",
-        "triggering",
-        "executed",
-        "refused",
-        "expired",
-        "invalidated",
-    }
-    expected = tuple(str(value) for value in expected_states)
-    if not expected or state not in allowed or any(value not in allowed for value in expected):
-        raise ValueError("invalid universe setup transition")
-    updates = {**fields, "state": state, "updated_at": datetime.now(timezone.utc).isoformat()}
-    sets = ", ".join(f"{column}=?" for column in updates)
-    placeholders = ",".join("?" for _ in expected)
-    result = execute_write(
-        f"UPDATE universe_setups SET {sets} WHERE id=? AND state IN ({placeholders})",
-        (*updates.values(), setup_id, *expected),
-    )
-    return result.rowcount == 1
-
-
-def insert_conditional_entry_authorization(
-    authorization: ConditionalEntryAuthorization,
-) -> None:
-    _insert(
-        "conditional_entry_authorizations",
-        _stamp_provenance(authorization.model_dump()),
-    )
 
 
 def get_conditional_entry_authorization(setup_id: str) -> dict | None:
@@ -1011,8 +902,6 @@ def get_conditional_entry_authorization(setup_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def insert_fast_trigger_market_snapshot(snapshot: FastTriggerMarketSnapshot) -> None:
-    _insert("fast_trigger_market_snapshots", snapshot.model_dump())
 
 
 def get_fast_trigger_market_snapshot(setup_id: str) -> dict | None:
@@ -1425,31 +1314,6 @@ def insert_pi_decision(decision) -> None:
     _insert("pi_decisions", _stamp_provenance(data))
 
 
-def record_operator_evaluation_event(event) -> dict:
-    """Persist one deduplicated non-trading Operator observation.
-
-    This table deliberately sits outside ``pi_decisions``: a heartbeat with no
-    queue carrier is not an entry decision and must not consume an Opportunity.
-    ``dedup_key`` is supplied by the caller's bounded observation window.
-    """
-    data = _to_payload_dict(event)
-    db = get_db()
-    was_in_tx = db.in_transaction
-    columns = ", ".join(data)
-    placeholders = ", ".join("?" for _ in data)
-    execute_write(
-        f"INSERT OR IGNORE INTO operator_evaluation_events ({columns}) VALUES ({placeholders})",
-        tuple(data.values()),
-    )
-    row = db.execute(
-        "SELECT * FROM operator_evaluation_events WHERE dedup_key=?",
-        (data["dedup_key"],),
-    ).fetchone()
-    if not was_in_tx:
-        db.commit()
-    if row is None:
-        raise RuntimeError("operator evaluation observation did not persist")
-    return dict(row)
 
 
 def update_pi_decision(decision_id: str, **kwargs) -> None:
@@ -1495,586 +1359,16 @@ def get_pi_decision_for_proposal(proposal_id: str) -> dict | None:
     return dict(rows[0]) if rows else None
 
 
-def find_final_pi_decision_for_opportunity(
-    opportunity_id: str,
-    signal_source: str = "market_observer",
-    *,
-    action: str | None = None,
-) -> dict | None:
-    """Return the first authoritative result for one source identity.
-
-    ``action`` narrows idempotency to a position-management intent.  An entry
-    decision and a later close/reduce legitimately share one Opportunity, so
-    the historical entry must not swallow the management claim. Without an
-    explicit action, only terminal entry actions in the current carrier
-    generation qualify; an older eviction or final cannot consume a requeue.
-    """
-    if not opportunity_id:
-        return None
-    if action:
-        action_clause = "AND final.action=?"
-        generation_clause = ""
-        params: tuple[str, ...] = (
-            opportunity_id,
-            signal_source or "market_observer",
-            action,
-        )
-    else:
-        action_clause = "AND final.action NOT IN ('signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
-        generation_clause = (
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions pending "
-            " WHERE pending.opportunity_id=final.opportunity_id "
-            " AND COALESCE(pending.signal_source, 'market_observer')="
-            "     COALESCE(final.signal_source, 'market_observer') "
-            " AND pending.action='signal_pending' "
-            " AND (julianday(pending.created_at)>julianday(final.created_at) "
-            "      OR (julianday(pending.created_at)=julianday(final.created_at) "
-            "          AND pending.rowid>final.rowid))"
-            ") "
-        )
-        params = (
-            opportunity_id,
-            signal_source or "market_observer",
-        )
-    row = (
-        get_db()
-        .execute(
-            "SELECT final.* FROM pi_decisions final WHERE final.opportunity_id=? "
-            "AND COALESCE(final.signal_source, 'market_observer')=? "
-            f"{action_clause} "
-            f"{generation_clause}"
-            "ORDER BY julianday(final.created_at) ASC, final.rowid ASC LIMIT 1",
-            params,
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
 
 
-def classify_final_pi_decision_for_opportunity(
-    opportunity_id: str,
-    signal_source: str,
-    *,
-    symbol: str,
-    direction: str,
-    market_type: str,
-    action: str | None = None,
-) -> dict:
-    """Classify current-generation final rows without letting ambiguity consume it."""
-    if not opportunity_id:
-        return {"status": "none", "decision": None}
-    if action:
-        action_clause = "AND final.action=?"
-        generation_clause = ""
-        params = (opportunity_id, signal_source or "market_observer", action)
-    else:
-        action_clause = "AND final.action NOT IN ('signal_pending', 'signal_queue_evicted', 'close', 'reduce')"
-        generation_clause = (
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions pending "
-            " WHERE pending.opportunity_id=final.opportunity_id "
-            " AND COALESCE(pending.signal_source, 'market_observer')="
-            "     COALESCE(final.signal_source, 'market_observer') "
-            " AND pending.action='signal_pending' "
-            " AND (julianday(pending.created_at)>julianday(final.created_at) "
-            "      OR (julianday(pending.created_at)=julianday(final.created_at) "
-            "          AND pending.rowid>final.rowid))"
-            ") "
-        )
-        params = (
-            opportunity_id,
-            signal_source or "market_observer",
-        )
-    rows = (
-        get_db()
-        .execute(
-            "SELECT final.* FROM pi_decisions final WHERE final.opportunity_id=? "
-            "AND COALESCE(final.signal_source, 'market_observer')=? "
-            f"{action_clause} "
-            f"{generation_clause}"
-            "ORDER BY julianday(final.created_at) ASC, final.rowid ASC",
-            params,
-        )
-        .fetchall()
-    )
-    if not rows:
-        return {"status": "none", "decision": None}
-    if len(rows) != 1:
-        return {
-            "status": "integrity_unavailable",
-            "reason": "ambiguous_final_decisions",
-            "decision": None,
-        }
-    decision = dict(rows[0])
-    if any(
-        decision.get(field) != expected
-        for field, expected in (
-            ("symbol", symbol),
-            ("direction", direction),
-            ("market_type", market_type),
-        )
-    ):
-        return {
-            "status": "integrity_unavailable",
-            "reason": "conflicting_final_identity",
-            "decision": None,
-        }
-    return {"status": "exact", "decision": decision}
 
 
-def find_pending_pi_decision_for_opportunity(
-    opportunity_id: str,
-    signal_source: str = "market_observer",
-) -> dict | None:
-    """Return the durable queue carrier for one exact source opportunity.
-
-    This intentionally does not hide the row after a final ``submitting`` claim:
-    crash recovery must still prove that the original pending carrier existed.
-    Callers remain responsible for applying the market-observer TTL.
-    """
-    rows = list_pending_pi_decisions_for_opportunity(opportunity_id, signal_source)
-    return rows[0] if rows else None
 
 
-def list_pending_pi_decisions_for_opportunity(
-    opportunity_id: str,
-    signal_source: str = "market_observer",
-) -> list[dict]:
-    """Return pending carriers in the current source generation, oldest first.
-
-    A queue eviction closes only carriers ordered before it. A later
-    ``signal_pending`` starts a new generation, while duplicate carriers inside
-    that generation remain visible so execution can fail closed on ambiguity.
-    Entry finals stay visible to integrity/recovery checks; their validity is
-    classified separately and must never erase a malformed or ambiguous claim.
-    """
-    if not opportunity_id:
-        return []
-    rows = (
-        get_db()
-        .execute(
-            "SELECT pending.* FROM pi_decisions pending "
-            "WHERE pending.opportunity_id=? "
-            "AND pending.action='signal_pending' "
-            "AND COALESCE(pending.signal_source, 'market_observer')=? "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions boundary "
-            " WHERE boundary.opportunity_id=pending.opportunity_id "
-            " AND COALESCE(boundary.signal_source, 'market_observer')="
-            "     COALESCE(pending.signal_source, 'market_observer') "
-            " AND boundary.action='signal_queue_evicted' "
-            " AND (julianday(boundary.created_at)>julianday(pending.created_at) "
-            "      OR (julianday(boundary.created_at)=julianday(pending.created_at) "
-            "          AND boundary.rowid>pending.rowid))"
-            ") ORDER BY julianday(pending.created_at) ASC, pending.rowid ASC",
-            (opportunity_id, signal_source or "market_observer"),
-        )
-        .fetchall()
-    )
-    return [dict(row) for row in rows]
 
 
-def count_unresolved_signal_pending(max_age_minutes: int = 30) -> int:
-    """Count queued market candidates that consume an Operator admission slot.
-
-    ``Opportunity.valid_until`` is authoritative for current rows. The fixed
-    queue age remains only as a compatibility fallback for historical rows that
-    did not persist a parseable source deadline.
-
-    A candidate whose most recent Operator observation is an active defer
-    (``event_kind LIKE 'operator_decision_deferred_%'`` and
-    ``defer_until > now()``) does NOT consume an admission slot — Operator has
-    already judged it and it is awaiting its next re-evaluation window. Only
-    candidates still owed a fresh Operator judgment count here.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
-    row = (
-        get_db()
-        .execute(
-            "SELECT COUNT(DISTINCT pending.opportunity_id) "
-            "FROM pi_decisions pending "
-            "JOIN opportunities source ON source.id=pending.opportunity_id "
-            "WHERE pending.action='signal_pending' "
-            "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
-            "AND source.status='queued' "
-            "AND ((datetime(source.valid_until) IS NOT NULL "
-            "      AND datetime(source.valid_until)>datetime('now')) "
-            " OR (datetime(source.valid_until) IS NULL "
-            "      AND datetime(pending.created_at)>=datetime(?))) "
-            "AND pending.rowid=("
-            " SELECT newer.rowid FROM pi_decisions newer "
-            " WHERE newer.opportunity_id=pending.opportunity_id "
-            " AND COALESCE(newer.signal_source, 'market_observer')="
-            "     COALESCE(pending.signal_source, 'market_observer') "
-            " AND newer.action='signal_pending' "
-            " ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
-            ") "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions final "
-            " WHERE final.opportunity_id=pending.opportunity_id "
-            " AND COALESCE(final.signal_source, 'market_observer')="
-            "     COALESCE(pending.signal_source, 'market_observer') "
-            " AND final.action!='signal_pending' "
-            " AND COALESCE(final.proposal_status, '')!='submitting' "
-            " AND (julianday(final.created_at)>julianday(pending.created_at) "
-            "      OR (julianday(final.created_at)=julianday(pending.created_at) "
-            "          AND final.rowid>pending.rowid))"
-            ") "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM operator_evaluation_events e "
-            " WHERE json_extract(e.queue_snapshot_json,'$.opportunity_id')"
-            "       = pending.opportunity_id "
-            " AND e.event_kind LIKE 'operator_decision_deferred_%' "
-            " AND datetime(json_extract(e.queue_snapshot_json,'$.defer_until'))"
-            "     > datetime('now')"
-            ")",
-            (cutoff,),
-        )
-        .fetchone()
-    )
-    return int(row[0] or 0)
 
 
-def list_pending_signal_queue(max_age_minutes: int = 30) -> list[dict]:
-    """Return current queue occupants with their conviction score for priority comparison.
-
-    Each dict contains opportunity_id, symbol, conviction, created_at.  Same eligibility
-    criteria as count_unresolved_signal_pending — only rows that consume an
-    admission slot are returned.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
-    rows = (
-        get_db()
-        .execute(
-            "SELECT pending.opportunity_id, pending.symbol, pending.conviction, pending.created_at "
-            "FROM pi_decisions pending "
-            "JOIN opportunities source ON source.id=pending.opportunity_id "
-            "WHERE pending.action='signal_pending' "
-            "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
-            "AND source.status='queued' "
-            "AND ((datetime(source.valid_until) IS NOT NULL "
-            "      AND datetime(source.valid_until)>datetime('now')) "
-            " OR (datetime(source.valid_until) IS NULL "
-            "      AND datetime(pending.created_at)>=datetime(?))) "
-            "AND pending.rowid=("
-            " SELECT newer.rowid FROM pi_decisions newer "
-            " WHERE newer.opportunity_id=pending.opportunity_id "
-            " AND COALESCE(newer.signal_source, 'market_observer')="
-            "     COALESCE(pending.signal_source, 'market_observer') "
-            " AND newer.action='signal_pending' "
-            " ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
-            ") "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM pi_decisions final "
-            " WHERE final.opportunity_id=pending.opportunity_id "
-            " AND COALESCE(final.signal_source, 'market_observer')="
-            "     COALESCE(pending.signal_source, 'market_observer') "
-            " AND final.action!='signal_pending' "
-            " AND COALESCE(final.proposal_status, '')!='submitting' "
-            " AND (julianday(final.created_at)>julianday(pending.created_at) "
-            "      OR (julianday(final.created_at)=julianday(pending.created_at) "
-            "          AND final.rowid>pending.rowid))"
-            ") "
-            "AND NOT EXISTS ("
-            " SELECT 1 FROM operator_evaluation_events e "
-            " WHERE json_extract(e.queue_snapshot_json,'$.opportunity_id')"
-            "       = pending.opportunity_id "
-            " AND e.event_kind LIKE 'operator_decision_deferred_%' "
-            " AND datetime(json_extract(e.queue_snapshot_json,'$.defer_until'))"
-            "     > datetime('now')"
-            ") "
-            "GROUP BY pending.opportunity_id",
-            (cutoff,),
-        )
-        .fetchall()
-    )
-    return [
-        {
-            "opportunity_id": str(row["opportunity_id"]),
-            "symbol": str(row["symbol"] or ""),
-            "conviction": int(row["conviction"] or 0),
-            "created_at": row["created_at"],
-        }
-        for row in rows
-    ]
-
-
-def transition_queued_opportunity_to_open(oid: str) -> bool:
-    """Return a queued Opportunity to open so it can be re-admitted in a later run.
-
-    Used by priority-replacement eviction: a lower-scored incumbent is released
-    back to open status and its signal_pending carrier becomes superseded by the
-    subsequent eviction pi_decision written by the caller.
-    """
-    cur = execute_write(
-        "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
-        (oid,),
-    )
-    return cur.rowcount == 1
-
-
-class ReplacementResult:
-    """Outcome of one atomic priority-replacement attempt.
-
-    Attributes
-    ----------
-    committed : bool
-        True when exactly one incumbent was evicted and one replacement was
-        installed in the same transaction.  False when any pre-condition or
-        write failed and the transaction was rolled back.
-    reason : str
-        Short token describing why the attempt was rejected or failed.
-        ``"ok"`` on success; ``"incumbent_not_queued"``, ``"replacement_not_open"``,
-        ``"write_error"`` otherwise.
-    evicted_id : str
-        The incumbent opportunity_id that was released (only meaningful when
-        *committed* is True).
-    """
-
-    __slots__ = ("committed", "reason", "evicted_id")
-
-    def __init__(self, committed: bool, reason: str, evicted_id: str = "") -> None:
-        self.committed = committed
-        self.reason = reason
-        self.evicted_id = evicted_id
-
-
-def atomic_replace_queued_carrier(
-    incumbent_id: str,
-    replacement_id: str,
-    eviction_decision: object,
-    replacement_decision: object,
-    persist_enqueue_evidence_fn: object,
-) -> "ReplacementResult":
-    """Release *incumbent_id* and claim *replacement_id* in one immediate transaction.
-
-    All writes (opportunity state transitions, pi_decisions, enqueue evidence)
-    are committed together or not at all.  If any pre-condition fails — the
-    incumbent is no longer queued, the replacement is no longer open — the whole
-    attempt is rejected without touching the database and the incumbent stays put.
-
-    Parameters
-    ----------
-    incumbent_id : str
-        opportunity_id of the queued carrier to evict.
-    replacement_id : str
-        opportunity_id of the open candidate to promote.
-    eviction_decision : PiDecision
-        Pre-built ``signal_queue_evicted`` decision record for the incumbent.
-    replacement_decision : PiDecision
-        Pre-built ``signal_pending`` decision record for the replacement.
-    persist_enqueue_evidence_fn : callable
-        Zero-argument callable that writes the enqueue evidence row inside the
-        transaction.  Must raise on error so the transaction rolls back cleanly.
-    """
-    assert callable(persist_enqueue_evidence_fn), "persist_enqueue_evidence_fn must be callable"
-
-    try:
-        with transaction(immediate=True):
-            # Verify incumbent still occupies a queue slot (CAS: queued→open).
-            evicted = execute_write(
-                "UPDATE opportunities SET status='open' WHERE id=? AND status='queued'",
-                (incumbent_id,),
-            )
-            if evicted.rowcount != 1:
-                raise _AtomicReplacementAbort("incumbent_not_queued")
-            # Verify replacement is still open (CAS: open→queued).
-            claimed = execute_write(
-                "UPDATE opportunities SET status='queued' WHERE id=? AND status='open'",
-                (replacement_id,),
-            )
-            if claimed.rowcount != 1:
-                raise _AtomicReplacementAbort("replacement_not_open")
-            insert_pi_decision(eviction_decision)
-            insert_pi_decision(replacement_decision)
-            persist_enqueue_evidence_fn()
-    except _AtomicReplacementAbort as exc:
-        return ReplacementResult(committed=False, reason=str(exc), evicted_id=incumbent_id)
-    except Exception:
-        return ReplacementResult(committed=False, reason="write_error", evicted_id=incumbent_id)
-    return ReplacementResult(committed=True, reason="ok", evicted_id=incumbent_id)
-
-
-class _AtomicReplacementAbort(Exception):
-    """Internal signal to abort an atomic replacement attempt cleanly."""
-
-
-def active_defer_opportunity_ids(now_iso: str | None = None) -> set[str]:
-    """opportunity_id set whose most recent Operator observation is an active defer.
-
-    An "active defer" means: the ``operator_evaluation_events`` row has
-    ``event_kind LIKE 'operator_decision_deferred_%'`` and its
-    ``queue_snapshot_json.defer_until`` is still in the future.
-
-    Used by admission accounting (``count_unresolved_signal_pending``) and
-    display-layer ordering (``_build_pending_signal_queue``) so both share
-    one source of truth for "Operator has already judged, awaiting reopen".
-    """
-    if now_iso is None:
-        now_iso = datetime.now(timezone.utc).isoformat()
-    rows = (
-        get_db()
-        .execute(
-            "SELECT json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id "
-            "FROM operator_evaluation_events "
-            "WHERE event_kind LIKE 'operator_decision_deferred_%' "
-            "AND json_extract(queue_snapshot_json,'$.defer_until') > ? "
-            "GROUP BY json_extract(queue_snapshot_json,'$.opportunity_id')",
-            (now_iso,),
-        )
-        .fetchall()
-    )
-    return {str(row["opportunity_id"]) for row in rows if row["opportunity_id"]}
-
-
-def next_pending_signal_defer_deadline(now_iso: str | None = None) -> str | None:
-    """Return the earliest durable Operator defer that is still owed a review.
-
-    The deadline remains visible after it passes, until the exact market-observer
-    carrier receives either a newer Operator observation or a terminal PI
-    decision.  This lets the daemon recover the promise after restart and avoids
-    heartbeat phase alignment becoming part of trading behavior.
-    """
-    if now_iso is None:
-        now_iso = datetime.now(timezone.utc).isoformat()
-    row = (
-        get_db()
-        .execute(
-            "WITH ranked_operator_events AS ("
-            " SELECT rowid AS event_rowid,event_kind,queue_snapshot_json,created_at,"
-            "  json_extract(queue_snapshot_json,'$.opportunity_id') AS opportunity_id,"
-            "  ROW_NUMBER() OVER ("
-            "   PARTITION BY json_extract(queue_snapshot_json,'$.opportunity_id')"
-            "   ORDER BY julianday(created_at) DESC,rowid DESC"
-            "  ) AS recency"
-            " FROM operator_evaluation_events"
-            " WHERE json_extract(queue_snapshot_json,'$.opportunity_id') IS NOT NULL"
-            ") "
-            "SELECT json_extract(defer.queue_snapshot_json,'$.defer_until') AS deadline "
-            "FROM ranked_operator_events defer "
-            "JOIN opportunities source ON source.id="
-            " defer.opportunity_id "
-            "WHERE defer.recency=1 "
-            "AND defer.event_kind LIKE 'operator_decision_deferred_%' "
-            "AND datetime(json_extract(defer.queue_snapshot_json,'$.defer_until')) IS NOT NULL "
-            "AND source.status IN ('queued','reviewed') "
-            "AND datetime(source.valid_until)>datetime(?) "
-            "AND EXISTS ("
-            " SELECT 1 FROM pi_decisions pending "
-            " WHERE pending.opportunity_id=source.id "
-            " AND pending.action='signal_pending' "
-            " AND COALESCE(pending.signal_source,'market_observer')='market_observer' "
-            " AND NOT EXISTS ("
-            "  SELECT 1 FROM pi_decisions final "
-            "  WHERE final.opportunity_id=pending.opportunity_id "
-            "  AND COALESCE(final.signal_source,'market_observer')="
-            "      COALESCE(pending.signal_source,'market_observer') "
-            "  AND final.symbol IS pending.symbol "
-            "  AND final.direction IS pending.direction "
-            "  AND final.market_type IS pending.market_type "
-            "  AND final.action NOT IN ('signal_pending','close','reduce') "
-            "  AND COALESCE(final.proposal_status,'')!='submitting' "
-            "  AND (julianday(final.created_at)>julianday(pending.created_at) "
-            "       OR (julianday(final.created_at)=julianday(pending.created_at) "
-            "           AND final.rowid>pending.rowid))"
-            " )"
-            ") "
-            "ORDER BY datetime(deadline) ASC, defer.event_rowid ASC LIMIT 1",
-            (now_iso,),
-        )
-        .fetchone()
-    )
-    return str(row["deadline"]) if row is not None and row["deadline"] else None
-
-
-def latest_direct_skip_defer_for_setup(
-    symbol: str,
-    direction: str,
-    market_type: str,
-    *,
-    window_minutes: int = 120,
-) -> dict | None:
-    """Most recent ``direct_skip_not_confirmed`` defer for a symbol+direction setup.
-
-    Returns the parsed ``queue_snapshot_json`` (carrying ``material_fingerprint``)
-    of the latest such defer within ``window_minutes``, or ``None``. Only defer
-    events recorded after #321 carry the symbol/direction/market_type + material
-    fingerprint keys, so older rows simply never match (callers fail open = emit).
-
-    Used by emit-source suppression (#321): if the latest direct-skip judgment for
-    this setup shares the current material fingerprint, universe refresh must not
-    mint yet another fresh-opportunity_id carrier that re-burns an LLM re-eval.
-    The caller compares fingerprints — this only bounds the lookback by time so a
-    stale skip cannot suppress a setup forever.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))).isoformat()
-    row = (
-        get_db()
-        .execute(
-            "SELECT queue_snapshot_json FROM operator_evaluation_events "
-            "WHERE event_kind LIKE 'operator_decision_deferred_%' "
-            "AND json_extract(queue_snapshot_json,'$.defer_reason') LIKE 'direct_skip_not_confirmed%' "
-            "AND json_extract(queue_snapshot_json,'$.symbol') = ? "
-            "AND json_extract(queue_snapshot_json,'$.direction') = ? "
-            "AND json_extract(queue_snapshot_json,'$.market_type') = ? "
-            "AND created_at >= ? "
-            "AND EXISTS ("
-            " SELECT 1 FROM opportunities source "
-            " WHERE source.id=json_extract(operator_evaluation_events.queue_snapshot_json,'$.opportunity_id') "
-            " AND source.status IN ('open','queued') "
-            " AND (source.valid_until IS NULL OR datetime(source.valid_until)>datetime('now'))"
-            ") "
-            "ORDER BY created_at DESC LIMIT 1",
-            (symbol, direction, market_type, cutoff),
-        )
-        .fetchone()
-    )
-    if row is None:
-        return None
-    try:
-        return json.loads(row["queue_snapshot_json"])
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-
-
-def latest_skip_validation_for_setup(
-    symbol: str,
-    direction: str,
-    market_type: str,
-    *,
-    window_minutes: int = 30,
-) -> dict | None:
-    """Most recent ``operator_skip_validated`` cache row for a symbol+direction setup.
-
-    Returns the parsed ``queue_snapshot_json`` (carrying ``material_fingerprint``
-    plus the full validated adverse judgment) within ``window_minutes``, else None.
-
-    Used by reassess reuse (#321): when the model again judges the same setup a
-    skip at an unchanged material fingerprint, this lets the caller reuse the prior
-    counterfactual confirmation instead of a second LLM call.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max(int(window_minutes), 1))).isoformat()
-    row = (
-        get_db()
-        .execute(
-            "SELECT queue_snapshot_json FROM operator_evaluation_events "
-            "WHERE event_kind = 'operator_skip_validated' "
-            "AND json_extract(queue_snapshot_json,'$.symbol') = ? "
-            "AND json_extract(queue_snapshot_json,'$.direction') = ? "
-            "AND json_extract(queue_snapshot_json,'$.market_type') = ? "
-            "AND created_at >= ? "
-            "ORDER BY created_at DESC LIMIT 1",
-            (symbol, direction, market_type, cutoff),
-        )
-        .fetchone()
-    )
-    if row is None:
-        return None
-    try:
-        return json.loads(row["queue_snapshot_json"])
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
 
 
 def _expire_opportunity_rows_with_ttl_evidence(
@@ -2165,114 +1459,8 @@ def _expire_opportunity_rows_with_ttl_evidence(
         raise
 
 
-def expire_queued_opportunity_with_ttl_evidence(
-    opportunity_id: str,
-    *,
-    evaluated_at: str | None = None,
-    reason_detail: str,
-    parameters: dict | None = None,
-) -> bool:
-    """CAS one queued Opportunity to expired with its durable TTL fact.
-
-    Operator preflight and the final Proposal claim both use this primitive so
-    terminal state cannot be written without the corresponding rejection fact.
-    The inner helper owns a SAVEPOINT; an evidence failure therefore restores
-    the queued row even when an outer transaction catches the exception.
-    """
-    now_iso = evaluated_at or datetime.now(timezone.utc).isoformat()
-    with transaction(immediate=True):
-        row = (
-            get_db()
-            .execute(
-                "SELECT * FROM opportunities WHERE id=? AND status='queued'",
-                (opportunity_id,),
-            )
-            .fetchone()
-        )
-        if row is None:
-            return False
-        return bool(
-            _expire_opportunity_rows_with_ttl_evidence(
-                [row],
-                source_status="queued",
-                evaluated_at=now_iso,
-                reason_detail=reason_detail,
-                parameters=parameters or {},
-            )
-        )
 
 
-def expire_stale_queued_opportunities(max_age_minutes: int = 30) -> int:
-    """Expire queued work at its source deadline with a legacy age fallback.
-
-    Queue insertion time is not a second, shorter market-validity clock. New
-    rows therefore live until ``Opportunity.valid_until``. Only a missing or
-    unparsable historical deadline falls back to ``max_age_minutes``.
-    """
-    now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(minutes=max_age_minutes)).isoformat()
-    with transaction(immediate=True):
-        rows = (
-            get_db()
-            .execute(
-                "SELECT opportunities.*, pending.created_at AS pending_created_at "
-                "FROM opportunities JOIN pi_decisions pending "
-                "ON pending.opportunity_id=opportunities.id "
-                "AND pending.action='signal_pending' "
-                "AND COALESCE(pending.signal_source, 'market_observer')='market_observer' "
-                "WHERE opportunities.status='queued' "
-                "AND pending.rowid=("
-                "  SELECT newer.rowid FROM pi_decisions newer "
-                "  WHERE newer.action='signal_pending' "
-                "    AND newer.opportunity_id=opportunities.id "
-                "    AND COALESCE(newer.signal_source, 'market_observer')='market_observer' "
-                "  ORDER BY julianday(newer.created_at) DESC, newer.rowid DESC LIMIT 1"
-                ") AND NOT EXISTS ("
-                "  SELECT 1 FROM pi_decisions f "
-                "  WHERE f.action!='signal_pending' "
-                "    AND f.opportunity_id=opportunities.id "
-                "    AND COALESCE(f.signal_source, 'market_observer')='market_observer' "
-                "    AND (julianday(f.created_at)>julianday(pending.created_at) "
-                "         OR (julianday(f.created_at)=julianday(pending.created_at) "
-                "             AND f.rowid>pending.rowid))"
-                ") AND ("
-                "  (datetime(opportunities.valid_until) IS NOT NULL "
-                "   AND datetime(opportunities.valid_until)<=datetime(?)) "
-                "  OR (datetime(opportunities.valid_until) IS NULL "
-                "      AND datetime(pending.created_at)<datetime(?))"
-                ")",
-                (now.isoformat(), cutoff),
-            )
-            .fetchall()
-        )
-        expired = 0
-        for raw in rows:
-            row = dict(raw)
-            valid_until = row.get("valid_until")
-            if valid_until and get_db().execute("SELECT datetime(?) IS NOT NULL", (valid_until,)).fetchone()[0]:
-                reason_detail = "source Opportunity valid_until elapsed while awaiting System Operator evaluation"
-                parameters = {
-                    "expiry_basis": "valid_until",
-                    "valid_until": str(valid_until),
-                }
-            else:
-                reason_detail = (
-                    "legacy pending System Operator evaluation window elapsed "
-                    "without a parseable Opportunity valid_until"
-                )
-                parameters = {
-                    "expiry_basis": "pending_created_at_legacy_fallback",
-                    "pending_created_at": row.get("pending_created_at"),
-                    "max_age_minutes": max_age_minutes,
-                }
-            expired += _expire_opportunity_rows_with_ttl_evidence(
-                [row],
-                source_status="queued",
-                evaluated_at=now.isoformat(),
-                reason_detail=reason_detail,
-                parameters=parameters,
-            )
-        return expired
 
 
 # --- Capital Events ---
@@ -5781,169 +4969,131 @@ def update_serenity_theme(theme_id: str, **kwargs) -> None:
     _update("serenity_themes", theme_id, kwargs)
 
 
-def enqueue_serenity_theme_for_pi(
-    theme_id: str,
-    opportunity_ids: list[str],
-    *,
-    min_score_for_pi: float | None = None,
-    new_carriers_only: bool = False,
+def publish_serenity_candidates(
+    theme_id: str, opportunity_ids: list[str], *,
+    min_score_for_pi: float | None = None, new_candidates_only: bool = False,
 ) -> list[str]:
-    """Atomically hand one exact Serenity opportunity set to the PI queue.
+    """Publish research and real PA evidence atomically, never a legacy decision."""
+    from aletheia.config.loader import load_config
+    from aletheia.config.exchange_alignment import exchange_alignment
+    from aletheia.storage.models import new_id
+    from aletheia.trading.serenity_scoring import score_serenity_opportunity
+    from aletheia.universe.candidate_eligibility import evaluate_hard_gate
+    from aletheia.universe.candidate_opportunity import fingerprint, serenity_candidate_opportunity_context
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
 
-    Existing exact pending carriers are successful idempotent facts. Theme
-    promotion commits only after every requested active opportunity owns a
-    durable pending carrier; any failure rolls back carriers and intent updates.
-    """
-    from aletheia.storage.models import PiDecision
-
-    ordered_ids = list(dict.fromkeys(str(item) for item in opportunity_ids if item))
+    ordered_ids = list(dict.fromkeys(opportunity_ids))
     if not ordered_ids:
-        raise ValueError("Serenity PI handoff requires at least one opportunity")
+        raise ValueError("Serenity publication requires at least one opportunity")
+    if get_db().in_transaction:
+        raise ValueError("serenity_preparation_inside_transaction")
+    cfg = load_config(persist_migrations=False)
+    alignment = exchange_alignment(cfg)
+    venue = alignment.execution_exchange or alignment.data_exchange
+    now = datetime.now(timezone.utc)
+    timestamp = now.isoformat()
 
-    def exact_pending_carrier(
-        opportunity_id: str,
-        opportunity: dict,
-    ) -> dict | None:
-        pending = find_pending_pi_decision_for_opportunity(
-            opportunity_id,
-            signal_source="serenity",
-        )
-        if pending is None:
-            return None
-        mismatched = [
-            field for field in ("symbol", "direction", "market_type") if pending.get(field) != opportunity.get(field)
-        ]
-        if mismatched:
-            raise ValueError(
-                "Serenity pending carrier conflicts with opportunity identity: "
-                f"{opportunity_id}:" + ",".join(mismatched)
-            )
-        return pending
+    def source_material(opportunity_id: str) -> dict:
+        opportunity = get_serenity_opportunity(opportunity_id)
+        if opportunity is None or opportunity["theme_id"] != theme_id or opportunity["status"] != "active":
+            raise ValueError("serenity_source_ineligible")
+        evidence = _select_all("serenity_evidence", where="theme_id=?", params=(theme_id,), order="id", limit=None)
+        gates = _select_all("serenity_risk_gates", where="opportunity_id=?", params=(opportunity_id,), order="id", limit=None)
+        if not any(item["supports"] for item in evidence) or any(gate["status"] == "fail" for gate in gates):
+            raise ValueError("serenity_source_evidence_unavailable")
+        return {"opportunity": {key: value for key, value in opportunity.items()
+                                if key not in {"updated_at", "action_intent"}},
+                "evidence": evidence, "risk_gates": gates}
 
-    def exact_final_decision(
-        opportunity_id: str,
-        opportunity: dict,
-    ) -> dict | None:
-        classification = classify_final_pi_decision_for_opportunity(
-            opportunity_id,
-            "serenity",
-            symbol=opportunity.get("symbol"),
-            direction=opportunity.get("direction"),
-            market_type=opportunity.get("market_type"),
-        )
-        if classification["status"] == "integrity_unavailable":
-            raise ValueError(
-                f"Serenity final decision integrity unavailable: {opportunity_id}:{classification['reason']}"
-            )
-        final = classification.get("decision")
-        if final is None:
-            return None
-        if final.get("action") not in {"trade", "skip"}:
-            return None
-        return final
+    prepared = []
+    for opportunity_id in ordered_ids:
+        material = source_material(opportunity_id)
+        opportunity = material["opportunity"]
+        score = score_serenity_opportunity(opportunity, evidence=material["evidence"], risk_gates=material["risk_gates"])["score"]
+        if min_score_for_pi is not None and score < min_score_for_pi:
+            continue
+        source_hash = fingerprint(material)
+        existing = get_db().execute(
+            "SELECT um.id FROM universe_members um JOIN candidate_planning_generations pg ON (pg.candidate_id=um.id OR pg.last_candidate_id=um.id) "
+            "WHERE json_extract(um.candidate_opportunity_context_json,'$.source.kind')='serenity' "
+            "AND json_extract(um.candidate_opportunity_context_json,'$.source.id')=? "
+            "AND json_extract(um.candidate_opportunity_context_json,'$.candidate_selection.source_record_hash')=? "
+            "ORDER BY um.rowid LIMIT 1", (opportunity_id, source_hash),
+        ).fetchone()
+        if existing:
+            prepared.append((opportunity_id, source_hash, existing["id"], None, None))
+            continue
+        asset = get_db().execute(
+            "SELECT * FROM universe_registry WHERE venue=? AND symbol=? AND market_type=? AND status='active'",
+            (venue, opportunity["symbol"], opportunity["market_type"]),
+        ).fetchone()
+        if asset is None:
+            raise ValueError("serenity_exact_instrument_unavailable")
+        feature = get_latest_feature_snapshot(asset["id"])
+        if feature is None:
+            raise ValueError("serenity_pa_unavailable")
+        candles = get_ohlcv_candles(opportunity["symbol"], "1h", 1, venue, opportunity["market_type"], int(now.timestamp()*1000)-3_600_000+1)
+        feature.update({"asset_id": asset["id"], "venue": venue, "symbol": asset["symbol"],
+                        "market_type": asset["market_type"], "registry_status": asset["status"],
+                        "feature_snapshot_id": feature["id"], "feature_snapshot_ts": feature["ts"],
+                        "feature_source": "universe_feature_snapshot/v1",
+                        "data_freshness_sec": (now - _normalized_utc_datetime(feature["ts"])).total_seconds(),
+                        "last_price": candles[-1]["close"] if candles else None})
+        candidate_id = new_id()
+        gate = evaluate_hard_gate(feature, cfg.universe, candidate_key=candidate_id, evaluated_at=timestamp,
+            action_route_reason=fast_market_data_unavailability_reason(cfg, venue, opportunity["market_type"]))
+        if gate.status != "eligible" or gate.actionability != "actionable":
+            raise ValueError("serenity_instrument_ineligible")
+        context = serenity_candidate_opportunity_context(candidate_id=candidate_id, opportunity=opportunity,
+            feature=feature, source_record_hash=source_hash, detected_at=timestamp)
+        snapshot = UniverseSnapshot(source_kind="serenity", created_at=timestamp, policy_id="serenity_research_v1",
+            expires_at=(now + timedelta(hours=cfg.universe.snapshot_ttl_hours)).isoformat())
+        member = UniverseMember(id=candidate_id, snapshot_id=snapshot.id, asset_id=asset["id"], venue=venue,
+            symbol=asset["symbol"], market_type=asset["market_type"], rank=len(prepared)+1, total_score=score,
+            estimated_cost=(2.0 * cfg.trading.execution_fee_pct
+                + (float(feature["spread_bps"]) + 2.0 * cfg.trading.slippage_bps) / 100.0),
+            spread_bps=feature["spread_bps"], quote_volume_24h=feature["quote_volume_24h"],
+            scanner_family=context.opportunity["source_component_id"], scanner_direction=opportunity["direction"],
+            entry_price_usd=feature["last_price"], expires_at=snapshot.expires_at,
+            candidate_selection_policy="serenity_research_v1", candidate_selection_policy_epoch="serenity_research_v1",
+            opportunity_mechanism=context.opportunity["primary_mechanism"],
+            opportunity_mechanism_version=context.opportunity["mechanism_version"],
+            opportunity_source_component=context.opportunity["source_component_id"], opportunity_source_cutoff_at=timestamp,
+            opportunity_evidence_hash=source_hash, candidate_opportunity_context_version=context.version,
+            candidate_opportunity_context_json=context.model_dump_json(), candidate_opportunity_context_hash=context.context_hash)
+        proof = prepare_candidate_requalification(member.model_dump())
+        if proof is None:
+            raise ValueError("serenity_pa_requalification_unavailable")
+        prepared.append((opportunity_id, source_hash, member, snapshot, proof))
 
     with transaction(immediate=True):
         theme = get_serenity_theme(theme_id)
-        if theme is None:
-            raise ValueError(f"Serenity theme not found: {theme_id}")
-
-        placeholders = ",".join("?" for _ in ordered_ids)
-        rows = (
-            get_db()
-            .execute(
-                f"SELECT * FROM serenity_opportunities WHERE id IN ({placeholders}) AND theme_id=? AND status='active'",
-                (*ordered_ids, theme_id),
-            )
-            .fetchall()
-        )
-        by_id = {row["id"]: dict(row) for row in rows}
-        missing = [opportunity_id for opportunity_id in ordered_ids if opportunity_id not in by_id]
-        if missing:
-            raise ValueError(
-                "Serenity PI handoff requires active opportunities from the same theme: " + ",".join(missing)
-            )
-
-        theme_status = str(theme.get("status") or "")
-        if theme_status not in {"active", "promoted"}:
-            raise ValueError(f"Serenity theme status does not allow PI handoff: {theme_status}")
-
-        if min_score_for_pi is not None:
-            from aletheia.trading.serenity_scoring import score_serenity_opportunity
-
-            qualified_ids = []
-            for opportunity_id in ordered_ids:
-                opportunity = by_id[opportunity_id]
-                evidence = list_serenity_evidence(theme_id=opportunity["theme_id"], limit=200)
-                gates = list_serenity_risk_gates(opportunity_id=opportunity_id, limit=200)
-                score = score_serenity_opportunity(
-                    opportunity,
-                    evidence=evidence,
-                    risk_gates=gates,
-                )["score"]
-                if score >= min_score_for_pi:
-                    qualified_ids.append(opportunity_id)
-            ordered_ids = qualified_ids
-
-        now = datetime.now(timezone.utc).isoformat()
-        new_carrier_ids: list[str] = []
-        for opportunity_id in ordered_ids:
-            opportunity = by_id[opportunity_id]
-            pending = exact_pending_carrier(opportunity_id, opportunity)
-            final = exact_final_decision(opportunity_id, opportunity)
-            if pending is None and final is None:
-                insert_pi_decision(
-                    PiDecision(
-                        symbol=opportunity.get("symbol"),
-                        direction=opportunity.get("direction"),
-                        market_type=opportunity.get("market_type"),
-                        action="signal_pending",
-                        conviction=0,
-                        reasoning=(f"Serenity promote: theme={theme_id[:8]} opp={opportunity_id[:8]}"),
-                        opportunity_id=opportunity_id,
-                        signal_source="serenity",
-                        debate_ran=False,
-                    )
-                )
-                new_carrier_ids.append(opportunity_id)
-            update_serenity_opportunity(
-                opportunity_id,
-                action_intent="pi_evaluate",
-                updated_at=now,
-            )
-
-        durable_ids = [
-            opportunity_id
-            for opportunity_id in ordered_ids
-            if (
-                exact_pending_carrier(opportunity_id, by_id[opportunity_id]) is not None
-                or exact_final_decision(opportunity_id, by_id[opportunity_id]) is not None
-            )
-        ]
-        if durable_ids != ordered_ids:
-            raise RuntimeError("Serenity PI handoff is missing a durable pending carrier")
-
-        active_rows = (
-            get_db()
-            .execute(
-                "SELECT * FROM serenity_opportunities WHERE theme_id=? AND status='active'",
-                (theme_id,),
-            )
-            .fetchall()
-        )
-        all_active_have_carriers = all(
-            (
-                exact_pending_carrier(row["id"], dict(row)) is not None
-                or exact_final_decision(row["id"], dict(row)) is not None
-            )
-            for row in active_rows
-        )
-        update_serenity_theme(
-            theme_id,
-            status="promoted" if all_active_have_carriers else "active",
-            promoted_at=now if all_active_have_carriers else None,
-            updated_at=now,
-        )
-        return new_carrier_ids if new_carriers_only else durable_ids
+        if theme is None or theme["status"] not in {"active", "promoted"}:
+            raise ValueError("serenity_theme_ineligible")
+        result, created = [], []
+        for opportunity_id, source_hash, member, snapshot, proof in prepared:
+            if fingerprint(source_material(opportunity_id)) != source_hash:
+                raise ValueError("serenity_source_changed")
+            durable = get_db().execute(
+                "SELECT um.id FROM universe_members um JOIN candidate_planning_generations pg ON (pg.candidate_id=um.id OR pg.last_candidate_id=um.id) "
+                "WHERE json_extract(um.candidate_opportunity_context_json,'$.source.kind')='serenity' "
+                "AND json_extract(um.candidate_opportunity_context_json,'$.source.id')=? "
+                "AND json_extract(um.candidate_opportunity_context_json,'$.candidate_selection.source_record_hash')=? "
+                "ORDER BY um.rowid LIMIT 1", (opportunity_id, source_hash),
+            ).fetchone()
+            if durable is not None:
+                result.append(durable["id"])
+                continue
+            insert_universe_snapshot(snapshot)
+            insert_candidate(member)
+            generation, generation_created = ensure_candidate_planning_generation(member.id, now=now, requalification=proof)
+            if generation_created and json.loads(generation["requalification_source_json"]).get("birth_material") != proof:
+                raise ValueError("serenity_pa_requalification_changed")
+            result.append(member.id)
+            created.append(member.id)
+        if result:
+            update_serenity_theme(theme_id, status="promoted", promoted_at=timestamp, updated_at=timestamp)
+        return created if new_candidates_only else result
 
 
 def insert_serenity_evidence(e: SerenityEvidence) -> list[str]:
@@ -7825,39 +6975,6 @@ def prune_pi_decisions(days: int = 7) -> int:
     )
 
 
-def prune_signal_pending_stale(minutes: int = 30) -> int:
-    """Delete old market-observer carriers only after their source is terminal.
-
-    A queued source remains restart-recoverable even when old, and a final row in
-    ``submitting`` remains an active execution-recovery claim. Serenity carriers
-    have a different age contract and are intentionally excluded.
-    """
-    db = get_db()
-    cur = execute_write(
-        "DELETE FROM pi_decisions WHERE action='signal_pending' "
-        "AND COALESCE(signal_source, 'market_observer')='market_observer' "
-        "AND datetime(created_at) < datetime('now', ? || ' minutes') "
-        "AND EXISTS ("
-        " SELECT 1 FROM opportunities source "
-        " WHERE source.id=pi_decisions.opportunity_id "
-        " AND source.status IN ('reviewed','expired')"
-        ") "
-        "AND NOT EXISTS ("
-        " SELECT 1 FROM pi_decisions final "
-        " WHERE final.opportunity_id=pi_decisions.opportunity_id "
-        " AND COALESCE(final.signal_source, 'market_observer')="
-        "     COALESCE(pi_decisions.signal_source, 'market_observer') "
-        " AND final.action!='signal_pending' "
-        " AND final.proposal_status='submitting'"
-        ") "
-        "AND NOT EXISTS ("
-        " SELECT 1 FROM agent_run_artifacts artifact "
-        " WHERE artifact.artifact_type='pi_decision' "
-        " AND artifact.artifact_id=pi_decisions.id"
-        ")",
-        (f"-{minutes}",),
-    )
-    return cur.rowcount
 
 
 def prune_system_actions(days: int = 7) -> int:
@@ -8932,7 +8049,7 @@ def insert_universe_snapshot(snap: UniverseSnapshot) -> None:
 def get_active_universe_snapshot(market_type: str = "crypto") -> dict | None:
     db = get_db()
     row = db.execute(
-        "SELECT * FROM universe_snapshots WHERE status = 'active' AND market_type = ? ORDER BY created_at DESC LIMIT 1",
+        "SELECT * FROM universe_snapshots WHERE status = 'active' AND source_kind='universe' AND market_type = ? ORDER BY created_at DESC LIMIT 1",
         (market_type,),
     ).fetchone()
     return dict(row) if row else None
@@ -8963,7 +8080,7 @@ def expire_opportunities_from_superseded_snapshots(market_type: str = "crypto") 
             "SELECT o.* FROM opportunities o "
             "JOIN universe_snapshots s ON s.id=o.universe_snapshot_id "
             "WHERE o.status='open' "
-            "AND s.market_type=? AND s.status='superseded' "
+            "AND s.source_kind='universe' AND s.market_type=? AND s.status='superseded' "
             "ORDER BY o.created_at, o.rowid",
             (market_type,),
         ).fetchall()
@@ -9039,12 +8156,12 @@ def expire_universe_snapshots(market_type: str = "crypto", except_id: str | None
     if except_id:
         execute_write(
             "UPDATE universe_snapshots SET status = 'superseded' "
-            "WHERE status = 'active' AND market_type = ? AND id != ?",
+            "WHERE status = 'active' AND source_kind='universe' AND market_type = ? AND id != ?",
             (market_type, except_id),
         )
     else:
         execute_write(
-            "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND market_type = ?",
+            "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND source_kind='universe' AND market_type = ?",
             (market_type,),
         )
     if not was_in_tx:
@@ -9113,66 +8230,25 @@ def list_universe_members(snapshot_id: str, limit: int | None = 50) -> list[dict
 list_candidates = list_universe_members
 
 
-def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> tuple[int, int]:
-    """Slide Candidate expires_at forward on every reused snapshot member.
-
-    Used by universe refresh's change-suppression branch (service._atomic_universe_publication
-    is skipped when the allocation fingerprint is unchanged). Without this slide,
-    the Candidates' original expiry — `member.created_at + ttl_sec` — lapses even
-    though the allocation is still confirmed valid. The subsequent ranker scan
-    then hard-rejects every Candidate-derived carrier with skip_reason=ttl_expired.
-
-    Only slides forward (`WHERE expires_at < new_expires_at`) so a legitimate
-    longer expiry set elsewhere is never shortened. For backward compatibility,
-    only legacy NULL-generation Opportunity carriers linked to the same member
-    receive a mirrored valid_until slide; triggered V2 Opportunities keep their
-    own lease.
-
-    Returns (members_updated, opportunities_updated).
-    """
-    db = get_db()
-    was_in_tx = db.in_transaction
-
-    members = _select_all(
-        "universe_members",
-        where="snapshot_id = ?",
-        params=(snapshot_id,),
-        limit=1000,
-    )
-
-    n_members = 0
-    n_opps = 0
-
-    def _apply() -> None:
-        nonlocal n_members, n_opps
-        for m in members:
-            ttl_sec = int(m.get("ttl_sec") or 0)
+def refresh_active_snapshot_ttls(snapshot_id: str, now: datetime) -> int:
+    """Renew current Candidate leases without rewriting historical Opportunity rows."""
+    with transaction(immediate=True, savepoint=True):
+        members = _select_all(
+            "universe_members", where="snapshot_id = ?", params=(snapshot_id,), limit=1000,
+        )
+        updated = 0
+        for member in members:
+            ttl_sec = int(member["ttl_sec"])
             if ttl_sec <= 0:
                 continue
-            new_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
-            cur_m = execute_write(
-                "UPDATE universe_members SET expires_at = ? WHERE id = ? AND (expires_at IS NULL OR expires_at < ?)",
-                (new_expires, m["id"], new_expires),
+            expires_at = (now + timedelta(seconds=ttl_sec)).isoformat()
+            result = execute_write(
+                "UPDATE universe_members SET expires_at=? "
+                "WHERE id=? AND (expires_at IS NULL OR expires_at<?)",
+                (expires_at, member["id"], expires_at),
             )
-            if cur_m.rowcount and cur_m.rowcount > 0:
-                n_members += cur_m.rowcount
-            cur_o = execute_write(
-                "UPDATE opportunities SET valid_until = ? "
-                "WHERE universe_member_id = ? AND status IN ('open','queued') "
-                "AND generation_version IS NULL "
-                "AND (valid_until IS NULL OR valid_until < ?)",
-                (new_expires, m["id"], new_expires),
-            )
-            if cur_o.rowcount and cur_o.rowcount > 0:
-                n_opps += cur_o.rowcount
-
-    if was_in_tx:
-        _apply()
-    else:
-        with transaction(immediate=True):
-            _apply()
-
-    return n_members, n_opps
+            updated += result.rowcount
+    return updated
 
 
 def get_universe_member(member_id: str) -> dict | None:
@@ -9542,6 +8618,7 @@ def candidate_attention_is_active(
 def reconcile_candidate_attention(
     selected_generation_ids: set[str],
     *,
+    producer_scope: Literal["universe", "serenity"],
     eligible_identity_keys: set[tuple[str, str, str, str, str]],
     refresh_source: dict,
     soft_lease_sec: int,
@@ -9576,6 +8653,12 @@ def reconcile_candidate_attention(
             .fetchall()
         ]
         for row in rows:
+            birth = get_candidate(str(row["candidate_id"]))
+            birth_context = json.loads(row["requalification_source_json"] or "{}").get("candidate_opportunity_context")
+            if birth_context is None:
+                birth_context = json.loads(birth["candidate_opportunity_context_json"]) if birth and birth.get("candidate_opportunity_context_json") else {}
+            if birth_context.get("source", {}).get("kind", "universe") != producer_scope:
+                continue
             generation_id = str(row["id"])
             if generation_id in selected_generation_ids:
                 if generation_id in new_generation_ids:
@@ -9584,7 +8667,7 @@ def reconcile_candidate_attention(
                 source_json = json.dumps(
                     {
                         **refresh_source,
-                        **{k: v for k, v in json.loads(row["requalification_source_json"] or "{}").items() if k == "birth_material"},
+                        **{k: v for k, v in json.loads(row["requalification_source_json"] or "{}").items() if k in {"birth_material", "candidate_opportunity_context"}},
                         "planning_generation_id": generation_id,
                         "planning_identity": row["planning_identity"],
                     },
@@ -9787,6 +8870,18 @@ def ensure_candidate_planning_generation(
                 ).fetchone()
             )
         )
+        source_changed = False
+        if existing is not None:
+            birth = get_candidate(str(existing["candidate_id"]))
+            birth_context = json.loads(existing["requalification_source_json"] or "{}").get("candidate_opportunity_context")
+            if birth_context is None:
+                birth_context = json.loads(birth["candidate_opportunity_context_json"]) if birth and birth.get("candidate_opportunity_context_json") else {}
+            birth_source = birth_context.get("source", {})
+            source_changed = (birth_source.get("kind", "universe") != context.source.get("kind", "universe")
+                or (context.source.get("kind") == "serenity" and birth_source.get("id") != context.source["id"]))
+            if source_changed and (existing["attention_status"] == "active" or unresolved_execution
+                or (existing_plan is not None and existing_plan["status"] in _ACTIVE_ENTRY_PLAN_STATUSES)):
+                raise ValueError("instrument_owned")
         # The proof is prepared without the writer. Recheck its exact owner and
         # publication identity here; a concurrent successor makes it stale.
         if requalification is not None:
@@ -9885,8 +8980,8 @@ def ensure_candidate_planning_generation(
         )
         material_input_changed = bool(
             existing is not None
-            and existing["planning_identity"] != planning_identity
-            and later_completed_requalification
+            and ((existing["planning_identity"] != planning_identity and later_completed_requalification)
+                 or source_changed)
             and not unresolved_execution
         )
         compatibility_cutover = bool(
@@ -10023,7 +9118,8 @@ def ensure_candidate_planning_generation(
                 else "planning_dependencies_recovered" if dependency_recovered
                 else "initial_candidate"
             ),
-            requalification_source_json=(json.dumps({"birth_material": requalification}, sort_keys=True, separators=(",", ":")) if requalification is not None else None),
+            requalification_source_json=json.dumps({"candidate_opportunity_context": context.model_dump(mode="json"),
+                **({"birth_material": requalification} if requalification is not None else {})}, sort_keys=True, separators=(",", ":")),
             requalification_candidate_id=candidate_id,
             entry_behavior_fingerprint=entry_behavior_fingerprint,
             schema_fingerprint=schema_fingerprint,
@@ -10293,7 +9389,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
 
 
 def list_candidate_planning_refresh_assets(
-    *, venue: str, now: datetime | None = None,
+    *, venue: str | None = None, now: datetime | None = None,
 ) -> list[dict]:
     """Return exact assets whose canonical active planning needs fresh facts."""
     timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
@@ -10305,13 +9401,15 @@ def list_candidate_planning_refresh_assets(
         "WHERE pg.is_current=1 AND pg.attention_status='active' "
         "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
         "AND pg.status IN ('pending','planning','unavailable') "
-        "AND pg.entry_plan_id IS NULL AND pg.venue=? "
+        "AND pg.entry_plan_id IS NULL "
+        + ("AND pg.venue=? " if venue is not None else "")
+        +
         "AND ur.venue=pg.venue AND ur.symbol=pg.symbol AND ur.market_type=pg.market_type "
         "AND um.venue=pg.venue AND um.symbol=pg.symbol AND um.market_type=pg.market_type "
         "AND NOT EXISTS (SELECT 1 FROM entry_plans ep WHERE ep.planning_generation_id=pg.id "
         f"AND ep.status IN ({plan_status_placeholders})) "
         "ORDER BY COALESCE(pg.retry_not_before,pg.created_at),pg.created_at,pg.id",
-        (timestamp, timestamp, venue, *_ACTIVE_ENTRY_PLAN_STATUSES),
+        (timestamp, timestamp, *((venue,) if venue is not None else ()), *_ACTIVE_ENTRY_PLAN_STATUSES),
     ).fetchall()
     return list({row["id"]: dict(row) for row in rows}.values())
 
@@ -11146,7 +10244,7 @@ def get_active_universe_policy(market_type: str = "crypto") -> dict | None:
 def list_universe_snapshots(market_type: str = "crypto", limit: int = 20) -> list[dict]:
     return _select_all(
         "universe_snapshots",
-        where="market_type = ?",
+        where="market_type = ? AND source_kind='universe'",
         params=(market_type,),
         order="created_at DESC",
         limit=limit,

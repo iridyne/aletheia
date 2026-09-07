@@ -61,7 +61,8 @@ def test_entry_client_mode_comes_from_authoritative_order(
 ):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
+    from tests.uta.test_execution_coordinator import _Adapter, _ack
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage import repositories as repo
 
@@ -83,25 +84,14 @@ def test_entry_client_mode_comes_from_authoritative_order(
         execution_mode=execution_mode,
     )
 
-    observed_clients: list[tuple[str, str | None]] = []
-
-    class _FakeBitgetClient:
-        def __init__(self, mode, profile="classic_v2"):
-            orders = repo.list_orders(limit=10)
-            persisted_mode = orders[0]["execution_mode"] if orders else None
-            observed_clients.append((mode, persisted_mode))
-
-        async def place_order(self, _request):
-            return SimpleNamespace(
-                order_id="EX-ACCOUNT-ROUTING",
-                status="submitted",
-                fill_price=None,
-                filled_quantity=None,
-            )
-
-    monkeypatch.setattr(bitget_broker, "BitgetClient", _FakeBitgetClient)
-
-    bitget_broker.execute_live_order(
+    observed_clients = []
+    async def submit(command):
+        [order] = repo.list_orders(limit=10)
+        observed_clients.append((command.expected_account.environment, order["execution_mode"]))
+        return _ack(command)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: _Adapter(submit, mode))
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
+    coordinator.execute_order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,
         symbol="BTC/USDT",

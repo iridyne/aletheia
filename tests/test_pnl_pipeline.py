@@ -87,6 +87,11 @@ async def client(tmp_path, monkeypatch):
 @pytest.fixture
 def db(tmp_path, monkeypatch):
     _setup(tmp_path, monkeypatch)
+    from types import SimpleNamespace
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda: SimpleNamespace(
+        configured_identities=lambda: tuple(SimpleNamespace(execution_mode=mode)
+            for mode in ("bitget_demo", "okx_demo", "binance_testnet")),
+    ))
     yield tmp_path
     reset_db()
 
@@ -751,7 +756,7 @@ class TestSnapshotConsistency:
         # compute_portfolio() only enters the exchange-account path when
         # paper_execution_mode != "paper_internal" (uses_external_exchange=True).
         # The new config default is "paper_internal", so we must override it
-        # to "okx_demo" to make get_cached_state() be called and Row 2 written.
+        # to "okx_demo" to exercise the external account snapshot.
         import aletheia.config.loader as loader
         config = loader.load_config()
         config.exchange.paper_execution_mode = "okx_demo"
@@ -759,10 +764,10 @@ class TestSnapshotConsistency:
         # Inject fake exchange cache so Row 2 is written
         import aletheia.portfolio.exchange_sync as es
         fake_state = {
-            "equity_usdt": 5000.0,
-            "available_usdt": 4000.0,
-            "frozen_usdt": 1000.0,
-            "futures_unrealized_pnl": 0.0,
+            "accounts": [{"broker_id": "okx_demo"}],
+            "total_equity_usdt": 5000.0,
+            "total_available_usdt": 4000.0,
+            "total_unrealized_pnl": 0.0,
             "open_positions_count": 0,
             "open_orders_count": 0,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
@@ -770,7 +775,7 @@ class TestSnapshotConsistency:
             "positions": [],
             "age_seconds": 10,
         }
-        monkeypatch.setattr(es, "get_cached_state", lambda mode=None: fake_state)
+        monkeypatch.setattr(es, "get_unified_cached_state", lambda **kwargs: fake_state)
         compute_and_store_snapshot(execution_mode="paper_internal")
         snapshots = repo.list_portfolio_snapshots(limit=10)
         exc_rows = [s for s in snapshots if s["execution_mode"] == "exchange_account"]
@@ -1041,6 +1046,8 @@ class TestAutoDeposit:
             positions: list = None
             errors: list = None
             fetched_at: str = ""
+            connected_brokers: tuple = ("test_broker",)
+            execution_modes: tuple = ("test_broker",)
 
             def __post_init__(self):
                 if self.accounts is None:
@@ -1058,10 +1065,7 @@ class TestAutoDeposit:
                 if not self.fetched_at:
                     self.fetched_at = datetime.now(timezone.utc).isoformat()
 
-        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda: FakeUnified())
-        # Skip the legacy bitget sync
-        import aletheia.portfolio.exchange_sync as es
-        monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda **kwargs: FakeUnified())
 
         sync_all_exchanges()
 
@@ -1085,6 +1089,8 @@ class TestAutoDeposit:
             positions: list = None
             errors: list = None
             fetched_at: str = ""
+            connected_brokers: tuple = ("fallback_broker",)
+            execution_modes: tuple = ("fallback_broker",)
 
             def __post_init__(self):
                 if self.accounts is None:
@@ -1102,9 +1108,7 @@ class TestAutoDeposit:
                 if not self.fetched_at:
                     self.fetched_at = datetime.now(timezone.utc).isoformat()
 
-        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda: FakeUnified())
-        import aletheia.portfolio.exchange_sync as es
-        monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda **kwargs: FakeUnified())
 
         sync_all_exchanges()
 
@@ -1126,6 +1130,8 @@ class TestAutoDeposit:
             positions: list = None
             errors: list = None
             fetched_at: str = ""
+            connected_brokers: tuple = ("repeat_broker",)
+            execution_modes: tuple = ("repeat_broker",)
 
             def __post_init__(self):
                 if self.accounts is None:
@@ -1143,9 +1149,7 @@ class TestAutoDeposit:
                 if not self.fetched_at:
                     self.fetched_at = datetime.now(timezone.utc).isoformat()
 
-        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda: FakeUnified())
-        import aletheia.portfolio.exchange_sync as es
-        monkeypatch.setattr(es, "sync_exchange_account", lambda: None)
+        monkeypatch.setattr(uta_mgr, "get_unified_state_sync", lambda **kwargs: FakeUnified())
 
         sync_all_exchanges()
         sync_all_exchanges()

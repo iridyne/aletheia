@@ -57,8 +57,8 @@ export const REGIME_SECTION = {
 
 export const SERENITY_SECTION = {
   id: 'serenity-research', title: 'Serenity Research', tab: 'agent',
-  description: 'Long-horizon industrial-chain analyst lens. Promoting a theme enqueues its opportunities into the System Operator evaluation queue (the System Operator remains sole trade-decision maker).',
-  searchTerms: ['serenity', 'auto promote', 'pi evaluation', 'long horizon', 'industrial chain'],
+  description: 'Long-horizon research publishes Candidates to the shared Entry Planner. Entry Plans retain Serenity source identity and holding horizon; Risk and the Gateway remain mandatory.',
+  searchTerms: ['serenity', 'auto promote', 'entry planner', 'long horizon', 'industrial chain'],
 } satisfies SettingsFeatureDescriptor
 
 export const SCHEDULER_SECTION = {
@@ -160,7 +160,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
   const serenityEnabled = !!serenity.enabled
   const serenityAutoPromote = !!serenity.auto_promote
   const serenityMinScore = Number(serenity.min_score_for_pi ?? 72)
-  const serenityStopLossPct = Number(serenity.stop_loss_pct ?? 8.0)
   const serenityMaxHoldDays = Number(serenity.max_hold_days ?? 90)
   const controllerCfg = (settings?.controller ?? {}) as any
   const controllerShadowEnabled = controllerCfg.shadow_enabled !== false
@@ -442,15 +441,15 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
             checked={serenityAutoPromote}
             persistence="immediate"
             onChange={async v => {
-              if (v && !(await confirm({ title: 'Enable auto-promote?', description: 'Themes that meet the threshold will be queued to the System Operator without human review.', confirmLabel: 'Enable', variant: 'warning' }))) return
+              if (v && !(await confirm({ title: 'Enable auto-promote?', description: 'Qualifying research will publish Candidates to the shared Entry Planner without manual promotion. Risk approval remains required.', confirmLabel: 'Enable', variant: 'warning' }))) return
               serenityMut.mutate({ auto_promote: v })
             }}
             disabled={serenityMut.isPending}
           />
         </Row>
         <Row
-          label="Min score for System Operator"
-          hint="Minimum aggregate research score (0-100) required before an opportunity is forwarded to the System Operator. Default 72."
+          label="Min score for Candidate publication"
+          hint="Minimum research score (0–100) required to publish a Candidate for entry planning. This does not authorize an order."
         >
           <input
             type="number"
@@ -463,26 +462,6 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
               const v = parseInt(e.currentTarget.value, 10)
               if (!Number.isFinite(v) || v < 0 || v > 100 || v === serenityMinScore) return
               serenityMut.mutate({ min_score_for_pi: v })
-            }}
-            className="w-24"
-            disabled={serenityMut.isPending}
-          />
-        </Row>
-        <Row
-          label="Stop-loss % (serenity school)"
-          hint="Wider stop applied to serenity-school positions (long-horizon thesis). Default 8.0%. Short-term positions use the global Trading default."
-        >
-          <input
-            type="number"
-            min={0.1}
-            max={50}
-            step={0.1}
-            defaultValue={serenityStopLossPct}
-            data-persistence="immediate"
-            onBlur={e => {
-              const v = parseFloat(e.currentTarget.value)
-              if (!Number.isFinite(v) || v < 0.1 || v > 50 || v === serenityStopLossPct) return
-              serenityMut.mutate({ stop_loss_pct: v })
             }}
             className="w-24"
             disabled={serenityMut.isPending}
@@ -541,13 +520,13 @@ export function AgentModelsTab({ status, settings, qc, onDirty }: SettingsStatus
         </Row>
         <Row
           label="System Operator daemon (event-driven)"
-          hint="When ON, System Operator wakes instantly on signal arrival instead of polling every 15 min. Disable to revert to legacy polling."
+          hint="Runs the shared Entry Planner on wakes and heartbeats, and reviews open positions. Disabling it does not activate a legacy entry path."
         >
           <Toggle
             checked={piDaemonEnabled}
             persistence="immediate"
             onChange={async v => {
-              if (!v && !(await confirm({ title: 'Disable the System Operator daemon?', description: 'The agent will revert to 15-minute polling intervals.', confirmLabel: 'Disable', variant: 'danger' }))) return
+              if (!v && !(await confirm({ title: 'Disable the System Operator daemon?', description: 'Daemon planning wakes and portfolio reviews will stop. No legacy polling path will take over.', confirmLabel: 'Disable', variant: 'danger' }))) return
               piDaemonMut.mutate({ enabled: v })
             }}
             disabled={piDaemonMut.isPending}

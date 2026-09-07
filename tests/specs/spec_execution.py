@@ -56,19 +56,6 @@ def test_execution_internal_is_private():
     assert callable(gateway._execute_proposal)
 
 
-@spec_claim(
-    SpecClaim(
-        "EX-S03", "execution_contract", "§2 brokers", "L2a",
-        "Paper + Bitget + OKX brokers exist as separate modules",
-    ),
-)
-def test_broker_modules_exist():
-    from aletheia.execution import paper_broker, bitget_broker, okx_broker
-
-    assert callable(paper_broker.execute_paper_order)
-    assert callable(bitget_broker.execute_live_order)
-    assert callable(okx_broker.execute_live_order)
-
 
 @spec_claim(
     SpecClaim(
@@ -323,7 +310,8 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     """The pending row survives an ambiguous transport failure without resubmission."""
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
+    from tests.uta.test_execution_coordinator import _Adapter
     from aletheia.storage import repositories as repo
     from tests.execution_authority import seed_order_authority
 
@@ -340,28 +328,19 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     )
 
     captured_order_id = {}
-
-    original_insert = repo.insert_order
-
-    def _spy_insert(order):
-        captured_order_id["id"] = order.id
-        original_insert(order)
-
-    monkeypatch.setattr(repo, "insert_order", _spy_insert)
-    monkeypatch.setattr(bitget_broker, "insert_order", _spy_insert)
-
-    # Close the already-created coroutine before simulating an exchange failure;
-    # otherwise the leak is reported later against an unrelated test.
-    monkeypatch.setattr(
-        bitget_broker,
-        "_run_coro",
-        closing_coro_runner(ConnectionError("exchange unavailable")),
-    )
+    async def submit(command):
+        [pending] = repo.list_orders(limit=10)
+        assert pending["status"] == "pending"
+        captured_order_id["id"] = pending["id"]
+        raise ConnectionError("exchange unavailable")
+    adapter = _Adapter(submit, "bitget_demo")
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
     from aletheia.execution.errors import SubmissionUnknownError
 
     with pytest.raises(SubmissionUnknownError):
-        bitget_broker.execute_live_order(
+        coordinator.execute_order(
             proposal_id="prop-ex-b03",
             risk_decision_id="rd-ex-b03",
             symbol="BTC/USDT",
@@ -824,30 +803,6 @@ def test_fill_model_defaults_fee_source_estimated():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim(
-        "EX-S06", "execution_contract", "§16 causal chain", "L2a",
-        "Position carries opportunity_id; all four broker entry points accept it; "
-        "gateway threads proposal.opportunity_id into execution",
-    ),
-)
-def test_opportunity_id_threaded_through_execution():
-    import inspect
-    from aletheia.storage.models import Position
-
-    assert "opportunity_id" in Position.model_fields
-
-    from aletheia.execution.paper_broker import execute_paper_order
-    from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
-    from aletheia.execution.okx_broker import execute_live_order as okx_exec
-    from aletheia.execution.binance_broker import execute_live_order as binance_exec
-    for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
-        assert "opportunity_id" in inspect.signature(fn).parameters, fn.__module__
-
-    import aletheia.execution.gateway as gw
-    src = inspect.getsource(gw._execute_proposal)
-    assert src.count("opportunity_id=proposal.opportunity_id") >= 1
-
 
 @spec_claim(
     SpecClaim(
@@ -947,15 +902,15 @@ def test_symbol_check_paper_internal_always_passes():
 )
 def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     import aletheia.execution.gateway as gw
-    import aletheia.execution.okx_broker as okx_broker
+    import aletheia.execution.venue_capabilities as capabilities
 
     # New structure: {"swap": frozenset, "spot": frozenset}
     # WLD/USDT is spot-only on OKX demo — absent from swap, present in spot.
-    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", {
+    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
         "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
         "spot": frozenset({"BTC/USDT", "ETH/USDT", "WLD/USDT"}),
     })
-    monkeypatch.setattr(okx_broker, "_okx_demo_symbols_loaded_at", float("inf"))
+    monkeypatch.setattr(capabilities, "_okx_demo_symbols_loaded_at", float("inf"))
 
     # WLD is in spot but NOT in swap → perp order must be rejected
     reason = gw._check_symbol_availability("WLDUSDT", "okx_demo", "usdt_futures")
@@ -970,7 +925,7 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
 
     # Loaded cache contains only "swap" key — spot requests must be rejected (issue #1222)
     # _get_demo_symbols now returns frozenset() (not None) for a missing key in a loaded dict.
-    monkeypatch.setattr(okx_broker, "_okx_demo_symbols", {
+    monkeypatch.setattr(capabilities, "_okx_demo_symbols", {
         "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
     })
     reason_no_spot = gw._check_symbol_availability("BTCUSDT", "okx_demo", "spot")

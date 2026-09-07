@@ -1,5 +1,6 @@
 """Independent Bitget Classic-v2 and UTA-v3 profiles."""
 
+import json
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -39,6 +40,14 @@ class _BitgetDemoProfile(CCXTProfile):
             password=passphrase,
             options={"defaultType": "swap", "uta": uta},
         )
+
+    def close_position_absent(self, error: BaseException) -> bool:
+        try:
+            response = json.loads(str(error).removeprefix("bitget "))
+        except (ValueError, TypeError):
+            return False
+        codes = {"22002", "25227", "45110"} if self._uta else {"22002", "25227"}
+        return isinstance(response, dict) and str(response.get("code")) in codes
 
     @staticmethod
     def _venue_quantity(command, *, instrument=None) -> Decimal:
@@ -86,6 +95,14 @@ class _BitgetDemoProfile(CCXTProfile):
             and prepared.leverage is not None
             and not prepared.reduce_only
         ):
+            if not self._uta and prepared.purpose == "entry" and prepared.reference_price is not None:
+                balance = await exchange.fetch_balance({"type": "swap", "productType": "USDT-FUTURES", "uta": False})
+                available = decimal_value((balance.get("USDT") or {}).get("free"))
+                if available is None:
+                    raise UTAError(UTAErrorCode.INCOMPLETE_READ, "classic_margin_balance_unavailable", command_evidence=CommandEvidence.NOT_SENT)
+                need = prepared.quantity * prepared.reference_price / prepared.leverage - available
+                if need > 1:
+                    await exchange.transfer("USDT", format(need, ".2f"), "spot", "swap")
             await exchange.set_leverage(
                 int(prepared.leverage),
                 prepared.instrument.venue_symbol,

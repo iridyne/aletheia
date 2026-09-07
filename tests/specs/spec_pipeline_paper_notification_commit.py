@@ -65,7 +65,7 @@ def _seed_exchange_gateway(
     persist_materialization: bool = True,
 ):
     from aletheia.config import loader
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.execution.errors import SubmissionUnknownError
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
@@ -193,7 +193,7 @@ def _seed_exchange_gateway(
             )
         return dict(broker_result)
 
-    monkeypatch.setattr(bitget_broker, "execute_live_order", execute_live_order)
+    monkeypatch.setattr(coordinator, "execute_order", execute_live_order)
     return proposal
 
 
@@ -651,7 +651,7 @@ def test_exchange_result_ids_without_durable_chain_are_not_executed(monkeypatch)
 def test_broker_audit_failure_before_return_recovers_durable_order_without_retry(
     monkeypatch, caplog, durable_order_status
 ):
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.storage import repositories as repo
 
     proposal = _seed_exchange_gateway(
@@ -675,8 +675,8 @@ def test_broker_audit_failure_before_return_recovers_durable_order_without_retry
     assert "must-not-leak" not in caplog.text
 
     monkeypatch.setattr(
-        bitget_broker,
-        "execute_live_order",
+        coordinator,
+        "execute_order",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("retry reached broker after durable accepted Order")
         ),
@@ -699,7 +699,7 @@ def test_broker_audit_failure_before_return_recovers_durable_order_without_retry
 def test_broker_failure_with_repeated_evidence_read_fault_is_not_error(
     monkeypatch, caplog
 ):
-    from aletheia.execution import bitget_broker, gateway
+    from aletheia.execution import coordinator, gateway
     from aletheia.storage import repositories as repo
 
     proposal = _seed_exchange_gateway(
@@ -735,8 +735,8 @@ def test_broker_failure_with_repeated_evidence_read_fault_is_not_error(
     assert "must-not-leak" not in caplog.text
 
     monkeypatch.setattr(
-        bitget_broker,
-        "execute_live_order",
+        coordinator,
+        "execute_order",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("unreadable durable evidence permitted a retry")
         ),

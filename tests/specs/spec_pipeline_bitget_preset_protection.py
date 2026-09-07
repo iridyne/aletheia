@@ -180,8 +180,9 @@ def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, val
     )
 )
 def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
-    from aletheia.execution import bitget_broker
-    from aletheia.exchanges.bitget.client import OrderResponse
+    from aletheia.execution import coordinator
+    from tests.uta.test_execution_coordinator import _Adapter, _ack
+    from aletheia.uta.models import UTACapabilities, CapabilitySupport
     from tests.execution_authority import seed_order_authority
 
     proposal, decision = seed_order_authority(
@@ -199,14 +200,14 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
     )
     captured = []
 
-    async def _place(self, request):
-        captured.append(request)
-        return OrderResponse(order_id="EX-BROKER-PRESET", status="submitted")
-
-    monkeypatch.setattr(bitget_broker, "_ensure_mix_margin", lambda *_args: None)
-    monkeypatch.setattr(bitget_broker.BitgetClient, "place_order", _place)
-
-    bitget_broker.execute_live_order(
+    async def submit(command):
+        captured.append(command)
+        return _ack(command)
+    adapter = _Adapter(submit, "bitget_demo")
+    adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
+    coordinator.execute_order(
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
         symbol=proposal.symbol,
@@ -222,13 +223,12 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
     )
 
     assert len(captured) == 1
-    assert captured[0].preset_stop_loss_price == proposal.stop_price
-    assert captured[0].preset_take_profit_price == proposal.take_profit
+    assert captured[0].stop_loss_price == proposal.stop_price
+    assert captured[0].take_profit_price == proposal.take_profit
 
 
 def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
-    from aletheia.execution import bitget_broker
-    from aletheia.exchanges.bitget.client import OrderResponse
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
     from tests.execution_authority import seed_order_authority
 
@@ -247,15 +247,11 @@ def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
     )
     captured = []
 
-    async def _place(self, request):
-        captured.append(request)
-        return OrderResponse(order_id="EX-MUTATED-PRESET", status="submitted")
-
-    monkeypatch.setattr(bitget_broker, "_ensure_mix_margin", lambda *_args: None)
-    monkeypatch.setattr(bitget_broker.BitgetClient, "place_order", _place)
+    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: captured.append(_mode) or pytest.fail("mutated protection reached adapter"))
 
     with pytest.raises(ValueError, match="approved Proposal"):
-        bitget_broker.execute_live_order(
+        coordinator.execute_order(
             proposal_id=proposal.id,
             risk_decision_id=decision.id,
             symbol=proposal.symbol,
@@ -281,7 +277,7 @@ def _run_gateway_with_captured_broker(
     take_profit: float | None,
     position_id: str | None = None,
 ) -> tuple[dict, list[dict]]:
-    from aletheia.execution import bitget_broker, gateway, okx_broker
+    from aletheia.execution import coordinator, gateway
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, RiskDecision, TradeProposal
 
@@ -361,8 +357,7 @@ def _run_gateway_with_captured_broker(
         lambda *_args: (proposal.quantity, None),
     )
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
-    monkeypatch.setattr(bitget_broker, "execute_live_order", _execute)
-    monkeypatch.setattr(okx_broker, "execute_live_order", _execute)
+    monkeypatch.setattr(coordinator, "execute_order", _execute)
 
     return gateway._execute_proposal(proposal), captured
 
@@ -395,16 +390,6 @@ def test_gateway_passes_explicit_take_profit_only_to_bitget(monkeypatch, executi
     assert captured[0]["take_profit_price"] == 62_000.0
 
 
-def test_gateway_does_not_forward_bitget_preset_behavior_to_other_brokers(monkeypatch):
-    result, captured = _run_gateway_with_captured_broker(
-        monkeypatch,
-        execution_mode="okx_demo",
-        take_profit=62_000.0,
-    )
-
-    assert result["status"] == "submitted"
-    assert len(captured) == 1
-    assert captured[0]["take_profit_price"] is None
 
 
 @spec_claim(

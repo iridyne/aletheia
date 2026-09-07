@@ -578,6 +578,8 @@ class Order(_Provenanced):
     reference_price: float | None = None
     reference_price_source: str | None = None
     execution_mode: str
+    # Exact non-secret UTA identity captured before external submission; never backfilled from current config.
+    uta_account_identity_json: str | None = None
     exchange_order_id: str | None = None
     # Stable exchange-side idempotency/recovery key.  This is persisted before
     # submission so a timeout that loses the venue order id can still be
@@ -1614,6 +1616,7 @@ class UniverseSnapshot(BaseModel):
     id: str = Field(default_factory=new_id)
     created_at: str = Field(default_factory=_utcnow)
     market_type: str = "crypto"
+    source_kind: Literal["universe", "serenity"] = "universe"
     policy_id: str | None = None
     status: str = "active"
     expires_at: str | None = None
@@ -1661,7 +1664,7 @@ class UniverseMember(BaseModel):
     entry_price_usd: float | None = None
     learning_candidate_key: str | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
     ] = "legacy_total_score_v1"
     candidate_selection_policy_epoch: str | None = None
     candidate_selection_utility_pct: float | None = None
@@ -1680,7 +1683,7 @@ class UniverseMember(BaseModel):
     def _validate_candidate_selection_evidence(self):
         from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
 
-        target = self.candidate_selection_policy == "candidate_selection_utility_v1"
+        target = self.candidate_selection_policy in {"candidate_selection_utility_v1", "serenity_research_v1"}
         mechanism_evidence = (
             self.opportunity_mechanism_version,
             self.opportunity_source_component,
@@ -1763,7 +1766,7 @@ class CandidatePlanningGeneration(_Provenanced):
         "continuation", "reversal", "positioning_forced_flow", "information_catalyst"
     ] | None = None
     candidate_selection_policy: Literal[
-        "legacy_total_score_v1", "candidate_selection_utility_v1"
+        "legacy_total_score_v1", "candidate_selection_utility_v1", "serenity_research_v1"
     ] | None = None
     candidate_selection_policy_epoch: str | None = None
     mechanism_version: str | None = None

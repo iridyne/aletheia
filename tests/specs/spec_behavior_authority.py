@@ -65,26 +65,6 @@ def test_candidate_block_authority_fails_closed_by_source_and_path():
         ) is False
 
 
-@spec_claim(SpecClaim(
-    "BA-S02", "behavior_authority", "consumer coverage", "L2a",
-    "Every declared paper-candidate behavior consumer calls the central authority inventory.",
-))
-def test_all_declared_candidate_block_consumers_use_inventory():
-    from aletheia.agents import paper_trader_ranker
-    from aletheia.knowledge import guards
-    from aletheia.trust.behavior_authority import get_behavior_authority
-
-    authority = get_behavior_authority("block_paper_candidate")
-    assert authority.consumer_entrypoints == (
-        "aletheia.knowledge.guards.evaluate_guards",
-        "aletheia.agents.paper_trader_ranker._evaluate_candidate",
-    )
-    guard_source = inspect.getsource(guards._guard_influence_suppressed)
-    ranker_source = inspect.getsource(paper_trader_ranker._evaluate_candidate)
-    assert "authorize_candidate_block(" in guard_source
-    assert "authorize_candidate_block(" in ranker_source
-    assert "ranker_learned_guard" in guard_source
-    assert "learning_path_id=\"ranker_factor_filter\"" in ranker_source
 
 
 @spec_claim(SpecClaim(

@@ -407,100 +407,10 @@ async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
     ).fetchone()["id"] == "feature-complete"
 
 
-def test_pi_decision_persists_exact_evidence_manifest():
-    from aletheia.agent_shell.reflection import _build_pi_decision
-
-    manifest = {
-        "version": "vergex-utilization-v1",
-        "policy_epoch_id": "epoch-test",
-        "instrument": {"venue": "okx", "symbol": "BTC/USDT", "market_type": "perp"},
-        "technical_snapshot": {"id": "feat-1", "timeframes": ["15m", "1h", "4h"]},
-        "hyperliquid": {"funding_id": "fr-1", "open_interest_id": "oi-1"},
-        "position_x": {"status": "not_configured"},
-    }
-    row = _build_pi_decision({
-        "action": "skip",
-        "symbol": "BTC/USDT",
-        "direction": "long",
-        "market_type": "perp",
-        "evidence_manifest": manifest,
-    })
-
-    assert json.loads(row.evidence_manifest_json) == manifest
 
 
-def test_debate_uses_candidate_market_type_not_same_symbol_other_instrument():
-    from aletheia.agent_shell.trading_decision import _build_bull_prompt
-
-    ctx = {
-        "layer1": {
-            "feature_index": {
-                "okx|spot|BTC/USDT": {
-                    "symbol": "BTC/USDT", "market_type": "spot", "rsi_14": 30.0,
-                },
-                "okx|perp|BTC/USDT": {
-                    "symbol": "BTC/USDT", "market_type": "perp", "rsi_14": 70.0,
-                },
-            },
-            "regime": None,
-        },
-        "layer2": {
-            "pending_signals": [{
-                "symbol": "BTC/USDT", "market_type": "perp", "direction": "long",
-            }],
-        },
-    }
-
-    prompt = _build_bull_prompt("BTC/USDT", "long", ctx)
-    assert "RSI=70.0" in prompt
-    assert "RSI=30.0" not in prompt
 
 
-def test_runtime_manifest_does_not_reconstruct_missing_history_from_latest_rows(
-    tmp_path, monkeypatch,
-):
-    from tests.test_entry_logic import setup_env
-
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_shell.trading_context import build_decision_evidence_manifest
-    from aletheia.storage.sqlite import get_db
-
-    now = datetime.now(timezone.utc).isoformat()
-    db = get_db()
-    db.execute(
-        "INSERT INTO funding_rate_snapshots "
-        "(id, symbol, exchange, funding_rate, funding_rate_annualized, observed_at) "
-        "VALUES ('hl-fr', 'BTC/USDT', 'hyperliquid', 0.0001, 0.876, ?)",
-        (now,),
-    )
-    db.execute(
-        "INSERT INTO open_interest_snapshots "
-        "(id, symbol, exchange, open_interest_usd, observed_at) "
-        "VALUES ('hl-oi', 'BTC/USDT', 'hyperliquid', 1000000, ?)",
-        (now,),
-    )
-    db.commit()
-    feature = {
-        "feature_snapshot_id": "feat-1",
-        "feature_ts": now,
-        "venue": "okx",
-        "symbol": "BTC/USDT",
-        "market_type": "perp",
-    }
-    manifest = build_decision_evidence_manifest(
-        {
-            "vergex_policy_epoch_id": "epoch-1",
-            "layer1": {"feature_index": {"okx|perp|BTC/USDT": feature}},
-        },
-        SimpleNamespace(symbol="BTC/USDT", market_type="perp"),
-    )
-
-    assert manifest["technical_snapshot"]["id"] == "feat-1"
-    assert manifest["hyperliquid"]["funding_id"] is None
-    assert manifest["hyperliquid"]["open_interest_id"] is None
-    assert manifest["opportunity_t0"] == {"status": "unavailable"}
-    assert manifest["opportunity_t1"] == {"status": "unavailable"}
-    assert manifest["position_x"]["status"] == "unavailable"
 
 
 def test_owner_aggregate_import_seeds_observation_only_shadow_outcomes(tmp_path, monkeypatch):

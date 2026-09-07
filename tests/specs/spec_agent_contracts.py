@@ -35,40 +35,8 @@ def test_scheduler_max_workers_cap():
         )
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-S02", "agent_contracts", "§2 System Operator", "L2a",
-        "System Operator (trading_decision) exists with evaluate_trading_opportunity entry point",
-    ),
-)
-def test_pi_agent_entry_point():
-    from aletheia.agent_shell import trading_decision
-
-    assert callable(trading_decision.evaluate_trading_opportunity)
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-S03", "agent_contracts", "§3 paper_trader", "L2a",
-        "paper_trader module exists and does not import LLM helpers",
-    ),
-)
-def test_paper_trader_no_llm():
-    import ast
-    from pathlib import Path
-
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agents" / "paper_trader.py"
-    if not src.exists():
-        pytest.skip("paper_trader.py not found")
-    imports = set()
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            imports.add(node.module)
-    llm_imports = [i for i in imports if "llm" in i.lower() or "openai" in i.lower()]
-    assert llm_imports == [], (
-        f"paper_trader must not call LLM directly: {llm_imports}"
-    )
 
 
 @spec_claim(
@@ -117,35 +85,6 @@ def test_equity_observer_exists():
     assert hasattr(equity_observer, "EquityRead")
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-S07", "agent_contracts", "§2 paper_trader_ranker", "L2a",
-        "paper_trader_ranker exists and does not import LLM helpers",
-    ),
-)
-def test_paper_trader_ranker_no_llm():
-    import ast
-    from pathlib import Path
-
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agents" / "paper_trader_ranker.py"
-    if not src.exists():
-        pytest.skip("paper_trader_ranker.py not found")
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    imports = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.add(alias.name)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imports.add(node.module)
-    blocked = {"aletheia.agents.helpers", "aletheia.agents.helpers.llm"}
-    llm_imports = [
-        i for i in imports
-        if "llm" in i.lower() or "openai" in i.lower() or i in blocked
-    ]
-    assert llm_imports == [], (
-        f"paper_trader_ranker must not call LLM directly: {llm_imports}"
-    )
 
 
 @spec_claim(
@@ -505,73 +444,8 @@ def test_llm_fallback_retries_on_connect_error():
     assert call_log == ["primary-model", "fallback-model"]
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-B03", "agent_contracts", "§2 System Operator safety", "L2c",
-        "trading_decision.py does NOT import any live execution module "
-        "(gateway, bitget_broker, okx_broker, binance_broker) — System Operator advises, never orders",
-    ),
-)
-def test_pi_agent_no_live_execution_imports():
-    import ast
-    from pathlib import Path
-
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_shell" / "trading_decision.py"
-    if not src.exists():
-        pytest.skip("trading_decision.py not found")
-
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-    live_execution_modules = {
-        "aletheia.execution.gateway",
-        "aletheia.execution.bitget_broker",
-        "aletheia.execution.okx_broker",
-        "aletheia.execution.binance_broker",
-    }
-    found = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module in live_execution_modules:
-                found.append(node.module)
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name in live_execution_modules:
-                    found.append(alias.name)
-    assert found == [], (
-        f"System Operator (trading_decision.py) must not import live execution modules: {found}. "
-        "System Operator advises only — live orders must not be reachable from this path."
-    )
 
 
-@spec_claim(
-    SpecClaim(
-        "AC-B04", "agent_contracts", "§3 LLM-isolated agents", "L2c",
-        "paper_trader.py and paper_trader_ranker.py do not import aletheia.model_provider "
-        "or any of its sub-modules (these agents are rule-based, not LLM-driven)",
-    ),
-)
-def test_paper_traders_no_model_provider_imports():
-    import ast
-    from pathlib import Path
-
-    agents_dir = Path(__file__).parent.parent.parent / "aletheia" / "agents"
-    targets = ["paper_trader.py", "paper_trader_ranker.py"]
-    for fname in targets:
-        fpath = agents_dir / fname
-        if not fpath.exists():
-            pytest.skip(f"{fname} not found")
-        tree = ast.parse(fpath.read_text(encoding="utf-8"))
-        bad = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                if "model_provider" in node.module:
-                    bad.append(node.module)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    if "model_provider" in alias.name:
-                        bad.append(alias.name)
-        assert bad == [], (
-            f"{fname} must not import model_provider (rule-based agent, not LLM-driven): {bad}"
-        )
 
 
 @spec_claim(

@@ -27,25 +27,6 @@ ROOT = Path(__file__).resolve().parents[2]
 # Each listed module must migrate to the central eligible-outcome read model before
 # OI-C02 becomes GREEN.  Presentation and account-state readers are governed by
 # OI-C04 instead of being silently treated as judgement consumers.
-BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS = (
-    "aletheia/analytics/trade_stats.py",
-    "aletheia/analytics/family_scorecard.py",
-    "aletheia/analytics/confidence_calibration.py",
-    "aletheia/analytics/alpha_attribution.py",
-    "aletheia/agent_shell/operator_loop.py",
-    "aletheia/agent_shell/trading_context.py",
-    "aletheia/analytics/trade_attribution.py",
-    "aletheia/analytics/insight_synthesizer.py",
-    "aletheia/analytics/reasoning_feedback.py",
-    "aletheia/analytics/memo_effectiveness.py",
-    "aletheia/analytics/go_live_scorecard.py",
-    "aletheia/trading/sizing_policy.py",
-    "aletheia/trading/strategy_lifecycle.py",
-    "aletheia/trust/guard_chain.py",
-    "aletheia/agent_shell/trading_decision.py",
-    "aletheia/analytics/sizing_trace.py",
-    "aletheia/agent_shell/operator_recommendations.py",
-)
 
 ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS = (
     "aletheia/analytics/factor_feedback.py",
@@ -268,81 +249,8 @@ def test_reconcile_incident_detector_is_not_adopted_only():
     assert "market_type" in source
 
 
-@spec_claim(
-    SpecClaim(
-        "OI-C01", "outcome_integrity", "§8 incident-wide Learning refreeze", "L2c",
-        "A persisted reconcile-integrity incident globally refreezes every behavior-changing "
-        "Learning path to its static baseline across restart; read-only measurement remains "
-        "available and recovery requires an explicit clean observation gate.",
-        status="implemented",
-    )
-)
-def test_learning_control_consumes_reconcile_integrity_incident():
-    control = _source("aletheia/learning/control.py")
-    integrity = _source("aletheia/portfolio/reconciliation_integrity.py")
-    experiments = _source("aletheia/learning/experiments.py")
-    assert "global_learning_refreeze_reason" in control
-    assert "get_active_reconciliation_integrity_incident" in control
-    assert "clean_observation_gate" in integrity
-    assert "MIN_CLEAN_OBSERVATIONS" in integrity
-    assert "learning_influence_gate_reason" in experiments
-    gated_consumers = {
-        "aletheia/agent_shell/trading_context.py": (
-            "authorize_operator_learning_context",
-        ),
-        "aletheia/agents/market_observer.py": (
-            "authorize_observer_learning_bundle",
-        ),
-        # Ranker score changes and learned Guard blocks are separate authority
-        # paths. Do not accept the former global on/off switch as proof for either.
-        "aletheia/agents/paper_trader_ranker.py": (
-            "_authorized_ranker_delta",
-            "apply_numeric_treatment",
-            "evaluate_guards",
-        ),
-        "aletheia/knowledge/guards.py": (
-            "learned_guard_block_authorized",
-            "apply_numeric_treatment",
-        ),
-        "aletheia/trading/sizing_policy.py": ("learning_influence_enabled",),
-        "aletheia/trading/persona.py": ("learning_influence_enabled",),
-        "aletheia/trading/persona_rollout.py": ("global_learning_refreeze_reason",),
-    }
-    for path, gates in gated_consumers.items():
-        source = _source(path)
-        for gate in gates:
-            assert gate in source, f"{path}: missing {gate}"
 
 
-@spec_claim(
-    SpecClaim(
-        "OI-C02", "outcome_integrity", "§9 behavior-consumer eligibility", "L2c",
-        "Every enumerated KPI, Operator, calibration, alpha, and trading-context consumer reads "
-        "eligible_strategy_outcomes from the central model; insufficient evidence never falls "
-        "back to unlabelled raw closed rows or a stale semantics version.",
-        status="implemented",
-    )
-)
-def test_behavior_changing_consumers_use_one_eligible_read_model():
-    for path in BEHAVIOR_CHANGING_CLOSED_POSITION_CONSUMERS:
-        source = _source(path)
-        assert "eligible_strategy_outcomes" in source, path
-        assert "SYNTHETIC_CLOSE_REASONS" not in source, path
-        assert "is_synthetic_close" not in source, path
-    for artifact_consumer in (
-        "aletheia/analytics/confidence_calibration.py",
-        "aletheia/analytics/insight_synthesizer.py",
-        "aletheia/analytics/reasoning_feedback.py",
-        "aletheia/analytics/memo_effectiveness.py",
-    ):
-        assert "is_current_outcome_artifact" in _source(artifact_consumer)
-    for path in ATTRIBUTION_DERIVED_OUTCOME_CONSUMERS:
-        source = _source(path)
-        assert "build_trade_attribution_rows" in source, path
-        assert "status = 'closed'" not in source, path
-        assert 'status="closed"' not in source, path
-    reflection = _source("aletheia/agent_shell/reflection.py")
-    assert "assess_realized_position" in reflection
 
 
 @spec_claim(

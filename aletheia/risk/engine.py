@@ -131,6 +131,8 @@ def _entry_plan_authority_violations(
         or _physical_market_type(plan.market_type) != _physical_market_type(proposal.market_type)
         or plan.direction != proposal.direction
         or plan.execution_account_mode != proposal.execution_mode
+        or plan.trade_school != proposal.trade_school
+        or proposal.opportunity_id != (plan.source_id if plan.source_kind == "serenity" else None)
     ):
         violations.append("entry_plan_order_identity_mismatch")
     # An Entry Plan is the immutable execution authority.  Identity and risk
@@ -142,7 +144,7 @@ def _entry_plan_authority_violations(
     for field, expected in (
         ("stop_price", plan.stop_price),
         ("take_profit", plan.target_price),
-        ("expected_horizon_hours", plan.expected_horizon_hours),
+        ("expected_horizon_hours", plan.holding_horizon_hours),
     ):
         actual = getattr(proposal, field)
         try:
@@ -779,33 +781,23 @@ def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | Non
     try:
         from aletheia.portfolio.exchange_sync import (
             account_available_value,
-            get_cached_state,
             get_unified_cached_state,
         )
 
-        use_legacy_bitget = execution_mode.startswith("bitget_") and (
-            _is_live(execution_mode)
-            or cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
+        unified = (
+            get_unified_cached_state(execution_modes=(execution_mode,))
+            if _is_live(execution_mode) else get_unified_cached_state()
         )
-        if use_legacy_bitget:
-            state = get_cached_state("live" if _is_live(execution_mode) else "demo")
-            if not _external_account_cache_is_healthy(state):
-                return None
-            value = account_available_value(state)
-        else:
-            unified = get_unified_cached_state() or {}
-            if not _external_account_cache_is_healthy(unified):
-                return None
-            account = next(
-                (
-                    item for item in (unified.get("accounts") or [])
-                    if item.get("broker_id") == execution_mode
-                ),
-                None,
-            )
-            if not _external_account_row_is_healthy(account):
-                return None
-            value = account_available_value(account)
+        if not _external_account_cache_is_healthy(unified):
+            return None
+        account = next(
+            (item for item in unified.get("accounts", [])
+             if item.get("broker_id") == execution_mode),
+            None,
+        )
+        if not _external_account_row_is_healthy(account):
+            return None
+        value = account_available_value(account)
         available = float(value)
         return max(0.0, available)
     except (TypeError, ValueError, AttributeError):
@@ -2707,10 +2699,7 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     an unavailable account snapshot:
     - ``paper_internal``: local paper ledger (cash + unrealized PnL). exchange_sync
       knows nothing about this account — its balance never appears there.
-    - live modes: aggregate only cached live-account rows (with the explicit Bitget
-      live cache as the legacy single-account fallback).
-    - exchange demo modes: exact broker account only.  Bitget keeps its legacy
-      per-mode cache; OKX/Binance are named rows in the unified cache.
+    - external modes: the exact UTA account row, never another account or cache.
     """
     if execution_mode == "paper_internal":
         try:
@@ -2740,50 +2729,13 @@ def _account_equity(execution_mode: str, cfg) -> float | None:
     try:
         from aletheia.portfolio.exchange_sync import (
             account_equity_value,
-            get_cached_state,
             get_unified_cached_state,
         )
 
-        if _is_live(execution_mode):
-            # Live Risk sizing is bound to the exact broker account selected by
-            # the proposal.  Summing every live account would let a valid Bitget
-            # cache subsidise an OKX/Binance order.
-            unified = get_unified_cached_state() or {}
-            if _external_account_cache_is_healthy(unified):
-                account = next(
-                    (
-                        item for item in (unified.get("accounts") or [])
-                        if item.get("broker_id") == execution_mode
-                    ),
-                    None,
-                )
-                if account is not None:
-                    if not _external_account_row_is_healthy(account):
-                        return None
-                    value = account_equity_value(account)
-                    if value is not None:
-                        return value
-            if execution_mode.startswith("bitget_"):
-                cached = get_cached_state("live") or {}
-                if not _external_account_cache_is_healthy(cached):
-                    return None
-                equity = account_equity_value(cached)
-                if equity is not None:
-                    return equity
-            return None
-
-        if execution_mode.startswith("bitget_") and (
-            cfg.exchange.uta_read_boundary_for(execution_mode) != "uta_v1"
-        ):
-            cached = get_cached_state("demo") or {}
-            if not _external_account_cache_is_healthy(cached):
-                return None
-            equity = account_equity_value(cached)
-            if equity is not None:
-                return equity
-            return None
-
-        unified = get_unified_cached_state() or {}
+        unified = (
+            get_unified_cached_state(execution_modes=(execution_mode,))
+            if _is_live(execution_mode) else get_unified_cached_state()
+        )
         if not _external_account_cache_is_healthy(unified):
             return None
         account = next(

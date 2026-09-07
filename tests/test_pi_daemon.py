@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -121,12 +121,12 @@ async def test_debounce_batches_signals():
     """Three rapid signals must trigger exactly one evaluate call."""
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+    with patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -162,17 +162,13 @@ async def test_daemon_drains_reported_pending_backlog():
     remaining = [2, 1, 0]
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         value = remaining[min(eval_count, len(remaining) - 1)]
         eval_count += 1
         return {"action": "skip", "pending_queue_remaining": value}
 
-    async def idle_planner():
-        return {"status": "idle"}
-
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
-         patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=idle_planner), \
+    with patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -201,7 +197,7 @@ async def test_no_model_defer_backlog_does_not_wait_for_llm_cooldown():
     remaining = [2, 1, 0]
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         value = remaining[min(eval_count, len(remaining) - 1)]
         eval_count += 1
@@ -211,15 +207,9 @@ async def test_no_model_defer_backlog_does_not_wait_for_llm_cooldown():
             "pending_queue_remaining": value,
         }
 
-    async def idle_planner():
-        return {"status": "idle"}
-
     with patch(
-        "aletheia.agent_shell.commands.evaluate_trading_opportunity",
-        new=fake_evaluate,
-    ), patch(
         "aletheia.agent_shell.entry_planner.run_entry_planner_batch",
-        new=idle_planner,
+        new=fake_evaluate,
     ), patch("aletheia.config.loader.load_config") as mock_cfg, patch.object(
         pd, "_NO_MODEL_COOLDOWN_MAX_SEC", 0.01
     ):
@@ -300,15 +290,15 @@ async def _run_horizon_review_retry(first_result):
             return first_result
         return {"action": "hold", "review_completed": True}
 
-    async def fake_entry_evaluation(params):
-        entry_evaluations.append(params)
+    async def fake_entry_evaluation():
+        entry_evaluations.append({})
         return {"action": "skip", "pending_queue_remaining": 0}
 
     with patch(
         "aletheia.agent_shell.commands.review_portfolio_state",
         new=fake_review,
     ), patch(
-        "aletheia.agent_shell.commands.evaluate_trading_opportunity",
+        "aletheia.agent_shell.entry_planner.run_entry_planner_batch",
         new=fake_entry_evaluation,
     ), patch.object(pd, "_has_pending_signal_work", return_value=False), patch(
         "aletheia.config.loader.load_config"
@@ -424,12 +414,12 @@ async def test_heartbeat_triggers_evaluation():
     """When no signals arrive, the heartbeat timeout must trigger evaluation."""
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+    with patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = False
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -453,135 +443,18 @@ async def test_heartbeat_triggers_evaluation():
     assert eval_count >= 1, "Heartbeat should have triggered at least one evaluation"
 
 
-async def test_defer_deadline_wakes_before_heartbeat_without_early_evaluation():
-    """A durable defer deadline is an independent wake source, not a heartbeat hint."""
-    loop = asyncio.get_running_loop()
-    due_at = loop.time() + 0.08
-    triggers: list[tuple[str, float]] = []
-    completed = False
-
-    def fake_defer_delay():
-        if completed:
-            return None
-        return max(due_at - loop.time(), 0.0)
-
-    async def fake_run_evaluation(triggered_by, _wake_context=None):
-        nonlocal completed
-        triggers.append((triggered_by, loop.time()))
-        completed = True
-        return 0
-
-    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
-        pd, "_next_pending_signal_defer_delay", side_effect=fake_defer_delay
-    ), patch.object(pd, "_run_evaluation", new=fake_run_evaluation), patch(
-        "aletheia.config.loader.load_config"
-    ) as mock_cfg:
-        mock_cfg.return_value.runtime.paused = False
-        mock_cfg.return_value.agent.permission_mode = "Paper"
-        task = start_pi_daemon(
-            loop=loop,
-            debounce_sec=0.0,
-            cooldown_sec=0.0,
-            heartbeat_sec=999.0,
-        )
-
-        await asyncio.sleep(0.03)
-        assert triggers == []
-        await asyncio.sleep(0.10)
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-
-    assert len(triggers) == 1
-    assert triggers[0][0] == "defer_deadline"
-    assert triggers[0][1] >= due_at
-
-
-async def test_durable_defer_probe_does_not_block_the_event_loop():
-    """A slow production-size SQLite read must not stall unrelated requests."""
-    probe_started = threading.Event()
-    release_probe = threading.Event()
-    released_by_loop: list[bool] = []
-
-    def blocking_defer_probe():
-        probe_started.set()
-        released_by_loop.append(release_probe.wait(timeout=0.5))
-        return None
-
-    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
-        pd, "_next_pending_signal_defer_delay", side_effect=blocking_defer_probe
-    ):
-        task = start_pi_daemon(
-            loop=asyncio.get_running_loop(),
-            debounce_sec=0.0,
-            cooldown_sec=0.0,
-            heartbeat_sec=999.0,
-        )
-
-        async def release_after_probe_starts():
-            while not probe_started.is_set():
-                await asyncio.sleep(0)
-            release_probe.set()
-            while not released_by_loop:
-                await asyncio.sleep(0)
-
-        try:
-            await asyncio.wait_for(release_after_probe_starts(), timeout=1.0)
-            assert released_by_loop == [True]
-        finally:
-            release_probe.set()
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-
-
-async def test_overdue_defer_does_not_spin_while_runtime_is_paused():
-    """A blocked behavior gate must not turn an overdue durable fact into a busy loop."""
-    delay_reads = 0
-
-    def overdue_defer():
-        nonlocal delay_reads
-        delay_reads += 1
-        return 0.0
-
-    with patch.object(pd, "_has_pending_signal_work", return_value=False), patch.object(
-        pd, "_next_pending_signal_defer_delay", side_effect=overdue_defer
-    ), patch.object(pd, "_run_evaluation") as evaluate, patch(
-        "aletheia.config.loader.load_config"
-    ) as mock_cfg:
-        mock_cfg.return_value.runtime.paused = True
-        mock_cfg.return_value.agent.permission_mode = "Paper"
-        task = start_pi_daemon(
-            loop=asyncio.get_running_loop(),
-            debounce_sec=0.0,
-            cooldown_sec=0.0,
-            heartbeat_sec=999.0,
-        )
-        await asyncio.sleep(0.05)
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
-
-    evaluate.assert_not_called()
-    assert delay_reads == 1
 
 
 async def test_skips_when_paused():
     """Daemon must not call evaluate when runtime is paused."""
     eval_count = 0
 
-    async def fake_evaluate(_params):
+    async def fake_evaluate():
         nonlocal eval_count
         eval_count += 1
         return {"action": "skip"}
 
-    with patch("aletheia.agent_shell.commands.evaluate_trading_opportunity", new=fake_evaluate), \
+    with patch("aletheia.agent_shell.entry_planner.run_entry_planner_batch", new=fake_evaluate), \
          patch("aletheia.config.loader.load_config") as mock_cfg:
         mock_cfg.return_value.runtime.paused = True
         mock_cfg.return_value.agent.permission_mode = "Paper"
@@ -688,3 +561,26 @@ async def test_catastrophic_event_bypasses_ratelimit():
     with_batches = [p for p in captured if p.get("wake_batches")]
     assert with_batches, f"catastrophic must bypass rate limit; got {captured}"
     assert with_batches[0]["wake_batches"][0]["max_priority"] == 0
+
+
+async def test_legacy_pending_does_not_wake_or_invoke_model_when_planner_is_idle(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.storage.sqlite import get_db
+    from aletheia.agents import helpers
+
+    setup_env(tmp_path, monkeypatch)
+    db = get_db()
+    db.execute(
+        "INSERT INTO pi_decisions (id, action, symbol, opportunity_id) VALUES (?, ?, ?, ?)",
+        ("historical-pending", "signal_pending", "BTC/USDT", "historical-opportunity"),
+    )
+    db.commit()
+    model = AsyncMock(side_effect=AssertionError("idle planner must not invoke a model"))
+    monkeypatch.setattr(helpers, "llm_structured", model)
+
+    assert pd._has_pending_signal_work() is False
+    assert await pd._run_evaluation("heartbeat") == 0
+    model.assert_not_awaited()
+    assert [tuple(row) for row in get_db().execute(
+        "SELECT id, action FROM pi_decisions"
+    )] == [("historical-pending", "signal_pending")]

@@ -5,6 +5,7 @@ signed immutable releases, durable progress state, and tray-controlled activatio
 These routes are not agent-callable tools.
 """
 
+import sys
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -59,11 +60,10 @@ def _is_packaged_update_mode() -> bool:
 def update_status():
     """Return local state only; network checks require an explicit human action."""
 
-    return {
-        **applier.update_progress(),
-        "ok": False,
-        "reason": "update_check_required",
-    }
+    state = applier.update_progress()
+    if state.get("mode") == "source_release":
+        return state
+    return {**state, "ok": False, "reason": "update_check_required"}
 
 
 @router.post("/check")
@@ -80,11 +80,6 @@ def update_progress():
 
 class ApplyBody(BaseModel):
     confirm: bool = False
-
-
-class ContinuityBody(BaseModel):
-    confirm: bool = False
-    cause: str = "update_continuity_candidate"
 
 
 @router.post("/apply")
@@ -117,7 +112,7 @@ def update_apply(request: Request, body: ApplyBody = ApplyBody()):
         return {
             "applied": False,
             "accepted": False,
-            "mode": "development",
+            "mode": "source_release" if sys.platform == "linux" else "development",
             "reason": "source_update_requires_cli",
             "message": (
                 "Source-checkout updates must run through `aletheia update` so the "
@@ -161,84 +156,3 @@ def update_rollback(request: Request, body: ApplyBody = ApplyBody()):
         }
     )
     return applier.rollback_update()
-
-
-@router.post("/continuity")
-def update_continuity(body: ContinuityBody = ContinuityBody()):
-    """Legacy development-checkout candidate materialisation.
-
-    Installed packaged updates do not create Git worktrees. They stage signed payloads and
-    use the Tray host for activation. Keep this endpoint only for explicit development
-    continuity experiments.
-    """
-
-    _reject_preview_update()
-    if not body.confirm:
-        return {
-            "created": False,
-            "reason": "confirmation_required",
-            "message": "Set confirm=true to create a runtime continuity candidate.",
-        }
-    status = applier.check_for_update()
-    if status.get("mode") == "packaged":
-        return {
-            "created": False,
-            "reason": "packaged_runtime_uses_signed_update_flow",
-            "update_status": status,
-        }
-    if not status.get("ok"):
-        return {"created": False, "reason": status.get("reason", "update_status_unavailable")}
-    remote_commit = status.get("remote_commit") or status.get("current_commit") or "unknown"
-    branch = str(status.get("branch") or "master")
-    runtime_id = f"runtime-{str(remote_commit)[:12].replace('/', '-')}"
-    try:
-        from aletheia.runtime_continuity import bundles
-
-        artifact_path = str(
-            bundles.materialize_candidate_worktree(
-                runtime_id=runtime_id,
-                commit=str(remote_commit),
-                branch=branch,
-            )
-        )
-    except Exception as exc:
-        return {
-            "created": False,
-            "reason": "candidate_materialization_failed",
-            "detail": str(exc),
-            "update_status": status,
-        }
-    from aletheia.runtime_continuity.service import RuntimeContinuityService
-    from aletheia.config.loader import load_config as _load_cfg
-
-    cfg = _load_cfg()
-    candidate = RuntimeContinuityService(
-        enabled=cfg.runtime.runtime_continuity_enabled,
-    ).prepare_candidate(
-        actor="human",
-        cause=body.cause,
-        code_version=str(remote_commit),
-        config_version="update-config",
-        schema_version="sqlite-runtime-continuity-v1",
-        build_git_sha=str(remote_commit),
-        release_bundle_hash=str(remote_commit),
-        artifact_path=artifact_path,
-        metadata={
-            "source": "update_continuity",
-            "branch": branch,
-            "behind_count": status.get("behind_count"),
-            "current_commit": status.get("current_commit"),
-            "artifact_path": artifact_path,
-        },
-    )
-    write_audit(
-        {
-            "actor": "human",
-            "source": "api",
-            "event_type": "runtime_candidate_created",
-            "entity_type": "runtime",
-            "entity_id": candidate["runtime_id"],
-            "message": f"Runtime candidate created from update status ({remote_commit})",
-        }
-    )
-    return {"created": True, "candidate": candidate, "update_status": status}

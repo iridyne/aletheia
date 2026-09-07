@@ -85,6 +85,7 @@ def test_same_origin_dashboard_request_can_start_packaged_update(monkeypatch):
 
 
 def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
+    monkeypatch.setattr(update_routes.sys, "platform", "linux")
     monkeypatch.setattr(update_routes, "is_preview_mode", lambda: False)
     monkeypatch.setattr(update_routes, "write_audit", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(update_routes, "_is_packaged_update_mode", lambda: False)
@@ -101,16 +102,10 @@ def test_source_dashboard_apply_refuses_mutation_and_requires_cli(monkeypatch):
         update_routes.ApplyBody(confirm=True),
     )
 
-    assert result == {
-        "applied": False,
-        "accepted": False,
-        "mode": "development",
-        "reason": "source_update_requires_cli",
-        "message": (
-            "Source-checkout updates must run through `aletheia update` so the "
-            "external updater process can restart Main and verify Observer continuity."
-        ),
-    }
+    assert result["applied"] is False
+    assert result["accepted"] is False
+    assert result["mode"] == "source_release"
+    assert result["reason"] == "source_update_requires_cli"
 
 
 def test_rollback_requires_confirmation_before_calling_applier(monkeypatch):

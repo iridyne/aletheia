@@ -1,4 +1,4 @@
-"""Tests for the live execution path (execution/bitget_broker.py + gateway wiring).
+"""UTA entry acknowledgement, private-fill reconciliation, and live Gateway authorization.
 
 The actual Bitget HTTP call is mocked — we verify the durable acknowledgement,
 private-fill reconciliation, and exchange_order_id, plus gateway routing for a
@@ -9,7 +9,6 @@ import sqlite3
 
 import pytest
 
-from aletheia.exchanges.bitget.client import OrderResponse
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import Position, RiskDecision, TradeProposal
@@ -28,25 +27,23 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-
+    from tests.specs.spec_pipeline_stop_propagation import _stub_uta_execution
+    _stub_uta_execution(monkeypatch)
 
 def _patch_place_order(monkeypatch, captured):
-    """Patch BitgetClient.place_order to record the request and return a fake id."""
-    from aletheia.exchanges.bitget import client as bg
-
-    async def fake_place_order(self, order):
-        captured.append(order)
-        # Exchange confirms the fill; broker only records a fill/position when
-        # the order is reported filled/partially_filled (no fabricated fills).
-        return OrderResponse(
-            order_id="EX-123",
-            client_oid="cli-1",
-            status="filled",
-            fill_price=order.price or 60000.0,
-            filled_quantity=order.quantity,
-        )
-
-    monkeypatch.setattr(bg.BitgetClient, "place_order", fake_place_order)
+    from tests.uta.test_execution_coordinator import _Adapter
+    from aletheia.uta.models import SubmissionReport, CommandEvidence, OrderStatusReport, OrderLifecycle
+    from datetime import datetime, timezone
+    async def submit(command):
+        captured.append(command)
+        now = datetime.now(timezone.utc)
+        return SubmissionReport(identity=command.expected_account, command_id=command.command_id, evidence=CommandEvidence.ACKNOWLEDGED, received_at=now, venue_order_id="EX-123", profile_version="1", order=OrderStatusReport(identity=command.expected_account, instrument=command.instrument, side=command.side, order_type=command.order_type, original_quantity=command.quantity, filled_quantity=command.quantity, state=OrderLifecycle.FILLED, received_at=now))
+    def adapter(mode):
+        from aletheia.uta.models import UTACapabilities
+        instance = _Adapter(submit, mode)
+        instance.capabilities = UTACapabilities(source="isolated_test")
+        return instance
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", adapter)
 
 
 def _seed_authority(
@@ -89,14 +86,12 @@ def test_bitget_broker_waits_for_private_fill_before_position(tmp_path, monkeypa
     )
     _patch_private_fill_history(
         monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
         fill_price=60000.0,
     )
     proposal_id, decision_id = _seed_authority("p1", quantity=0.001)
 
-    from aletheia.execution.bitget_broker import execute_live_order
-    result = execute_live_order(
+    from aletheia.execution.coordinator import execute_order
+    result = execute_order(execution_mode="bitget_live_limited",
         proposal_id=proposal_id, risk_decision_id=decision_id,
         symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.001, price=60000.0,
@@ -120,7 +115,7 @@ def test_bitget_broker_waits_for_private_fill_before_position(tmp_path, monkeypa
     assert positions[0]["execution_mode"] == "bitget_live_limited"
     # the order request actually reached the (mocked) exchange
     assert len(captured) == 1
-    assert captured[0].symbol == "BTCUSDT"
+    assert captured[0].instrument.canonical_symbol == "BTC/USDT"
 
 
 def test_place_order_carries_client_oid_from_proposal(tmp_path, monkeypatch):
@@ -131,31 +126,29 @@ def test_place_order_carries_client_oid_from_proposal(tmp_path, monkeypatch):
     _patch_place_order(monkeypatch, captured)
     proposal_id, decision_id = _seed_authority("prop-xyz", quantity=0.001)
 
-    from aletheia.execution.bitget_broker import execute_live_order
-    execute_live_order(
+    from aletheia.execution.coordinator import execute_order
+    execute_order(execution_mode="bitget_live_limited",
         proposal_id=proposal_id, risk_decision_id=decision_id,
         symbol="BTC/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.001, price=60000.0,
     )
     assert len(captured) == 1
-    assert captured[0].client_oid == "prop-xyz"
+    assert captured[0].client_order_id == "prop-xyz"
 
 
 def test_live_order_db_trace_when_exchange_call_fails(tmp_path, monkeypatch):
     """§1.3 hazard: if place_order fails, a local order row must still exist (marked
     error) and NO fill/position may be fabricated."""
     setup_env(tmp_path, monkeypatch)
-    from aletheia.exchanges.bitget import client as bg
-
-    async def boom_place_order(self, order):
+    from tests.uta.test_execution_coordinator import _Adapter
+    async def submit(command):
         raise RuntimeError("exchange timeout")
-
-    monkeypatch.setattr(bg.BitgetClient, "place_order", boom_place_order)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda mode: _Adapter(submit, mode))
     proposal_id, decision_id = _seed_authority("p-fail", quantity=0.001)
 
-    from aletheia.execution.bitget_broker import execute_live_order
+    from aletheia.execution.coordinator import execute_order
     with pytest.raises(RuntimeError):
-        execute_live_order(
+        execute_order(execution_mode="bitget_live_limited",
             proposal_id=proposal_id, risk_decision_id=decision_id,
             symbol="BTC/USDT", market_type="spot", direction="long",
             order_type="market", quantity=0.001, price=60000.0,
@@ -163,7 +156,7 @@ def test_live_order_db_trace_when_exchange_call_fails(tmp_path, monkeypatch):
 
     orders = repo.list_orders()
     assert len(orders) == 1  # pending row was written before the exchange call
-    assert orders[0]["status"] == "error"
+    assert orders[0]["status"] == "submission_unknown"
     assert orders[0]["proposal_id"] == proposal_id
     assert len(repo.list_fills()) == 0
     assert len(repo.list_positions(status="open")) == 0
@@ -272,14 +265,13 @@ def test_private_fill_materialization_keeps_strategy_positions_separate(tmp_path
     )
     _patch_private_fill_history(
         monkeypatch,
-        "aletheia.execution.bitget_broker",
-        "aletheia.exchanges.bitget.client",
         fill_price=60000.0,
     )
 
-    from aletheia.execution.bitget_broker import execute_live_order
+    from aletheia.execution.coordinator import execute_order
+    from tests.uta.test_execution_coordinator import _insert_bound_position
 
-    repo.insert_position(Position(
+    _insert_bound_position(Position(
         strategy_id="strategy-alpha",
         symbol="BTC/USDT",
         market_type="spot",
@@ -294,7 +286,7 @@ def test_private_fill_materialization_keeps_strategy_positions_separate(tmp_path
         "live-two", quantity=0.002, strategy_id="strategy-beta"
     )
 
-    result = execute_live_order(
+    result = execute_order(execution_mode="bitget_live_limited",
         proposal_id=proposal_id,
         risk_decision_id=decision_id,
         symbol="BTC/USDT",

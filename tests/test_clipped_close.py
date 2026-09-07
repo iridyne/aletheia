@@ -14,6 +14,31 @@ import json
 from datetime import datetime, timezone
 
 
+class _CloseAdapter:
+    def __init__(self, captured):
+        from aletheia.uta.models import UTAAccountIdentity
+        self.identity = UTAAccountIdentity(
+            account_id="bitget_demo", execution_mode="bitget_demo", venue="bitget",
+            environment="demo", profile="bitget_uta_v3_demo", credential_generation=1,
+            adapter_implementation="CCXTUTAAdapter", adapter_version="1",
+        )
+        self.captured = captured
+
+    async def submit_order(self, command):
+        from aletheia.uta.models import SubmissionReport, CommandEvidence
+        self.captured["order"] = command
+        return SubmissionReport(
+            identity=self.identity, command_id=command.command_id,
+            evidence=CommandEvidence.ACKNOWLEDGED, received_at=datetime.now(timezone.utc),
+            client_order_id=command.client_order_id, venue_order_id="EX-NEW-1",
+            profile_version="1",
+        )
+
+    async def close(self):
+        pass
+
+
+
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl
@@ -34,6 +59,10 @@ def _setup_db(tmp_path, monkeypatch):
     sq._db_conn = conn
     jsonl._last_audit_hash = None
     run_migrations()
+    monkeypatch.setattr(
+        "aletheia.execution.coordinator.require_uta_mutation_qualification",
+        lambda *_args, **_kwargs: None,
+    )
     return conn
 
 
@@ -54,7 +83,14 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
         price=0.992,
         execution_mode="bitget_demo",
     )
+    entry = Order(proposal_id=proposal.id, risk_decision_id=_decision.id, client_order_id=proposal.id,
+                  symbol="XRP/USDT", market_type=market_type, direction="short",
+                  order_type="market", quantity=quantity, price=0.992,
+                  execution_mode="bitget_demo", status="filled",
+                  uta_account_identity_json=_CloseAdapter({}).identity.model_dump_json())
+    repo.insert_order(entry)
     repo.insert_position(Position(
+        order_id=entry.id,
         id=position_id, proposal_id=proposal.id, symbol="XRP/USDT",
         market_type=market_type, direction="short", quantity=quantity,
         entry_price=0.992, execution_mode="bitget_demo", status="open",
@@ -62,6 +98,7 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
         pending_close_order_id=order_id, pending_close_status="submitted",
     ))
     repo.insert_order(Order(
+        uta_account_identity_json=entry.uta_account_identity_json,
         id=order_id, proposal_id=proposal.id, client_order_id=f"close-{position_id}",
         position_id=position_id, close_reason="stop_loss", symbol="XRP/USDT",
         market_type=market_type, direction="short", order_type="market",
@@ -279,7 +316,7 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
     _setup_db(tmp_path, monkeypatch)
     from types import SimpleNamespace
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -298,30 +335,24 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
 
     captured: dict = {}
 
-    class _FakeClient:
-        def __init__(self, mode, profile):
-            pass
-
-        async def get_ticker(self, symbol, market_type):
-            captured["ticker"] = (symbol, market_type)
+    class _Provider:
+        async def get_ticker(self, instrument):
+            captured["ticker"] = instrument
             return SimpleNamespace(last_price=1.5)
 
-        async def place_order(self, request):
-            captured["order"] = request
-            return SimpleNamespace(order_id="EX-NEW-1", status="submitted")
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
-    monkeypatch.setattr(bitget_broker, "BitgetClient", _FakeClient)
-    monkeypatch.setattr(bitget_broker, "_configured_bitget_profile", lambda: "uta_v3")
-
-    result = bitget_broker.close_demo_position("pos-clip", reason="stop_loss")
+    result = coordinator.close_position("pos-clip", reason="stop_loss")
 
     request = captured["order"]
     assert request.order_type == "limit"
     # Short close = venue buy: bound floors onto the reference tick (1.5 has
     # one decimal → 1.515 floors to 1.5, still inside [ref, ref×1.01]).
-    assert request.price == 1.5
+    assert request.limit_price == 1.5
     assert request.quantity == 424.0  # marketable limit carries the full remaining
-    assert captured["ticker"][0] == "XRPUSDT"
+    assert captured["ticker"].symbol == "XRP/USDT"
+    assert captured["ticker"].exchange == "bitget"
     assert result["closed"] is False or result.get("order_id")
 
 
@@ -329,7 +360,7 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from types import SimpleNamespace
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -346,21 +377,14 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
 
     captured: dict = {}
 
-    class _FakeClient:
-        def __init__(self, mode, profile):
-            pass
-
-        async def get_ticker(self, symbol, market_type):
+    class _Provider:
+        async def get_ticker(self, instrument):
             raise RuntimeError("ticker unavailable")
 
-        async def place_order(self, request):
-            captured["order"] = request
-            return SimpleNamespace(order_id="EX-NEW-3", status="submitted")
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
-    monkeypatch.setattr(bitget_broker, "BitgetClient", _FakeClient)
-    monkeypatch.setattr(bitget_broker, "_configured_bitget_profile", lambda: "uta_v3")
-
-    bitget_broker.close_demo_position("pos-clip", reason="stop_loss")
+    coordinator.close_position("pos-clip", reason="stop_loss")
 
     request = captured["order"]
     assert request.order_type == "market"
@@ -374,7 +398,7 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
 
 
 def test_quantize_to_reference_precision_matches_venue_ticks():
-    from aletheia.execution.bitget_broker import _quantize_to_reference_precision
+    from aletheia.execution.coordinator import _quantize_to_reference_precision
 
     # XRPUSDT: tick 0.0001 via the reference's own precision.
     assert _quantize_to_reference_precision(1.512273, 1.4973, up=False) == 1.5122
@@ -389,7 +413,7 @@ def test_market_close_stays_market_without_cancel_history(tmp_path, monkeypatch)
     _setup_db(tmp_path, monkeypatch)
     from types import SimpleNamespace
 
-    from aletheia.execution import bitget_broker
+    from aletheia.execution import coordinator
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()
@@ -402,31 +426,24 @@ def test_market_close_stays_market_without_cancel_history(tmp_path, monkeypatch)
 
     captured: dict = {}
 
-    class _FakeClient:
-        def __init__(self, mode, profile):
-            pass
-
-        async def get_ticker(self, symbol, market_type):
+    class _Provider:
+        async def get_ticker(self, instrument):
             raise AssertionError("ticker must not be consulted without cancel history")
 
-        async def place_order(self, request):
-            captured["order"] = request
-            return SimpleNamespace(order_id="EX-NEW-2", status="submitted")
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
 
-    monkeypatch.setattr(bitget_broker, "BitgetClient", _FakeClient)
-    monkeypatch.setattr(bitget_broker, "_configured_bitget_profile", lambda: "uta_v3")
-
-    bitget_broker.close_demo_position("pos-clip", reason="stop_loss")
+    coordinator.close_position("pos-clip", reason="stop_loss")
 
     request = captured["order"]
     assert request.order_type == "market"
-    assert request.price is None
+    assert request.limit_price is None
     assert request.quantity == 424.0
 
 
 def test_clipped_close_quantity_halves_per_venue_cancel(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.bitget_broker import _clipped_close_quantity
+    from aletheia.execution.coordinator import _clipped_close_quantity
     from aletheia.storage import repositories as repo
 
     db = repo.get_db()

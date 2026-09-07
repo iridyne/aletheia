@@ -164,38 +164,3 @@ def test_equity_observer_stamps_attribution_fields_and_confidence_fallback(tmp_p
     from aletheia.agents.helpers import _release_run_counter
     _release_run_counter("run-eq-attr")
     reset_db()
-
-
-def test_paper_trader_ignores_xstocks_opportunities(tmp_path, monkeypatch):
-    """paper_trader must not trade asset_class=equity opportunities (shadow track only)."""
-    _setup(tmp_path, monkeypatch)
-
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    save_config(cfg)
-
-    from aletheia.storage.models import Opportunity, MarketSnapshot
-    # Insert an xStocks opportunity.
-    opp = Opportunity(
-        symbol="AAPLON/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="xstock test",
-        confidence="high",
-        source_agent="market_observer",
-        asset_class="equity",
-    )
-    repo.insert_opportunity(opp)
-    # Also a price snapshot so paper_trader could price it if it tried.
-    repo.insert_market_snapshot(MarketSnapshot(symbol="AAPLON/USDT", market_type="spot", price=309.0))
-
-    from aletheia.agents.paper_trader import run_paper_trader
-    out = asyncio.run(run_paper_trader(permission_mode="Full", run_id="run-xs-pt"))
-
-    # equity_shadow_track candidate appears in skip outputs but never becomes a trade proposal.
-    skip_outputs = [o for o in out["outputs"] if o.startswith("skip:") and "equity_shadow_track" in o]
-    assert skip_outputs, f"Expected equity_shadow_track skip output, got: {out}"
-    proposals = repo.list_trade_proposals()
-    assert not proposals, "paper_trader must not propose xStocks trades"
-    reset_db()

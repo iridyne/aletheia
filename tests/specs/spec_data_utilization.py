@@ -252,24 +252,6 @@ def test_hyperliquid_routed_to_decision_context():
     )
 
 
-@spec_claim(
-    SpecClaim(
-        "DU-S21", _CONTRACT, "§cross-venue Hyperliquid OI", "L2c",
-        "Hyperliquid OI is freshness-qualified, rendered with source time, and its exact row id "
-        "is eligible for the System Operator evidence manifest.",
-        status="implemented",
-    ),
-)
-def test_hyperliquid_oi_is_consumed_with_provenance():
-    obs = _MARKET_OBS.read_text(encoding="utf-8")
-    ctx = _CONTEXT_BUILDER.read_text(encoding="utf-8")
-    trading_ctx = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(
-        encoding="utf-8"
-    )
-    assert "batch_open_interest" in obs
-    assert "cross_venue_open_interest" in obs
-    assert "hl_open_interest_usd" in ctx and "hl_observed_at" in ctx
-    assert "open_interest_id" in trading_ctx and "evidence_manifest" in trading_ctx
 
 
 @spec_claim(
@@ -448,40 +430,6 @@ def test_perp_structure_registered_and_consumed():
 # DU-S14 — Position X safe-material parser + compact advisory consumer path
 # ---------------------------------------------------------------------------
 
-@spec_claim(
-    SpecClaim(
-        "DU-S14", _CONTRACT, "§position x advisory path", "L2a",
-        "Position X safe-material parsing lives in aletheia.data.position_x, "
-        "extracts compact knowledge cards / snapshots from authorized offline "
-        "materials only, and the resulting advisory-only structure block is "
-        "consumed by both market_observer and the System Operator context.",
-    ),
-)
-def test_position_x_parser_and_consumers_exist():
-    doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    px = _POSITION_X.read_text(encoding="utf-8")
-    obs = _MARKET_OBS.read_text(encoding="utf-8")
-    tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
-
-    assert "Position X" in doc, (
-        "data_utilization.md must register the Position X offline-material path"
-    )
-    assert (
-        "extract_position_x_knowledge_cards" in px
-        and "extract_position_x_snapshot" in px
-        and "extract_position_x_material_bundle" in px
-    ), (
-        "aletheia.data.position_x must expose the offline bundle/card/snapshot extractors"
-    )
-    assert "build_position_x_agent_context" in px, (
-        "Position X module must expose a compact advisory context builder"
-    )
-    assert "Position X" in obs or "build_position_x_agent_context" in obs, (
-        "market_observer must consume compact Position X structure evidence"
-    )
-    assert "build_position_x_agent_context" in tc or "position_x" in tc, (
-        "System Operator context must consume compact Position X structure evidence"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -937,12 +885,6 @@ def test_family_direction_edge_requires_one_exact_cost_model(tmp_path, monkeypat
     assert family_direction_edge(cost_model_version="v1")[0]["n"] == 30
 
 
-def test_full_pool_family_edge_is_not_routed_to_pi():
-    tc = (_ROOT / "aletheia" / "agent_shell" / "trading_context.py").read_text(encoding="utf-8")
-    td = (_ROOT / "aletheia" / "agent_shell" / "trading_decision.py").read_text(encoding="utf-8")
-    assert "family_direction_edge" not in tc
-    assert '"family_edge"' not in tc and "'family_edge'" not in tc
-    assert "_fmt_family_edge" not in td
 
 
 # ---------------------------------------------------------------------------

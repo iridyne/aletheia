@@ -40,12 +40,12 @@ def test_sizing_ratchet_recovers_with_real_dispatch_and_persistence(tmp_path):
             if result.get("action") == "increase_sizing"
         ]
         assert increases and increases[0]["status"] == "executed"
-        assert 100.0 < harness.load_config().risk.max_demo_position_margin_usdt <= 200.0
+        assert 100.0 < harness.load_config().risk.demo.capital.max_position_margin_usdt <= 200.0
 
         harness.restart()
-        persisted = harness.load_config().risk.max_demo_position_margin_usdt
+        persisted = harness.load_config().risk.demo.capital.max_position_margin_usdt
         second = harness.run_operator_cycle(trigger=scenario["incident_id"])
-        assert harness.load_config().risk.max_demo_position_margin_usdt == persisted
+        assert harness.load_config().risk.demo.capital.max_position_margin_usdt == persisted
         assert any(
             result.get("action") == "increase_sizing"
             and result.get("status") == "cooldown"

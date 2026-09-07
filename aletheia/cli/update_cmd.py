@@ -179,6 +179,13 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
         typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
         return
 
+    if sys.platform == "linux":
+        if not restart:
+            typer.echo("source_update_requires_restart", err=True)
+            raise typer.Exit(1)
+        auto_run()
+        return
+
     from aletheia.update.continuity import apply_update_with_continuity
 
     if sys.stdout.isatty():
@@ -328,6 +335,10 @@ def status(json_output: bool = typer.Option(False, "--json", help="Print machine
     typer.echo(f"Mode: {result.get('mode', 'unknown')}")
     typer.echo(f"Phase: {result.get('phase', 'unknown')}")
     typer.echo(f"Status: {result.get('status', 'unknown')}")
+    if result.get("reason"):
+        typer.echo(f"Reason: {result['reason']}")
+    if result.get("target_tag"):
+        typer.echo(f"Target: {result['target_tag']} ({result.get('target_sha')})")
     if result.get("target_release"):
         typer.echo(f"Target: {result['target_release']}")
     if result.get("progress") is not None:
@@ -359,6 +370,12 @@ def check():
             typer.echo("Run `aletheia update` to stage and install it through Aletheia Tray.")
         else:
             typer.echo(f"Up to date ({result.get('current_release')}).")
+        return
+
+    if result.get("mode") == "source_release":
+        typer.echo(f"Release check: {result.get('reason')}")
+        if result.get("target_tag"):
+            typer.echo(f"Target: {result['target_tag']} ({result.get('target_sha')})")
         return
 
     if result["has_update"]:

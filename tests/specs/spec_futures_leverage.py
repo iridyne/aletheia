@@ -167,34 +167,6 @@ def test_risk_engine_liquidation_buffer():
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("FL-S10", "futures_leverage", "§10 leverage persisted on Position", "L2a",
-              "Position model carries leverage + liquidation_price; all four broker entry "
-              "points (paper/bitget/okx/binance) accept a leverage param; gateway threads "
-              "proposal.leverage into execution"),
-)
-def test_leverage_threaded_through_execution():
-    import inspect
-    from aletheia.storage.models import Position
-
-    # Position model carries the futures fields.
-    fields = Position.model_fields
-    assert "leverage" in fields
-    assert "liquidation_price" in fields
-
-    # All four broker entry points accept leverage (clone rule).
-    from aletheia.execution.paper_broker import execute_paper_order
-    from aletheia.execution.bitget_broker import execute_live_order as bitget_exec
-    from aletheia.execution.okx_broker import execute_live_order as okx_exec
-    from aletheia.execution.binance_broker import execute_live_order as binance_exec
-    for fn in (execute_paper_order, bitget_exec, okx_exec, binance_exec):
-        assert "leverage" in inspect.signature(fn).parameters, fn.__module__
-
-    # Gateway threads proposal.leverage into the paper + live execution calls.
-    import aletheia.execution.gateway as gw
-    src = inspect.getsource(gw._execute_proposal)
-    assert src.count("leverage=proposal.leverage") >= 1
-
 
 @spec_claim(
     SpecClaim("FL-S11", "futures_leverage", "§11 paper open records leverage", "L2b",
@@ -257,120 +229,10 @@ def test_paper_open_records_leverage_and_liquidation(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@spec_claim(
-    SpecClaim("FL-S12", "futures_leverage", "§12 PI decision schema", "L2a",
-              "PI decision schema + TradingDecision dataclass + parser carry market_type "
-              "and leverage so the System Operator can choose spot vs perp and a leverage level"),
-)
-def test_pi_decision_schema_market_type_and_leverage():
-    from aletheia.agent_shell.trading_decision import (
-        _DECISION_SCHEMA, TradingDecision, _parse_decision,
-    )
-
-    props = _DECISION_SCHEMA["properties"]
-    assert "market_type" in props
-    assert set(props["market_type"]["enum"]) == {"spot", "usdt_futures"}
-    assert "leverage" in props
-
-    # dataclass carries the fields
-    d = TradingDecision(action="trade", symbol="BTC/USDT", direction="long",
-                        conviction=70, reasoning="x")
-    assert hasattr(d, "market_type")
-    assert hasattr(d, "leverage")
-
-    # parser reads them from raw LLM output
-    parsed = _parse_decision({
-        "action": "trade", "symbol": "BTC/USDT", "direction": "long",
-        "conviction": 70, "reasoning": "x", "bear_case": "y",
-        "market_type": "usdt_futures", "leverage": 3,
-        "stop_price": 98.0, "take_profit": 104.0,
-        "parameter_rationale": {
-            key: f"reason for {key}"
-            for key in (
-                "entry_price", "stop_loss", "take_profit", "notional_usdt", "leverage"
-            )
-        },
-    })
-    assert parsed.market_type == "usdt_futures"
-    assert parsed.leverage == 3
 
 
-@spec_claim(
-    SpecClaim("FL-S13", "futures_leverage", "§13 leverage clamped on submit", "L2b",
-              "submit_decision_as_proposal preserves PI market_type + leverage on "
-              "the prepared Proposal, clamping leverage to the per-tier cap"),
-)
-async def test_submit_decision_clamps_leverage(tmp_path, monkeypatch):
-    import aletheia.agent_shell.trading_decision as td
-    from aletheia.config.loader import load_config
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import MarketSnapshot
-    from tests.test_entry_logic import setup_env
-
-    setup_env(tmp_path, monkeypatch)
-    venue = load_config().market_data.ccxt_exchange or "binance"
-    repo.insert_market_snapshot(MarketSnapshot(
-        symbol="BTC/USDT",
-        market_type="perp",
-        exchange=venue,
-        price=60000.0,
-    ))
-
-    captured = {}
-
-    def _fake_submit_prepared(proposal):
-        captured.update(proposal.model_dump())
-        return {"status": "executed", "proposal_id": "x"}
-
-    # Stub only the gateway-facing boundary + advisory guard chain. Entry pricing
-    # deliberately goes through the production exact-venue freshness accessor.
-    monkeypatch.setattr(
-        "aletheia.execution.paper_tools.submit_prepared_paper_proposal",
-        _fake_submit_prepared,
-    )
-    monkeypatch.setattr("aletheia.trust.guard_chain.run_guards", lambda ctx: [])
-    monkeypatch.setattr("aletheia.trust.guard_chain.summarize",
-                        lambda v: {"blocks": [], "details": ""})
-
-    # PI asks for 50x on BTC (major demo cap = 20) → must clamp to 20.
-    decision = td.TradingDecision(
-        action="trade", symbol="BTC/USDT", direction="long",
-        conviction=80, reasoning="strong", position_size_usdt=100.0,
-        market_type="usdt_futures", leverage=50,
-    )
-    await td.submit_decision_as_proposal(decision, execution_mode="paper_internal")
-    assert captured["market_type"] == "usdt_futures"
-    assert captured["leverage"] == 20  # clamped to BTC demo tier cap
 
 
-@spec_claim(
-    SpecClaim("FL-S14", "futures_leverage", "§14 futures context", "L2a",
-              "trading_context._build_futures_context injects per-symbol leverage limits + "
-              "account leverage ratio + margin headroom; the assessment prompt renders it"),
-)
-def test_futures_context_injection():
-    import inspect
-    from aletheia.agent_shell.trading_context import _build_futures_context
-    import aletheia.agent_shell.trading_decision as td
-    from aletheia.config.loader import load_config
-
-    cfg = load_config()
-    layer = {
-        "features": [{"symbol": "BTC/USDT"}, {"symbol": "SOL/USDT"}],
-        "positions": [],
-        "balance": {"equity_usdt": 1000.0, "available_usdt": 800.0},
-    }
-    fut = _build_futures_context(layer, cfg)
-    limits = fut["leverage_limits"]
-    assert limits["BTC/USDT"]["tier"] == "major"
-    assert limits["BTC/USDT"]["max_demo"] == 20
-    assert limits["SOL/USDT"]["tier"] == "mid"
-    assert "account_leverage_ratio" in fut
-    assert "available_margin_pct" in fut
-
-    # The assessment prompt renders the futures section when the context is present.
-    prompt = td._build_assessment_prompt({"layer1": {"futures": fut}, "layer2": {}, "layer3": {}})
-    assert "Futures" in prompt or "Leverage limits" in prompt
 
 
 @spec_claim(
@@ -394,74 +256,8 @@ def test_opportunity_carries_derivatives_fields():
     assert 'updates["oi_delta_1h"]' in src
 
 
-@spec_claim(
-    SpecClaim("FL-S16", "futures_leverage", "§16 exchange set_leverage", "L2a",
-              "All three exchange clients expose set_leverage and call it from place_order "
-              "for a leveraged futures open; OrderRequest carries leverage; the three live "
-              "brokers forward leverage into OrderRequest (fail-closed clone rule)"),
-)
-def test_exchange_set_leverage_wiring():
-    import inspect
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest as BgOR
-    from aletheia.exchanges.okx.client import OKXClient, OrderRequest as OkxOR
-    from aletheia.exchanges.binance.client import BinanceClient, OrderRequest as BnOR
-
-    # set_leverage exists + place_order invokes it on every client. Read the module
-    # source (not client.place_order, which the autouse exchange-block fixture patches).
-    for client in (BitgetClient, OKXClient, BinanceClient):
-        assert hasattr(client, "set_leverage"), client.__name__
-        mod_src = inspect.getsource(inspect.getmodule(client))
-        assert "async def set_leverage" in mod_src, client.__name__
-        assert "self.set_leverage(" in mod_src, client.__name__
-
-    # OrderRequest carries leverage on every client
-    for OR in (BgOR, OkxOR, BnOR):
-        assert "leverage" in OR.__dataclass_fields__, OR.__module__
-
-    # The three live brokers forward leverage into OrderRequest
-    import aletheia.execution.bitget_broker as bgb
-    import aletheia.execution.okx_broker as okxb
-    import aletheia.execution.binance_broker as bnb
-    for mod in (bgb, okxb, bnb):
-        src = inspect.getsource(mod.execute_live_order)
-        assert "leverage=leverage" in src, mod.__name__
 
 
-@spec_claim(
-    SpecClaim("FL-S17", "futures_leverage", "§17 strategy market affinity", "L2b",
-              "StrategyRecord carries market_type_affinity; the paper ranker skips a "
-              "strategy whose affinity contradicts the opportunity's market (a spot-only "
-              "strategy must not take a perp opportunity)"),
-)
-def test_strategy_market_type_affinity_filters_ranker():
-    pytest.skip(
-        "FL-S17 superseded by Position C 2026-07-02: paper ranker treats "
-        "linked_strategy_id as attribution and no longer resolves StrategyRecord "
-        "market affinity."
-    )
-    import json as _json
-    from aletheia.storage.models import StrategyRecord, Opportunity, MarketSnapshot
-    from aletheia.storage import repositories as repo
-
-    assert "market_type_affinity" in StrategyRecord.model_fields
-
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="usdt_futures", price=60000))
-    strat = StrategyRecord(
-        name="spot-only", state="paper_running", market_type_affinity="spot",
-        parameters=_json.dumps({"symbol": "BTC/USDT"}),
-    )
-    repo.insert_strategy(strat)
-    opp = Opportunity(
-        symbol="BTC/USDT", market="usdt_futures", direction_bias="long",
-        confidence="high", confidence_score=80, source_agent="market_observer",
-        linked_strategy_id=strat.id,
-    )
-    repo.insert_opportunity(opp)
-
-    from aletheia.agents.paper_trader_ranker import build_paper_candidates
-    cands = [c for c in build_paper_candidates(limit=50) if c["symbol"] == "BTC/USDT"]
-    assert cands, "a candidate row should be produced (recorded as skipped)"
-    assert any("market_type_mismatch" in (c.get("skip_reason") or "") for c in cands), cands
 
 
 @spec_claim(

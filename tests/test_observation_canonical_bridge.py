@@ -696,31 +696,60 @@ def test_legacy_identityless_treatment_refusal_imports_as_non_authorizing_audit(
     ).fetchone()[0] == 0
 
 
-def test_legacy_assignment_namespace_and_denominator_are_bitwise_compatible():
-    from aletheia.learning.experiments import stable_assignment
-    from aletheia.learning.models import LearningExperiment
-    from aletheia.observation_lab.manifest import resolve_treatment
+def test_pending_receipt_blocks_cutover_without_losing_evidence():
+    from aletheia.observation_lab.canonical import (
+        append_delivery_receipt, get_authority_source, set_authority_source,
+    )
+    from aletheia.storage.sqlite import get_db
 
-    manifest = _manifest(
-        assignment_namespace_key="legacy-experiment-id",
-        assignment_hash_version="sha256-prefix16/0xffffffffffffffff",
+    receipt_id = append_delivery_receipt(
+        receipt_kind="capture", candidate_key="pending-cutover",
+        resolution_reason="legacy_capture",
     )
-    legacy = LearningExperiment(
-        experiment_id="legacy-experiment-id",
-        hypothesis_id="h",
-        assignment_salt=manifest.assignment_salt,
-        allocation_pct=manifest.allocation_pct,
+    before = get_authority_source()
+    with pytest.raises(RuntimeError, match="authority_cutover_pending_main_receipts"):
+        set_authority_source("lab", actor="owner", reason="pending cutover")
+    assert get_authority_source() == before
+    assert get_db().execute(
+        "SELECT acknowledged_at FROM observation_delivery_outbox WHERE receipt_id=?",
+        (receipt_id,),
+    ).fetchone()[0] is None
+
+
+@pytest.mark.parametrize("authority_state", ["legacy", "missing_row", "missing_schema"])
+def test_numeric_treatment_without_lab_authority_preserves_baseline(authority_state):
+    from aletheia.learning.experiments import InfluenceDecision, apply_numeric_treatment
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    if authority_state == "missing_row":
+        db.execute("DELETE FROM observation_authority_state")
+    elif authority_state == "missing_schema":
+        db.execute("DROP TABLE observation_authority_state")
+    decision = apply_numeric_treatment(
+        path_id="ranker_case_score", scope={}, action={}, source_cohort="test",
+        target_horizon="24h", candidate_key="unavailable-authority",
+        baseline=1.0, treatment=2.0, consumer="test", consumer_stage="score",
     )
-    for index in range(1000):
-        key = f"candidate-{index}"
-        expected = stable_assignment(legacy, key)
-        actual = resolve_treatment(
-            manifest=manifest,
-            candidate_key=key,
-            assignment_key=key,
-            now="2026-01-01T00:00:00+00:00",
-        ).assignment
-        assert actual == expected
+    assert decision == InfluenceDecision(1.0, False, "unassigned", "authority_source_unavailable")
+    assert db.execute("SELECT COUNT(*) FROM observation_delivery_outbox").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM learning_exposures").fetchone()[0] == 0
+
+
+def test_canonical_resolver_missing_schema_reports_unavailable_not_legacy():
+    from aletheia.observation_lab.canonical import register_treatment_adapter, resolve_observation_treatment
+    from aletheia.storage.sqlite import get_db
+
+    get_db().execute("DROP TABLE observation_authority_state")
+    register_treatment_adapter(_Adapter(), replace=True)
+    decision = resolve_observation_treatment(
+        adapter_id="test-adapter", candidate_key="missing-schema",
+        context={"unit": "missing-schema"}, baseline={"value": 1.0},
+        persist_receipt=False,
+    )
+    assert decision.reason == "authority_source_unavailable"
+    assert decision.payload == {"value": 1.0}
+    assert decision.applied is False
 
 
 def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
@@ -1243,22 +1272,20 @@ def test_canonical_registration_does_not_create_a_main_experiment():
     ).fetchone()[0] == 0
 
 
-def test_lab_authority_blocks_legacy_experiment_behavior_paths():
-    from aletheia.learning import ledger
-    from aletheia.learning.contribution_runner import run_verdict_cycle
-    from aletheia.learning.lifecycle import run_lifecycle_controller
-    from aletheia.observation_lab.canonical import set_authority_source
-    from aletheia.analytics.filter_controller import run_controller_observe
+def test_lab_authority_cannot_return_to_legacy():
+    from aletheia.observation_lab.canonical import get_authority_source, set_authority_source
 
-    set_authority_source("lab", actor="owner", reason="legacy-path-guard-test")
-    with pytest.raises(RuntimeError, match="observation_lab_authority_required"):
-        ledger.insert_experiment(object())
-    with pytest.raises(RuntimeError, match="observation_lab_authority_required"):
-        ledger.insert_exposure(object())
-    assert run_verdict_cycle()["status"] == "canonical_lab_authority"
-    assert run_lifecycle_controller()["status"] == "canonical_lab_authority"
-    assert run_controller_observe()["pass_reason"] == "canonical_lab_authority"
-    assert ledger.list_open_experiments() == []
+    legacy = get_authority_source()
+    assert legacy.source == "legacy"
+    with pytest.raises(ValueError, match="authority_source_must_be_lab"):
+        set_authority_source("legacy", actor="owner", reason="keep legacy")
+    assert get_authority_source() == legacy
+    lab = set_authority_source("lab", actor="owner", reason="cutover")
+    with pytest.raises(ValueError, match="authority_source_must_be_lab"):
+        set_authority_source("legacy", actor="owner", reason="rollback")
+    assert get_authority_source() == lab
+    assert set_authority_source("lab", actor="owner", reason="retry") == lab
+
 
 
 def test_owner_close_is_imported_as_terminal_lab_lifecycle():

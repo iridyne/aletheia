@@ -68,9 +68,7 @@ def _put_setting(conn, key: str, value: str):
     SpecClaim(
         "PL-PROFIT-01", "pipeline_profit_loop", "§balance multi-broker default",
         "L2b",
-        "get_cached_state() default path returns the active account's true equity "
-        "(unified cache) when the active paper broker is non-Bitget — not the idle "
-        "Bitget demo balance. Prevents System Operator phantom-bankruptcy skip.",
+        "The unified cache reports external account equity, never the retired Bitget cache.",
     ),
 )
 def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
@@ -96,48 +94,25 @@ def test_default_cached_state_reflects_active_broker(tmp_path, monkeypatch):
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }))
 
-    # Config: exchange.mode stays "demo" (the demo/live binary used by risk #9b),
-    # but the active paper broker has migrated to okx_demo.
-    class _Exch:
-        mode = "demo"
-        paper_execution_mode = "okx_demo"
-
-        @staticmethod
-        def uta_read_boundary_for(_execution_mode):
-            return "legacy"
-
-    class _Cfg:
-        exchange = _Exch()
-
-    monkeypatch.setattr(loader, "load_config", lambda: _Cfg())
-    monkeypatch.setattr("aletheia.portfolio.exchange_sync.load_config", lambda: _Cfg())
-
-    # Default path (mode=None) — what trading_context.py:61 calls.
-    state = exchange_sync.get_cached_state()
+    state = exchange_sync.get_unified_cached_state()
     from aletheia.portfolio.exchange_sync import account_equity_value
 
     equity = account_equity_value(state)
     assert equity == pytest.approx(88687.0), (
-        f"default get_cached_state() must return active-account equity, got {equity} "
+        f"unified cache must return account equity, got {equity} "
         "(regression: System Operator would see phantom-bankrupt $167 and skip every signal)"
     )
 
-    # Explicit mode="demo" (CLI bitget tools) must still get the per-mode cache.
-    legacy = exchange_sync.get_cached_state(mode="demo")
-    assert legacy.get("equity_usdt") == pytest.approx(167.37), (
-        "explicit mode='demo' must still return the Bitget per-mode cache verbatim"
-    )
 
 
 @spec_claim(
     SpecClaim(
         "PL-PROFIT-02", "pipeline_profit_loop", "§balance bitget-active",
         "L2b",
-        "When the active paper broker IS Bitget, default get_cached_state() keeps "
-        "reading the per-mode cache (no behavior change for Bitget-native setups).",
+        "Bitget uses UTA only; a retired cache cannot supply account evidence.",
     ),
 )
-def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
+def test_bitget_active_rejects_legacy_cache(tmp_path, monkeypatch):
     import json
     import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
@@ -148,24 +123,7 @@ def test_bitget_active_keeps_legacy_cache(tmp_path, monkeypatch):
         "fetched_at": datetime.now(timezone.utc).isoformat(),
     }))
 
-    class _Exch:
-        mode = "demo"
-        paper_execution_mode = "bitget_demo"
-
-        @staticmethod
-        def uta_read_boundary_for(_execution_mode):
-            return "legacy"
-
-    class _Cfg:
-        exchange = _Exch()
-
-    monkeypatch.setattr(loader, "load_config", lambda: _Cfg())
-    monkeypatch.setattr("aletheia.portfolio.exchange_sync.load_config", lambda: _Cfg())
-
-    state = exchange_sync.get_cached_state()
-    assert state.get("equity_usdt") == pytest.approx(5000.0), (
-        "Bitget-active setups must still use the per-mode cache on the default path"
-    )
+    assert exchange_sync.get_unified_cached_state() is None
 
 
 # ---------------------------------------------------------------------------
@@ -194,56 +152,3 @@ def _insert_proposal(conn, age_minutes: float):
          0.001, 50000.0, "okx_demo", "executed", ts),
     )
     conn.commit()
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-PROFIT-03", "pipeline_profit_loop", "§doctor stall detection",
-        "L2b",
-        "doctor _probe_profit_loop emits a WARN when opportunities are fresh "
-        "(<60min) but no proposal has been created for >6h — the silent-stall "
-        "signature that looks alive but earns nothing.",
-    ),
-)
-def test_doctor_flags_profit_loop_stall(tmp_path, monkeypatch):
-    from aletheia.diagnostics import doctor
-
-    conn = _setup_db(tmp_path, monkeypatch)
-    # Opportunities flowing, but newest proposal is 10h old → stall.
-    _insert_opportunity(conn, age_minutes=5)
-    _insert_proposal(conn, age_minutes=600)
-
-    report = doctor.Report(generated_at=datetime.now(timezone.utc).isoformat())
-    doctor._probe_profit_loop(report)
-
-    rows = [c for c in report.checks if c.name == "loop.profit"]
-    assert rows, "profit-loop probe produced no check"
-    assert rows[0].severity == "warn", (
-        f"expected WARN for stalled loop, got {rows[0].severity}: {rows[0].detail}"
-    )
-    assert "STALL" in rows[0].detail.upper()
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-PROFIT-04", "pipeline_profit_loop", "§doctor healthy path",
-        "L2b",
-        "doctor _probe_profit_loop reports ok when proposals are recent — no "
-        "false alarm on a healthy loop.",
-    ),
-)
-def test_doctor_profit_loop_healthy(tmp_path, monkeypatch):
-    from aletheia.diagnostics import doctor
-
-    conn = _setup_db(tmp_path, monkeypatch)
-    _insert_opportunity(conn, age_minutes=5)
-    _insert_proposal(conn, age_minutes=20)  # fresh proposal
-
-    report = doctor.Report(generated_at=datetime.now(timezone.utc).isoformat())
-    doctor._probe_profit_loop(report)
-
-    rows = [c for c in report.checks if c.name == "loop.profit"]
-    assert rows, "profit-loop probe produced no check"
-    assert rows[0].severity == "ok", (
-        f"expected ok for healthy loop, got {rows[0].severity}: {rows[0].detail}"
-    )

@@ -394,19 +394,18 @@ def get_watched_instruments(
         always_on_sources_complete = False
         logger.warning("price_feed: failed to get position symbols: %s", e)
 
-    # Pending candidates are an always-on high-priority set. Their exact mark is
-    # required for entry planning, so they must not inherit the Universe tick gate.
+    # Current planning demand is high priority, independent of the Universe tick gate.
     try:
-        from aletheia.data.candidate_market_facts import pending_candidate_instruments
+        from aletheia.storage.repositories import list_candidate_planning_refresh_assets
 
-        for instrument in pending_candidate_instruments():
+        for asset in list_candidate_planning_refresh_assets():
             append_instrument(
-                instrument.symbol, instrument.market_type, instrument.exchange,
+                asset["symbol"], asset["market_type"], asset["venue"],
                 is_always_on=True,
             )
     except Exception as e:
         always_on_sources_complete = False
-        logger.warning("price_feed: pending candidate expansion failed: %s", type(e).__name__)
+        logger.warning("price_feed: planning expansion failed: %s", type(e).__name__)
 
     # Universe members — tick-gated
     try:
@@ -479,7 +478,6 @@ async def refresh_watched_prices() -> dict:
 
     refreshed: list[str] = []
     errors: list[str] = []
-    refreshed_instruments = []
     try:
         from collections import defaultdict
 
@@ -492,13 +490,6 @@ async def refresh_watched_prices() -> dict:
         from aletheia.config.loader import load_config
 
         cfg = load_config()
-        from aletheia.data.candidate_market_facts import (
-            pending_candidate_instruments,
-            record_candidate_refresh_failure,
-            wake_pending_candidate_defers,
-        )
-
-        pending_identities = {str(item) for item in pending_candidate_instruments()}
         groups = defaultdict(list)
         for instrument in instruments:
             groups[instrument.exchange].append(instrument)
@@ -599,21 +590,10 @@ async def refresh_watched_prices() -> dict:
                                 _check_event_triggers(sym, pct, volume_24h, prev_volume_24h, cfg)
 
                             refreshed.append(sym)
-                            refreshed_instruments.append(instrument)
-                        elif str(instrument) in pending_identities:
-                            record_candidate_refresh_failure(
-                                instrument,
-                                component="price_mark",
-                                reason="upstream_quote_unavailable",
-                            )
+                        else:
+                            errors.append(f"{instrument}: upstream_quote_unavailable")
                     except Exception as e:
                         errors.append(f"{instrument}: {e}")
-                        if str(instrument) in pending_identities:
-                            record_candidate_refresh_failure(
-                                instrument,
-                                component="price_mark",
-                                reason="upstream_quote_unavailable",
-                            )
             finally:
                 await provider.close()
     except Exception as e:
@@ -625,19 +605,6 @@ async def refresh_watched_prices() -> dict:
     if errors:
         logger.warning("price_feed: %d errors: %s", len(errors), errors[:3])
 
-    refreshed_candidates = [
-        instrument for instrument in refreshed_instruments
-        if str(instrument) in pending_identities
-    ] if "pending_identities" in locals() else []
-    if refreshed_candidates:
-        try:
-            wake_pending_candidate_defers(
-                instruments=refreshed_candidates,
-                defer_reasons={"candidate_entry_mark_unavailable"},
-                source="candidate_entry_mark_refreshed",
-            )
-        except Exception:
-            logger.debug("candidate entry-mark wake failed", exc_info=True)
 
     return {"refreshed": len(refreshed), "symbols": refreshed, "errors": errors}
 

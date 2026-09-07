@@ -34,14 +34,6 @@ from aletheia.counterfactual.trades import (
 _BAND_EDGES: list[float] = [40.0, 46.0, 50.0, 55.0, 60.0, 70.0]
 
 
-def _min_conviction_gate() -> int:
-    """Return the live conviction-to-trade gate, or the DL-INV-2 default."""
-    try:
-        from aletheia.agent_shell.trading_decision import _MIN_CONVICTION_TO_TRADE
-
-        return int(_MIN_CONVICTION_TO_TRADE)
-    except Exception:
-        return 55
 
 
 def _band_label(score: float, edges: list[float]) -> str:
@@ -119,7 +111,7 @@ def build_calibration(
     """
     import aletheia.storage.sqlite as sqlite_store
 
-    gate = _min_conviction_gate()
+    gate = 55  # Retired Operator conviction gate; historical cohort marker only.
     report: dict[str, Any] = {
         "window_days": days,
         "symbols": symbols or "ALL",

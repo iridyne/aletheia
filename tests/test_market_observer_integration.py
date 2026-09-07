@@ -1,23 +1,3 @@
-"""Integration test — Round 2 anti-hallucination boundary audit (plan §8.6.3).
-
-Round 1 was terminated because a downstream learning loop consumed hallucinated
-opportunity_id=None rows from trading_decision.py:250, feeding the ranker noise
-that bypassed the frozen guards. The contract for Round 2 macro signals (LSR,
-F&G, top movers) is that those values enter the LLM enriched_context ONLY —
-they must NOT be read by trading_decision, pi_agent, learning, dreaming, or
-research. The LLM may CITE a value from the snapshot in key_observations
-(that's the prompt's whole point), but the structured fields must stay walled
-off from the feedback loops that learn from outcomes.
-
-These tests assert both halves of that contract:
-  1. STATIC grep — no module under the trading/learning chain references the
-     new field names by string. Cheap, definitive, runs in the spec window.
-  2. BEHAVIORAL — when the market_observer produces an Opportunity row whose
-     key_observations string mentions "LSR=2.09" (i.e. the LLM cited the value),
-     the row lands in storage and the downstream rankers never get
-     long_short_ratio passed in via the row dict's columns. The new field
-     stays in the snapshot tables, not in opportunities.
-"""
 
 from __future__ import annotations
 
@@ -32,12 +12,6 @@ ROOT = Path(__file__).parent.parent
 NEW_FIELDS = ("long_short_ratio", "fng_value", "fng_classification", "top_movers_summary")
 
 # Modules that MUST NOT reference the new field names (per [[aletheia-round1-terminated-fix-batch]]).
-FORBIDDEN_PATHS = [
-    "aletheia/agent_shell/trading_decision.py",
-    "aletheia/learning",
-    "aletheia/dreaming",
-    "aletheia/research",
-]
 
 
 def _grep_for_field(field: str, path: Path) -> list[str]:
@@ -67,21 +41,6 @@ def test_pi_agent_files_glob_exists_or_skipped():
         pytest.skip("no pi_agent_* files — module may have been renamed")
 
 
-def test_new_fields_not_in_trading_decision():
-    """trading_decision.py — the Round 1 hallucination loop's terminal sink."""
-    target = ROOT / "aletheia/agent_shell/trading_decision.py"
-    if not target.exists():
-        pytest.skip(f"{target} not present")
-    leaks: dict[str, list[str]] = {}
-    for field in NEW_FIELDS:
-        hits = _grep_for_field(field, target)
-        if hits:
-            leaks[field] = hits
-    assert not leaks, (
-        "Round 2 anti-hallucination boundary VIOLATED: new fields leaked into "
-        "trading_decision.py — these fields must stay in enriched_context only.\n"
-        "Leaks:\n" + "\n".join(f"  {fld}: {hits}" for fld, hits in leaks.items())
-    )
 
 
 def test_new_fields_not_in_pi_agent():

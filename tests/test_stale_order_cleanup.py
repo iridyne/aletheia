@@ -39,7 +39,10 @@ def _order(*, oid: str, hours_ago: float, execution_mode: str = "okx_demo",
            position_id: str | None = None,
            exchange_order_id: str | None = "ex-1",
            client_order_id: str | None = "cli-1") -> Order:
+    from tests.uta.test_execution_coordinator import _identity
+
     return Order(
+        uta_account_identity_json=_identity(execution_mode).model_dump_json(),
         id=oid,
         symbol="MON/USDT",
         market_type="usdt_futures",
@@ -265,4 +268,22 @@ def test_exchange_confirms_absent_cancels_before_hard_window(monkeypatch):
     monkeypatch.setattr(soc, "_exchange_order_absent_unfilled", lambda order: True)
     summary = soc.cleanup_stale_orphan_orders()
     assert summary["cancelled"] == 1
-    assert repo.get_order("gone")["error_reason"] == "stale_order_absent_on_exchange"
+    assert _status("gone") == "cancelled"
+
+
+def test_unbound_historical_order_cannot_supply_cleanup_evidence(monkeypatch):
+    from aletheia.execution import pending_close_recovery as pcr
+    from aletheia.uta import manager
+
+    order = _order(oid="unbound", hours_ago=300).model_dump()
+    order["uta_account_identity_json"] = None
+    calls = []
+    async def query(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("unbound order must not select a current account")
+    monkeypatch.setattr(manager, "query_uta", query)
+    assert soc._exchange_order_absent_unfilled(order) is None
+    assert pcr._exchange_open_order_ids(order) is None
+    assert pcr._exchange_fill_rows(order) is None
+    assert pcr._uta_history_lookup(order) is pcr._HISTORY_FAILED
+    assert calls == []

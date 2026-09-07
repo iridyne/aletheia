@@ -356,14 +356,6 @@ def _stub_creds(monkeypatch):
         monkeypatch.setattr(cls, "_get_creds", lambda self: ("k", "s", "p"))
 
 
-def test_exchange_sync_client_inherits_profile(tmp_path, monkeypatch):
-    from aletheia.portfolio import exchange_sync
-
-    _use_profile(tmp_path, monkeypatch, "uta_v3")
-    _stub_creds(monkeypatch)
-    client, _mode = exchange_sync._client_or_unconfigured()
-    assert client is not None
-    assert client.profile == "uta_v3"
 
 
 def test_broker_funding_settlement_uses_uta_account_mode(tmp_path, monkeypatch):
@@ -373,12 +365,3 @@ def test_broker_funding_settlement_uses_uta_account_mode(tmp_path, monkeypatch):
     _stub_creds(monkeypatch)
     client = _client_for_mode("bitget_demo")
     assert client.execution_mode == "bitget_demo"
-
-
-def test_demo_adapter_client_inherits_profile(tmp_path, monkeypatch):
-    from aletheia.portfolio.uta.bitget_adapter import BitgetDemoAdapter
-
-    _use_profile(tmp_path, monkeypatch, "uta_v3")
-    _stub_creds(monkeypatch)
-    adapter = BitgetDemoAdapter()
-    assert adapter._client.profile == "uta_v3"

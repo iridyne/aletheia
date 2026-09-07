@@ -362,10 +362,9 @@ class TestGetWatchedSymbols:
             "binance:BTC/USDT:perp"
         ]
 
-    def test_pending_spot_and_perp_bypass_universe_tick_gate(self, monkeypatch):
+    def test_planning_spot_and_perp_bypass_universe_tick_gate(self, monkeypatch):
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
-        from aletheia.data import candidate_market_facts
 
         cfg = MagicMock()
         cfg.market_data.ccxt_exchange = "binance"
@@ -373,11 +372,11 @@ class TestGetWatchedSymbols:
         monkeypatch.setattr(loader, "load_config", lambda: cfg)
         monkeypatch.setattr(repo, "list_all_open_positions", lambda: [])
         monkeypatch.setattr(
-            candidate_market_facts,
-            "pending_candidate_instruments",
+            repo,
+            "list_candidate_planning_refresh_assets",
             lambda: [
-                InstrumentId.from_parts("okx", "BTC/USDT", "spot"),
-                InstrumentId.from_parts("binance", "BTC/USDT", "perp"),
+                {"venue": "okx", "symbol": "BTC/USDT", "market_type": "spot"},
+                {"venue": "binance", "symbol": "BTC/USDT", "market_type": "perp"},
             ],
         )
 
@@ -462,52 +461,6 @@ class TestRefreshWatchedPrices:
     def test_no_symbols_early_return(self, mock_symbols):
         result = asyncio.run(refresh_watched_prices())
         assert result == {"refreshed": 0, "symbols": [], "errors": []}
-
-    def test_successful_pending_mark_refresh_wakes_exact_defer(self, monkeypatch):
-        from aletheia.data import candidate_market_facts, price_feed
-        import aletheia.config.loader as loader
-        import aletheia.data.ccxt_provider as providers
-
-        instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
-        monkeypatch.setattr(
-            price_feed,
-            "get_watched_instruments",
-            lambda **_kwargs: [instrument],
-        )
-        monkeypatch.setattr(
-            candidate_market_facts,
-            "pending_candidate_instruments",
-            lambda: [instrument],
-        )
-        wakes: list[dict] = []
-        monkeypatch.setattr(
-            candidate_market_facts,
-            "wake_pending_candidate_defers",
-            lambda **kwargs: wakes.append(kwargs) or True,
-        )
-        cfg = MagicMock()
-        cfg.market_data.ccxt_exchange = "binance"
-        cfg.event_triggers.enabled = False
-        monkeypatch.setattr(loader, "load_config", lambda: cfg)
-        ticker = Ticker(
-            symbol="BTC/USDT",
-            last_price=65_000.0,
-            volume_24h=1_000_000.0,
-            change_pct_24h=0.0,
-            provider="binance",
-        )
-        provider = MagicMock()
-        provider.get_ticker = AsyncMock(return_value=ticker)
-        provider.close = AsyncMock()
-        monkeypatch.setattr(
-            providers, "get_market_data_provider", lambda **kwargs: provider,
-        )
-
-        result = asyncio.run(refresh_watched_prices())
-
-        assert result["refreshed"] == 1
-        assert wakes[0]["instruments"] == [instrument]
-        assert wakes[0]["defer_reasons"] == {"candidate_entry_mark_unavailable"}
 
     @patch(
         "aletheia.data.price_feed.get_watched_instruments",
@@ -683,7 +636,7 @@ class TestRefreshWatchedPrices:
                 mock_events.assert_called_once()
 
     def test_universe_events_survive_slow_scheduler_tick_gate(self, monkeypatch):
-        from aletheia.data import candidate_market_facts, ccxt_provider, price_feed
+        from aletheia.data import ccxt_provider, price_feed
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 
@@ -696,7 +649,7 @@ class TestRefreshWatchedPrices:
         monkeypatch.setattr(loader, "load_config", lambda: cfg)
         monkeypatch.setattr(repo, "list_all_open_positions", lambda: [])
         monkeypatch.setattr(
-            candidate_market_facts, "pending_candidate_instruments", lambda: [],
+            repo, "list_candidate_planning_refresh_assets", lambda: [],
         )
         monkeypatch.setattr(
             repo,
@@ -757,7 +710,7 @@ class TestRefreshWatchedPrices:
     def test_universe_recovery_requires_a_new_sampling_segment(
         self, monkeypatch, discontinuity
     ):
-        from aletheia.data import candidate_market_facts, ccxt_provider
+        from aletheia.data import ccxt_provider
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 
@@ -784,7 +737,7 @@ class TestRefreshWatchedPrices:
 
         monkeypatch.setattr(repo, "list_all_open_positions", open_positions)
         monkeypatch.setattr(
-            candidate_market_facts, "pending_candidate_instruments", lambda: [],
+            repo, "list_candidate_planning_refresh_assets", lambda: [],
         )
 
         member = {

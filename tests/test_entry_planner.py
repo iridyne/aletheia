@@ -101,6 +101,7 @@ def _typed_candidate(
             "source_record_hash": "a" * 64,
         },
         source={
+            "kind": "universe", "id": candidate_id, "trade_school": "short_term",
             "detected_at": source_at,
             "source_cutoff_at": source_at,
             "feature_snapshot_id": "feature-1",
@@ -260,6 +261,7 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
         planning_generation_id=generation["id"],
         candidate_id=generation["last_candidate_id"],
         candidate_family=generation["candidate_family"],
+        source_kind="universe", source_id=generation["last_candidate_id"], trade_school="short_term",
         venue="bitget",
         symbol="BTC/USDT",
         market_type="perp",
@@ -598,7 +600,7 @@ def test_candidate_attention_requalification_preserves_hard_deadline():
     assert created is False
     source = {"scanner_run_id": "run-complete", "snapshot_id": reselected.snapshot_id}
     counts = repo.reconcile_candidate_attention(
-        {same["id"]},
+        {same["id"]}, producer_scope="universe",
         eligible_identity_keys={("bitget", "BTC/USDT", "perp", "momentum", "long")},
         refresh_source=source,
         soft_lease_sec=900,
@@ -613,11 +615,8 @@ def test_candidate_attention_requalification_preserves_hard_deadline():
     assert repo.get_candidate_planning_for_candidate(candidate.id)["id"] == generation["id"]
     assert repo.get_candidate_planning_for_candidate(reselected.id)["id"] == generation["id"]
     persisted_source = json.loads(stored["requalification_source_json"])
-    assert persisted_source == {
-        **source,
-        "planning_generation_id": generation["id"],
-        "planning_identity": generation["planning_identity"],
-    }
+    assert persisted_source["candidate_opportunity_context"] == json.loads(candidate.candidate_opportunity_context_json)
+    assert persisted_source["scanner_run_id"] == "run-complete"
 
 
 def test_timer_only_universe_ttl_slide_does_not_requalify_attention():
@@ -630,7 +629,8 @@ def test_timer_only_universe_ttl_slide_does_not_requalify_attention():
 
     after = repo.get_candidate_planning_generation(generation["id"])
     assert after["last_requalified_at"] is None
-    assert after["requalification_source_json"] is None
+    assert after["requalification_source_json"] == before["requalification_source_json"]
+    assert json.loads(after["requalification_source_json"])["candidate_opportunity_context"]["source"]["id"] == candidate.id
     assert after["soft_expires_at"] == before["soft_expires_at"]
     assert after["hard_expires_at"] == before["hard_expires_at"]
 
@@ -658,7 +658,7 @@ def test_completed_reselection_after_soft_deadline_cannot_revive_attention():
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=start)
     counts = repo.reconcile_candidate_attention(
-        {generation["id"]},
+        {generation["id"]}, producer_scope="universe",
         eligible_identity_keys={("bitget", "BTC/USDT", "perp", "momentum", "long")},
         refresh_source={"scanner_run_id": "completed-too-late"},
         soft_lease_sec=900,
@@ -727,7 +727,7 @@ def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence()
     evicted_generation, _ = repo.ensure_candidate_planning_generation(evicted.id, now=start)
 
     assert repo.reconcile_candidate_attention(
-        {selected_generation["id"]},
+        {selected_generation["id"]}, producer_scope="universe",
         eligible_identity_keys=set(),
         refresh_source={"scanner_run_id": "failed"},
         soft_lease_sec=900,
@@ -737,7 +737,7 @@ def test_completed_refresh_terminal_reasons_require_exact_eligibility_evidence()
     assert repo.get_candidate_planning_generation(evicted_generation["id"])["attention_status"] == "active"
 
     counts = repo.reconcile_candidate_attention(
-        {selected_generation["id"]},
+        {selected_generation["id"]}, producer_scope="universe",
         eligible_identity_keys={("bitget", "ETH/USDT", "perp", "momentum", "short")},
         refresh_source={"scanner_run_id": "complete"},
         soft_lease_sec=900,

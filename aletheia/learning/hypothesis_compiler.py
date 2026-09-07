@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from math import isfinite
-from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,7 +12,6 @@ from aletheia.learning.hypotheses import (
     HypothesisResearchEvidenceV1,
     hypothesis_fingerprint,
 )
-from aletheia.learning.models import LearningExperiment
 from aletheia.learning.registry import get_learning_path
 from aletheia.learning.t0_context import T0FoundationAssessmentV1
 
@@ -226,82 +223,3 @@ def assess_experimentability(
         status=status,
         reasons=list(dict.fromkeys(reasons)),
     )
-
-
-def admit_nomination_to_shadow(
-    nomination_id: str,
-    preflight: ExperimentabilityPreflightV1,
-) -> LearningExperiment | None:
-    """Open one existing-ledger Shadow experiment only after viable preflight."""
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        if get_authority_source().source == "lab":
-            return None
-    except FileNotFoundError:
-        pass
-    except Exception as exc:
-        if "no such table: observation_authority_state" not in str(exc):
-            return None
-    from aletheia.learning.ledger import (
-        get_nomination,
-        get_open_experiment,
-        insert_experiment,
-    )
-    from aletheia.storage.repositories import transaction
-    from aletheia.storage.sqlite import get_db
-
-    if preflight.status not in {"ready", "slow_but_viable"}:
-        return None
-    nomination = get_nomination(nomination_id)
-    if nomination is None or nomination.get("publication_status") != "published":
-        return None
-    hypothesis_id = str(nomination.get("hypothesis_id") or "")
-    if not hypothesis_id or hypothesis_id != preflight.hypothesis_id:
-        return None
-
-    path = get_learning_path(preflight.path_id)
-    if not path.measurement_supported:
-        return None
-    with transaction(immediate=True):
-        hypothesis = get_db().execute(
-            "SELECT * FROM learning_hypotheses WHERE hypothesis_id=?",
-            (hypothesis_id,),
-        ).fetchone()
-        if hypothesis is None or str(hypothesis["path_id"]) != preflight.path_id:
-            return None
-        existing = get_open_experiment(hypothesis_id)
-        if existing is not None:
-            return LearningExperiment.model_validate(existing)
-        overlap = get_db().execute(
-            "SELECT 1 FROM learning_experiments e "
-            "JOIN learning_hypotheses h ON h.hypothesis_id=e.hypothesis_id "
-            "WHERE e.ended_at IS NULL AND h.overlap_group=? AND h.hypothesis_id!=? LIMIT 1",
-            (str(hypothesis["overlap_group"]), hypothesis_id),
-        ).fetchone()
-        if overlap is not None:
-            return None
-        experiment = LearningExperiment(
-            hypothesis_id=hypothesis_id,
-            stage="shadow",
-            assignment_salt=uuid4().hex,
-            allocation_pct=0.5,
-            min_samples_per_arm=preflight.required_samples_per_arm,
-            min_market_days=preflight.required_market_days,
-            primary_metric=path.metric_version,
-            promotion_gate_json=json.dumps({
-                "prospective_only": True,
-                "net_of_costs": True,
-                "preflight_status": preflight.status,
-            }, sort_keys=True),
-            harm_gate_json=str(hypothesis["harm_budget_json"]),
-            status="registered",
-        )
-        insert_experiment(experiment)
-        get_db().execute(
-            "UPDATE learning_hypotheses SET status='shadow', updated_at=? "
-            "WHERE hypothesis_id=? AND status='proposed'",
-            (experiment.created_at, hypothesis_id),
-        )
-        persisted = get_open_experiment(hypothesis_id)
-    return LearningExperiment.model_validate(persisted) if persisted is not None else None

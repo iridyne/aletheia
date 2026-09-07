@@ -100,12 +100,6 @@ def test_1215_allocator_validates_quota():
         resolve_family_quota(FakeCfg(), None)
 
 
-def test_1218_ranker_caps_legacy_negative_penalty():
-    """#1218: ranker defends against legacy negative config by clamping to zero."""
-    from aletheia.agents.paper_trader_ranker import _evaluate_guards_safe
-    # Would need full fixture setup; verifying the defensive clamp logic is present
-    # via code read is sufficient for this focused test
-    pass  # Defensive code added in ranker line 1225: max(0.0, float(cfg.max_score_penalty or 0))
 
 
 def test_1219_daemon_gate_failure_blocks_start(monkeypatch):

@@ -1,26 +1,6 @@
 from __future__ import annotations
 
 
-def test_candidate_supply_snapshot_empty_candidates_survives_event_write_failure(monkeypatch):
-    from aletheia.agent_shell.trading_context import _record_candidate_supply_snapshot
-    from aletheia.agent_shell import operator_store
-
-    def fail_create_event(**kwargs):  # noqa: ARG001
-        raise RuntimeError("db unavailable")
-
-    monkeypatch.setattr(operator_store, "create_event", fail_create_event)
-    layer = {
-        "executable_candidates": [],
-        "excluded_candidates_summary": [],
-    }
-
-    _record_candidate_supply_snapshot(layer)
-
-    supply = layer["candidate_supply"]
-    assert supply["executable_count"] == 0
-    assert supply["below_floor"] is True
-    assert supply["main_reason"] == "no_candidates"
-    assert supply["event_status"] == "not_persisted"
 
 
 def test_candidate_supply_drought_requires_two_consecutive_low_cycles():

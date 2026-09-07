@@ -1,20 +1,9 @@
-"""Regression tests for GET /api/analytics/learning-contribution.
-
-Issue #322: The route queried a non-existent `classification` column on
-`learning_contribution_verdicts` and silently converted the SQLite error
-into total=0 via `except Exception: pass`.
-
-Assertions:
-- Persisted verdict counts are returned by stored `verdict` value.
-- A schema/read failure cannot produce total=0 and exposes only a stable code.
-- GET causes no Learning table mutation.
-"""
+"""Current contribution cannot resurrect retired verdicts or hide unavailable reads."""
 
 from __future__ import annotations
 
 import pytest
 from pathlib import Path
-from types import SimpleNamespace
 
 
 def _setup_env(tmp_path: Path, monkeypatch) -> None:
@@ -55,8 +44,8 @@ def _insert_verdict(verdict_value: str, verdict_id: str | None = None) -> None:
 
 
 @pytest.mark.anyio
-async def test_verdicts_by_verdict_returned(tmp_path, monkeypatch):
-    """Real verdict rows must appear in by_verdict keyed by the stored verdict value."""
+async def test_retired_verdicts_are_not_current_lab_counts(tmp_path, monkeypatch):
+    """Historical verdict rows are not counted as current canonical Lab evidence."""
     _setup_env(tmp_path, monkeypatch)
     _insert_verdict("invalid", "exp-invalid")
     _insert_verdict("insufficient_data", "exp-insufficient")
@@ -70,134 +59,9 @@ async def test_verdicts_by_verdict_returned(tmp_path, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     verdicts = body["verdicts"]
-    assert verdicts["total"] == 2, f"expected 2 verdicts, got {verdicts['total']}"
-    by_verdict = {row["verdict"]: row["n"] for row in verdicts["by_verdict"]}
-    assert by_verdict.get("invalid") == 1
-    assert by_verdict.get("insufficient_data") == 1
-    assert "by_classification" not in verdicts, "stale key must not appear"
-
-
-@pytest.mark.anyio
-async def test_db_error_is_not_silently_zero(tmp_path, monkeypatch):
-    """A schema/read failure on the verdicts query must surface in the response, not return total=0."""
-    _setup_env(tmp_path, monkeypatch)
-
-    import aletheia.storage.sqlite as sq
-    real_get_db = sq.get_db
-
-    class _FailingConn:
-        def execute(self, sql, *args, **kwargs):
-            if "learning_contribution_verdicts" in sql:
-                raise Exception("simulated schema error")
-            return real_get_db().execute(sql, *args, **kwargs)
-
-        def __getattr__(self, name):
-            return getattr(real_get_db(), name)
-
-    monkeypatch.setattr(sq, "get_db", lambda: _FailingConn())
-
-    from httpx import ASGITransport, AsyncClient
-    from aletheia.server.app import app
-
-    # The route must not turn DB errors into zero. It exposes a stable code rather
-    # than returning raw exception text or local paths.
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.get("/api/analytics/learning-contribution")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["verdicts"]["total"] is None
-    assert body["verdicts"]["query_error"] == "read_failed"
-    assert body["legacy_query_errors"]["verdicts"] == "read_failed"
-    assert "simulated schema error" not in str(body)
-
-
-@pytest.mark.anyio
-async def test_legacy_activity_failures_are_distinct_from_empty_and_zero(
-    tmp_path, monkeypatch,
-):
-    _setup_env(tmp_path, monkeypatch)
-    import aletheia.storage.sqlite as sq
-    real_get_db = sq.get_db
-
-    class _FailingLegacyConn:
-        def execute(self, sql, *args, **kwargs):
-            if any(table in sql for table in (
-                "learning_exposures",
-                "learning_experiments",
-                "learning_lifecycle_events",
-            )):
-                raise RuntimeError("private legacy query failure")
-            return real_get_db().execute(sql, *args, **kwargs)
-
-        def __getattr__(self, name):
-            return getattr(real_get_db(), name)
-
-    monkeypatch.setattr(sq, "get_db", lambda: _FailingLegacyConn())
-    from httpx import ASGITransport, AsyncClient
-    from aletheia.server.app import app
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
-    ) as client:
-        response = await client.get("/api/analytics/learning-contribution")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["legacy_query_errors"] == {
-        "authority_applied": "read_failed",
-        "experiments_by_stage": "read_failed",
-        "exposures_by_path": "read_failed",
-        "lifecycle_event_n": "read_failed",
-    }
-    assert body["lifecycle_event_n"] is None
-    assert body["authority_applied"] == {
-        "treatment_n": None,
-        "applied_n": None,
-        "applied_rate": None,
-    }
-    assert "private legacy query failure" not in response.text
-
-
-@pytest.mark.anyio
-async def test_legacy_job_health_does_not_leak_raw_errors(tmp_path, monkeypatch):
-    _setup_env(tmp_path, monkeypatch)
-    import aletheia.learning.control as control
-    import aletheia.learning.read_models as read_models
-
-    raw = "/private/local/path: sqlite OperationalError"
-    monkeypatch.setattr(
-        control,
-        "get_learning_job_health",
-        lambda _job_id: SimpleNamespace(model_dump=lambda: {
-            "status": "degraded",
-            "last_error": raw,
-            "last_failure_reason": raw,
-        }),
-    )
-    monkeypatch.setattr(
-        read_models,
-        "build_learning_contribution_projection",
-        lambda: read_models.unavailable_learning_contribution_projection(
-            "projection_read_failed"
-        ),
-    )
-
-    from httpx import ASGITransport, AsyncClient
-    from aletheia.server.app import app
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://test",
-    ) as client:
-        response = await client.get("/api/analytics/learning-contribution")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert raw not in str(body)
-    assert all(
-        "last_error" not in health and "last_failure_reason" not in health
-        for health in body["job_health"].values()
-    )
+    assert verdicts["total"] is None
+    assert verdicts["by_verdict"] == []
+    assert body["availability"] == "unavailable"
 
 
 @pytest.mark.anyio
@@ -206,16 +70,17 @@ async def test_unavailable_projection_preserves_configured_freshness_threshold(
 ):
     _setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    import aletheia.learning.read_models as read_models
+    from aletheia.observation_lab.db import get_lab_db, reset_lab_db
+    from aletheia.storage.sqlite import get_db
 
     cfg = load_config()
     cfg.learning.evaluation_interval_minutes = 180
     save_config(cfg)
-    monkeypatch.setattr(
-        read_models,
-        "build_learning_contribution_projection",
-        lambda: (_ for _ in ()).throw(RuntimeError("private projection failure")),
-    )
+    reset_lab_db()
+    get_db().execute("UPDATE observation_authority_state SET authority_source='lab'")
+    lab = get_lab_db()
+    lab.execute("DROP TABLE observation_windows")
+    lab.commit()
 
     from httpx import ASGITransport, AsyncClient
     from aletheia.server.app import app
@@ -229,7 +94,8 @@ async def test_unavailable_projection_preserves_configured_freshness_threshold(
     assert response.status_code == 200
     assert body["availability"] == "unavailable"
     assert body["data_freshness"]["stale_after_sec"] == 21_600
-    assert "private projection failure" not in response.text
+    assert body["verdicts"]["total"] is None
+    assert "observation_windows" not in response.text
 
 
 @pytest.fixture

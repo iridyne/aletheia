@@ -25,7 +25,6 @@ _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 # remain finite because urllib rejects non-finite or non-positive deadlines.
 NotificationHour = Annotated[int, Field(ge=0, le=23)]
 WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
-UTAReadBoundary = Literal["legacy", "shadow_read", "uta_v1"]
 UTAGeneration = Annotated[int, Field(ge=0)]
 
 
@@ -278,11 +277,6 @@ class RuntimeConfig(BaseModel):
     # a manual `aletheia gateway restart`. The supervisor PID does not change, so
     # single-instance mutex (pidfile) is preserved. Set False before going live.
     auto_reload: bool = True
-    # Experimental PI runtime continuity. When false, the legacy update/gateway
-    # behavior stays the default; operator routes can still inspect recorded state.
-    runtime_continuity_enabled: bool = False
-    runtime_continuity_lock_ttl_sec: int = 300
-    runtime_continuity_shadow_port_offset: int = 100
 
 
 class ExchangeConfig(BaseModel):
@@ -314,9 +308,6 @@ class ExchangeConfig(BaseModel):
     #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
     #                  Experimental: Demo qualification required before any live use.
     bitget_profile: str = "classic_v2"
-    # Per-execution-mode UTA read selector. Missing entries are deliberately
-    # legacy until that exact account/profile generation is qualified.
-    uta_read_boundaries: dict[str, UTAReadBoundary] = Field(default_factory=dict)
     # Non-secret configuration component of the exact account generation.
     # Credential mutations carry a separate durable counter in secrets.enc.
     uta_account_config_generations: dict[str, UTAGeneration] = Field(default_factory=dict)
@@ -329,15 +320,12 @@ class ExchangeConfig(BaseModel):
             raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
         return v
 
-    @field_validator("uta_read_boundaries", "uta_account_config_generations")
+    @field_validator("uta_account_config_generations")
     @classmethod
     def _validate_uta_mode_keys(cls, value: dict) -> dict:
         if any(not isinstance(key, str) or not key.strip() for key in value):
-            raise ValueError("UTA account generation and boundary keys must be non-empty")
+            raise ValueError("UTA account generation keys must be non-empty")
         return value
-
-    def uta_read_boundary_for(self, execution_mode: str) -> UTAReadBoundary:
-        return self.uta_read_boundaries.get(execution_mode, "legacy")
 
     def uta_account_config_generation_for(self, execution_mode: str) -> int:
         return self.uta_account_config_generations.get(execution_mode, 0)
@@ -1464,10 +1452,6 @@ class TradingConfig(BaseModel):
         ge=EXECUTION_FEE_PCT_BOUNDS[0],
         le=EXECUTION_FEE_PCT_BOUNDS[1],
     )  # % fee per side — Bitget taker (0.06%); change to match your live exchange
-    # Minimum LLM confidence for paper_trader to open a position
-    # (high | medium | speculative). Below this, the opportunity is recorded but
-    # not traded.
-    min_confidence_to_trade: str = "medium"
     # Account-wide position adoption ("接管即纳管"). When ON, the periodic
     # reconcile job AUTO-ADOPTS external DEMO positions (positions on the demo
     # account that Aletheia did not open) into local management, and
@@ -1928,17 +1912,13 @@ class NewsConfig(BaseModel):
 class SerenityConfig(BaseModel):
     """Serenity Research school — long-horizon industrial-chain analyst lens.
 
-    Phase 3 (Option A, D5): promote theme → enqueue signal_pending PiDecisions
-    (PI remains sole trade-decision maker). auto_promote is default OFF;
-    manual-only promotion preserves the human-curator workflow.
+    Promotion publishes Candidates to the shared Entry Planner. Auto-promotion
+    is disabled by default; manual promotion retains the curator workflow.
     """
     enabled: bool = False
     auto_promote: bool = False
     min_score_for_pi: int = 72
-    # Phase 4 — long-horizon holding parameters. Wider than the short-term defaults
-    # because Serenity holdings are industrial-chain bets measured in weeks/months,
-    # not intraday swings.
-    stop_loss_pct: float = 8.0
+    # Holding horizon is independent of compiled entry-order expiry and stop geometry.
     max_hold_days: int = 90
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from unittest.mock import patch
 
 import pytest
 
@@ -38,101 +36,6 @@ def _decision(**overrides):
     }
     decision.update(overrides)
     return decision
-
-
-def test_new_opportunity_t0_forces_this_computation_snapshot(monkeypatch):
-    from aletheia.data.symbols import instrument_analysis_context
-    from aletheia.storage.models import UniverseFeatureSnapshot
-    from aletheia.universe import features, signal_emitter
-
-    valid_until = "2099-12-31T07:10:00+00:00"
-    computed = UniverseFeatureSnapshot(
-        id="feature-current",
-        asset_id="asset-btc-spot",
-        ts="2026-07-19T06:10:00+00:00",
-        rsi_14=61.0,
-        return_1h=2.5,
-        return_4h=4.0,
-    )
-    background = {
-        "version": "instrument-background/v1",
-        "status": "complete",
-        "venue": "fixture",
-        "symbol": "BTC/USDT",
-        "market_type": "spot",
-        "physical_market_type": "spot",
-        "asset_class": "crypto",
-        "product_kind": "crypto_spot",
-        "reference_asset": "BTC",
-        "relationship": "direct_asset",
-        "classification": {"source": "test_fixture"},
-    }
-    feature = {
-        "asset_id": computed.asset_id,
-        "symbol": "BTC/USDT",
-        "market_type": "spot",
-        "venue": "fixture",
-        "instrument_background": background,
-        "analysis_context": instrument_analysis_context(background),
-        "return_1h": computed.return_1h,
-        "return_4h": computed.return_4h,
-        "rsi_14": computed.rsi_14,
-        "funding_rate": None,
-        "scanner_direction": "long",
-        "last_price": 100.0,
-        "reasons": ["fresh move"],
-        # The ordinary <30 minute refresh suppression reused this durable row.
-        "feature_snapshot_id": "feature-previous",
-        # The emitter still needs the exact calculation that selected the member.
-        "_computed_feature_snapshot": computed,
-    }
-    member = {
-        "id": "member-current",
-        "symbol": "BTC/USDT",
-        "market_type": "spot",
-        # Momentum now produces a Setup.  This test exercises the unchanged
-        # non-Momentum Candidate evidence boundary.
-        "scanner_family": "volume",
-        "total_score": 65,
-        "venue": "fixture",
-        "instrument_background": background,
-        "analysis_context": instrument_analysis_context(background),
-        "expires_at": valid_until,
-        "entry_price_usd": 100.0,
-    }
-    persisted = []
-    opportunities = []
-    generations = []
-    monkeypatch.setattr(features, "_persist_feature_snapshot", persisted.append)
-    monkeypatch.setattr(
-        "aletheia.learning.opportunity_information_policy.ensure_opportunity_information_policy_epoch",
-        lambda: "epoch",
-    )
-
-    with patch.object(
-        signal_emitter.repo,
-        "find_opportunity_by_symbol_snapshot",
-        return_value=None,
-    ), patch.object(
-        signal_emitter.repo,
-        "insert_opportunity_generation",
-        side_effect=lambda opportunity, generation: opportunities.append(opportunity)
-        or generations.append(generation)
-        or opportunity,
-    ), patch.object(signal_emitter, "_record_emission_decision"), patch.object(
-        signal_emitter, "has_fresh_market_snapshot", return_value=True
-    ), patch.object(
-        signal_emitter, "lookup_factor_signal", return_value={"status": "watch"}
-    ):
-        assert signal_emitter.emit_deterministic_opportunities(
-            [member], "universe-current", [feature]
-        ) == 1
-
-    manifest = json.loads(opportunities[0].metadata)["evidence_manifest"]
-    assert persisted == [computed]
-    assert feature["feature_snapshot_id"] == computed.id
-    assert manifest["t0"]["feature_snapshot_id"] == computed.id
-    assert generations[0].motive_evidence["feature_snapshot_id"] == computed.id
 
 
 def test_serenity_trade_selects_namespace_before_uuid_lookup(monkeypatch):

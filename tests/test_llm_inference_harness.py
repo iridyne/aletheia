@@ -663,17 +663,17 @@ async def test_context_artifacts_link_to_exact_evaluation_call():
 
 
 @pytest.mark.asyncio
-async def test_operator_inference_records_existing_causal_identity_without_fabricating_proposal():
+async def test_inference_records_explicit_causal_identity_without_fabricating_proposal():
     from aletheia.agent_runtime.run_context import bind_economic_attribution
     from aletheia.agents import helpers
 
     provider = _RepairProvider([{"value": 3}])
     with (
         bind_economic_attribution(
-            logical_agent="pi_trading_decision",
+            logical_agent="portfolio_review",
             evaluation_id="operator_eval_exact",
             opportunity_id="opp-exact",
-            decision_id="pending-exact",
+            decision_id="position-review-exact",
             arbitrary_text="must-not-persist",
         ),
         patch.object(helpers, "get_provider_async", lambda _name: _make_async_provider(provider)),
@@ -683,20 +683,20 @@ async def test_operator_inference_records_existing_causal_identity_without_fabri
             "system",
             "user",
             schema=_ValueSchema,
-            caller="system_operator.assess_opportunity",
+            caller="agent_shell.portfolio_review",
         )
 
     assert error is None and data == {"value": 3}
     db = get_db()
     logical = db.execute(
-        "SELECT run_id,metadata_json FROM llm_inference_calls WHERE caller='system_operator.assess_opportunity'"
+        "SELECT run_id,metadata_json FROM llm_inference_calls WHERE caller='agent_shell.portfolio_review'"
     ).fetchone()
     assert logical is not None
     assert logical["run_id"] is None
     environment = json.loads(logical["metadata_json"])["environment"]
     assert environment["evaluation_id"] == "operator_eval_exact"
     assert environment["opportunity_id"] == "opp-exact"
-    assert environment["decision_id"] == "pending-exact"
+    assert environment["decision_id"] == "position-review-exact"
     assert "proposal_id" not in environment
     assert "arbitrary_text" not in environment
 
@@ -704,12 +704,12 @@ async def test_operator_inference_records_existing_causal_identity_without_fabri
         "SELECT run_id,opportunity_id,decision_id,proposal_id,metadata_json "
         "FROM runtime_cost_events WHERE call_id=("
         "SELECT logical_call_id FROM llm_inference_calls "
-        "WHERE caller='system_operator.assess_opportunity')"
+        "WHERE caller='agent_shell.portfolio_review')"
     ).fetchone()
     assert physical is not None
     assert physical["run_id"] is None
     assert physical["opportunity_id"] == "opp-exact"
-    assert physical["decision_id"] == "pending-exact"
+    assert physical["decision_id"] == "position-review-exact"
     assert physical["proposal_id"] is None
     metadata = json.loads(physical["metadata_json"])
     assert metadata["evaluation_id"] == "operator_eval_exact"

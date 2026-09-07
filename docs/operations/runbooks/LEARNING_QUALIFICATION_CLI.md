@@ -27,13 +27,9 @@ absolute path into another Runtime; it accepts only the corresponding relative
 document under the selected current data root. Hash conflicts remain
 unavailable rather than silently selecting file or database content.
 
-All output is JSON. `knowledge list` reports `current_qualified_n: 0` and
-`production_economic_contribution_state: none` when the Runtime has no current
-qualified positive fact. Paper test fixtures demonstrate code semantics only and
-are never production economic proof.
-
-Knowledge Yield keeps incompatible path, behavior, metric, outcome, and horizon
-identities in separate slices. Missing generation cost or root-outcome lineage is
-reported as partial coverage. Meta recommendations use only `EXTEND`, `REPLICATE`,
-`DIFFERENT_TEST`, `RETIRE`, or local `HOLD_INSUFFICIENT_EVIDENCE`; every result is
-advisory-only.
+All output is JSON. After the Lab-only cutover, current Economic Knowledge and
+Knowledge Yield report `unavailable` until canonical consumed-result evidence
+supports qualification. Historical positive verdicts remain evidence, not current
+qualified facts. Do not interpret the empty projection as zero economic effect.
+Nomination provenance remains readable; recommendations stay advisory-only.
+Paper fixtures demonstrate code semantics, never production economic proof.

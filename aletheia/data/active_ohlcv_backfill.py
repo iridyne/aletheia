@@ -24,6 +24,7 @@ from aletheia.storage import repositories as repo
 logger = logging.getLogger("aletheia.active_ohlcv_backfill")
 
 _TIMEFRAMES = ("1h", "4h")
+CANDIDATE_OHLCV_MAX_AGE_SEC = {"1h": 2 * 60 * 60, "4h": 8 * 60 * 60}
 _PARTIAL_RETRY_MINUTES = 60
 _FAILURE_BACKOFF_BASE_MINUTES = 15
 _FAILURE_BACKOFF_MAX_MINUTES = 6 * 60
@@ -91,17 +92,16 @@ def _parse_utc(value: str | None) -> datetime | None:
 
 
 def _active_instruments(member_limit: int = 50) -> list[tuple[InstrumentId, int]]:
-    """Resolve pending candidates first, then active Universe instruments."""
+    """Resolve current planning demand first, then active Universe instruments."""
     result: list[tuple[InstrumentId, int]] = []
     seen: set[str] = set()
     try:
-        from aletheia.data.candidate_market_facts import pending_candidate_instruments
-
-        for instrument in pending_candidate_instruments():
+        for asset in repo.list_candidate_planning_refresh_assets():
+            instrument = InstrumentId.from_parts(asset["venue"], asset["symbol"], asset["market_type"])
             seen.add(str(instrument))
             result.append((instrument, -1))
     except Exception:
-        logger.warning("Pending candidate OHLCV expansion failed", exc_info=True)
+        logger.warning("Planning OHLCV expansion failed", exc_info=True)
 
     for member in repo.get_active_universe_members(limit=member_limit):
         # Data coverage must precede and remain independent from execution
@@ -159,7 +159,6 @@ def plan_active_ohlcv_backfill(
         return []
     current = (now or _utcnow()).astimezone(timezone.utc)
     targets: list[CoverageTarget] = []
-    from aletheia.data.candidate_market_facts import CANDIDATE_OHLCV_MAX_AGE_SEC
 
     for instrument, rank in _active_instruments(member_limit=member_limit):
         for timeframe in _TIMEFRAMES:

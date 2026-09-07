@@ -60,7 +60,6 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
     spec.caller_id: spec
     for spec in (
         _spec("agent_shell.general_query", OutputMode.TEXT),
-        _spec("agent_shell.fast_trigger_authorizer", OutputMode.STRUCTURED),
         _spec("agent_shell.entry_planner", OutputMode.STRUCTURED),
         _spec(
             "agent_shell.entry_planner.v2",
@@ -90,10 +89,6 @@ CALLER_SPECS: dict[str, InferenceCallerSpec] = {
         _spec("agent_shell.portfolio_review", OutputMode.STRUCTURED),
         _spec("agent_shell.intent_classification", OutputMode.STRUCTURED),
         _spec("committee.llm_analysis", OutputMode.STRUCTURED),
-        _spec("system_operator.assess_opportunity", OutputMode.STRUCTURED),
-        _spec("system_operator.reassess_direct_skip", OutputMode.STRUCTURED),
-        _spec("system_operator.debate_bull", OutputMode.STRUCTURED),
-        _spec("system_operator.debate_bear", OutputMode.STRUCTURED),
         _spec("equity_observer.market_read", OutputMode.STRUCTURED),
         _spec("market_observer.market_read", OutputMode.STRUCTURED),
         _spec("prediction_observer.market_read", OutputMode.STRUCTURED),

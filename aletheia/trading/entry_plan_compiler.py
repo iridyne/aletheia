@@ -532,7 +532,15 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     if maker and ((direction == "long" and primary.price >= ask) or (direction == "short" and primary.price <= bid)):
         raise PlanIntentError("POST_ONLY_WOULD_CROSS")
     hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
+    source = context.candidate_opportunity_context["source"]
     updates = {
+        "source_kind": source["kind"],
+        "source_id": source["id"],
+        "trade_school": source["trade_school"],
+        "holding_horizon_hours": (
+            float(cfg.serenity.max_hold_days) * 24
+            if source["kind"] == "serenity" else base.expected_horizon_hours
+        ),
         "entry_zone": zone,
         "execution_mode": "TRIGGERED" if retrace else "RESTING_MAKER",
         "order_tactic": "POST_ONLY_LIMIT" if maker else "OPPOSING_BBO_IOC",
