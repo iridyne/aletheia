@@ -63,3 +63,27 @@ def test_empty_runtime_schema_retirement_and_baseline_do_not_recreate():
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not set(migrations._RETIRED_RUNTIME_TABLES) & tables
         assert migrations._legacy_baseline_implementation_checksum() == migrations._LEGACY_BASELINE_CHECKSUM
+
+
+def test_runtime_retirement_resolves_env_backup_and_allows_null_artifact(tmp_path, monkeypatch):
+    import aletheia.config.loader as loader
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
+    with sqlite3.connect(tmp_path / "app.db") as db:
+        db.execute("CREATE TABLE runtime_registry (runtime_id TEXT PRIMARY KEY, state TEXT, artifact_path TEXT)")
+        db.execute("INSERT INTO runtime_registry VALUES ('historical', 'current', NULL)")
+        for table in migrations._RETIRED_RUNTIME_TABLES[1:]:
+            db.execute(f'CREATE TABLE "{table}" (id TEXT PRIMARY KEY, payload TEXT)')
+            db.execute(f'INSERT INTO "{table}" VALUES (?, ?)', (table, "historical data"))
+        db.commit()
+
+        backup = BackupService(tmp_path).create_backup("runtime-retirement-env", profile="authoritative")
+        assert verify_backup(backup).recovery_eligible
+
+        monkeypatch.setenv("ALETHEIA_BACKUP_PATH", str(backup))
+        # backup_path is None, must resolve from ALETHEIA_BACKUP_PATH
+        migrations.retire_runtime_continuity_tables(db)
+
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert not set(migrations._RETIRED_RUNTIME_TABLES) & tables
