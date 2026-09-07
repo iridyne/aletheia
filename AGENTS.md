@@ -21,6 +21,33 @@ changes; stop if an invariant cannot be proved safely.
 - Never read, reveal, log, prompt, or commit credentials. Never invent healthy UI or runtime state; use `not available` or `not configured`.
 - Keep changes and verification proportional: one root cause and the smallest focused regression, with fail-closed handling at trust boundaries.
 
+### Convergence over compatibility (standing goal)
+
+One capability keeps exactly one live implementation. Backward compatibility is
+not a goal here and is the root cause of the dual mainlines this MVP is being
+hardened out of. When you find two implementations of one behaviour, converge
+them and **delete** the loser — do not add a bridge, a shim, an alias mirror, or
+a "soft deprecation".
+
+- `additive-only` constrains the **data layer** (migrations must not rewrite
+  history). It does not license a compatibility layer in the **code** layer.
+  A legacy read/write alias is not additive; it is a second authority.
+- A compatibility shim is a stopgap that must ship with the deletion that
+  retires it, or an Issue that owns the deletion. Never leave one as the end
+  state. If you add one to stop active bleeding, say so in the commit and name
+  the follow-up.
+- Retired mechanisms are deleted from code and moved to
+  [`docs/design/history/`](docs/design/history/), never left "in case".
+- Two implementations cannot be identified by keyword search. Read both and
+  prove they answer the same question before converging; two functions with
+  similar names may answer different questions (and two with different names may
+  be the same mainline).
+- Before judging a deletion to be a regression, read
+  [`docs/design/contracts/`](docs/design/contracts/) first — the calling code
+  alone will tell you the opposite of the truth. See
+  [`DEBUG_AUDIT_PLAYBOOK.md`](docs/governance/protocols/DEBUG_AUDIT_PLAYBOOK.md)
+  SOP-14.
+
 ## Environment and verification boundaries
 
 Use `uv run` for Python. macOS is development/control only; do not infer Fedora
