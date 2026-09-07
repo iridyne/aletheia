@@ -582,6 +582,37 @@ def test_candidate_preflight_preserves_smoke_stage_and_detail(tmp_path, monkeypa
     assert "workflow route mismatch" in error.value.detail
 
 
+def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from aletheia.update import auto, git_ops
+
+    root = tmp_path / "candidates"
+    monkeypatch.setattr(auto, "_paths", lambda: {"root": root})
+    monkeypatch.setattr(git_ops, "_git", lambda *_args: SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        auto,
+        "RestoreService",
+        lambda: SimpleNamespace(restore=lambda *_args: SimpleNamespace(success=True, errors=[])),
+    )
+    monkeypatch.setattr(auto, "_uv", lambda: pytest.fail("preflight must not resolve uv"))
+
+    calls = []
+    monkeypatch.setattr(
+        auto,
+        "_run",
+        lambda command, **kwargs: calls.append((command, kwargs)) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    worktree = auto._candidate_preflight("target_commit", tmp_path / "backup.tar")
+    assert worktree.is_dir()
+    assert len(calls) == 1
+    command, kwargs = calls[0]
+    assert command[0] == auto.sys.executable
+    assert command[1] == "-c"
+    assert kwargs["cwd"] == worktree
+    assert str(worktree) in kwargs["env"]["PYTHONPATH"]
+
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     from aletheia.update import auto
 
