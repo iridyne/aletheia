@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
+from aletheia.utils.dt import parse_utc
 from aletheia.economics.schema import ECONOMICS_SCHEMA_VERSION, ensure_economics_schema
 from aletheia.economics.tracing import list_cost_summary
 
@@ -266,18 +267,10 @@ def build_system_viability(
     return _persist(report) if persist else report
 
 
-def _parse_dt(value: Any) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _same_close_event(left: Any, right: Any, tolerance_sec: float = 1.0) -> bool:
-    left_dt, right_dt = _parse_dt(left), _parse_dt(right)
+    left_dt, right_dt = parse_utc(left), parse_utc(right)
     return bool(
         left_dt
         and right_dt
