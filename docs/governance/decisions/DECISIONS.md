@@ -891,3 +891,48 @@ is not the sole maintained surface.
 **Reason:** An update crosses the dashboard process boundary. The CLI can
 perform the checked update and controlled restart in one explicit command,
 including when the dashboard is unavailable or needs replacing.
+
+---
+
+## 2026-09-07 — Remote CI 维持 manual-only 是主动决策，不是遗留疏漏
+
+**Decision:** GitHub Actions 上的远程 CI 保持 `on: workflow_dispatch` 触发（manual-only）。
+不新增 push/PR 触发，不新增强制通过 CI 的 merge gate，不把"等 CI 绿"作为合并前提。
+
+**Reason:** CI 维护成本（self-hosted runner 管理、flakiness、与 macOS 开发环境的分歧、
+spec 套件的版本敏感性）已长期高于其收益。local preflight（`scripts/ci_preflight.py` /
+`scripts/ci_local.py`）覆盖了编译、契约和快速回归；Fedora 全量运行在 owner 显式请求时
+才值得启动。
+
+**Guardrail:**
+- 不得在 workflow 文件中把 `workflow_dispatch` 改为 `push`/`pull_request` 触发。
+- 不得添加要求 CI 状态通过的 branch protection rule。
+- "我想证明这个 PR 没问题"不是触发远程 CI 的授权——本地 preflight 是默认验证手段。
+- Agent 想运行远程 CI 时，必须有 owner 在当次任务中的显式指令；release/merge/部署意图
+  本身不构成授权。
+
+---
+
+## 2026-09-07 — Policy A（只增不减迁移）是数据层策略，不得扩散到代码层
+
+**Decision:** "Additive-Only Schema Migrations"（Policy A）仅约束 SQLite 数据层：已有列、
+表、索引只能新增，不能删除或重命名。该策略**不适用于代码层**：旧的代码实现在新实现存在后
+应被删除，而非保留为并行路径。
+
+**Reason:** #2945 之前积累的"双主线"（dual mainline）问题，根因就是把数据层迁移策略
+误用于代码层——新实现出现后旧实现没有删除，导致同一功能存在两套活跃路径，增加维护负担、
+制造语义分歧、产生大量向后兼容胶水代码。
+
+**How it works:**
+- **数据层（OK）**：`agent_runs` 表已有 `status TEXT` 列 → 新增 CHECK 约束、UNIQUE INDEX，
+  不删旧列。迁移只加不减，保证历史数据存活。
+- **代码层（必须替换）**：`update_agent_run(**kwargs)` 被 `claim_agent_run` /
+  `begin_agent_run` / `finish_agent_run` 替换后，旧函数应删除，而非并行保留。
+  两套函数并存就是双主线。
+
+**Guardrail:**
+- 新代码实现上线后，若旧实现已无 caller，立即删除，不留"万一有人用"的空实现。
+- `kwargs` 泛型接口（`update_X(**kwargs)`）是双主线的早期征兆：它使调用方可以绕过
+  新专用函数，间接保留旧路径。发现时应视为技术债提 Issue，不应任其积累。
+- 向后兼容胶水（re-export、shim、alias）只允许在跨服务 API 边界存在，且必须有明确的
+  删除计划（Issue + 里程碑）；repo 内部模块间禁止。
