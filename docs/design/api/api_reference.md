@@ -432,11 +432,8 @@ be interpreted as zeroing spendable balance or equity. See also
 | POST | `/bitget/test-connection` | Test Bitget API connectivity |
 | POST | `/bitget/test-candidate` | Test candidate credentials before saving |
 | GET | `/binance/credentials-status` | Binance credentials status |
-| GET | `/binance-testnet/credentials-status` | Binance testnet status |
 | POST | `/settings/binance-credentials` | Save Binance credentials |
-| POST | `/settings/binance-testnet-credentials` | Save Binance testnet credentials |
 | POST | `/binance/test-connection` | Test Binance connectivity |
-| POST | `/binance-testnet/test-connection` | Test Binance testnet |
 | POST | `/binance/test-candidate` | Test candidate Binance credentials |
 | GET | `/okx/credentials-status` | OKX credentials status |
 | POST | `/settings/okx-credentials` | Save OKX credentials |
