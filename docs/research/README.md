@@ -61,6 +61,18 @@ Research files are evidence, audits, and explorations. They can guide work but d
   durable stage visibility, and restart reconciliation without a generic job
   framework.
 
+- [Backend state, authority, and production-parity audit — 2026-09-06](audits/BACKEND_STATE_AUTHORITY_PRODUCTION_PARITY_AUDIT_2026-09-06.md)
+  identifies the shared ownership failure behind weak lifecycle boundaries,
+  distributed authority enforcement, and test/production semantic drift; it records
+  evidence and dependency-ordered repair contracts without changing Runtime behavior.
+- [Dual-mainline convergence plan — 2026-09-07](audits/DUAL_MAINLINE_CONVERGENCE_PLAN_2026-09-07.md)
+  measures the red baseline #2945 left, disposes of four divergent branches against
+  content evidence, and orders the ownership and dual-mainline work by lever rather
+  than by list. It also records two findings that only appeared while executing it:
+  two reported P1 defects were misdiagnosed (one would have blocked candidate
+  selection if "fixed"), and closing a status vocabulary requires enumerating the
+  values stored rows already hold — six were missing, each named by a read path.
+
 ## Agent Rule
 
 Use research to find evidence and hypotheses. If a conclusion becomes authoritative, promote it into `design/`, `product/`, `governance/`, or `operations/`.
