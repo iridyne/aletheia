@@ -319,11 +319,18 @@ def _iso(days_ago: int) -> str:
         _CONTRACT,
         "§11 UI/API honesty",
         "L2c",
-        "Learning alpha reports raw events separately from unique cohorts and bases confidence on unique outcomes.",
-        status="partial",
+        "Learning alpha derives sample confidence ONLY from persisted canonical Lab "
+        "measurements. Duplicate lessons and closed trades — however many — cannot "
+        "manufacture a sample size, and the absence of a Lab measurement is reported as "
+        "insufficient_data with an explicit reason rather than a computed verdict. "
+        "Contract Delta (2026-09-07, learning_contract.md preamble): the Phase 0 "
+        "lesson/trade-derived alpha with its raw/unique/duplicate event counts is "
+        "retired — Observation Lab is the only online Experiment authority and legacy "
+        "ledgers are never an executable fallback.",
+        status="implemented",
     )
 )
-def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts(monkeypatch):
+def test_learning_alpha_cannot_manufacture_confidence_from_duplicate_lessons(monkeypatch):
     import aletheia.analytics.alpha_attribution as alpha_attribution
     from aletheia.storage.sqlite import get_db
 
@@ -349,13 +356,36 @@ def test_learning_alpha_deduplicates_duplicate_lessons_and_reports_raw_counts(mo
     db.commit()
 
     learning = alpha_attribution.build_alpha_attribution_audit(days=30)["verdicts"]["learning"]
-    assert learning["sample_size"] == 5
-    assert learning["details"]["raw_event_count"] == 6
-    assert learning["details"]["unique_event_count"] == 1
-    assert learning["details"]["duplicate_event_count"] == 5
-    assert learning["details"]["unique_after_sample_size"] == 5
+
+    # 6 duplicate applied lessons over one shared source_id, plus 10 closed
+    # positions, are deliberately adversarial input. None of it may become sample
+    # confidence: the only admissible evidence is a persisted Lab measurement.
+    assert learning["sample_size"] == 0
     assert learning["contribution_verdict"] == "insufficient_data"
-    assert learning["measurement_status"] == "directional_evidence_only"
+    assert learning["evidence_type"] == "canonical_lab_measurements"
+    assert learning["details"]["measurements"] == []
+    # The reason must name the real blocker. Missing Lab authority is reported as
+    # unavailable (learning_contract.md preamble: "Missing authority is
+    # unavailable."), never as a computed neutral/negative verdict.
+    assert learning["details"]["unavailable_reason"] in {
+        "experiment_authority_unavailable",
+        "no_persisted_lab_measurement",
+        "current_consumed_settled_proof_unavailable",
+    }, learning["details"]["unavailable_reason"]
+    assert learning["reason"] == learning["details"]["unavailable_reason"]
+
+    # The retired Phase 0 derivation must not come back: these keys existed only
+    # while alpha was computed from the ps_lessons/trade join.
+    for retired_key in (
+        "raw_event_count",
+        "unique_event_count",
+        "duplicate_event_count",
+        "unique_after_sample_size",
+    ):
+        assert retired_key not in learning["details"], (
+            f"{retired_key} is back — learning alpha is deriving confidence from "
+            "legacy lesson/trade rows instead of persisted Lab measurements"
+        )
 
 
 def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
