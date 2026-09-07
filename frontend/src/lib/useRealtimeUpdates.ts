@@ -28,10 +28,14 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   // ── Alert tier (100 ms — highest priority) ───────────────────────────────
   infra_events: [
     ['infra-events'],
+    ['health'],
+    ['ui-shell-bootstrap'],
   ],
   collector_error: [
     ['collector-health'],
     ['market-data-coverage'],
+    ['health'],
+    ['ui-shell-bootstrap'],
   ],
   // ── Core trading ──────────────────────────────────────────────────────────
   agent_runs: [
@@ -68,6 +72,8 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   collector_health: [
     ['collector-health'],
     ['market-data-coverage'],
+    ['health'],
+    ['ui-shell-bootstrap'],
   ],
   macro_snaps: [
     ['macro'],
@@ -82,6 +88,8 @@ const CHANGE_MAP: Record<string, readonly QueryKeyPrefix[]> = {
   // ── Operator / runtime ────────────────────────────────────────────────────
   heartbeats: [
     ['operator-status'],
+    ['health'],
+    ['ui-shell-bootstrap'],
   ],
 
   // ── Research / signals ────────────────────────────────────────────────────

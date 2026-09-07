@@ -102,8 +102,6 @@ type SystemDetail = 'collectors' | 'coverage' | 'mode' | null
 function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap; coverage?: MarketDataCoverageReport; coverageError?: boolean }) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState<SystemDetail>(null)
-  const scheduler = shell?.scheduler
-  const runtime = shell?.runtime
   const exchange = shell?.exchange
   const exchangeDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
   const exchangeAligned = exchange?.status === 'aligned'
@@ -150,27 +148,36 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const coverageValue = coverageReport
     ? `${coverageReport.fresh_count}/${coverageReport.domain_count} current`
     : coverageError ? 'not available' : 'deferred'
-  const modelProvider = shell?.operator?.model_provider || 'not available'
-  const bootCommit = runtime?.boot_commit || ''
-  const currentCommit = runtime?.current_commit || ''
-  const codeDrift = !!bootCommit && !!currentCommit && bootCommit !== currentCommit
   const healthIssues = sortedIssues(parseAllIssues(shell?.health?.issues || []))
   const toggle = (detail: Exclude<SystemDetail, null>) => setExpanded(value => value === detail ? null : detail)
+  const pipelineTone: Light = coverageError || !collectorHealth
+    ? 'muted'
+    : collectorState === 'degraded' || (coverageReport && coverageReport.critical_problem_count > 0)
+      ? 'yellow'
+      : collectorHealth.status === 'attention' || collectorHealth.status === 'initializing'
+        ? 'yellow'
+        : 'green'
+  const pipelineLabel = coverageError || !collectorHealth
+    ? 'UNAVAILABLE'
+    : collectorState === 'degraded' || (coverageReport && coverageReport.critical_problem_count > 0)
+      ? 'DEGRADED'
+      : collectorHealth.status === 'attention'
+        ? 'ATTENTION'
+        : collectorHealth.status === 'initializing'
+          ? 'INITIALIZING'
+          : 'OPERATIONAL'
   return (
-    <Card className="rail-card system-panel">
-      <div className="mb-2"><h3>System</h3></div>
+    <Card className="rail-card system-panel data-pipeline-panel">
+      <div className="pipeline-head">
+        <h3>Data Pipeline</h3>
+        <StatusText tone={pipelineTone}>{pipelineLabel}</StatusText>
+      </div>
       <table className="status-board"><tbody>
-        <StatusRow label="Gateway" light={shell?.gateway?.running ? (shell.gateway.paused ? 'yellow' : 'green') : !shell ? 'muted' : 'red'} value={shell ? (shell.gateway?.paused ? 'paused' : 'running') : 'not available'} />
-        <StatusRow label="Scheduler" light={scheduler?.running ? 'green' : scheduler ? 'yellow' : 'muted'} value={scheduler?.state || 'not available'} />
-        <StatusRow label="Connectivity" light={connectivityTone(shell?.connectivity?.state)} value={shell?.connectivity?.state || 'deferred'} title={shell?.connectivity?.reason || undefined} />
         <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => navigate('/settings?tab=execution')} title={exchangeDiverged ? 'Execution and market-data exchanges are intentionally split.' : exchangeLabel} externalLink />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
         {collectorHealth && collectorHealth.status !== 'healthy' && expanded !== 'collectors' && <tr className="status-detail-row"><td colSpan={2}><div className="system-inline-detail"><CollectorHealthDetails health={collectorHealth} mode="compact" /></div></td></tr>}
         <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
-        <StatusRow label="Model" light="muted" value={modelProvider} onClick={() => navigate('/settings?tab=agent')} externalLink />
-        <StatusRow label="Mode" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'KILL SWITCH' : shell?.live?.enabled ? `Live: ${humanize(shell?.live?.state || 'active')}` : humanize(shell?.permission?.mode || 'Paper')} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />
-        <StatusRow label="Code" light={!bootCommit ? 'muted' : codeDrift ? 'yellow' : 'green'} value={bootCommit ? bootCommit.slice(0, 12) : 'not available'} title={bootCommit ? (codeDrift ? `Running commit: ${bootCommit}. Checked-out commit: ${currentCommit}.` : `Running backend commit: ${bootCommit}`) : 'Running commit is not available.'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
-        <StatusRow label="Runtime" light="muted" value={runtime?.mode || 'not available'} onClick={() => navigate('/settings?tab=runtime')} externalLink />
+        <StatusRow label="Execution" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'KILL SWITCH' : shell?.live?.enabled ? `Live: ${humanize(shell?.live?.state || 'active')}` : humanize(shell?.permission?.mode || 'Paper')} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />
       </tbody></table>
       <AnimatedSection open={expanded === 'collectors'}>
         {collectorHealth?.domains?.length ? <CollectorHealthDetails health={collectorHealth} mode="full" /> : <p className="text-muted text-sm" role="status">Collector diagnostics not available.</p>}

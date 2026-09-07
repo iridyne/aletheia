@@ -1,7 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import CollectorHealthDetails from './CollectorHealthDetails'
 import type { RealtimeStatus } from '../lib/useRealtimeUpdates'
 import type { ShellBootstrap } from '../api/boot'
 import type { InfraEvent } from '../types'
@@ -80,14 +79,17 @@ export default function StatusCluster({
 
   // Keep the cold graph small: the old popover's detail fan-out starts only
   // when an operator actually hovers or focuses the status cluster.
-  const detailOptions = { enabled: detailsRequested, staleTime: 15_000 }
+  const detailOptions = {
+    enabled: detailsRequested,
+    staleTime: popoverOpen ? 1_500 : 5_000,
+    refetchInterval: popoverOpen ? 2_000 : 8_000,
+  }
   const statusQuery = useQuery({ queryKey: ['status'], queryFn: api.getStatus, ...detailOptions })
   const operatorQuery = useQuery({ queryKey: ['operator-status'], queryFn: api.getOperatorStatus, ...detailOptions })
   const killSwitchQuery = useQuery({ queryKey: ['kill-switch'], queryFn: api.getKillSwitch, ...detailOptions })
   const runsQuery = useQuery({ queryKey: ['agent-runs'], queryFn: api.getAgentRuns, ...detailOptions })
   const healthQuery = useQuery({ queryKey: ['health'], queryFn: api.getHealth, ...detailOptions })
   const infraEventsQuery = useQuery({ queryKey: ['infra-events'], queryFn: api.getInfraEvents, ...detailOptions })
-  const collectorHealthQuery = useQuery({ queryKey: ['collector-health'], queryFn: api.getCollectorHealth, ...detailOptions })
   const riskQuery = useQuery({ queryKey: ['risk-status'], queryFn: api.getRiskStatus, ...detailOptions })
 
   const status = statusQuery.data
@@ -135,10 +137,17 @@ export default function StatusCluster({
     (_opDaemon && typeof _opDaemon === 'object' && 'evaluating' in _opDaemon)
       ? Boolean(_opDaemon.evaluating)
       : undefined
+  const activeBlockingHealthIssues = healthIssues.filter(
+    issue => !issue.startsWith('code_updated_pending_restart:') &&
+             !issue.startsWith('observer_stale:') &&
+             !issue.startsWith('observer_initializing') &&
+             issue !== 'candidate_progress_unavailable'
+  )
   const operatorTradingBlocked = (
     operatorStatus === 'online' &&
     operatorDaemonEvaluating === false &&
-    operatorCurrentIntent.toLowerCase().includes('gateway health issue')
+    operatorCurrentIntent.toLowerCase().includes('gateway health issue') &&
+    activeBlockingHealthIssues.length > 0
   )
   const healthState = String(healthQuery.data?.status || data?.health?.status || '')
   const master = deriveMasterState({
@@ -325,64 +334,28 @@ export default function StatusCluster({
           aria-labelledby={popoverId + '-title'}
           tabIndex={-1}
         >
-          <div id={popoverId + '-title'} className="status-popover-title">System Status</div>
+          <div id={popoverId + '-title'} className="status-popover-title">System Diagnostics</div>
 
           <div className="sp-section">
+            <div className="sp-section-label">Services & Connectivity</div>
             <div className="sp-row"><span className={`dot dot-${gwLight}`} /><span className="sp-label">Gateway</span><span className="sp-value">{running ? (paused ? 'paused' : 'running') : 'stopped'}</span></div>
             <div className="sp-row"><span className={`dot dot-${schedulerLight}`} /><span className="sp-label">Scheduler</span><span className="sp-value">{schedulerState}</span></div>
-            <div className="sp-row"><span className={`dot dot-${liveLight}`} /><span className="sp-label">Live</span><span className="sp-value">{live.replace('live_', '')}</span></div>
-            <div className="sp-row"><span className={`dot dot-${killLight}`} /><span className="sp-label">Kill Switch</span><span className="sp-value">{killed ? 'engaged' : 'inactive'}</span></div>
-            {healthIssues.length > 0 && (
-              <div className="sp-issues">
-                {healthIssues.map(issue => {
-                  const parsed = parseHealthIssue(issue)
-                  return (
-                    <div key={issue} className="sp-issue-row" title={parsed.key} aria-label={`${parsed.label}: ${parsed.detail || parsed.hint}`}>
-                      <span className={`sp-issue-icon sp-issue-${parsed.severity}`}>⚠</span>
-                      <div className="sp-issue-body">
-                        <div className="sp-issue-title"><span className="sp-issue-label">{parsed.label}</span>{parsed.value && <span className="sp-issue-value">{parsed.value}</span>}</div>
-                        {parsed.hint && <span className="sp-issue-hint">{parsed.hint}</span>}
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="sp-section">
-            <div className="sp-section-label">Infrastructure</div>
             <div className="sp-row"><span className={`dot dot-${connectivityLight}`} /><span className="sp-label">Connectivity</span><span className="sp-value">{connectivityState}</span></div>
             <div className="sp-row"><span className={`dot dot-${realtimeTone}`} /><span className="sp-label">Realtime transport</span><span className="sp-value">{realtime.state}{realtime.lastFrameAt && ` · last ${fmtEventTime(new Date(realtime.lastFrameAt).toISOString())}`}{(realtime.malformedFrameCount > 0 || realtime.unknownCategoryCount > 0) && ` · ${realtime.malformedFrameCount} malformed · ${realtime.unknownCategoryCount} unknown`}</span></div>
-            <div className="sp-row"><span className="sp-label">Exchange</span><span className="sp-value">{exchangeLabel(data, status)}</span></div>
-            <div className="sp-row"><span className="sp-label">Worker / Trading permission</span><span className="sp-value">{permission || 'not available'}</span></div>
-            <div className="sp-row"><span className="sp-label">Operator permission</span><span className="sp-value">{operatorPermission || 'not available'}</span></div>
-            {(status?.model_provider || operator?.model_provider) && <div className="sp-row"><span className="sp-label">Model</span><span className="sp-value">{status?.model_provider || operator?.model_provider}</span></div>}
-            {collectorHealthQuery.data && <CollectorHealthDetails health={collectorHealthQuery.data} mode="compact" />}
             {detailsRequested && statusQuery.isPending && <div className="sp-row"><span className="sp-label">Diagnostics</span><span className="sp-value">loading…</span></div>}
             {detailsRequested && statusQuery.isError && <div className="sp-row"><span className="sp-label">Diagnostics</span><span className="sp-value">not available</span></div>}
           </div>
 
-          {recentInfraEvents.length > 0 && (
-            <div className="sp-section">
-              <div className="sp-section-label">Infra Events</div>
-              <div className="sp-events">
-                {recentInfraEvents.map((event, index) => (
-                  <div key={`${event.created_at}-${event.code}-${index}`} className="sp-event-row">
-                    <span className={`sp-issue-icon sp-issue-${eventTone(event)}`}>⚠</span>
-                    <div className="sp-event-main">
-                      <div className="sp-event-header"><span className="sp-event-code">{event.code}</span>{event.created_at && <span className="sp-event-ts">{fmtEventTime(event.created_at)}</span>}</div>
-                      <span className="sp-event-message">{event.message}</span>
-                      {event.action && <span className="sp-event-action">{event.action}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="sp-section">
+            <div className="sp-section-label">Trading Authority & Safety</div>
+            <div className="sp-row"><span className={`dot dot-${liveLight}`} /><span className="sp-label">Live</span><span className="sp-value">{live.replace('live_', '')}</span></div>
+            <div className="sp-row"><span className={`dot dot-${killLight}`} /><span className="sp-label">Kill Switch</span><span className="sp-value">{killed ? 'engaged' : 'inactive'}</span></div>
+            <div className="sp-row"><span className="sp-label">Worker / Trading permission</span><span className="sp-value">{permission || 'not available'}</span></div>
+            <div className="sp-row"><span className="sp-label">Operator permission</span><span className="sp-value">{operatorPermission || 'not available'}</span></div>
+          </div>
 
           <div className="sp-section">
-            <div className="sp-section-label">Operator</div>
+            <div className="sp-section-label">Operator Agent</div>
             <div className="sp-row"><span className="sp-label">Status</span><span className="sp-value">{opDisplay.state}{operatorStatus === 'stale' && <span className="sp-stale-hint"> — heartbeat delayed; usually self-recovers in 1–2 min. If stuck, restart the gateway.</span>}</span></div>
             {opDisplay.blockedDetail && <div className="sp-blocked-detail">{opDisplay.blockedDetail}</div>}
             {operatorTradingBlocked && <div className="sp-blocked-detail">Not evaluating signals — gateway health issue. {operatorCurrentIntent && <span className="sp-value-muted">{operatorCurrentIntent}</span>}</div>}
@@ -393,6 +366,42 @@ export default function StatusCluster({
             {latestRun && <div className="sp-row"><span className="sp-label">Last Run</span><span className="sp-value">{latestRun.agent_name}</span></div>}
             {operator?.last_error && <div className="sp-row"><span className="sp-issue-icon sp-issue-red">⚠</span><span className="sp-issue-label">{operator.last_error}</span></div>}
           </div>
+
+          {(healthIssues.length > 0 || recentInfraEvents.length > 0) && (
+            <div className="sp-section">
+              <div className="sp-section-label">Health & Events</div>
+              {healthIssues.length > 0 && (
+                <div className="sp-issues">
+                  {healthIssues.map(issue => {
+                    const parsed = parseHealthIssue(issue)
+                    return (
+                      <div key={issue} className="sp-issue-row" title={parsed.key} aria-label={`${parsed.label}: ${parsed.detail || parsed.hint}`}>
+                        <span className={`sp-issue-icon sp-issue-${parsed.severity}`}>⚠</span>
+                        <div className="sp-issue-body">
+                          <div className="sp-issue-title"><span className="sp-issue-label">{parsed.label}</span>{parsed.value && <span className="sp-issue-value">{parsed.value}</span>}</div>
+                          {parsed.hint && <span className="sp-issue-hint">{parsed.hint}</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {recentInfraEvents.length > 0 && (
+                <div className="sp-events">
+                  {recentInfraEvents.map((event, index) => (
+                    <div key={`${event.created_at}-${event.code}-${index}`} className="sp-event-row">
+                      <span className={`sp-issue-icon sp-issue-${eventTone(event)}`}>⚠</span>
+                      <div className="sp-event-main">
+                        <div className="sp-event-header"><span className="sp-event-code">{event.code}</span>{event.created_at && <span className="sp-event-ts">{fmtEventTime(event.created_at)}</span>}</div>
+                        <span className="sp-event-message">{event.message}</span>
+                        {event.action && <span className="sp-event-action">{event.action}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
         </div>
       </div>

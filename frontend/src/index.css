@@ -491,7 +491,7 @@ table, code, .mono, .badge, .topbar-status { font-feature-settings: 'tnum' 1, 'c
 }
 .sp-row .dot { flex-shrink: 0; align-self: center; }
 .sp-label {
-  width: 80px; flex-shrink: 0;
+  width: 95px; flex-shrink: 0;
   color: var(--muted); font-size: 0.7rem; font-weight: 500;
 }
 .sp-value {
@@ -2615,14 +2615,14 @@ button.market-instrument-group-title { font-family: inherit; }
 
 
 /* System status board — tabular, old-school console feel with status lights */
-.status-board { width: 100%; }
+.status-board { width: 100%; border-collapse: separate; border-spacing: 0 2px; }
 .status-board th {
   font-weight: 500; color: var(--muted); font-size: 0.76rem; text-align: left;
-  padding: var(--space-1) var(--space-2) var(--space-1) 0; white-space: nowrap; width: 1%;
+  padding: var(--space-1) var(--space-2) var(--space-1) 4px; white-space: nowrap; width: 1%;
 }
-.status-board td { padding: var(--space-1) 0; }
+.status-board td { padding: var(--space-1) 4px var(--space-1) 0; }
 .status-cell { display: flex; align-items: center; gap: var(--space-2); overflow: hidden; }
-.status-board .status-cell { padding-left: 4px; }
+.status-board .status-cell { padding-left: 2px; }
 .status-value {
   font-family: var(--mono); font-size: 0.78rem; color: var(--text);
   min-width: 0; flex: 1 1 0; white-space: normal; overflow-wrap: anywhere;
@@ -2639,32 +2639,36 @@ button.market-instrument-group-title { font-family: inherit; }
 /* Settings — display decimals input */
 
 /* Collector health — clickable status row affordance */
-.status-row-clickable { cursor: pointer; user-select: none; }
+.status-row-clickable {
+  cursor: pointer; user-select: none;
+  transition: background 120ms ease;
+}
 .status-row-clickable:hover th,
-.status-row-clickable:hover td { background: var(--surface-raised); }
+.status-row-clickable:hover td { background: var(--surface-2); }
+.status-row-clickable:hover th { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.status-row-clickable:hover td { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
 .status-row-chevron {
-  /* Sized to visually match .status-value (0.78rem) so the affordance
-     doesn't look like a stray typo next to it. Slightly less faint
-     than --faint (which vanishes on the surface-2 hover state); still
-     dimmer than the row's mono value so the value stays the focus. */
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   color: var(--muted);
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 4px;
   line-height: 1;
-  /* Fixed glyph box so the three characters (→ ▶ ▼) land in the same
-     right-edge column across rows even though they have different
-     intrinsic widths in the sans-serif font. */
   min-width: 12px;
   text-align: center;
+  opacity: 0.6;
+  transition: opacity 120ms ease, color 120ms ease;
 }
-.status-row-clickable:hover .status-row-chevron { color: var(--text); }
+.status-row-clickable:hover .status-row-chevron { color: var(--text); opacity: 1; }
 .status-row-clickable:focus-visible th,
 .status-row-clickable:focus-visible td { outline: 1px solid var(--accent); outline-offset: -1px; }
 
 .system-inline-detail {
-  padding: 0 var(--space-2) var(--space-1);
+  margin: 4px 0 6px 2px;
+  padding: 6px 10px;
+  background: rgba(245, 185, 66, 0.06);
+  border: 1px solid rgba(245, 185, 66, 0.2);
+  border-radius: var(--r-sm);
 }
 .status-detail-row td { padding: 0; border-bottom: 0; }
 .overview-health-issues {
@@ -2673,6 +2677,20 @@ button.market-instrument-group-title { font-family: inherit; }
   border-top: 1px dashed var(--border);
   max-height: 180px;
   overflow-y: auto;
+}
+/* Data Pipeline Panel header */
+.pipeline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.pipeline-head h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
 }
 
 /* CollapsibleSection uses inline styles — no CSS class needed. */
