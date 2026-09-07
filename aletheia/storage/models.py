@@ -115,6 +115,14 @@ AgentRunStatus = Literal[
     "stale",
     "cancelled",
     "rejected_queue_full",
+    # Historical terminals with no writer left, kept legal so the CHECK migration
+    # runs on real data while no transition can produce them. The read paths
+    # still classify all three: run_view.FAILED_AGENT_RUN_STATUSES has "error",
+    # run_view.SUCCESS_AGENT_RUN_STATUSES has "success", and
+    # health._FAILED_STATUSES adds "cancel_requested".
+    "error",
+    "cancel_requested",
+    "success",
 ]
 
 

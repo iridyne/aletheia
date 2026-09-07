@@ -295,7 +295,7 @@ def test_operator_cost_rows_use_half_open_adjacent_windows():
     for run_id, started_at in runs:
         db.execute(
             "INSERT INTO agent_runs "
-            "(id,agent_name,permission_mode,started_at) VALUES (?,?,?,?)",
+            "(id,agent_name,permission_mode,started_at,status) VALUES (?,?,?,?,'completed')",
             (run_id, "system_operator", "Paper", started_at),
         )
         _insert_known_llm_cost(

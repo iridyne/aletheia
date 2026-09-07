@@ -7887,6 +7887,11 @@ def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
         "stale",
         "cancelled",
         "rejected_queue_full",
+        # Historical terminals the read paths still classify (run_view.py,
+        # health.py). Rejecting them here would fail-close a real upgrade.
+        "error",
+        "cancel_requested",
+        "success",
     )
     placeholders = ",".join("?" for _ in allowed)
     invalid = db.execute(
@@ -7928,7 +7933,8 @@ def _apply_agent_run_lifecycle_v75(db: sqlite3.Connection) -> None:
                 ended_at TEXT,
                 status TEXT NOT NULL DEFAULT 'running' CHECK(status IN (
                     'queued','running','completed','completed_with_errors','failed',
-                    'timed_out','stale','cancelled','rejected_queue_full'
+                    'timed_out','stale','cancelled','rejected_queue_full',
+                    'error','cancel_requested','success'
                 )),
                 model_provider TEXT,
                 model_name TEXT,
