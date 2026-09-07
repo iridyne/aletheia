@@ -805,43 +805,6 @@ def evaluate_observation(
     return
 
 
-def _latest_lab_evaluation(observation_id: str) -> dict | None:
-    from aletheia.observation_lab.db import readonly_lab_db
-
-    try:
-        with readonly_lab_db(allow_missing=True) as db:
-            if db is None:
-                return None
-            lookup_generation = None
-            lookup_id = observation_id
-            if ":g" in observation_id and observation_id.rsplit(":g", 1)[1].isdigit():
-                lookup_id, raw_generation = observation_id.rsplit(":g", 1)
-                lookup_generation = int(raw_generation)
-            if lookup_generation is None:
-                rows = db.execute(
-                    "SELECT observation_id, generation FROM observation_windows "
-                    "WHERE observation_id=? OR substr(observation_id,1,?)=? "
-                    "ORDER BY observation_id, generation DESC",
-                    (lookup_id, len(lookup_id), lookup_id),
-                ).fetchall()
-            else:
-                rows = db.execute(
-                    "SELECT observation_id, generation FROM observation_windows "
-                    "WHERE observation_id=? AND generation=?",
-                    (lookup_id, lookup_generation),
-                ).fetchall()
-            if len(rows) != 1:
-                return None
-            row = db.execute(
-                "SELECT * FROM observation_evaluations WHERE observation_id=? AND generation=? "
-                "ORDER BY created_at DESC, evaluation_id DESC LIMIT 1",
-                (rows[0]["observation_id"], rows[0]["generation"]),
-            ).fetchone()
-            return dict(row) if row else None
-    except Exception:
-        return None
-
-
 @observe_app.command("register")
 def register(
     spec_path: Path = typer.Argument(
@@ -1515,24 +1478,3 @@ def _collect_overview(*, equivalence_limit: int = 5) -> dict:
         "checkpoint": checkpoint_payload,
         "bridge": bridge,
     }
-
-
-def _find_observation(observation_id: str) -> dict | None:
-    """Resolve an id or unique prefix to a single observation row."""
-    from aletheia.storage import repositories as repo
-
-    matches = [
-        row for row in repo.list_filter_shadow_experiments(limit=1000)
-        if row["id"] == observation_id or row["id"].startswith(observation_id)
-    ]
-    if not matches:
-        typer.echo(f"no observation matches {observation_id!r}", err=True)
-        return None
-    if len(matches) > 1:
-        typer.echo(
-            f"prefix {observation_id!r} is ambiguous — "
-            f"matches {[m['id'][:12] for m in matches]}",
-            err=True,
-        )
-        return None
-    return matches[0]

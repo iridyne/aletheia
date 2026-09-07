@@ -221,27 +221,6 @@ def run_preflight_checks() -> PreflightResult:
     return result
 
 
-def log_preflight_result(result: PreflightResult):
-    """将预检结果输出到日志（用于 CI/调试）。"""
-    if result.passed and not result.has_warnings:
-        logger.info("Preflight checks: ALL PASS")
-        return
-
-    if result.has_warnings:
-        logger.warning("Preflight checks: WARNINGS detected")
-        for check in result.warnings():
-            logger.warning(f"  [{check.name}] {check.message}")
-            if check.remedy:
-                logger.warning(f"    Fix: {check.remedy}")
-
-    if not result.passed:
-        logger.error("Preflight checks: FAILURES detected")
-        for check in result.failures():
-            logger.error(f"  [{check.name}] {check.message}")
-            if check.remedy:
-                logger.error(f"    Fix: {check.remedy}")
-
-
 def assert_preflight_or_exit(result: PreflightResult):
     """如果预检失败，打印报告并退出进程（用于 CLI 启动）。"""
     if result.passed:

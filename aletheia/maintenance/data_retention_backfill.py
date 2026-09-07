@@ -160,17 +160,6 @@ def _db_size_mb(path: Path) -> float:
     return path.stat().st_size / (1024 * 1024)
 
 
-def _iso_from_migration_completed(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    value = payload.get("completed_at") if isinstance(payload, dict) else None
-    return str(value) if value else None
-
-
 # --- Retention plan construction ------------------------------------------
 
 def _build_plan(args: argparse.Namespace) -> BackfillPlan:

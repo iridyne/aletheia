@@ -157,18 +157,3 @@ async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
 
         return await OKXClient.load_demo_markets()
     return load_venue_capabilities(execution_mode)
-
-
-def get_supported_symbols(
-    execution_mode: str,
-    market_type: str = "usdt_futures",
-) -> frozenset | None:
-    """Return canonical symbols known for ``execution_mode`` and market type."""
-    capabilities = load_venue_capabilities(execution_mode)
-    if capabilities is None:
-        return None
-    if execution_mode == "okx_demo":
-        key = "spot" if market_type == "spot" else "swap"
-    else:
-        key = market_type
-    return capabilities.get(key, frozenset())

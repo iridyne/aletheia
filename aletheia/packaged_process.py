@@ -41,36 +41,6 @@ def gateway_runner_command(
     return command
 
 
-def uvicorn_command(
-    app: str,
-    *,
-    real_python: str,
-    host: str,
-    port: int,
-    log_level: str,
-    loop: str = "none",
-) -> list[str]:
-    """Return an uvicorn child command without assuming the payload is Python."""
-
-    prefix = (
-        [sys.executable, "__packaged_uvicorn"]
-        if is_frozen_runtime()
-        else [real_python, "-m", "uvicorn"]
-    )
-    return [
-        *prefix,
-        app,
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--log-level",
-        log_level,
-        "--loop",
-        loop,
-    ]
-
-
 def packaged_child_environment(base: dict[str, str] | None = None) -> dict[str, str]:
     """Preserve the packaged-mode marker for frozen child processes."""
 

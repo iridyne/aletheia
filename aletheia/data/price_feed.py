@@ -698,34 +698,6 @@ def get_price_for_pnl(symbol: str) -> float | None:
     return float(snap["price"]) if snap else None
 
 
-def get_price_for_risk(symbol: str) -> float | None:
-    """Conservative price for risk checks.
-
-    When the cache entry came from a fallback source, also checks the SQLite
-    snapshot (5-min cadence, possibly CCXT-sourced). Returns whichever is more
-    conservative (higher value — worst-case for position sizing).
-    """
-    meta = get_cached_price_with_meta(symbol)
-    cache_price = meta["price"] if meta else None
-    cache_provider = (meta.get("provider") or "unknown") if meta else "unknown"
-
-    if cache_price is None:
-        from aletheia.trading.market_data import latest_snapshot
-        snap = latest_snapshot(symbol)
-        return float(snap["price"]) if snap else None
-
-    if cache_provider in _PRIMARY_EXCHANGE_PROVIDERS:
-        return cache_price
-
-    # Fallback source — cross-check with SQLite snapshot for conservatism.
-    from aletheia.trading.market_data import latest_snapshot
-    snap = latest_snapshot(symbol)
-    snap_price = float(snap["price"]) if snap else None
-    if snap_price is None:
-        return cache_price
-    return max(cache_price, snap_price)
-
-
 def get_price_for_liquidation(symbol: str) -> float | None:
     """Exchange mark price for liquidation estimation.
 
