@@ -321,7 +321,9 @@ class AgentShellRuntime:
 
             response = await synthesize_answer(result, text, ctx)
 
-            action = self._build_action(intent.command, result)
+            from aletheia.agent_shell.executor import build_action
+
+            action = build_action(intent.command)
             record_command(session_id, intent.command, intent.parameters, True, response[:200])
             close_session(session_id, intent=intent.command, command=intent.command,
                           response=response, permitted=True, start_time=start_time)
@@ -373,11 +375,3 @@ class AgentShellRuntime:
             f"For more specific information, try asking about system status, "
             f"agent activity, market prices, or positions."
         )
-
-    def _build_action(self, command: str, result: dict) -> dict | None:
-        """Build frontend action hint for commands that have side effects."""
-        if command == "pause_agents":
-            return {"type": "state_change", "key": "paused", "value": True}
-        if command == "resume_agents":
-            return {"type": "state_change", "key": "paused", "value": False}
-        return None
