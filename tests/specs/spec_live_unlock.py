@@ -605,7 +605,7 @@ def test_ui_warning_wall_three_elements():
 def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
     from types import SimpleNamespace
 
-    from aletheia.agent_shell import commands
+    import aletheia.config.loader as config_loader_mod
     from aletheia.trust import live_unlock as live_unlock_mod
 
     cfg = SimpleNamespace(
@@ -616,15 +616,13 @@ def test_unlocked_state_selects_live_mode_for_new_proposal(monkeypatch):
         ),
         live=SimpleNamespace(state="live_limited", unlock_evidence={"ok": True}),
     )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
-    # `current_authorization_ref` is unit-under-test's proof of authority.
-    # The join itself is what LU-C07 asserts; the ref's internal derivation is
-    # covered by evidence_matches_config's own tests.
+    monkeypatch.setattr(config_loader_mod, "load_config", lambda: cfg)
     monkeypatch.setattr(
         live_unlock_mod, "current_authorization_ref", lambda _cfg: "sha256:live-ok"
     )
 
-    assert commands._configured_paper_execution_mode() == "okx_live_limited"
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    assert resolve_selected_execution_mode() == "okx_live_limited"
 
 
 def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
@@ -632,7 +630,7 @@ def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
     keep the configured paper mode. Fail-closed by default (#1004 EX-04)."""
     from types import SimpleNamespace
 
-    from aletheia.agent_shell import commands
+    import aletheia.config.loader as config_loader_mod
     from aletheia.trust import live_unlock as live_unlock_mod
 
     cfg = SimpleNamespace(
@@ -643,9 +641,10 @@ def test_locked_state_keeps_paper_mode_on_new_proposal(monkeypatch):
         ),
         live=SimpleNamespace(state="live_limited", unlock_evidence=None),
     )
-    monkeypatch.setattr(commands.config_loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(config_loader_mod, "load_config", lambda: cfg)
     monkeypatch.setattr(
         live_unlock_mod, "current_authorization_ref", lambda _cfg: None
     )
 
-    assert commands._configured_paper_execution_mode() == "okx_demo"
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+    assert resolve_selected_execution_mode() == "okx_demo"

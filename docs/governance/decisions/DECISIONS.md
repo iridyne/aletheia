@@ -1,5 +1,48 @@
 # Architecture Decision Log
 
+## 2026-09-07 — measurement_unsupported 是路径固有状态，判定必须早于 Lab authority 探测
+
+### Context
+
+`learning/experiments.py` 的 `_resolve_numeric_via_observation_lab()` 是 numeric 与
+boolean treatment 的唯一入口。它先探测 canonical Lab authority，authority 不可读或不是
+`lab` 时返回 `authority_source_unavailable`。
+
+问题出在 `measurement_supported=False` 的 path 上。`learning/registry.py` 里
+`measurement_supported` 默认 `False`，`operator_learning_bundle`、`policy epoch anchor`
+等都属于这一类。这些 path 按设计永远不会挂 hypothesis / experiment / exposure，因此**根本
+不需要 Lab authority**。但因为 authority 探测在前，它们在无 Lab 环境下报的是
+`authority_source_unavailable`。
+
+`docs/design/proposals/learning_observability.md` §8.3 是这里的 golden standard：
+
+> A path with `measurement_supported=false` cannot create a formal hypothesis,
+> experiment, or exposure. Its consumer receives the declared static fallback with
+> `measurement_unsupported`.
+
+两个 reason 的运维含义相反：`authority_source_unavailable` 暗示"Lab 挂了，去修"，是短暂且
+可行动的；`measurement_unsupported` 是永久设计状态，无需任何行动。Learning Observability
+的 Contribution tab 要把 `measurement_supported=false` 显示为**显式状态**，报错误 reason
+会让该面板长期显示一个不存在的故障。
+
+### Decisions
+
+1. `measurement_supported` 判定前移到 authority 探测之前，unsupported path 直接返回静态
+   baseline + `measurement_unsupported`。
+2. 不吞 `get_learning_path()` 的 `KeyError`。未声明的 path 是编程错误，必须由 allowlist
+   抛出，不能降级成一个 reason code。
+3. 不引入第二个"unsupported"reason，也不在消费者侧做 reason 翻译。reason 是单一权威，
+   产生它的地方负责给对。
+
+### Consequences
+
+- 无 Lab 环境下，unsupported path 不再伪报 authority 故障；Contribution tab 的显式状态
+  与实际 reason 一致。
+- unsupported path 少一次 authority 读取；这是副作用而非目的，判定顺序由语义决定而不是性能。
+- `measurement_supported=True` 的 path 行为完全不变，authority 仍是它们的硬门。
+
+---
+
 ## 2026-07-11 — 回放只负责提出候选，独立前瞻样本才负责验证
 
 ### Context

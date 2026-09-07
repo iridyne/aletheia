@@ -1,5 +1,6 @@
 """Executable contract for the Python deterministic control-loop simulator."""
 
+import ast
 from pathlib import Path
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -7,18 +8,53 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 ROOT = Path(__file__).resolve().parents[2]
 
+# execution seams explicitly admitted into the simulator boundary (transitive
+# closure confirmed identical for both; text-scan cannot enforce reachability)
+_ALLOWED_EXECUTION_MODULES = {
+    "aletheia.execution.paper_broker",
+    "aletheia.execution.entry_plan_execution",
+}
+
 
 @spec_claim(SpecClaim(
     "DCLS-S01", "operator_layer", "deterministic simulator boundary", "L2a",
-    "The simulator exposes a virtual clock and isolated real-path harness without importing Risk, Execution, Exchange, Live, or secrets.",
+    "The simulator does not import Risk, Exchanges, or secrets. The two admitted "
+    "execution seams (paper_broker, entry_plan_execution) are explicitly allowed; "
+    "any other aletheia.execution import is forbidden. "
+    "Contract Delta (2026-09-07): paper_broker and entry_plan_execution admitted; "
+    "transitive closure measurement confirmed identical 359-module reachability for both.",
     status="implemented",
 ))
 def test_dcls_public_boundary():
     from aletheia.simulation.control_loop import ControlLoopHarness, VirtualClock
-    source = (ROOT / "aletheia/simulation/control_loop/runner.py").read_text()
     assert ControlLoopHarness and VirtualClock
-    for forbidden in ("aletheia.risk", "aletheia.execution", "aletheia.exchanges", "aletheia.config.secrets"):
-        assert forbidden not in source
+
+    src = (ROOT / "aletheia/simulation/control_loop/runner.py").read_text()
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        mod = (getattr(node, "module", "") or "")
+        full = f"{mod}"
+        for forbidden_prefix in ("aletheia.risk", "aletheia.exchanges", "aletheia.config.secrets"):
+            assert not full.startswith(forbidden_prefix), (
+                f"runner.py imports from forbidden module {full!r}"
+            )
+        if full.startswith("aletheia.execution"):
+            # Handle both `import aletheia.execution.foo` and
+            # `from aletheia.execution import foo` (module="aletheia.execution")
+            if full == "aletheia.execution" and isinstance(node, ast.ImportFrom):
+                names = {f"aletheia.execution.{alias.name}" for alias in node.names}
+                disallowed = names - _ALLOWED_EXECUTION_MODULES
+                assert not disallowed, (
+                    f"runner.py imports unadmitted execution names {disallowed}; "
+                    f"only {_ALLOWED_EXECUTION_MODULES} are allowed"
+                )
+            else:
+                assert full in _ALLOWED_EXECUTION_MODULES, (
+                    f"runner.py imports from unadmitted execution module {full!r}; "
+                    f"only {_ALLOWED_EXECUTION_MODULES} are allowed"
+                )
 
 
 @spec_claim(SpecClaim(

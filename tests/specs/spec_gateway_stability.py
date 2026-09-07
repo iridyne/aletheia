@@ -123,6 +123,7 @@ def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
 class _Resp:
     def __init__(self, content, completion_tokens=10):
         self.content = content
+        self.usage = {"output_tokens": completion_tokens}
         self.raw = {"usage": {"completion_tokens": completion_tokens}}
 
 
