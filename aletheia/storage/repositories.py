@@ -581,28 +581,6 @@ def has_audit_event(*, event_type: str, entity_id: str) -> bool:
     return row is not None
 
 
-def candidate_selection_epoch_is_admitted(policy_epoch_id: str) -> bool:
-    """Return whether the epoch's latest committed authority transition admits it."""
-
-    row = get_db().execute(
-        "SELECT event_type FROM audit_events WHERE event_type IN ("
-        "'candidate_selection_authority_admitted', "
-        "'candidate_selection_authority_rolled_back') AND (entity_id=? OR "
-        "CASE WHEN event_type='candidate_selection_authority_admitted' "
-        "AND json_valid(after_state) THEN json_extract(after_state, "
-        "'$.candidate_selection_policy_epoch') END=? OR "
-        "CASE WHEN event_type='candidate_selection_authority_rolled_back' "
-        "AND json_valid(before_state) THEN json_extract(before_state, "
-        "'$.candidate_selection_policy_epoch') END=?) "
-        "ORDER BY timestamp DESC, rowid DESC LIMIT 1",
-        (policy_epoch_id, policy_epoch_id, policy_epoch_id),
-    ).fetchone()
-    return bool(
-        row
-        and row["event_type"] == "candidate_selection_authority_admitted"
-    )
-
-
 def list_audit_events(
     limit: int = 50, event_type: str | None = None,
 ) -> list[dict]:
@@ -943,39 +921,6 @@ def insert_opportunity_generation(
     return stored
 
 
-def insert_opportunity_validity_assessment(
-    assessment: OpportunityEntryValidityAssessment,
-) -> bool:
-    """Append one immutable assessment; an exact replay is idempotent."""
-
-    try:
-        evidence = json.loads(assessment.evidence_json)
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
-        raise ValueError("Opportunity validity evidence is invalid") from exc
-    canonical = json.dumps(evidence, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    if canonical != assessment.evidence_json or expected != assessment.evidence_hash:
-        raise ValueError("Opportunity validity evidence hash mismatch")
-    data = assessment.model_dump()
-    columns = ", ".join(data)
-    placeholders = ", ".join("?" for _ in data)
-    cursor = execute_write(
-        f"INSERT OR IGNORE INTO opportunity_entry_validity_assessments ({columns}) VALUES ({placeholders})",
-        tuple(data.values()),
-    )
-    return cursor.rowcount == 1
-
-
-def list_opportunity_validity_assessments(opportunity_id: str) -> list[dict]:
-    return _select_all(
-        "opportunity_entry_validity_assessments",
-        where="opportunity_id=?",
-        params=(opportunity_id,),
-        order="observed_at ASC, rowid ASC",
-        limit=1_000,
-    )
-
-
 def list_opportunities(limit: int = 50) -> list[dict]:
     return _select_all("opportunities", limit=limit)
 
@@ -992,34 +937,6 @@ def get_opportunity_by_setup(setup_id: str) -> dict | None:
 
 def get_universe_setup(setup_id: str) -> dict | None:
     return _select_one("universe_setups", setup_id)
-
-
-
-
-def get_conditional_entry_authorization(setup_id: str) -> dict | None:
-    row = (
-        get_db()
-        .execute(
-            "SELECT * FROM conditional_entry_authorizations WHERE setup_id=? LIMIT 1",
-            (setup_id,),
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
-
-
-
-
-def get_fast_trigger_market_snapshot(setup_id: str) -> dict | None:
-    row = (
-        get_db()
-        .execute(
-            "SELECT * FROM fast_trigger_market_snapshots WHERE setup_id=? LIMIT 1",
-            (setup_id,),
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
 
 
 def list_opportunity_instruments() -> list[dict]:
@@ -1072,20 +989,6 @@ def list_opportunities_for_instrument(
         where="symbol = ? AND market = ?",
         params=(symbol, market),
         order="created_at DESC, rowid DESC",
-        limit=limit,
-    )
-
-
-def list_open_opportunities(limit: int = 50) -> list[dict]:
-    """Return a bounded FIFO working set without reviewed-history crowd-out.
-
-    Oldest-first ordering guarantees repeated bounded runs advance an existing
-    backlog even while newer Opportunities continue to arrive.
-    """
-    return _select_all(
-        "opportunities",
-        where="status = 'open'",
-        order="created_at ASC, rowid ASC",
         limit=limit,
     )
 
@@ -1296,39 +1199,6 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
         sql += " AND market = ?"
         params.append(market)
     sql += " LIMIT 1"
-    row = db.execute(sql, params).fetchone()
-    return dict(row) if row else None
-
-
-def find_live_opportunity_by_symbol_direction(
-    symbol: str,
-    direction: str,
-    market: str | None = None,
-) -> dict | None:
-    """Return the most-recent live (open or queued, non-expired) opportunity for
-    a given symbol+direction+market combination.
-
-    Used by the signal emitter to suppress duplicate emissions when a live candidate
-    for the same symbol+direction already occupies the evaluation queue (#326).
-    ``valid_until IS NULL`` rows are treated as never-expiring and always considered
-    live (paranoid fail-safe: better to suppress one extra signal than to flood the
-    queue).
-    """
-    db = get_db()
-    sql = (
-        "SELECT * FROM opportunities "
-        "WHERE symbol = ? AND direction_bias = ? "
-        "AND status IN ('open','queued') "
-        "AND (valid_until IS NULL OR datetime(valid_until) > datetime('now'))"
-    )
-    params: list = [symbol, direction]
-    if market:
-        sql += " AND market = ?"
-        params.append(market)
-    # A queued carrier owns admission even if a newer analytical open
-    # generation exists during snapshot publication. Prefer that durable owner
-    # so replacement cannot silently bypass it.
-    sql += " ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1"
     row = db.execute(sql, params).fetchone()
     return dict(row) if row else None
 
@@ -3484,26 +3354,6 @@ def list_positions_for_path_observation_recovery() -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def get_observed_position_ids_for_bucket(position_ids: Sequence[str], *, bucket_open_ms: int) -> set[str]:
-    """Return candidate Position IDs already observed for one bucket."""
-
-    observed: set[str] = set()
-    for offset in range(0, len(position_ids), 400):
-        chunk = position_ids[offset : offset + 400]
-        placeholders = ",".join("?" for _ in chunk)
-        rows = (
-            get_db()
-            .execute(
-                "SELECT position_id FROM position_path_observations "
-                f"WHERE bucket_open_ms=? AND position_id IN ({placeholders})",
-                (bucket_open_ms, *chunk),
-            )
-            .fetchall()
-        )
-        observed.update(str(row["position_id"]) for row in rows)
-    return observed
-
-
 def get_position_path_bucket_state(
     position_ids: Sequence[str],
 ) -> dict[str, dict[str, set[int]]]:
@@ -4820,26 +4670,6 @@ def get_exit_breakeven_shadow_outcome(position_id: str) -> dict | None:
         .fetchone()
     )
     return dict(row) if row is not None else None
-
-
-def list_exit_breakeven_shadow_outcomes(limit: int = 1000) -> list[dict]:
-    if limit < 1 or limit > 10000:
-        raise ValueError("limit must be between 1 and 10000")
-    rows = (
-        get_db()
-        .execute(
-            "SELECT outcome.*, assignment.direction, assignment.market_type, "
-            "assignment.treatment_id, assignment.code_commit, position.close_reason "
-            "FROM exit_breakeven_shadow_outcomes AS outcome "
-            "JOIN exit_breakeven_shadow_assignments AS assignment "
-            "ON assignment.position_id=outcome.position_id "
-            "LEFT JOIN positions AS position ON position.id=outcome.position_id "
-            "ORDER BY outcome.settled_at DESC LIMIT ?",
-            (limit,),
-        )
-        .fetchall()
-    )
-    return [dict(row) for row in rows]
 
 
 def list_exit_breakeven_shadow_report_rows(
@@ -7835,32 +7665,6 @@ def sync_universe_assets(
     return len(rows), other, stale
 
 
-def deactivate_universe_assets_not_in_venue(active_venue: str) -> int:
-    """Mark all registry rows from other venues as inactive."""
-    db = get_db()
-    was_in_tx = db.in_transaction
-    result = execute_write(
-        "UPDATE universe_registry SET status='inactive' WHERE venue != ? AND status='active'",
-        (active_venue,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return result.rowcount
-
-
-def deactivate_stale_universe_assets(venue: str, cutoff_iso: str) -> int:
-    """Mark registry rows for this venue not seen since cutoff as inactive."""
-    db = get_db()
-    was_in_tx = db.in_transaction
-    result = execute_write(
-        "UPDATE universe_registry SET status='inactive' WHERE venue = ? AND status='active' AND last_seen_at < ?",
-        (venue, cutoff_iso),
-    )
-    if not was_in_tx:
-        db.commit()
-    return result.rowcount
-
-
 def list_universe_assets(
     venue: str | None = None,
     active_only: bool = True,
@@ -7965,23 +7769,6 @@ def universe_twin_shadow_capture_due(
     return _universe_twin_shadow_capture_due_from_latest(
         captured_at,
         latest,
-        min_interval_sec=min_interval_sec,
-    )
-
-
-def relative_rank_shadow_capture_due(
-    captured_at: str,
-    *,
-    min_interval_sec: int = 55 * 60,
-) -> bool:
-    row = (
-        get_db()
-        .execute("SELECT captured_at FROM universe_relative_rank_shadow_batches ORDER BY captured_at DESC LIMIT 1")
-        .fetchone()
-    )
-    return _universe_twin_shadow_capture_due_from_latest(
-        captured_at,
-        str(row["captured_at"]) if row else None,
         min_interval_sec=min_interval_sec,
     )
 
@@ -10511,21 +10298,6 @@ def list_watchable_entry_plans_page(
     )
 
 
-def has_current_entry_plan_for_instrument(venue: str, symbol: str, market_type: str, direction: str) -> bool:
-    row = (
-        get_db()
-        .execute(
-            "SELECT 1 FROM entry_plans ep "
-            "JOIN candidate_planning_generations pg ON pg.id=ep.planning_generation_id "
-            "WHERE pg.is_current=1 AND ep.venue=? AND ep.symbol=? "
-            "AND ep.market_type=? AND ep.direction=? LIMIT 1",
-            (venue, symbol, market_type, direction),
-        )
-        .fetchone()
-    )
-    return row is not None
-
-
 def transition_entry_plan(
     plan_id: str,
     *,
@@ -11204,33 +10976,6 @@ def list_universe_discovery_benchmarks(limit: int = 20) -> list[dict]:
     )
 
 
-def update_universe_discovery_benchmark(window_id: str, **updates) -> dict:
-    allowed = {
-        "status", "invalidated_at", "invalidation_reason", "aborted_at", "abort_reason",
-        "finalized_at", "summary_json", "artifact_path", "artifact_sha256", "artifact_size",
-        "capture_count", "last_capture_at",
-    }
-    unknown = set(updates) - allowed
-    if unknown:
-        raise ValueError(f"unknown benchmark update fields: {sorted(unknown)}")
-    if not updates:
-        row = get_universe_discovery_benchmark(window_id)
-        if row is None:
-            raise KeyError(window_id)
-        return row
-    with transaction(immediate=True):
-        cur = execute_write(
-            f"UPDATE universe_discovery_benchmarks SET {', '.join(f'{key}=?' for key in updates)} WHERE id=?",
-            [*updates.values(), window_id],
-        )
-        if cur.rowcount != 1:
-            raise KeyError(window_id)
-    row = get_universe_discovery_benchmark(window_id)
-    if row is None:
-        raise RuntimeError("benchmark update disappeared")
-    return row
-
-
 def invalidate_universe_discovery_benchmark(
     window_id: str, *, reason: str, at: str,
 ) -> bool:
@@ -11238,19 +10983,6 @@ def invalidate_universe_discovery_benchmark(
         cur = execute_write(
             "UPDATE universe_discovery_benchmarks SET status='invalidated', "
             "invalidated_at=?, invalidation_reason=? "
-            "WHERE id=? AND status='active'",
-            (at, reason, window_id),
-        )
-        return bool(cur.rowcount == 1)
-
-
-def abort_universe_discovery_benchmark(
-    window_id: str, *, reason: str, at: str,
-) -> bool:
-    with transaction(immediate=True):
-        cur = execute_write(
-            "UPDATE universe_discovery_benchmarks SET status='aborted', "
-            "aborted_at=?, abort_reason=? "
             "WHERE id=? AND status='active'",
             (at, reason, window_id),
         )
@@ -11410,25 +11142,6 @@ def list_pending_universe_discovery_outcomes(before_ts: str, limit: int = 200) -
         order="due_at ASC, id ASC",
         limit=limit,
     )
-
-
-def finalize_universe_discovery_benchmark(
-    window_id: str,
-    *,
-    finalized_at: str,
-    summary_json: str,
-    artifact_path: str,
-    artifact_sha256: str,
-    artifact_size: int,
-) -> bool:
-    with transaction(immediate=True):
-        cur = execute_write(
-            "UPDATE universe_discovery_benchmarks SET status='finalized', finalized_at=?, "
-            "summary_json=?, artifact_path=?, artifact_sha256=?, artifact_size=? "
-            "WHERE id=? AND status='active'",
-            (finalized_at, summary_json, artifact_path, artifact_sha256, artifact_size, window_id),
-        )
-        return bool(cur.rowcount == 1)
 
 def list_pending_filter_candidate_outcomes(
     before_ts: str,
@@ -11792,19 +11505,6 @@ def insert_controller_recommendation(rec: dict) -> None:
     _insert("controller_recommendations", rec)
 
 
-def list_controller_recommendations(limit: int = 200, run_id: str | None = None) -> list[dict]:
-    """Most recent recommendations, optionally scoped to one observe run."""
-    if run_id:
-        return _select_all(
-            "controller_recommendations",
-            where="run_id = ?",
-            params=(run_id,),
-            order="created_at DESC",
-            limit=limit,
-        )
-    return _select_all("controller_recommendations", order="created_at DESC", limit=limit)
-
-
 def latest_controller_run_id() -> str | None:
     """run_id of the most recent observe cycle, or None if the table is empty."""
     db = get_db()
@@ -11857,30 +11557,6 @@ def update_filter_shadow_experiment(experiment_id: str, **values) -> None:
     )
     if not was_in_tx:
         db.commit()
-
-
-def insert_filter_shadow_evaluation(evaluation: dict) -> None:
-    if _canonical_lab_authority():
-        raise RuntimeError("observation_lab_authority_required")
-    db = get_db()
-    was_in_tx = db.in_transaction
-    _insert("filter_shadow_evaluations", evaluation)
-    if not was_in_tx:
-        db.commit()
-
-
-def latest_filter_shadow_evaluation(experiment_id: str) -> dict | None:
-    if _canonical_lab_authority():
-        return None
-    row = (
-        get_db()
-        .execute(
-            "SELECT * FROM filter_shadow_evaluations WHERE experiment_id=? ORDER BY created_at DESC LIMIT 1",
-            (experiment_id,),
-        )
-        .fetchone()
-    )
-    return dict(row) if row else None
 
 
 # Observation Lab v1 (Issue #1072): ``filter_shadow_frozen_units`` lives in the
@@ -12861,17 +12537,6 @@ def insert_options_structure_snapshot(data: dict) -> None:
     _insert("options_market_structure_snapshots", data)
 
 
-def latest_options_structure(symbol: str) -> dict | None:
-    rows = _select_all(
-        "options_market_structure_snapshots",
-        where="symbol = ?",
-        params=(symbol,),
-        order="observed_at DESC",
-        limit=1,
-    )
-    return rows[0] if rows else None
-
-
 def batch_options_structures(symbols: list[str]) -> dict[str, dict]:
     """Return {symbol: latest_row} for each symbol that has data."""
     if not symbols:
@@ -13323,24 +12988,6 @@ def scan_orphan_session_ids() -> dict:
         }
     except Exception as e:
         return {"error": str(e), "total_orphan_refs": 0, "by_table": {}, "orphan_session_ids": []}
-
-
-def prune_backtest_trades(days: int = 60) -> int:
-    """Prune backtest_trades whose parent run created_at is older than ``days``.
-
-    Exposed for symmetry with the _PRUNABLE whitelist; ``prune_backtest_runs``
-    cascades through this function first inside a single transaction.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    db = get_db()
-    was_in_tx = db.in_transaction
-    cur = execute_write(
-        "DELETE FROM backtest_trades WHERE run_id IN (  SELECT id FROM backtest_runs WHERE created_at < ?)",
-        (cutoff,),
-    )
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount or 0
 
 
 def prune_backtest_runs(days: int = 60) -> int:
