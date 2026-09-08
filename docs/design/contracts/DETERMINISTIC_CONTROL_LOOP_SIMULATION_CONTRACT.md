@@ -4,7 +4,31 @@
 
 The DCLS MVP verifies the Python System Operator as a closed control loop. It uses real configuration loading and saving, real SQLite migrations and repositories, real assessment, decision, dispatch, handlers, audit persistence, downstream candidate filtering, and restart behavior.
 
-It is not a market simulator and cannot place orders. Network access, credentials, wall-clock sleeps, Risk, Execution, Exchange, and Live paths are outside this boundary.
+It is not a market simulator and cannot place orders. Network access, credentials,
+wall-clock sleeps, Risk, Exchange, and Live paths are outside this boundary.
+
+**Contract Delta (2026-09-07, D1).** Execution was previously listed alongside them.
+The simulator's synthetic entry now goes through `execution.paper_broker` and
+`execution.entry_plan_execution` — the local paper fill model and its receipt type —
+so the real broker owns depth walking and fill evidence, which the previous
+`portfolio.paper_account` seam did not produce. Those two modules, and only those
+two, are inside the boundary.
+
+The reason this is not a weakening: it was measured. The transitive
+`aletheia`-import closure of `portfolio.paper_account` and of
+`execution.paper_broker` are **both 359 modules**, and both reach 5
+`aletheia.exchanges` modules, `aletheia.config.secrets`, 5 `aletheia.risk` modules
+and 13 `aletheia.gateway` modules. The runner's own closure is 366 and has always
+reached the same set. So the module-prefix rule never enforced unreachability and
+could not — the package is too densely coupled for any seam here to be isolated by
+import graph. What it enforces, and what DCLS-S01 still asserts, is **direct-import
+hygiene in the simulator's own source**: `runner.py` must not name Risk, Exchange,
+Live or secrets, so no author can casually add a venue broker, a credential read, or
+a Risk evaluation to the loop.
+
+Determinism and offline behaviour are guaranteed by `VirtualClock` and the
+artifact/replay contracts below, not by the import rule. Do not read DCLS-S01 as a
+reachability guarantee.
 
 ## Controlled boundaries
 

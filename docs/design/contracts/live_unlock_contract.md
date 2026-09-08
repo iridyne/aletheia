@@ -119,6 +119,22 @@ EX-04 / GitHub #418 跟踪。
 - Live 解锁仍须遵守 §2 的人工确认门，自动化流程不得绕过
 - **risk_engine.evaluate_proposal() 不读取 operator.permission_mode，Auto 模式不豁免任何风控关卡**（见 §4b-1）
 
+### §4b-2 已选执行模式解析（L2c 不变式）
+
+`analytics.execution_mode.resolve_selected_execution_mode()` 是**已选执行模式的唯一
+实现**。规则：`exchange.mode == "live"` 且 `live.state == "live_limited"` 且
+`trust.live_unlock.current_authorization_ref(cfg)` 非 None 时，返回该 broker 的精确
+`*_live_limited` 模式（经 `config.exchanges.live_execution_mode_for_exchange` 派生，
+不硬编码）；否则回落到配置的 paper 模式。配置不可读或 paper 模式为空返回 `None`。
+
+**这不是 §4b 所说的 new-Proposal 路由。** 本节只约束"当前已选模式"这个读取口径，
+供 analytics / 仪表盘 / CLI 使用；新 Proposal 仍读 `exchange.paper_execution_mode`，
+缺失的 proposal-mode join 仍如 §4b 记录追踪于 GitHub #418。两者不得混淆：本节为绿
+不代表实盘路由存在。
+
+`agent_shell/commands._configured_paper_execution_mode` 是本规则的历史实现，已随
+#2945 删除的 proposal-creation 命令一并移除。spec: LU-C07。
+
 ### §4b-1 risk_engine 不依赖 operator.permission_mode（L2c 不变式）
 
 `aletheia/risk/engine.py` 中的 `evaluate_proposal()` **不得**读取 `cfg.operator.permission_mode` 并做 skip/bypass 分支判断。

@@ -497,28 +497,57 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
 
 @spec_claim(
     SpecClaim(
-        "AC-S13", "agent_contracts", "§3 paper_trader trigger", "L2a",
-        "Every committed Ranker work source has an on-demand wake and the scheduled fallback remains.",
+        "AC-S13", "agent_contracts", "§B canonical planner wake", "L2a",
+        "Durable Candidate planning wakes the daemon, the ~15min heartbeat remains the "
+        "fallback, and no retired Ranker wake source comes back.",
         status="implemented",
     ),
 )
-def test_paper_trader_on_demand_sources_and_fallback_are_wired():
+def test_canonical_planner_wake_sources_and_fallback_are_wired():
+    """agent_contracts.md §B: the planner's only on-demand wake is durable Candidate
+    planning; §3 retires the Ranker/PaperTrader queue *and its on-demand notification*.
+
+    The retired half is asserted as ABSENT on purpose. Reading only the deleted call
+    sites makes those five wake edges look like a #2945 regression, and re-adding them
+    would contradict `agent_contracts.md:174` ("does not wake Ranker"), `:191`
+    ("research Opportunities do not wake a retired entry queue") and `:468` ("old
+    pending cannot ... wake a retired evaluator"). The three observers involved all
+    commit `execution_eligible=False` Opportunities, so waking an entry planner for
+    them can never produce an entry.
+    """
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    expected = {
-        "aletheia/universe/service.py": "universe_refresh_new_snapshot",
+
+    # The live wake path: durable Candidate planning, routed through pi_daemon.
+    service = (root / "aletheia/universe/service.py").read_text(encoding="utf-8")
+    assert "notify_pi_daemon(source=source)" in service
+    for wake_source in (
+        "candidate_planning_generation_created",
+        "universe_refresh_new_snapshot",
+    ):
+        assert wake_source in service
+
+    # The scheduled fallback that must survive (contract row 6).
+    scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    assert '_guarded("pi_trading_heartbeat", _run_pi_trading_decision)' in scheduler
+    assert 'id="pi_trading_decision"' in scheduler
+    assert "_pi_fallback_min = 15" in scheduler
+
+    # The retired wake sources must stay retired.
+    retired = {
         "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
         "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
         "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
-        "aletheia/server/routes/settings.py": "ranker_config_changed",
         "aletheia/analytics/guard_promotion.py": "guard_set_changed",
-        "aletheia/agent_shell/commands.py": "operator_queue_slot_released",
+        "aletheia/server/routes/settings.py": "ranker_config_changed",
     }
-    for relative, source in expected.items():
-        assert source in (root / relative).read_text(encoding="utf-8")
+    for relative, retired_source in retired.items():
+        assert retired_source not in (root / relative).read_text(encoding="utf-8"), (
+            f"{relative} re-added the retired wake source {retired_source!r}; "
+            "agent_contracts.md \u00a73 retires it"
+        )
 
-    scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
-    assert '_guarded("paper_trader", _run_paper_trader)' in scheduler
-    assert '"interval", minutes=3, id="paper_trader"' in scheduler
-    assert "on_demand:" in scheduler
+    # notify_paper_trader itself is gone; nothing may reintroduce the symbol.
+    for relative in ("aletheia/agent_runtime/scheduler.py", "aletheia/agent_shell/commands.py"):
+        assert "notify_paper_trader" not in (root / relative).read_text(encoding="utf-8")
