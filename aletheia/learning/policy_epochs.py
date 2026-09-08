@@ -47,8 +47,8 @@ def build_policy_epoch(
     safe_values = _without_secrets(effective_values)
     # Strip ``code_commit`` from the hashing payload: a rebuild of the same
     # policy must not rotate the epoch (that churned learning_policy_epochs
-    # every restart with no policy delta).  The commit is still recorded on
-    # ``learning_exposures.code_commit`` for downstream attribution, so no
+    # every restart with no policy delta).  The commit still reaches the Lab
+    # delivery receipt as ``producer_commit`` for downstream attribution, so no
     # measurement replay is lost.
     hash_values = _without_code_commit(safe_values)
     payload = {
