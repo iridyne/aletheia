@@ -47,34 +47,21 @@ WHERE execution_mode = 'paper_internal'
 "
 ```
 
-若有结果，需要执行下面的数据修复。
+若有结果，**不要** 通过 SQL 批量修改 outcome 字段。
 
-### 修复命令（批量，排除管理性关闭）
-
-```bash
-sqlite3 data/app.db "
-UPDATE positions
-SET close_category            = 'strategy',
-    outcome_eligible          = 1,
-    exit_fill_verified        = 1,
-    exit_price_source         = 'local_fill',
-    outcome_semantics_version = 'oi-v1',
-    outcome_exclusion_reason  = 'eligible'
-WHERE execution_mode = 'paper_internal'
-  AND status         = 'closed'
-  AND (close_category IS NULL OR close_category = 'unknown')
-  AND COALESCE(close_reason, '') NOT IN
-      ('reconciled_gone','demo_validation_cleanup','units_bug_cleanup','retry_after_fix');
-SELECT changes() || ' rows updated';
-"
-```
-
-修复后无需重启，下一轮提案周期内 `account_loss` 检查会即时重算。
+> ⛔ **原手册在此处包含设置 `outcome_eligible=1, exit_fill_verified=1` 的批量 UPDATE，
+> 已违反 `execution_contract.md §17`（不能用 UPDATE 覆盖未经验证的 outcome eligibility），
+> 并于 2026-09-08 移除（#2995）。**
+>
+> `close_category='unknown'` 的历史行确实没有经过验证的 fill 原件，应保持
+> `outcome_eligible=false`。若需为有完整 fill 记录的历史行重建 outcome，
+> 使用 `maintenance/historical_accounting.py`（条件满足才重建，不会盲目赋值）。
 
 ### 根本原因（已修复）
 
 `portfolio/pnl.py:close_position()` 自 2026-07-13 起已写入正确 outcome 字段，
-新产生的关闭行不再触发此封锁。此命令仅用于修复在代码修复前已关闭的遗留行。
+新产生的关闭行不再触发此封锁。若仍出现 `close_category='unknown'` 的新行，
+说明有代码回归，应排查 `pnl.py:close_position()`，而非修改数据库。
 
 ---
 
@@ -180,17 +167,7 @@ FROM risk_decisions, json_each(risk_decisions.violations)
 WHERE date(created_at) = date('now') AND approved=0
 GROUP BY violation ORDER BY cnt DESC;"
 
-# 2. 修复遗留 paper_internal outcome 字段
-sqlite3 data/app.db "
-UPDATE positions
-SET close_category='strategy', outcome_eligible=1, exit_fill_verified=1,
-    exit_price_source='local_fill', outcome_semantics_version='oi-v1',
-    outcome_exclusion_reason='eligible'
-WHERE execution_mode='paper_internal' AND status='closed'
-  AND (close_category IS NULL OR close_category='unknown')
-  AND COALESCE(close_reason,'') NOT IN
-      ('reconciled_gone','demo_validation_cleanup','units_bug_cleanup','retry_after_fix');
-SELECT changes() || ' rows updated';"
+# 2. 封锁类型 A 已退役 — 见上方说明，不执行 outcome 字段批量修改
 
 # 3. 关闭 sector concentration 检查（开发阶段）
 grep -q "correlation_guard_enabled: true" data/config.yaml && \
