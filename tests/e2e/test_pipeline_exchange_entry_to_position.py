@@ -740,3 +740,54 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
         order["uta_account_identity_json"]
     ) == identity_of(_MODE)
     assert repo.list_positions(execution_mode="paper_internal") == []
+
+
+def test_exchange_entry_lineage_links_candidate_to_order_by_exact_ids(
+    e2e_db, monkeypatch
+):
+    """Candidate → PlanningGeneration → EntryPlan → Proposal → Order, one chain.
+
+    The other tests here start from a persisted waiting plan and assert what
+    happens downstream. This asserts the head is actually attached: the planning
+    generation belongs to the Candidate, the Entry Plan to that generation, the
+    Proposal to that plan, and the Order to that Proposal — by exact id at every
+    hop, on an exchange mode.
+
+    Lineage is not decoration. Attribution, the learning exposure link and every
+    later Outcome are joined on these ids; a chain that merely exists in parallel
+    rows would let two Candidates' evidence be attributed to one entry.
+    """
+    _approving_risk(monkeypatch)
+    submitted, _ = _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+
+    generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
+    assert generation is not None
+    candidate_id = generation["candidate_id"]
+    assert candidate_id, generation
+    assert repo.get_candidate(candidate_id) is not None
+
+    stored_plan = repo.get_entry_plan(plan.plan_id)
+    assert stored_plan["planning_generation_id"] == generation["id"]
+    assert stored_plan["candidate_id"] == candidate_id
+
+    result = _drive_entry(plan)
+    assert result["status"] == "submitted", result
+
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    assert proposal["entry_plan_id"] == plan.plan_id
+    assert proposal["execution_mode"] == _MODE
+
+    order = repo.get_order(result["order_id"])
+    assert order["proposal_id"] == proposal["id"]
+    assert order["entry_plan_id"] == plan.plan_id
+    assert order["execution_mode"] == _MODE
+
+    # One Candidate, one generation, one plan, one proposal, one order — a second
+    # of anything here would mean the chain forked without saying so.
+    assert len(submitted) == 1
+    orders = [
+        row for row in repo.list_orders(limit=50) if row["execution_mode"] == _MODE
+    ]
+    assert len(orders) == 1, orders
+    assert repo.list_positions(execution_mode="paper_internal") == []

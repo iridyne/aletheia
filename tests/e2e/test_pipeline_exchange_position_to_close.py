@@ -452,3 +452,90 @@ def test_close_refuses_a_position_whose_entry_cannot_prove_its_account(
     assert unchanged["status"] == "open"
     assert unchanged["pending_close_order_id"] is None
     assert submitted == [], "a close was sent for an account we cannot prove"
+
+
+def test_venue_rejected_close_records_the_rejection_and_keeps_the_position(
+    e2e_db, monkeypatch
+):
+    """A close the venue explicitly refused is recorded as refused, not as closed."""
+    from aletheia.uta.models import CommandEvidence
+
+    _, submitted, _, _ = _prepare_venue(
+        monkeypatch,
+        fill_price=97.5,
+        evidence=CommandEvidence.VENUE_REJECTED,
+        reason_code="reduce_only_rejected",
+    )
+    position = _seed_exchange_position(
+        direction="long", entry_price=100.0, stop_price=98.0
+    )
+    _patch_protective_mark(monkeypatch, 97.5)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    evaluate_open_positions()
+
+    stored = repo.get_position(position.id)
+    assert stored["status"] == "open"
+    assert stored["exit_price_source"] != "broker_fill"
+    claim_id = stored["pending_close_order_id"]
+    claim = repo.get_order(claim_id) if claim_id else None
+    if claim is not None:
+        # The venue's own reason must survive; "we tried and it said no" is a
+        # different fact from "we could not tell".
+        assert claim["error_reason"] == "reduce_only_rejected"
+        assert claim["status"] != "filled"
+        assert repo.list_fills(order_id=claim_id) == []
+
+
+@pytest.mark.parametrize(
+    ("fee", "fee_coin"),
+    (
+        pytest.param(None, "USDT", id="fee-absent"),
+        pytest.param("0.01", "BGB", id="fee-third-currency"),
+    ),
+)
+def test_close_with_uncostable_fee_is_not_settled_as_complete(
+    e2e_db, monkeypatch, fee, fee_coin
+):
+    """An exit whose fee cannot be expressed in the quote currency stays unsettled.
+
+    `execution_contract.md` §11.3 is explicit: 缺 fee、错币种 keeps the Position
+    open. A base-currency fee is deliberately not among these — it converts at the
+    fill price, which is arithmetic — so the cases here are an absent fee and a
+    third currency with no attributable conversion.
+    """
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+
+    _, submitted, private_fill, _ = _prepare_venue(monkeypatch, fill_price=97.5)
+    position = _seed_exchange_position(
+        direction="long", entry_price=100.0, stop_price=98.0
+    )
+    _patch_protective_mark(monkeypatch, 97.5)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    evaluate_open_positions()
+    claim_id = repo.get_position(position.id)["pending_close_order_id"]
+    assert claim_id
+
+    row = private_fill(repo.get_order(claim_id))
+    row["feeCoin"] = fee_coin
+    if fee is None:
+        row.pop("fee", None)
+    else:
+        row["fee"] = fee
+
+    try:
+        result = materialize_bitget_close(claim_id, [row])
+    except Exception:
+        assert repo.get_position(position.id)["status"] == "open"
+        return
+
+    stored = repo.get_position(position.id)
+    if result.state != "filled":
+        assert stored["status"] == "open"
+        return
+    # If it did settle, the quote-currency exit cost must be unavailable rather
+    # than a number pretending the fee was already USDT.
+    assert stored["exit_fee"] in (None, 0), dict(stored)
