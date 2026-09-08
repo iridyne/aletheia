@@ -2538,6 +2538,20 @@ def _run_tpsl_fill_check():
         return None
 
 
+def _configured_identity(execution_mode: str):
+    """The account the current configuration would authenticate as, or None."""
+    from aletheia.uta.manager import build_uta_registry
+
+    return next(
+        (
+            identity
+            for identity in build_uta_registry().configured_identities()
+            if identity.execution_mode == execution_mode
+        ),
+        None,
+    )
+
+
 def _claim_observed_tpsl_close(
     position_id: str,
     *,
@@ -2669,15 +2683,7 @@ def _tpsl_fill_check_body():
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
-            from aletheia.uta.manager import build_uta_registry
-            reader_identity = next(
-                (
-                    identity
-                    for identity in build_uta_registry().configured_identities()
-                    if identity.execution_mode == execution_mode
-                ),
-                None,
-            )
+            reader_identity = _configured_identity(execution_mode)
             if reader_identity is None:
                 # No proven account for this mode: touch the venue for nothing and
                 # claim nothing. Reported so the job goes red rather than quiet.
@@ -2734,6 +2740,15 @@ def _tpsl_fill_check_body():
                             reason = (
                                 "stop_loss" if plan_type == "sl" else "take_profit"
                             )
+                            # This executeOrderId was discovered by the raw
+                            # client, which re-reads its credentials per request.
+                            # Stamping it durably under the frozen identity would
+                            # wedge the Position if the configuration moved during
+                            # this pass: the claim persists, the identity-bound
+                            # read then refuses it, and no later pass can advance
+                            # or clear it. Re-resolve before anything durable.
+                            if _configured_identity(execution_mode) != reader_identity:
+                                raise ValueError("uta_account_identity_mismatch")
                             close_order, _ = _claim_observed_tpsl_close(
                                 pos["id"],
                                 execute_order_id=execute_order_id,
@@ -2742,10 +2757,18 @@ def _tpsl_fill_check_body():
                             )
                             if close_order is None:
                                 continue
+                            # CCXTUTAAdapter.get_fills returns PARTIAL with
+                            # private_fill_history_start_required when the scope
+                            # carries no start bound, and the projection raises on
+                            # anything short of COMPLETE. The exit fill cannot
+                            # precede the entry, so the Position's opened_at is the
+                            # tightest honest bound -- the same shape as
+                            # reconciliation's start_at=order["created_at"].
                             private_fills = await evidence_reader.get_order_fills(
                                 order_id=execute_order_id,
                                 symbol=pos["symbol"],
                                 market_type=pos["market_type"],
+                                start_at=pos["opened_at"],
                             )
                             result = materialize_bitget_close(
                                 close_order["id"], private_fills

@@ -146,17 +146,25 @@ def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None
     from tests.specs.uta_private_history import patch_private_history
 
     patch_private_history(monkeypatch, reconciliation, fill_rows, calls=calls)
-    if available is None:
-        return
     verified = reconciliation.query_uta
 
     async def _gated(execution_mode, method, query, *, expected_account=None):
+        # Mirror CCXTUTAAdapter.get_fills: an unbounded history scope is PARTIAL,
+        # not COMPLETE. Without this the fake hides a missing start bound and the
+        # real adapter would refuse every close read in production.
+        if method == "get_fills" and query.scope.start_at is None:
+            raise RuntimeError("private_fill_history_start_required")
         # Delegate first so the attempt is recorded and the identity assertion
         # still runs; only then refuse to hand the evidence back.
         report = await verified(
             execution_mode, method, query, expected_account=expected_account
         )
-        if method == "get_fills" and query.venue_order_id and not available():
+        if (
+            available is not None
+            and method == "get_fills"
+            and query.venue_order_id
+            and not available()
+        ):
             raise RuntimeError("private history incomplete")
         return report
 
@@ -626,6 +634,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
             "market_type": "usdt_futures",
             "execution_mode": "bitget_demo",
             "exchange_tpsl_order_id": {"sl": "PLAN-FAIL"},
+            "opened_at": "2026-07-13T00:00:00+00:00",
         },
         {
             "id": "pos-ok",
@@ -633,6 +642,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
             "market_type": "usdt_futures",
             "execution_mode": "bitget_demo",
             "exchange_tpsl_order_id": {"tp": "PLAN-OK"},
+            "opened_at": "2026-07-13T00:00:00+00:00",
         },
     ]
     fail_private_query = True
@@ -1024,3 +1034,122 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
     assert venue_reads == ["client", "plan", "close"]
     assert _exact_fill_reads(reads) == [("EXEC-UNC-SL", "usdt_futures")]
     assert repo._select_one("positions", position.id)["status"] == "closed"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-09",
+        "pipeline_tpsl_private_materialization",
+        "§7 bounded history and pre-claim reader recheck",
+        "L2c",
+        "The close evidence read carries a history start no later than the Position's "
+        "opening, because an unbounded scope is only ever PARTIAL; and a configuration "
+        "that moved after plan discovery leaves no durable claim behind.",
+        status="implemented",
+    )
+)
+def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
+    tmp_path, monkeypatch
+):
+    from datetime import datetime
+
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.compat import utc
+
+    position = _seed_position(
+        "bitget_demo", suffix="bounded", plan_ids={"sl": "PLAN-BND-SL"}
+    )
+    entry_identity = _identity("bitget_demo")
+    rotated_identity = entry_identity.model_copy(
+        update={"credential_generation": 5}
+    )
+    reads: list[tuple] = []
+    _patch_configured_reader(monkeypatch, entry_identity)
+    _patch_evidence_reader(
+        monkeypatch, [_private_close_fill("EXEC-BND-SL")], calls=reads
+    )
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            pass
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-BND-SL",
+            }]
+
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert repo._select_one("positions", position.id)["status"] == "closed"
+
+    # The scope must be bounded, and no later than the Position opened: the exit
+    # fill cannot precede the entry, and an unbounded scope is only ever PARTIAL.
+    fill_scopes = [
+        query.scope for method, _mode, query in reads
+        if method == "get_fills" and query.venue_order_id
+    ]
+    assert len(fill_scopes) == 1
+    assert fill_scopes[0].start_at is not None
+    assert fill_scopes[0].start_at <= utc(position.opened_at)
+    assert isinstance(fill_scopes[0].start_at, datetime)
+
+    # A configuration that moves between plan discovery and the claim must leave
+    # nothing durable: a stamped claim carrying a foreign executeOrderId could
+    # never be advanced or cleared by any later pass.
+    second = _seed_position(
+        "bitget_demo", suffix="bounded-2", plan_ids={"sl": "PLAN-BND2-SL"}
+    )
+    rotate_on_discovery = True
+
+    class _RotatingClient(_Client):
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            history = [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-BND2-SL",
+            }]
+            if rotate_on_discovery:
+                _patch_configured_reader(monkeypatch, rotated_identity)
+            return history
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _RotatingClient)
+    summary = scheduler._tpsl_fill_check_body()
+
+    stored = repo._select_one("positions", second.id)
+    assert stored["status"] == "open"
+    assert stored["pending_close_order_id"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (second.id,),
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] == 1
+
+    # Stable configuration converges it the ordinary way.
+    rotate_on_discovery = False
+    _patch_configured_reader(monkeypatch, entry_identity)
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC-BND2-SL")])
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert repo._select_one("positions", second.id)["status"] == "closed"
