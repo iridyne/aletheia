@@ -127,8 +127,8 @@ def _exchange_adapter_class():
     return _ExchangeAdapter
 
 
-def _wire_venue(monkeypatch):
-    """Accept one entry command and report it acknowledged with a venue identity."""
+def _wire_venue(monkeypatch, *, evidence=None, reason_code=None, venue_order_id=True):
+    """Wire the venue double. `evidence` selects the command outcome under test."""
     from aletheia.execution import coordinator
     from aletheia.uta.models import CommandEvidence, SubmissionReport
     from tests.uta.test_execution_coordinator import _identity
@@ -136,16 +136,20 @@ def _wire_venue(monkeypatch):
     _ExchangeAdapter = _exchange_adapter_class()
 
     submitted: list[object] = []
+    outcome = evidence or CommandEvidence.ACKNOWLEDGED
 
     async def submit(command):
         submitted.append(command)
         return SubmissionReport(
             identity=command.expected_account,
             command_id=command.command_id,
-            evidence=CommandEvidence.ACKNOWLEDGED,
+            evidence=outcome,
+            reason_code=reason_code,
             received_at=datetime.now(timezone.utc),
             client_order_id=command.client_order_id,
-            venue_order_id=f"venue-entry-{len(submitted)}",
+            venue_order_id=(
+                f"venue-entry-{len(submitted)}" if venue_order_id else None
+            ),
             profile_version="1",
         )
 
@@ -159,6 +163,71 @@ def _wire_venue(monkeypatch):
         lambda mode, symbol, market, qty, price: qty,
     )
     return submitted, _identity
+
+
+def _approving_risk(monkeypatch):
+    """Represent Risk by an approving decision, as the paper counterpart does."""
+    from types import SimpleNamespace
+
+    from aletheia.execution import gateway
+    from aletheia.storage.models import RiskDecision
+
+    def approve(proposal, *, decision_role, execution_receipt=None):
+        decision = RiskDecision(
+            proposal_id=proposal.id,
+            approved=True,
+            allowed_execution_mode=_MODE,
+            decision_role=decision_role,
+            evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash,
+            proposal_execution_mode=proposal.execution_mode,
+        )
+        repo.insert_risk_decision(decision)
+        return SimpleNamespace(
+            approved=True,
+            allowed_execution_mode=_MODE,
+            decision_id=decision.id,
+            decision_role=decision_role,
+        )
+
+    monkeypatch.setattr(gateway, "evaluate_proposal", approve)
+
+
+def _drive_entry(plan):
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from tests.test_entry_plan_execution import _execution_receipt_kwargs
+
+    now = datetime.now(timezone.utc)
+    return execute_entry_plan(
+        plan.plan_id,
+        bid=100,
+        ask=100.05,
+        observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(),
+        now=now,
+        **_execution_receipt_kwargs(now, depth=True),
+    )
+
+
+def _seeded_plan():
+    from tests.test_entry_plan_execution import _persist_waiting_plan
+
+    return _persist_waiting_plan(
+        account_mode=_MODE, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC"
+    )
+
+
+def _private_entry_fill(order: dict, *, quantity=None, fee="0.02", fee_coin="USDT"):
+    return {
+        "orderId": order["exchange_order_id"],
+        "clientOid": order["client_order_id"],
+        "tradeId": f"private-entry-{order['id']}",
+        "fillPrice": "100.05",
+        "fillQuantity": str(quantity if quantity is not None else order["quantity"]),
+        "fee": fee,
+        "feeCoin": fee_coin,
+        "cTime": str(int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000),
+    }
 
 
 def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
@@ -273,3 +342,152 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     assert position["entry_price"] == pytest.approx(100.05)
     # Paper never appears anywhere in this lineage.
     assert repo.list_positions(execution_mode="paper_internal") == []
+
+
+@pytest.mark.parametrize(
+    ("evidence_name", "reason_code", "expected_status", "expected_reason"),
+    (
+        pytest.param(
+            "NOT_SENT",
+            "insufficient_margin",
+            "error",
+            "insufficient_margin",
+            id="pre-submit-failure",
+        ),
+        pytest.param(
+            "AMBIGUOUS",
+            None,
+            "submission_unknown",
+            "command_acknowledgement_unknown",
+            id="acknowledgement-unknown",
+        ),
+        pytest.param(
+            "VENUE_REJECTED",
+            "invalid_quantity",
+            "submission_rejected",
+            "invalid_quantity",
+            id="venue-rejected",
+        ),
+    ),
+)
+def test_non_acknowledged_entry_invents_no_economics(
+    e2e_db, monkeypatch, evidence_name, reason_code, expected_status, expected_reason
+):
+    """A command the venue did not take must leave no Fill and no Position.
+
+    These are the three non-acknowledged outcomes the coordinator distinguishes
+    (`coordinator._status`), and they are distinct on purpose: `error` means the
+    order never left, `submission_unknown` means we cannot tell and must not
+    retry, `submission_rejected` means the venue said no. Collapsing any of them
+    into a fill is the failure this covers.
+    """
+    from aletheia.uta.models import CommandEvidence
+
+    _approving_risk(monkeypatch)
+    _wire_venue(monkeypatch, evidence=getattr(CommandEvidence, evidence_name),
+                reason_code=reason_code)
+    plan = _seeded_plan()
+
+    _drive_entry(plan)
+
+    orders = [
+        row for row in repo.list_orders(limit=50) if row["execution_mode"] == _MODE
+    ]
+    assert len(orders) == 1, orders
+    order = orders[0]
+    assert order["status"] == expected_status
+    assert order["error_reason"] == expected_reason
+    # Nothing economic, whatever the venue said.
+    assert repo.list_fills(order_id=order["id"]) == []
+    assert repo.list_positions(execution_mode=_MODE) == []
+    assert repo.list_positions(execution_mode="paper_internal") == []
+
+
+def test_partial_private_fill_does_not_report_a_complete_entry(e2e_db, monkeypatch):
+    """Half the requested quantity is a partial entry, not a filled one."""
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+
+    _approving_risk(monkeypatch)
+    _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+    result = _drive_entry(plan)
+    order = repo.get_order(result["order_id"])
+
+    requested = float(order["quantity"])
+    materialized = materialize_bitget_entry(
+        order["id"], [_private_entry_fill(order, quantity=requested / 2)]
+    )
+
+    assert materialized.state != "filled", materialized
+    settled = repo.get_order(order["id"])
+    assert settled["status"] != "filled"
+    # Whatever the partial state is called, it must not claim the full quantity.
+    fills = repo.list_fills(order_id=order["id"])
+    assert sum(float(row["fill_quantity"]) for row in fills) < requested
+    assert repo.list_positions(execution_mode="paper_internal") == []
+
+
+def test_replayed_private_fill_evidence_stays_idempotent(e2e_db, monkeypatch):
+    """The same private fill seen twice is one Fill and one Position, not two.
+
+    Reconciliation, the scheduler and a restart can all present the same evidence
+    again; the materializer is the single place that has to refuse to double-count.
+    """
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+
+    _approving_risk(monkeypatch)
+    _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+    result = _drive_entry(plan)
+    order = repo.get_order(result["order_id"])
+    evidence = [_private_entry_fill(order)]
+
+    first = materialize_bitget_entry(order["id"], evidence)
+    assert first.state == "filled", first
+    second = materialize_bitget_entry(order["id"], evidence)
+    assert second.state == "filled", second
+
+    assert len(repo.list_fills(order_id=order["id"])) == 1
+    assert len(repo.list_positions(execution_mode=_MODE)) == 1
+
+
+def test_entry_fails_closed_when_another_account_already_holds_the_mode(
+    e2e_db, monkeypatch
+):
+    """An open Order under a different account identity blocks a new entry.
+
+    `coordinator.execute_order` refuses rather than submitting alongside evidence
+    it cannot attribute to one account. Without this a credential or profile
+    change mid-flight would leave two accounts' Orders in the same execution mode
+    with no way to tell them apart.
+    """
+    from aletheia.storage.models import Order
+
+    _approving_risk(monkeypatch)
+    submitted, identity_of = _wire_venue(monkeypatch)
+
+    foreign = identity_of(_MODE).model_copy(update={"credential_generation": 99})
+    repo.insert_order(
+        Order(
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            direction="long",
+            order_type="market",
+            quantity=1.0,
+            price=100.0,
+            execution_mode=_MODE,
+            status="submitted",
+            # Adopted, so this fixture needs no Proposal/RiskDecision authority of
+            # its own: the identity check reads status and execution_mode, not
+            # provenance.
+            source="adopted",
+            uta_account_identity_json=foreign.model_dump_json(),
+        )
+    )
+
+    plan = _seeded_plan()
+    _drive_entry(plan)
+
+    # The command never went to the venue, and no Position was opened.
+    assert submitted == []
+    assert repo.list_positions(execution_mode=_MODE) == []
