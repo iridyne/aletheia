@@ -132,6 +132,46 @@ def _patch_configured_reader(monkeypatch, *identities):
     )
 
 
+def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None):
+    """Patch the identity-enforcing UTA read the observer uses for close evidence.
+
+    Close fills no longer come from the raw Bitget client: it re-reads its
+    credentials on every request, so no snapshot of the configured identity can
+    bind what it actually signs with. ``patch_private_history`` asserts
+    ``expected_account`` on each read, so these tests also prove that binding.
+    ``available`` makes the exact-order read fail on demand without disturbing
+    the identity assertion.
+    """
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history
+
+    patch_private_history(monkeypatch, reconciliation, fill_rows, calls=calls)
+    if available is None:
+        return
+    verified = reconciliation.query_uta
+
+    async def _gated(execution_mode, method, query, *, expected_account=None):
+        # Delegate first so the attempt is recorded and the identity assertion
+        # still runs; only then refuse to hand the evidence back.
+        report = await verified(
+            execution_mode, method, query, expected_account=expected_account
+        )
+        if method == "get_fills" and query.venue_order_id and not available():
+            raise RuntimeError("private history incomplete")
+        return report
+
+    monkeypatch.setattr(reconciliation, "query_uta", _gated)
+
+
+def _exact_fill_reads(calls) -> list[tuple[str, str]]:
+    """(venue_order_id, market_type) of every exact-order private fill read."""
+    return [
+        (str(query.venue_order_id), query.scope.instrument.market_type)
+        for method, _mode, query in calls
+        if method == "get_fills" and query.venue_order_id
+    ]
+
+
 @spec_claim(
     SpecClaim(
         "PL-TPSL-01",
@@ -178,9 +218,10 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
                 "executeOrderId": "",
             }]
 
-        async def get_order_fills(self, *, order_id, symbol, market_type):
-            calls.append(("fills", order_id, symbol, market_type))
-            return [_private_close_fill(order_id)]
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -196,6 +237,10 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
         scheduler,
         "load_config",
         lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+    uta_calls: list[tuple] = []
+    _patch_evidence_reader(
+        monkeypatch, [_private_close_fill("EXEC-SL")], calls=uta_calls
     )
 
     scheduler._tpsl_fill_check_body()
@@ -221,7 +266,7 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
         1_784_050_000, tz=timezone.utc
     ).isoformat()
     assert ("client", "demo") in calls
-    assert ("fills", "EXEC-SL", "BTCUSDT", "usdt_futures") in calls
+    assert _exact_fill_reads(uta_calls) == [("EXEC-SL", "usdt_futures")]
 
     scheduler._tpsl_fill_check_body()
     assert db.execute(
@@ -258,6 +303,10 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
         plan_ids={"sl": "PLAN-LIVE-SL"},
     )
     _patch_configured_reader(monkeypatch, _identity("bitget_live_limited"))
+    uta_calls: list[tuple] = []
+    _patch_evidence_reader(
+        monkeypatch, [_private_close_fill("EXEC-LIVE-SL")], calls=uta_calls
+    )
     calls: list[tuple] = []
 
     class _Client:
@@ -272,9 +321,10 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
                 "executeOrderId": "EXEC-LIVE-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, symbol, market_type):
-            calls.append(("fills", order_id, symbol, market_type))
-            return [_private_close_fill(order_id)]
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -321,9 +371,9 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
     assert calls == [
         ("client", "live"),
         ("plan", "PLAN-LIVE-SL"),
-        ("fills", "EXEC-LIVE-SL", "BTCUSDT", "usdt_futures"),
         ("close",),
     ]
+    assert _exact_fill_reads(uta_calls) == [("EXEC-LIVE-SL", "usdt_futures")]
 
     scheduler._tpsl_fill_check_body()
     assert db.execute(
@@ -449,7 +499,13 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     )
     _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     fills_available = False
-    exact_fill_calls: list[tuple[str, str, str]] = []
+    observer_reads: list[tuple] = []
+    _patch_evidence_reader(
+        monkeypatch,
+        [_private_close_fill("EXEC-TP-X")],
+        calls=observer_reads,
+        available=lambda: fills_available,
+    )
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -462,13 +518,10 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
                 "executeOrderId": "EXEC-TP-X",
             }]
 
-        async def get_order_fills(self, **kwargs):
-            exact_fill_calls.append((
-                kwargs["order_id"], kwargs["symbol"], kwargs["market_type"]
-            ))
-            if not fills_available:
-                raise RuntimeError("private history incomplete")
-            return [_private_close_fill(kwargs["order_id"])]
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
 
         async def get_open_orders(self, **kwargs):
             return []
@@ -502,6 +555,7 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 0
+    assert _exact_fill_reads(observer_reads) == [("EXEC-TP-X", "usdt_futures")]
 
     fills_available = True
     from aletheia.execution import reconciliation
@@ -537,9 +591,6 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     assert recovered_position["status"] == "closed"
     assert recovered_order["status"] == "filled"
     assert recovered_fill["fill_price"] == pytest.approx(59_000.0)
-    assert exact_fill_calls == [
-        ("EXEC-TP-X", "BTCUSDT", "usdt_futures"),
-    ]
     assert [
         query.venue_order_id
         for method, _, query in uta_calls
@@ -604,7 +655,9 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
             }]
 
         async def get_order_fills(self, **_kwargs):
-            return [{"tradeId": "private-fill"}]
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
 
         async def close(self):
             return None
@@ -616,6 +669,8 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
     )
     monkeypatch.setattr(repositories, "list_all_open_positions", lambda: positions)
     monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
+    _patch_evidence_reader(monkeypatch, [])
     monkeypatch.setattr(
         scheduler,
         "_claim_observed_tpsl_close",
@@ -767,3 +822,205 @@ def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypat
     ).fetchone()[0] == 0
     assert summary["failed_count"] == 1
     assert [c for c in calls if c[0] == "fills"] == []
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-07",
+        "pipeline_tpsl_private_materialization",
+        "§7 resumed claim carrier proof",
+        "L2c",
+        "A close claim written before the account proof existed carries no identity, "
+        "so a later observation must refuse to advance it rather than file evidence "
+        "under absent provenance; the same refusal covers a claim carrying a foreign "
+        "identity.",
+        status="implemented",
+    )
+)
+def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        "bitget_demo", suffix="legacy-claim", plan_ids={"sl": "PLAN-LEG-SL"}
+    )
+    entry_identity = _identity("bitget_demo")
+    _patch_configured_reader(monkeypatch, entry_identity)
+    fills_available = False
+    _patch_evidence_reader(
+        monkeypatch,
+        [_private_close_fill("EXEC-LEG-SL")],
+        available=lambda: fills_available,
+    )
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            pass
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-LEG-SL",
+            }]
+
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+
+    # Claim it the ordinary way, with the exact-order evidence read unavailable,
+    # so the Position keeps an unresolved pending claim.
+    scheduler._tpsl_fill_check_body()
+    pending = repo._select_one("positions", position.id)["pending_close_order_id"]
+    assert pending is not None
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+
+    # Reproduce the row shape this account proof did not exist for. Migration v73
+    # is nullable_no_backfill, so every claim written before it carries NULL here.
+    # This restores a legacy carrier; it manufactures no fill, close or outcome.
+    db.execute(
+        "UPDATE orders SET uta_account_identity_json=NULL WHERE id=?", (pending,)
+    )
+    assert repo.get_order(pending)["uta_account_identity_json"] is None
+
+    fills_available = True
+    summary = scheduler._tpsl_fill_check_body()
+
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "open"
+    assert stored["pending_close_order_id"] == pending
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] == 1
+    assert summary["errors"][0]["position_id"] == position.id
+
+    # A carrier that parses but names another account is refused the same way.
+    db.execute(
+        "UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+        (
+            entry_identity.model_copy(
+                update={"credential_generation": 11}
+            ).model_dump_json(),
+            pending,
+        ),
+    )
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] == 1
+
+    # Restoring the proven carrier lets the ordinary path converge — the refusal
+    # is about provenance, not a dead end.
+    db.execute(
+        "UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+        (entry_identity.model_dump_json(), pending),
+    )
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert repo._select_one("positions", position.id)["status"] == "closed"
+    assert repo.get_order(pending)["status"] == "filled"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 1
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-08",
+        "pipeline_tpsl_private_materialization",
+        "§7 evidence reader binding",
+        "L2c",
+        "Close evidence is read through the identity-bound UTA projection, never the "
+        "raw client whose credentials are re-read per request, and an account with no "
+        "configured identity is reported without any venue read or claim.",
+        status="implemented",
+    )
+)
+def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
+    tmp_path, monkeypatch
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        "bitget_demo", suffix="unconfigured", plan_ids={"sl": "PLAN-UNC-SL"}
+    )
+    venue_reads: list[str] = []
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            venue_reads.append("client")
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            venue_reads.append("plan")
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-UNC-SL",
+            }]
+
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
+
+        async def close(self):
+            venue_reads.append("close")
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+
+    # No configured account for this mode: nothing may be read or claimed, and the
+    # job must still go red rather than report a quiet success.
+    _patch_configured_reader(monkeypatch)
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert venue_reads == []
+    assert summary["failed_count"] == 1
+    assert summary["errors"][0]["error_type"] == "uta_account_identity_unavailable"
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
+    ).fetchone()[0] == 0
+
+    # With the account configured, the evidence read carries expected_account into
+    # every UTA query — patch_private_history asserts exactly that — and the raw
+    # client is left with plan discovery only.
+    reads: list[tuple] = []
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
+    _patch_evidence_reader(
+        monkeypatch, [_private_close_fill("EXEC-UNC-SL")], calls=reads
+    )
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert venue_reads == ["client", "plan", "close"]
+    assert _exact_fill_reads(reads) == [("EXEC-UNC-SL", "usdt_futures")]
+    assert repo._select_one("positions", position.id)["status"] == "closed"

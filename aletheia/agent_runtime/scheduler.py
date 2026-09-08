@@ -2550,6 +2550,7 @@ def _claim_observed_tpsl_close(
     from aletheia.execution.coordinator import _position_account
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
+    from aletheia.uta.models import UTAAccountIdentity
 
     execute_order_id = str(execute_order_id or "").strip()
     if not execute_order_id:
@@ -2578,6 +2579,18 @@ def _claim_observed_tpsl_close(
                 and existing.get("exchange_order_id") == execute_order_id
                 and existing.get("position_id") == position_id
             ):
+                # A claim written before this account proof existed carries a NULL
+                # identity, and materialize_bitget_close enforces none of its own.
+                # Advancing it would file evidence under absent or foreign
+                # provenance, so the carrier proves itself or the claim waits.
+                try:
+                    claimed = UTAAccountIdentity.model_validate_json(
+                        existing.get("uta_account_identity_json") or ""
+                    )
+                except ValueError as exc:
+                    raise ValueError("uta_account_identity_unavailable") from exc
+                if claimed != entry_account:
+                    raise ValueError("uta_account_identity_mismatch")
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
 
@@ -2617,7 +2630,6 @@ def _tpsl_fill_check_body():
         import asyncio
         import json as _json
         from aletheia.storage.repositories import list_all_open_positions
-        from aletheia.data.symbols import to_bitget
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
         )
@@ -2656,6 +2668,7 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+            from aletheia.execution.reconciliation import _UTAReconciliationProjection
             from aletheia.uta.manager import build_uta_registry
             reader_identity = next(
                 (
@@ -2664,6 +2677,31 @@ def _tpsl_fill_check_body():
                     if identity.execution_mode == execution_mode
                 ),
                 None,
+            )
+            if reader_identity is None:
+                # No proven account for this mode: touch the venue for nothing and
+                # claim nothing. Reported so the job goes red rather than quiet.
+                return {
+                    "materialized": [],
+                    "errors": [
+                        {
+                            "execution_mode": execution_mode,
+                            "position_id": pos.get("id"),
+                            "plan_order_id": None,
+                            "error_type": "uta_account_identity_unavailable",
+                        }
+                        for pos, _tpsl_ids in account_candidates
+                    ],
+                }
+            # BitgetClient._headers() re-reads secrets per request, so this snapshot
+            # cannot bind what the raw client actually signs with. The evidence read
+            # -- the one whose result is persisted -- therefore goes through the UTA
+            # projection, which passes expected_account into every query and refuses
+            # anything short of a complete read. Plan history has no UTA equivalent
+            # yet (#2994); a foreign one is harmless because the identity-enforced,
+            # order-id-scoped fills read below then returns nothing.
+            evidence_reader = _UTAReconciliationProjection(
+                execution_mode, reader_identity
             )
             client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
@@ -2704,9 +2742,9 @@ def _tpsl_fill_check_body():
                             )
                             if close_order is None:
                                 continue
-                            private_fills = await client.get_order_fills(
+                            private_fills = await evidence_reader.get_order_fills(
                                 order_id=execute_order_id,
-                                symbol=to_bitget(pos["symbol"]),
+                                symbol=pos["symbol"],
                                 market_type=pos["market_type"],
                             )
                             result = materialize_bitget_close(
