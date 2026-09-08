@@ -1123,14 +1123,20 @@ _OPEN_TRADE_RETRY_SQL = f"""
 
 
 def list_open_trade_opportunities(limit: int = 50) -> list[dict]:
-    """Return one bounded, starvation-free open trade workset.
+    """Return one bounded open trade workset, newest arrivals last.
 
     Legacy rows with a NULL/blank asset class predate the discriminator and are
     crypto opportunities by construction. Prediction observations remain
     research context and never enter this trade workset. Half of each normal
     page is reserved for never-evaluated rows and half for the oldest retryable
-    rows; either side may consume unused capacity from the other. This prevents
-    sustained new arrivals from permanently hiding already-ranked open work.
+    rows; either side may consume unused capacity from the other.
+
+    The retryable half only fills for rows carrying ``last_ranked_at``, and no
+    code writes that column any more: the ranker that advanced the cursor was
+    retired with the signal emitter. On a fresh database this returns the
+    oldest-first unranked stream and nothing else, so the two-stream split no
+    longer delivers the anti-starvation property it was built for. Restoring it
+    needs a cursor producer, not a change here.
     """
     page_size = max(0, int(limit))
     if page_size == 0:
@@ -1185,30 +1191,6 @@ def list_open_trade_opportunities(limit: int = 50) -> list[dict]:
             )
         )
     return unranked + retryable
-
-
-def mark_opportunities_ranked(opportunity_ids: list[str], ranked_at: str) -> int:
-    """Advance the rotation cursor for one proven workset, exactly once.
-
-    Callers place this update in the same explicit transaction as the immutable
-    current-run evidence batch. A missing row is an integrity failure: the batch
-    must roll back instead of claiming a workset that was not actually marked.
-    """
-    ids = list(dict.fromkeys(str(item) for item in opportunity_ids if item))
-    if not ids:
-        return 0
-    db = get_db()
-    was_in_tx = db.in_transaction
-    placeholders = ",".join("?" for _ in ids)
-    cur = execute_write(
-        f"UPDATE opportunities SET last_ranked_at=? WHERE id IN ({placeholders})",
-        (ranked_at, *ids),
-    )
-    if cur.rowcount != len(ids):
-        raise RuntimeError(f"ranked_opportunity_set_changed:{cur.rowcount}/{len(ids)}")
-    if not was_in_tx:
-        db.commit()
-    return cur.rowcount
 
 
 def find_divergence_opportunity_by_source_version(
@@ -1296,39 +1278,6 @@ def find_open_opportunity_by_symbol_snapshot(symbol: str, snapshot_id: str, mark
         sql += " AND market = ?"
         params.append(market)
     sql += " LIMIT 1"
-    row = db.execute(sql, params).fetchone()
-    return dict(row) if row else None
-
-
-def find_live_opportunity_by_symbol_direction(
-    symbol: str,
-    direction: str,
-    market: str | None = None,
-) -> dict | None:
-    """Return the most-recent live (open or queued, non-expired) opportunity for
-    a given symbol+direction+market combination.
-
-    Used by the signal emitter to suppress duplicate emissions when a live candidate
-    for the same symbol+direction already occupies the evaluation queue (#326).
-    ``valid_until IS NULL`` rows are treated as never-expiring and always considered
-    live (paranoid fail-safe: better to suppress one extra signal than to flood the
-    queue).
-    """
-    db = get_db()
-    sql = (
-        "SELECT * FROM opportunities "
-        "WHERE symbol = ? AND direction_bias = ? "
-        "AND status IN ('open','queued') "
-        "AND (valid_until IS NULL OR datetime(valid_until) > datetime('now'))"
-    )
-    params: list = [symbol, direction]
-    if market:
-        sql += " AND market = ?"
-        params.append(market)
-    # A queued carrier owns admission even if a newer analytical open
-    # generation exists during snapshot publication. Prefer that durable owner
-    # so replacement cannot silently bypass it.
-    sql += " ORDER BY CASE WHEN status='queued' THEN 0 ELSE 1 END, created_at DESC, rowid DESC LIMIT 1"
     row = db.execute(sql, params).fetchone()
     return dict(row) if row else None
 
