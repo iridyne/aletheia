@@ -10,6 +10,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict
 
+from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.config.prediction import prediction_observer_blocked_reason
 from aletheia.portfolio.pnl import compute_portfolio
@@ -77,23 +78,6 @@ def _truthy_flag(value) -> bool:
     return bool(value)
 
 
-def _parse_utc_timestamp(value) -> datetime | None:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    elif " " in text and "T" not in text:
-        text = text.replace(" ", "T", 1)
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _to_json(value, fallback):

@@ -65,6 +65,50 @@ _write_lock_state = threading.local()
 _WRITE_QUEUE_CAPACITY = 256
 _WRITE_QUEUE_STOP = object()
 _JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+# Negative cache_size is absolute KiB and therefore page_size-independent:
+# -65536 always means 64 MiB regardless of the deployed page size.
+_CACHE_SIZE_KIB = -65536  # 64 MiB page cache
+_MMAP_SIZE_BYTES = 256 * 1024 * 1024  # 256 MiB mapped read window (64-bit only)
+
+# Connection-scoped PRAGMAs reset on every fresh handle. Applying them is not
+# the same as them taking effect: a read-only mount, an open reader pinning the
+# legacy journal, or a 32-bit build silently degrades the request. Every value
+# is therefore read back and asserted before the handle is released.
+_READ_WRITE_PRAGMA_BASELINE: dict[str, object] = {
+    "journal_mode": "wal",
+    "synchronous": 1,
+    "foreign_keys": 1,
+    "cache_size": _CACHE_SIZE_KIB,
+    "busy_timeout": 30000,
+    "journal_size_limit": _JOURNAL_SIZE_LIMIT_BYTES,
+}
+
+
+class PragmaBaselineError(RuntimeError):
+    """A SQLite connection could not prove its own PRAGMA baseline."""
+
+
+def _verify_pragma_baseline(
+    conn: sqlite3.Connection,
+    baseline: dict[str, object],
+) -> dict[str, object]:
+    """Read every baseline PRAGMA back and fail closed on any mismatch."""
+
+    observed: dict[str, object] = {}
+    for pragma, expected in baseline.items():
+        row = sqlite3.Connection.execute(conn, f"PRAGMA {pragma}").fetchone()
+        actual = row[0] if row is not None else None
+        if isinstance(expected, str):
+            actual = str(actual).lower()
+        else:
+            actual = int(actual)
+        observed[pragma] = actual
+        if actual != expected:
+            raise PragmaBaselineError(
+                f"PRAGMA {pragma}: expected {expected!r}, got {actual!r}"
+            )
+    return observed
+
 _MUTATING_SQL = {
     "ALTER",
     "ANALYZE",
@@ -342,6 +386,13 @@ def _open_connection(path: Path) -> sqlite3.Connection:
     # journal_size_limit is connection-local. Set it on every connection so a
     # successfully reset WAL cannot retain an old multi-GiB allocation forever.
     conn.execute(f"PRAGMA journal_size_limit={_JOURNAL_SIZE_LIMIT_BYTES}")
+    conn.execute(f"PRAGMA cache_size={_CACHE_SIZE_KIB}")
+    conn.execute(f"PRAGMA mmap_size={_MMAP_SIZE_BYTES}")
+    # Long-lived connections have no query history at open time; the 0x10000 bit
+    # makes PRAGMA optimize consider every table, and 0x0002 permits ANALYZE.
+    # SQLite >= 3.46 self-limits the scan, so no analysis_limit is needed.
+    conn.execute("PRAGMA optimize=0x10002")
+    _verify_pragma_baseline(conn, _READ_WRITE_PRAGMA_BASELINE)
     return conn
 
 
@@ -651,6 +702,39 @@ def shutdown_writer() -> None:
 def db_path() -> Path:
     return get_data_dir() / "app.db"
 
+_READ_ONLY_PRAGMA_BASELINE: dict[str, object] = {
+    "query_only": 1,
+    "cache_size": _CACHE_SIZE_KIB,
+}
+
+
+def _open_readonly_connection(path: Path, *, timeout: float) -> sqlite3.Connection:
+    """Open one verified read-only handle: mode=ro plus the read PRAGMA baseline.
+
+    Two defensive layers:
+
+    - ``mode=ro`` at the URI level — the SQLite driver refuses to open a WAL
+      writer lane, so any write attempt fails with ``OperationalError`` before
+      touching the file.
+    - ``PRAGMA query_only=ON`` — belt-and-suspenders for observability.
+
+    Page cache and mmap window match the read-write baseline so readers benefit
+    from the same memory budget as writers. Returns a verified handle; raises
+    :exc:`PragmaBaselineError` on mismatch.
+    """
+
+    conn = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=timeout,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    conn.execute(f"PRAGMA cache_size={_CACHE_SIZE_KIB}")
+    conn.execute(f"PRAGMA mmap_size={_MMAP_SIZE_BYTES}")
+    _verify_pragma_baseline(conn, _READ_ONLY_PRAGMA_BASELINE)
+    return conn
+
 
 @contextmanager
 def read_snapshot():
@@ -675,6 +759,9 @@ def read_snapshot():
 @contextmanager
 def readonly_db(*, allow_missing: bool = False):
     """Open the effective database without creation or write-oriented PRAGMAs.
+
+    Uses :func:`_open_readonly_connection`, so callers also observe the read
+    PRAGMA baseline (``query_only=ON``, shared page cache, mmap window).
 
     File-backed test injection follows the injected path. In-memory injection has
     no second connection to open, so it yields the existing test connection and
@@ -714,12 +801,7 @@ def readonly_db(*, allow_missing: bool = False):
                 _readonly_local.block_missing = previous_block
             return
         raise FileNotFoundError(path)
-    connection = sqlite3.connect(
-        f"{path.resolve().as_uri()}?mode=ro",
-        uri=True,
-        timeout=1.0,
-    )
-    connection.row_factory = sqlite3.Row
+    connection = _open_readonly_connection(path, timeout=1.0)
     _readonly_local.connection = connection
     _readonly_local.block_missing = False
     try:
@@ -741,19 +823,15 @@ def open_readonly_snapshot(path=None) -> sqlite3.Connection:
     - ``PRAGMA query_only=ON`` — belt-and-suspenders for observability
       (``EXPLAIN`` and read-side pragmas still work).
 
+    The handle also inherits the read PRAGMA baseline (page cache, mmap window)
+    from :func:`_open_readonly_connection`.
+
     Callers must ``close()`` when done. Used by Observation Lab code paths that
     read canonical facts but must never write, and by architecture tests that
     prove the boundary is physical rather than conventional.
     """
     resolved = Path(path or _injected_db_path or db_path()).resolve()
-    conn = sqlite3.connect(
-        f"{resolved.as_uri()}?mode=ro",
-        uri=True,
-        timeout=1.0,
-    )
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON")
-    return conn
+    return _open_readonly_connection(resolved, timeout=1.0)
 
 
 def get_db() -> sqlite3.Connection:

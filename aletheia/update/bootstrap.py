@@ -9,7 +9,6 @@ Existing selections are never overwritten; normal signed updates own all later c
 from __future__ import annotations
 
 from contextlib import contextmanager
-import json
 import os
 from pathlib import Path
 import re
@@ -24,23 +23,6 @@ from aletheia.package_integrity import (
 )
 
 _RELEASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
-
-
-def _atomic_json(path: Path, value: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}-{uuid4().hex[:8]}")
-    with temporary.open("w", encoding="utf-8") as handle:
-        json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, path)
-    if os.name != "nt":
-        descriptor = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
 
 
 @contextmanager
@@ -187,7 +169,7 @@ def install_bootstrap_runtime(
             paths["feed_url"].write_text(feed_url + "\n", encoding="utf-8")
 
         selection = {"schema_version": 1, "current": release_id, "previous": None}
-        _atomic_json(paths["current"], selection)
+        packaged._atomic_json(paths["current"], selection)  # noqa: SLF001
         return {
             "installed": True,
             "release_id": release_id,

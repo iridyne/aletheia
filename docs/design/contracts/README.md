@@ -22,6 +22,56 @@ Use [template.md](template.md) for new Contracts. Contract changes and their
 executable claims must remain aligned, but claim conformance does not determine
 Product Support.
 
+## Keeping a Contract and its claims aligned
+
+"Aligned" is a two-way obligation and the direction that gets skipped is
+claim → Contract. Whenever a `SpecClaim`'s `contract`, `section`, or `invariant`
+text changes:
+
+1. Open the named Contract and the named section. **If the section does not
+   exist, you invented it** — add the section or repoint the claim. (2026-09-07:
+   `LU-C07` was repointed at a `§4b selected-mode resolution` that did not exist;
+   the fix was adding `§4b-2` to the Live Unlock Contract.)
+2. The claim's `invariant` may promise only what the Contract states and only
+   what the test actually exercises. A claim promising more than the Contract is
+   the defect, even when the test is green. (`LU-C07` promised a selector acting
+   "before Proposal persistence" while the Contract records that join as missing
+   and tracked in #418.)
+3. If the behaviour was retired, invert the claim to assert the retirement holds
+   rather than deleting it, and mark the mechanism retired in the owning
+   document. A red spec that caught a documented retirement is worth converting
+   into a guard against reinstatement. (`AC-S13`, `DM-S06`, both 2026-09-07.)
+4. A Contract must not present a retired mechanism as current. `DM-S06` inverted
+   cleanly only after `docs/design/data/data_model.md` marked the five Runtime
+   Continuity tables retired.
+5. Claim ids follow the owning spec file's existing contiguous numbering. Do not
+   invent a far-future number to avoid collisions — `RE-S99` was wrong where the
+   file ran `RE-S01..S08`; it is `RE-S09`.
+
+## Writing an executable claim that will not rot
+
+- **Assert behaviour, not source text.** Call the function; check the return
+  value, the exception, or the persisted row.
+- If a source-text scan is genuinely the only option, its docstring must state
+  **what it guarantees and what it does not**. A prefix/import denylist is
+  direct-import hygiene, never a reachability guarantee — measure the transitive
+  closure before claiming otherwise (`DCLS-S01`).
+- Use AST, not substring matching, for anything about imports:
+  `from a.b import c` and `from a.b.c import d` name different modules.
+- "String must be absent" stands alone. "String must be present" must be paired
+  with an assertion about the behaviour behind it, or it will pass vacuously
+  after the text survives a semantic change (`DM-S06`: the DDL text was still in
+  the file while the runtime constant excluded it).
+- An exact-inventory assertion (`allowed == discovered`) trips on debt
+  **shrinking** too. Print both `unexpected` and `stale` in the message so the
+  next reader can tell which direction fired; only `unexpected` is a real signal.
+- Prove a new guard is non-vacuous before shipping it: revert the fix it guards,
+  see it fail, restore. Record that in the commit.
+
+Full case notes for each rule above:
+[`DEBUG_AUDIT_PLAYBOOK.md`](../../governance/protocols/DEBUG_AUDIT_PLAYBOOK.md)
+SOP-14 through SOP-19.
+
 The [Observation Experiment Ownership V2 Migration Contract](observation_experiment_ownership_v2.md) freezes the current Phase 1 legacy-coupling inventory and serial migration boundary. Its [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future target; until the explicit authority-cutover gate is satisfied, legacy Experiment authority remains active.
 
 Current framework-wide contracts include the

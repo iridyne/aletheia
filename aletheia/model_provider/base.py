@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 import asyncio
+import json
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -252,6 +253,45 @@ def _cost_metadata(provider: Any, *, mode: str | None = None, request: Any = Non
         if guardrail_observations:
             metadata["prompt_guardrail"] = list(guardrail_observations)
     return metadata
+
+
+async def structured_via_complete(
+    provider: "ModelProvider", request: "StructuredModelRequest", schema: type
+) -> dict:
+    """Ask ``complete`` for a json_schema response and parse it.
+
+    The four HTTP providers all obtain structured output this way. Kept a
+    function rather than the ``ModelProvider.structured`` default so that
+    default stays ``NotImplementedError``: a provider that cannot honour
+    ``response_format="json_schema"`` must fail loudly, not return whatever its
+    prose happened to parse into.
+    """
+    response = await provider.complete(
+        ModelRequest(
+            messages=list(request.messages),
+            system=request.system,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            response_format="json_schema",
+            structured_schema=portable_json_schema_payload(schema),
+        )
+    )
+    return json.loads(response.content)
+
+
+async def health_from_catalogue_probe(provider: "ModelProvider") -> "ModelHealth":
+    """Report health from the model catalogue without spending an inference call."""
+    try:
+        models = await provider.list_models()
+        if models:
+            return health_from_model_catalogue(provider.name, provider.model, models)
+        return ModelHealth(
+            provider=provider.name,
+            available=False,
+            error="model catalogue unavailable; use explicit Ping to test inference",
+        )
+    except Exception as exc:
+        return ModelHealth(provider=provider.name, available=False, error=str(exc))
 
 
 @dataclass

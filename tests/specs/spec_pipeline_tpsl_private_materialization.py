@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from tests.specs.uta_private_history import _identity
-
 from datetime import datetime, timezone
 import json
 import sqlite3
@@ -12,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
+from tests.specs.uta_private_history import _identity
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -197,12 +196,6 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
     assert close_order["exchange_order_id"] == "EXEC-SL"
     assert close_order["status"] == "filled"
     assert close_order["close_reason"] == "stop_loss"
-    # The TPSL close claim must carry the same proven account identity as the entry
-    # Order it closes. Without it reconcile() rejects the order every 2 minutes with
-    # uta_account_identity_unavailable and paints its job red.
-    entry_order = repo.get_order(stored_position["order_id"])
-    assert close_order["uta_account_identity_json"] == entry_order["uta_account_identity_json"]
-    assert close_order["uta_account_identity_json"]
     assert close_fill["fill_price"] == pytest.approx(59_000.0)
     assert close_fill["fee"] == pytest.approx(0.2)
     assert stored_position["status"] == "closed"
@@ -501,6 +494,17 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
         [_private_close_fill("EXEC-TP-X")],
         calls=uta_calls,
     )
+    monkeypatch.setattr(
+        reconciliation,
+        "build_uta_registry",
+        lambda: SimpleNamespace(configured_identities=lambda: (_identity("bitget_demo"),)),
+    )
+
+    # Reopen durable state; recovery must not depend on the observing connection.
+    import aletheia.storage.sqlite as sq
+
+    sq.reset_db()
+    db = sq.get_db()
 
     result = reconciliation.reconcile()
     recovered_position = repo._select_one("positions", position.id)

@@ -41,7 +41,6 @@ from aletheia.config.schema import (
     RiskConfig,
     RuntimeConfig,
     SerenityConfig,
-    StrategyFactoryConfig,
     NotificationHour,
     TelegramConfig,
     TradingConfig,
@@ -61,7 +60,7 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 # Operator surface (cfg.operator.permission_mode: ReadOnly/Research/PaperAuto/
 # AllowEditing/Auto) — this endpoint correctly governs only the worker side, so
 # the 3-value allowlist is intentional, not a bug (CR-AR-02 was a false positive).
-VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
+from aletheia.agent_shell.permissions import VALID_WORKER_MODES as VALID_PERMISSION_MODES
 
 
 def _mutate_config_with_candidate_publication_permit(mutator):
@@ -245,14 +244,6 @@ class SettingsTunnelResponse(BaseModel):
     metrics_port: int
 
 
-class SettingsStrategyFactoryResponse(StrategyFactoryConfig):
-    """Deprecated config projection with its explicit UI deprecation marker."""
-
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
-    deprecated: bool = Field(default=True, alias="_deprecated")
-    reason: str = Field(default="", alias="_reason")
-
-
 class SettingsPersonaRolloutResponse(BaseModel):
     """Durable rollout status; nested evidence is intentionally read-only."""
 
@@ -328,7 +319,6 @@ class SettingsResponse(BaseModel):
     remote_control: RemoteControlConfig
     regime: RegimeConfig
     network: NetworkConfig
-    strategy_factory: SettingsStrategyFactoryResponse
     historical_data: HistoricalDataConfig
     event_triggers: EventTriggerConfig
     pi_daemon: PiDaemonConfig
@@ -447,14 +437,6 @@ def get_settings() -> SettingsResponse:
         "remote_control": cfg.remote_control.model_dump(mode="json"),
         "regime": cfg.regime.model_dump(mode="json"),
         "network": _redacted_network(cfg.network.model_dump(mode="json")),
-        "strategy_factory": {
-            **cfg.strategy_factory.model_dump(mode="json"),
-            "_deprecated": True,
-            "_reason": (
-                "Strategy Factory subsystem removed with Position C (2026-07-02). "
-                "All fields are compatibility-only with no production consumer."
-            ),
-        },
         "historical_data": cfg.historical_data.model_dump(mode="json"),
         "event_triggers": cfg.event_triggers.model_dump(mode="json"),
         "pi_daemon": cfg.pi_daemon.model_dump(mode="json"),
@@ -749,8 +731,17 @@ def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> Non
 def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
-    if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
-        raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
+    # Validate against the Risk vocabulary itself. The former hand-written set
+    # accepted `binance_live` and `okx_live` — UTA credential profile names, not
+    # execution modes — and the mutator below persists the value verbatim. Either
+    # one makes resolve_risk_policy raise UnknownRiskExecutionMode, so every
+    # subsequent proposal is rejected `unregistered_risk_execution_mode:...`:
+    # a total trading halt reachable from one dashboard POST.
+    from aletheia.risk.policy import DEMO_EXECUTION_MODES
+
+    if req.paper_execution_mode is not None and req.paper_execution_mode not in DEMO_EXECUTION_MODES:
+        allowed = ", ".join(sorted(DEMO_EXECUTION_MODES))
+        raise HTTPException(400, f"paper_execution_mode must be one of: {allowed}")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
     # Pre-validate outside the mutation lock to fail fast
@@ -2799,53 +2790,6 @@ def get_candidate_selection_status():
 # Strategy Factory config  (DEPRECATED — subsystem removed 2026-07-02)
 # ---------------------------------------------------------------------------
 
-_STRATEGY_FACTORY_DEPRECATED_FIELDS = [
-    "backtest_gate_enabled", "sweep_enabled", "sweep_max_variants",
-    "sweep_n_trials", "sweep_top_k",
-    "event_driven_enabled", "event_cooldown_minutes", "event_min_score",
-    "walk_forward_enabled", "walk_forward_folds", "walk_forward_min_bars",
-    "high_trade_count_threshold", "min_runtime_days_relaxed",
-]
-
-# Accepts (but ignores) the old field set so old API callers don't get a hard 422.
-class StrategyFactoryConfigUpdate(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-    backtest_gate_enabled: bool | None = None
-    sweep_enabled: bool | None = None
-    sweep_max_variants: int | None = None
-    event_driven_enabled: bool | None = None
-    event_cooldown_minutes: int | None = None
-    event_min_score: float | None = None
-    walk_forward_enabled: bool | None = None
-    walk_forward_folds: int | None = None
-    walk_forward_min_bars: int | None = None
-    high_trade_count_threshold: int | None = None
-    min_runtime_days_relaxed: int | None = None
-    sweep_n_trials: int | None = None
-    sweep_top_k: int | None = None
-
-
-@router.post("/strategy_factory")
-def update_strategy_factory_config(req: StrategyFactoryConfigUpdate):
-    """Strategy Factory subsystem was removed with Position C (2026-07-02).
-
-    This endpoint is kept for backward compatibility but performs no mutation and
-    writes no audit event. The response explicitly signals that no runtime behavior
-    changed. The current authority chain is scanner-family opportunities → ranker /
-    System Operator → Proposal → Risk/Execution.
-    """
-    return {
-        "deprecated": True,
-        "supported": False,
-        "reason": (
-            "Strategy Factory subsystem removed with Position C (2026-07-02). "
-            "These fields have no production consumer and saving them does not alter "
-            "any runtime decision. Current path: scanner → ranker → System Operator "
-            "→ Proposal → Risk/Execution."
-        ),
-        "fields": _STRATEGY_FACTORY_DEPRECATED_FIELDS,
-        "updated": {},
-    }
 
 
 # ---------------------------------------------------------------------------

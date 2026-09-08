@@ -2375,3 +2375,112 @@ async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_pa
         anchor_ready = anchor_engine.observe(observed) or anchor_ready
     assert anchor_ready.entry_trigger["trigger_spec_id"] == "anchor-retrace-reclaim"
     assert "trigger_spec_version" not in anchor_ready.entry_trigger
+
+
+@pytest.mark.asyncio
+async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch):
+    """A sequence anomaly must not permanently silence a Triggered Plan.
+
+    ``MomentumTriggerEngine`` fails closed on a duplicate/out-of-order frame and
+    nothing inside it clears ``health_reason``, so a reused instance rejects every
+    later event forever while the stream keeps reporting ready.  The watcher owns
+    the engine lifecycle, so a reload must discard that instance and re-arm.
+    """
+
+    from types import SimpleNamespace
+
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.universe.fast_stream import FastMarketEvent
+
+    payload = "{}"
+    row = {
+        "id": "resync-plan",
+        "status": "waiting",
+        "plan_json": payload,
+        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
+        "order_id": None,
+    }
+    plan = SimpleNamespace(
+        plan_id="resync-plan",
+        planning_generation_id="generation-resync",
+        risk_policy_id="policy-resync",
+        risk_policy_revision=1,
+        risk_policy_hash="policy-hash-resync",
+        execution_account_mode="bitget_demo",
+        execution_mode="TRIGGERED",
+        order_tactic="OPPOSING_BBO_IOC",
+        max_wait_sec=0,
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        venue="bitget",
+        symbol="BTC/USDT",
+        market_type="perp",
+        direction="long",
+        trigger_spec_id="anchor-retrace-reclaim",
+        trigger_params={
+            "breakout_level": 100.0,
+            "pullback_low": 99.5,
+            "pullback_high": 100.5,
+            "entry_low": 100.0,
+            "entry_high": 100.5,
+            "invalidation_price": 98.0,
+            "sweep_low": 99.5,
+            "sweep_high": 100.0,
+            "atr_abs": 2.0,
+            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "d" * 64,
+        },
+    )
+    monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
+    monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
+    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
+    monkeypatch.setattr(
+        "aletheia.risk.policy.resolve_risk_policy",
+        lambda _cfg, _mode: SimpleNamespace(
+            policy=SimpleNamespace(policy_id="policy-resync", revision=1),
+            policy_hash="policy-hash-resync",
+        ),
+    )
+
+    async def no_prewarm(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(watch, "_prewarm_market_structure", no_prewarm)
+    cfg = SimpleNamespace(
+        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
+        universe=SimpleNamespace(max_spread_bps=50, min_depth_10bps_usd=100),
+    )
+
+    _, engines = await watch._load_entry_plan_watchers(cfg)
+    engine = engines[plan.plan_id]
+
+    # A healthy engine keeps its rolling windows across an ordinary reload.
+    _, reused = await watch._load_entry_plan_watchers(cfg, engines)
+    assert reused[plan.plan_id] is engine
+
+    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
+    engine.confirm_subscription()
+    first = FastMarketEvent(
+        event_type="quote",
+        instrument=instrument,
+        exchange_timestamp_ms=1_000,
+        received_timestamp_ms=1_000,
+        sequence=2,
+        bid=100.0,
+        ask=100.01,
+    )
+    engine.observe(first)
+    engine.observe(first.model_copy(update={"received_timestamp_ms": 1_100, "sequence": 1}))
+    assert engine.health_reason == "sequence_anomaly:quote"
+    assert engine.observe(
+        first.model_copy(update={"received_timestamp_ms": 1_200, "sequence": 3})
+    ) is None, "poisoned engine must stay closed until it is replaced"
+
+    _, rebuilt = await watch._load_entry_plan_watchers(cfg, reused)
+
+    fresh = rebuilt[plan.plan_id]
+    assert fresh is not engine
+    assert fresh.health_reason is None
+    assert fresh.state == "armed"
+    assert fresh.subscription_confirmed is False

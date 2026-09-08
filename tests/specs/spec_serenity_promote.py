@@ -1,22 +1,37 @@
-"""Spec: Serenity promote → PI evaluation queue (Phase 3 — Option A, D5 switch)
+"""Spec: Serenity promote → durable Candidate publication (D2 canonical entry)
 
-Owner decision 2026-06-27 (Option A, System Operator-centered): the apex System Operator is the SOLE
-trade-decision maker. Phase 2 wired the `signal_source` discriminator on
-`pi_decisions`; this phase replaces the legacy `StrategyRecord(state='draft')`
-dead-record path with a real producer → consumer chain:
+Contract Delta (2026-09-07, serenity_contract.md §7): the legacy
+`signal_pending` PiDecision queue is RETIRED. Both promotion paths — manual
+`routes/data.py:promote_serenity_theme` and automatic
+`research_worker._auto_promote_serenity_opportunities` — now go through one
+repository function:
+
+    repo.publish_serenity_candidates(theme_id, opportunity_ids, *,
+                                     min_score_for_pi=None,
+                                     new_candidates_only=False) -> list[str]
 
     POST /api/serenity/themes/{id}/promote
-       → for each active serenity_opportunity under the theme:
-            update_serenity_opportunity(action_intent='pi_evaluate')
-            insert_pi_decision(action='signal_pending', signal_source='serenity',
-                               opportunity_id=<serenity_opportunities.id>)
-       → update_serenity_theme(status='promoted')
-       → notify_pi_daemon(source='serenity_promote')
+       → publish_serenity_candidates(theme_id, <active opportunity ids>)
+            · prepares research evidence, exact registry instrument, current
+              feature/market facts and the shared PA evaluator OUTSIDE the
+              writer transaction
+            · re-verifies source material hash + global exact-instrument owner
+              inside one BEGIN IMMEDIATE, then writes the source-scoped
+              UniverseSnapshot + UniverseMember + PlanningGeneration
+            · marks the theme 'promoted' only when a durable Candidate exists
+       → notify_pi_daemon(source='serenity_promote')  # wakes the canonical Planner
 
-PI then evaluates these signals like any other input (Layer 3 already surfaces
-the Serenity context — see Phase 2 / SA-S04). The D5 config switch
-`aletheia.config.schema.SerenityConfig` keeps `auto_promote=False` by default —
-manual-only promotion preserves the human-curator workflow.
+Consequences for the claims below:
+- No `pi_decisions` row is ever written by promotion (SP-B01).
+- Promotion is IDEMPOTENT by (source id, material hash) — re-promoting returns
+  the same Candidate IDs instead of the retired 400 double-enqueue guard
+  (SP-B02).
+- A writer failure rolls back every row and leaves the theme retryable
+  (SP-B04).
+
+The D5 config switch `aletheia.config.schema.SerenityConfig` keeps
+`auto_promote=False` by default — manual-only promotion preserves the
+human-curator workflow.
 
 Contract: serenity_promote (logical contract — registered in the conformance
 matrix but intentionally NOT in REQUIRED_CONTRACTS, mirroring the behavioral
@@ -112,20 +127,30 @@ def test_promote_does_not_write_draft_strategy_record():
 
 @spec_claim(
     SpecClaim(
-        "SP-S03", _CONTRACT, "§promote enqueues signal_pending PiDecisions", "L2a",
-        "promote_serenity_theme delegates the all-or-nothing pending-carrier handoff to "
-        "the repository and wakes the PI daemon only after it commits",
+        "SP-S03", _CONTRACT, "§promote publishes durable Candidates", "L2a",
+        "promote_serenity_theme delegates the all-or-nothing publication to the "
+        "repository's publish_serenity_candidates and wakes the canonical Planner only "
+        "after it commits. "
+        "Contract Delta (2026-09-07): the signal_pending PiDecision queue is retired; "
+        "enqueue_serenity_theme_for_pi no longer exists.",
     ),
 )
-def test_promote_writes_signal_pending_pi_decision():
+def test_promote_publishes_durable_candidates():
     body = _promote_fn_body()
-    assert "enqueue_serenity_theme_for_pi" in body, (
-        "promote_serenity_theme does not call the repository's atomic pending "
-        "handoff — theme state and PI carriers could diverge"
+    assert "publish_serenity_candidates" in body, (
+        "promote_serenity_theme does not call the repository's atomic publication — "
+        "theme state and durable Candidates could diverge"
+    )
+    assert "enqueue_serenity_theme_for_pi" not in body, (
+        "promote_serenity_theme still references the retired pending-carrier handoff"
+    )
+    assert "insert_pi_decision" not in body and "signal_pending" not in body, (
+        "promote_serenity_theme still writes the retired PiDecision queue — promotion "
+        "must produce durable Candidates, not legacy decisions"
     )
     assert "notify_pi_daemon" in body, (
-        "promote_serenity_theme does not wake the PI daemon — signals would sit "
-        "until the next scheduled tick instead of being evaluated promptly"
+        "promote_serenity_theme does not wake the Planner — published Candidates would "
+        "sit until the next scheduled tick instead of being planned promptly"
     )
 
 
@@ -211,34 +236,108 @@ def _switch_to_filebacked_db():
     run_migrations()                # write schema into tmp_path/app.db
 
 
+_PUBLISHABLE_SYMBOLS = ("BTC/USDT", "ETH/USDT")
+
+
 def _seed_theme_with_opportunities(n: int = 2):
-    """Insert a SerenityTheme with n active opportunities and return ids."""
+    """Seed a theme whose active opportunities can reach durable publication.
+
+    `publish_serenity_candidates` refuses anything it cannot ground in real
+    facts, so a promotable theme needs, per opportunity: supporting Serenity
+    evidence, an ACTIVE `universe_registry` row for the exact
+    venue/symbol/market_type, a current feature snapshot that clears the hard
+    gate, and enough OHLCV history for requalification. Seeding less than this
+    makes the route answer 409 for a data reason instead of exercising the
+    publication claim.
+    """
+    import math
+    from datetime import datetime, timezone
+
+    from aletheia.config.loader import load_config
+    from aletheia.data.providers import Candle
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import SerenityTheme, SerenityOpportunity
+    from aletheia.storage.models import (
+        SerenityEvidence,
+        SerenityOpportunity,
+        SerenityTheme,
+        UniverseAsset,
+        UniverseFeatureSnapshot,
+    )
+
+    assert n <= len(_PUBLISHABLE_SYMBOLS), "extend _PUBLISHABLE_SYMBOLS"
+    now = datetime.now(timezone.utc)
+    venue = load_config().market_data.ccxt_exchange
 
     theme = SerenityTheme(name="Test industrial chain — semis", status="active")
     repo.insert_serenity_theme(theme)
+    repo.insert_serenity_evidence(SerenityEvidence(
+        theme_id=theme.id, title="Filed research", source="sec",
+        source_ref="https://www.sec.gov/Archives/research", tier="disclosed",
+        supports=True,
+    ))
 
     opp_ids: list[str] = []
-    for i in range(n):
+    for symbol in _PUBLISHABLE_SYMBOLS[:n]:
         opp = SerenityOpportunity(
-            theme_id=theme.id,
-            symbol="NVDA" if i == 0 else "AAPL",
-            direction="long",
-            status="active",
-            action_intent="watch",  # promote MUST flip this to 'pi_evaluate'
+            theme_id=theme.id, symbol=symbol, direction="long",
+            market_type="spot", status="active", action_intent="watch",
         )
         repo.insert_serenity_opportunity(opp)
         opp_ids.append(opp.id)
+
+        asset = UniverseAsset(venue=venue, symbol=symbol, market_type="spot")
+        repo.upsert_universe_asset(asset)
+        repo.insert_universe_feature_snapshot(UniverseFeatureSnapshot(
+            asset_id=asset.id, ts=now.isoformat(), quote_volume_24h=10_000_000,
+            spread_bps=5, depth_10bps_usd=30_000, data_freshness_sec=0,
+            return_1h=1, return_4h=3, return_24h=8, relative_strength_24h=5,
+            rsi_14=60, atr_pct=2,
+        ))
+        for timeframe, interval, count in (("15m", 900_000, 96), ("1h", 3_600_000, 1)):
+            end = int(now.timestamp() * 1000) // interval * interval
+            candles = [
+                Candle(
+                    timestamp=end - (count - index) * interval,
+                    open=100 + math.sin(index / 3), high=102 + math.sin(index / 3),
+                    low=98 + math.sin(index / 3), close=100 + math.sin(index / 3),
+                    volume=1000,
+                )
+                for index in range(count)
+            ]
+            repo.upsert_ohlcv_candles(
+                symbol, timeframe, candles, exchange=venue, market_type="spot",
+            )
+    repo.execute_write(
+        "UPDATE market_ohlcv SET first_persisted_at=?, last_mutated_at=?",
+        (now.isoformat(), now.isoformat()),
+    )
     return theme.id, opp_ids
+
+
+def _serenity_candidate_ids(repo, opp_ids: set[str]) -> list[str]:
+    """Durable Candidate IDs whose frozen context names one of these sources."""
+    import json
+
+    found = []
+    for row in repo.get_db().execute(
+        "SELECT id, candidate_opportunity_context_json FROM universe_members"
+    ).fetchall():
+        context = json.loads(row["candidate_opportunity_context_json"] or "{}")
+        source = context.get("source") or {}
+        if source.get("kind") == "serenity" and source.get("id") in opp_ids:
+            found.append(row["id"])
+    return found
 
 
 @spec_claim(
     SpecClaim(
-        "SP-B01", _CONTRACT, "§promote → PI queue full round-trip", "L2b",
-        "POST /api/serenity/themes/{id}/promote with 2 active opportunities writes "
-        "2 signal_pending PiDecisions tagged signal_source='serenity', flips each "
-        "opportunity's action_intent to 'pi_evaluate', and marks the theme 'promoted'",
+        "SP-B01", _CONTRACT, "§promote → durable Candidate full round-trip", "L2b",
+        "POST /api/serenity/themes/{id}/promote with 2 active opportunities publishes 2 "
+        "durable Candidates whose frozen context carries source.kind='serenity' + the "
+        "exact SerenityOpportunity id, marks the theme 'promoted', and writes NO "
+        "pi_decisions row. "
+        "Contract Delta (2026-09-07): replaces the retired signal_pending PiDecision "
+        "queue and the action_intent='pi_evaluate' flip.",
     ),
 )
 def test_promote_endpoint_full_round_trip(monkeypatch):
@@ -267,15 +366,14 @@ def test_promote_endpoint_full_round_trip(monkeypatch):
         f"promote returned {resp.status_code}: {resp.text}"
     )
     body = resp.json()
-    assert body.get("status") == "submitted_to_pi", (
+    assert body.get("status") == "submitted_to_planning", (
         f"unexpected status: {body!r}"
     )
-    assert body.get("queued") == 2, (
-        f"expected 2 opportunities queued, got {body!r}"
+    assert body.get("candidate_count") == 2, (
+        f"expected 2 Candidates published, got {body!r}"
     )
-    assert set(body.get("opportunity_ids") or []) == set(opp_ids), (
-        f"opportunity_ids mismatch: {body!r} vs seeded {opp_ids}"
-    )
+    candidate_ids = body.get("candidate_ids") or []
+    assert len(set(candidate_ids)) == 2, f"candidate_ids not distinct: {body!r}"
 
     # Theme must be marked promoted
     theme_row = repo.get_serenity_theme(theme_id)
@@ -284,30 +382,23 @@ def test_promote_endpoint_full_round_trip(monkeypatch):
         f"theme status not flipped: {theme_row['status']!r}"
     )
 
-    # Each opportunity must have action_intent='pi_evaluate'
-    opps = repo.list_serenity_opportunities(theme_id=theme_id, limit=10)
-    intents = {o["id"]: o["action_intent"] for o in opps}
-    for oid in opp_ids:
-        assert intents.get(oid) == "pi_evaluate", (
-            f"opportunity {oid} action_intent not flipped: {intents.get(oid)!r}"
+    # Each published Candidate must be causally frozen to its exact research
+    # source — this is what replaced the signal_source='serenity' discriminator.
+    assert set(_serenity_candidate_ids(repo, set(opp_ids))) == set(candidate_ids), (
+        "published Candidates do not carry the exact SerenityOpportunity sources"
+    )
+    for candidate_id in candidate_ids:
+        planning = repo.get_candidate_planning_for_candidate(candidate_id)
+        assert planning is not None, (
+            f"Candidate {candidate_id} has no PlanningGeneration — the Planner "
+            "would never pick it up"
         )
 
-    # Two signal_pending PiDecisions tagged signal_source='serenity', each
-    # linked to one of the seeded opportunity ids
-    decisions = repo.list_pi_decisions(limit=20)
-    serenity_decisions = [
-        d for d in decisions
-        if d.get("signal_source") == "serenity"
-        and d.get("action") == "signal_pending"
-        and d.get("opportunity_id") in set(opp_ids)
-    ]
-    assert len(serenity_decisions) == 2, (
-        f"expected 2 serenity signal_pending pi_decisions, got "
-        f"{len(serenity_decisions)}: {serenity_decisions!r}"
-    )
-    assert {d["opportunity_id"] for d in serenity_decisions} == set(opp_ids), (
-        "pi_decisions do not cover all promoted opportunities"
-    )
+    # The retired queue must stay empty: promotion produces durable Candidates,
+    # never a legacy decision row.
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM pi_decisions"
+    ).fetchone()[0] == 0, "promotion wrote a retired pi_decisions carrier"
 
     # Daemon wake attempted (best-effort — route swallows ImportError, but in
     # the normal path this should fire)
@@ -318,74 +409,84 @@ def test_promote_endpoint_full_round_trip(monkeypatch):
 
 @spec_claim(
     SpecClaim(
-        "SP-B02", _CONTRACT, "§promote idempotency guard", "L2b",
-        "Promoting a theme whose status is already 'promoted' returns 400 — preventing "
-        "double-enqueue of the same opportunities into the PI queue",
+        "SP-B02", _CONTRACT, "§promote idempotency by source material", "L2b",
+        "Re-promoting a theme reuses the durable Candidate already published for the "
+        "same (source id, material hash) instead of creating a second one. "
+        "Contract Delta (2026-09-07): the retired 400 double-enqueue guard is replaced "
+        "by real idempotency — unchanged research cannot yield two entry carriers.",
     ),
 )
-def test_promote_already_promoted_returns_400():
+def test_promote_is_idempotent_for_unchanged_research():
+    from aletheia.storage import repositories as repo
+
     _switch_to_filebacked_db()
-    theme_id, _ = _seed_theme_with_opportunities(n=1)
+    theme_id, opp_ids = _seed_theme_with_opportunities(n=1)
     client = _make_test_client()
+
     first = client.post(f"/api/serenity/themes/{theme_id}/promote")
     assert first.status_code == 200, f"first promote failed: {first.text}"
+    first_ids = first.json()["candidate_ids"]
+    assert len(first_ids) == 1
 
     second = client.post(f"/api/serenity/themes/{theme_id}/promote")
-    assert second.status_code == 400, (
-        f"re-promote should be 400, got {second.status_code}: {second.text}"
+    assert second.status_code == 200, (
+        f"re-promote of unchanged research should be idempotent, got "
+        f"{second.status_code}: {second.text}"
+    )
+    assert second.json()["candidate_ids"] == first_ids, (
+        "re-promote published a different Candidate for unchanged research"
+    )
+    assert _serenity_candidate_ids(repo, set(opp_ids)) == first_ids, (
+        "re-promote duplicated the durable Candidate"
     )
 
 
 @spec_claim(
     SpecClaim(
-        "SP-B04", _CONTRACT, "§promote atomic queue handoff", "L2b",
-        "A Serenity theme becomes promoted only when every active opportunity and its "
-        "signal_pending carrier commit together; an insertion failure rolls the whole "
-        "handoff back so the same theme can be retried without duplicate carriers",
+        "SP-B04", _CONTRACT, "§promote atomic publication", "L2b",
+        "A Serenity theme becomes promoted only when the Snapshot, Candidate and "
+        "PlanningGeneration of every published opportunity commit together; a writer "
+        "failure rolls the whole publication back so the same theme can be retried "
+        "without duplicate Candidates.",
     ),
 )
-def test_promote_queue_handoff_rolls_back_and_remains_retryable(monkeypatch):
+def test_promote_publication_rolls_back_and_remains_retryable(monkeypatch):
     from aletheia.storage import repositories as repo
 
     _switch_to_filebacked_db()
     theme_id, opp_ids = _seed_theme_with_opportunities(n=2)
-    real_insert = repo.insert_pi_decision
+    real_insert = repo.insert_candidate
     calls = 0
 
-    def fail_second_insert(decision):
+    def fail_second_insert(member):
         nonlocal calls
         calls += 1
         if calls == 2:
-            raise RuntimeError("deterministic queue failure")
-        return real_insert(decision)
+            raise RuntimeError("deterministic publication failure")
+        return real_insert(member)
 
-    monkeypatch.setattr(repo, "insert_pi_decision", fail_second_insert)
+    monkeypatch.setattr(repo, "insert_candidate", fail_second_insert)
     client = _make_test_client()
     failed = client.post(f"/api/serenity/themes/{theme_id}/promote")
 
-    assert failed.status_code == 500
-    assert repo.get_serenity_theme(theme_id)["status"] == "active"
-    opps = repo.list_serenity_opportunities(theme_id=theme_id, limit=10)
-    assert {row["id"]: row["action_intent"] for row in opps} == {
-        opportunity_id: "watch" for opportunity_id in opp_ids
-    }
-    assert [
-        row for row in repo.list_pi_decisions(limit=20)
-        if row.get("signal_source") == "serenity"
-        and row.get("opportunity_id") in set(opp_ids)
-    ] == []
+    assert failed.status_code == 500, (
+        f"writer failure must not be reported as success: {failed.text}"
+    )
+    assert repo.get_serenity_theme(theme_id)["status"] == "active", (
+        "theme was marked promoted despite a rolled-back publication"
+    )
+    assert _serenity_candidate_ids(repo, set(opp_ids)) == [], (
+        "a partial publication left a durable Candidate behind"
+    )
 
-    monkeypatch.setattr(repo, "insert_pi_decision", real_insert)
+    monkeypatch.setattr(repo, "insert_candidate", real_insert)
     retried = client.post(f"/api/serenity/themes/{theme_id}/promote")
-    assert retried.status_code == 200
-    assert retried.json()["queued"] == 2
+    assert retried.status_code == 200, f"retry failed: {retried.text}"
+    assert retried.json()["candidate_count"] == 2
     assert repo.get_serenity_theme(theme_id)["status"] == "promoted"
-    carriers = [
-        row for row in repo.list_pi_decisions(limit=20)
-        if row.get("signal_source") == "serenity"
-        and row.get("opportunity_id") in set(opp_ids)
-    ]
-    assert len(carriers) == 2
+    assert len(_serenity_candidate_ids(repo, set(opp_ids))) == 2, (
+        "retry did not converge on exactly one Candidate per source"
+    )
 
 
 @spec_claim(
@@ -433,8 +534,9 @@ _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 @spec_claim(
     SpecClaim(
         "SP-S06", _CONTRACT, "§auto_promote pipeline integration", "L2a",
-        "When auto_promote=True and score≥min_score_for_pi, research_worker uses the "
-        "same atomic pending-carrier handoff as manual promotion after pipeline stage 4",
+        "When auto_promote=True and score≥min_score_for_pi, research_worker publishes "
+        "through the SAME repository function as manual promotion after pipeline stage 4 "
+        "— one publication path, so automatic and manual promotion cannot diverge.",
     ),
 )
 def test_research_worker_auto_promote_block_exists():
@@ -446,17 +548,20 @@ def test_research_worker_auto_promote_block_exists():
         "research_worker.py has no auto_promote reference — the D5 switch is dead"
     )
     assert "min_score_for_pi=cfg.serenity.min_score_for_pi" in src, (
-        "research_worker does not pass the configured score gate into the atomic handoff"
+        "research_worker does not pass the configured score gate into the publication"
     )
     assert "score_serenity_opportunity" in repo_src, (
-        "atomic Serenity handoff does not re-score current evidence and gates"
+        "atomic Serenity publication does not re-score current evidence and gates"
     )
-    assert "enqueue_serenity_theme_for_pi" in src, (
-        "research_worker does not use the atomic PI handoff — auto-promote can "
-        "diverge from manual promotion"
+    assert "publish_serenity_candidates" in src, (
+        "research_worker does not use the shared Candidate publication — auto-promote "
+        "can diverge from manual promotion"
+    )
+    assert "enqueue_serenity_theme_for_pi" not in src, (
+        "research_worker still references the retired pending-carrier handoff"
     )
     assert "notify_pi_daemon" in src, (
-        "research_worker does not wake PI daemon after auto-promote"
+        "research_worker does not wake the Planner after auto-promote"
     )
     assert "serenity_auto_promote" in src, (
         "research_worker auto-promote source tag missing — audit trail incomplete"

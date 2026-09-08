@@ -1012,32 +1012,6 @@ def create_extension_run(
     return run_id
 
 
-def update_extension_run(run_id: str, **kwargs) -> None:
-    if not kwargs:
-        return
-    updates = dict(kwargs)
-    if "input_data" in updates:
-        updates["input_data"] = _json_dump(updates["input_data"] or {})
-    if "output_data" in updates:
-        updates["output_data"] = (
-            _json_dump(updates["output_data"])
-            if updates["output_data"] is not None
-            else None
-        )
-    status = updates.get("status")
-    if status in {"passed", "failed"} and "completed_at" not in updates:
-        updates["completed_at"] = _utc_now()
-
-    db = get_db()
-    was_in_tx = db.in_transaction
-    sets = ", ".join(f"{key} = ?" for key in updates.keys())
-    db.execute(
-        f"UPDATE extension_runs SET {sets} WHERE id = ?",
-        [*updates.values(), run_id],
-    )
-    _commit_if_needed(db, was_in_tx)
-
-
 def get_extension_run(run_id: str) -> dict | None:
     db = get_db()
     row = db.execute(

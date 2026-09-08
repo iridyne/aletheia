@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import UniverseForwardOutcome
 
@@ -414,8 +415,8 @@ async def _settle_due_once(*, max_rows: int, time_budget_sec: float) -> int:
                 total_processed += 1
                 continue
 
-            entry_dt = _parse_dt(row.get("entry_ts"))
-            due_dt = _parse_dt(row.get("due_at"))
+            entry_dt = parse_utc(row.get("entry_ts"))
+            due_dt = parse_utc(row.get("due_at"))
             hold_seconds = (
                 max(0.0, (due_dt - entry_dt).total_seconds())
                 if entry_dt and due_dt
@@ -860,8 +861,8 @@ def _build_plan(row: dict, *, now: datetime) -> _ObservationPlan | None:
     from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.data.symbols import InstrumentId
 
-    entry_dt = _parse_dt(row.get("entry_ts"))
-    due_dt = _parse_dt(row.get("due_at"))
+    entry_dt = parse_utc(row.get("entry_ts"))
+    due_dt = parse_utc(row.get("due_at"))
     if entry_dt is None or due_dt is None:
         return None
     raw_market_type = str(row.get("market_type") or "spot").lower()
@@ -1045,14 +1046,6 @@ def _local_observation(plan: _ObservationPlan) -> tuple[dict | None, str]:
     }, "hit"
 
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:

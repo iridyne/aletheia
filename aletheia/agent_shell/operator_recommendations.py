@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import math
 
+from aletheia.utils.dt import parse_utc
 from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     list_artifacts,
@@ -39,23 +40,6 @@ def _truthy_flag(value) -> bool:
     return bool(value)
 
 
-def _parse_utc_timestamp(value) -> datetime | None:
-    if value in (None, ""):
-        return None
-    text = str(value).strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    elif " " in text and "T" not in text:
-        text = text.replace(" ", "T", 1)
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
 def _parse_json_list(value) -> list[str]:
@@ -83,7 +67,7 @@ def _has_fresh_report_artifact(
     for artifact in artifacts:
         if artifact.get("artifact_type") != artifact_type:
             continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        created_at = parse_utc(artifact.get("created_at"))
         if created_at is None or created_at <= cutoff:
             continue
         content = artifact.get("content") or {}
@@ -98,21 +82,21 @@ def _is_stuck_task(task: dict, *, threshold_minutes: int = 30) -> bool:
     if str(task.get("status") or "") != "running":
         return False
     started_at = task.get("started_at") or task.get("created_at")
-    parsed = _parse_utc_timestamp(started_at)
+    parsed = parse_utc(started_at)
     if parsed is None:
         return False
     return (datetime.now(timezone.utc) - parsed) >= timedelta(minutes=threshold_minutes)
 
 
 def _task_age_minutes(task: dict) -> float | None:
-    parsed = _parse_utc_timestamp(task.get("created_at"))
+    parsed = parse_utc(task.get("created_at"))
     if parsed is None:
         return None
     return (datetime.now(timezone.utc) - parsed).total_seconds() / 60.0
 
 
 def _run_age_minutes(run: dict) -> float | None:
-    parsed = _parse_utc_timestamp(run.get("ended_at") or run.get("started_at"))
+    parsed = parse_utc(run.get("ended_at") or run.get("started_at"))
     if parsed is None:
         return None
     return (datetime.now(timezone.utc) - parsed).total_seconds() / 60.0
@@ -639,7 +623,7 @@ def build_risk_summary(
     for decision in repo.list_risk_decisions(limit=200):
         if bool(decision.get("approved")):
             continue
-        created_at = _parse_utc_timestamp(decision.get("created_at"))
+        created_at = parse_utc(decision.get("created_at"))
         if created_at is None or created_at <= cutoff_24h:
             continue
         proposal = repo.get_trade_proposal(str(decision.get("proposal_id") or ""))
@@ -666,7 +650,7 @@ def build_risk_summary(
     for artifact in artifacts:
         if artifact.get("artifact_type") != "risk_boundary_change_proposal":
             continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        created_at = parse_utc(artifact.get("created_at"))
         if created_at is None or created_at <= cutoff_24h:
             continue
         content = artifact.get("content") or {}
@@ -696,7 +680,7 @@ def build_risk_summary(
     aggregated: dict[tuple, dict] = {}
     for decision in recent_rejected_decisions:
         proposal = repo.get_trade_proposal(str(decision.get("proposal_id") or ""))
-        created_at = _parse_utc_timestamp(decision.get("created_at"))
+        created_at = parse_utc(decision.get("created_at"))
         for violation in decision.get("violations") or []:
             violation_text = str(violation)
             candidate = _risk_boundary_change_from_violation(violation_text, proposal, cfg)
@@ -747,8 +731,8 @@ def build_risk_summary(
                 bucket["suggested_value"] = candidate["suggested_value"]
                 bucket["changes"] = candidate["changes"]
             if created_at and (
-                _parse_utc_timestamp(bucket.get("latest_created_at")) is None
-                or created_at > _parse_utc_timestamp(bucket.get("latest_created_at"))
+                parse_utc(bucket.get("latest_created_at")) is None
+                or created_at > parse_utc(bucket.get("latest_created_at"))
             ):
                 bucket["latest_created_at"] = decision.get("created_at")
 
@@ -801,10 +785,10 @@ def build_risk_summary(
         modes: list[str] = bucket["execution_modes"]
         if execution_mode and execution_mode not in modes:
             modes.append(execution_mode)
-        created_at = _parse_utc_timestamp(decision.get("created_at"))
+        created_at = parse_utc(decision.get("created_at"))
         if created_at and (
-            _parse_utc_timestamp(bucket.get("latest_created_at")) is None
-            or created_at > _parse_utc_timestamp(bucket.get("latest_created_at"))
+            parse_utc(bucket.get("latest_created_at")) is None
+            or created_at > parse_utc(bucket.get("latest_created_at"))
         ):
             bucket["latest_created_at"] = decision.get("created_at")
 
@@ -882,7 +866,7 @@ def build_command_center_behavior_summary(
     for command in list_commands(limit=200):
         if bool(command.get("permitted")):
             continue
-        created_at = _parse_utc_timestamp(command.get("created_at"))
+        created_at = parse_utc(command.get("created_at"))
         if created_at is None or created_at <= cutoff_24h:
             continue
         session_id = str(command.get("session_id") or "")
@@ -900,7 +884,7 @@ def build_command_center_behavior_summary(
     for artifact in artifacts:
         if artifact.get("artifact_type") != "command_center_behavior_proposal":
             continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        created_at = parse_utc(artifact.get("created_at"))
         if created_at is None or created_at <= cutoff_24h:
             continue
         content = artifact.get("content") or {}
@@ -1375,7 +1359,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         artifact
         for artifact in recent_artifacts
         if artifact.get("artifact_type") == "strategy_evaluation"
-        and (_parse_utc_timestamp(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
+        and (parse_utc(artifact.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc))
         > datetime.now(timezone.utc) - timedelta(hours=24)
     ]
     recent_strategy_evaluations = []
@@ -1440,7 +1424,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     ]
     market_observer_runs.sort(
         key=lambda run: (
-            _parse_utc_timestamp(run.get("ended_at") or run.get("started_at"))
+            parse_utc(run.get("ended_at") or run.get("started_at"))
             or datetime.min.replace(tzinfo=timezone.utc)
         ),
         reverse=True,
@@ -1551,7 +1535,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
             recent_runs_by_agent.setdefault(agent_name, []).append(run)
         if run.get("status") not in failed_run_statuses:
             continue
-        started_at = _parse_utc_timestamp(run.get("started_at"))
+        started_at = parse_utc(run.get("started_at"))
         if started_at is None or started_at <= datetime.now(timezone.utc) - timedelta(hours=24):
             continue
         if not agent_name:
@@ -1563,7 +1547,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         sorted_runs = sorted(
             runs,
             key=lambda run: (
-                _parse_utc_timestamp(run.get("ended_at") or run.get("started_at"))
+                parse_utc(run.get("ended_at") or run.get("started_at"))
                 or datetime.min.replace(tzinfo=timezone.utc)
             ),
             reverse=True,
@@ -1609,7 +1593,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     for artifact in recent_artifacts:
         if artifact.get("artifact_type") != "prompt_change_proposal":
             continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        created_at = parse_utc(artifact.get("created_at"))
         if created_at is None or created_at <= datetime.now(timezone.utc) - timedelta(hours=24):
             continue
         content = artifact.get("content") or {}
@@ -1653,7 +1637,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
     for artifact in recent_artifacts:
         if artifact.get("artifact_type") != "schedule_change_proposal":
             continue
-        created_at = _parse_utc_timestamp(artifact.get("created_at"))
+        created_at = parse_utc(artifact.get("created_at"))
         if created_at is None or created_at <= datetime.now(timezone.utc) - timedelta(hours=24):
             continue
         content = artifact.get("content") or {}
@@ -1710,7 +1694,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         1
         for run in recent_agent_runs
         if (
-            (_parse_utc_timestamp(run.get("ended_at") or run.get("started_at"))
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
              or datetime.min.replace(tzinfo=timezone.utc))
             > datetime.now(timezone.utc) - timedelta(hours=12)
         )
@@ -1720,7 +1704,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         for run in recent_agent_runs
         if str(run.get("status") or "") in failed_run_statuses
         and (
-            (_parse_utc_timestamp(run.get("ended_at") or run.get("started_at"))
+            (parse_utc(run.get("ended_at") or run.get("started_at"))
              or datetime.min.replace(tzinfo=timezone.utc))
             > datetime.now(timezone.utc) - timedelta(hours=12)
         )
@@ -1769,7 +1753,7 @@ def build_recommendations(limit: int = 10) -> list[dict]:
         1
         for run in recent_agent_runs
         if (
-            (_parse_utc_timestamp(run.get("ended_at") or run.get("started_at")) or datetime.min.replace(tzinfo=timezone.utc))
+            (parse_utc(run.get("ended_at") or run.get("started_at")) or datetime.min.replace(tzinfo=timezone.utc))
             > datetime.now(timezone.utc) - timedelta(hours=12)
         )
     )

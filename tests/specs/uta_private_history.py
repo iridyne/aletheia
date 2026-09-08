@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 from aletheia.uta.models import (
     FillListReport,
@@ -18,15 +17,6 @@ from aletheia.uta.models import (
 )
 
 
-# Every mode a spec seeds an Order in. reconcile() keys the configured registry by
-# execution_mode, so a superset is harmless and a missing mode silently discards the
-# order.  #2945 added the identity pre-gate (reconciliation.py:1056) and updated one
-# of the four spec files to patch the registry alongside this fake; the other three
-# were left behind and their orders were dropped before any exchange read. Pairing
-# the two patches here is what stops that happening a fourth time.
-_CONFIGURED_MODES = ("bitget_demo", "bitget_live_limited")
-
-
 def patch_private_history(
     monkeypatch,
     reconciliation,
@@ -35,7 +25,6 @@ def patch_private_history(
     open_ids=(),
     calls=None,
     unscoped_fill_rows=None,
-    configured_modes=_CONFIGURED_MODES,
 ):
     async def _query_uta(execution_mode, method, query, *, expected_account=None):
         if calls is not None:
@@ -88,13 +77,6 @@ def patch_private_history(
         raise AssertionError(f"unexpected UTA method: {method}")
 
     monkeypatch.setattr(reconciliation, "query_uta", _query_uta)
-    monkeypatch.setattr(
-        reconciliation,
-        "build_uta_registry",
-        lambda: SimpleNamespace(
-            configured_identities=lambda: tuple(_identity(m) for m in configured_modes),
-        ),
-    )
 
 
 def _identity(execution_mode: str) -> UTAAccountIdentity:

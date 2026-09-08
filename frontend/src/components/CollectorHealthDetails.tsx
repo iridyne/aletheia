@@ -88,7 +88,9 @@ function FullDetails({ health }: { health: CollectorHealthReport }) {
             </div>
             <div className="chd-domain-meta">
               {cons > 1 && <span>{cons}× consecutive</span>}
-              {d.last_error_code && <span className="chd-err-code">{d.last_error_code}</span>}
+              {d.last_error_code && d.last_error_code !== 'asyncio_timeout' && (
+                <span className="chd-err-code">{d.last_error_code === 'ExchangeNotAvailable' ? 'Exchange unavailable' : d.last_error_code}</span>
+              )}
               {d.age_sec != null && (
                 <span>last {fmtAge(d.age_sec)} · cadence {fmtCadence(d.cadence_sec)}</span>
               )}
@@ -145,10 +147,12 @@ function CompactDetails({ health }: { health: CollectorHealthReport }) {
       {problems.map(d => {
         const light = domainLight(d)
         const cons = d.consecutive_problems ?? 0
-        const parts: string[] = [d.last_status]
+        const rawStatus = d.last_status === 'timed_out' ? 'timeout' : (d.last_status || '')
+        const cleanErr = d.last_error_code === 'asyncio_timeout' || d.last_error_code === d.last_status ? null : d.last_error_code
+        const parts: string[] = [rawStatus]
         if (d.overdue) parts.push('overdue')
         if (cons > 1) parts.push(`${cons}×`)
-        if (d.last_error_code) parts.push(d.last_error_code)
+        if (cleanErr) parts.push(cleanErr === 'ExchangeNotAvailable' ? 'Exchange unavailable' : cleanErr)
         return (
           <div key={d.domain} className="sp-row">
             <span className={`dot dot-${light}`} />

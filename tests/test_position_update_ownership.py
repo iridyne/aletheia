@@ -53,6 +53,47 @@ def test_production_has_no_generic_position_update_entrypoint():
     assert offenders == []
 
 
+# Raw `UPDATE positions` is allowed only where per-owner field ownership cannot
+# apply. No trigger can express that ownership -- SQLite has no notion of which
+# Python component issued a statement -- so this scan is the only enforcement
+# there is, and banning the `update_position(` symbol alone left it open.
+_RAW_POSITION_UPDATE_ALLOWED = {
+    # Owns the table definition and every migration that rewrites it.
+    "storage/migrations.py",
+    # Hosts the owners themselves, including _update_owned_position_fields.
+    "storage/repositories.py",
+    # One-shot remediation batch (REMEDIATION_BATCH_ID). Its idempotence key is
+    # `outcome_semantics_version IS NULL`, not a status CAS, and routing it
+    # through the settlement owner would mean permanently widening that owner's
+    # whitelist by close_category + outcome_semantics_version to accommodate a
+    # migration-shaped job. Keep the raw statement and the narrower authority.
+    "maintenance/outcome_integrity.py",
+}
+
+
+def test_raw_position_updates_are_confined_to_the_owning_modules():
+    """PR #2955 removed the generic writer but not the raw-SQL bypasses.
+
+    Three sites still wrote `positions` directly, skipping the field whitelist,
+    the expected-state CAS and the rowcount check that raises
+    PositionClaimConflict: two in paper_account.py (one live, one dead since the
+    economics write moved to the settlement owner) and one remediation batch.
+    """
+    root = Path(__file__).parents[1] / "aletheia"
+    offenders = sorted(
+        str(source.relative_to(root))
+        for source in root.rglob("*.py")
+        if "UPDATE positions" in source.read_text(encoding="utf-8")
+        and str(source.relative_to(root)) not in _RAW_POSITION_UPDATE_ALLOWED
+    )
+    assert offenders == [], (
+        f"raw `UPDATE positions` outside the owning modules: {offenders}. "
+        "Route the write through one of the four public position owners in "
+        "storage/repositories.py, or justify an addition to "
+        "_RAW_POSITION_UPDATE_ALLOWED in this file."
+    )
+
+
 def test_known_pre_submission_error_can_be_reclaimed_by_one_new_close_order():
     position = _position()
     repo.claim_position_close(

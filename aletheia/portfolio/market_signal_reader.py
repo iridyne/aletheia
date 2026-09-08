@@ -112,7 +112,7 @@ def _normalize_direction(raw: str | None) -> str | None:
     return raw
 
 
-def _parse_utc(raw: str | None) -> datetime | None:
+def parse_utc_strict(raw: str | None) -> datetime | None:
     if not raw:
         return None
     try:
@@ -269,8 +269,8 @@ def get_market_signals_for_positions(
         if not matching_requests:
             continue
 
-        created_at = _parse_utc(row["created_at"])
-        valid_until = _parse_utc(row["valid_until"])
+        created_at = parse_utc_strict(row["created_at"])
+        valid_until = parse_utc_strict(row["valid_until"])
         if created_at is None or valid_until is None:
             continue
         if not _within_fresh_window(
@@ -325,7 +325,7 @@ def get_market_signals_for_positions(
 
     latest_by_asset = {}
     for snapshot in snapshots:
-        observed_at = _parse_utc(snapshot["ts"])
+        observed_at = parse_utc_strict(snapshot["ts"])
         if not _within_fresh_window(
             observed_at,
             cutoff=cutoff,

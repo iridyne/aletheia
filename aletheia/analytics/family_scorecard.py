@@ -180,7 +180,7 @@ def _empty_family(name: str) -> dict:
     }
 
 
-def _parse_iso(value) -> datetime | None:
+def parse_utc_strict(value) -> datetime | None:
     if not value:
         return None
     try:

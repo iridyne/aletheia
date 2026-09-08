@@ -5,9 +5,6 @@ from aletheia.data.symbols import (
     stock_token_exchange, is_stock_token,
 )
 
-# MVP tradable symbols — Bitget execution format (used by risk engine + order router)
-TRADABLE_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-
 # Market types
 MARKET_USDT_FUTURES = "usdt_futures"
 
@@ -18,49 +15,6 @@ def instrument_market_to_db_market(market_type: str) -> str:
 
 # Canonical timeframes (used by data layer and agent reasoning)
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-
-# Bitget-specific granularity strings — execution-context only.
-# New code should use canonical timeframes ('1h', '4h', '1d') via data.symbols.
-BITGET_GRANULARITY = {
-    "5m": "5min",
-    "15m": "15min",
-    "1h": "1h",
-    "4h": "4h",
-    "1d": "1day",
-}
-
-
-def tradable_symbols_from_config(cfg) -> list[str]:
-    """Return the symbol_list from exchange config in CANONICAL format (BTC/USDT).
-
-    Previously returned the raw config list (which may hold Bitget-format
-    'BTCUSDT'); consumers like paper_trader_ranker then had to to_canonical()
-    each entry, and any that forgot (strategy_designer) silently mismatched the
-    canonical opportunities/positions and dropped symbols at the filter. Now
-    normalised at the source so every consumer gets canonical form. to_canonical
-    is idempotent, so consumers that still call it are unaffected.
-    (CR-DL-01 / data_layer Phase 3.6, 2026-06-23.)
-    """
-    return [to_canonical(s) for s in cfg.exchange.symbol_list]
-
-
-def observed_symbols_from_config(cfg) -> list[str]:
-    """Return the market data observation list (canonical BTC/USDT format).
-
-    If observed_instruments is configured, derives symbol list from it.
-    Otherwise returns observed_symbols directly (legacy path).
-    """
-    if cfg.market_data.observed_instruments:
-        seen: dict[str, None] = {}
-        for s in cfg.market_data.observed_instruments:
-            try:
-                iid = InstrumentId.parse(s)
-                seen[iid.symbol] = None
-            except (ValueError, Exception):
-                pass
-        return list(seen)
-    return cfg.market_data.observed_symbols
-
 
 def stock_tokens_from_config(cfg) -> list[InstrumentId]:
     """Return all configured tokenized equity/ETF instruments as InstrumentId list.

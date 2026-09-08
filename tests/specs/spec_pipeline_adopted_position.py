@@ -509,6 +509,22 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     # Inject one exact fresh mark at the Position Manager authority seam. Short
     # stop is ABOVE entry; breach = stop + margin.
     breach_price = stop_level + 10.0
+    import aletheia.data.price_feed as pf_mod
+    from datetime import datetime, timezone
+
+    def _fake_mark(symbol, market_type, *, venue, not_before=None):
+        return {
+            "price": breach_price,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "age_seconds": 0.0,
+            "source": "spec_stub",
+            "venue": venue,
+            "symbol": symbol,
+            "market_type": market_type,
+        }
+
+    monkeypatch.setattr(pf_mod, "get_fresh_mark_for_protective_close", _fake_mark)
+    monkeypatch.setattr(pm_mod, "get_fresh_mark_for_protective_close", _fake_mark)
     monkeypatch.setattr(
         pm_mod,
         "get_fresh_price_for_protective_close",

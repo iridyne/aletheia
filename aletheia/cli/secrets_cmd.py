@@ -31,12 +31,6 @@ KNOWN_KEYS = [
 ]
 
 
-@secrets_app.callback()
-def _deprecated():
-    from aletheia.cli._deprecated import warn_deprecated
-    warn_deprecated("Settings → Credentials / Model Provider")
-
-
 @secrets_app.command(name="set")
 def set_cmd(key: str = typer.Argument(..., help="Secret key path, e.g. bitget.demo.api_key")):
     """Set a secret value (prompted securely, never echoed)."""
@@ -77,15 +71,15 @@ def test(service: str = typer.Argument(..., help="Service to test, e.g. bitget")
     """Test secrets connectivity for a service."""
     if service == "bitget":
         from aletheia.config.loader import load_config
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-        cfg = load_config()
-        client = BitgetClient(mode=cfg.exchange.mode, profile=configured_bitget_profile())
-        result = asyncio.run(client.test_connection())
+        from aletheia.execution.venue_capabilities import venue_execution_mode
+        from aletheia.uta.manager import probe_account_reachable
+
+        mode = venue_execution_mode("bitget", load_config().exchange.mode)
+        result = probe_account_reachable(mode)
         if result["connected"]:
-            typer.echo(f"✓ Bitget {result['mode']} connection successful")
+            typer.echo(f"✓ Bitget {mode} connection successful")
         else:
-            typer.echo(f"✗ Bitget {result['mode']} connection failed: {result['error']}", err=True)
+            typer.echo(f"✗ Bitget {mode} connection failed: {result['error']}", err=True)
             raise typer.Exit(1)
     else:
         typer.echo(f"Unknown service '{service}'. Supported: bitget", err=True)

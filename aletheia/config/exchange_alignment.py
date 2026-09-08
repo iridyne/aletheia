@@ -4,13 +4,22 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
 
+
+# Derived from the exchange registry so a new venue cannot be half-registered.
+# `binance_live` / `okx_live` used to be listed here: they are UTA *credential
+# profile* names (uta/manager.py), not execution modes, and they leaked in from
+# the OKX credential UI. `resolve_risk_policy` raises UnknownRiskExecutionMode
+# for both, so persisting one as paper_execution_mode rejects every proposal.
+#
+# ponytail: paper modes only. The real live modes (`*_live_limited`) still
+# resolve through the `configured_exchange` fallback below, which is correct
+# whenever exchange.name agrees with the mode; derive them here too if that
+# assumption ever needs enforcing.
 _EXECUTION_MODE_EXCHANGES = {
-    "bitget_demo": "bitget",
-    "binance_testnet": "binance",
-    "binance_live": "binance",
-    "okx_demo": "okx",
-    "okx_live": "okx",
+    paper_mode: ccxt_name
+    for ccxt_name, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
 }
 
 

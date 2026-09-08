@@ -220,3 +220,141 @@ fail-open，效果完全相反。
 2. 记录数字（failed/passed），作为后续每批修复的参照锚点。
 3. 每批修复后立即重跑同一命令，确认数字在向好方向移动；若反向，立即停止找根因。
 4. 基线数字落进 PR 描述或 commit message，让 reviewer 看到起点和终点。
+
+## SOP-14 ｜ 判定"删除是回归"之前，先读合同层
+
+**陷阱**：只读被删掉的调用点，会得出与事实**相反**的结论。缺失的调用边看起来永远像
+半途而废的删除，因为证据链（函数没了、调用方 0 引用、没有后继）确实完整——缺的那一环
+是"这件事本来就该被删掉"，而它只写在 `docs/design/contracts/`。
+
+**真实案例（2026-09-07 #2945 收尾）**：查出 7 条按需唤醒边有 5 条被删
+（`equity_observer_opportunity` / `prediction_observer_opportunity` /
+`divergence_scanner_opportunity` / `guard_set_changed` / `ranker_config_changed`
+全部 0 引用，原来都是 `notify_paper_trader(source=...)`，#2945 删了该函数却没把调用方
+改指向 `notify_pi_daemon`）。据此**改了 5 个生产文件**。随后读到
+`agent_contracts.md:204`「Historical Ranker / PaperTrader (retired entry)」：
+
+> neither job, queue admission, TTL writer nor **on-demand notification** remains
+> an executable entry path.
+
+另有 `:174`「does not wake Ranker」、`:191`、`:468` 三处一致表述；三个 observer 提交的
+都是 `execution_eligible=False` 的 Opportunity，唤醒入场规划器永远产不出入场。
+**5 个文件全部回退。**
+
+同一天另有三例同型：
+- `refresh_active_snapshot_ttls` 签名 `tuple[int,int]` → `int`，像删了 opportunity
+  续期（疑似 GAP-2 回归）。实际被删那段只作用于 `generation_version IS NULL` 的行，而
+  `insert_opportunity` 对 execution-eligible 生产者强制 v2 否则 raise ⇒ 删对了。
+- `spec_agent_contracts` AC-S13 不是"要决策的断言"，是 spec 落后于已记录的退役。
+- `spec_live_unlock` LU-C07 我曾判定"改测试会掩盖真缺口"，但
+  `live_unlock_contract.md:45/106-114` 早已写明新 Proposal 不路由到实盘、能力
+  Experimental、缺失的 join 追踪于 #418 ⇒ 缺口是**已记录并追踪的**，不是隐藏的。
+
+**SOP**：
+1. 顺序固定：**合同文档 → 生产代码 → 被删调用点**。反过来必错。
+2. 先 `grep -rn "<被删符号|能力名>" docs/design/contracts/ docs/design/history/`。
+   命中"retired / 不再 / 已退役 / Experimental / 追踪于 #NNN"即为有意删除。
+3. 合同没写但代码删了 ⇒ 才可能是回归；此时仍需确认后继者是否换名存在。
+4. 把"a reported defect is a hypothesis until the calling code is read"补一句：
+   **直到合同层被读。**
+
+## SOP-15 ｜ 扫源码文本的 spec 会烂，且烂法是静默的
+
+**陷阱**：断言"某字符串出现在某生产文件里"的 spec，在重构、改名、把硬编码换成派生之后
+必然红，而它红的原因与它想保护的不变式无关。更坏的是它可能**空过**：字符串还在，但
+语义早已不同。
+
+**真实案例（2026-09-07）**四例：
+- `AC-S13` 断言 7 个 `notify_*` token 出现在 6 个文件里 + 一个 3 分钟 job。
+- `DU-S18` 断言字面量 `"okx_demo"` 出现在 `exchange_alignment.py`——把硬编码 map 改成
+  从 `EXCHANGE_UNIFICATION_MAP` 派生后立刻红，而派生是更强的安排。
+- `DM-S06` 断言三张表的 DDL 在 `SCHEMA_SQL` 里；DDL 文本确实还在源文件，但 #2945 在
+  import 后重绑了该常量把整块切掉，所以**文本为真、运行时为假**。
+- `DCLS-S01` 用前缀扫描 `runner.py` 源码禁四个包，被当成"不可达性保证"，实测完全不是
+  （见 SOP-16）。
+
+**SOP**：
+1. **优先断言行为**：调函数、看返回值/异常/落库结果。
+2. 必须扫文本时，在测试 docstring 里写清**它保证什么、不保证什么**，否则下一个读者会
+   把它当更强的保证。
+3. 扫"某字符串必须存在"时，同时断言该字符串背后的行为；只有"某字符串必须不存在"
+   （反向断言）可以单独成立。
+4. 用 AST 而非子串：`from a.b import c` 与 `from a.b.c import d` 是不同模块，
+   `split()` 分不开（本次踩过）。
+
+## SOP-16 ｜ 前缀/导入 denylist 是卫生检查，不是可达性保证
+
+**陷阱**：把"某文件源码不得出现 `aletheia.execution`"读成"该文件到不了 Execution"。
+在耦合密的包里这两件事没有关系。
+
+**真实案例（2026-09-07 DCLS-S01）**：模拟器合同把 Execution 列在边界外，#2945 却把
+合成入场接到了 `execution.paper_broker`。在"回退代码"和"改合同"之间选择前先测传递闭包：
+
+| 入口 | aletheia 闭包 | exchanges | secrets | risk | gateway |
+| --- | --- | --- | --- | --- | --- |
+| `portfolio.paper_account`（#2945 之前的 seam） | 359 | 5 | 1 | 5 | 13 |
+| `execution.paper_broker`（当前 seam） | 359 | 5 | 1 | 5 | 13 |
+| `simulation.control_loop.runner` | 366 | 5 | 1 | 5 | 13 |
+
+**闭包完全相同** ⇒ 回退只买到文本卫生，一点真隔离都买不到；该前缀规则从未执行它看起来
+在执行的意图。结论是留代码、把 spec 收窄到它真正执行的东西（`runner.py` 自身源码的直接
+导入卫生），并把测量写进合同作为 Contract Delta 的依据。
+
+**SOP**：
+1. 任何"不得导入 X"的规则，先测传递闭包再相信它。脚本见本 SOP 案例（AST 遍历 +
+   BFS，含函数内延迟导入，故为"可达"而非"import 时加载"）。
+2. 闭包相同 ⇒ 该规则只是直接导入卫生。仍值得保留（防止有人顺手加 venue broker /
+   读凭证 / 调 Risk），但**必须在 docstring 与合同里写明它不是可达性保证**。
+3. 真要隔离，靠的是进程边界、虚拟时钟、显式注入，不是前缀。
+
+## SOP-17 ｜ 精确清单断言在债务**缩小**时同样会红
+
+**陷阱**：`assert allowed == discovered` 这类"精确债务上限"双向严格。债增长时红是设计
+意图；债缩小时也红，而这时人的第一反应是"我弄坏了什么"，实际是别人把债还了。
+
+**真实案例（2026-09-07）**：`spec_observation_experiment_ownership` 两个测试红，
+`unexpected = discovered - allowed` **都是空**（没有新增耦合，被守卫的不变式完好），
+而 `stale = allowed - discovered` 分别有 17 和 10 项——#2945 把 legacy Experiment 表
+的引用从 12 个存活文件里清空、另删了 5 个文件。修法是删 allowlist 的 27 行，零生产改动，
+零保护损失。
+
+**SOP**：
+1. 读这类失败先分清是 `unexpected` 还是 `stale`。**只有 `unexpected` 是真信号。**
+2. 断言消息里必须同时打印两侧，否则下一个人分不清方向（本次两个测试都做对了这点）。
+3. 收窄 allowlist 时在注释里写清"为什么这次是缩小"，并说明 `unexpected` 仍是守卫的那半。
+4. 测试名写 `cannot_grow` 而断言是精确相等，属于命名误导，改名或改断言。
+
+## SOP-18 ｜ 绿 ≠ 对：一行改测试可能掩盖真缺口
+
+**陷阱**：spec 红是因为它调了一个被删的 wrapper，把它改指向存活的等价实现就绿了。但
+"等价实现存在"不等于"该能力存在"——被删的可能是整条接线。
+
+**真实案例（2026-09-07）**：`spec_live_unlock` 两个测试改一行即绿；但有效的 live unlock
+**确实无法**把新 Proposal 路由到实盘（entry-plan compiler 裸读
+`paper_execution_mode` 且只接受 `{paper_internal, bitget_demo}`，gateway
+`submit_proposal` 已无生产调用方）。我据此把它列为"待所有者决策"并搁置——**这也是错的**，
+因为合同早已记录并追踪（#418）。正确动作是：改测试 + 把 claim 文本改成合同真实承诺的
+范围 + 在合同里新增小节说明"本节为绿不代表实盘路由存在"。
+
+**SOP**：
+1. 改测试前问：**被删的是实现，还是能力？** 后者要先读合同（SOP-14）。
+2. claim 的 `invariant` 文本必须只承诺被测的那件事。原 LU-C07 承诺
+   "before Proposal persistence"，而合同说这个 join 不存在 ⇒ claim 文本才是错的那半。
+3. 合同若缺少描述被测行为的小节，**补小节**，并显式写清它不蕴含什么。
+4. 既不能改测试装作没事，也不能把可读出答案的歧义推给所有者。
+
+## SOP-19 ｜ 守卫测试必须被证明会红
+
+**陷阱**：新加的守卫看着合理、跑起来绿，但它其实什么都没测。
+
+**真实案例（2026-09-07）**三次都做了这一步并有一次救了场：
+- `RE-S09`（flat/nested 镜像）：`git stash` 掉 `schema.py` 后该测试
+  `assert 10.0 == 7.0` 红 ⇒ 非空。
+- 裸 `UPDATE positions` 守卫：塞回一条裸 SQL 后红并点名文件 ⇒ 非空。
+- `DCLS-S01` 收窄后：加一条 `execution.coordinator` 导入后红 ⇒ 非空。
+
+**SOP**：
+1. 每加一个守卫，**先把被守卫的修复临时撤掉，确认它红**，再恢复。
+   `git stash push -- <file>` / 临时插一行违规代码都可以。
+2. 在 commit message 写明"verified non-vacuous by ..."。
+3. 这一步不可省。绿色的空测试比没有测试更坏，因为它让人以为这块有覆盖。

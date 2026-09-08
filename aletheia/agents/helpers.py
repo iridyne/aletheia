@@ -1075,6 +1075,9 @@ async def llm_stream(
     include_harness_header: bool | None = None,
     context_adapter: ContextAdapter | str | None = None,
     caller: str = "unregistered.stream",
+    allow_model_fallback: bool = True,
+    context_artifacts: list[dict] | None = None,
+    context_symbol: str | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """Stream response chunks from the provider.
 
@@ -1087,6 +1090,7 @@ async def llm_stream(
         system,
         include=include_harness_header,
         adapter=context_adapter,
+        context_artifacts=context_artifacts,
     )
     messages = [{"role": "user", "content": user}]
     inference_call = build_inference_call(
@@ -1098,8 +1102,9 @@ async def llm_stream(
         context_manifest=context_manifest,
         requested_provider=provider_name,
         max_tokens=max_tokens,
+        allow_model_fallback=allow_model_fallback,
     )
-    _record_call_started(inference_call, None, None)
+    _record_call_started(inference_call, context_artifacts, context_symbol)
     try:
         provider_instance = await get_provider_async(provider_name)
         from aletheia.model_provider.broker import brokered_stream

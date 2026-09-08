@@ -1,81 +1,25 @@
 """Regression tests for Settings honesty — dead config fields must not
 pretend to be active controls.
 
-Issue #399: Strategy Factory subsystem was removed with Position C (2026-07-02).
-The UI/API must not accept mutations for dead fields or return a successful
-"updated" response implying runtime behavior changed.
+Issue #399: the Strategy Factory subsystem was removed with Position C
+(2026-07-02) but its config class, its `POST /api/settings/strategy_factory`
+route and its GET projection survived as a compatibility shell. The shell is now
+DELETED, so the tests that asserted the shell's honest-but-inert behavior are
+gone with it; two of them actively guarded the dead code's survival
+(`assert sf_fields, "must still exist for config-file backward compat"`).
+
+`AletheiaConfig` is `extra="forbid"`, so a config.yaml still carrying a
+`strategy_factory:` section would fail to LOAD once the field is gone. Removing a
+config section therefore requires a drop migration, which `config/loader.py` now
+performs alongside the other removed-key migrations.
+
+What remains here is the Event Triggers half of the same honesty rule: a removed
+field must be REJECTED, not silently accepted.
 """
 
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-
-
-# ---------------------------------------------------------------------------
-# Shared app + config fixtures
-# ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def settings_app():
-    from aletheia.server.routes import settings as settings_mod
-    from aletheia.config.schema import StrategyFactoryConfig, EventTriggerConfig, AletheiaConfig
-    from fastapi import FastAPI
-
-    cfg = MagicMock(spec=AletheiaConfig)
-    cfg.strategy_factory = StrategyFactoryConfig()
-    cfg.event_triggers = EventTriggerConfig()
-
-    app = FastAPI()
-    app.include_router(settings_mod.router)
-
-    with (
-        patch.object(settings_mod, "load_config", return_value=cfg),
-        patch.object(settings_mod, "save_config") as mock_save,
-        patch("aletheia.files.jsonl.write_audit") as mock_audit,
-    ):
-        yield TestClient(app, raise_server_exceptions=True), cfg, mock_save, mock_audit
-
-
-# ---------------------------------------------------------------------------
-# Strategy Factory POST — must return deprecated, never mutate config
-# ---------------------------------------------------------------------------
-
-def test_strategy_factory_post_returns_deprecated_flag(settings_app):
-    client, cfg, mock_save, mock_audit = settings_app
-    resp = client.post("/api/settings/strategy_factory", json={"backtest_gate_enabled": False})
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["deprecated"] is True
-    assert body["supported"] is False
-
-
-def test_strategy_factory_post_does_not_mutate_config(settings_app):
-    client, cfg, mock_save, mock_audit = settings_app
-    original_value = cfg.strategy_factory.backtest_gate_enabled
-    client.post("/api/settings/strategy_factory", json={"backtest_gate_enabled": False})
-    mock_save.assert_not_called()
-    assert cfg.strategy_factory.backtest_gate_enabled == original_value
-
-
-def test_strategy_factory_post_does_not_write_audit(settings_app):
-    client, cfg, mock_save, mock_audit = settings_app
-    client.post("/api/settings/strategy_factory", json={"sweep_enabled": True})
-    mock_audit.assert_not_called()
-
-
-def test_strategy_factory_post_returns_empty_updated(settings_app):
-    client, cfg, _, __ = settings_app
-    resp = client.post("/api/settings/strategy_factory", json={"walk_forward_enabled": True})
-    assert resp.json()["updated"] == {}
-
-
-def test_strategy_factory_post_lists_deprecated_fields(settings_app):
-    client, cfg, _, __ = settings_app
-    resp = client.post("/api/settings/strategy_factory", json={})
-    body = resp.json()
-    assert "fields" in body
-    assert "backtest_gate_enabled" in body["fields"]
-    assert "sweep_enabled" in body["fields"]
 
 
 # ---------------------------------------------------------------------------
@@ -132,72 +76,107 @@ def test_event_trigger_live_fields_still_accepted(event_trigger_app):
 
 
 # ---------------------------------------------------------------------------
-# Schema — StrategyFactoryConfig docstring signals deprecation
+# The removed shell must stay removed
 # ---------------------------------------------------------------------------
 
-def test_strategy_factory_config_docstring_marks_deprecated():
-    from aletheia.config.schema import StrategyFactoryConfig
-    doc = (StrategyFactoryConfig.__doc__ or "").upper()
-    assert "DEPRECATED" in doc, (
-        "StrategyFactoryConfig docstring must mark it DEPRECATED so code readers "
-        "and AI agents do not infer it as an active subsystem."
-    )
+def test_strategy_factory_shell_is_gone():
+    """No config class, no route, no GET projection.
 
-
-def test_strategy_factory_fields_have_no_production_consumer():
-    """Every field on StrategyFactoryConfig is compatibility-only.
-
-    If someone adds a real consumer for one of these fields they should first
-    remove the field from StrategyFactoryConfig, create a properly-named config
-    class for the new subsystem, and delete this assertion for that field.
+    A compatibility shell that returns `{"deprecated": true, "updated": {}}` is a
+    second, inert API surface. Keeping it taught readers the subsystem still
+    existed and kept 13 dead fields alive in the schema.
     """
     import ast
     import pathlib
 
-    repo_root = pathlib.Path(__file__).parent.parent
-    schema_file = repo_root / "aletheia" / "config" / "schema.py"
-    source = schema_file.read_text()
+    from aletheia.config.schema import AletheiaConfig
 
-    sf_fields: list[str] = []
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "StrategyFactoryConfig":
-            for item in node.body:
-                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    sf_fields.append(item.target.id)
+    assert not hasattr(AletheiaConfig(), "strategy_factory"), (
+        "AletheiaConfig grew a strategy_factory section again"
+    )
 
-    assert sf_fields, "StrategyFactoryConfig must still exist for config-file backward compat"
-
-    # Only these files are allowed to reference StrategyFactoryConfig field names.
-    allowed_consumer_files = {
-        "aletheia/config/schema.py",
-        "aletheia/server/routes/settings.py",
-        "tests/test_settings_honesty.py",
-    }
-
-    violations: list[str] = []
-    for field in sf_fields:
-        for py_file in sorted(repo_root.rglob("*.py")):
-            rel = str(py_file.relative_to(repo_root))
-            if rel in allowed_consumer_files:
-                continue
-            if "__pycache__" in rel:
-                continue
-            if ".pytest_tmp_unawaited_probe" in rel:
-                continue
-            try:
-                text = py_file.read_text(errors="replace")
-            except FileNotFoundError:
-                # Probe file created and deleted by test_pytest_policy_rejects_an_unawaited_coroutine
-                # during parallel test execution — skip it.
-                continue
-            if f".{field}" in text or f'"{field}"' in text or f"'{field}'" in text:
-                violations.append(f"{field} found in {rel}")
-
-    if violations:
-        pytest.fail(
-            "StrategyFactoryConfig fields appear to have consumers outside the "
-            "allowed set. If this is a new legitimate consumer, update "
-            "allowed_consumer_files and remove the DEPRECATED marker.\n"
-            + "\n".join(violations)
+    root = pathlib.Path(__file__).parent.parent
+    for relative in ("aletheia/config/schema.py", "aletheia/server/routes/settings.py"):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "StrategyFactory" not in source, (
+            f"{relative} references the removed Strategy Factory shell"
         )
+        assert "strategy_factory" not in source, (
+            f"{relative} references the removed strategy_factory config section"
+        )
+
+    # And the route itself must not come back under any decorator form.
+    settings_src = (root / "aletheia/server/routes/settings.py").read_text(encoding="utf-8")
+    tree = ast.parse(settings_src)
+    routes = {
+        arg.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        for arg in node.args
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+    }
+    assert "/strategy_factory" not in routes
+
+
+def test_removed_strategy_factory_section_still_loads(tmp_path, monkeypatch):
+    """An existing config.yaml with the removed section must LOAD, not explode.
+
+    `AletheiaConfig` is `extra="forbid"`, so deleting the field without a drop
+    migration turns every pre-existing config file into a hard startup failure.
+    This is the regression that caught it: 28 test modules failed collection with
+    `strategy_factory: Extra inputs are not permitted` because they read a real
+    config file carrying the old section.
+    """
+    import yaml
+
+    import aletheia.config.loader as loader
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "strategy_factory": {"backtest_gate_enabled": True, "sweep_top_k": 10},
+            "trading": {"default_stop_loss_pct": 2.0},
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(loader, "CONFIG_PATH", config_path)
+    loader._invalidate_config_cache()
+
+    cfg = loader.load_config(use_cache=False, persist_migrations=False)
+
+    assert cfg.trading.default_stop_loss_pct == 2.0
+    assert not hasattr(cfg, "strategy_factory")
+
+
+def test_unimplemented_system_tools_are_not_registered():
+    """A registered tool with no handler advertises a capability that cannot run.
+
+    `create_playbook_draft` / `create_prompt_draft` /
+    `create_code_change_proposal` had zero handler implementations, yet were
+    registered under the `system` class, which `TOOL_CLASSES` permitted for
+    `Full`. `is_tool_permitted` already fails closed for unknown names
+    (`TOOL_REGISTRY.get(name, "restricted_tool")` → empty allow-set), so removing
+    them is strictly more restrictive, not less.
+    """
+    from aletheia.agent_runtime.permissions import (
+        TOOL_CLASSES,
+        TOOL_REGISTRY,
+        is_tool_permitted,
+    )
+    from aletheia.agent_runtime.tool_registry import init_tool_registry
+
+    init_tool_registry()
+    for phantom in (
+        "create_playbook_draft",
+        "create_prompt_draft",
+        "create_code_change_proposal",
+    ):
+        assert phantom not in TOOL_REGISTRY
+        for mode in ("Observe", "Paper", "Full"):
+            assert is_tool_permitted(phantom, mode) is False
+
+    assert "system" not in TOOL_CLASSES, (
+        "the system tool class has no members; an empty permission class invites "
+        "a future tool to be added without deciding its real class"
+    )

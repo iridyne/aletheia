@@ -5,6 +5,7 @@ selection, ranking, risk approval, or order execution.
 """
 
 from __future__ import annotations
+from aletheia.utils.dt import parse_utc
 
 import hashlib
 import json
@@ -374,7 +375,7 @@ def _latest_ohlcv_price(symbol: str, entry_ts: str) -> float | None:
     try:
         from aletheia.storage.sqlite import get_db
 
-        dt = _parse_dt(entry_ts)
+        dt = parse_utc(entry_ts)
         if dt is None:
             return None
         ts = int(dt.timestamp() * 1000)
@@ -400,20 +401,12 @@ def _latest_ohlcv_price(symbol: str, entry_ts: str) -> float | None:
 
 
 def _due_at(entry_ts: str, horizon: str) -> str | None:
-    dt = _parse_dt(entry_ts)
+    dt = parse_utc(entry_ts)
     if dt is None:
         return None
     return (dt + _HORIZON_DELTA[horizon]).isoformat()
 
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _utcnow() -> str:

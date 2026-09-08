@@ -32,6 +32,21 @@ DEFAULT_UNIFIED_EXECUTION_MODES = (
     "bitget_demo",
 )
 
+# Every execution mode UTA can build an adapter for — the authoritative list of
+# real-exchange account identities. `EXECUTION_MODE_TO_VENUE` in
+# execution/venue_capabilities.py is deliberately NOT this list: it names only the
+# modes whose symbol availability is checked against `universe_registry`, and
+# `okx_demo` is absent there on purpose because it uses the dedicated CCXT sandbox
+# capability seam instead.
+UTA_EXECUTION_MODES: tuple[str, ...] = (
+    "binance_testnet",
+    "okx_demo",
+    "bitget_demo",
+    "binance_live_limited",
+    "okx_live_limited",
+    "bitget_live_limited",
+)
+
 
 @dataclass
 class UnifiedState:
@@ -148,14 +163,7 @@ def build_uta_registry(cfg=None) -> UTARegistry:
     """Build immutable factories from current config; no client/session is created."""
     cfg = cfg or load_config()
     registry = UTARegistry()
-    for execution_mode in (
-        "binance_testnet",
-        "okx_demo",
-        "bitget_demo",
-        "binance_live_limited",
-        "okx_live_limited",
-        "bitget_live_limited",
-    ):
+    for execution_mode in UTA_EXECUTION_MODES:
         scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
             cfg, execution_mode
         )
@@ -454,3 +462,41 @@ def get_unified_state_sync(
             asyncio.run,
             get_unified_state(execution_modes=execution_modes),
         ).result(timeout=30)
+
+
+def probe_account_reachable(execution_mode: str, *, cfg=None) -> dict:
+    """One signed read-only account probe for credential/connectivity checks.
+
+    Replaces the per-venue hand-rolled `test_connection()` methods. Uses the same
+    adapter, identity validation and teardown as every other UTA read, so a probe
+    can never succeed against an account the rest of the system would reject.
+
+    Never returns `str(exc)`: a CCXT/venue error can carry the signed request, and
+    therefore the API key, in its message. The exception CLASS name is enough to
+    act on, and the categorised cases below cover what an operator can actually
+    fix.
+    """
+    from aletheia.async_utils import run_coro_from_sync
+
+    try:
+        report = run_coro_from_sync(
+            query_uta(execution_mode, "get_account", cfg=cfg), timeout=20
+        )
+    except Exception as exc:  # noqa: BLE001 - classified below, never echoed raw
+        message = str(exc).lower()
+        if "not configured" in message or "credential" in message:
+            reason = "credentials_not_configured"
+        elif "timeout" in message:
+            reason = "connection_timeout"
+        elif "identity_mismatch" in message:
+            reason = "account_identity_mismatch"
+        else:
+            reason = type(exc).__name__
+        return {"connected": False, "execution_mode": execution_mode, "error": reason}
+    if report.completeness is not ReadCompleteness.COMPLETE:
+        return {
+            "connected": False,
+            "execution_mode": execution_mode,
+            "error": report.reason_code or "account_read_incomplete",
+        }
+    return {"connected": True, "execution_mode": execution_mode}

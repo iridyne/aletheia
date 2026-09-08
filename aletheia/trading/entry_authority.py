@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aletheia.agent_shell.permissions import WORKER_MODE_RANK
 from aletheia.execution.venue_capabilities import ENTRY_EXECUTION_MINIMUM_PERMISSION
 
 
-_PERMISSION_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
+_PERMISSION_RANK = WORKER_MODE_RANK
 
 
 @dataclass(frozen=True)

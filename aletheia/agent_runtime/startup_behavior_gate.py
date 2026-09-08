@@ -417,15 +417,16 @@ def _run_checks(cfg, state_store) -> list[dict]:
 
 def _check_bitget_profile(cfg) -> tuple[bool, str]:
     """Validate bitget_profile is a known value and warn on Experimental uta_v3."""
-    from aletheia.exchanges.bitget.client import _KNOWN_PROFILES
+    from aletheia.config.schema import KNOWN_BITGET_PROFILES
 
     try:
         mode = cfg.exchange.paper_execution_mode or ""
         profile = (getattr(cfg.exchange, "bitget_profile", None) or "classic_v2").strip()
     except Exception as e:
         return False, f"bitget_profile check failed: {e}"
-    if profile not in _KNOWN_PROFILES:
-        return False, f"bitget_profile={profile!r} is not a known profile {sorted(_KNOWN_PROFILES)}"
+    known = KNOWN_BITGET_PROFILES
+    if profile not in known:
+        return False, f"bitget_profile={profile!r} is not a known profile {sorted(known)}"
     if "bitget" not in mode:
         return True, f"bitget_profile={profile!r} (bitget not active)"
     if profile == "uta_v3":

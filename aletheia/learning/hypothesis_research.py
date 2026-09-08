@@ -10,6 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from aletheia.utils.dt import parse_utc
 from aletheia.agents.helpers import llm_structured
 from aletheia.learning.hypotheses import (
     HypothesisCounterfactualCheckV1,
@@ -330,7 +331,7 @@ def _assemble_t0_envelope_context(
         opened_at = envelope.anchor_at
         if position_id:
             position = repo.get_position(position_id)
-            opened = _parse_aware_timestamp((position or {}).get("opened_at"))
+            opened = parse_utc((position or {}).get("opened_at"))
             if opened is None:
                 missing.append(f"position_opened_at_unavailable:{source_artifact_id}")
                 continue
@@ -387,8 +388,8 @@ def _source_artifact_matches_t0(
         anchor is None
         or str(anchor["stage"] or "") != "paper_ranker"
         or str(anchor["opportunity_id"] or "") != opportunity_id
-        or _parse_aware_timestamp(anchor["evaluated_at"])
-        != _parse_aware_timestamp(envelope.anchor_at)
+        or parse_utc(anchor["evaluated_at"])
+        != parse_utc(envelope.anchor_at)
     ):
         return False
     candidate_opportunities = {
@@ -653,8 +654,8 @@ def _holding_matches_horizon(value: Any, target_horizon: str) -> bool:
 
 
 def _at_or_before(value: Any, boundary: Any) -> bool:
-    parsed = _parse_timestamp(value)
-    parsed_boundary = _parse_timestamp(boundary)
+    parsed = parse_utc(value)
+    parsed_boundary = parse_utc(boundary)
     return (
         parsed is not None
         and parsed_boundary is not None
@@ -662,24 +663,8 @@ def _at_or_before(value: Any, boundary: Any) -> bool:
     )
 
 
-def _parse_timestamp(value: Any) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
 
 
-def _parse_aware_timestamp(value: Any) -> datetime | None:
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _bounded_missing(values: Iterable[Any]) -> list[str]:

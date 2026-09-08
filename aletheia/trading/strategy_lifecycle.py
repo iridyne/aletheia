@@ -11,6 +11,7 @@ backtest framework is explicitly out of scope per project red lines.
 import json
 from datetime import datetime, timezone
 
+from aletheia.utils.dt import parse_utc
 from aletheia.files.jsonl import write_audit
 from aletheia.storage.models import StrategyRecord
 from aletheia.storage.repositories import (
@@ -361,20 +362,10 @@ def check_live_limited_gates(strategy_id: str) -> dict:
     }
 
 
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except ValueError:
-        return None
 
 
 def _first_order_age_days(orders: list[dict]) -> int | None:
-    dates = [_parse_dt(o.get("created_at")) for o in orders]
+    dates = [parse_utc(o.get("created_at")) for o in orders]
     dates = [d for d in dates if d is not None]
     if not dates:
         return None

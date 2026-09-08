@@ -21,68 +21,48 @@ _LEGACY_TABLES = frozenset({
     "filter_shadow_experiments",
 })
 
-# Exact Phase-1 inventory of production modules that mention one of the four
-# legacy Experiment tables. This is a debt ceiling: later migration phases may
-# shrink it, but new entries require explicit contract review.
+# Exact inventory of production modules that mention one of the four legacy
+# Experiment tables. This is a debt ceiling: later migration phases may shrink
+# it, but new entries require explicit contract review.
+#
+# Trimmed by 17 rows after #2945 retired the legacy Learning Experiment runtime.
+# The assertion is exact in BOTH directions, so debt shrinking trips it as loudly
+# as debt growing; `unexpected` (discovered - allowed) is the half that guards the
+# invariant, and it was empty, so nothing lost protection here.
 _REFERENCE_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
-    "aletheia/analytics/alpha_attribution.py",
     "aletheia/analytics/profit_gradient_evidence.py",
     # Backup verification must inspect legacy rows so an unproven cutover
     # cannot be presented as an authoritative recovery checkpoint.
     "aletheia/backup/verify.py",
-    "aletheia/cli/data_cmd.py",
-    "aletheia/cli/learning_cmd.py",
     "aletheia/cli/observe_cmd.py",
     "aletheia/config/schema.py",
     "aletheia/counterfactual/__init__.py",
-    "aletheia/counterfactual/filter_experiments.py",
-    "aletheia/learning/authority.py",
-    "aletheia/learning/cohorts.py",
-    "aletheia/learning/contribution_runner.py",
-    "aletheia/learning/economic_knowledge.py",
-    "aletheia/learning/experiments.py",
-    "aletheia/learning/fixed_look.py",
-    "aletheia/learning/hypothesis_compiler.py",
-    "aletheia/learning/knowledge_yield.py",
     "aletheia/learning/ledger.py",
-    "aletheia/learning/lifecycle.py",
-    "aletheia/learning/maintenance.py",
-    "aletheia/learning/policy_epochs.py",
-    "aletheia/learning/read_models.py",
     "aletheia/maintenance/data_retention_backfill.py",
     "aletheia/observation_lab/checkpoint.py",
     "aletheia/observation_lab/db.py",
     "aletheia/observation_lab/exposure.py",
-    "aletheia/observation_lab/runner.py",
     "aletheia/observation_lab/migration.py",
-    "aletheia/server/routes/analytics.py",
     "aletheia/server/routes/data.py",
     "aletheia/server/routes/settings.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
-    "aletheia/universe/service.py",
     "aletheia/update/continuity.py",
 })
 
 # Existing physical writers and mutation call sites only. A path being listed
 # is temporary migration debt, not general permission to introduce new legacy
 # operations or tables.
+#
+# Trimmed by 10 rows: after #2945 no aletheia/ module writes the legacy Experiment
+# ledger at all. learning/ledger.py stays out of this list while remaining in the
+# reference list above, because its two remaining touches are SELECTs.
 _WRITER_ALLOWLIST = frozenset({
     "aletheia/agent_runtime/scheduler.py",
-    "aletheia/cli/observe_cmd.py",
-    "aletheia/counterfactual/filter_experiments.py",
-    "aletheia/learning/contribution_runner.py",
-    "aletheia/learning/experiments.py",
-    "aletheia/learning/fixed_look.py",
-    "aletheia/learning/hypothesis_compiler.py",
-    "aletheia/learning/ledger.py",
-    "aletheia/learning/lifecycle.py",
-    "aletheia/learning/maintenance.py",
     "aletheia/maintenance/data_retention_backfill.py",
     "aletheia/storage/migrations.py",
     "aletheia/storage/repositories.py",
-    "aletheia/universe/service.py",
 })
 
 

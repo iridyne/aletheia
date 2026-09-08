@@ -98,37 +98,59 @@ def _query_exchange_fill(
     *,
     execution_mode: str,
 ) -> dict | None:
-    """Fetch complete private-fill evidence; unavailable evidence fails closed."""
+    """Fetch complete private-fill evidence; unavailable evidence fails closed.
+
+    Reads through the shared UTA projection rather than the hand-rolled Bitget
+    client. Three reasons this is not merely a style change:
+
+    * the account is *verified*. `_UTAReconciliationProjection` passes
+      ``expected_account`` on every read, so a credential or profile change cannot
+      silently return another account's fills. The old path constructed
+      ``BitgetClient(mode="demo", ...)`` with the mode hardcoded, so it would have
+      queried the demo account even when repairing a ``bitget_live_limited``
+      Position.
+    * incompleteness is explicit. The projection raises on any
+      ``ReadCompleteness`` other than ``COMPLETE``, which the ``except`` below
+      turns into "evidence unavailable, repair unchanged" — the fail-closed
+      behaviour this function documents. A partial page previously looked like a
+      short-but-valid fill list.
+    * it is profile-aware. Bitget's classic_v2 (``/api/v2/``) and uta_v3
+      (``/api/v3/``) surfaces are selected by the UTA profile, not routed by hand.
+    """
     try:
-        from aletheia.exchanges.bitget.client import BitgetClient
-        from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+        from aletheia.async_utils import run_coro_from_sync
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection
+        from aletheia.uta.manager import build_uta_registry
 
-        client = BitgetClient(mode="demo", profile=configured_bitget_profile())
-        try:
-            from aletheia.data.symbols import to_bitget
-            from aletheia.async_utils import run_coro_from_sync
-
-            rows = run_coro_from_sync(
-                client.get_order_fills(
-                    order_id=str(exchange_order_id),
-                    symbol=to_bitget(symbol),
-                    market_type="usdt_futures",
-                ),
-                timeout=30,
+        identity = next(
+            (
+                candidate
+                for candidate in build_uta_registry().configured_identities()
+                if candidate.execution_mode == execution_mode
+            ),
+            None,
+        )
+        if identity is None:
+            logger.warning(
+                "no configured UTA account for %s; administrative repair remains unchanged",
+                execution_mode,
             )
-            return _aggregate_exchange_fills(
-                rows,
-                exchange_order_id=str(exchange_order_id),
+            return None
+        client = _UTAReconciliationProjection(execution_mode, identity)
+        rows = run_coro_from_sync(
+            client.get_order_fills(
+                order_id=str(exchange_order_id),
                 symbol=symbol,
-                execution_mode=execution_mode,
-            )
-        finally:
-            from aletheia.async_utils import run_coro_from_sync
-
-            try:
-                run_coro_from_sync(client.close(), timeout=10)
-            except Exception:
-                pass
+                market_type="usdt_futures",
+            ),
+            timeout=30,
+        )
+        return _aggregate_exchange_fills(
+            rows,
+            exchange_order_id=str(exchange_order_id),
+            symbol=symbol,
+            execution_mode=execution_mode,
+        )
     except Exception as exc:
         logger.warning("exchange fill query failed (%s); administrative repair remains unchanged", exc)
         return None

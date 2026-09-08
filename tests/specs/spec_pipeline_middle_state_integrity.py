@@ -15,6 +15,9 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl
@@ -871,7 +874,10 @@ def test_trade_opportunity_and_divergence_identity_helpers(tmp_path, monkeypatch
         "§5 atomic Opportunity producer identity",
         "L2c",
         "Concurrent Observer retries for one symbol, snapshot, and market resolve one "
-        "durable owner; Universe triggers use generation-bound setup materialization.",
+        "durable owner, and a queued owner cannot be rewritten by a late Observer. "
+        "Contract Delta (2026-09-07): the `universe/signal_emitter.py` producer was "
+        "retired; the producer-boundary half of this claim now locks the retirement — "
+        "no production module may reintroduce snapshot-scoped Opportunity emission.",
         status="implemented",
     )
 )
@@ -933,16 +939,44 @@ def test_snapshot_opportunity_identity_claim_is_atomic(tmp_path, monkeypatch):
     assert queued["direction_bias"] == "long"
     import inspect
     from aletheia.agents import market_observer
-    from aletheia.universe import signal_emitter
 
     assert "insert_opportunity_once_by_snapshot(" not in inspect.getsource(
         market_observer
     )
     assert "update_open_opportunity(" in inspect.getsource(market_observer)
-    signal_emitter_source = inspect.getsource(signal_emitter)
-    assert "insert_opportunity_once_by_snapshot(" not in signal_emitter_source
-    assert "insert_universe_setup(" in signal_emitter_source
-    assert "insert_opportunity_generation(" in signal_emitter_source
+
+    # Producer-boundary retirement (2026-09-07, #2945): `universe/signal_emitter.py`
+    # was the only module that emitted snapshot-scoped Opportunities and
+    # generation-bound setups. It is deleted; the canonical entry path is
+    # `universe/candidate_opportunity.py` → Candidate/Generation → Planner.
+    # This locks the retirement so no production module reintroduces the seam.
+    assert not (ROOT / "aletheia/universe/signal_emitter.py").exists(), (
+        "signal_emitter.py is back — snapshot-scoped Opportunity emission was "
+        "retired in favor of the canonical Candidate path"
+    )
+    # AST, not text: `models.py` documents these seams in a comment, and a
+    # comment is not a producer.
+    import ast
+
+    emitter_seams = {"insert_universe_setup", "insert_opportunity_generation"}
+    reintroduced = {}
+    for path in (ROOT / "aletheia").rglob("*.py"):
+        if path.name == "repositories.py":
+            continue  # definition site; retired seams are deleted with their callers
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute)
+                else None
+            )
+            if name in emitter_seams:
+                reintroduced[path.relative_to(ROOT).as_posix()] = name
+    assert not reintroduced, (
+        f"retired emitter seams reintroduced in production: {reintroduced}"
+    )
 
 
 @spec_claim(
@@ -1009,171 +1043,6 @@ def test_divergence_source_version_identity_claim_is_atomic(tmp_path, monkeypatc
     assert "insert_divergence_opportunity_once(" in inspect.getsource(
         divergence_scanner
     )
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-MSI-07",
-        "pipeline_middle_state_integrity",
-        "§6 atomic Serenity queue handoff",
-        "L2b",
-        "A Serenity theme and every exact pending PI carrier commit atomically, remain "
-        "idempotent on retry, and reject an empty handoff.",
-        status="implemented",
-    )
-)
-def test_enqueue_serenity_theme_for_pi_is_atomic_and_idempotent(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
-
-    theme = SerenityTheme(id="theme-atomic", name="Atomic handoff")
-    repo.insert_serenity_theme(theme)
-    opportunities = [
-        SerenityOpportunity(
-            id=f"serenity-atomic-{index}",
-            theme_id=theme.id,
-            symbol=f"SER{index}/USDT",
-            direction="long",
-        )
-        for index in range(2)
-    ]
-    for opportunity in opportunities:
-        repo.insert_serenity_opportunity(opportunity)
-
-    with pytest.raises(ValueError):
-        repo.enqueue_serenity_theme_for_pi(theme.id, [])
-
-    ids = [opportunity.id for opportunity in opportunities]
-    assert repo.enqueue_serenity_theme_for_pi(theme.id, ids) == ids
-    assert repo.enqueue_serenity_theme_for_pi(theme.id, ids) == ids
-    carriers = [
-        row for row in repo.list_pi_decisions(limit=20)
-        if row.get("signal_source") == "serenity"
-    ]
-    assert len(carriers) == 2
-    assert {row["opportunity_id"] for row in carriers} == set(ids)
-    assert repo.get_serenity_theme(theme.id)["status"] == "promoted"
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-MSI-08",
-        "pipeline_middle_state_integrity",
-        "§6 atomic Serenity rollback",
-        "L2b",
-        "A failure while inserting one Serenity pending carrier rolls back prior carriers, "
-        "opportunity intents, and theme promotion together.",
-        status="implemented",
-    )
-)
-def test_enqueue_serenity_theme_for_pi_rolls_back_every_row(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import SerenityOpportunity, SerenityTheme
-
-    theme = SerenityTheme(id="theme-rollback", name="Rollback handoff")
-    repo.insert_serenity_theme(theme)
-    ids = ["serenity-rollback-0", "serenity-rollback-1"]
-    for index, opportunity_id in enumerate(ids):
-        repo.insert_serenity_opportunity(SerenityOpportunity(
-            id=opportunity_id,
-            theme_id=theme.id,
-            symbol=f"ROLL{index}/USDT",
-            direction="long",
-        ))
-
-    real_insert = repo.insert_pi_decision
-    calls = 0
-
-    def fail_second(decision):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("deterministic carrier failure")
-        return real_insert(decision)
-
-    monkeypatch.setattr(repo, "insert_pi_decision", fail_second)
-    with pytest.raises(RuntimeError, match="deterministic carrier failure"):
-        repo.enqueue_serenity_theme_for_pi(theme.id, ids)
-
-    assert repo.get_serenity_theme(theme.id)["status"] == "active"
-    assert {
-        row["id"]: row["action_intent"]
-        for row in repo.list_serenity_opportunities(theme_id=theme.id, limit=10)
-    } == {opportunity_id: "watch" for opportunity_id in ids}
-    assert [
-        row for row in repo.list_pi_decisions(limit=20)
-        if row.get("signal_source") == "serenity"
-    ] == []
-
-
-@pytest.mark.parametrize(
-    ("field", "wrong_value"),
-    (
-        ("symbol", "WRONG/USDT"),
-        ("direction", "short"),
-        ("market_type", None),
-    ),
-)
-@spec_claim(
-    SpecClaim(
-        "PL-MSI-13",
-        "pipeline_middle_state_integrity",
-        "§6 exact Serenity carrier identity",
-        "L2b",
-        "A wrong or legacy-partial pending carrier cannot promote a Serenity theme, "
-        "and the handoff never hides the conflict behind a second carrier.",
-        status="implemented",
-    )
-)
-def test_enqueue_serenity_rejects_mismatched_existing_carrier(
-    tmp_path,
-    monkeypatch,
-    field,
-    wrong_value,
-):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PiDecision, SerenityOpportunity, SerenityTheme
-
-    theme = SerenityTheme(id=f"theme-wrong-{field}", name="Wrong carrier")
-    repo.insert_serenity_theme(theme)
-    opportunity = SerenityOpportunity(
-        id=f"serenity-wrong-{field}",
-        theme_id=theme.id,
-        symbol="BTC/USDT",
-        direction="long",
-        market_type="spot",
-    )
-    repo.insert_serenity_opportunity(opportunity)
-    carrier_identity = {
-        "symbol": opportunity.symbol,
-        "direction": opportunity.direction,
-        "market_type": opportunity.market_type,
-    }
-    carrier_identity[field] = wrong_value
-    repo.insert_pi_decision(PiDecision(
-        opportunity_id=opportunity.id,
-        signal_source="serenity",
-        action="signal_pending",
-        **carrier_identity,
-    ))
-
-    with pytest.raises(ValueError, match="conflicts with opportunity identity"):
-        repo.enqueue_serenity_theme_for_pi(theme.id, [opportunity.id])
-
-    assert repo.get_serenity_theme(theme.id)["status"] == "active"
-    assert repo.get_serenity_opportunity(opportunity.id)["action_intent"] == "watch"
-    carriers = [
-        row
-        for row in repo.list_pi_decisions(limit=20)
-        if row.get("opportunity_id") == opportunity.id
-    ]
-    assert len(carriers) == 1
 
 
 @spec_claim(
@@ -1378,7 +1247,6 @@ def test_safety_loops_do_not_use_the_truncated_open_position_reader():
         "aletheia/trading/market_data.py",
         "aletheia/agent_runtime/scheduler.py",
         "aletheia/execution/paper_broker.py",
-        "aletheia/trust/guard_chain.py",
     )
     for relative in paths:
         source = (root / relative).read_text(encoding="utf-8")

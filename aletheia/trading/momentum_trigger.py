@@ -41,6 +41,29 @@ def _zone(value: tuple[float, float], field: str) -> tuple[float, float]:
     return low, high
 
 
+def health_reason_requires_resync(reason: str | None) -> bool:
+    """Is this engine-integrity fault one only a fresh engine can clear?
+
+    An ordering, routing or stream-generation fault leaves the rolling
+    quote/trade/depth windows holding facts whose order is no longer proven, so
+    the engine correctly refuses every later event -- and nothing inside it ever
+    clears that refusal.  The watcher owns the lifecycle, so it must discard the
+    instance and re-arm from empty rather than keep a permanently silent engine.
+
+    Excluded on purpose: ``momentum_trigger_structural_invalidation`` (the Plan
+    is genuinely invalidated and the watcher terminalizes it) and
+    ``subscription_unconfirmed`` (``confirm_subscription`` already owns it).
+    """
+
+    if reason is None:
+        return False
+    return (
+        reason.startswith("sequence_anomaly:")
+        or reason.endswith("instrument_mismatch")
+        or reason == "market_evidence_generation_mismatch"
+    )
+
+
 class MomentumTriggerEngine:
     """Deterministic ARMED→PULLBACK→SWEEP→RECLAIM→TRIGGERED engine."""
 

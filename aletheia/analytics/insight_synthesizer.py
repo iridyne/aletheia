@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from aletheia.analytics.execution_mode import (
     execution_mode_identity,
@@ -90,6 +90,7 @@ class TradingMemo(TypedDict):
     cohort_complete: bool
     ordered_source_digest: str
     cohort_identity: dict[str, str | None]
+    execution_mode: NotRequired[str]  # absent in pre-mode-tagging memos
 
 
 def get_latest_memo(

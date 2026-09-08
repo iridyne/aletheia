@@ -53,6 +53,46 @@ against the exact candidate head after implementation. Both phases are advisory
 only and never a required gate. See
 [SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md).
 
+Steps 1–6 are **per commit**, not per session. Put the depth, boundary,
+unchanged set, and Contract Delta in the commit message itself, so a reviewer
+reads them beside the diff. A batch of commits that shares one investigation
+still owes each commit its own declaration — they routinely differ in depth
+(2026-09-07: one batch held five D0 conformance repairs and one D1 contract
+delta, and only the D1 was declared, which is the failure this paragraph exists
+to prevent).
+
+Categorise commits by concern, not by session order. A conformance repair, a
+test realignment, a contract delta, and a guidance update are four commits even
+when one investigation produced all four; each has a different reviewer, a
+different revert risk, and a different depth.
+
+## Measuring test results honestly
+
+- **Never compare failure counts across a changed denominator.** Establish the
+  collected count alongside the failure count. #2945 deleted 875 test functions
+  repo-wide (319 under `tests/specs/`), so "42 failed of 1407" and "29 failed of
+  1728" describe different suites and the delta between them is meaningless.
+- **Measure the baseline yourself; do not inherit a number from a document.**
+  A recorded baseline goes stale as `master` advances (2026-09-07: a plan
+  document's `141 failed` was `125 failed` by the time it was used). Use a
+  throwaway worktree:
+  ```sh
+  git worktree add /tmp/baseline origin/master
+  (cd /tmp/baseline && uv run pytest tests -q -p no:randomly --tb=no) > /tmp/base.txt
+  git worktree remove /tmp/baseline --force
+  ```
+- **Never run two full suites concurrently.** They share the data directory and
+  crash each other; the crash looks like a test failure. Run them in sequence.
+- **Diff the failure lists, not the counts.** `comm -13 before.txt after.txt`
+  proves "no new failures"; a smaller total does not.
+- Redirect full-suite output to a file. `| tail -n` discards the `FAILED` list
+  you need for the diff.
+- Some specs are run-to-run unstable. If a count moves with no code change,
+  re-run before attributing it, and report the stable value plus the observed
+  spread rather than the single most favourable number.
+- Before claiming a failure is pre-existing, prove it: `git stash push -- <files>`,
+  re-run, `git stash pop`, re-run. Same reds both ways ⇒ pre-existing.
+
 ## PR metadata preflight (Phase 1)
 
 For PR review budgets, feedback validity, lifecycle states, and merge readiness,

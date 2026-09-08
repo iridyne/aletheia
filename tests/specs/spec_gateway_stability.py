@@ -123,6 +123,12 @@ def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
 class _Resp:
     def __init__(self, content, completion_tokens=10):
         self.content = content
+        # Production reads `resp.usage or raw.get("usage")` (helpers.py:880). Without
+        # the attribute, attempt 0 raised AttributeError, the outer handler turned it
+        # into `llm_unavailable`, and every retry/repair/empty-content behaviour these
+        # tests assert was unreachable. Falsy on purpose so the raw fallback below is
+        # what supplies completion_tokens, exactly as before.
+        self.usage = {}
         self.raw = {"usage": {"completion_tokens": completion_tokens}}
 
 

@@ -14,7 +14,6 @@ cancellation.
 from __future__ import annotations
 
 from tests.position_fixture import force_update_position
-from tests.specs.uta_private_history import _identity
 
 from datetime import datetime, timezone
 import json
@@ -30,6 +29,20 @@ _FILL_TIME_MS = 1_784_500_000_000
 _FILL_TIME = datetime.fromtimestamp(
     _FILL_TIME_MS / 1000, tz=timezone.utc
 ).isoformat()
+
+
+def _spec_identity():
+    """The exact UTA account identity a real bitget_demo submission would freeze.
+
+    execution_contract.md §submit: "提交前持久化 exact `uta_account_identity_json`；
+    历史 NULL 不按当前配置补造身份." `reconcile()` therefore refuses to read private
+    history for an Order that cannot prove its account, so a seeded Order must
+    carry the identity the configured registry reports — exactly as the
+    submission path would have written it.
+    """
+    from tests.specs.uta_private_history import _identity
+
+    return _identity("bitget_demo")
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -117,17 +130,27 @@ def _seed_entry(
         exchange_order_id=f"EX-HISTORICAL-{suffix}",
         status=status,
         filled_at=_FILL_TIME if status == "filled" else None,
-        uta_account_identity_json=_identity("bitget_demo").model_dump_json(),
+        uta_account_identity_json=_spec_identity().model_dump_json(),
     )
     repo.insert_order(order)
     return proposal, decision, order
 
 
 def _patch_bitget_client(monkeypatch, rows, calls):
+    from types import SimpleNamespace
+
     from aletheia.execution import reconciliation
     from tests.specs.uta_private_history import patch_private_history
 
     patch_private_history(monkeypatch, reconciliation, rows, calls=calls)
+    # The identity preflight compares the Order's frozen identity against the
+    # CONFIGURED registry, not against the query double — both must agree or the
+    # Order is fail-closed out of the scan before any private read.
+    monkeypatch.setattr(
+        reconciliation,
+        "build_uta_registry",
+        lambda: SimpleNamespace(configured_identities=lambda: (_spec_identity(),)),
+    )
 
 
 @spec_claim(

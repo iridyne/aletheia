@@ -20,10 +20,10 @@ import json
 import math
 from typing import Any, Mapping
 
+from aletheia.utils.dt import parse_utc
 from aletheia.portfolio.local_funding import (
     _ENTRY_TIME_TOLERANCE,
     _EntryFill,
-    _parse_utc,
     compute_local_funding_from_entry_fills,
 )
 
@@ -131,7 +131,7 @@ def _legacy_entry_fills(db, row: Mapping[str, Any]) -> tuple[list[_EntryFill] | 
         return None, "missing_entry_fills", evidence
     validated: list[_EntryFill] = []
     for fill in fills:
-        price, quantity, filled_at = _finite(fill.get("fill_price")), _finite(fill.get("fill_quantity")), _parse_utc(fill.get("filled_at"))
+        price, quantity, filled_at = _finite(fill.get("fill_price")), _finite(fill.get("fill_quantity")), parse_utc(fill.get("filled_at"))
         if not fill.get("id") or price is None or quantity is None or price <= 0 or quantity <= 0 or filled_at is None:
             return None, "legacy_entry_fill_invalid", evidence
         validated.append(_EntryFill(order_id=order_id, proposal_id=str(row.get("proposal_id") or ""), fill_id=str(fill["id"]), fill_price=price, fill_quantity=quantity, filled_at=filled_at))
@@ -142,7 +142,7 @@ def _legacy_entry_fills(db, row: Mapping[str, Any]) -> tuple[list[_EntryFill] | 
         return None, "legacy_entry_quantity_mismatch", evidence
     if not _same(sum(item.fill_price * item.fill_quantity for item in validated), entry_price * position_quantity):
         return None, "legacy_entry_price_mismatch", evidence
-    opened_at = _parse_utc(row.get("opened_at"))
+    opened_at = parse_utc(row.get("opened_at"))
     if opened_at is None or any(item.filled_at < opened_at - _ENTRY_TIME_TOLERANCE for item in validated):
         return None, "legacy_entry_time_mismatch", evidence
     validated.sort(key=lambda item: (item.filled_at, item.fill_id))

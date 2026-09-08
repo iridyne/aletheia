@@ -44,3 +44,71 @@ def test_config_diagnostic_names_actual_execution_exchange():
     assert "execution (okx)" in finding.message
     assert "market data (binance)" in finding.message
     assert "bitget" not in finding.message
+
+
+def test_paper_execution_mode_vocabulary_excludes_uta_credential_profiles():
+    """`binance_live` / `okx_live` are UTA credential profile names, not execution modes.
+
+    They were accepted by POST /settings/exchange-markets and listed in the alignment
+    map, and the mutator persists paper_execution_mode verbatim. Neither is in any Risk
+    vocabulary, so resolve_risk_policy raises UnknownRiskExecutionMode and every
+    subsequent proposal is rejected `unregistered_risk_execution_mode:...` — a total
+    trading halt reachable from one dashboard POST. Both surfaces now derive from the
+    authority instead of restating it, so they cannot drift apart again.
+    """
+    from aletheia.config.exchange_alignment import _EXECUTION_MODE_EXCHANGES
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+    from aletheia.risk.policy import (
+        DEMO_EXECUTION_MODES,
+        LIVE_EXECUTION_MODES,
+        UnknownRiskExecutionMode,
+        resolve_risk_policy,
+    )
+
+    profiles = {"binance_live", "okx_live"}
+    assert not profiles & set(_EXECUTION_MODE_EXCHANGES)
+    assert not profiles & DEMO_EXECUTION_MODES
+    assert not profiles & LIVE_EXECUTION_MODES
+
+    # The alignment map is the registry's paper modes, no more and no less.
+    assert _EXECUTION_MODE_EXCHANGES == {
+        paper_mode: ccxt_name
+        for ccxt_name, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
+    }
+
+    # The reason they must never be accepted: Risk cannot resolve a policy for them.
+    cfg = AletheiaConfig()
+    for profile in sorted(profiles):
+        try:
+            resolve_risk_policy(cfg, profile)
+        except UnknownRiskExecutionMode:
+            continue
+        raise AssertionError(f"{profile} unexpectedly resolves to a risk policy")
+
+
+def test_exchange_markets_route_rejects_uta_credential_profiles():
+    """Behaviour, not source text: the route must 400 before the mutator persists.
+
+    A source-text scan is what made AC-S13 rot; assert the rejection itself.
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    from aletheia.risk.policy import DEMO_EXECUTION_MODES
+    from aletheia.server.routes.settings import (
+        ExchangeMarketsRequest,
+        set_exchange_markets,
+    )
+
+    for profile in ("binance_live", "okx_live"):
+        with pytest.raises(HTTPException) as excinfo:
+            set_exchange_markets(
+                ExchangeMarketsRequest(
+                    spot=True, usdt_futures=True, paper_execution_mode=profile,
+                )
+            )
+        assert excinfo.value.status_code == 400
+        assert "paper_execution_mode must be one of" in str(excinfo.value.detail)
+
+    # paper_internal must stay admissible: it is the local-simulation mode.
+    assert "paper_internal" in DEMO_EXECUTION_MODES

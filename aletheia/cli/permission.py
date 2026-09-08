@@ -5,12 +5,6 @@ import typer
 permission_app = typer.Typer(no_args_is_help=True)
 
 
-@permission_app.callback()
-def _deprecated():
-    from aletheia.cli._deprecated import warn_deprecated
-    warn_deprecated("Settings → Permission Mode")
-
-
 @permission_app.command()
 def status():
     """Show current permission mode."""
@@ -22,8 +16,9 @@ def status():
 @permission_app.command(name="set")
 def set_mode(mode: str = typer.Argument(..., help="Observe|Paper|Full")):
     """Set the agent permission mode."""
+    from aletheia.agent_shell.permissions import VALID_WORKER_MODES
     from aletheia.config.loader import load_config, save_config
-    valid = {"Observe", "Paper", "Full"}
+    valid = VALID_WORKER_MODES
     if mode not in valid:
         typer.echo(f"Invalid mode. Choose from: {', '.join(sorted(valid))}", err=True)
         raise typer.Exit(1)
