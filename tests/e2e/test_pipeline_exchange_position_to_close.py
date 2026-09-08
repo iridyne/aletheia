@@ -478,21 +478,38 @@ def test_venue_rejected_close_records_the_rejection_and_keeps_the_position(
     stored = repo.get_position(position.id)
     assert stored["status"] == "open"
     assert stored["exit_price_source"] != "broker_fill"
+    # Unconditional: a claim that vanished would skip every assertion below and
+    # let the test pass while the venue's reason and the durable retry/audit state
+    # were lost. The attempt has to stay durable for reconciliation to own it.
     claim_id = stored["pending_close_order_id"]
-    claim = repo.get_order(claim_id) if claim_id else None
-    if claim is not None:
-        # The venue's own reason must survive; "we tried and it said no" is a
-        # different fact from "we could not tell".
-        assert claim["error_reason"] == "reduce_only_rejected"
-        assert claim["status"] != "filled"
-        assert repo.list_fills(order_id=claim_id) == []
+    assert claim_id, "the rejected attempt must stay durable"
+    claim = repo.get_order(claim_id)
+    assert claim is not None
+    # The venue's own reason must survive; "we tried and it said no" is a
+    # different fact from "we could not tell".
+    assert claim["error_reason"] == "reduce_only_rejected"
+    assert claim["status"] != "filled"
+    assert repo.list_fills(order_id=claim_id) == []
 
 
 @pytest.mark.parametrize(
     ("fee", "fee_coin"),
     (
         pytest.param(None, "USDT", id="fee-absent"),
-        pytest.param("0.01", "BGB", id="fee-third-currency"),
+        pytest.param(
+            "0.01",
+            "BGB",
+            id="fee-third-currency",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "#3008: materialize_bitget_close settles a close whose exit fee "
+                    "has no quote-currency conversion, against execution_contract "
+                    "§11.3 (错币种 keeps the Position open). Strict so a fix cannot "
+                    "leave this marker behind."
+                ),
+            ),
+        ),
     ),
 )
 def test_close_with_uncostable_fee_is_not_settled_as_complete(
@@ -532,10 +549,12 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
         assert repo.get_position(position.id)["status"] == "open"
         return
 
+    # §11.3 is not "settle but leave the fee blank" — it is 缺 fee、错币种 keeps
+    # the Position open. Accepting a settled Position with a null exit_fee would
+    # bless a financially incomplete close, which is the opposite of the rule this
+    # test cites.
     stored = repo.get_position(position.id)
-    if result.state != "filled":
-        assert stored["status"] == "open"
-        return
-    # If it did settle, the quote-currency exit cost must be unavailable rather
-    # than a number pretending the fee was already USDT.
-    assert stored["exit_fee"] in (None, 0), dict(stored)
+    assert result.state != "filled", result
+    assert stored["status"] == "open", dict(stored)
+    assert stored["closed_at"] is None
+    assert stored["exit_fill_verified"] in (0, None)
