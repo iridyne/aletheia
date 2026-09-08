@@ -12,8 +12,8 @@ from aletheia.model_provider.base import (
     ModelResponse,
     ModelHealth,
     StreamChunk,
-    health_from_model_catalogue,
-    portable_json_schema_payload,
+    structured_via_complete,
+    health_from_catalogue_probe,
 )
 
 BASE_URL = "https://api.openai.com/v1"
@@ -150,16 +150,7 @@ class OpenAINativeProvider(ModelProvider):
                     yield StreamChunk(content="", done=True, usage=usage, model=actual_model)
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:
-        mr = ModelRequest(
-            messages=list(request.messages),
-            system=request.system,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            response_format="json_schema",
-            structured_schema=portable_json_schema_payload(schema),
-        )
-        resp = await self.complete(mr)
-        return json.loads(resp.content)
+        return await structured_via_complete(self, request, schema)
 
     async def list_models(self) -> list[dict]:
         try:
@@ -193,14 +184,4 @@ class OpenAINativeProvider(ModelProvider):
         return sorted(models, key=lambda m: m["slug"])
 
     async def healthcheck(self) -> ModelHealth:
-        try:
-            models = await self.list_models()
-            if models:
-                return health_from_model_catalogue(self.name, self.model, models)
-            return ModelHealth(
-                provider=self.name,
-                available=False,
-                error="model catalogue unavailable; use explicit Ping to test inference",
-            )
-        except Exception as e:
-            return ModelHealth(provider=self.name, available=False, error=str(e))
+        return await health_from_catalogue_probe(self)
