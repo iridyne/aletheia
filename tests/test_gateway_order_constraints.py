@@ -140,3 +140,52 @@ def test_unavailable_rules_reject_before_any_exchange_order(tmp_path, monkeypatc
 
     assert result["status"] == "rejected"
     assert "No order was sent" in result["message"]
+
+
+def test_registry_symbol_availability_speaks_the_execution_vocabulary(e2e_db=None):
+    """A synced venue must not report "no usdt_futures products" for its perps.
+
+    `universe_registry.market_type` is free TEXT and production populates it with
+    the universe vocabulary ("perp"/"spot") — verified on the paper runtime, whose
+    registry holds binance perp=723 / spot=490. Every consumer of
+    `load_registry_symbols` indexes that cache with the *execution* vocabulary
+    ("usdt_futures"/"spot") carried by Proposals and Orders, so without a
+    translation `_check_symbol_availability` rejects every futures entry on any
+    venue that has been synced at all.
+
+    This was latent rather than visible: a venue with no registry rows returns
+    None and fails open, so the trap only springs once that venue is wired — which
+    is exactly what pointing the runtime at Bitget Demo does.
+    """
+    from aletheia.execution import gateway, venue_capabilities
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseAsset
+
+    venue_capabilities._registry_symbol_cache.clear()
+    repo.upsert_universe_asset(
+        UniverseAsset(
+            id="asset-reg-perp",
+            venue="bitget",
+            symbol="BTC/USDT",
+            market_type="perp",
+            min_notional=1.0,
+            price_precision=4,
+            amount_precision=6,
+        )
+    )
+
+    registry = venue_capabilities.load_registry_symbols("bitget")
+    assert registry is not None
+    assert "usdt_futures" in registry, registry
+    assert "BTC/USDT" in registry["usdt_futures"]
+
+    assert gateway._check_symbol_availability(
+        "BTC/USDT", "bitget_demo", "usdt_futures"
+    ) is None
+
+    # A symbol the venue does not list is still rejected: the translation must not
+    # turn the gate into a rubber stamp.
+    venue_capabilities._registry_symbol_cache.clear()
+    assert gateway._check_symbol_availability(
+        "DOGE/USDT", "bitget_demo", "usdt_futures"
+    ) is not None
