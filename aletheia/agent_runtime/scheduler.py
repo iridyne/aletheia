@@ -2538,16 +2538,33 @@ def _run_tpsl_fill_check():
         return None
 
 
+def _configured_identity(execution_mode: str):
+    """The account the current configuration would authenticate as, or None."""
+    from aletheia.uta.manager import build_uta_registry
+
+    return next(
+        (
+            identity
+            for identity in build_uta_registry().configured_identities()
+            if identity.execution_mode == execution_mode
+        ),
+        None,
+    )
+
+
 def _claim_observed_tpsl_close(
     position_id: str,
     *,
     execute_order_id: str,
     reason: str,
+    expected_account,
 ):
     """Atomically register an observed Bitget TPSL execution without placing it."""
     from datetime import datetime, timezone
+    from aletheia.execution.coordinator import _position_account
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
+    from aletheia.uta.models import UTAAccountIdentity
 
     execute_order_id = str(execute_order_id or "").strip()
     if not execute_order_id:
@@ -2561,6 +2578,13 @@ def _claim_observed_tpsl_close(
             raise ValueError(
                 "automatic TPSL close registration requires a supported Bitget mode"
             )
+        # The observing reader is built from current configuration, but the claim
+        # carries the entry Order's frozen identity. Only a reader authenticating
+        # as exactly that account may produce or advance this claim; reconcile()
+        # rejects the same mismatch, and this bridge must not be the softer door.
+        entry_account = _position_account(position)
+        if expected_account is None or entry_account != expected_account:
+            raise ValueError("uta_account_identity_mismatch")
         pending_id = position.get("pending_close_order_id")
         if pending_id:
             existing = repo.get_order(pending_id)
@@ -2569,10 +2593,23 @@ def _claim_observed_tpsl_close(
                 and existing.get("exchange_order_id") == execute_order_id
                 and existing.get("position_id") == position_id
             ):
+                # A claim written before this account proof existed carries a NULL
+                # identity, and materialize_bitget_close enforces none of its own.
+                # Advancing it would file evidence under absent or foreign
+                # provenance, so the carrier proves itself or the claim waits.
+                try:
+                    claimed = UTAAccountIdentity.model_validate_json(
+                        existing.get("uta_account_identity_json") or ""
+                    )
+                except ValueError as exc:
+                    raise ValueError("uta_account_identity_unavailable") from exc
+                if claimed != entry_account:
+                    raise ValueError("uta_account_identity_mismatch")
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
 
         close_order = Order(
+            uta_account_identity_json=entry_account.model_dump_json(),
             proposal_id=position.get("proposal_id"),
             client_order_id=f"close-{position_id}",
             position_id=position_id,
@@ -2606,8 +2643,8 @@ def _tpsl_fill_check_body():
     try:
         import asyncio
         import json as _json
-        from aletheia.storage.repositories import list_all_open_positions
         from aletheia.data.symbols import to_bitget
+        from aletheia.storage.repositories import list_all_open_positions
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
         )
@@ -2646,6 +2683,33 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+            from aletheia.execution.reconciliation import _UTAReconciliationProjection
+            reader_identity = _configured_identity(execution_mode)
+            if reader_identity is None:
+                # No proven account for this mode: touch the venue for nothing and
+                # claim nothing. Reported so the job goes red rather than quiet.
+                return {
+                    "materialized": [],
+                    "errors": [
+                        {
+                            "execution_mode": execution_mode,
+                            "position_id": pos.get("id"),
+                            "plan_order_id": None,
+                            "error_type": "uta_account_identity_unavailable",
+                        }
+                        for pos, _tpsl_ids in account_candidates
+                    ],
+                }
+            # BitgetClient._headers() re-reads secrets per request, so this
+            # snapshot cannot bind what the raw client signs with. What it can do
+            # is prove, through an identity-enforcing read, that the execute Order
+            # belongs to the verified account before its economics are trusted.
+            # get_order is exact and window-free when venue_order_id is present
+            # (ccxt_adapter.py:479-520 -> exchange.fetch_order), unlike get_fills,
+            # which always demands a time window and scans the account.
+            account_prover = _UTAReconciliationProjection(
+                execution_mode, reader_identity
+            )
             client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
             errors = []
@@ -2677,18 +2741,49 @@ def _tpsl_fill_check_body():
                             reason = (
                                 "stop_loss" if plan_type == "sl" else "take_profit"
                             )
+                            # This executeOrderId was discovered by the raw
+                            # client, which re-reads its credentials per request.
+                            # Nothing durable may be written for an execute Order
+                            # this account cannot be shown to own: the claim sets
+                            # pending_close_order_id, so a later refusal would wedge
+                            # the Position and make ordinary closes report
+                            # already_pending while it is still open locally.
+                            #
+                            # This read also subsumes a plain configuration
+                            # re-resolve: query_uta builds its adapter from current
+                            # config and requires it to equal reader_identity, so a
+                            # rotation during plan discovery fails here too.
+                            proven = await account_prover.get_order_status(
+                                order_id=execute_order_id,
+                                client_order_id=None,
+                                symbol=pos["symbol"],
+                                market_type=pos["market_type"],
+                            )
+                            if proven is None or str(
+                                proven.venue_order_id or ""
+                            ) != execute_order_id:
+                                raise ValueError(
+                                    "uta_account_order_membership_unproven"
+                                )
                             close_order, _ = _claim_observed_tpsl_close(
                                 pos["id"],
                                 execute_order_id=execute_order_id,
                                 reason=reason,
+                                expected_account=reader_identity,
                             )
                             if close_order is None:
                                 continue
+                            # Economics come from the venue's exact per-order fills
+                            # endpoint: complete, and with no time window to get
+                            # wrong. Re-resolve once more so nothing is persisted
+                            # across a configuration change.
                             private_fills = await client.get_order_fills(
                                 order_id=execute_order_id,
                                 symbol=to_bitget(pos["symbol"]),
                                 market_type=pos["market_type"],
                             )
+                            if _configured_identity(execution_mode) != reader_identity:
+                                raise ValueError("uta_account_identity_mismatch")
                             result = materialize_bitget_close(
                                 close_order["id"], private_fills
                             )
