@@ -2643,6 +2643,7 @@ def _tpsl_fill_check_body():
     try:
         import asyncio
         import json as _json
+        from aletheia.data.symbols import to_bitget
         from aletheia.storage.repositories import list_all_open_positions
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
@@ -2682,10 +2683,7 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-            from datetime import datetime, timedelta, timezone
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
-            from aletheia.uta.compat import utc
-            from aletheia.uta.manager import funding_history_retention_contract
             reader_identity = _configured_identity(execution_mode)
             if reader_identity is None:
                 # No proven account for this mode: touch the venue for nothing and
@@ -2702,27 +2700,15 @@ def _tpsl_fill_check_body():
                         for pos, _tpsl_ids in account_candidates
                     ],
                 }
-            # BitgetClient._headers() re-reads secrets per request, so this snapshot
-            # cannot bind what the raw client actually signs with. The evidence read
-            # -- the one whose result is persisted -- therefore goes through the UTA
-            # projection, which passes expected_account into every query and refuses
-            # anything short of a complete read. Plan history has no UTA equivalent
-            # yet (#2994); a foreign one is harmless because the identity-enforced,
-            # order-id-scoped fills read below then returns nothing.
-            evidence_reader = _UTAReconciliationProjection(
+            # BitgetClient._headers() re-reads secrets per request, so this
+            # snapshot cannot bind what the raw client signs with. What it can do
+            # is prove, through an identity-enforcing read, that the execute Order
+            # belongs to the verified account before its economics are trusted.
+            # get_order is exact and window-free when venue_order_id is present
+            # (ccxt_adapter.py:479-520 -> exchange.fetch_order), unlike get_fills,
+            # which always demands a time window and scans the account.
+            account_prover = _UTAReconciliationProjection(
                 execution_mode, reader_identity
-            )
-            # The venue retains only so much private history, and the adapter
-            # refuses a scope that starts before that. Ask for the widest window
-            # it will actually serve instead of failing closed on an old Position:
-            # an empty result is still evidence_missing, never proof of absence,
-            # so widening can only find a fill -- it cannot invent one. The margin
-            # keeps the request off the exact retention edge.
-            retention_days, _profile_version = funding_history_retention_contract(
-                execution_mode
-            )
-            history_floor = datetime.now(timezone.utc) - timedelta(
-                days=max(retention_days - 1, 0)
             )
             client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
@@ -2772,22 +2758,32 @@ def _tpsl_fill_check_body():
                             )
                             if close_order is None:
                                 continue
-                            # CCXTUTAAdapter.get_fills is PARTIAL without a start
-                            # bound, and the projection raises on anything short of
-                            # COMPLETE. The exit fill cannot precede the entry, so
-                            # opened_at is the tightest honest bound -- clamped to
-                            # what the venue still retains.
-                            opened_at = utc(pos.get("opened_at"))
-                            private_fills = await evidence_reader.get_order_fills(
+                            # Prove the execute Order is this account's, under an
+                            # identity-enforced exact read, before trusting any
+                            # economics attributed to it.
+                            proven = await account_prover.get_order_status(
                                 order_id=execute_order_id,
+                                client_order_id=None,
                                 symbol=pos["symbol"],
                                 market_type=pos["market_type"],
-                                start_at=(
-                                    max(opened_at, history_floor)
-                                    if opened_at is not None
-                                    else history_floor
-                                ),
                             )
+                            if proven is None or str(
+                                proven.venue_order_id or ""
+                            ) != execute_order_id:
+                                raise ValueError(
+                                    "uta_account_order_membership_unproven"
+                                )
+                            # Economics come from the venue's exact per-order fills
+                            # endpoint: complete, and with no time window to get
+                            # wrong. Re-resolve once more so nothing is persisted
+                            # across a configuration change.
+                            private_fills = await client.get_order_fills(
+                                order_id=execute_order_id,
+                                symbol=to_bitget(pos["symbol"]),
+                                market_type=pos["market_type"],
+                            )
+                            if _configured_identity(execution_mode) != reader_identity:
+                                raise ValueError("uta_account_identity_mismatch")
                             result = materialize_bitget_close(
                                 close_order["id"], private_fills
                             )

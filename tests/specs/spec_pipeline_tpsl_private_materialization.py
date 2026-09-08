@@ -140,14 +140,14 @@ def _patch_configured_reader(monkeypatch, *identities):
 
 
 def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None):
-    """Patch the identity-enforcing UTA read the observer uses for close evidence.
+    """Patch the identity-enforcing UTA reads the observer and reconciliation use.
 
-    Close fills no longer come from the raw Bitget client: it re-reads its
-    credentials on every request, so no snapshot of the configured identity can
-    bind what it actually signs with. ``patch_private_history`` asserts
-    ``expected_account`` on each read, so these tests also prove that binding.
-    ``available`` makes the exact-order read fail on demand without disturbing
-    the identity assertion.
+    The observer proves the execute Order belongs to the verified account through
+    ``get_order``, which is exact and window-free; ``patch_private_history``
+    asserts ``expected_account`` on every read, so these tests prove that binding
+    rather than assuming it. ``get_fills`` is still what reconciliation uses, and
+    its preconditions are mirrored below so no claim about fill visibility passes
+    vacuously. ``available`` fails the windowed read on demand.
     """
     from datetime import datetime, timedelta, timezone
 
@@ -205,6 +205,24 @@ def _exact_fill_reads(calls) -> list[tuple[str, str]]:
     ]
 
 
+def _account_proofs(calls) -> list[tuple[str, str, bool]]:
+    """(venue_order_id, market_type, window_free) of every exact-order proof.
+
+    ``window_free`` records that no history bound was needed: ``get_order`` only
+    demands one when ``venue_order_id`` is absent, which is the whole reason the
+    proof can be exact for a Position of any age.
+    """
+    return [
+        (
+            str(query.venue_order_id),
+            query.scope.instrument.market_type,
+            query.scope.start_at is None,
+        )
+        for method, _mode, query in calls
+        if method == "get_order" and query.venue_order_id
+    ]
+
+
 @spec_claim(
     SpecClaim(
         "PL-TPSL-01",
@@ -251,10 +269,9 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
                 "executeOrderId": "",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, symbol, market_type):
+            calls.append(("fills", order_id, symbol, market_type))
+            return [_private_close_fill(order_id)]
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -299,7 +316,10 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
         1_784_050_000, tz=timezone.utc
     ).isoformat()
     assert ("client", "demo") in calls
-    assert _exact_fill_reads(uta_calls) == [("EXEC-SL", "usdt_futures")]
+    assert ("fills", "EXEC-SL", "BTCUSDT", "usdt_futures") in calls
+    # The economics came from the exact-order endpoint, but only after an
+    # identity-enforced, window-free proof that the Order is this account's.
+    assert _account_proofs(uta_calls) == [("EXEC-SL", "usdt_futures", True)]
 
     scheduler._tpsl_fill_check_body()
     assert db.execute(
@@ -354,10 +374,9 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
                 "executeOrderId": "EXEC-LIVE-SL",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, symbol, market_type):
+            calls.append(("fills", order_id, symbol, market_type))
+            return [_private_close_fill(order_id)]
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -404,9 +423,10 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
     assert calls == [
         ("client", "live"),
         ("plan", "PLAN-LIVE-SL"),
+        ("fills", "EXEC-LIVE-SL", "BTCUSDT", "usdt_futures"),
         ("close",),
     ]
-    assert _exact_fill_reads(uta_calls) == [("EXEC-LIVE-SL", "usdt_futures")]
+    assert _account_proofs(uta_calls) == [("EXEC-LIVE-SL", "usdt_futures", True)]
 
     scheduler._tpsl_fill_check_body()
     assert db.execute(
@@ -533,11 +553,9 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     fills_available = False
     observer_reads: list[tuple] = []
+    exact_fill_calls: list[tuple[str, str, str]] = []
     _patch_evidence_reader(
-        monkeypatch,
-        [_private_close_fill("EXEC-TP-X")],
-        calls=observer_reads,
-        available=lambda: fills_available,
+        monkeypatch, [_private_close_fill("EXEC-TP-X")], calls=observer_reads
     )
 
     class _Client:
@@ -551,10 +569,13 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
                 "executeOrderId": "EXEC-TP-X",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, **kwargs):
+            exact_fill_calls.append((
+                kwargs["order_id"], kwargs["symbol"], kwargs["market_type"]
+            ))
+            if not fills_available:
+                raise RuntimeError("private history incomplete")
+            return [_private_close_fill(kwargs["order_id"])]
 
         async def get_open_orders(self, **kwargs):
             return []
@@ -588,7 +609,9 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 0
-    assert _exact_fill_reads(observer_reads) == [("EXEC-TP-X", "usdt_futures")]
+    # The account proof succeeded; only the economics were unavailable.
+    assert _account_proofs(observer_reads) == [("EXEC-TP-X", "usdt_futures", True)]
+    assert exact_fill_calls == [("EXEC-TP-X", "BTCUSDT", "usdt_futures")]
 
     fills_available = True
     from aletheia.execution import reconciliation
@@ -690,9 +713,7 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
             }]
 
         async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+            return [{"tradeId": "private-fill"}]
 
         async def close(self):
             return None
@@ -705,7 +726,10 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
     monkeypatch.setattr(repositories, "list_all_open_positions", lambda: positions)
     monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
     _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
-    _patch_evidence_reader(monkeypatch, [])
+    _patch_evidence_reader(
+        monkeypatch,
+        [_private_close_fill("EXEC-PLAN-FAIL"), _private_close_fill("EXEC-PLAN-OK")],
+    )
     monkeypatch.setattr(
         scheduler,
         "_claim_observed_tpsl_close",
@@ -884,11 +908,7 @@ def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
     entry_identity = _identity("bitget_demo")
     _patch_configured_reader(monkeypatch, entry_identity)
     fills_available = False
-    _patch_evidence_reader(
-        monkeypatch,
-        [_private_close_fill("EXEC-LEG-SL")],
-        available=lambda: fills_available,
-    )
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC-LEG-SL")])
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -901,10 +921,10 @@ def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
                 "executeOrderId": "EXEC-LEG-SL",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            if not fills_available:
+                raise RuntimeError("private history incomplete")
+            return [_private_close_fill(order_id)]
 
         async def close(self):
             return None
@@ -1016,10 +1036,9 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
                 "executeOrderId": "EXEC-UNC-SL",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            venue_reads.append("fills")
+            return [_private_close_fill(order_id)]
 
         async def close(self):
             venue_reads.append("close")
@@ -1045,19 +1064,35 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
         (position.id,),
     ).fetchone()[0] == 0
 
-    # With the account configured, the evidence read carries expected_account into
-    # every UTA query — patch_private_history asserts exactly that — and the raw
-    # client is left with plan discovery only.
+    # Configured, but the verified account does not own that execute Order: the
+    # economics are never read and nothing is materialized. This is the guard the
+    # raw exact-order endpoint cannot provide on its own.
     reads: list[tuple] = []
     _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("SOMEONE-ELSE")],
+                           calls=reads)
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert _account_proofs(reads) == [("EXEC-UNC-SL", "usdt_futures", True)]
+    assert "fills" not in venue_reads
+    assert summary["failed_count"] == 1
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?",
+        (repo._select_one("positions", position.id)["pending_close_order_id"],),
+    ).fetchone()[0] == 0
+
+    # Once the proof succeeds, the exact-order endpoint supplies the economics.
+    reads.clear()
+    venue_reads.clear()
     _patch_evidence_reader(
         monkeypatch, [_private_close_fill("EXEC-UNC-SL")], calls=reads
     )
     summary = scheduler._tpsl_fill_check_body()
 
     assert summary["failed_count"] == 0
-    assert venue_reads == ["client", "plan", "close"]
-    assert _exact_fill_reads(reads) == [("EXEC-UNC-SL", "usdt_futures")]
+    assert venue_reads == ["client", "plan", "fills", "close"]
+    assert _account_proofs(reads) == [("EXEC-UNC-SL", "usdt_futures", True)]
     assert repo._select_one("positions", position.id)["status"] == "closed"
 
 
@@ -1096,6 +1131,7 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
     _patch_evidence_reader(
         monkeypatch, [_private_close_fill("EXEC-BND-SL")], calls=reads
     )
+    raw_fill_reads: list[str] = []
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -1108,10 +1144,9 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
                 "executeOrderId": "EXEC-BND-SL",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            raw_fill_reads.append(order_id)
+            return [_private_close_fill(order_id)]
 
         async def close(self):
             return None
@@ -1130,17 +1165,12 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
 
     # The scope must be bounded, and no later than the Position opened: the exit
     # fill cannot precede the entry, and an unbounded scope is only ever PARTIAL.
-    fill_scopes = [
-        query.scope for method, _mode, query in reads
-        if method == "get_fills" and query.venue_order_id
-    ]
-    assert len(fill_scopes) == 1
-    assert isinstance(fill_scopes[0].start_at, datetime)
-    # Exactly the entry, not merely no later than it. Widening to the retention
-    # floor for a Position that opened well inside the window would scan ~90 days
-    # of history for nothing, and reaching the venue's page bound is itself
-    # reported as PARTIAL -- the same failure this bound exists to avoid.
-    assert fill_scopes[0].start_at == utc(position.opened_at)
+    # Both reads are order-scoped and neither needs a history window: the proof
+    # because get_order is exact when venue_order_id is present, the economics
+    # because the venue's per-order fills endpoint takes no time bound at all.
+    # That is what makes a Position of any age materializable.
+    assert _account_proofs(reads) == [("EXEC-BND-SL", "usdt_futures", True)]
+    assert raw_fill_reads == ["EXEC-BND-SL"]
 
     # A configuration that moves between plan discovery and the claim must leave
     # nothing durable: a stamped claim carrying a foreign executeOrderId could
@@ -1173,32 +1203,87 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
     ).fetchone()[0] == 0
     assert summary["failed_count"] == 1
 
-    # Stable configuration converges it the ordinary way.
+    # A configuration that moves *during* the economics read must not be
+    # persisted either: the claim already exists by then, so the last chance to
+    # refuse is at the write boundary.
     rotate_on_discovery = False
+    third = _seed_position(
+        "bitget_demo", suffix="bounded-3", plan_ids={"sl": "PLAN-BND3-SL"}
+    )
     _patch_configured_reader(monkeypatch, entry_identity)
-    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC-BND2-SL")])
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC-BND3-SL")])
+    rotate_on_fill_read = True
+
+    class _RotatingOnFills(_Client):
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-BND3-SL",
+            }]
+
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            rows = [_private_close_fill(order_id)]
+            if rotate_on_fill_read:
+                _patch_configured_reader(monkeypatch, rotated_identity)
+            return rows
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _RotatingOnFills)
+    summary = scheduler._tpsl_fill_check_body()
+
+    third_pending = repo._select_one("positions", third.id)["pending_close_order_id"]
+    assert third_pending is not None
+    assert repo._select_one("positions", third.id)["status"] == "open"
+    assert repo.get_order(third_pending)["status"] == "materialization_missing"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (third_pending,)
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] >= 1
+
+    # Stable configuration converges both the ordinary way.
+    rotate_on_fill_read = False
+    _patch_configured_reader(monkeypatch, entry_identity)
+    _patch_evidence_reader(
+        monkeypatch,
+        [
+            _private_close_fill("EXEC-BND2-SL"),
+            _private_close_fill("EXEC-BND3-SL"),
+        ],
+    )
+
+    class _StableClient(_Client):
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": order_id.replace("PLAN-", "EXEC-"),
+            }]
+
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            return [_private_close_fill(order_id)]
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _StableClient)
     summary = scheduler._tpsl_fill_check_body()
 
     assert summary["failed_count"] == 0
     assert repo._select_one("positions", second.id)["status"] == "closed"
+    assert repo._select_one("positions", third.id)["status"] == "closed"
 
 
 @spec_claim(
     SpecClaim(
         "PL-TPSL-10",
         "pipeline_tpsl_private_materialization",
-        "§7 retention-clamped evidence window",
+        "§7 age-independent exact reads",
         "L2c",
-        "A Position open longer than the venue's private-history retention still "
-        "converges from a trigger inside that window, because the read asks for the "
-        "widest window the venue serves instead of failing closed; a fill genuinely "
-        "outside retention stays evidence_missing and never becomes proof of absence.",
+        "A Position open far longer than the venue's private-history retention still "
+        "converges, because both the account proof and the close economics are "
+        "order-scoped reads that take no history window; Position age cannot block "
+        "materialization, and an unproven Order still yields nothing.",
         status="implemented",
     )
 )
-def test_position_older_than_retention_still_converges_from_a_recent_trigger(
-    tmp_path, monkeypatch
-):
+def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch):
     from datetime import datetime, timedelta, timezone
 
     db = _setup_db(tmp_path, monkeypatch)
@@ -1209,10 +1294,8 @@ def test_position_older_than_retention_still_converges_from_a_recent_trigger(
 
     now = datetime.now(timezone.utc)
     retention = CCXTProfile.private_history_retention_days
-    # Older than the whole retention window: opened_at alone would be refused.
-    ancient = (now - timedelta(days=retention + 110)).isoformat()
-    recent_trigger_ms = int((now - timedelta(days=2)).timestamp() * 1000)
-    unreachable_trigger_ms = int((now - timedelta(days=retention + 40)).timestamp() * 1000)
+    # Twice the retention window: any windowed read would refuse this outright.
+    ancient = (now - timedelta(days=retention * 2)).isoformat()
 
     position = _seed_position(
         "bitget_demo",
@@ -1220,12 +1303,11 @@ def test_position_older_than_retention_still_converges_from_a_recent_trigger(
         plan_ids={"sl": "PLAN-OLD-SL"},
         opened_at=ancient,
     )
-    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     reads: list[tuple] = []
+    raw_fill_reads: list[str] = []
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     _patch_evidence_reader(
-        monkeypatch,
-        [_private_close_fill("EXEC-OLD-SL", filled_at_ms=unreachable_trigger_ms)],
-        calls=reads,
+        monkeypatch, [_private_close_fill("EXEC-OLD-SL")], calls=reads
     )
 
     class _Client:
@@ -1239,10 +1321,9 @@ def test_position_older_than_retention_still_converges_from_a_recent_trigger(
                 "executeOrderId": "EXEC-OLD-SL",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            raise AssertionError(
-                "close evidence must not come from the unverified raw client"
-            )
+        async def get_order_fills(self, *, order_id, **_kwargs):
+            raw_fill_reads.append(order_id)
+            return [_private_close_fill(order_id)]
 
         async def close(self):
             return None
@@ -1254,39 +1335,50 @@ def test_position_older_than_retention_still_converges_from_a_recent_trigger(
         lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
     )
 
-    # The read is attempted, not refused: the bound is clamped into retention.
     summary = scheduler._tpsl_fill_check_body()
 
-    fill_scopes = [
-        query.scope for method, _mode, query in reads
-        if method == "get_fills" and query.venue_order_id
-    ]
-    assert len(fill_scopes) == 1
-    assert fill_scopes[0].start_at >= now - timedelta(days=retention)
-    assert fill_scopes[0].start_at > utc(ancient)
-
-    # A fill genuinely outside retention is unavailable, never absent: the claim
-    # stays unresolved and the Position stays open.
-    pending = repo._select_one("positions", position.id)["pending_close_order_id"]
-    assert pending is not None
-    assert repo.get_order(pending)["status"] == "materialization_missing"
-    assert repo._select_one("positions", position.id)["status"] == "open"
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
-    ).fetchone()[0] == 0
-    assert repo._select_one("positions", position.id)["closed_at"] is None
-
-    # The same ancient Position converges once the trigger itself is inside the
-    # window the venue serves. This is the case failing closed would have lost.
-    _patch_evidence_reader(
-        monkeypatch,
-        [_private_close_fill("EXEC-OLD-SL", filled_at_ms=recent_trigger_ms)],
-    )
-    summary = scheduler._tpsl_fill_check_body()
-
+    # Age is irrelevant: neither read carries a history bound to fall outside.
     assert summary["failed_count"] == 0
-    assert repo._select_one("positions", position.id)["status"] == "closed"
-    assert repo.get_order(pending)["status"] == "filled"
+    assert _account_proofs(reads) == [("EXEC-OLD-SL", "usdt_futures", True)]
+    assert raw_fill_reads == ["EXEC-OLD-SL"]
+    assert utc(ancient) < now - timedelta(days=retention)
+
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "closed"
+    close_order = db.execute(
+        "SELECT * FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
+    ).fetchone()
+    assert close_order["status"] == "filled"
     assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 1
+
+    # Age does not weaken the membership proof either: an equally ancient Position
+    # whose execute Order the verified account does not own materializes nothing.
+    other = _seed_position(
+        "bitget_demo",
+        suffix="ancient-unproven",
+        plan_ids={"sl": "PLAN-OLD2-SL"},
+        opened_at=ancient,
+    )
+    reads.clear()
+    raw_fill_reads.clear()
+    _patch_evidence_reader(
+        monkeypatch, [_private_close_fill("NOT-OURS")], calls=reads
+    )
+
+    class _OtherClient(_Client):
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-OLD2-SL",
+            }]
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _OtherClient)
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 1
+    assert raw_fill_reads == []
+    assert repo._select_one("positions", other.id)["status"] == "open"
