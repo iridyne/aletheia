@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from aletheia.uta.compat import utc
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.uta_private_history import _identity
 
@@ -38,7 +39,13 @@ def _setup_db(tmp_path, monkeypatch):
     return conn
 
 
-def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
+def _seed_position(
+    execution_mode: str,
+    *,
+    suffix: str,
+    plan_ids: dict,
+    opened_at: str = "2026-07-13T00:00:00+00:00",
+):
     from tests.execution_authority import seed_order_authority
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Fill, Order, Position
@@ -96,7 +103,7 @@ def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
         entry_fill_verified=True,
         entry_price_source="broker_fill",
         exchange_tpsl_order_id=json.dumps(plan_ids),
-        opened_at="2026-07-13T00:00:00+00:00",
+        opened_at=opened_at,
     )
     repo.insert_position(position)
     repo.update_order_metadata(entry_order.id, position_id=position.id)
@@ -104,7 +111,7 @@ def _seed_position(execution_mode: str, *, suffix: str, plan_ids: dict):
     return position
 
 
-def _private_close_fill(exchange_order_id: str) -> dict:
+def _private_close_fill(exchange_order_id: str, *, filled_at_ms: int = 1_784_050_000_000) -> dict:
     return {
         "orderId": exchange_order_id,
         "tradeId": f"FILL-{exchange_order_id}",
@@ -112,7 +119,7 @@ def _private_close_fill(exchange_order_id: str) -> dict:
         "fillQuantity": "0.01",
         "fee": "0.2",
         "feeCoin": "USDT",
-        "cTime": "1784050000000",
+        "cTime": str(filled_at_ms),
     }
 
 
@@ -142,23 +149,41 @@ def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None
     ``available`` makes the exact-order read fail on demand without disturbing
     the identity assertion.
     """
+    from datetime import datetime, timedelta, timezone
+
     from aletheia.execution import reconciliation
+    from aletheia.uta.profiles.base import CCXTProfile
     from tests.specs.uta_private_history import patch_private_history
 
     patch_private_history(monkeypatch, reconciliation, fill_rows, calls=calls)
     verified = reconciliation.query_uta
 
     async def _gated(execution_mode, method, query, *, expected_account=None):
-        # Mirror CCXTUTAAdapter.get_fills: an unbounded history scope is PARTIAL,
-        # not COMPLETE. Without this the fake hides a missing start bound and the
-        # real adapter would refuse every close read in production.
-        if method == "get_fills" and query.scope.start_at is None:
-            raise RuntimeError("private_fill_history_start_required")
+        # Mirror CCXTUTAAdapter.get_fills' preconditions. Without them the fake
+        # answers COMPLETE for a scope the real adapter would refuse, and every
+        # claim about which fills are visible passes vacuously.
+        if method == "get_fills":
+            if query.scope.start_at is None:
+                raise RuntimeError("private_fill_history_start_required")
+            retention = timedelta(days=CCXTProfile.private_history_retention_days)
+            if query.scope.start_at < datetime.now(timezone.utc) - retention:
+                raise RuntimeError("private_fill_history_retention_expired")
         # Delegate first so the attempt is recorded and the identity assertion
         # still runs; only then refuse to hand the evidence back.
         report = await verified(
             execution_mode, method, query, expected_account=expected_account
         )
+        if method == "get_fills" and query.scope.start_at is not None:
+            # `since` is passed to the venue, so a fill before the bound is not
+            # returned. Modelling that is what makes the bound itself testable.
+            report = report.model_copy(
+                update={
+                    "fills": tuple(
+                        fill for fill in report.fills
+                        if fill.executed_at >= query.scope.start_at
+                    )
+                }
+            )
         if (
             available is not None
             and method == "get_fills"
@@ -1110,9 +1135,12 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
         if method == "get_fills" and query.venue_order_id
     ]
     assert len(fill_scopes) == 1
-    assert fill_scopes[0].start_at is not None
-    assert fill_scopes[0].start_at <= utc(position.opened_at)
     assert isinstance(fill_scopes[0].start_at, datetime)
+    # Exactly the entry, not merely no later than it. Widening to the retention
+    # floor for a Position that opened well inside the window would scan ~90 days
+    # of history for nothing, and reaching the venue's page bound is itself
+    # reported as PARTIAL -- the same failure this bound exists to avoid.
+    assert fill_scopes[0].start_at == utc(position.opened_at)
 
     # A configuration that moves between plan discovery and the claim must leave
     # nothing durable: a stamped claim carrying a foreign executeOrderId could
@@ -1153,3 +1181,112 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
 
     assert summary["failed_count"] == 0
     assert repo._select_one("positions", second.id)["status"] == "closed"
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-10",
+        "pipeline_tpsl_private_materialization",
+        "§7 retention-clamped evidence window",
+        "L2c",
+        "A Position open longer than the venue's private-history retention still "
+        "converges from a trigger inside that window, because the read asks for the "
+        "widest window the venue serves instead of failing closed; a fill genuinely "
+        "outside retention stays evidence_missing and never becomes proof of absence.",
+        status="implemented",
+    )
+)
+def test_position_older_than_retention_still_converges_from_a_recent_trigger(
+    tmp_path, monkeypatch
+):
+    from datetime import datetime, timedelta, timezone
+
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.profiles.base import CCXTProfile
+
+    now = datetime.now(timezone.utc)
+    retention = CCXTProfile.private_history_retention_days
+    # Older than the whole retention window: opened_at alone would be refused.
+    ancient = (now - timedelta(days=retention + 110)).isoformat()
+    recent_trigger_ms = int((now - timedelta(days=2)).timestamp() * 1000)
+    unreachable_trigger_ms = int((now - timedelta(days=retention + 40)).timestamp() * 1000)
+
+    position = _seed_position(
+        "bitget_demo",
+        suffix="ancient",
+        plan_ids={"sl": "PLAN-OLD-SL"},
+        opened_at=ancient,
+    )
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
+    reads: list[tuple] = []
+    _patch_evidence_reader(
+        monkeypatch,
+        [_private_close_fill("EXEC-OLD-SL", filled_at_ms=unreachable_trigger_ms)],
+        calls=reads,
+    )
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            pass
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-OLD-SL",
+            }]
+
+        async def get_order_fills(self, **_kwargs):
+            raise AssertionError(
+                "close evidence must not come from the unverified raw client"
+            )
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+
+    # The read is attempted, not refused: the bound is clamped into retention.
+    summary = scheduler._tpsl_fill_check_body()
+
+    fill_scopes = [
+        query.scope for method, _mode, query in reads
+        if method == "get_fills" and query.venue_order_id
+    ]
+    assert len(fill_scopes) == 1
+    assert fill_scopes[0].start_at >= now - timedelta(days=retention)
+    assert fill_scopes[0].start_at > utc(ancient)
+
+    # A fill genuinely outside retention is unavailable, never absent: the claim
+    # stays unresolved and the Position stays open.
+    pending = repo._select_one("positions", position.id)["pending_close_order_id"]
+    assert pending is not None
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 0
+    assert repo._select_one("positions", position.id)["closed_at"] is None
+
+    # The same ancient Position converges once the trigger itself is inside the
+    # window the venue serves. This is the case failing closed would have lost.
+    _patch_evidence_reader(
+        monkeypatch,
+        [_private_close_fill("EXEC-OLD-SL", filled_at_ms=recent_trigger_ms)],
+    )
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert summary["failed_count"] == 0
+    assert repo._select_one("positions", position.id)["status"] == "closed"
+    assert repo.get_order(pending)["status"] == "filled"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 1

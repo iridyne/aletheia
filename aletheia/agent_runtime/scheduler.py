@@ -2682,7 +2682,10 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+            from datetime import datetime, timedelta, timezone
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
+            from aletheia.uta.compat import utc
+            from aletheia.uta.manager import funding_history_retention_contract
             reader_identity = _configured_identity(execution_mode)
             if reader_identity is None:
                 # No proven account for this mode: touch the venue for nothing and
@@ -2708,6 +2711,18 @@ def _tpsl_fill_check_body():
             # order-id-scoped fills read below then returns nothing.
             evidence_reader = _UTAReconciliationProjection(
                 execution_mode, reader_identity
+            )
+            # The venue retains only so much private history, and the adapter
+            # refuses a scope that starts before that. Ask for the widest window
+            # it will actually serve instead of failing closed on an old Position:
+            # an empty result is still evidence_missing, never proof of absence,
+            # so widening can only find a fill -- it cannot invent one. The margin
+            # keeps the request off the exact retention edge.
+            retention_days, _profile_version = funding_history_retention_contract(
+                execution_mode
+            )
+            history_floor = datetime.now(timezone.utc) - timedelta(
+                days=max(retention_days - 1, 0)
             )
             client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
@@ -2757,18 +2772,21 @@ def _tpsl_fill_check_body():
                             )
                             if close_order is None:
                                 continue
-                            # CCXTUTAAdapter.get_fills returns PARTIAL with
-                            # private_fill_history_start_required when the scope
-                            # carries no start bound, and the projection raises on
-                            # anything short of COMPLETE. The exit fill cannot
-                            # precede the entry, so the Position's opened_at is the
-                            # tightest honest bound -- the same shape as
-                            # reconciliation's start_at=order["created_at"].
+                            # CCXTUTAAdapter.get_fills is PARTIAL without a start
+                            # bound, and the projection raises on anything short of
+                            # COMPLETE. The exit fill cannot precede the entry, so
+                            # opened_at is the tightest honest bound -- clamped to
+                            # what the venue still retains.
+                            opened_at = utc(pos.get("opened_at"))
                             private_fills = await evidence_reader.get_order_fills(
                                 order_id=execute_order_id,
                                 symbol=pos["symbol"],
                                 market_type=pos["market_type"],
-                                start_at=pos["opened_at"],
+                                start_at=(
+                                    max(opened_at, history_floor)
+                                    if opened_at is not None
+                                    else history_floor
+                                ),
                             )
                             result = materialize_bitget_close(
                                 close_order["id"], private_fills
