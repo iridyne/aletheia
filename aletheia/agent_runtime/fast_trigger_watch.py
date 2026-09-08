@@ -15,7 +15,10 @@ from aletheia.storage.models import (
 )
 from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
 from aletheia.trading.entry_plan import EntryPlan
-from aletheia.trading.momentum_trigger import MomentumTriggerEngine
+from aletheia.trading.momentum_trigger import (
+    MomentumTriggerEngine,
+    health_reason_requires_resync,
+)
 from aletheia.universe.fast_stream import (
     fast_market_data_unavailability_reason,
     fast_market_stream_for_config,
@@ -596,8 +599,18 @@ async def _load_entry_plan_watchers(
         if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
             continue
         if existing is not None and plan.plan_id in existing:
-            engines[plan.plan_id] = existing[plan.plan_id]
-            continue
+            watching = existing[plan.plan_id]
+            if not health_reason_requires_resync(watching.health_reason):
+                engines[plan.plan_id] = watching
+                continue
+            # ponytail: rebuilt on every reload while the fault persists; add a
+            # resync cap plus typed monitoring degradation if logs ever show a
+            # chronically anomalous feed instead of a transient frame.
+            logger.warning(
+                "Entry Plan %s trigger engine resynchronizing after %s",
+                plan.plan_id,
+                watching.health_reason,
+            )
         params = plan.trigger_params
         instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
         policy = TriggerPolicy(
