@@ -159,6 +159,14 @@ def _patch_evidence_reader(monkeypatch, fill_rows, *, calls=None, available=None
     verified = reconciliation.query_uta
 
     async def _gated(execution_mode, method, query, *, expected_account=None):
+        # Mirror query_uta: the adapter is built from current configuration and
+        # must equal expected_account, so a rotated reader is refused before any
+        # evidence is served. Modelling it here keeps the refusal a production
+        # error rather than a bare assert inside the shared fake.
+        if expected_account is not None and expected_account != _identity(
+            execution_mode
+        ):
+            raise ValueError("uta_account_identity_mismatch")
         # Mirror CCXTUTAAdapter.get_fills' preconditions. Without them the fake
         # answers COMPLETE for a scope the real adapter would refuse, and every
         # claim about which fills are visible passes vacuously.
@@ -813,6 +821,7 @@ def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypat
     fills_available = False
 
     _patch_configured_reader(monkeypatch, rotated_identity)
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC-ROT-SL")])
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -1003,11 +1012,12 @@ def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
     SpecClaim(
         "PL-TPSL-08",
         "pipeline_tpsl_private_materialization",
-        "§7 evidence reader binding",
+        "§7 order membership proof",
         "L2c",
-        "Close evidence is read through the identity-bound UTA projection, never the "
-        "raw client whose credentials are re-read per request, and an account with no "
-        "configured identity is reported without any venue read or claim.",
+        "The execute Order's membership of the verified account is proven through an "
+        "identity-bound exact read before anything durable is written or any economics "
+        "are requested; an unproven Order leaves no claim, and an account with no "
+        "configured identity is reported without touching the venue at all.",
         status="implemented",
     )
 )
@@ -1076,10 +1086,14 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
     assert _account_proofs(reads) == [("EXEC-UNC-SL", "usdt_futures", True)]
     assert "fills" not in venue_reads
     assert summary["failed_count"] == 1
-    assert repo._select_one("positions", position.id)["status"] == "open"
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "open"
+    # Nothing durable: a claim here would set pending_close_order_id and make
+    # ordinary closes report already_pending on a Position that is still open.
+    assert stored["pending_close_order_id"] is None
     assert db.execute(
-        "SELECT COUNT(*) FROM fills WHERE order_id=?",
-        (repo._select_one("positions", position.id)["pending_close_order_id"],),
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
     ).fetchone()[0] == 0
 
     # Once the proof succeeds, the exact-order endpoint supplies the economics.
@@ -1203,9 +1217,9 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
     ).fetchone()[0] == 0
     assert summary["failed_count"] == 1
 
-    # A configuration that moves *during* the economics read must not be
-    # persisted either: the claim already exists by then, so the last chance to
-    # refuse is at the write boundary.
+    # A configuration that moves *during* the economics read is the one case the
+    # pre-claim proof structurally cannot catch: by then the claim legitimately
+    # exists, so the write boundary is the last chance to refuse.
     rotate_on_discovery = False
     third = _seed_position(
         "bitget_demo", suffix="bounded-3", plan_ids={"sl": "PLAN-BND3-SL"}
@@ -1216,6 +1230,10 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
 
     class _RotatingOnFills(_Client):
         async def get_plan_order_history(self, *, order_id, **_kwargs):
+            # Only this Position triggers; the others must not be dragged into
+            # a claim by a fake that answers for every plan alike.
+            if order_id != "PLAN-BND3-SL":
+                return [{"orderId": order_id, "planStatus": "not_trigger"}]
             return [{
                 "orderId": order_id,
                 "planStatus": "executed",
@@ -1381,4 +1399,10 @@ def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch
 
     assert summary["failed_count"] == 1
     assert raw_fill_reads == []
-    assert repo._select_one("positions", other.id)["status"] == "open"
+    stored_other = repo._select_one("positions", other.id)
+    assert stored_other["status"] == "open"
+    assert stored_other["pending_close_order_id"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (other.id,),
+    ).fetchone()[0] == 0

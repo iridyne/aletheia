@@ -2743,24 +2743,16 @@ def _tpsl_fill_check_body():
                             )
                             # This executeOrderId was discovered by the raw
                             # client, which re-reads its credentials per request.
-                            # Stamping it durably under the frozen identity would
-                            # wedge the Position if the configuration moved during
-                            # this pass: the claim persists, the identity-bound
-                            # read then refuses it, and no later pass can advance
-                            # or clear it. Re-resolve before anything durable.
-                            if _configured_identity(execution_mode) != reader_identity:
-                                raise ValueError("uta_account_identity_mismatch")
-                            close_order, _ = _claim_observed_tpsl_close(
-                                pos["id"],
-                                execute_order_id=execute_order_id,
-                                reason=reason,
-                                expected_account=reader_identity,
-                            )
-                            if close_order is None:
-                                continue
-                            # Prove the execute Order is this account's, under an
-                            # identity-enforced exact read, before trusting any
-                            # economics attributed to it.
+                            # Nothing durable may be written for an execute Order
+                            # this account cannot be shown to own: the claim sets
+                            # pending_close_order_id, so a later refusal would wedge
+                            # the Position and make ordinary closes report
+                            # already_pending while it is still open locally.
+                            #
+                            # This read also subsumes a plain configuration
+                            # re-resolve: query_uta builds its adapter from current
+                            # config and requires it to equal reader_identity, so a
+                            # rotation during plan discovery fails here too.
                             proven = await account_prover.get_order_status(
                                 order_id=execute_order_id,
                                 client_order_id=None,
@@ -2773,6 +2765,14 @@ def _tpsl_fill_check_body():
                                 raise ValueError(
                                     "uta_account_order_membership_unproven"
                                 )
+                            close_order, _ = _claim_observed_tpsl_close(
+                                pos["id"],
+                                execute_order_id=execute_order_id,
+                                reason=reason,
+                                expected_account=reader_identity,
+                            )
+                            if close_order is None:
+                                continue
                             # Economics come from the venue's exact per-order fills
                             # endpoint: complete, and with no time window to get
                             # wrong. Re-resolve once more so nothing is persisted
