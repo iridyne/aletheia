@@ -1329,6 +1329,19 @@ def _materialize_complete_private_close(
             "funding_evidence": funding.evidence,
         }
 
+    if total_fee is None:
+        # execution_contract.md:585-586 — verified close 要求 quote-currency fee;
+        # 缺 fee、错币种 都保持 open. `_fee_in_quote` has already determined the
+        # exit fee has no attributable quote-currency conversion and logged it as
+        # unavailable, so settling here would record a verified close whose cost
+        # is, by this module's own determination, unknowable. The evidence stays
+        # durable and the claim stays unresolved for reconciliation to own.
+        return MaterializationResult(
+            state="evidence_incomplete",
+            position_id=position["id"],
+            exchange_order_id=exchange_order_id,
+        )
+
     close_position(
         position["id"],
         exit_price=exit_price,

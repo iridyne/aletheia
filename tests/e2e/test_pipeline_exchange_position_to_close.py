@@ -496,20 +496,7 @@ def test_venue_rejected_close_records_the_rejection_and_keeps_the_position(
     ("fee", "fee_coin"),
     (
         pytest.param(None, "USDT", id="fee-absent"),
-        pytest.param(
-            "0.01",
-            "BGB",
-            id="fee-third-currency",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "#3008: materialize_bitget_close settles a close whose exit fee "
-                    "has no quote-currency conversion, against execution_contract "
-                    "§11.3 (错币种 keeps the Position open). Strict so a fix cannot "
-                    "leave this marker behind."
-                ),
-            ),
-        ),
+        pytest.param("0.01", "BGB", id="fee-third-currency"),
     ),
 )
 def test_close_with_uncostable_fee_is_not_settled_as_complete(
