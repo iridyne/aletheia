@@ -56,6 +56,12 @@ ENTRY_EXECUTION_MINIMUM_PERMISSION: dict[str, str] = {
 }
 
 _REGISTRY_CACHE_TTL = 14400  # 4h — same cadence as the OKX demo capability cache
+# universe_registry.market_type is free TEXT and is populated with the universe
+# vocabulary ("perp"/"spot"); every consumer of this cache indexes it with the
+# execution vocabulary ("usdt_futures"/"spot") that Proposals and Orders carry.
+# Without translating, a synced venue reports "no usdt_futures products" for
+# every futures symbol it actually lists.
+_REGISTRY_MARKET_TYPE_ALIASES = {"perp": "usdt_futures", "swap": "usdt_futures"}
 _registry_symbol_cache: dict[str, tuple[dict, float]] = {}
 _registry_cache_lock = threading.Lock()
 
@@ -83,6 +89,7 @@ def load_registry_symbols(venue: str) -> dict | None:
         by_type: dict[str, set] = {}
         for row in assets:
             market_type = row.get("market_type") or "usdt_futures"
+            market_type = _REGISTRY_MARKET_TYPE_ALIASES.get(market_type, market_type)
             by_type.setdefault(market_type, set()).add(row["symbol"])
         result = {key: frozenset(value) for key, value in by_type.items()}
         with _registry_cache_lock:
