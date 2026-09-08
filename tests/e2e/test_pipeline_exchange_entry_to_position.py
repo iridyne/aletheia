@@ -210,10 +210,17 @@ def _drive_entry(plan):
 
 
 def _seeded_plan():
+    return _seeded_plan_with(None)
+
+
+def _seeded_plan_with(plan_updates):
     from tests.test_entry_plan_execution import _persist_waiting_plan
 
     return _persist_waiting_plan(
-        account_mode=_MODE, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC"
+        account_mode=_MODE,
+        mode="TRIGGERED",
+        tactic="OPPOSING_BBO_IOC",
+        plan_updates=plan_updates,
     )
 
 
@@ -594,3 +601,42 @@ def test_entry_with_unavailable_cost_is_not_reported_as_complete(
         {"entry_fee": entry_fee, "fill_fee": fills[0]["fee"],
          "fill_fee_currency": fills[0].get("fee_currency")},
     )
+
+
+def test_real_risk_refuses_an_exchange_entry_the_runtime_is_not_configured_for(
+    e2e_db, monkeypatch
+):
+    """The real Risk engine, not an approving double, and it fails closed.
+
+    Every other entry test here represents Risk by a decision that always
+    approves, which proves routing but says nothing about whether Risk itself
+    admits an exchange-mode Entry Plan. `evaluate_proposal` is left in place here.
+
+    What it refuses is worth recording, because it is the same wall the Bitget Demo
+    runtime proof sits behind (#2899): with `exchange.mode = "paper"` Risk rejects
+    a `bitget_demo` order as `account_mode_mismatch`, before and independently of
+    the missing account equity and market snapshot it also names. Switching the
+    runtime's execution mode is therefore not cosmetic — Risk enforces the
+    agreement between the configured venue and the order's execution mode, and no
+    amount of credentials substitutes for it.
+
+    The approving-path counterpart (real Risk *admitting* an exchange entry) needs
+    a configured demo mode plus known account equity plus a fresh venue snapshot,
+    and is not covered here.
+    """
+    submitted, _ = _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+
+    result = _drive_entry(plan)
+
+    assert result["status"] == "rejected", result
+    violations = " ".join(result.get("violations") or []) + result.get("message", "")
+    assert "account_mode_mismatch" in violations, result
+
+    # Nothing reached the venue and nothing durable was created.
+    assert submitted == []
+    assert repo.list_positions(execution_mode=_MODE) == []
+    assert repo.list_positions(execution_mode="paper_internal") == []
+    decisions = repo.list_risk_decisions(limit=20)
+    assert decisions, "Risk must record its refusal, not stay silent"
+    assert not any(row["approved"] for row in decisions), decisions
