@@ -37,6 +37,8 @@ def test_capacity_snapshot_is_read_only_and_attributes_objects(tmp_path):
     assert 0 <= sample_object["packing_ratio"] <= 1
     assert sample_object["unused_bytes"] >= 0
     assert path.stat().st_mtime_ns == before_mtime
+    assert snapshot["effective_pragmas"]["query_only"] == 1
+    assert "cache_size" in snapshot["effective_pragmas"]
 
 
 def test_new_sqlite_database_enables_incremental_vacuum(tmp_path):
@@ -47,6 +49,69 @@ def test_new_sqlite_database_enables_incremental_vacuum(tmp_path):
     try:
         assert db.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
         assert db.execute("PRAGMA journal_size_limit").fetchone()[0] == 64 * 1024 * 1024
+    finally:
+        db.close()
+
+
+def test_open_connection_verifies_hardened_pragma_baseline(tmp_path):
+    from aletheia.storage.sqlite import _open_connection
+
+    path = tmp_path / "new.db"
+    db = _open_connection(path)
+    try:
+        assert db.execute("PRAGMA cache_size").fetchone()[0] == -65536
+        assert db.execute("PRAGMA mmap_size").fetchone()[0] > 0
+        assert db.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        assert db.execute("PRAGMA synchronous").fetchone()[0] == 1
+        assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    finally:
+        db.close()
+
+
+def test_pragma_baseline_mismatch_fails_closed(tmp_path):
+    from aletheia.storage.sqlite import _verify_pragma_baseline, PragmaBaselineError
+    import sqlite3
+
+    path = tmp_path / "x.db"
+    conn = sqlite3.connect(str(path))
+    conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY)")
+    with pytest.raises(PragmaBaselineError, match="journal_mode"):
+        _verify_pragma_baseline(conn, {"journal_mode": "wal"})
+    conn.close()
+
+
+def test_readonly_handle_is_query_only_and_cached(tmp_path):
+    from aletheia.storage.sqlite import _open_connection, _open_readonly_connection
+
+    path = tmp_path / "app.db"
+    w = _open_connection(path)
+    w.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+    w.execute("INSERT INTO t(v) VALUES ('x')")
+    w.close()
+
+    r = _open_readonly_connection(path, timeout=1.0)
+    try:
+        assert r.execute("PRAGMA query_only").fetchone()[0] == 1
+        assert r.execute("PRAGMA cache_size").fetchone()[0] == -65536
+        with pytest.raises(sqlite3.OperationalError, match="attempt to write"):
+            r.execute("CREATE TABLE t2(x)")
+    finally:
+        r.close()
+
+
+def test_optimize_query_planner_handles_never_analyzed_database(tmp_path):
+    from aletheia.storage.sqlite import _open_connection
+    from aletheia.maintenance.database_capacity import optimize_query_planner
+
+    path = tmp_path / "new.db"
+    db = _open_connection(path)
+    try:
+        db.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+        db.execute("CREATE INDEX t_v ON t(v)")
+        db.executemany("INSERT INTO t(v) VALUES (?)", [(f"row{i}",) for i in range(100)])
+        result = optimize_query_planner(db)
+        assert "duration_ms" in result
+        assert "analyzed" in result
     finally:
         db.close()
 

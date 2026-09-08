@@ -40,9 +40,9 @@ def _sidecar_size(path: Path, suffix: str) -> int:
 
 
 def _read_only_connection(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    return connection
+    from aletheia.storage.sqlite import _open_readonly_connection
+
+    return _open_readonly_connection(path, timeout=1.0)
 
 
 def database_capacity_snapshot(
@@ -57,6 +57,12 @@ def database_capacity_snapshot(
     ``deep`` adds current SQLite object sizes via ``dbstat``. It is deliberately
     opt-in because walking every page of a multi-GiB database is an operator
     diagnostic, not a scheduler hot path.
+
+    The ``effective_pragmas`` field captures the PRAGMA values as seen through
+    the snapshot's own read-only connection. These reflect the *read* baseline
+    (``query_only=1``, ``journal_mode`` is the persistent WAL flag). They are
+    **not** sampled from the writer-lane connection; do not interpret them as
+    the writer's live cache or mmap state.
     """
 
     db_file = _database_path(path)
@@ -73,6 +79,19 @@ def database_capacity_snapshot(
         page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
         freelist_count = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
         auto_vacuum = int(connection.execute("PRAGMA auto_vacuum").fetchone()[0])
+        effective_pragmas = {
+            name: connection.execute(f"PRAGMA {name}").fetchone()[0]
+            for name in (
+                "journal_mode",
+                "synchronous",
+                "cache_size",
+                "mmap_size",
+                "busy_timeout",
+                "journal_size_limit",
+                "wal_autocheckpoint",
+                "query_only",
+            )
+        }
         wal_bytes = _sidecar_size(db_file, "-wal")
         payload = {
             "captured_at": _utcnow(),
@@ -96,6 +115,7 @@ def database_capacity_snapshot(
             "logical_used_bytes": page_size * max(0, page_count - freelist_count),
             "auto_vacuum": auto_vacuum,
             "incremental_vacuum_enabled": auto_vacuum == 2,
+            "effective_pragmas": effective_pragmas,
         }
         physical_bytes = payload["database_bytes"] + payload["wal_bytes"]
         payload["physical_bytes"] = physical_bytes
@@ -187,6 +207,39 @@ def passive_wal_checkpoint(
             else "complete"
         ),
         "alert_threshold_frames": _WAL_AUTOCHECKPOINT_PAGES,
+    }
+
+
+def optimize_query_planner(db: sqlite3.Connection) -> dict:
+    """Run one bounded ``PRAGMA optimize`` and report what it did.
+
+    SQLite >= 3.46 self-limits the ANALYZE subcommands, so this stays fast even
+    on a multi-GiB database and needs no ``analysis_limit``. Usually a no-op; it
+    occasionally reanalyzes a table that grew since its last statistics.
+
+    Return value's ``analyzed`` is a lower-bound indicator: reanalysis of an
+    existing table may leave ``sqlite_stat1`` row count unchanged, so
+    ``analyzed=False`` does not prove ANALYZE did nothing.
+    """
+
+    def _stat1_rows() -> int:
+        exists = db.execute(
+            "SELECT count(*) FROM sqlite_master "
+            "WHERE type='table' AND name='sqlite_stat1'"
+        ).fetchone()[0]
+        if not exists:
+            return 0
+        return int(db.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0])
+
+    started = time.perf_counter()
+    before = _stat1_rows()
+    db.execute("PRAGMA optimize")
+    after = _stat1_rows()
+    return {
+        "duration_ms": round((time.perf_counter() - started) * 1000.0, 3),
+        "stat1_rows_before": before,
+        "stat1_rows_after": after,
+        "analyzed": after != before,
     }
 
 
