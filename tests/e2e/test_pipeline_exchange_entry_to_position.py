@@ -640,3 +640,103 @@ def test_real_risk_refuses_an_exchange_entry_the_runtime_is_not_configured_for(
     decisions = repo.list_risk_decisions(limit=20)
     assert decisions, "Risk must record its refusal, not stay silent"
     assert not any(row["approved"] for row in decisions), decisions
+
+
+def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
+    e2e_db, monkeypatch
+):
+    """The approving half: real Risk lets a bitget_demo entry through.
+
+    The refusal counterpart above names three independent reasons Risk gives while
+    the runtime is not pointed at the venue. This satisfies all three honestly
+    rather than bypassing the gate:
+
+    * `exchange.mode` is set to `demo`, so the configured venue and the order's
+      execution mode agree — the mismatch is a real disagreement, not a nuisance;
+    * account equity comes from the exchange account cache seam Risk actually
+      reads (`exchange_sync.get_unified_cached_state`), so capital is a known
+      number rather than an assumption;
+    * a fresh snapshot exists at the configured market-data venue.
+
+    Nothing in the Risk engine is patched. This is the last Gate A entry claim
+    that had no exchange-mode coverage: that Risk *admits*, not merely that it
+    refuses.
+    """
+    from datetime import datetime as _dt
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.data import price_feed
+    from aletheia.portfolio import exchange_sync, local_funding
+    from aletheia.risk.policy import resolve_risk_policy
+    from aletheia.storage.models import MarketSnapshot
+
+    submitted, identity_of = _wire_venue(monkeypatch)
+    # Risk calls load_config() itself, so the configured venue has to be persisted
+    # rather than set on a local copy — patching an object the engine never sees is
+    # how this test first "passed" the mode gate without actually agreeing with it.
+    cfg = load_config()
+    cfg.exchange.mode = "demo"
+    save_config(cfg)
+    cfg = load_config()
+    assert cfg.exchange.mode == "demo"
+    resolved = resolve_risk_policy(cfg, _MODE)
+
+    repo.insert_market_snapshot(
+        MarketSnapshot(
+            id="exchange-entry-snapshot",
+            symbol="BTC/USDT",
+            market_type="usdt_futures",
+            exchange=cfg.market_data.ccxt_exchange,
+            price=100.05,
+            volume_24h=500_000_000.0,
+            snapshot_at=_dt.now(timezone.utc).isoformat(),
+        )
+    )
+    monkeypatch.setattr(
+        exchange_sync,
+        "get_unified_cached_state",
+        lambda *a, **k: {
+            "age_seconds": 1.0,
+            "status": "healthy",
+            "errors": [],
+            "accounts": [{"broker_id": _MODE, "equity_usdt": 5_000.0}],
+            "positions": [],
+        },
+    )
+    monkeypatch.setattr(
+        price_feed,
+        "get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: 100.05,
+    )
+    monkeypatch.setattr(
+        local_funding, "has_fresh_local_funding_schedule", lambda *a, **k: True
+    )
+
+    plan = _seeded_plan_with(
+        {
+            "max_notional": 10.0,
+            "risk_policy_id": resolved.policy.policy_id,
+            "risk_policy_revision": resolved.policy.revision,
+            "risk_policy_hash": resolved.policy_hash,
+        }
+    )
+
+    result = _drive_entry(plan)
+
+    assert result["status"] == "submitted", result
+    assert len(submitted) == 1
+
+    approved = [row for row in repo.list_risk_decisions(limit=20) if row["approved"]]
+    assert approved, repo.list_risk_decisions(limit=20)
+    assert approved[0]["proposal_execution_mode"] == _MODE
+    assert approved[0]["allowed_execution_mode"] == _MODE
+
+    order = repo.get_order(result["order_id"])
+    assert order["execution_mode"] == _MODE
+    assert order["risk_decision_id"] == approved[0]["id"]
+    from aletheia.uta.models import UTAAccountIdentity
+
+    assert UTAAccountIdentity.model_validate_json(
+        order["uta_account_identity_json"]
+    ) == identity_of(_MODE)
+    assert repo.list_positions(execution_mode="paper_internal") == []
