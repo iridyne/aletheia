@@ -29,7 +29,7 @@ from aletheia.storage.models import Position
 _MODE = "bitget_demo"
 
 
-def _prepare_venue(monkeypatch, *, fill_price: float):
+def _prepare_venue(monkeypatch, *, fill_price: float, evidence=None, reason_code=None):
     """Wire an adapter double that accepts the close and reports one exact fill."""
     from datetime import datetime as _dt
 
@@ -49,7 +49,8 @@ def _prepare_venue(monkeypatch, *, fill_price: float):
             # OrderLifecycle, not CommandEvidence — using it would leave the claim
             # at `submission_unknown` with no exchange_order_id, and the private
             # fill could then never be matched to the order.
-            evidence=CommandEvidence.ACKNOWLEDGED,
+            evidence=evidence or CommandEvidence.ACKNOWLEDGED,
+            reason_code=reason_code,
             received_at=_dt.now(timezone.utc),
             client_order_id=command.client_order_id,
             venue_order_id=f"venue-close-{len(submitted)}",
@@ -332,3 +333,122 @@ def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
 
     assert submitted == [], "the refused live close still reached the venue"
     assert repo.get_position(position.id)["status"] == "open"
+
+
+@pytest.mark.parametrize(
+    ("evidence_name", "expected_status", "expected_reason"),
+    (
+        pytest.param(
+            "AMBIGUOUS",
+            "submission_unknown",
+            "command_acknowledgement_unknown",
+            id="acknowledgement-unknown",
+        ),
+        pytest.param("NOT_SENT", "error", "command_not_sent", id="pre-submit-failure"),
+    ),
+)
+def test_unacknowledged_close_records_its_own_uncertainty(
+    e2e_db, monkeypatch, evidence_name, expected_status, expected_reason
+):
+    """The claim must record *which* kind of not-closed this is.
+
+    Asserting only "the Position stayed open" does not distinguish a correct
+    refusal from a broken one: a non-acknowledged close leaves no fill evidence
+    either way, so the Position stays open even if the outcome were misread as an
+    acknowledgement. The distinguishing fact lives on the claim — `error` means the
+    command never left, `submission_unknown` means we cannot tell and nothing may
+    retry — so that is what this asserts.
+    """
+    from aletheia.uta.models import CommandEvidence
+
+    _, submitted, _, _ = _prepare_venue(
+        monkeypatch, fill_price=97.5, evidence=getattr(CommandEvidence, evidence_name)
+    )
+    position = _seed_exchange_position(
+        direction="long", entry_price=100.0, stop_price=98.0
+    )
+    _patch_protective_mark(monkeypatch, 97.5)
+
+    from aletheia.portfolio.position_manager import evaluate_open_positions
+
+    evaluate_open_positions()
+
+    stored = repo.get_position(position.id)
+    assert stored["status"] == "open"
+    assert stored["closed_at"] is None
+    # The mark that triggered the close must never become a verified exit price.
+    assert stored["exit_price_source"] != "broker_fill"
+    assert stored["exit_fill_verified"] in (0, None)
+
+    claim_id = stored["pending_close_order_id"]
+    assert claim_id, "the attempt must stay durable so reconciliation can own it"
+    claim = repo.get_order(claim_id)
+    assert claim["status"] == expected_status
+    assert claim["error_reason"] == expected_reason
+    assert repo.list_fills(order_id=claim_id) == []
+
+
+def test_close_refuses_a_position_whose_entry_cannot_prove_its_account(
+    e2e_db, monkeypatch
+):
+    """A Position whose entry Order proves no account is not closable.
+
+    Driven through `close_position_routed` directly rather than through
+    `evaluate_open_positions`: the protective-trigger path declines such a Position
+    earlier for its own reasons, so routing through it would assert nothing about
+    the account proof. `coordinator._position_account` is the gate under test — it
+    derives the close's account from the entry Order and must refuse rather than
+    guess (execution_contract.md:235 — 历史 NULL 不按当前配置补造身份).
+
+    The refusal that actually fires is the identity *parse* of a NULL carrier,
+    ahead of the explicit `uta_position_account_unavailable` raise. Recorded here
+    because mutating that later raise leaves this test green, while making
+    `_position_account` synthesise an identity from current configuration for a
+    NULL carrier fails it — which is exactly what the contract line forbids.
+    """
+    from datetime import datetime as _dt
+
+    from aletheia.storage.models import Order, Position
+
+    _, submitted, _, _ = _prepare_venue(monkeypatch, fill_price=97.5)
+
+    orphan_entry = Order(
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        order_type="market",
+        quantity=1.0,
+        price=100.0,
+        execution_mode=_MODE,
+        status="filled",
+        source="adopted",
+    )
+    repo.insert_order(orphan_entry)
+    orphan = Position(
+        order_id=orphan_entry.id,
+        symbol="SOL/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        current_price=100.0,
+        execution_mode=_MODE,
+        status="open",
+        opened_at=(_dt.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+    )
+    repo.insert_position(orphan)
+    assert repo.get_order(orphan_entry.id)["uta_account_identity_json"] is None
+
+    from aletheia.portfolio.position_manager import close_position_routed
+
+    with pytest.raises(Exception) as raised:
+        close_position_routed(orphan.id, reason="stop_loss")
+    # Either the parse refuses the NULL carrier or the explicit guard fires;
+    # what must never happen is an identity conjured from current configuration.
+    message = str(raised.value)
+    assert "UTAAccountIdentity" in message or "account" in message.lower(), message
+
+    unchanged = repo.get_position(orphan.id)
+    assert unchanged["status"] == "open"
+    assert unchanged["pending_close_order_id"] is None
+    assert submitted == [], "a close was sent for an account we cannot prove"
