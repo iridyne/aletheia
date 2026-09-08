@@ -1378,7 +1378,6 @@ def test_safety_loops_do_not_use_the_truncated_open_position_reader():
         "aletheia/trading/market_data.py",
         "aletheia/agent_runtime/scheduler.py",
         "aletheia/execution/paper_broker.py",
-        "aletheia/trust/guard_chain.py",
     )
     for relative in paths:
         source = (root / relative).read_text(encoding="utf-8")

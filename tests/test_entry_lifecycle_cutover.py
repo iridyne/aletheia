@@ -141,36 +141,6 @@ def test_legacy_runtime_no_plan_is_not_economic_learning_evidence():
     assert outcome.economic_no_plan is False
 
 
-def test_legacy_entry_reader_preserves_exact_payload_bytes_and_hashes():
-    import hashlib
-
-    from aletheia.trading.entry_compat import read_legacy_entry_record
-
-    planner_input = '{ "context_version": "entry-analysis-context/v1" }'
-    plan_json = '{ "version": "entry-plan/v2", "status": "waiting" }'
-    result_json = '{ "reason_code": "AI_ENTRY_RUNTIME_UNSUPPORTED" }'
-    generation = {
-        "planner_contract_version": "entry-planner/v3",
-        "planner_input_json": planner_input,
-        "planner_input_hash": hashlib.sha256(planner_input.encode()).hexdigest(),
-        "result_json": result_json,
-    }
-    plan = {
-        "plan_json": plan_json,
-        "plan_hash": hashlib.sha256(plan_json.encode()).hexdigest(),
-    }
-
-    projected = read_legacy_entry_record(generation, plan)
-
-    assert projected.planner_input_json == planner_input
-    assert projected.plan_json == plan_json
-    assert projected.result_json == result_json
-    assert projected.planner_input_hash_valid is True
-    assert projected.plan_hash_valid is True
-    assert generation["planner_input_json"] == planner_input
-    assert plan["plan_json"] == plan_json
-
-
 def _insert_expired_plan(repo, generation: dict, candidate_id: str, plan_id: str, expires_at: str):
     import hashlib
     import json

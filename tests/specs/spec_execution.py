@@ -1059,9 +1059,8 @@ def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
     ),
 )
 def test_gateway_does_not_wire_guard_chain():
-    """AST-scan gateway.py imports + text-scan for run_guards(). The disconnection of
-    trust/guard_chain from the execution path is INTENTIONAL (advisory-only); locking it
-    prevents silent wiring (a hidden hard block) AND mistaking the disconnection for a bug."""
+    """AST-scan gateway.py imports + text-scan for run_guards(). guard_chain.py is DELETED
+    (2026-09-07); this claim locks out any future re-introduction into the execution path."""
     from pathlib import Path
 
     src = Path(__file__).parents[2] / "aletheia" / "execution" / "gateway.py"

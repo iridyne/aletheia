@@ -180,7 +180,6 @@ the Contract spec.
 | `agent_shell.intent_classification` | `agent_shell.intent_classification` | `v1` | `structured` | `none` |
 | `agent_shell.portfolio_review` | `agent_shell.portfolio_review` | `v1` | `structured` | `none` |
 | `agent_shell.synthesis` | `agent_shell.synthesis` | `v1` | `text` | `none` |
-| `committee.llm_analysis` | `committee.llm_analysis` | `v1` | `structured` | `none` |
 | `dreaming.lesson_extraction` | `dreaming.lesson_extraction` | `v1` | `structured` | `none` |
 | `dreaming.nightly_consolidation` | `dreaming.nightly_consolidation` | `v1` | `text` | `none` |
 | `equity_observer.market_read` | `equity_observer.market_read` | `v1` | `structured` | `none` |
