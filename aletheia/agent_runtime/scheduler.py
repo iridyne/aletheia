@@ -2543,9 +2543,11 @@ def _claim_observed_tpsl_close(
     *,
     execute_order_id: str,
     reason: str,
+    expected_account,
 ):
     """Atomically register an observed Bitget TPSL execution without placing it."""
     from datetime import datetime, timezone
+    from aletheia.execution.coordinator import _position_account
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
@@ -2561,6 +2563,13 @@ def _claim_observed_tpsl_close(
             raise ValueError(
                 "automatic TPSL close registration requires a supported Bitget mode"
             )
+        # The observing reader is built from current configuration, but the claim
+        # carries the entry Order's frozen identity. Only a reader authenticating
+        # as exactly that account may produce or advance this claim; reconcile()
+        # rejects the same mismatch, and this bridge must not be the softer door.
+        entry_account = _position_account(position)
+        if expected_account is None or entry_account != expected_account:
+            raise ValueError("uta_account_identity_mismatch")
         pending_id = position.get("pending_close_order_id")
         if pending_id:
             existing = repo.get_order(pending_id)
@@ -2572,11 +2581,8 @@ def _claim_observed_tpsl_close(
                 return existing, False
             raise RuntimeError("TPSL execute order conflicts with pending close claim")
 
-        # Preserve the entry Order's account proof; never infer it from current config.
-        from aletheia.execution.coordinator import _position_account
-
         close_order = Order(
-            uta_account_identity_json=_position_account(position).model_dump_json(),
+            uta_account_identity_json=entry_account.model_dump_json(),
             proposal_id=position.get("proposal_id"),
             client_order_id=f"close-{position_id}",
             position_id=position_id,
@@ -2650,6 +2656,15 @@ def _tpsl_fill_check_body():
                 return {"materialized": [], "errors": []}
             account_mode = "demo" if execution_mode == "bitget_demo" else "live"
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+            from aletheia.uta.manager import build_uta_registry
+            reader_identity = next(
+                (
+                    identity
+                    for identity in build_uta_registry().configured_identities()
+                    if identity.execution_mode == execution_mode
+                ),
+                None,
+            )
             client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
             materialized = []
             errors = []
@@ -2685,6 +2700,7 @@ def _tpsl_fill_check_body():
                                 pos["id"],
                                 execute_order_id=execute_order_id,
                                 reason=reason,
+                                expected_account=reader_identity,
                             )
                             if close_order is None:
                                 continue

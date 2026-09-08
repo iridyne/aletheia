@@ -116,6 +116,22 @@ def _private_close_fill(exchange_order_id: str) -> dict:
     }
 
 
+def _patch_configured_reader(monkeypatch, *identities):
+    """Set the reader identity the TPSL bridge must authenticate as.
+
+    The observer builds its Bitget client from current configuration, so every
+    exercise of the real claim path has to declare which account that reader is;
+    otherwise its assertions pass vacuously through the identity gate.
+    """
+    import aletheia.uta.manager as uta_manager
+
+    monkeypatch.setattr(
+        uta_manager,
+        "build_uta_registry",
+        lambda *_a, **_k: SimpleNamespace(configured_identities=lambda: identities),
+    )
+
+
 @spec_claim(
     SpecClaim(
         "PL-TPSL-01",
@@ -138,6 +154,7 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
     position = _seed_position(
         "bitget_demo", suffix="demo", plan_ids={"sl": "PLAN-SL", "tp": "PLAN-TP"}
     )
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     calls: list[tuple] = []
 
     class _Client:
@@ -240,6 +257,7 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
         suffix="live",
         plan_ids={"sl": "PLAN-LIVE-SL"},
     )
+    _patch_configured_reader(monkeypatch, _identity("bitget_live_limited"))
     calls: list[tuple] = []
 
     class _Client:
@@ -376,6 +394,7 @@ def test_incomplete_or_ambiguous_plan_identity_stays_open(
     position = _seed_position(
         "bitget_demo", suffix="invalid", plan_ids={"sl": "PLAN-X"}
     )
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -428,6 +447,7 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
     position = _seed_position(
         "bitget_demo", suffix="query-fail", plan_ids={"tp": "PLAN-TP-X"}
     )
+    _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     fills_available = False
     exact_fill_calls: list[tuple[str, str, str]] = []
 
@@ -644,3 +664,106 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
 
     assert second["failed_count"] == 0
     assert scheduler._consecutive_failures["tpsl_fill_check"] == 0
+
+
+@spec_claim(
+    SpecClaim(
+        "PL-TPSL-06",
+        "pipeline_tpsl_private_materialization",
+        "§6 observing-reader identity proof",
+        "L2c",
+        "When the configured Bitget reader identity differs from the entry Order's "
+        "frozen identity, the TPSL observer claims nothing, reads no private fills "
+        "and materializes nothing — for a fresh observation and for one whose close "
+        "claim is already pending.",
+        status="implemented",
+    )
+)
+def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position(
+        "bitget_demo", suffix="rotate", plan_ids={"sl": "PLAN-ROT-SL"}
+    )
+    entry_identity = _identity("bitget_demo")
+    # Same physical account, later credential generation: a credential rotation,
+    # an account config generation bump, a classic_v2/uta_v3 profile switch or a
+    # plain ccxt upgrade each produce exactly this.
+    rotated_identity = entry_identity.model_copy(
+        update={"credential_generation": 7}
+    )
+    calls: list[tuple] = []
+    fills_available = False
+
+    _patch_configured_reader(monkeypatch, rotated_identity)
+
+    class _Client:
+        def __init__(self, mode, **_kwargs):
+            calls.append(("client", mode))
+
+        async def get_plan_order_history(self, *, order_id, **_kwargs):
+            calls.append(("plan", order_id))
+            return [{
+                "orderId": order_id,
+                "planStatus": "executed",
+                "executeOrderId": "EXEC-ROT-SL",
+            }]
+
+        async def get_order_fills(self, *, order_id, symbol, market_type):
+            calls.append(("fills", order_id))
+            if not fills_available:
+                raise RuntimeError("private fills unavailable")
+            return [_private_close_fill(order_id)]
+
+        async def place_order(self, *args, **kwargs):
+            raise AssertionError("TPSL observation must never place an order")
+
+        async def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
+    monkeypatch.setattr(
+        scheduler,
+        "load_config",
+        lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)),
+    )
+
+    # Phase 1 — a mismatched reader may not create the claim at all, and must not
+    # read private fill evidence it would then attribute to the entry identity.
+    summary = scheduler._tpsl_fill_check_body()
+
+    assert repo._select_one("positions", position.id)["status"] == "open"
+    assert repo._select_one("positions", position.id)["pending_close_order_id"] is None
+    assert db.execute(
+        "SELECT COUNT(*) FROM orders WHERE position_id=? AND close_reason IS NOT NULL",
+        (position.id,),
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] == 1
+    assert summary["errors"][0]["position_id"] == position.id
+    assert [c for c in calls if c[0] == "fills"] == []
+
+    # Phase 2 — a claim proven under the entry identity must not be materialized
+    # by a later reader whose configured identity no longer matches it.
+    _patch_configured_reader(monkeypatch, entry_identity)
+    summary = scheduler._tpsl_fill_check_body()
+    pending = repo._select_one("positions", position.id)["pending_close_order_id"]
+    assert pending is not None
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+
+    _patch_configured_reader(monkeypatch, rotated_identity)
+    fills_available = True
+    calls.clear()
+    summary = scheduler._tpsl_fill_check_body()
+
+    stored = repo._select_one("positions", position.id)
+    assert stored["status"] == "open"
+    assert stored["pending_close_order_id"] == pending
+    assert repo.get_order(pending)["status"] == "materialization_missing"
+    assert db.execute(
+        "SELECT COUNT(*) FROM fills WHERE order_id=?", (pending,)
+    ).fetchone()[0] == 0
+    assert summary["failed_count"] == 1
+    assert [c for c in calls if c[0] == "fills"] == []
