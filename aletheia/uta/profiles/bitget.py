@@ -7,7 +7,7 @@ from typing import Any
 
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import CommandEvidence
-from aletheia.uta.profiles.base import CCXTProfile, decimal_value
+from aletheia.uta.profiles.base import CCXTProfile, decimal_value, venue_contract_quantity
 from aletheia.uta.models import FillReport, UTAAccountIdentity
 
 
@@ -49,27 +49,7 @@ class _BitgetDemoProfile(CCXTProfile):
         codes = {"22002", "25227", "45110"} if self._uta else {"22002", "25227"}
         return isinstance(response, dict) and str(response.get("code")) in codes
 
-    @staticmethod
-    def _venue_quantity(command, *, instrument=None) -> Decimal:
-        selected = instrument or command.instrument
-        quantity = Decimal(command.quantity)
-        if selected.market_type == "spot":
-            return quantity
-        contract_size = selected.contract_size
-        if contract_size is None or contract_size <= 0:
-            raise UTAError(
-                UTAErrorCode.INVALID_ORDER,
-                "contract_size_unavailable",
-                command_evidence=CommandEvidence.NOT_SENT,
-            )
-        contracts = quantity / contract_size
-        if contracts != contracts.to_integral_value() or contracts <= 0:
-            raise UTAError(
-                UTAErrorCode.INVALID_ORDER,
-                "quantity_not_exact_contract_multiple",
-                command_evidence=CommandEvidence.NOT_SENT,
-            )
-        return contracts
+    _venue_quantity = staticmethod(venue_contract_quantity)
 
     async def prepare_submit(self, exchange, command):
         market = (exchange.markets or {}).get(command.instrument.venue_symbol) or {}
