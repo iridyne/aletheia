@@ -17,6 +17,13 @@ from aletheia.config.execution_costs import (
 
 _logger = logging.getLogger("aletheia.config")
 
+# The recognized Bitget endpoint-family identities. Declared here because the
+# set of VALID profile names is a configuration fact, not a venue-client fact:
+# `bitget_profile` is validated on load, and asking "is this a known profile?"
+# must not require importing a concrete exchange client. `exchanges/bitget/`
+# reads this rather than keeping a parallel copy.
+KNOWN_BITGET_PROFILES = frozenset({"classic_v2", "uta_v3"})
+
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WILDCARD_HOSTS = {"0.0.0.0", "::"}
 
@@ -315,9 +322,10 @@ class ExchangeConfig(BaseModel):
     @field_validator("bitget_profile")
     @classmethod
     def _validate_bitget_profile(cls, v: str) -> str:
-        allowed = {"classic_v2", "uta_v3"}
-        if v not in allowed:
-            raise ValueError(f"bitget_profile must be one of {sorted(allowed)}, got {v!r}")
+        if v not in KNOWN_BITGET_PROFILES:
+            raise ValueError(
+                f"bitget_profile must be one of {sorted(KNOWN_BITGET_PROFILES)}, got {v!r}"
+            )
         return v
 
     @field_validator("uta_account_config_generations")
@@ -1736,29 +1744,6 @@ class EventTriggerConfig(BaseModel):
     strategy_design_min_move_pct: float = 5.0
 
 
-class StrategyFactoryConfig(BaseModel):
-    """DEPRECATED — strategy FSM / backtest-orchestrator removed with Position C (2026-07-02).
-
-    All fields are compatibility-only: they load from existing config.yaml files without
-    error but have no production consumer. No scheduler, ranker, System Operator or
-    execution path reads these values. Do not add new consumers; the current authority
-    chain is scanner-family opportunities → ranker / System Operator → Proposal → Risk.
-    """
-    backtest_gate_enabled: bool = True
-    sweep_enabled: bool = True
-    sweep_max_variants: int = 100
-    sweep_n_trials: int = 60
-    sweep_top_k: int = 10
-    event_driven_enabled: bool = True
-    event_cooldown_minutes: int = 30
-    event_min_score: float = 60.0
-    walk_forward_enabled: bool = True
-    walk_forward_folds: int = 3
-    walk_forward_min_bars: int = 150
-    high_trade_count_threshold: int = 30
-    min_runtime_days_relaxed: int = 3
-
-
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
@@ -2068,7 +2053,6 @@ class AletheiaConfig(BaseModel):
     universe: UniverseConfig = Field(default_factory=UniverseConfig)
     fast_trigger: FastTriggerConfig = Field(default_factory=FastTriggerConfig)
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
-    strategy_factory: StrategyFactoryConfig = Field(default_factory=StrategyFactoryConfig)
     guard: GuardConfig = Field(default_factory=GuardConfig)
     tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
     remote_control: RemoteControlConfig = Field(default_factory=RemoteControlConfig)

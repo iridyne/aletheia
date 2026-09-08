@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from aletheia.utils.dt import parse_utc
 from aletheia.config.loader import load_config
 from aletheia.learning.ledger import (
     finish_lesson_reviewer_attempt,
@@ -236,16 +237,6 @@ def daily_catchup_due(job_id: str, *, now: datetime | None = None) -> bool:
     return get_learning_job_health(job_id).input_watermark != current_daily_window(job_id, now=now)
 
 
-def _parse_timestamp(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except (TypeError, ValueError):
-        return None
 
 
 def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:
@@ -263,7 +254,7 @@ def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:
         return "reviewer_never_succeeded"
     if reviewer.status == "failed" or reviewer.consecutive_failures > 0:
         return "reviewer_failed"
-    last_success = _parse_timestamp(reviewer.last_succeeded_at)
+    last_success = parse_utc(reviewer.last_succeeded_at)
     if last_success is None or current - last_success > _REVIEWER_STALE_AFTER:
         return "reviewer_stale"
     # #1826: reject future timestamps with a small skew allowance (5 minutes).
@@ -272,7 +263,7 @@ def promotion_refreeze_reason(*, now: datetime | None = None) -> str | None:
     _CLOCK_SKEW_ALLOWANCE = timedelta(minutes=5)
     if last_success > current + _CLOCK_SKEW_ALLOWANCE:
         return "reviewer_timestamp_future"
-    oldest = _parse_timestamp(reviewer.oldest_backlog_at)
+    oldest = parse_utc(reviewer.oldest_backlog_at)
     if oldest is not None and oldest > current + _CLOCK_SKEW_ALLOWANCE:
         return "reviewer_backlog_timestamp_future"
     if oldest is not None and current - oldest > _REVIEWER_STALE_AFTER:

@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 import json
 import logging
 
+from aletheia.utils.dt import parse_utc
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -130,23 +131,10 @@ def _run_coro(coro):
     return run_coro_from_sync(coro)
 
 
-def _parse_dt(value: str | None) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    if text.endswith("Z"):
-        text = f"{text[:-1]}+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def _age_hours(*timestamps: str | None) -> float | None:
-    candidates = [_parse_dt(value) for value in timestamps if value]
+    candidates = [parse_utc(value) for value in timestamps if value]
     candidates = [value for value in candidates if value is not None]
     if not candidates:
         return None

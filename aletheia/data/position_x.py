@@ -22,6 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from aletheia.utils.dt import parse_utc
 from aletheia.data.models import PerpStructureSnapshot
 
 
@@ -893,8 +894,8 @@ def build_position_x_agent_context(
     if not row:
         return base
 
-    now = _parse_iso(now_iso) or datetime.now(timezone.utc)
-    as_of = _parse_iso(row.get("as_of_time")) or _parse_iso(row.get("observed_at"))
+    now = parse_utc(now_iso) or datetime.now(timezone.utc)
+    as_of = parse_utc(row.get("as_of_time")) or parse_utc(row.get("observed_at"))
     if not as_of or now - as_of > timedelta(minutes=max_age_minutes):
         return base
 
@@ -1266,17 +1267,6 @@ def _loads_json(value: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _parse_iso(value: Any) -> datetime | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def _number(value: Any) -> float | None:

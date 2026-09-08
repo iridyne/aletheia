@@ -12,7 +12,7 @@ COMMAND_VERSION = "paper-close-timestamp-recovery-v1"
 _MAX_SKEW = timedelta(milliseconds=1)
 
 
-def _parse_utc(value: Any) -> datetime | None:
+def parse_utc_strict(value: Any) -> datetime | None:
     try:
         parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except (TypeError, ValueError):
@@ -85,10 +85,10 @@ def _plan_state(db, state: dict[str, Any]) -> dict[str, Any]:
         return _unavailable(base, f"close_lineage_invalid:{exc}")
 
     fill = fills[0]
-    created_at = _parse_utc(order.get("created_at"))
-    order_filled_at = _parse_utc(order.get("filled_at"))
-    fill_filled_at = _parse_utc(fill.get("filled_at"))
-    detected_at = _parse_utc(trigger.get("detected_at"))
+    created_at = parse_utc_strict(order.get("created_at"))
+    order_filled_at = parse_utc_strict(order.get("filled_at"))
+    fill_filled_at = parse_utc_strict(fill.get("filled_at"))
+    detected_at = parse_utc_strict(trigger.get("detected_at"))
     if None in (created_at, order_filled_at, fill_filled_at, detected_at):
         return _unavailable(base, "invalid_close_timestamp")
     if order_filled_at != fill_filled_at:

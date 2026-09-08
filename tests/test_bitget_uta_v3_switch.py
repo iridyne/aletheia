@@ -278,8 +278,8 @@ def test_is_unified_short_circuits_by_profile(monkeypatch):
         raise AssertionError("HTTP roundtrip forbidden: profile decides routing")
 
     monkeypatch.setattr(bg, "httpx_client", _boom)
-    assert asyncio.run(BitgetClient(mode="demo", profile="uta_v3")._is_unified()) is True
-    assert asyncio.run(BitgetClient(mode="demo", profile="classic_v2")._is_unified()) is False
+    assert BitgetClient(mode="demo", profile="uta_v3")._is_unified() is True
+    assert BitgetClient(mode="demo", profile="classic_v2")._is_unified() is False
 
 
 # ─── v2-only private history fails loud under uta_v3 ─────────────────────────

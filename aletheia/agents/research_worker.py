@@ -159,9 +159,6 @@ def _auto_promote_serenity_opportunities(
     return promoted_count
 
 
-# Legacy alias kept so any call sites we missed still compile.
-_is_tradeable_crypto_symbol = _is_allowed_serenity_symbol
-
 
 def _get_recent_news_for_research() -> str:
     """Fetch recent high-relevance analyzed news for injection into research context."""
@@ -1164,8 +1161,10 @@ def _handle_rate_limit(run_id: str, run: dict, error_message: str) -> None:
 def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
     """Schedule an automatic retry via APScheduler one-shot job."""
     try:
-        from aletheia.agent_runtime.scheduler import _scheduler
-        if _scheduler and _scheduler.running:
+        from aletheia.agent_runtime.scheduler import _current_scheduler
+
+        scheduler = _current_scheduler()
+        if scheduler and scheduler.running:
             from datetime import timedelta
             import random
             backoff_seconds = [60, 180, 600]
@@ -1190,7 +1189,7 @@ def _schedule_auto_retry(run_id: str, run: dict, retry_count: int) -> None:
                 if not deduplicated:
                     enqueue_research_run(stored["id"])
 
-            _scheduler.add_job(
+            scheduler.add_job(
                 _retry_job, "date", run_date=run_time,
                 id=f"serenity_retry_{run_id}",
                 misfire_grace_time=120,

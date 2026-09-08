@@ -3,7 +3,9 @@
 from aletheia.agent_shell.registry import COMMANDS, FORBIDDEN_INTENTS
 
 # Config modes in ascending privilege order for worker-surface commands.
-_WORKER_MODE_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
+WORKER_MODE_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
+VALID_WORKER_MODES: frozenset[str] = frozenset(WORKER_MODE_RANK)
+_WORKER_MODE_RANK = WORKER_MODE_RANK  # keep private alias for internal use
 _WORKER_REQUIRED_RANK = {"Observe": 0, "Paper": 1, "Full": 2}
 
 # Operator-surface permission ladder from the design package.

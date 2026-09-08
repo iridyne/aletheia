@@ -202,7 +202,7 @@ def _bitget_verified_fill(raw: dict):
     )
 
 
-_KNOWN_PROFILES = frozenset({"classic_v2", "uta_v3"})
+from aletheia.exchanges.bitget.profile_config import _KNOWN_PROFILES  # noqa: E402
 
 # Error codes that mean "no open position" — profile-specific where they differ.
 # classic_v2: 22002, 25227. uta_v3: uses the same codes per Bitget migration guide.
@@ -719,7 +719,7 @@ class BitgetClient:
     # detect UTA once per client and route the affected calls to the v3
     # unified endpoints. Classic accounts keep the original v2 behaviour.
     # ------------------------------------------------------------------
-    async def _is_unified(self) -> bool:
+    def _is_unified(self) -> bool:
         # Profile is the source of truth for endpoint-family routing. #1124 made
         # the profile explicit so the classic_v2 (/api/v2/) and uta_v3 (/api/v3/)
         # endpoint families are never mixed at runtime — there is no detection
@@ -734,7 +734,7 @@ class BitgetClient:
         Returns {available, equity, unrealized_pnl, unified}. For UTA the
         available USDT of the unified wallet is the margin source.
         """
-        if await self._is_unified():
+        if self._is_unified():
             data = await self.get_uta_account()
             assets = (data or {}).get("assets") or [] if isinstance(data, dict) else []
             usdt = next((a for a in assets if a.get("coin") == "USDT"), None)

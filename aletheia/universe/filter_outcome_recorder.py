@@ -59,9 +59,9 @@ async def settle_due_filter_outcomes(
     """
     from aletheia.config.loader import load_config
     from aletheia.universe.outcome_economics import estimate_outcome_economics
+    from aletheia.utils.dt import parse_utc
     from aletheia.universe.outcome_recorder import (
         _batch_fetch_market_observations,
-        _parse_dt,
         fetch_group_key,
         is_deferred,
         local_market_observations,
@@ -216,8 +216,8 @@ async def settle_due_filter_outcomes(
             )
             return _FAILED
 
-        entry_dt = _parse_dt(row.get("entry_ts"))
-        due_dt = _parse_dt(row.get("due_at"))
+        entry_dt = parse_utc(row.get("entry_ts"))
+        due_dt = parse_utc(row.get("due_at"))
         hold_seconds = (
             max(0.0, (due_dt - entry_dt).total_seconds())
             if entry_dt and due_dt

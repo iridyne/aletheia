@@ -43,7 +43,7 @@ def _hash_json(payload: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _parse_utc(value: object) -> datetime | None:
+def parse_utc_strict(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
     try:
@@ -254,9 +254,9 @@ def settle_position_shadow(position: dict[str, Any]) -> dict[str, Any]:
         return _unavailable(assignment, position, "closed_paper_position_required")
 
     actual_net = _finite(position.get("realized_pnl"))
-    opened = _parse_utc(position.get("opened_at"))
-    assigned = _parse_utc(assignment.get("assigned_at"))
-    closed = _parse_utc(position.get("closed_at"))
+    opened = parse_utc_strict(position.get("opened_at"))
+    assigned = parse_utc_strict(assignment.get("assigned_at"))
+    closed = parse_utc_strict(position.get("closed_at"))
     if actual_net is None or opened is None or assigned is None or closed is None or closed <= opened:
         return _unavailable(assignment, position, "actual_economics_or_window_unavailable")
     state = repo.get_position_protection_state(position_id)
@@ -420,7 +420,7 @@ def build_exit_breakeven_shadow_report(
 
     cutoff = None
     if closed_after is not None:
-        cutoff = _parse_utc(closed_after)
+        cutoff = parse_utc_strict(closed_after)
         if cutoff is None:
             raise ValueError("closed_after must be an ISO-8601 timestamp with timezone")
     rows = repo.list_exit_breakeven_shadow_report_rows(

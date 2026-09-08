@@ -6,6 +6,12 @@ endpoint families consistent across execution, sync, and read-only paths.
 """
 
 from aletheia.config.loader import load_config
+from aletheia.config.schema import KNOWN_BITGET_PROFILES
+
+
+# Re-exported from the config layer, which owns the validated identity. Kept as
+# a name here so `exchanges/bitget/` has one import site rather than many.
+_KNOWN_PROFILES = KNOWN_BITGET_PROFILES
 
 
 def configured_bitget_profile() -> str:
@@ -16,3 +22,8 @@ def configured_bitget_profile() -> str:
     see an unknown profile leak into a constructed client.
     """
     return load_config().exchange.bitget_profile
+
+
+def known_bitget_profiles() -> frozenset[str]:
+    """Every recognized Bitget profile identity."""
+    return _KNOWN_PROFILES
