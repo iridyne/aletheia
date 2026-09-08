@@ -742,26 +742,6 @@ def materialize_position_economics(
     }
 
 
-def _update_position_economics(
-    position_id: str,
-    realized_pnl: float,
-    funding_cost: float,
-    outcome_eligible: bool,
-    outcome_exclusion_reason: str,
-) -> None:
-    from aletheia.storage.sqlite import get_db
-    with repo.transaction(immediate=True):
-        get_db().execute(
-            """UPDATE positions SET
-               realized_pnl=?, funding_cost=?, funding_source='local_simulation',
-               outcome_eligible=?, outcome_exclusion_reason=?
-               WHERE id=?""",
-            (realized_pnl, funding_cost, int(outcome_eligible),
-             outcome_exclusion_reason, position_id),
-        )
-        settle_position_closed(position_id, realized_pnl)
-
-
 async def _backfill_historical_funding_for_position(row: dict) -> int:
     """Fetch and store historical funding snapshots for a position's symbol+window.
 
@@ -947,10 +927,13 @@ async def settle_unsettled_paper_closes() -> dict:
                 ):
                     reason_before = str(row.get("outcome_exclusion_reason") or "")
                     with repo.transaction(immediate=True):
-                        get_db().execute(
-                            "UPDATE positions SET outcome_exclusion_reason=?, "
-                            "outcome_eligible=0 WHERE id=?",
-                            (FUNDING_PERMANENTLY_UNRECOVERABLE, position_id),
+                        # Settlement owner, not raw SQL: these rows are selected
+                        # WHERE status='closed', so its CAS matches, and both fields
+                        # are already in _POSITION_SETTLEMENT_FIELDS.
+                        repo.update_closed_position_settlement(
+                            position_id,
+                            outcome_exclusion_reason=FUNDING_PERMANENTLY_UNRECOVERABLE,
+                            outcome_eligible=0,
                         )
                     write_audit({
                         "actor": "system",
