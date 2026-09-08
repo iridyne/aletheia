@@ -731,8 +731,17 @@ def _require_exchange_divergence_confirmation(alignment, confirmed: bool) -> Non
 def set_exchange_markets(req: ExchangeMarketsRequest):
     if not req.spot and not req.usdt_futures:
         raise HTTPException(400, "At least one market must be enabled")
-    if req.paper_execution_mode is not None and req.paper_execution_mode not in {"bitget_demo", "paper_internal", "binance_testnet", "okx_demo", "binance_live", "okx_live"}:
-        raise HTTPException(400, "paper_execution_mode must be one of: bitget_demo, paper_internal, binance_testnet, okx_demo, binance_live, okx_live")
+    # Validate against the Risk vocabulary itself. The former hand-written set
+    # accepted `binance_live` and `okx_live` — UTA credential profile names, not
+    # execution modes — and the mutator below persists the value verbatim. Either
+    # one makes resolve_risk_policy raise UnknownRiskExecutionMode, so every
+    # subsequent proposal is rejected `unregistered_risk_execution_mode:...`:
+    # a total trading halt reachable from one dashboard POST.
+    from aletheia.risk.policy import DEMO_EXECUTION_MODES
+
+    if req.paper_execution_mode is not None and req.paper_execution_mode not in DEMO_EXECUTION_MODES:
+        allowed = ", ".join(sorted(DEMO_EXECUTION_MODES))
+        raise HTTPException(400, f"paper_execution_mode must be one of: {allowed}")
     if req.bitget_profile is not None and req.bitget_profile not in {"classic_v2", "uta_v3"}:
         raise HTTPException(400, "bitget_profile must be one of: classic_v2, uta_v3")
     # Pre-validate outside the mutation lock to fail fast

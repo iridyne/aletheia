@@ -354,7 +354,22 @@ def test_exchange_source_divergence_is_guarded_and_visible():
         for name in ("ExecutionTab.tsx", "SignalsTab.tsx")
     )
 
-    assert "paper_internal" in alignment and "okx_demo" in alignment
+    # Behaviour, not source text: the alignment model must cover every registered
+    # paper mode and must keep paper_internal venue-less. Asserting the literal
+    # "okx_demo" appeared in the file broke the moment the map started deriving
+    # itself from EXCHANGE_UNIFICATION_MAP, which is the stronger arrangement.
+    from aletheia.config.exchange_alignment import (
+        _EXECUTION_MODE_EXCHANGES,
+        execution_exchange_for_mode,
+    )
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+
+    assert "paper_internal" in alignment
+    assert set(_EXECUTION_MODE_EXCHANGES) == {
+        paper_mode for _ccxt, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
+    }
+    assert execution_exchange_for_mode("paper_internal") is None
+    assert execution_exchange_for_mode("okx_demo") == "okx"
     assert settings_route.count("confirm_exchange_divergence") >= 2
     assert "exchange_alignment" in health_route
     assert "exchange_diverged" in overview
