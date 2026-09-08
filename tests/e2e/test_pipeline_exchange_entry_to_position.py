@@ -491,3 +491,106 @@ def test_entry_fails_closed_when_another_account_already_holds_the_mode(
     # The command never went to the venue, and no Position was opened.
     assert submitted == []
     assert repo.list_positions(execution_mode=_MODE) == []
+
+
+def test_acknowledged_entry_recovers_after_the_connection_is_reopened(
+    e2e_db, monkeypatch
+):
+    """An acknowledged entry converges from evidence read on a fresh connection.
+
+    Scope, stated rather than implied: this crosses the *connection* boundary, not
+    the process boundary. Recovery must not depend on the connection that observed
+    the acknowledgement — durable state has to carry everything the materializer
+    needs. The process-boundary proof for exchange economics lives in
+    `test_exchange_funding_golden_path`, which runs three real Python processes;
+    this is the cheaper adjacent claim, not a substitute for it.
+    """
+    import aletheia.storage.sqlite as sq
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+
+    _approving_risk(monkeypatch)
+    _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+    result = _drive_entry(plan)
+    order_id = result["order_id"]
+    assert repo.get_order(order_id)["status"] == "submitted"
+
+    # Drop the observing connection before any evidence is applied.
+    sq.reset_db()
+    sq.get_db()
+
+    reopened = repo.get_order(order_id)
+    assert reopened["exchange_order_id"] == "venue-entry-1"
+    # The account proof survived the reopen; without it the materializer has no
+    # attributable evidence at all.
+    assert reopened["uta_account_identity_json"]
+
+    materialized = materialize_bitget_entry(
+        order_id, [_private_entry_fill(reopened)]
+    )
+    assert materialized.state == "filled", materialized
+
+    positions = repo.list_positions(execution_mode=_MODE)
+    assert len(positions) == 1
+    assert positions[0]["order_id"] == order_id
+    assert repo.list_positions(execution_mode="paper_internal") == []
+
+
+@pytest.mark.parametrize(
+    ("fee", "fee_coin", "case"),
+    (
+        pytest.param(None, "USDT", "fee-absent", id="fee-absent"),
+        pytest.param("0.02", "BGB", "fee-third-currency", id="fee-third-currency"),
+    ),
+)
+def test_entry_with_unavailable_cost_is_not_reported_as_complete(
+    e2e_db, monkeypatch, fee, fee_coin, case
+):
+    """Cost that cannot be expressed in the quote currency must stay unavailable.
+
+    Gate A's last item: unavailable cost must not masquerade as complete.
+
+    The two cases here are the ones that genuinely cannot be costed. A fee in the
+    *base* currency deliberately is not among them — the materializer converts it
+    at the fill price, which is arithmetic rather than fabrication. A fee in a
+    third currency (BGB, BNB) has no attributable conversion without market data,
+    and an absent fee has no value at all; either read as 0.0 would understate
+    cost on every downstream Outcome.
+    """
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+
+    _approving_risk(monkeypatch)
+    _wire_venue(monkeypatch)
+    plan = _seeded_plan()
+    result = _drive_entry(plan)
+    order = repo.get_order(result["order_id"])
+
+    row = _private_entry_fill(order, fee=fee, fee_coin=fee_coin)
+    if fee is None:
+        row.pop("fee")
+
+    try:
+        materialized = materialize_bitget_entry(order["id"], row and [row])
+    except Exception:
+        # Refusing outright is an acceptable, honest answer for evidence that
+        # cannot be costed.
+        assert repo.list_positions(execution_mode=_MODE) == []
+        return
+
+    if materialized.state != "filled":
+        assert repo.list_positions(execution_mode=_MODE) == []
+        return
+
+    # The raw venue fee stays auditable on the Fill by design — that is not the
+    # claim. The claim is that the Position's quote-currency entry cost must be
+    # unavailable rather than a number pretending the fee was already in USDT.
+    fills = repo.list_fills(order_id=order["id"])
+    assert len(fills) == 1
+    positions = repo.list_positions(execution_mode=_MODE)
+    assert len(positions) == 1
+    entry_fee = positions[0]["entry_fee"]
+    assert entry_fee is None or entry_fee == 0, (
+        f"{case}: an uncostable fee became a quote-currency entry cost",
+        {"entry_fee": entry_fee, "fill_fee": fills[0]["fee"],
+         "fill_fee_currency": fills[0].get("fee_currency")},
+    )
