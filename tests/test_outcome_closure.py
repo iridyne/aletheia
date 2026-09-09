@@ -12,6 +12,7 @@ import pytest
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
+from aletheia.portfolio.pnl import _account_environment
 
 
 def _assert_complete_closed_position_fixture(
@@ -107,85 +108,12 @@ def _assert_complete_closed_position_fixture(
         for event in close_audits
     )
 
-    if position["execution_mode"] == "paper_internal":
-        events = [
-            dict(row) for row in db.execute(
-                "SELECT * FROM paper_account_events ORDER BY rowid ASC"
-            ).fetchall()
-        ]
-        assert sum(
-            event["action"] == "position_opened"
-            and event["position_id"] == position_id
-            for event in events
-        ) == 1
-        assert sum(
-            event["action"] == "position_closed"
-            and event["position_id"] == position_id
-            for event in events
-        ) == 1
-        opened_event = next(
-            event for event in events
-            if event["action"] == "position_opened"
-            and event["position_id"] == position_id
-        )
-        closed_event = next(
-            event for event in events
-            if event["action"] == "position_closed"
-            and event["position_id"] == position_id
-        )
-        assert datetime.fromisoformat(
-            opened_event["created_at"].replace("Z", "+00:00")
-        ) == opened_at
-        assert datetime.fromisoformat(
-            closed_event["created_at"].replace("Z", "+00:00")
-        ) == closed_at
-        assert closed_event["amount_usdt"] == pytest.approx(
-            position["realized_pnl"]
-        )
-        assert closed_event["cash_balance_after_usdt"] == pytest.approx(
-            closed_event["cash_balance_before_usdt"]
-            + closed_event["amount_usdt"]
-        )
-        funding_events = [
-            event for event in events if event["action"] == "initial_funding"
-        ]
-        assert len(funding_events) == 1
-        all_opened_at = [
-            datetime.fromisoformat(event["created_at"].replace("Z", "+00:00"))
-            for event in events
-            if event["action"] == "position_opened"
-        ]
-        funding_at = datetime.fromisoformat(
-            funding_events[0]["created_at"].replace("Z", "+00:00")
-        )
-        assert funding_at <= min(all_opened_at)
-        for previous, current in zip(events, events[1:]):
-            assert current["cash_balance_before_usdt"] == pytest.approx(
-                previous["cash_balance_after_usdt"]
-            )
-        events_by_time = [
-            dict(row) for row in db.execute(
-                "SELECT * FROM paper_account_events "
-                "ORDER BY created_at ASC, "
-                "CASE action WHEN 'initial_funding' THEN 0 "
-                "WHEN 'position_opened' THEN 1 "
-                "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
-            ).fetchall()
-        ]
-        assert [event["id"] for event in events_by_time] == [
-            event["id"] for event in events
-        ]
-        for previous, current in zip(events_by_time, events_by_time[1:]):
-            assert current["cash_balance_before_usdt"] == pytest.approx(
-                previous["cash_balance_after_usdt"]
-            )
-    else:
-        assert entry_order["exchange_order_id"]
-        assert close_order["exchange_order_id"]
-        assert entry_fills[0]["fee_source"] == "reconciled"
-        assert all(fill["fee_source"] == "reconciled" for fill in close_fills)
-        assert evidence.get("fill_ids")
-        assert evidence.get("durable_fill_ids")
+    assert entry_order["exchange_order_id"]
+    assert close_order["exchange_order_id"]
+    assert entry_fills[0]["fee_source"] == "reconciled"
+    assert all(fill["fee_source"] == "reconciled" for fill in close_fills)
+    assert evidence.get("fill_ids")
+    assert evidence.get("durable_fill_ids")
 
     for job in jobs:
         for field in ("created_at", "updated_at", "next_attempt_at"):
@@ -210,30 +138,11 @@ def _fixture_utc(value: str, *, field: str) -> datetime:
 def _align_historical_producer_run(
     position_id: str,
     *,
-    opened_at: str,
     closed_at: str,
-    local_paper: bool,
 ) -> None:
-    """Align one historical close and keep any paper ledger in true time order."""
+    """Align isolated historical close audit and hook timestamps."""
     db = repo.get_db()
     with repo.transaction(immediate=True):
-        if local_paper:
-            db.execute(
-                "UPDATE paper_account_events SET created_at = ? "
-                "WHERE action = 'initial_funding' "
-                "AND created_at > ?",
-                (opened_at, opened_at),
-            )
-            db.execute(
-                "UPDATE paper_account_events SET created_at = ? "
-                "WHERE action = 'position_opened' AND position_id = ?",
-                (opened_at, position_id),
-            )
-            db.execute(
-                "UPDATE paper_account_events SET created_at = ? "
-                "WHERE action = 'position_closed' AND position_id = ?",
-                (closed_at, position_id),
-            )
         db.execute(
             "UPDATE audit_events SET timestamp = ? "
             "WHERE entity_type = 'position' AND entity_id = ? "
@@ -247,42 +156,6 @@ def _align_historical_producer_run(
             "WHERE position_id = ?",
             (closed_at, closed_at, closed_at, closed_at, position_id),
         )
-
-        if local_paper:
-            # Historical fixtures may be inserted out of chronological order or
-            # overlap in time. Rebuild this isolated test ledger in event-time order
-            # so its physical append order and cached balance snapshots tell the same
-            # story. Event identities, amounts, actors, sources, and notes are kept.
-            events = [
-                dict(row) for row in db.execute(
-                    "SELECT * FROM paper_account_events "
-                    "ORDER BY created_at ASC, "
-                    "CASE action WHEN 'initial_funding' THEN 0 "
-                    "WHEN 'position_opened' THEN 1 "
-                    "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
-                ).fetchall()
-            ]
-            db.execute("DELETE FROM paper_account_events")
-            balance = 0.0
-            for event in events:
-                before = round(balance, 8)
-                after = round(before + float(event["amount_usdt"]), 8)
-                if after < -1e-8:
-                    raise AssertionError(
-                        "historical paper fixture would produce negative cash"
-                    )
-                db.execute(
-                    "INSERT INTO paper_account_events "
-                    "(id, action, amount_usdt, cash_balance_before_usdt, "
-                    "cash_balance_after_usdt, actor, source, position_id, note, "
-                    "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        event["id"], event["action"], event["amount_usdt"],
-                        before, max(0.0, after), event["actor"], event["source"],
-                        event["position_id"], event["note"], event["created_at"],
-                    ),
-                )
-                balance = after
 
 
 def _insert_entry_chain(
@@ -377,34 +250,21 @@ def _insert_entry_chain(
         quantity=quantity,
         price=price,
         execution_mode=execution_mode,
-        exchange_order_id=(
-            None
-            if execution_mode == "paper_internal"
-            else f"entry-exchange-order-{position_id}"
-        ),
-        client_order_id=(
-            None if execution_mode == "paper_internal" else proposal.id
-        ),
+        exchange_order_id=f"entry-exchange-order-{position_id}",
+        client_order_id=proposal.id,
         status="filled",
-        paper_fill_model_version=(
-            "paper-order-fill/v1" if execution_mode == "paper_internal" else None
-        ),
         created_at=entry_at,
         filled_at=entry_at,
     ))
-    if execution_mode == "paper_internal":
-        fill_id = f"paper-entry:{position_id}:{entry_at}"
-        fee_source = "estimated"
-    else:
-        from aletheia.execution.exchange_materialization import (
-            durable_private_fill_id,
-        )
+    from aletheia.execution.exchange_materialization import (
+        durable_private_fill_id,
+    )
 
-        fill_id = durable_private_fill_id(
-            execution_mode,
-            f"remote-entry-fill-{position_id}",
-        )
-        fee_source = "reconciled"
+    fill_id = durable_private_fill_id(
+        execution_mode,
+        f"remote-entry-fill-{position_id}",
+    )
+    fee_source = "reconciled"
     repo.insert_fill(Fill(
         id=fill_id,
         order_id=order_id,
@@ -412,9 +272,6 @@ def _insert_entry_chain(
         fill_quantity=quantity,
         fee=entry_fee,
         fee_source=fee_source,
-        paper_fill_model_version=(
-            "paper-order-fill/v1" if execution_mode == "paper_internal" else None
-        ),
         filled_at=entry_at,
     ))
     return opportunity.id, proposal.id, order_id
@@ -485,11 +342,10 @@ def _insert_closed_position_via_producer(
         confidence=confidence,
         confidence_score=confidence_score,
     )
-    local_paper = execution_mode == "paper_internal"
     funding_source = (
         "not_applicable"
         if market_type == "spot"
-        else "local_simulation" if local_paper else "broker_ledger"
+        else "broker_ledger"
     )
     position = Position(
         id=position_id,
@@ -504,27 +360,16 @@ def _insert_closed_position_via_producer(
         opportunity_id=opportunity_id,
         proposal_id=proposal_id,
         order_id=order_id,
-        entry_price_source="local_fill" if local_paper else "broker_fill",
+        entry_price_source="broker_fill",
         entry_fill_verified=True,
         entry_fee=entry_fee,
         btc_entry_price=btc_entry_price,
         funding_cost=funding_cost,
         funding_source=funding_source,
-        slippage_cost=0.0 if local_paper else None,
         opened_at=opened_iso,
     )
     repo.insert_position(position)
     repo.update_order_metadata(order_id, position_id=position_id)
-    if local_paper:
-        from aletheia.portfolio.paper_account import record_position_opened
-
-        record_position_opened(position_id)
-        opened_event = repo.get_db().execute(
-            "SELECT id FROM paper_account_events "
-            "WHERE action = 'position_opened' AND position_id = ?",
-            (position_id,),
-        ).fetchone()
-        assert opened_event is not None
 
     target_gross = realized_pnl + entry_fee + exit_fee + funding_cost
     if direction in {"long", "buy"}:
@@ -551,72 +396,67 @@ def _insert_closed_position_via_producer(
         quantity=quantity,
         price=exit_price,
         execution_mode=execution_mode,
-        exchange_order_id=None if local_paper else remote_order_id,
+        exchange_order_id=remote_order_id,
         status="filled",
         created_at=closed_iso,
         filled_at=closed_iso,
     )
-    if local_paper:
-        close_fill_id = f"paper-close:{position_id}:{closed_iso}"
-        close_fee_source = "estimated"
-        verified_exit_evidence = None
-    else:
-        from aletheia.execution.exchange_materialization import (
-            durable_private_fill_id,
-        )
+    from aletheia.execution.exchange_materialization import (
+        durable_private_fill_id,
+    )
 
-        remote_fill_id = f"remote-close-fill-{position_id}"
-        close_fill_id = durable_private_fill_id(execution_mode, remote_fill_id)
-        evidence_source, source_endpoint, account_environment = {
-            "bitget_demo": ("bitget_private_close_fills", "private_fills", "demo"),
-            "bitget_live_limited": (
-                "bitget_private_close_fills", "private_fills", "live",
-            ),
-            "okx_demo": (
-                "okx_demo_private_close_fills",
-                "/api/v5/trade/fills-history",
-                "demo",
-            ),
-            "okx_live_limited": (
-                "okx_live_limited_private_close_fills",
-                "/api/v5/trade/fills-history",
-                "live",
-            ),
-            "binance_testnet": (
-                "binance_testnet_private_close_fills",
-                "/fapi/v1/userTrades",
-                "testnet",
-            ),
-            "binance_live_limited": (
-                "binance_live_limited_private_close_fills",
-                "/fapi/v1/userTrades",
-                "live",
-            ),
-        }[execution_mode]
-        close_fee_source = "reconciled"
-        verified_exit_evidence = {
-            "source": evidence_source,
-            "source_endpoint": source_endpoint,
-            "broker_id": execution_mode,
-            "account_environment": account_environment,
-            "execution_mode": execution_mode,
-            "exchange_order_id": remote_order_id,
-            "client_order_id": close_order.client_order_id,
-            "fill_ids": [remote_fill_id],
-            "durable_fill_ids": [close_fill_id],
-            "fill_quantity": quantity,
-            "fee_in_quote": exit_fee,
-            "fills": [{
-                "fill_id": remote_fill_id,
-                "remote_fill_id": remote_fill_id,
-                "durable_fill_id": close_fill_id,
-                "price": exit_price,
-                "quantity": quantity,
-                "fee": exit_fee,
-                "fee_currency": "USDT",
-                "filled_at": closed_iso,
-            }],
-        }
+    remote_fill_id = f"remote-close-fill-{position_id}"
+    close_fill_id = durable_private_fill_id(execution_mode, remote_fill_id)
+    evidence_source, source_endpoint, account_environment = {
+        "bitget_demo": ("bitget_private_close_fills", "private_fills", "demo"),
+        "bitget_live_limited": (
+            "bitget_private_close_fills", "private_fills", "live",
+        ),
+        "okx_demo": (
+            "okx_demo_private_close_fills",
+            "/api/v5/trade/fills-history",
+            "demo",
+        ),
+        "okx_live_limited": (
+            "okx_live_limited_private_close_fills",
+            "/api/v5/trade/fills-history",
+            "live",
+        ),
+        "binance_testnet": (
+            "binance_testnet_private_close_fills",
+            "/fapi/v1/userTrades",
+            "testnet",
+        ),
+        "binance_live_limited": (
+            "binance_live_limited_private_close_fills",
+            "/fapi/v1/userTrades",
+            "live",
+        ),
+    }[execution_mode]
+    close_fee_source = "reconciled"
+    verified_exit_evidence = {
+        "source": evidence_source,
+        "source_endpoint": source_endpoint,
+        "broker_id": execution_mode,
+        "account_environment": account_environment,
+        "execution_mode": execution_mode,
+        "exchange_order_id": remote_order_id,
+        "client_order_id": close_order.client_order_id,
+        "fill_ids": [remote_fill_id],
+        "durable_fill_ids": [close_fill_id],
+        "fill_quantity": quantity,
+        "fee_in_quote": exit_fee,
+        "fills": [{
+            "fill_id": remote_fill_id,
+            "remote_fill_id": remote_fill_id,
+            "durable_fill_id": close_fill_id,
+            "price": exit_price,
+            "quantity": quantity,
+            "fee": exit_fee,
+            "fee_currency": "USDT",
+            "filled_at": closed_iso,
+        }],
+    }
     close_fill = Fill(
         id=close_fill_id,
         order_id=close_order.id,
@@ -642,18 +482,9 @@ def _insert_closed_position_via_producer(
         actor="test_fixture",
         source="production_close_fixture",
     )
-    if local_paper:
-        closed_event = repo.get_db().execute(
-            "SELECT id FROM paper_account_events "
-            "WHERE action = 'position_closed' AND position_id = ?",
-            (position_id,),
-        ).fetchone()
-        assert closed_event is not None
     _align_historical_producer_run(
         position_id,
-        opened_at=opened_iso,
         closed_at=closed_iso,
-        local_paper=local_paper,
     )
     assert result["realized_pnl"] == pytest.approx(realized_pnl)
     return _assert_complete_closed_position_fixture(
@@ -662,54 +493,7 @@ def _insert_closed_position_via_producer(
     )
 
 
-def test_historical_paper_fixture_keeps_funding_and_ledger_in_true_time_order():
-    now = datetime.now(timezone.utc)
-    later_opened = now - timedelta(hours=5)
-    later_closed = now - timedelta(hours=1)
-    earlier_opened = now - timedelta(hours=6)
-    earlier_closed = now - timedelta(hours=3)
-
-    # Insert the later trade first and overlap both holding intervals. The helper
-    # must still produce one chronology whose event-time and rowid order agree.
-    for position_id, opened_at, closed_at, realized_pnl in (
-        ("historical-later", later_opened, later_closed, 2.0),
-        ("historical-earlier", earlier_opened, earlier_closed, -1.0),
-    ):
-        _insert_closed_position_via_producer(
-            position_id=position_id,
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            realized_pnl=realized_pnl,
-            execution_mode="paper_internal",
-            opened_at=opened_at.isoformat(),
-            closed_at=closed_at.isoformat(),
-        )
-
-    db = repo.get_db()
-    events = [
-        dict(row) for row in db.execute(
-            "SELECT * FROM paper_account_events ORDER BY rowid ASC"
-        ).fetchall()
-    ]
-    assert datetime.fromisoformat(
-        events[0]["created_at"].replace("Z", "+00:00")
-    ) == earlier_opened
-    assert events[0]["action"] == "initial_funding"
-    assert [event["id"] for event in events] == [
-        row["id"] for row in db.execute(
-            "SELECT id FROM paper_account_events "
-            "ORDER BY created_at ASC, "
-            "CASE action WHEN 'initial_funding' THEN 0 "
-            "WHEN 'position_opened' THEN 1 "
-            "WHEN 'position_closed' THEN 3 ELSE 2 END ASC, rowid ASC"
-        ).fetchall()
-    ]
-
-
-def _position(*, execution_mode: str = "paper_internal") -> Position:
+def _position(*, execution_mode: str = "bitget_demo") -> Position:
     position_id = "position-close-split"
     opportunity_id, proposal_id, order_id = _insert_entry_chain(
         position_id=position_id,
@@ -726,16 +510,10 @@ def _position(*, execution_mode: str = "paper_internal") -> Position:
         market_type="usdt_futures", direction="long", quantity=2.0,
         entry_price=100.0, current_price=105.0, unrealized_pnl=10.0,
         execution_mode=execution_mode, entry_fee=0.2,
-        entry_price_source=(
-            "local_fill" if execution_mode == "paper_internal" else "broker_fill"
-        ),
+        entry_price_source="broker_fill",
         entry_fill_verified=True,
         funding_cost=0.0,
-        funding_source=(
-            "local_simulation"
-            if execution_mode == "paper_internal"
-            else "broker_ledger"
-        ),
+        funding_source="broker_ledger",
         opportunity_id=opportunity_id,
         proposal_id=proposal_id,
         order_id=order_id,
@@ -749,9 +527,7 @@ def _verified_result(position: Position):
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     request = VerifiedExitRequest(
         broker_id=position.execution_mode,
-        account_environment=(
-            "local" if position.execution_mode == "paper_internal" else "demo"
-        ),
+        account_environment=_account_environment(position.execution_mode),
         account_scope="account-scope-1", execution_mode=position.execution_mode,
         position_id=position.id, symbol=position.symbol,
         market_type=position.market_type, direction=position.direction,
@@ -780,9 +556,7 @@ def _verified_result(position: Position):
 def _admin_identity(position: Position) -> dict:
     return {
         "broker_id": position.execution_mode,
-        "account_environment": (
-            "local" if position.execution_mode == "paper_internal" else "demo"
-        ),
+        "account_environment": _account_environment(position.execution_mode),
         "account_scope": "account-scope-1",
         "execution_mode": position.execution_mode,
         "position_id": position.id,
@@ -794,12 +568,9 @@ def _admin_identity(position: Position) -> dict:
 
 def test_administrative_close_converges_state_without_economic_side_effects(monkeypatch):
     from aletheia.portfolio import outcome_closure
-    from aletheia.portfolio.paper_account import get_paper_account, record_position_opened
 
     position = _position()
     repo.insert_position(position)
-    record_position_opened(position.id)
-    before = get_paper_account(event_limit=100)
     monkeypatch.setattr(
         outcome_closure, "_run_outcome_hooks",
         lambda *args, **kwargs: (_ for _ in ()).throw(
@@ -828,9 +599,7 @@ def test_administrative_close_converges_state_without_economic_side_effects(monk
     assert stored["slippage_cost"] is None
     assert stored["current_price"] == 105.0
 
-    after = get_paper_account(event_limit=100)
-    assert after["cash_balance_usdt"] == before["cash_balance_usdt"]
-    assert not repo.has_paper_account_position_event("position_closed", position.id)
+    assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
     from aletheia.portfolio.pnl import today_eligible_strategy_pnl
     assert today_eligible_strategy_pnl() == 0.0
@@ -854,12 +623,9 @@ def test_administrative_close_converges_state_without_economic_side_effects(monk
 
 def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     from aletheia.portfolio import outcome_closure
-    from aletheia.portfolio.paper_account import get_paper_account, record_position_opened
 
     position = _position()
     repo.insert_position(position)
-    record_position_opened(position.id)
-    before_cash = get_paper_account(event_limit=100)["cash_balance_usdt"]
     hook_calls = []
     monkeypatch.setattr(
         outcome_closure, "_run_outcome_hooks",
@@ -877,7 +643,7 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     assert result["realized_pnl"] == pytest.approx(21.6)
     stored = repo._select_one("positions", position.id)
     assert stored["close_category"] == "strategy"
-    assert stored["exit_price_source"] == "local_fill"
+    assert stored["exit_price_source"] == "broker_fill"
     assert stored["exit_fill_verified"] == 1
     assert stored["outcome_eligible"] == 1
     assert stored["exit_fee"] == pytest.approx(0.2)
@@ -887,9 +653,6 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
         tz=timezone.utc,
     ).isoformat()
     assert stored["closed_at"] == expected_closed_at
-    assert get_paper_account(event_limit=100)["cash_balance_usdt"] == pytest.approx(
-        before_cash + 21.6
-    )
     from aletheia.portfolio.pnl import today_eligible_strategy_pnl
     assert today_eligible_strategy_pnl() == pytest.approx(21.6)
     assert len(hook_calls) == 1
@@ -902,36 +665,7 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     )
     assert repeated["already_closed"] is True
     assert len(hook_calls) == 1
-    assert len([
-        row for row in repo.list_paper_account_events(limit=100)
-        if row["action"] == "position_closed" and row["position_id"] == position.id
-    ]) == 1
-
-
-@pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))
-def test_local_close_rejects_invalid_persisted_entry_fee(bad_fee):
-    from aletheia.portfolio.pnl import close_position
-
-    position = Position(
-        id="local-invalid-entry-fee",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        execution_mode="paper_internal",
-        entry_fee=0.0,
-    )
-    repo.insert_position(position)
-    force_update_position(position.id, entry_fee=bad_fee)
-
-    with pytest.raises(ValueError, match="entry_fee must be a finite non-negative value"):
-        close_position(position.id, exit_price=110.0)
-
-    stored = repo._select_one("positions", position.id)
-    assert stored["status"] == "open"
-    assert repo.list_position_close_events(position_id=position.id) == []
-    assert not repo.has_paper_account_position_event("position_closed", position.id)
+    assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))

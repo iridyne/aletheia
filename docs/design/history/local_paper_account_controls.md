@@ -145,3 +145,10 @@ local expired-lease replay and estimated simulator fills are retired. Current
 claims use external modes. Completed-Proposal idempotency is checked directly,
 without skipping when a simulated entry fails; actual causal links and reconciled
 fees are checked through the existing external private-fill materializer.
+
+Shared Outcome fixtures no longer rebuild simulated cash ledgers or invoke local
+settlement. Their surviving producer path uses external close evidence. Factor
+feedback and selected-mode profitability checks use Bitget Demo and OKX Demo;
+archived ledger read-only checks remain in `test_authoritative_account_loss.py`.
+The duplicate simulated daily-loss activation test is removed; the existing
+external-account loss test retains the threshold and mode-specific brake claim.

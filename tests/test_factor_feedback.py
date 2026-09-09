@@ -72,7 +72,7 @@ def _eligible_factor_row(
         quantity=1.0,
         entry_price=100.0,
         realized_pnl=realized_pnl,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         opened_at=opened.isoformat(),
         closed_at=closed.isoformat(),
         close_reason=close_reason,
