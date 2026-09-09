@@ -48,29 +48,25 @@ Before changing code:
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
 
-SDD depth is a semantic classifier, not an approval process. AI implementation
-should pause at a Human Decision Point (scope expansion, ambiguity, or D1/D2
-approval needed) and return facts + one recommended decision rather than broadening
-scope to resolve it.
+SDD depth is a semantic classifier, not an approval process. AI pauses at a Human
+Decision Point (scope expansion, ambiguity, or D1/D2 approval needed) and returns
+facts + one recommended decision rather than broadening scope to resolve it.
 
 For D1/D2 or an explicitly selected high-risk D0, an optional pre-change shadow
 audit may be run before step 1 to surface semantic gaps early. Run convergence
-against the exact candidate head after implementation. Both phases are advisory
-only and never a required gate. See
+against the exact candidate head after implementation. Both phases are advisory only
+and never a required gate. If selected, follow
 [SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md).
 
-Steps 1–6 are **per commit**, not per session. Put the depth, boundary,
-unchanged set, and Contract Delta in the commit message itself, so a reviewer
-reads them beside the diff. A batch of commits that shares one investigation
-still owes each commit its own declaration — they routinely differ in depth
-(2026-09-07: one batch held five D0 conformance repairs and one D1 contract
-delta, and only the D1 was declared, which is the failure this paragraph exists
-to prevent).
+For each commit, include concise metadata at a minimum: SDD depth, changed
+boundary, and Contract Delta (`NONE` for conformance repair). Use non-goals and
+extra verification notes only when materially relevant. A batch of commits that
+shares one investigation should still keep metadata scoped to each commit’s actual
+change. Problem statement, accepted root cause/semantic decision, and success evidence
+stay in the linked Issue / Change Contract; do not regenerate them per commit. Human
+approval follows root `AGENTS.md`, independently of commit metadata.
 
-Categorise commits by concern, not by session order. A conformance repair, a
-test realignment, a contract delta, and a guidance update are four commits even
-when one investigation produced all four; each has a different reviewer, a
-different revert risk, and a different depth.
+Categorize commits by concern, not by session order.
 
 ## Measuring test results honestly
 
@@ -119,20 +115,11 @@ When `scripts/ci_local.py` is available, it may validate the PR head locally:
 uv run python scripts/ci_local.py --pr-body-file /path/to/pr-body.md
 ```
 
-These scripts are local validators, not authorization to start GitHub Actions.
-Remote GitHub CI is manual-only: never dispatch, start, or rerun it unless the
-owner explicitly requests remote CI in the current task. Release, deployment,
-merge, or broad-verification intent does not imply that permission.
-
-It validates the same Change Contract parser and changed-file exemption logic
-as GitHub CI, needs no fabricated GitHub event payload, performs no network I/O
-or Runtime startup, and prints bounded structured reason codes on failure.
-
+These scripts are local validators, not authorization to start or wait for CI.
 If only `SDD Depth` / `Contract Delta` metadata is invalid after a PR exists,
 fix the PR body on the **same head SHA** and rerun the local preflight. Never
 add a no-op, retrigger, or metadata-only source commit. Existing successful
-deep evidence for that head remains unchanged. Remote CI remains manual-only
-and requires an explicit owner request, including after metadata repair.
+deep evidence for that head remains unchanged.
 
 - Inspect first; add focused failure-path coverage for safety, lifecycle, audit,
   secrets, and trading changes; implement the smallest fix; broaden tests only
@@ -144,9 +131,8 @@ and requires an explicit owner request, including after metadata repair.
   progress, and defects belong in GitHub Issues/PRs. Create a Proposal only for
   major, cross-domain, or trust-boundary changes. Follow
   [documentation governance](../../../governance/policies/documentation_governance.md).
-- Commit only scoped files and publish through the normal PR workflow. GitHub
-  Actions uses self-hosted runners only. Disable a broken workflow; do not
-  archive the repository.
+- Commit only scoped files and publish through the normal PR workflow. Disable a broken
+  workflow; do not archive the repository.
 - Run focused local regression tests proportional to the change. If the owner
   explicitly requests a complete suite and the result cannot wait, use an
   isolated Fedora CI/Test process in a
@@ -167,12 +153,12 @@ and requires an explicit owner request, including after metadata repair.
   A Worktree alone does not provide this isolation.
 - `Prepare and tag releases` runs only after an owner selects the explicit
   `operational_need` input for an accumulated batch. It may create or refresh a
-  held release candidate, but it never starts CI. Agents must not start CI to
-  clear that hold without a separate explicit owner request for remote CI.
+  held release candidate, but it never starts any validation workflow. Agents must not wait for external validation to
+  clear that hold without a separate explicit owner request.
   Qualification runtimes remain pinned unless an owner explicitly selects a
   deployment. See the
   [release contract](../../deployment/MODULAR_MONOLITH_RELEASE.md).
-- When owner-requested CI is pending, inspect checks, the registered runner/queue state, and any
+- When owner-requested external validation is pending, inspect the available checks, any event state,
   failing log once. Continue independent work and monitor non-blockingly at
   intervals up to 30 minutes; do not spend the work loop polling unchanged jobs.
 - The gateway is global: do not restart it casually or from competing worktrees.
@@ -191,9 +177,8 @@ and requires an explicit owner request, including after metadata repair.
   Path observer, and durable pause owners; it is read-only and may report
   explicit `unavailable` reasons). The command uses SQLite `mode=ro`; a missing
   database remains unavailable and is never created by inspection.
-- Full suite: run it only when explicitly requested, through remote CI or the
-  isolated Fedora process above; never run it on macOS or use Windows as a
-  validation fallback.
+- Full suite: run it only when explicitly requested, through the isolated Fedora process above;
+  never run it on macOS or use Windows as a validation fallback.
 - Gateway: `uv run aletheia gateway <start|stop|restart|status|logs>`
 - Daily/release UI: `http://127.0.0.1:8787/`
 - Worktree HMR: Vite `http://127.0.0.1:5173/`; read

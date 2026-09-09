@@ -15,7 +15,7 @@ from scripts.check_change_contract import check_pr_description
 VALID_D0_PR = """
 ## SDD Depth
 
-D0 — Implementation Conformance Repair
+D0 — Restore Truth / Conformance Repair
 
 ## Contract Delta
 
@@ -26,7 +26,7 @@ NONE — existing Contract remains unchanged.
 VALID_D1_PR = """
 ## SDD Depth
 
-D1 — Contract Behavior Change
+D1 — Change Semantics
 
 ## Contract Delta
 
@@ -40,7 +40,7 @@ D1 — Contract Behavior Change
 VALID_D2_PR = """
 ## SDD Depth
 
-D2 — Substantial Design Change
+D2 — Change Structure
 
 ## Contract Delta
 

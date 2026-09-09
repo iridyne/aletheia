@@ -21,9 +21,9 @@ or a future delivery sequence in the Issue body. If A depends on B, state that d
 directly. Open a focused child only when future work becomes independently actionable.
 
 D0: restore truth / conformance repair — existing Contract / invariant already
-  defines target behavior; no semantic change.
+  defines target behavior; no new semantics are being introduced.
 D1: change semantics — behavior semantics change. State ADDED / MODIFIED / REMOVED
-  deltas.
+  semantic deltas.
 D2: change structure — authority ownership, mainline, subsystem topology, or product
   scope changes; requires accepted docs/design/proposals/ Proposal first.
 

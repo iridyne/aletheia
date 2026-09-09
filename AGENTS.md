@@ -16,8 +16,9 @@ Capability > Agent autonomy`.
 Before changing code, classify each change by semantic nature:
 
 - **D0 = restore truth (conformance repair)**: an existing Contract / invariant already
-  defines the target behavior, and current code, tests, docs, or runtime facts are
-  non-conformant. Repair it without changing behavior. `Contract Delta` is `NONE`.
+  defines the target behavior. Current code, tests, docs, or runtime facts are non-conformant.
+  Repair restores conformance by changing implementation/runtime behavior to the already-approved
+  semantics. `Contract Delta` is `NONE`.
 - **D1 = change semantics**: the target behavior or meaning changes while long-lived
   structure and ownership stay largely stable.
 - **D2 = change structure**: state ownership, mainline, subsystem topology, authority,
@@ -27,14 +28,22 @@ AI execution authority is constrained by the following:
 
 - Owner alone defines current problem statement, root-cause acceptance, completion
   criteria, phase promotion, and any D1/D2 semantic/structure decision.
+- Only the owner selects project priority and the next problem; backlog labels,
+  closed Issues, merged PRs, or green tests do not authorize either or prove runtime success.
+- Approval is per semantic change, not per implementation commit. Once the owner
+  accepts the Change Contract, AI may execute it without repeated approval. Ordinary
+  D0 repairs may proceed within approved scope while Delta is `NONE` and no ambiguity arises.
 - A new Issue records evidence or a defect; it is not execution authorization for
   changed scope.
 - AI may investigate, reproduce, test, review, and implement only inside an owner-approved
   issue scope.
-- If investigation reaches a D1/D2, ambiguity, or scope expansion, implementation stops
-  and a decision packet is produced:
+- If investigation reaches an unapproved D1/D2, ambiguity, or scope expansion,
+  the affected implementation stops and a decision packet is produced:
   facts, inference with confidence, unresolved uncertainty, one recommended decision,
   changed boundary, and required evidence.
+- Ask the owner the specific decision needed. Do not substitute more agents, parallel
+  implementations, or changed tests/contracts for that decision, or promote inference
+  into project truth. Nested guides inherit this boundary rather than redefining it.
 
 - Orders reach exchanges only through the backend Execution Gateway; Risk approval always precedes execution.
 - Live trading is off by default. Agents cannot expand tool, credential, Risk, Gateway, or live-unlock authority.
@@ -74,12 +83,11 @@ Use `uv run` for Python. macOS is development/control only; do not infer Fedora
 runtime state or start a local Gateway unless explicitly requested. Fedora is the
 operational verification target. Windows is not a validation fallback.
 
-Remote GitHub CI is manual-only. Never dispatch, start, or rerun it unless the
-owner explicitly requests remote CI in the current task; release, deployment,
-merge, or broad-verification intent does not imply that permission. Use focused
-local tests by default. `scripts/ci_plan.py`, `scripts/ci_preflight.py`, and
-`scripts/ci_local.py` are local validators and do not authorize a GitHub workflow.
-If owner-requested CI is pending, inspect it once and monitor non-blockingly.
+Remote GitHub CI is retired/unavailable for the current workflow. Agents must not
+start, dispatch, wait for, or claim authority from remote CI. Use focused local
+deterministic validation instead (`scripts/ci_plan.py`, `scripts/ci_preflight.py`,
+`scripts/ci_local.py`, and `scripts/check_docs.py`/targeted pytest), which is local-only
+validation and does not grant merge/runtime authority.
 
 Before opening or resetting an Observation/qualification window after a merged
 behavior or evidence change, deploy the exact merged commit to Fedora, restart
