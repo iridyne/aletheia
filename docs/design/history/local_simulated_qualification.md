@@ -138,3 +138,10 @@ execution and unresolved-submission regressions remain in
 `tests/specs/spec_pipeline_exchange_commit.py`, retaining their existing claim IDs.
 Current planner checks use Full permission and Bitget Demo; fixed-horizon entry
 Learning fixtures also use external order and position modes.
+
+`record_candidate_filter_trace` was the sequential trace writer for the retired
+Ranker and had no remaining caller. It is removed; Observer and Risk keep their
+existing evidence writers and shared exact-venue helpers. The behavior inventory
+no longer names the deleted Ranker entrypoint. Guard evaluation remains available
+for advisory context and diagnostics without claiming a current Ranker hard-block
+execution path.

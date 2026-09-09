@@ -26,7 +26,6 @@ BEHAVIOR_AUTHORITIES: tuple[BehaviorAuthority, ...] = (
         behavior_id="block_paper_candidate",
         consumer_entrypoints=(
             "aletheia.knowledge.guards.evaluate_guards",
-            "aletheia.agents.paper_trader_ranker._evaluate_candidate",
         ),
         # Seed guards are shipped static safety policy. Manual guards are explicit
         # owner-authored static policy. Neither is historical auto-learning.
