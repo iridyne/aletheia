@@ -306,20 +306,23 @@ def test_still_open_order_left_alone(tmp_path, monkeypatch):
     assert repo.list_orders()[0]["status"] == "submitted"
 
 
-def test_paper_orders_ignored(tmp_path, monkeypatch):
+def test_archived_orders_are_ignored_without_mutation(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _patch_open_orders(monkeypatch, open_ids=[])
 
-    repo.insert_order(Order(
+    order = Order(
         source="adopted",
         symbol="SOL/USDT", market_type="spot", direction="long", order_type="market",
         quantity=1.0, price=150, execution_mode="paper_internal", status="filled",
-    ))
+    )
+    repo._insert("orders", order.model_dump())
+    before = repo.get_order(order.id)
     from aletheia.execution.reconciliation import reconcile
     result = reconcile()
-    # paper order untouched and not counted
+    # Historical rows are readable but excluded from exchange reconciliation.
     assert result["filled"] == 0
     assert result["checked"] == 0
+    assert repo.get_order(order.id) == before
 
 
 def test_reconciliation_scans_all_unresolved_orders_without_fixed_limit(
