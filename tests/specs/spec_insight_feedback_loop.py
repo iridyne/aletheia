@@ -297,7 +297,7 @@ def test_position_regime_reads_market_regime(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
     from aletheia.storage.migrations import run_migrations
-    from aletheia.execution import position_enrichment, paper_broker
+    from aletheia.execution import position_enrichment
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -317,12 +317,9 @@ def test_position_regime_reads_market_regime(tmp_path, monkeypatch):
     )
     conn.commit()
 
-    # Both broker regime sources must stamp the MARKET regime, not 'neutral'/'unknown'.
+    # Entry enrichment reads the persisted market regime.
     assert position_enrichment.current_regime() == "bear", (
         "current_regime must read market_regimes.state (A1) — got non-market value"
-    )
-    assert paper_broker._current_regime() == "bear", (
-        "_current_regime must mirror the same market-regime source as enrichment"
     )
 
 

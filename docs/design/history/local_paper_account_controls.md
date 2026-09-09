@@ -165,3 +165,10 @@ external close/outbox tests retain attribution-read recovery; the remaining
 causal-identity and funding-completeness claims use external close evidence.
 Serenity feedback tests now verify external closes, exactly-once PostMortem
 creation, opportunity status and loss buckets without a simulated account.
+
+The former `PA-S01`–`PA-S03` Paper Attribution suite and `test_paper_autoloop.py`
+are retired with the local broker, wrapper and agent/scheduler entry points.
+`PL-ENRICH-01` now verifies that all three external brokers retain the Proposal
+attribution snapshot even when current BTC/regime lookups have changed. `PI-S05`
+keeps only the external native-limit plan gate. `PL-MSI-02` retains the complete
+open-position working-set and stop-adjustment check without local merge lookup.

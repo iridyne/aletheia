@@ -2,7 +2,7 @@
 
 Regression lock for the EC-stop sibling bug class: the three real-exchange paths
 (okx/binance/bitget) historically materialized a Position WITHOUT the entry-time
-metadata that paper_broker records — btc_entry_price, regime_tag,
+decision metadata — btc_entry_price, regime_tag,
 entry_market_summary, decision_reasoning, entry_fee, slippage_cost. These fields
 now survive the broker acknowledgement handoff and are applied only when exact
 private fill evidence creates the Position.
@@ -49,7 +49,7 @@ def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
 
     monkeypatch.setattr(
         gateway,
-        "capture_paper_attribution_snapshot",
+        "capture_attribution_snapshot",
         lambda symbol, **_kwargs: {
             "btc_entry_price": btc,
             "regime_tag": regime,
@@ -101,6 +101,8 @@ def test_broker_open_stamps_entry_metadata(tmp_path, monkeypatch, exec_mode):
             "market_context": {"source": "spec"},
         }),
     )
+    # Current market context has drifted since the immutable proposal snapshot.
+    _patch_enrichment_lookups(monkeypatch, btc=999999.0, regime="execution_drift")
     # requested price 59950 vs fill 60000 → slippage_cost = 50 * 0.01 = 0.5
     result = coordinator.execute_order(proposal_id=proposal_id,
     risk_decision_id=risk_decision_id,
@@ -123,6 +125,7 @@ def test_broker_open_stamps_entry_metadata(tmp_path, monkeypatch, exec_mode):
     assert pos["regime_tag"] == "risk_on", (
         f"{label}: regime_tag dropped (got {pos['regime_tag']!r}) — per-regime learning collapses"
     )
+    assert json.loads(pos["entry_market_summary"]) == {"source": "spec"}
     assert pos["entry_fee"] is not None and pos["entry_fee"] > 0, (
         f"{label}: entry_fee dropped (got {pos['entry_fee']!r})"
     )
@@ -193,8 +196,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
 
 # Real-exchange DEMO modes whose close MUST go through the exchange broker (not a
 # local-only close that would desync the demo exchange + fabricate the exit price).
-# okx_demo is the active experiment path. (paper_internal is the only mode allowed to
-# close purely locally; *_live_limited is human-only — covered separately in -04.)
+# The human-only live-close boundary is covered separately in -04.
 _CLOSE_ROUTED = ["bitget_demo", "binance_testnet", "okx_demo"]
 
 

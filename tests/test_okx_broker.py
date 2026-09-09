@@ -175,12 +175,6 @@ class TestSymbolFilter:
         assert failures == [("okx_demo_symbols", "market load unavailable")]
 
 
-class TestPaperToolsIntegration:
-    """Verify okx_demo is in _PAPER_MODES."""
-
-    def test_okx_demo_in_paper_modes(self):
-        from aletheia.execution.paper_tools import _PAPER_MODES
-        assert "okx_demo" in _PAPER_MODES
 
 
 class TestRiskEngineOkx:
@@ -191,15 +185,3 @@ class TestRiskEngineOkx:
         assert _is_live("okx_live_limited") is True
         assert _is_live("okx_demo") is False
         assert _is_live("bitget_live_limited") is True
-
-
-class TestPositionManagerRouting:
-    """Verify position_manager knows about OKX modes."""
-
-    def test_paper_modes_includes_okx(self):
-        from aletheia.portfolio.position_manager import _PAPER_MODES
-        # okx_demo should NOT be in position_manager's _PAPER_MODES (it uses exchange close)
-        # but it should be handled in the close routing
-        # The actual routing is in evaluate_open_positions() — just verify module loads
-        import aletheia.portfolio.position_manager
-        assert callable(aletheia.portfolio.position_manager.evaluate_open_positions)

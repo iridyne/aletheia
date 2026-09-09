@@ -352,38 +352,13 @@ def test_low_risk_write_commands_reject_docs_prefix_path():
 
 @spec_claim(
     SpecClaim("PI-S05", "execution_contract", "§entry discipline by execution mode", "L2b",
-              "Local paper entry uses an immediate market fill from a fresh exact mark; "
-              "the autonomous wrapper and paper broker reject local limit entries. "
-              "Exchange demo callers may still request a planned native limit entry, whose "
+              "Exchange demo callers may request a planned native limit entry, whose "
               "four entry fields remain protected by Risk."),
 )
-def test_entry_discipline_market_default_local_limit_rejection_and_native_gate(monkeypatch):
-    """行为断言(非源码 grep):
-
-    1. create_paper_proposal 默认下单类型 = market。
-    2. paper_internal 显式 limit 在 wrapper 和 broker 两层都拒绝且无副作用。
-    3. 风控对 exchange native limit 入场缺任一要素(入场价/止损/止盈/盈亏比)→ 拒单
-       (incomplete_entry_plan)。
-    4. 四要素齐全的 exchange native limit 入场 → 不再触发 incomplete_entry_plan。
-    """
-    import inspect
-    from aletheia.execution import paper_tools
+def test_exchange_native_limit_plan_gate():
+    """Incomplete native limit plans are rejected; complete plans and market orders are distinct."""
     from aletheia.storage.models import TradeProposal
     from aletheia.risk.engine import evaluate_proposal
-
-    # 1. local paper is an immediate simulated fill, not a fake maker promise.
-    sig = inspect.signature(paper_tools.create_paper_proposal)
-    assert sig.parameters["order_type"].default == "market"
-
-    monkeypatch.setattr(
-        paper_tools, "submit_proposal", lambda **kwargs: kwargs,
-    )
-    with pytest.raises(ValueError, match="paper_internal_market_only"):
-        paper_tools.create_paper_proposal(
-            symbol="BTC/USDT", market_type="spot", direction="long",
-            quantity=0.001, price=50000.0, execution_mode="paper_internal",
-            order_type="limit",
-        )
 
     common = dict(symbol="BTC/USDT", market_type="spot", direction="long",
                   quantity=0.001, price=50000.0, execution_mode="bitget_demo")

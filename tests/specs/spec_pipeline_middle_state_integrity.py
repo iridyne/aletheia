@@ -534,15 +534,13 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         "§2 complete open-position working set",
         "L2b",
         "Safety and lifecycle loops see every open Position beyond the legacy 50-row "
-        "display default, and paper aggregation can find an older Position only for "
-        "the same immutable Proposal lineage.",
+        "display default, including an older external Position whose stop is adjusted.",
         status="implemented",
     )
 )
-def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monkeypatch):
+def test_open_position_working_set_is_unbounded(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import paper_broker
     from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position, TradeProposal
@@ -554,7 +552,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         direction="long",
         quantity=1.0,
         price=10.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executed",
     )
     repo.insert_trade_proposal(proposal)
@@ -566,7 +564,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         direction="long",
         quantity=1.0,
         entry_price=10.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         strategy_id="target-strategy",
         proposal_id=proposal.id,
     )
@@ -579,23 +577,17 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
             direction="long",
             quantity=1.0,
             entry_price=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             strategy_id=f"strategy-{index}",
         ))
 
     all_open = repo.list_all_open_positions()
     assert len(all_open) == 501
     assert target.id in {row["id"] for row in all_open}
-    matched = paper_broker._find_open_position(
-        target.symbol,
-        target.market_type,
-        target.direction,
-        target.execution_mode,
-        target.strategy_id,
-        target.proposal_id,
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda *_args: True,
     )
-    assert matched is not None
-    assert matched["id"] == target.id
 
     adjusted = position_manager.adjust_stop(target.id, 9.0)
     assert adjusted["updated"] is True
@@ -1246,7 +1238,6 @@ def test_safety_loops_do_not_use_the_truncated_open_position_reader():
         "aletheia/data/price_feed.py",
         "aletheia/trading/market_data.py",
         "aletheia/agent_runtime/scheduler.py",
-        "aletheia/execution/paper_broker.py",
     )
     for relative in paths:
         source = (root / relative).read_text(encoding="utf-8")
