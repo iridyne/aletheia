@@ -58,7 +58,7 @@ def _divergent_risk_config() -> AletheiaConfig:
     [
         (
             "exceeds_demo_position_margin:300.0>200.0",
-            "paper_internal",
+            "bitget_demo",
             "max_demo_position_margin_usdt",
             200.0,
             300.0,
@@ -78,13 +78,13 @@ def _divergent_risk_config() -> AletheiaConfig:
             15.0,
         ),
         ("exceeds_single_trade_risk:3.0>2.0", "bitget_live_limited", "max_single_trade_risk_pct", 2.0, 3.0),
-        ("exceeds_demo_single_trade_risk:25.0>20.0", "paper_internal", "max_demo_single_trade_risk_pct", 20.0, 25.0),
-        ("max_daily_loss_exceeded:-25.0<=-20.0", "paper_internal", "max_daily_loss_pct", 20.0, 25.0),
-        ("exceeds_max_leverage:11.0>10.0", "paper_internal", "max_futures_leverage_demo", 10, 11),
+        ("exceeds_demo_single_trade_risk:25.0>20.0", "bitget_demo", "max_demo_single_trade_risk_pct", 20.0, 25.0),
+        ("max_daily_loss_exceeded:-25.0<=-20.0", "bitget_demo", "max_daily_loss_pct", 20.0, 25.0),
+        ("exceeds_max_leverage:11.0>10.0", "bitget_demo", "max_futures_leverage_demo", 10, 11),
         ("max_live_positions_reached:3", "bitget_live_limited", "max_open_positions_live", 3, 4),
-        ("max_demo_positions_reached:20", "paper_internal", "max_open_positions_demo", 20, 21),
+        ("max_demo_positions_reached:20", "bitget_demo", "max_open_positions_demo", 20, 21),
         ("short_not_allowed_live", "bitget_live_limited", "allow_short_live", False, True),
-        ("short_not_allowed_demo", "paper_internal", "allow_short_demo", False, True),
+        ("short_not_allowed_demo", "bitget_demo", "allow_short_demo", False, True),
     ],
 )
 def test_risk_boundary_candidates_read_current_value_from_resolved_mode_policy(
@@ -137,7 +137,8 @@ def test_every_live_venue_uses_live_leverage_policy(execution_mode):
 
 @pytest.mark.parametrize(
     "proposal",
-    (None, {}, {"execution_mode": ""}, {"execution_mode": "unknown_mode"}),
+    (None, {}, {"execution_mode": ""}, {"execution_mode": "unknown_mode"},
+     {"execution_mode": "paper_internal"}),
 )
 def test_risk_boundary_candidate_fails_closed_without_registered_execution_mode(proposal):
     cfg = _divergent_risk_config()
@@ -159,7 +160,7 @@ def test_current_demo_daily_loss_does_not_recommend_legacy_one_point_seven_perce
     assert (
         recommendations._risk_boundary_change_from_violation(
             "max_daily_loss_exceeded:-3.4<=-2.0",
-            {"execution_mode": "paper_internal"},
+            {"execution_mode": "bitget_demo"},
             cfg,
         )
         is None
@@ -182,7 +183,7 @@ def _risk_summary_rows(
         ("live", live_count, live_loss),
     ):
         policy = getattr(cfg.risk, risk_mode)
-        execution_mode = "paper_internal" if risk_mode == "demo" else "bitget_live_limited"
+        execution_mode = "bitget_demo" if risk_mode == "demo" else "bitget_live_limited"
         for index in range(count):
             proposal_id = f"{risk_mode}-proposal-{index}"
             proposals[proposal_id] = {

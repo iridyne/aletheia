@@ -11,6 +11,11 @@
 >
 > Last aligned with current Learning code/contracts: 2026-08-08.
 
+The `paper_*` Learning stages describe bounded treatment influence, not an
+exchange or a local account. Trading uses explicitly configured external
+exchange environments. The [retired local simulator](../../design/proposals/retire_local_simulated_exchange.md)
+provides no current execution or qualification authority.
+
 ## 1. What an experiment must prove
 
 An experiment tests one named causal claim under bounded authority. It must name:
