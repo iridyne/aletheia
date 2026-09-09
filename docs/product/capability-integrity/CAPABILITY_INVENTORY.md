@@ -1,5 +1,11 @@
 # Aletheia Capability Inventory
 
+> **Archived capability review.** Counts, statuses and “current” statements below
+> refer to the reviewed scope at that time, including the retired local simulator.
+> They do not qualify the current external exchange mainline. Use
+> [current capability boundaries](../CAPABILITY_GROUND_TRUTH.md) and the
+> [archived review scope](../../design/history/local_simulated_capability_review.md).
+
 This is the deduplicated capability list discovered from the current reviewed
 worktree. It deliberately makes **no implementation-quality judgment**.
 

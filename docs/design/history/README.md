@@ -29,3 +29,5 @@ reactivating a historical document in place.
 - [Previous local-exchange capability review](local_simulated_capability_review.md): original capability labels and evidence, superseded by the external-account scope.
 
 - [Former product scope](local_simulated_product_scope.md): superseded simulator mainline, support claims and duplicated Learning gates.
+
+- [Local simulated Alpha audit](local_simulated_alpha_audit.md): former report outputs and contribution definitions.

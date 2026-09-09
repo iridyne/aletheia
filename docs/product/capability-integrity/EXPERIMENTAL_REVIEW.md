@@ -1,5 +1,11 @@
 # Experimental Capability Integrity Review
 
+> **Archived capability review.** Counts, statuses and “current” statements below
+> refer to the reviewed scope at that time, including the retired local simulator.
+> They do not qualify the current external exchange mainline. Use
+> [current capability boundaries](../CAPABILITY_GROUND_TRUTH.md) and the
+> [archived review scope](../../design/history/local_simulated_capability_review.md).
+
 This is the read-only review of the 20 capabilities classified
 `Experimental` before this pass. The review asks whether each public promise
 reaches its stated final result; it does not require natural runtime evidence

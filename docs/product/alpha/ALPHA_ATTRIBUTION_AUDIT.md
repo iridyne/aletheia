@@ -2,6 +2,10 @@
 
 ## Purpose
 
+The [pre-retirement definition](../../design/history/local_simulated_alpha_audit.md)
+is archived. Historical simulator evidence retains its original identity and
+cannot qualify current external exchange execution.
+
 This is a read-only judging layer. It does not make the trading system smarter,
 place trades, change risk, alter the ranker, or modify System Operator behavior.
 It answers a narrower question: which layer appears to contribute or destroy
@@ -62,13 +66,16 @@ verdicts:
 - `universe_twin_evidence` consumes the existing randomized scanner-cluster
   Twin evaluator for one exact policy epoch and exposes fixed-4h outcome
   maturity, identity failures, cluster utility, and harm diagnostics.
-- `exit_paired_evidence` projects one existing prospective paired Exit treatment
-  in quote-currency net PnL.
-- `risk_policy_evidence` estimates the authoritative local-Paper Risk policy's
-  fixed-24h candidate value relative to a shadow pass-all policy.
-- `execution_cost_evidence` pairs each eligible native local-Paper Position with
-  immutable pre-fill entry/exit references to attribute actual fees and price
-  impact.
+- `universe_relative_rank_evidence` reads one exact relative-rank shadow policy
+  epoch whose complete window fits the requested audit window.
+- `exit_paired_evidence` reads archived prospective Exit assignments and paired
+  outcomes. It has no current assignment or settlement producer.
+- `exit_trailing_qualification` reads archived dynamic-trailing assignments and
+  outcomes, with enrollment disabled and no promotion authority.
+
+The former `risk_policy_evidence` and `execution_cost_evidence` fields and their
+local-simulator producers are removed. Their definitions are retained only in
+the [archived qualification contract](../../design/history/local_simulated_qualification.md).
 
 None is a sixth judging-layer verdict and none grants behavior authority or
 promotion.
@@ -190,50 +197,23 @@ policy itself; it cannot by itself prescribe a prompt or model change.
 
 ### Learning Alpha
 
-Question: does an exact supported Learning treatment improve its declared
-cost-aware outcome, and what do weaker learning/memo/guard diagnostics suggest?
-
-Current implementation:
-
-- Preferentially consumes exactly one current, already-consumed fixed-look
-  confirmatory verdict for a measurement-supported Learning path.
-- While a current Paper experiment is still collecting, reuses the existing
-  `lco-v1` read model to expose its exact experiment identity, raw samples,
-  intervention state, and exclusions instead of falling back to unrelated
-  lesson before/after diagnostics.
-- Reports identity-valid exposed intervention units separately from settled
-  economic intervention units; exposure telemetry never satisfies a verdict
-  or promotion gate.
-- Requires the durable inference decision, authority eligibility, exact
-  experiment/hypothesis/stage/policy epoch/horizon/outcome/metric/code/behavior
-  identities, arm sample contract, and complete baseline/observed/delta.
-- Never averages multiple Learning estimands. Missing, stale, incompatible, or
-  conflicting authority evidence fails closed.
-- Reads accepted/applied `ps_lessons`.
-- Also reads structured `knowledge_items` for `trading_memo`, `trading_guard`,
-  but not `guard_candidate` because candidates are not active behavior yet.
-- Extracts group keys when evidence/tags include:
-  `scanner_family`, `direction`, `symbol`, `failure_bucket` or `close_reason`.
-- Uses difference-in-differences when non-matching contemporaneous closed trades
-  provide a control group.
-- Falls back to same-pattern before/after only when controls are too thin.
-
-Only the exact consumed confirmatory path can produce
-`strong_prospective_control` and measured contribution. Generic lesson/memo/guard
-fallbacks remain `moderate_quasi_causal` or `weak_before_after`; disabling active
-safety guards for random trades would be unsafe. A current Paper monitoring
-verdict remains non-authoritative even when its provisional delta is positive or
-negative.
+The current projection reads persisted Lab measurements through
+`build_learning_contribution_projection`. It exposes experiment identity,
+availability, freshness, samples, inference, integrity and audit-window
+compatibility. It returns `insufficient_data` with
+`evidence_type=canonical_lab_measurements`; persisted or historical measurements
+do not become current consumed qualification proof. The former local-Paper
+confirmatory and lesson before/after definitions are archived.
 
 ### Exit Paired Evidence
 
 Question: for the frozen `entry-lock-after-1.5pct/v1` treatment, how would the
 same eligible Position's net quote-currency PnL have changed?
 
-Current implementation:
+Archived evidence reader:
 
 - Reads immutable prospective assignments and paired outcomes from the existing
-  Exit breakeven shadow experiment.
+  retired Exit breakeven shadow experiment; it creates no new records.
 - Uses the same Position as the statistical unit and reports actual, shadow, and
   incremental net PnL under the frozen cost model.
 - Reports available-outcome coverage and a deterministic position-level
@@ -254,65 +234,13 @@ cannot authorize applying the treatment selectively by a future close reason.
 Coverage and uncertainty remain descriptive and do not create behavior or
 promotion authority.
 
-### Risk Policy Evidence
+### Retired Risk and Execution projections
 
-Question: on the exact native local-Paper proposals that reached authoritative
-Risk, how much 24h cost-aware candidate return did the current Risk policy add
-or remove relative to passing every candidate?
-
-Current implementation:
-
-- Uses persisted authoritative `RiskDecision` as the treatment assignment and
-  requires exact Proposal commit/quantity, Demo policy identity, and matching
-  Proposal-to-Risk runtime/build/behavior provenance plus its append-only Risk
-  filter trace.
-- Joins only the exact `proposal:<id>` canonical settled `24h`
-  `filter_candidate_outcomes` result and verifies instrument, entry, horizon,
-  settlement, cost-model identity, and net-return arithmetic.
-- Defines pass-all control value as each candidate's cost-aware net return.
-  Approved candidates have the same treatment value; rejected candidates are
-  actual Risk interventions whose treatment value is zero exposure.
-- Requires one policy/build/behavior/cost identity, enough candidates, and enough
-  actual rejections. Missing or mixed evidence fails closed.
-
-An audit window may span clean Gateway restarts. Runtime session is therefore
-validated on every Proposal-to-Risk lineage but is not a cohort-wide identity;
-policy, build, behavior, and cost model remain cohort-wide identities.
-
-The statistical unit is `proposal_id`; the economic unit is percentage points of
-candidate `net_return_pct`. This is a paired value estimate for the Risk gate,
-not realized Position PnL or a full portfolio simulation. It does not model
-capacity/interference, and `behavior_authority=false` plus
-`promotion_eligible=false` remain explicit.
-
-### Execution Cost Evidence
-
-Question: for an exact native local-Paper Position, how much net return did its
-actual fills and fees add or remove relative to frictionless fills at the prices
-known immediately before execution?
-
-Current implementation:
-
-- Persists the Risk-verified Proposal price on each new Paper entry Order and the
-  exact fresh mark on each Paper close Order before adverse slippage is applied.
-  Schema v15 makes those reference fields immutable; historical rows stay NULL.
-- Reads only central `eligible_strategy_outcomes` and requires the complete
-  Proposal→authoritative RiskDecision→entry Order/Fill→Position→close Order/Fill
-  chain, exact quantity/instrument/provenance, matching Position fees and complete
-  funding economics.
-- Holds quantity, direction, entry/exit timing, and funding fixed. The control
-  uses the requested entry/exit prices with zero execution fees; the treatment
-  uses the actual local fills and fees.
-- Reports mean net-return delta plus quote-currency fee, price-impact, and total
-  incremental PnL. Missing references, mixed identities, partial/ambiguous chains,
-  or insufficient samples fail closed.
-
-The statistical unit is `position_id`. This is prospective paired accounting for
-Execution cost, not a randomized routing-policy experiment. It measures fees and
-fill-price impact exactly within the Paper simulator, but does not measure whether
-the current router avoided worse fills or outperformed an alternative algorithm.
-It remains read-only with `behavior_authority=false` and
-`promotion_eligible=false`.
+The local Risk-policy and execution-cost projections are no longer part of this
+report. Their frozen definitions remain in the
+[historical Risk and execution contracts](../../design/history/local_simulated_risk_execution.md).
+No external-account contribution or routing-quality claim is inferred from their
+old simulator results.
 
 ### Serenity Alpha
 
@@ -356,14 +284,6 @@ This audit is read-only:
   their fixed-horizon outcomes and evaluated under one frozen policy epoch, but
   no behavior authority or actual intervention was granted. This grade remains
   non-actionable.
-- `strong_prospective_paired_policy`: every candidate has an ex-ante
-  authoritative policy action and exact fixed-horizon control outcome; actual
-  reject interventions produce paired policy-value deltas. This measures the
-  declared candidate-level policy estimand, not portfolio-wide profitability.
-- `strong_prospective_paired_accounting`: immutable pre-fill references and the
-  exact verified execution/outcome chain permit same-Position cost decomposition.
-  This is accounting authority for the declared cost estimand, not evidence that
-  one routing policy causally beats another.
 - `moderate_quasi_causal`: difference-in-differences against contemporaneous
   controls is available, but there was no randomized holdout.
 - `weak_reconstructed`: the baseline was reconstructed after the fact from OHLCV.
@@ -377,16 +297,14 @@ This audit is read-only:
 - Universe Twin evidence is evaluated by exact policy epoch and remains
   Shadow-only; collecting more clusters cannot by itself create behavior
   authority or a measured Universe-layer verdict.
-- Generic Learning Alpha depends on structured evidence/tags. Unstructured
-  narrative-only lessons cannot be judged, and unsupported paths remain
-  directional even when they are consumer-wired.
+- Learning Alpha exposes persisted Lab evidence and remains insufficient for
+  current measured contribution; historical qualification does not promote it.
 - Exit paired evidence covers one frozen treatment; its actual `close_reason`
   breakdown is descriptive and cannot define an ex-ante treatment policy.
-- Risk policy evidence uses a pass-all candidate control and does not model
-  portfolio capacity, simultaneous exposures, or downstream Execution/Exit.
-- Execution cost evidence is limited to newly opened and closed native
-  `paper_internal` Positions under schema v16. Exchange/demo/live rows, legacy
-  rows, partial closes, and routing-policy value remain unmeasured.
+- Exit paired and trailing projections are archival readers. New external
+  Positions are not enrolled into the retired simulator experiments.
+- Local Risk-policy and execution-cost projections are removed. Their historical
+  results do not establish current external exchange qualification.
 - Directional verdicts retain suspected-module metadata for diagnosis, but the
   CLI does not render that metadata as confirmed or prescriptive advice.
 - A negative Ranker or System Operator observational delta does not prove either

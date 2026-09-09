@@ -1,5 +1,11 @@
 # Capability Integrity Issue Candidates
 
+> **Archived capability review.** Counts, statuses and “current” statements below
+> refer to the reviewed scope at that time, including the retired local simulator.
+> They do not qualify the current external exchange mainline. Use
+> [current capability boundaries](../CAPABILITY_GROUND_TRUTH.md) and the
+> [archived review scope](../../design/history/local_simulated_capability_review.md).
+
 These are the frozen fact-card drafts that produced the live GitHub tracking
 items. GitHub Issues, not this file, carry current ownership, priority, progress,
 and closure. Each draft remains as review evidence and does not authorize
