@@ -217,7 +217,6 @@ def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
 ):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -241,7 +240,6 @@ def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
 
     from aletheia.cli.inspect_cmd import inspect_app
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -587,23 +585,23 @@ def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     assert out["positions_count"] == 0
 
 
-def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monkeypatch):
-    """A stale external cache must not become local-paper account value."""
+def test_archived_portfolio_read_never_initializes_an_account(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 10000.0, 0.0)])
     es.sync_all_exchanges()
-
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-
     from aletheia.portfolio.pnl import compute_portfolio
-    out = compute_portfolio()
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    before = db.total_changes
+    out = compute_portfolio(execution_mode="paper_internal")
+
     assert out["exchange_sync_status"] == "not_applicable"
     assert out["exchange_equity_usdt"] is None
-    # The external cache cannot supply local-paper equity; its own cash ledger can.
-    assert out["total_value_usdt"] == out["account_equity_usdt"] == 200.0
+    assert out["total_value_usdt"] is None
+    assert out["account_equity_usdt"] is None
+    assert db.total_changes == before
+    assert db.execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
 # --- drift detection ---
@@ -772,7 +770,7 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     result = adopt_position(ex, "live")
     pos = repo._select_one("positions", result["position_id"])
     assert pos["execution_mode"] == "bitget_live_limited"
-    assert pos["execution_mode"] not in pm._PAPER_MODES  # position_manager will skip it
+    assert pos["execution_mode"] not in pm._DEMO_MODES  # position_manager will skip it
 
 
 def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):

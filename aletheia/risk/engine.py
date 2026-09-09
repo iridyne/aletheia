@@ -72,7 +72,6 @@ _NATIVE_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
 _NATIVE_DIRECTIONS = frozenset({"long", "short"})
 _NATIVE_ORDER_TYPES = frozenset({"market", "limit"})
 _NATIVE_EXECUTION_MODES = frozenset({
-    "paper_internal",
     "bitget_demo",
     "bitget_live_limited",
     "binance_testnet",
@@ -226,197 +225,9 @@ def _entry_plan_authority_violations(
     return violations
 
 
-def _entry_execution_receipt_violations(
-    proposal: TradeProposal,
-    execution_receipt,
-) -> list[str]:
-    """Validate one expiring Entry Plan attempt against its immutable intent."""
-
-    if not proposal.entry_plan_id:
-        return []
-    from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
-
-    try:
-        receipt = EntryExecutionReceiptV1.model_validate(execution_receipt)
-    except Exception:
-        return ["entry_execution_receipt_required"]
-    if not receipt.hash_is_valid():
-        return ["entry_execution_receipt_hash_mismatch"]
-    row = get_entry_plan(proposal.entry_plan_id)
-    if row is None:
-        return ["entry_plan_not_found"]
-    try:
-        plan = decode_entry_plan(str(row["plan_json"]))
-    except Exception:
-        return ["entry_plan_contract_invalid"]
-
-    violations: list[str] = []
-    if receipt.proposal_id != proposal.id or receipt.entry_plan_id != plan.plan_id:
-        violations.append("entry_execution_receipt_identity_mismatch")
-    instrument = receipt.instrument
-    if (
-        instrument.get("venue") != plan.venue
-        or instrument.get("symbol") != plan.symbol
-        or _physical_market_type(instrument.get("market_type"))
-        != _physical_market_type(plan.market_type)
-    ):
-        violations.append("entry_execution_receipt_instrument_mismatch")
-    captured_at = None
-    try:
-        captured_at = datetime.fromisoformat(receipt.captured_at.replace("Z", "+00:00"))
-        expires_at = datetime.fromisoformat(receipt.expires_at.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        if captured_at.tzinfo is None or expires_at.tzinfo is None:
-            raise ValueError
-        if captured_at > now + MAX_FUTURE_SKEW or expires_at <= now or expires_at <= captured_at:
-            violations.append("entry_execution_receipt_stale")
-    except (TypeError, ValueError):
-        violations.append("entry_execution_receipt_time_invalid")
-
-    expected_channels = {
-        {"books5": "depth", "candle1m": "candle"}.get(channel, channel)
-        for channel in plan.trigger_data_requirements
-    } or {"quote"}
-    if not expected_channels <= set(receipt.required_channels):
-        violations.append("entry_execution_receipt_channels_missing")
-    quote = receipt.quote
-    freshness_ms = int(plan.trigger_freshness_ms or 2_000)
-    try:
-        bid = float(quote["bid"])
-        ask = float(quote["ask"])
-        quote_received = int(quote["received_timestamp_ms"])
-        quote_exchange = int(quote["exchange_timestamp_ms"])
-        quote_sequence = int(quote["sequence"])
-        if captured_at is None:
-            raise ValueError
-        captured_ms = int(captured_at.timestamp() * 1_000)
-        if (
-            not math.isfinite(bid)
-            or not math.isfinite(ask)
-            or bid <= 0
-            or ask < bid
-            or quote_sequence < 0
-            or quote_received != captured_ms
-            or quote_exchange > quote_received + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
-            or quote_received - quote_exchange > freshness_ms
-        ):
-            raise ValueError
-    except (KeyError, TypeError, ValueError, OverflowError):
-        violations.append("entry_execution_receipt_quote_invalid")
-        bid = ask = None
-
-    try:
-        proposal_price = float(proposal.price)
-    except (TypeError, ValueError):
-        proposal_price = math.nan
-    if bid is not None and ask is not None:
-        if proposal.order_tactic == "POST_ONLY_LIMIT":
-            crossed = (
-                proposal.direction == "long" and proposal_price >= ask
-            ) or (
-                proposal.direction == "short" and proposal_price <= bid
-            )
-            if crossed:
-                violations.append("entry_execution_receipt_post_only_crossed")
-        elif proposal.order_tactic == "OPPOSING_BBO_IOC":
-            expected_bbo = ask if proposal.direction == "long" else bid
-            if not math.isclose(proposal_price, expected_bbo, rel_tol=1e-9, abs_tol=1e-8):
-                violations.append("entry_execution_receipt_ioc_price_mismatch")
-            depth = receipt.depth
-            if not isinstance(depth, dict) or not depth.get("bids") or not depth.get("asks"):
-                violations.append("entry_execution_receipt_depth_required")
-            else:
-                try:
-                    depth_received = int(depth["received_timestamp_ms"])
-                    depth_exchange = int(depth["exchange_timestamp_ms"])
-                    depth_sequence = int(depth["sequence"])
-                    bids = [(float(price), float(size)) for price, size in depth["bids"]]
-                    asks = [(float(price), float(size)) for price, size in depth["asks"]]
-                    if (
-                        depth_sequence < 0
-                        or depth_received > captured_ms
-                        + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
-                        or captured_ms - depth_received > freshness_ms
-                        or depth_exchange
-                        > depth_received + int(MAX_FUTURE_SKEW.total_seconds() * 1_000)
-                        or depth_received - depth_exchange > freshness_ms
-                        or any(
-                            not math.isfinite(value) or value <= 0
-                            for level in (*bids, *asks)
-                            for value in level
-                        )
-                        or any(left[0] < right[0] for left, right in zip(bids, bids[1:]))
-                        or any(left[0] > right[0] for left, right in zip(asks, asks[1:]))
-                        or bids[0][0] > asks[0][0]
-                    ):
-                        raise ValueError
-                except (KeyError, TypeError, ValueError, OverflowError):
-                    violations.append("entry_execution_receipt_depth_invalid")
-    attribution = {}
-    try:
-        attribution = json.loads(proposal.attribution_snapshot or "{}")
-    except (TypeError, ValueError):
-        pass
-    trigger = attribution.get("entry_trigger") if isinstance(attribution, dict) else None
-    expected_trigger_hash = (
-        hashlib.sha256(
-            json.dumps(trigger, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if isinstance(trigger, dict)
-        else None
-    )
-    if receipt.trigger_evidence_hash != expected_trigger_hash:
-        violations.append("entry_execution_receipt_trigger_mismatch")
-    return violations
-
-
-def _paper_opportunity_identity_violations(proposal: TradeProposal) -> list[str]:
-    """Resolve one unambiguous durable source and compare its exact trade identity."""
-    opportunity_id = str(proposal.opportunity_id or "").strip()
-    if not opportunity_id:
-        return ["proposal_opportunity_required"]
-    try:
-        normal = get_opportunity(opportunity_id)
-        serenity = get_serenity_opportunity(opportunity_id)
-    except Exception as exc:
-        logger.warning(
-            "proposal opportunity identity unavailable id=%s (%s)",
-            opportunity_id,
-            type(exc).__name__,
-        )
-        return ["proposal_opportunity_check_error"]
-    sources = [
-        ("market_observer", normal) if normal is not None else None,
-        ("serenity", serenity) if serenity is not None else None,
-    ]
-    resolved = [item for item in sources if item is not None]
-    if not resolved:
-        return ["proposal_opportunity_not_found"]
-    if len(resolved) != 1:
-        return ["proposal_opportunity_ambiguous"]
-    source_kind, source = resolved[0]
-    violations: list[str] = []
-    try:
-        source_symbol = to_canonical(str(source.get("symbol") or ""))
-    except Exception:
-        source_symbol = ""
-    if source_symbol != to_canonical(proposal.symbol):
-        violations.append("proposal_opportunity_symbol_mismatch")
-    source_market = (
-        source.get("market")
-        if source_kind == "market_observer"
-        else source.get("market_type")
-    )
-    if _physical_market_type(source_market) != _physical_market_type(proposal.market_type):
-        violations.append("proposal_opportunity_market_mismatch")
-    source_direction = (
-        source.get("direction_bias")
-        if source_kind == "market_observer"
-        else source.get("direction")
-    )
-    if str(source_direction or "").strip().lower() != str(proposal.direction).strip().lower():
-        violations.append("proposal_opportunity_direction_mismatch")
-    return violations
+def _active_open_positions() -> list[dict]:
+    """Archived simulator rows cannot consume current exchange capacity."""
+    return [row for row in list_all_open_positions() if row.get("execution_mode") != "paper_internal"]
 
 
 def _prefixed_snapshot(row: dict, prefix: str, model_type) -> dict:
@@ -501,6 +312,8 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
     """
     reservations: list[_UnresolvedEntryReservation] = []
     for row in list_unresolved_native_entry_orders_for_risk():
+        if row.get("execution_mode") == "paper_internal":
+            continue  # Archived order; no current account reservation.
         invalid: list[str] = []
         authority_valid = False
         proposal_snapshot: dict = {}
@@ -563,13 +376,6 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
         if price is None or not math.isfinite(price) or price <= 0:
             price = None
             invalid.append("unresolved_entry_invalid_price")
-        elif authority_valid and row.get("execution_mode") == "paper_internal":
-            # Local paper stores the slipped fill price on Order while the hashed
-            # Proposal retains the approved plan price. Either can be higher; use
-            # the conservative floor so altering the mutable Order cannot lower
-            # the Risk allowance.
-            approved_price = float(proposal_snapshot["price"])
-            price = max(price, approved_price)
 
         try:
             persisted_fill_quantity = float(
@@ -689,6 +495,8 @@ def _pre_order_entry_reservations(
     for row in list_active_entry_risk_reservations_for_risk(
         exclude_proposal_id=exclude_proposal_id,
     ):
+        if row.get("execution_mode") == "paper_internal":
+            continue  # Preserve the archived row without restoring its allowance.
         invalid: list[str] = []
         if not _pre_order_reservation_has_exact_authority(row):
             invalid.append("entry_risk_reservation_authority_invalid")
@@ -741,27 +549,7 @@ def _pre_order_entry_reservations(
 
 
 def _cached_available_balance_usdt(execution_mode: str, cfg=None) -> float | None:
-    """Return the cached available USDT for the account used by an order.
-
-    Risk evaluation must stay local and deterministic: it never calls an exchange
-    for a balance. Bitget has a per-mode cache; the other exchange-backed modes
-    use their named account in the unified cache. ``paper_internal`` has no
-    external account; it uses an isolated local ledger instead.
-    """
-    if execution_mode == "paper_internal":
-        try:
-            from aletheia.portfolio.paper_account import get_paper_account
-            available = float(
-                get_paper_account(event_limit=0)["available_balance_usdt"]
-            )
-            if not math.isfinite(available):
-                return None
-            return max(0.0, available)
-        except Exception:
-            # Unlike an exchange cache, the local paper ledger is the account
-            # authority itself.  Its absence cannot be replaced by config capital.
-            return None
-
+    """Read available USDT from the exact cached exchange account; never call the venue."""
     cfg = cfg or load_config()
     if _is_live(execution_mode):
         try:
@@ -825,8 +613,6 @@ def _effective_position_margin_cap(
     )
     available = _cached_available_balance_usdt(execution_mode)
     if available is None:
-        if execution_mode == "paper_internal":
-            return None
         return configured_cap
     return min(configured_cap, available)
 
@@ -864,7 +650,7 @@ class RiskCheckResult:
     approved: bool = False
     risk_score: float = 0.0
     violations: list[str] = field(default_factory=list)
-    allowed_execution_mode: str = "paper_internal"
+    allowed_execution_mode: str = ""
     message: str = ""
     decision_id: str | None = None
 
@@ -1053,114 +839,14 @@ def _evaluate_proposal_locked(
         if filter_set and sym_canonical not in filter_set:
             violations.append(f"symbol_not_allowed:{proposal.symbol}")
 
-    # 1b. Local paper has no exchange submission that can discover or reject an
-    # unusable price later.  Each dispatch preflight and the initial authoritative
-    # Risk pass therefore require the same exact-instrument, fail-closed mark used
-    # by protective closes: memory <=90s, or typed SQLite fallback <=120s.
-    if (
-        proposal.source == "native"
-        and proposal.execution_mode == "paper_internal"
-    ):
-        if proposal.entry_plan_id:
-            violations.extend(
-                _entry_execution_receipt_violations(proposal, execution_receipt)
-            )
-        else:
-            from aletheia.data.price_feed import (
-                get_fresh_price_for_protective_close,
-                protective_price_venue,
-            )
-
-            venue = protective_price_venue(
-                proposal.execution_mode,
-                configured_data_venue=cfg.market_data.ccxt_exchange,
-            )
-            physical_market = (
-                "perp" if proposal.market_type == "usdt_futures" else proposal.market_type
-            )
-            fresh_mark = None
-            if venue is not None:
-                try:
-                    raw_fresh_mark = get_fresh_price_for_protective_close(
-                        sym_canonical,
-                        proposal.market_type,
-                        venue=venue,
-                    )
-                    if raw_fresh_mark is not None:
-                        candidate_mark = float(raw_fresh_mark)
-                        if math.isfinite(candidate_mark) and candidate_mark > 0:
-                            fresh_mark = candidate_mark
-                except Exception as exc:
-                    logger.warning(
-                        "paper market authority unavailable for %s/%s/%s (%s)",
-                        venue,
-                        physical_market,
-                        sym_canonical,
-                        type(exc).__name__,
-                    )
-            if fresh_mark is None:
-                violations.append(
-                    f"paper_market_data_unavailable:{venue or 'unknown'}:{physical_market}"
-                )
-            elif not math.isclose(
-                float(proposal.price),
-                fresh_mark,
-                rel_tol=1e-9,
-                abs_tol=1e-8,
-            ):
-                violations.append("proposal_price_not_current_mark")
-            if proposal.order_type == "limit":
-                violations.append("paper_internal_limit_not_supported")
-            violations.extend(_paper_opportunity_identity_violations(proposal))
-
     # 2. Market allowed
     if proposal.market_type == "spot" and not cfg.exchange.enabled_markets.get("spot"):
         violations.append("spot_market_disabled")
     if proposal.market_type == "usdt_futures" and not cfg.exchange.enabled_markets.get("usdt_futures"):
         violations.append("futures_market_disabled")
 
-    # 2a. A local futures Position is admissible only when the durable derivatives
-    # collector has a fresh next-settlement anchor for this exact symbol.  The paper
-    # close path then retains that venue's schedule and computes signed funding as
-    # ``local_simulation``.  A missing/read-failed schedule remains fail-closed here;
-    # existing Positions always retain their separate protective exit path.
-    if (
-        proposal.source == "native"
-        and proposal.execution_mode == "paper_internal"
-        and proposal.market_type == "usdt_futures"
-    ):
-        try:
-            from aletheia.portfolio.local_funding import (
-                has_fresh_local_funding_schedule,
-            )
-
-            funding_available = has_fresh_local_funding_schedule(
-                proposal.symbol,
-                venue=str(cfg.market_data.ccxt_exchange or ""),
-                market_type="perp",
-            )
-        except Exception as exc:
-            logger.warning(
-                "local funding schedule unavailable for %s (%s)",
-                proposal.symbol,
-                type(exc).__name__,
-            )
-            funding_available = False
-        if not funding_available:
-            violations.append("local_paper_futures_funding_unavailable")
-
-    # 2b. Entry-plan completeness (owner discussion #6, 2026-07-03): every native
-    #     local-paper entry, plus every native exchange limit entry, must commit all
-    #     four numbers BEFORE the order — entry (price), stop (stop_price),
-    #     take-profit, and reward:risk (risk_reward). Exchange market closes/reduces
-    #     and reconciler-adopted chains legitimately carry no TP/RR and stay exempt.
-    requires_complete_entry_plan = proposal.source == "native" and (
-        proposal.order_type == "limit"
-        or (
-            proposal.execution_mode == "paper_internal"
-            and proposal.order_type == "market"
-        )
-    )
+    # Native exchange limit entries must commit their complete price/risk intent.
+    requires_complete_entry_plan = proposal.source == "native" and proposal.order_type == "limit"
     if requires_complete_entry_plan:
         _missing = []
         if (
@@ -1234,8 +920,7 @@ def _evaluate_proposal_locked(
         violations.append("live_disabled")
 
     # A live proposal must use the broker whose private account was selected for
-    # the current configuration.  paper_internal remains self-contained for the
-    # existing paper-only path.
+    # the current configuration.
     if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
         from aletheia.config.exchanges import live_execution_mode_for_exchange
 
@@ -1259,7 +944,7 @@ def _evaluate_proposal_locked(
 
     # 4. Permission mode
     perm = cfg.agent.permission_mode
-    if proposal.execution_mode != "paper_internal" and perm == "Observe":
+    if perm == "Observe":
         violations.append(f"permission_mode_insufficient:{perm}")
 
     # 5. Max position size. Live and demo each have a configured hard cap, tightened
@@ -1279,7 +964,7 @@ def _evaluate_proposal_locked(
             proposal.execution_mode,
         )
         if position_cap is None:
-            violations.append("paper_account_balance_unavailable")
+            violations.append("account_balance_unavailable")
         else:
             effective_cap = position_cap * drawdown_scale
             if _is_live(proposal.execution_mode):
@@ -1297,7 +982,7 @@ def _evaluate_proposal_locked(
     # occupy the same max_open_positions quota. Isolated pools (serenity only counts
     # against serenity quota) are a Phase 2 decision deferred until serenity_executor
     # is implemented. Until then ALL open positions count regardless of trade_school.
-    open_positions = list_all_open_positions()
+    open_positions = _active_open_positions()
     prop_is_live = _is_live(proposal.execution_mode)
     try:
         unresolved_entries = _unresolved_entry_reservations()
@@ -1365,8 +1050,7 @@ def _evaluate_proposal_locked(
 
     # 6b. No duplicate open position for same symbol in the same pool (demo or live).
     #     Prevents the system from opening a second position when one already exists
-    #     on a different broker in the same pool (e.g. paper_internal + okx_demo both
-    #     holding ETHUSDT short at the same time).
+    #     on a different broker in the same pool.
     same_symbol_open = [
         p for p in open_positions
         if p.get("symbol") == proposal.symbol
@@ -1446,8 +1130,7 @@ def _evaluate_proposal_locked(
         #    A live order requires exchange.mode == 'live'; a real demo order requires
         #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
         #    proposal evaluated while exchange.mode == 'live' would place a REAL live order
-        #    through the demo path (trust-boundary hole). paper_internal is local sim and
-        #    is exempt (it never touches the exchange).
+        #    through the demo path (trust-boundary hole).
         if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
             violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
         if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
@@ -1535,10 +1218,7 @@ def _evaluate_proposal_locked(
             if demo_max_risk > 0 and demo_risk_amount > demo_max_risk:
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
-        # Demo data freshness — bitget_demo places a REAL exchange order, so it must
-        # not trade against a frozen feed. paper_internal (local sim) is exempt: it has
-        # no exchange-side price and runs even when collection is paused. Looser bound
-        # than live (see _MAX_DEMO_DATA_AGE_SECONDS).
+        # Demo orders require fresh venue data (see _MAX_DEMO_DATA_AGE_SECONDS).
         if proposal.execution_mode in (
             "bitget_demo",
             "okx_demo",
@@ -1577,8 +1257,7 @@ def _evaluate_proposal_locked(
                         f"{projected}>{demo_exposure_cap}"
                     )
 
-        # 14b. Exchange-demo entry quality. Live #14 and paper_internal stay
-        # unchanged. Open positions are not closed by these tokens.
+        # 14b. Exchange-demo entry quality does not close existing positions.
         from aletheia.risk.demo_entry_quality import (
             collect_demo_entry_quality_violations,
         )
@@ -1624,7 +1303,7 @@ def _evaluate_proposal_locked(
         violations.extend(liq_violations)
 
     # 19. Per-symbol cumulative notional cap (CUM-ADD). Same-symbol adds average-merge
-    #     into one position (paper_broker / live brokers), so the single-position cap
+    #     into one position, so the single-position cap
     #     (#5) does not bound repeated accumulation. Sum existing open notional for this
     #     symbol in the same live/demo class + the proposed notional; reject if over cap.
     #
@@ -1791,7 +1470,7 @@ def _risk_result_from_row(row: dict) -> RiskCheckResult:
         approved=bool(row.get("approved")),
         risk_score=float(row.get("risk_score") or 0.0),
         violations=violations,
-        allowed_execution_mode=row.get("allowed_execution_mode") or "paper_internal",
+        allowed_execution_mode=row.get("allowed_execution_mode") or "",
         message=row.get("message") or "",
         decision_id=row.get("id"),
     )
@@ -1825,7 +1504,7 @@ def _persist_risk_result(
     if decision_role == "authoritative" and proposal.source == "native" and approved and not identity_complete:
         violations = ["risk_policy_identity_unavailable"]
         approved = False
-    allowed_mode = proposal.execution_mode if approved else "paper_internal"
+    allowed_mode = proposal.execution_mode if approved else ""
     result = RiskCheckResult(
         approved=approved,
         risk_score=min(len(violations) * 0.2, 1.0),
@@ -1840,9 +1519,7 @@ def _persist_risk_result(
         risk_score=result.risk_score,
         violations=json.dumps(violations),
         allowed_execution_mode=allowed_mode,
-        # Preserve the requested mode verbatim — allowed_mode is downgraded to
-        # paper_internal on rejection, which erased the live/demo signal that
-        # strategy_lifecycle needs to classify a live rejection as critical (CR-RE-01).
+        # Keep requested identity even when no execution mode is authorized.
         proposal_execution_mode=proposal.execution_mode,
         decision_role=decision_role,
         evaluated_quantity=proposal.quantity,
@@ -2050,10 +1727,6 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
         "drawdown", zeroing the size cap and rejecting every demo proposal
         while the real account sat untouched at ~$88k. Drawdown must track
         equity, not how much notional happens to be open right now.
-      - paper_internal: its snapshots contain managed-position notional, not a
-        simulated account-equity series. Skip this scaling until a dedicated
-        paper-equity ledger exists; the configured cap and other risk checks
-        continue to bound the order.
     """
     return _portfolio_drawdown_assessment(execution_mode)[0]
 
@@ -2061,13 +1734,6 @@ def _portfolio_drawdown_scale(execution_mode: str) -> float:
 def _portfolio_drawdown_assessment(execution_mode: str, cfg=None) -> tuple[float, bool]:
     """Return the Risk scale and whether its equity evidence is available."""
     try:
-        # Local paper has no trustworthy equity history. Its own snapshots are
-        # position notional, while exchange_account snapshots belong to a separate
-        # account and may be stale or unrelated. Either source can fabricate a
-        # drawdown and turn every proposal into a $0-cap rejection.
-        if execution_mode == "paper_internal":
-            return 1.0, False
-
         # View-completeness gate (P0, 2026-07-02): for exchange-backed modes, if the
         # active broker is missing from the unified view (e.g. OKX API down), the
         # equity snapshots may reflect the WRONG broker's balance — computing a
@@ -2088,7 +1754,7 @@ def _portfolio_drawdown_assessment(execution_mode: str, cfg=None) -> tuple[float
             return 1.0, False
 
         # Exchange-backed modes use real account equity, never per-mode position
-        # notional. paper_internal returned above and cannot reach this branch.
+        # notional.
         mode_snapshots = [
             s for s in snapshots if s.get("execution_mode") == "exchange_account"
         ]
@@ -2137,7 +1803,7 @@ def _current_account_exposure(
 ) -> float:
     """Sum notional exposure using one account-equity denominator."""
     total = 0.0
-    for row in list_all_open_positions():
+    for row in _active_open_positions():
         if not _account_pool_matches(
             str(row.get("execution_mode") or ""),
             execution_mode,
@@ -2219,7 +1885,7 @@ def _check_correlation_exposure(
         proposal_is_live = _is_live(proposal.execution_mode)
         open_positions = [
             position
-            for position in list_all_open_positions()
+            for position in _active_open_positions()
             if _is_live(str(position.get("execution_mode") or ""))
             == proposal_is_live
         ]
@@ -2555,7 +2221,7 @@ def _check_account_leverage_ratio(
         if is_live else getattr(risk, "max_account_leverage_demo", 3.0)
     )
     try:
-        open_positions = list_all_open_positions()
+        open_positions = _active_open_positions()
         relevant = _relevant_positions(open_positions, proposal.execution_mode)
 
         weighted_notional = 0.0
@@ -2693,24 +2359,7 @@ def _external_account_row_is_healthy(account: dict | None) -> bool:
 
 
 def _account_equity(execution_mode: str, cfg) -> float | None:
-    """Return locally cached equity for the account pool used by ``execution_mode``.
-
-    This helper never calls an exchange and never substitutes configured capital for
-    an unavailable account snapshot:
-    - ``paper_internal``: local paper ledger (cash + unrealized PnL). exchange_sync
-      knows nothing about this account — its balance never appears there.
-    - external modes: the exact UTA account row, never another account or cache.
-    """
-    if execution_mode == "paper_internal":
-        try:
-            from aletheia.portfolio.paper_account import get_paper_account
-            equity = get_paper_account(event_limit=0).get("equity_usdt")
-            if equity is not None and math.isfinite(float(equity)) and float(equity) > 0:
-                return float(equity)
-        except Exception:
-            pass
-        return None
-
+    """Read equity from the exact cached UTA account without fallback capital."""
     if _is_live(execution_mode):
         try:
             from aletheia.config.exchanges import live_execution_mode_for_exchange
@@ -2866,13 +2515,11 @@ def _config_active_execution_mode(cfg) -> str:
     if cfg.exchange.mode == "live":
         broker = (getattr(cfg.exchange, "name", None) or "bitget").lower()
         return f"{broker}_live_limited"
-    return getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
+    return getattr(cfg.exchange, "paper_execution_mode", None) or ""
 
 
 def _account_pool_matches(existing_mode: str, target_mode: str) -> bool:
     """Whether two exposure rows draw on the same leverage-equity denominator."""
-    if target_mode == "paper_internal":
-        return existing_mode == "paper_internal"
     if _is_live(target_mode):
         return _is_live(existing_mode)
     return existing_mode == target_mode
@@ -2881,7 +2528,6 @@ def _account_pool_matches(existing_mode: str, target_mode: str) -> bool:
 def _relevant_positions(open_positions: list, execution_mode: str) -> list:
     """Return the subset of open positions that belong to the same account pool.
 
-    - paper_internal: isolated local ledger — only paper_internal positions count.
     - live modes: all live positions aggregate (real-money account, any broker).
     - exchange demo modes: each broker is a separate account — exact mode match.
     """
@@ -2973,7 +2619,7 @@ def check_account_leverage(cfg=None, execution_mode: str | None = None) -> dict:
         if is_live else getattr(cfg.risk, "max_account_leverage_demo", 3.0)
     )
     try:
-        open_positions = list_all_open_positions()
+        open_positions = _active_open_positions()
     except Exception:
         return _unavailable_account_leverage_result(
             cap=max_ratio,

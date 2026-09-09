@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import validated_fee, validated_funding_economics
 from aletheia.storage.models import PortfolioSnapshot
+from aletheia.uta.manager import UTA_EXECUTION_MODES
 
 logger = logging.getLogger("aletheia.pnl")
 from aletheia.storage.repositories import (
@@ -502,7 +503,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             upnl = (price - entry) * qty
         else:
             upnl = (entry - price) * qty
-        if persist:
+        if persist and execution_mode in UTA_EXECUTION_MODES:
             _persist_fields: dict = {"unrealized_pnl": upnl, "unrealized_pnl_source": upnl_source}
             if exact_mark is not None:
                 _persist_fields["current_price"] = exact_mark
@@ -628,7 +629,6 @@ def persist_exit_reasoning(
 # Exit fee rate per execution mode. Must match the open-leg constants in each broker
 # file so realized PnL is internally consistent regardless of which path opened it.
 _EXIT_FEE_BY_MODE: dict[str, float] = {
-    "paper_internal": 0.0006,  # matches paper_broker default (Bitget taker)
     "bitget_demo": 0.0006,  # bitget_broker._DEMO_FEE_RATE
     "bitget_live_limited": 0.0006,  # bitget_broker._LIVE_FEE_RATE
     "okx_demo": 0.0005,  # okx_broker._OKX_FEE_RATE
@@ -658,22 +658,10 @@ def close_position(
     funding_source: str | None = None,
     funding_evidence: dict | None = None,
 ) -> dict:
-    """Close an open position at exit_price, realizing PnL. Returns the result.
+    """Persist an exchange close and its supplied private evidence atomically.
 
-    Writes a position_closed audit event (trust §1.4). `reason` is recorded as
-    close_reason (e.g. stop_loss / take_profit / max_hold / manual). Exchange
-    reconciliation may supply the venue-confirmed exit fee, fill timestamp, and
-    private evidence so every downstream audit/notification/feedback consumer
-    observes the same actual close economics instead of an estimate later being
-    written over it. Local paper fills are authoritative within the simulator;
-    exchange closes without private evidence remain explicitly ineligible. A
-    local broker may pass a database-only ``materialize_close`` callback; it runs
-    inside the same transaction as Position and cash settlement, after the
-    second open-state check and before any post-commit side effect.  A local
-    futures broker may also pass its completed simulated funding amount, source,
-    and event evidence.  Those facts are validated and committed with the same
-    Position/Fill transaction; callers that omit them retain the legacy behavior
-    of reading already-persisted Position funding fields.
+    Exchange closes without private evidence remain explicitly ineligible.
+    The materialization callback writes Order/Fill rows in the same transaction.
     """
     from aletheia.analytics.close_reasons import is_synthetic_close
 
@@ -687,6 +675,9 @@ def close_position(
         raise ValueError(f"position not found: {position_id}")
     if row.get("status") != "open":
         raise ValueError(f"position is not open: {position_id}")
+
+    if row.get("execution_mode") not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported position execution mode")
 
     # Normalize the close boundary before validating any economics that claim
     # to cover this exact holding window.
@@ -764,7 +755,6 @@ def close_position(
     btc_exit = _btc_price_at_close() if _btc_benchmark_applicable(row) else None
 
     execution_mode = str(row.get("execution_mode") or "")
-    local_paper_fill = execution_mode == "paper_internal"
     if private_exchange_fill:
         if not isinstance(verified_exit_evidence, dict):
             raise ValueError("verified_exit_evidence must be a mapping")
@@ -790,7 +780,7 @@ def close_position(
                 "verified exchange close requires complete private fill identity, quantity, fee, and timestamp"
             )
 
-    exit_fill_verified = local_paper_fill or private_exchange_fill
+    exit_fill_verified = private_exchange_fill
     from aletheia.analytics.outcome_integrity import (
         OUTCOME_SEMANTICS_VERSION,
         outcome_write_eligibility,
@@ -815,17 +805,7 @@ def close_position(
         "market_type": row.get("market_type"),
         "direction": row.get("direction"),
     }
-    if local_paper_fill:
-        outcome_evidence = {
-            "source": "local_paper_fill",
-            "fill_id": f"paper-close:{position_id}:{closed_at}",
-            "fill_price": float(exit_price),
-            "fill_quantity": float(row["quantity"]),
-            "fee": float(exit_fee),
-            "fee_currency": "USDT",
-            "filled_at": closed_at,
-        }
-    elif private_exchange_fill:
+    if private_exchange_fill:
         outcome_evidence = dict(verified_exit_evidence or {})
     else:
         outcome_evidence = {
@@ -837,19 +817,6 @@ def close_position(
         }
     if funding_evidence is not None:
         outcome_evidence["funding"] = dict(funding_evidence)
-        if (
-            local_paper_fill
-            and market_type == "usdt_futures"
-            and evidence_status == "complete"
-        ):
-            from aletheia.portfolio.paper_account import _economics_fingerprint
-
-            outcome_evidence["funding_economics_fingerprint"] = (
-                _economics_fingerprint(funding_evidence)
-            )
-            outcome_evidence["funding_accounting_version"] = funding_evidence.get(
-                "accounting_version", "local-paper-funding-v2",
-            )
     if close_reasoning is None:
         exit_reasoning = build_exit_reasoning(
             row,
@@ -885,11 +852,11 @@ def close_position(
         "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
         "funding_cost": funding_cost,
         "funding_source": funding_source,
-        "slippage_cost": (row.get("slippage_cost") if local_paper_fill else None),
+        "slippage_cost": None,
         "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
         "close_category": "strategy",
         "exit_price_source": (
-            "local_fill" if local_paper_fill else "broker_fill" if private_exchange_fill else "unavailable"
+            "broker_fill" if private_exchange_fill else "unavailable"
         ),
         "exit_fill_verified": exit_fill_verified,
         "reconciliation_identity": json.dumps(
@@ -938,11 +905,7 @@ def close_position(
         f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
         f"realized={realized}; outcome={update_fields['outcome_exclusion_reason']}"
     )
-    # The Position outcome and the local-paper cash event are one accounting
-    # fact.  Commit them together so a ledger failure cannot leave a closed
-    # Position with unchanged cash (or release an eligible Outcome downstream).
-    # Re-read under the writer claim to make concurrent close attempts fail
-    # closed instead of both publishing close side effects.
+    # Re-read under the writer claim before committing the close and outcome hooks.
     with repo.transaction(immediate=True):
         current = repo._select_one("positions", position_id)
         if current is None:
@@ -965,10 +928,6 @@ def close_position(
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs({**row, **update_fields})
-        if row.get("execution_mode") == "paper_internal" and realized is not None:
-            from aletheia.portfolio.paper_account import settle_position_closed
-
-            settle_position_closed(position_id, realized)
         from aletheia.storage.models import AuditEvent, new_id
 
         # Per-close ledger (exit-intent R1): committed atomically with the Position
@@ -1129,10 +1088,7 @@ def reduce_position(
     Use close_position for a full exit — reduce_qty must be a strict fraction of the open
     quantity. Returns a result dict; {"error": ...} on invalid input.
 
-    NOTE (needs follow-on, see PARTIAL_REDUCE_RESEARCH.md): paper_internal cash-ledger
-    settlement of a partial (paper_account_events UNIQUE(action, position_id)) and the
-    real-exchange reduce-only order are not wired here. The risk-critical realized-PnL
-    accounting IS complete via the per-close ledger + the Stage-2 breaker term.
+    The active product router exposes full closes only.
     """
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import new_id
@@ -1146,10 +1102,9 @@ def reduce_position(
     # Product boundary (2026-07): the active product has no authorized partial-reduce
     # entry in any execution mode. This accounting primitive remains for the isolated
     # OKX reference helper and focused tests, but the production router fails closed.
-    # paper_internal additionally cannot represent partial settlement in its cash ledger.
-    if row.get("execution_mode") == "paper_internal":
+    if row.get("execution_mode") not in UTA_EXECUTION_MODES:
         return {
-            "error": "partial_reduce_unsupported_on_paper_internal",
+            "error": "unsupported_position_execution_mode",
             "position_id": position_id,
             "hint": ("active product supports full closes only; partial reduce is not production-authorized"),
         }
@@ -1239,19 +1194,8 @@ def _realized_economics_value(row: dict) -> float | None:
     after treating missing funding as zero, so NULL-only detection would keep
     publishing those historical false numbers.
 
-    IMPORTANT — this predicate does NOT distinguish "still retrying" from
-    "terminally given up". A row with
-    ``outcome_exclusion_reason == funding_permanently_unrecoverable`` also
-    returns None here, because the audit chain remains genuinely
-    unreconstructible; that is the honest answer for count-style tiles like
-    the Realized "N closes unverified" caveat. For "is this close still
-    in flight?" callers (Overview hero card, Risk affordability, paper
-    ledger completeness), see the canonical recipe
-    ``aletheia.portfolio.paper_account._unsettled_local_closes`` which
-    additionally excludes the terminal state. Do NOT use
-    ``_realized_economics_value(row) is None`` as an "in-flight" signal —
-    that pattern was the root cause of the 2026-07-20 "— USDT" hero-card
-    outage (fixed in d20973d6). Prefer the canonical helper.
+    Missing historical economics remains unavailable, including terminal funding
+    failures. This read predicate does not imply that recovery is still running.
     """
     pnl = _finite_number(row.get("realized_pnl"))
     entry = _finite_number(row.get("entry_price"))
@@ -1449,12 +1393,9 @@ def today_pnl_by_symbol(
 def compute_portfolio(execution_mode: str | None = None, persist_marks: bool = False) -> dict:
     """Return one SQLite-consistent portfolio projection."""
     from aletheia.config.loader import load_config
-    from aletheia.portfolio.paper_account import ensure_paper_account
     from aletheia.storage.sqlite import read_snapshot
 
-    uses_external_exchange = load_config().exchange.paper_execution_mode != "paper_internal"
-    if not uses_external_exchange:
-        ensure_paper_account()
+    uses_external_exchange = execution_mode is None or execution_mode in UTA_EXECUTION_MODES
     marked_positions = None
     if persist_marks:
         marked_positions = mark_positions_to_market(persist=True)
@@ -1474,8 +1415,6 @@ def _compute_portfolio(
 ) -> dict:
     """Aggregate open positions into a portfolio summary (marks to market first)."""
     selected_mode = execution_mode
-    if selected_mode is None and not uses_external_exchange:
-        selected_mode = "paper_internal"
     if positions is None:
         positions = mark_positions_to_market(persist=False)
     if selected_mode:
@@ -1523,26 +1462,12 @@ def _compute_portfolio(
     final_positions_count = len(positions)
     final_exposure = exposure
     final_today_pnl = total_unrealized + total_today_realized
-    # The headline must be an account value, never the locally-managed notional.
-    # In local paper mode the append-only cash ledger plus freshly marked open
-    # PnL is the only trustworthy source.  If old unsettled closes make that
-    # ledger incomplete, return None rather than presenting position notional as
-    # account equity.
+    # Account value comes from the external account, never position notional.
     final_total_value: float | None = None
     account_equity_usdt: float | None = None
     exchange_external_summary: list = []
     sync_status = "not_applicable" if not uses_external_exchange else "unconfigured"
-    if not uses_external_exchange:
-        from aletheia.portfolio.paper_account import get_paper_account
-
-        local_account = get_paper_account(event_limit=0, open_positions=positions)
-        # equity_usdt is always set now (issue #316: no longer gated on
-        # economics_complete); use it directly.
-        _eq = local_account.get("equity_usdt")
-        if _eq is not None:
-            account_equity_usdt = round(float(_eq), 4)
-            final_total_value = account_equity_usdt
-    else:
+    if uses_external_exchange:
         try:
             from aletheia.portfolio import exchange_sync
 
@@ -1675,40 +1600,22 @@ def _compute_portfolio(
     }
 
 
-def compute_and_store_snapshot(execution_mode: str = "paper_internal") -> PortfolioSnapshot:
-    """Compute the portfolio and persist portfolio_snapshot rows.
-
-    Writes two rows when exchange data is available:
-    1. Paper-local row (execution_mode from arg) — pure mark-to-market, no exchange data
-    2. Exchange row (execution_mode="exchange_account") — real account equity from cache
-
-    Called from the scheduler thread — uses persist=True to also write
-    mark-to-market prices back to the positions table.
-    """
+def compute_and_store_snapshot(execution_mode: str) -> PortfolioSnapshot:
+    """Store mode-specific position exposure and available exchange account equity."""
+    if execution_mode not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported portfolio snapshot execution mode")
     summary = compute_portfolio(execution_mode=execution_mode, persist_marks=True)
-
-    # Row 1: mode-specific reading.  Local-paper snapshots are only persisted as
-    # account-equity readings when the cash ledger is complete; they must never
-    # silently fall back to position notional.
     mode_positions = [p for p in summary.get("positions", []) if p.get("execution_mode") == execution_mode]
     local_unrealized = sum(p.get("unrealized_pnl", 0) for p in mode_positions)
     local_notional = sum(p["quantity"] * (p.get("current_price") or p["entry_price"]) for p in mode_positions)
-    local_account_equity = summary.get("account_equity_usdt") if execution_mode == "paper_internal" else None
     snap = PortfolioSnapshot(
-        total_value_usdt=round(
-            local_account_equity if local_account_equity is not None else local_notional,
-            4,
-        ),
+        total_value_usdt=round(local_notional, 4),
         unrealized_pnl=round(local_unrealized, 4),
         realized_pnl=summary["realized_pnl"],
         positions_count=len(mode_positions),
         execution_mode=execution_mode,
-        account_equity_usdt=local_account_equity,
     )
-    if execution_mode != "paper_internal" or local_account_equity is not None:
-        insert_portfolio_snapshot(snap)
-    else:
-        logger.warning("Skipping local-paper account-equity snapshot: local ledger economics are incomplete.")
+    insert_portfolio_snapshot(snap)
 
     # Row 2: exchange account — prefer UTA unified equity (multi-broker sum),
     # fallback to legacy single-broker Bitget cache.

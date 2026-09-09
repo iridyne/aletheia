@@ -40,7 +40,7 @@ from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exi
 from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
 logger = logging.getLogger("aletheia.position_manager")
 
-_PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
+_DEMO_MODES = {"bitget_demo", "binance_testnet", "okx_demo"}
 _OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 
@@ -85,154 +85,14 @@ def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
     ))
 
 
-class LocalPaperClosePreflightError(RuntimeError):
-    """No local close was attempted because at least one mark was unavailable."""
-
-    def __init__(self, failures: list[dict]):
-        self.failures = failures
-        position_ids = ",".join(str(item.get("position_id")) for item in failures)
-        super().__init__(f"bulk_close_mark_preflight_failed:{position_ids}")
 
 
-def _fresh_local_paper_mark(
-    position: dict,
-    *,
-    configured_data_venue: str | None = None,
-    not_before: datetime | None = None,
-) -> dict:
-    """Resolve the only mark allowed to authorize a local-paper close Fill."""
-    if position.get("execution_mode") != "paper_internal":
-        raise ValueError(
-            f"position {position.get('id')} is not paper_internal "
-            f"(mode={position.get('execution_mode')!r})"
-        )
-    if configured_data_venue is None:
-        configured_data_venue = load_config().market_data.ccxt_exchange
-    venue = protective_price_venue(
-        "paper_internal",
-        configured_data_venue=configured_data_venue,
-    )
-    if venue is None:
-        raise RuntimeError(
-            f"protective_mark_venue_unavailable:{position.get('id')}"
-        )
-    mark = get_fresh_mark_for_protective_close(
-        position["symbol"],
-        position.get("market_type") or "spot",
-        venue=venue,
-        not_before=not_before,
-    )
-    if mark is None:
-        raise RuntimeError(
-            f"protective_mark_unavailable:{position.get('id')}"
-        )
-    return mark
 
 
-def _close_local_paper_with_authorized_mark(
-    position_id: str,
-    mark: dict,
-    *,
-    reason: str,
-    actor: str,
-    source: str,
-) -> dict:
-    """Materialize a local close from a mark authorized inside this module."""
-    from aletheia.execution.paper_broker import close_paper_position
-
-    return close_paper_position(
-        position_id,
-        mark_price=float(mark["price"]),
-        mark_provenance=mark,
-        reason=reason,
-        actor=actor,
-        source=source,
-    )
 
 
-def _bulk_close_failure(
-    position: dict,
-    code: str,
-    exc: Exception | None = None,
-) -> dict:
-    failure = {
-        "position_id": position.get("id"),
-        "symbol": position.get("symbol"),
-        "market_type": position.get("market_type"),
-        "code": code,
-    }
-    if exc is not None:
-        failure["error_type"] = type(exc).__name__
-        failure["message"] = str(exc)[:200]
-    return failure
 
 
-def close_local_positions_batch(
-    market_type: str | None,
-    *,
-    reason: str = "manual_bulk_close",
-    decision_actor: str = "human",
-    decision_source: str = "dashboard",
-) -> dict:
-    """Preflight and close the complete local-paper working set.
-
-    Every exact-instrument mark is resolved before the first close. A missing or
-    failed mark therefore rejects the whole batch without any close facts. Once
-    preflight succeeds, non-price execution failures may be partial, so both the
-    successful and failed identities are returned explicitly.
-    """
-    candidates = [
-        row for row in list_all_open_positions()
-        if row.get("execution_mode") == "paper_internal"
-        and (market_type is None or row.get("market_type") == market_type)
-    ]
-    configured_venue = load_config().market_data.ccxt_exchange
-    authorized_marks: dict[str, dict] = {}
-    preflight_failures: list[dict] = []
-    for position in candidates:
-        try:
-            authorized_marks[position["id"]] = _fresh_local_paper_mark(
-                position,
-                configured_data_venue=configured_venue,
-            )
-        except Exception as exc:
-            code = (
-                "protective_mark_unavailable"
-                if str(exc).startswith("protective_mark_unavailable:")
-                else "protective_mark_lookup_failed"
-            )
-            preflight_failures.append(
-                _bulk_close_failure(position, code, exc)
-            )
-    if preflight_failures:
-        raise LocalPaperClosePreflightError(preflight_failures)
-
-    closed_position_ids: list[str] = []
-    failed: list[dict] = []
-    for position in candidates:
-        try:
-            result = _close_local_paper_with_authorized_mark(
-                position["id"],
-                authorized_marks[position["id"]],
-                reason=reason,
-                actor=decision_actor,
-                source=decision_source,
-            )
-            if result.get("closed") is True:
-                closed_position_ids.append(position["id"])
-            else:
-                failed.append(_bulk_close_failure(
-                    position,
-                    "close_not_confirmed",
-                ))
-        except Exception as exc:
-            failed.append(_bulk_close_failure(position, "close_failed", exc))
-
-    return {
-        "requested_count": len(candidates),
-        "closed_position_ids": closed_position_ids,
-        "failed": failed,
-    }
 
 
 def close_position_routed(
@@ -240,45 +100,16 @@ def close_position_routed(
     reason: str,
     fallback_exit_price: float | None = None,
     *,
-    paper_mark_venue: str | None = None,
-    paper_mark_not_before: datetime | None = None,
     allow_live: bool = False,
     decision_reasoning: str | None = None,
     decision_actor: str = "system",
     decision_source: str = "position_lifecycle",
 ) -> dict:
-    """Close a position through the correct path for its execution_mode.
-
-    SINGLE SOURCE OF TRUTH for close routing. Real-exchange modes (demo AND
-    live-limited) MUST close via their broker so the exchange position is actually
-    reduced and the exit price is the exchange's real fill. A local-only close would
-    (a) leave a dangling real position — the §1.3 desync, and on *_live_limited that
-    position holds REAL funds — and (b) fabricate the exit from a local mark, breaking
-    the "never fabricate an exit" honesty invariant. Only paper_internal closes purely
-    locally.
-
-    Used by BOTH the auto-exit loop (evaluate_open_positions) and any manual/agent
-    close (e.g. PI portfolio review) so neither can silently desync a real position.
-
-    ``fallback_exit_price`` is retained for call compatibility only. It never
-    authorizes a ``paper_internal`` Fill: the local branch always resolves its own
-    fresh exact venue/symbol/market mark immediately before materialization.
-
-    LIVE GUARD (governance, see module docstring §LIVE): a `*_live_limited` position is
-    human-only — NEVER auto-closed. Because this router is the chokepoint, the guard
-    lives HERE: autonomous callers (auto-exit loop, PI portfolio review) leave
-    `allow_live=False`, so a live position raises instead of silently placing a REAL
-    exchange order (CLAUDE.md: "Never place live orders ... autonomously"). Only an
-    explicit human-initiated close passes `allow_live=True`.
-    """
+    """Route closes through the exchange Gateway; live closes require explicit authority."""
     from aletheia.storage.repositories import _select_one
 
     row = _select_one("positions", position_id)
     mode = (row or {}).get("execution_mode")
-    if (
-        paper_mark_venue is not None or paper_mark_not_before is not None
-    ) and mode != "paper_internal":
-        raise ValueError("paper mark constraints are only valid for paper_internal closes")
     if mode and mode.endswith("_live_limited") and not allow_live:
         raise RuntimeError(
             f"refusing to autonomously close live position {position_id} "
@@ -320,24 +151,6 @@ def close_position_routed(
             position_id,
             reason=reason,
             close_reasoning=close_reasoning,
-        )
-    elif mode == "paper_internal":
-        # paper_internal — pure local simulation; needs an observed mark. The
-        # paper broker applies adverse close-side slippage and atomically writes
-        # the close Order/Fill with Position and cash settlement.
-        if row is None:
-            raise ValueError(f"position not found: {position_id}")
-        mark = _fresh_local_paper_mark(
-            row,
-            configured_data_venue=paper_mark_venue,
-            not_before=paper_mark_not_before,
-        )
-        result = _close_local_paper_with_authorized_mark(
-            position_id,
-            mark,
-            reason=reason,
-            actor=decision_actor,
-            source=decision_source,
         )
     else:
         raise ValueError(
@@ -1282,7 +1095,7 @@ def evaluate_open_positions() -> dict:
             )
 
             for position in all_open:
-                if position.get("execution_mode") not in _PAPER_MODES:
+                if position.get("execution_mode") not in _DEMO_MODES:
                     continue
                 try:
                     venue = protective_price_venue(
@@ -1308,7 +1121,7 @@ def evaluate_open_positions() -> dict:
             logger.warning("market_signal_index build failed: %s", e)
 
     for p in all_open:
-        if p.get("execution_mode") not in _PAPER_MODES:
+        if p.get("execution_mode") not in _DEMO_MODES:
             continue
         checked += 1
         pending_close = has_unresolved_close_claim(p)
@@ -1998,7 +1811,7 @@ def proactive_exit(
 
     if (order_type or "market") == "limit":
         # Issue #416: the locally-watched limit executor (evaluate_open_positions)
-        # only processes _PAPER_MODES positions.  A live-limited position that
+        # only processes _DEMO_MODES positions.  A live-limited position that
         # accepts a limit exit is persisted as pending_limit_exit=True but nothing
         # can ever execute it.  Reject limit exits on live-limited positions so the
         # operator knows they must use market or close from the exchange UI.

@@ -22,6 +22,10 @@ def _closed_position(
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     closed_at = datetime.now(timezone.utc).isoformat()
+    if eligible and mode == "paper_internal":
+        _orphaned_paper_close(position_id, float(pnl or 0.0))
+        _archived_cash_event(position_id, float(pnl or 0.0))
+        return
     if eligible:
         _insert_closed_position_via_producer(
             position_id=position_id,
@@ -59,6 +63,18 @@ def _closed_position(
         "outcome_semantics_version": "oi-v1",
     })
     repo.insert_position(Position(**kwargs))
+
+
+def _archived_cash_event(position_id: str, amount: float) -> None:
+    from aletheia.storage.sqlite import get_db
+    from uuid import uuid4
+
+    get_db().execute(
+        "INSERT INTO paper_account_events "
+        "(id,action,amount_usdt,cash_balance_before_usdt,cash_balance_after_usdt,position_id) "
+        "VALUES (?,'position_closed',?,200,?,?)",
+        (uuid4().hex, amount, 200 + amount, position_id),
+    )
 
 
 def _corrupt_paper_close_event(position_id: str, amount: float) -> None:
@@ -233,9 +249,7 @@ def test_null_realized_pnl_with_settled_rows_still_unavailable():
     closes are known exactly.
     """
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import ensure_paper_account
 
-    ensure_paper_account()
     _closed_position("settled-mix", -3.0)
     _pending_paper_close("pending-mix", entry_price=100.0, exit_price=95.0,
                          quantity=0.1, direction="short")
@@ -247,32 +261,6 @@ def test_null_realized_pnl_with_settled_rows_still_unavailable():
 
 
 
-def test_funding_materialization_restores_daily_loss_availability():
-    """After funding settles, the exact net amount becomes available."""
-    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import ensure_paper_account, settle_position_closed
-    from aletheia.storage import repositories as repo
-
-    ensure_paper_account()
-    _pending_paper_close("pending-settle", entry_price=100.0, exit_price=102.0,
-                         quantity=0.1, direction="short")
-
-    # Before settlement: unavailable
-    before = authoritative_account_realized_loss("paper_internal")
-    assert before.available is False
-    assert before.reason == "pending_funding_economics"
-
-    # Funding materializes: gross=-0.2, fees=0.002, funding_cost=0.05 → net=-0.252
-    # Must set positions.realized_pnl before writing the ledger entry so that
-    # _paper_ledger_snapshot's validity check (p.realized_pnl IS NULL) passes.
-    force_update_position("pending-settle", realized_pnl=-0.252)
-    settle_position_closed("pending-settle", -0.252)
-
-    after = authoritative_account_realized_loss("paper_internal")
-    assert after.available is True
-    assert after.source == "paper_account_ledger"
-    assert abs(after.realized_pnl_usdt - (-0.252)) < 1e-6
-    assert abs(after.loss_usdt - 0.252) < 1e-6
 
 
 def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
@@ -328,50 +316,18 @@ def test_archived_ledger_read_does_not_repair_missing_events():
     assert db.execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
-def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
-    from aletheia.portfolio.paper_account import (
-        ensure_paper_account,
-        settle_unsettled_paper_closes,
-    )
-    from aletheia.storage import repositories as repo
-
-    ensure_paper_account()
-    _orphaned_paper_close("orphan-only", -4.0)
-
-    result = asyncio.run(settle_unsettled_paper_closes())
-
-    event = repo.get_db().execute(
-        "SELECT amount_usdt FROM paper_account_events "
-        "WHERE action='position_closed' AND position_id=?",
-        ("orphan-only",),
-    ).fetchone()
-    assert event is not None
-    assert float(event["amount_usdt"]) == -4.0
-    assert result == {
-        "settled": 1,
-        "revived": 0,
-        "still_pending": 0,
-        "gave_up": 0,
-        "audit_pending": 0,
-        "errors": [],
-    }
 
 
 def test_delayed_previous_day_settlement_is_not_today_phantom():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import (
-        ensure_paper_account,
-        settle_position_closed,
-    )
     from aletheia.storage import repositories as repo
 
-    ensure_paper_account()
     _orphaned_paper_close("delayed-settlement", -6.0)
     force_update_position(
         "delayed-settlement",
         closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
     )
-    settle_position_closed("delayed-settlement", -6.0)
+    _archived_cash_event("delayed-settlement", -6.0)
 
     snapshot = authoritative_account_realized_loss("paper_internal")
 
@@ -384,19 +340,14 @@ def test_delayed_previous_day_settlement_is_not_today_phantom():
 
 def test_delayed_previous_day_settlement_with_wrong_amount_remains_unavailable():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import (
-        ensure_paper_account,
-        settle_position_closed,
-    )
     from aletheia.storage import repositories as repo
 
-    ensure_paper_account()
     _orphaned_paper_close("delayed-corrupt-settlement", -6.0)
     force_update_position(
         "delayed-corrupt-settlement",
         closed_at=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
     )
-    settle_position_closed("delayed-corrupt-settlement", -6.0)
+    _archived_cash_event("delayed-corrupt-settlement", -6.0)
     _corrupt_paper_close_event("delayed-corrupt-settlement", -5.0)
 
     snapshot = authoritative_account_realized_loss("paper_internal")
@@ -408,13 +359,8 @@ def test_delayed_previous_day_settlement_with_wrong_amount_remains_unavailable()
 
 def test_new_close_event_without_valid_paper_position_remains_unavailable():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import (
-        ensure_paper_account,
-        settle_position_closed,
-    )
 
-    ensure_paper_account()
-    settle_position_closed("missing-position", -1.0)
+    _archived_cash_event("missing-position", -1.0)
 
     snapshot = authoritative_account_realized_loss("paper_internal")
 
@@ -425,7 +371,6 @@ def test_new_close_event_without_valid_paper_position_remains_unavailable():
 
 def test_unreconciled_invalid_exit_price_evidence_blocks_account_economics():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import INVALID_EXIT_PRICE_EVIDENCE
     from aletheia.storage import repositories as repo
 
     _closed_position("invalid-exit", 4326.3885071)
@@ -433,106 +378,10 @@ def test_unreconciled_invalid_exit_price_evidence_blocks_account_economics():
         "invalid-exit",
         realized_pnl=None,
         outcome_eligible=False,
-        outcome_exclusion_reason=INVALID_EXIT_PRICE_EVIDENCE,
+        outcome_exclusion_reason="invalid_exit_price_evidence",
     )
 
     snapshot = authoritative_account_realized_loss("paper_internal")
 
     assert snapshot.available is False
     assert snapshot.reason == "paper_ledger_mismatch"
-
-
-@pytest.mark.parametrize("realized_pnl", [20.0, -20.0])
-def test_invalidated_settled_close_is_atomically_neutralized(realized_pnl):
-    from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import (
-        get_paper_account,
-        invalidate_paper_position_economics,
-    )
-    from aletheia.storage import repositories as repo
-
-    _closed_position("invalidated-close", realized_pnl)
-    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(200.0 + realized_pnl)
-
-    result = invalidate_paper_position_economics("invalidated-close")
-    replay = invalidate_paper_position_economics("invalidated-close")
-
-    assert result["cash_reversal_usdt"] == pytest.approx(-realized_pnl)
-    assert replay["status"] == "already_invalidated"
-    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(200.0)
-    snapshot = authoritative_account_realized_loss("paper_internal")
-    assert snapshot.available is True
-    assert snapshot.realized_pnl_usdt == 0.0
-    assert snapshot.loss_usdt == 0.0
-    position = repo._select_one("positions", "invalidated-close")
-    assert position["realized_pnl"] is None
-    assert position["outcome_eligible"] == 0
-    assert position["outcome_exclusion_reason"] == "invalid_exit_price_evidence"
-    events = repo.get_db().execute(
-        "SELECT action,amount_usdt FROM paper_account_events "
-        "WHERE position_id=? AND action!='position_opened' ORDER BY rowid",
-        ("invalidated-close",),
-    ).fetchall()
-    assert [(row["action"], row["amount_usdt"]) for row in events] == [
-        ("position_closed", realized_pnl),
-        ("position_economics_invalidated", -realized_pnl),
-    ]
-
-
-def test_invalidation_accepts_legacy_cash_close_without_close_event():
-    from aletheia.portfolio.paper_account import (
-        get_paper_account,
-        invalidate_paper_position_economics,
-        settle_position_closed,
-    )
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-
-    repo.insert_position(Position(
-        id="legacy-cash-close",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=112.0,
-        execution_mode="paper_internal",
-        status="closed",
-        realized_pnl=12.0,
-        outcome_eligible=True,
-        closed_at=datetime.now(timezone.utc).isoformat(),
-    ))
-    settle_position_closed("legacy-cash-close", 12.0)
-
-    result = invalidate_paper_position_economics("legacy-cash-close")
-
-    assert result["cash_reversal_usdt"] == pytest.approx(-12.0)
-    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(200.0)
-    assert repo._select_one("positions", "legacy-cash-close")["realized_pnl"] is None
-
-
-def test_invalidation_rolls_back_cash_and_position_when_db_audit_fails(monkeypatch):
-    from aletheia.portfolio.paper_account import (
-        get_paper_account,
-        invalidate_paper_position_economics,
-    )
-    from aletheia.storage import repositories as repo
-
-    _closed_position("audit-failure", 20.0)
-    monkeypatch.setattr(
-        repo,
-        "insert_audit_event",
-        lambda _event: (_ for _ in ()).throw(RuntimeError("audit failed")),
-    )
-
-    with pytest.raises(RuntimeError, match="audit failed"):
-        invalidate_paper_position_economics("audit-failure")
-
-    assert get_paper_account()["cash_balance_usdt"] == pytest.approx(220.0)
-    assert repo._select_one("positions", "audit-failure")["realized_pnl"] == 20.0
-    reversal_count = repo.get_db().execute(
-        "SELECT COUNT(*) FROM paper_account_events "
-        "WHERE position_id=? AND action='position_economics_invalidated'",
-        ("audit-failure",),
-    ).fetchone()[0]
-    assert reversal_count == 0

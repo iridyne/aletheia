@@ -110,3 +110,36 @@ def test_archived_accounting_is_readable_without_reconstruction():
     assert row["evidence"] == {"source": "archive"}
     assert row["reconstructed_realized_pnl"] == totals["historical_reconciled_pnl"] == -3.5
     assert db.total_changes == before
+
+
+def test_archived_position_has_no_current_execution_authority():
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.portfolio.position_manager import close_position_routed
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO positions(id,symbol,market_type,direction,quantity,entry_price,execution_mode,status) "
+        "VALUES ('archived-open','BTC/USDT','spot','long',1,100,'paper_internal','open')"
+    )
+    before = db.total_changes
+
+    with pytest.raises(ValueError, match="unsupported position execution mode"):
+        close_position("archived-open", exit_price=101)
+    with pytest.raises(ValueError, match="unsupported position execution_mode"):
+        close_position_routed("archived-open", reason="manual")
+
+    assert db.total_changes == before
+
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.risk.engine import evaluate_proposal
+    from aletheia.storage.models import TradeProposal
+
+    cfg = load_config()
+    cfg.risk.max_open_positions_demo = 1
+    save_config(cfg)
+    result = evaluate_proposal(TradeProposal(
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        quantity=0.01, price=100, execution_mode="bitget_demo",
+    ))
+    assert not any(item.startswith("max_demo_positions_reached") for item in result.violations)
