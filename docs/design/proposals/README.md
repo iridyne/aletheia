@@ -82,4 +82,4 @@ Proposal as stable decision history.
 
 - [Universe Fast Trigger Watch](universe_fast_trigger_watch.md): historical
   Momentum Setup/authorization design, replaced by the generic Entry Plan
-  contract; retained only for compatibility and audit context.
+  contract; its retired adapter and local-execution requirements are archived.

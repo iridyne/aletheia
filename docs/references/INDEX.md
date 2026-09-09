@@ -67,7 +67,7 @@
 | [prism_extraction.md](external-systems/prism_extraction.md) | 代码清仓 | prism 删库前的工程片段留存（ProgressHub / TaskStore / WS endpoint 等） |
 | [agent_framework_research_2025_2026.md](papers-and-benchmarks/agent_framework_research_2025_2026.md) | 验证镜 | 外部综述报告对照——确认而非启发，显式拒绝其重型栈 |
 | [competitors_and_papers.md](papers-and-benchmarks/competitors_and_papers.md) | 竞品+论文 | 已克隆之外的同领域竞品（TradingAgents/RD-Agent/Qlib/FinRL…）与参考论文（arXiv 编号已核实） |
-| [FRAMEWORK_MODULE_MAP.md](external-systems/FRAMEWORK_MODULE_MAP.md) | 自身架构 | Aletheia 12 模块地图（非外部参考，但与本目录互参） |
+| [FRAMEWORK_MODULE_MAP.md](external-systems/FRAMEWORK_MODULE_MAP.md) | 历史架构导航 | 已归档的 2026-06 模块地图；当前边界见产品与执行契约 |
 
 ---
 

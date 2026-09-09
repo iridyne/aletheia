@@ -41,3 +41,7 @@ reactivating a historical document in place.
 - [Original v1 implementation specification](implementation_guide_v1.md): archived local-simulator tools, API examples, project layout and milestones.
 
 - [June 2026 execution-path analysis](execution_path_honesty_202606.md): historical Paper Trader, RuleSet and local-simulator findings.
+
+- [June 2026 framework module map](framework_module_map_202606.md): retired simulator-centered module inventory and promotion loop.
+
+- [Former Universe Fast Trigger Watch proposal](universe_fast_trigger_watch.md): retired Setup adapter, local execution and acceptance requirements.
