@@ -21,7 +21,7 @@ def _outcomes():
 
 
 def _patch_common(monkeypatch, outcomes=None):
-    monkeypatch.setenv("REPORT_EXECUTION_MODE", "paper_internal")
+    monkeypatch.setenv("REPORT_EXECUTION_MODE", "bitget_demo")
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
         lambda **_: list(_outcomes() if outcomes is None else outcomes),
@@ -104,7 +104,7 @@ def test_report_isolates_outcome_transform_failures(monkeypatch, target, error_k
         outcome_reads += 1
         return list(_outcomes())
 
-    monkeypatch.setenv("REPORT_EXECUTION_MODE", "paper_internal")
+    monkeypatch.setenv("REPORT_EXECUTION_MODE", "bitget_demo")
     monkeypatch.setattr(
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
         eligible,

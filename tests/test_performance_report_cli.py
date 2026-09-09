@@ -8,7 +8,7 @@ def test_days_is_forwarded_and_reported(monkeypatch, capsys):
     import performance_report as report
 
     monkeypatch.delenv("REPORT_DAYS", raising=False)
-    monkeypatch.setenv("REPORT_EXECUTION_MODE", "paper_internal")
+    monkeypatch.setenv("REPORT_EXECUTION_MODE", "bitget_demo")
     seen: dict[str, int] = {}
     monkeypatch.setattr(
         trade_stats,
@@ -56,7 +56,7 @@ def test_legacy_hours_fallback_is_converted_and_marked(monkeypatch):
         lambda **_: [],
     )
 
-    report._collect(execution_mode="paper_internal")
+    report._collect(execution_mode="bitget_demo")
 
     assert seen == {"rolling": 2, "orders": 2}
 
