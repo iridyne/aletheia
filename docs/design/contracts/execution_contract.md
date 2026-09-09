@@ -301,7 +301,7 @@ JSONL 审计属于次要写入。
 `aletheia.execution.post_commit_audit.write_post_commit_audit`；该 helper 只包裹 JSONL sink，DB 写与
 exchange 调用必须留在 helper 外并保持原失败语义。close 的审计故障必须保留 Order 与 Position 的
 `pending_close_status`，重复 close 由 durable claim 直接返回，不得再次触达 exchange。
-可执行检查：`PL-PN-03`～`PL-PN-05`、`PL-RX-19`、`PL-RX-20`。
+可执行检查：`PL-PN-04`、`PL-PN-05`、`PL-RX-19`、`PL-RX-20`。
 
 ---
 

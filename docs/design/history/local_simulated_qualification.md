@@ -130,3 +130,11 @@ analysis. Reports mark that layer as `historical_ranker` and no longer identify
 the deleted Ranker implementation or its former helpers as current repair
 targets. The filter registry still resolves archived entry filter IDs while
 excluding those stages from current controls.
+
+`PL-PN-01` through `PL-PN-03` tested local simulator fill notifications, local
+transaction rollback, and simulator post-commit audit handling. These product
+requirements and their simulator seed helper are retired. External post-commit
+execution and unresolved-submission regressions remain in
+`tests/specs/spec_pipeline_exchange_commit.py`, retaining their existing claim IDs.
+Current planner checks use Full permission and Bitget Demo; fixed-horizon entry
+Learning fixtures also use external order and position modes.

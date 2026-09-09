@@ -1,59 +1,13 @@
-"""Paper fill notifications must describe only committed entry chains."""
+"""External execution responses preserve durable state across post-commit faults."""
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-import json
 from types import SimpleNamespace
 
 import pytest
 
 from tests.execution_authority import seed_order_authority
 from tests.specs.spec_meta import SpecClaim, spec_claim
-
-
-def _seed_gateway_entry(monkeypatch):
-    from aletheia.config import loader
-    from aletheia.execution import gateway
-    from aletheia.storage.sqlite import get_db
-
-    cfg = SimpleNamespace(
-        trading=SimpleNamespace(
-            slippage_bps=0.0,
-            execution_fee_pct=0.0,
-            default_take_profit_pct=4.0,
-        )
-    )
-    monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(gateway, "load_config", lambda: cfg)
-    proposal, decision = seed_order_authority(
-        proposal_id="paper-notification-proposal",
-        risk_decision_id="paper-notification-risk",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-        attribution_snapshot=json.dumps({"regime_tag": "unknown"}),
-    )
-    # The helper inserts the authoritative decision directly. Production Risk
-    # commits that decision before broker execution, so mirror that boundary.
-    get_db().commit()
-    monkeypatch.setattr(
-        gateway,
-        "evaluate_proposal",
-        lambda _proposal, *, decision_role: SimpleNamespace(
-            approved=True,
-            allowed_execution_mode="paper_internal",
-            decision_id=decision.id,
-            violations=[],
-            message="approved",
-        ),
-    )
-    monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
-    return proposal
 
 
 def _seed_exchange_gateway(
@@ -199,158 +153,8 @@ def _seed_exchange_gateway(
 
 @spec_claim(
     SpecClaim(
-        "PL-PN-01",
-        "pipeline_paper_notification_commit",
-        "committed fill notification",
-        "L2c",
-        "A paper fill notification is sent only after its Order, Fill, Position, "
-        "and executed Proposal are all committed.",
-        status="implemented",
-    )
-)
-def test_gateway_notifies_only_after_complete_paper_chain_commits(monkeypatch):
-    from aletheia import notifications
-    from aletheia.execution import gateway
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
-
-    proposal = _seed_gateway_entry(monkeypatch)
-    observed = []
-
-    def _observe(
-        symbol,
-        direction,
-        quantity,
-        fill_price,
-        position_id,
-        execution_mode,
-        **_kwargs,
-    ):
-        position = repo._select_one("positions", position_id)
-        order = repo.get_order(position["order_id"]) if position else None
-        fills = [
-            fill for fill in repo.list_fills(limit=10)
-            if order and fill["order_id"] == order["id"]
-        ]
-        stored_proposal = repo.get_trade_proposal(proposal.id)
-        observed.append({
-            "in_transaction": get_db().in_transaction,
-            "proposal_status": stored_proposal["status"],
-            "position_present": position is not None,
-            "order_present": order is not None,
-            "fill_present": bool(fills),
-        })
-
-    monkeypatch.setattr(notifications, "notify_trade_fill", _observe)
-
-    result = gateway._execute_proposal(proposal)
-
-    assert result["status"] == "executed"
-    assert observed == [{
-        "in_transaction": False,
-        "proposal_status": "executed",
-        "position_present": True,
-        "order_present": True,
-        "fill_present": True,
-    }]
-    assert "_notification_payload" not in result
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-PN-02",
-        "pipeline_paper_notification_commit",
-        "rollback suppression",
-        "L2c",
-        "A failed outer Gateway transaction rolls back the paper entry chain and "
-        "must not emit a trade-fill notification.",
-        status="implemented",
-    )
-)
-def test_gateway_rollback_suppresses_paper_fill_notification(monkeypatch):
-    from aletheia import notifications
-    from aletheia.execution import gateway
-    from aletheia.storage import repositories as repo
-
-    proposal = _seed_gateway_entry(monkeypatch)
-    notified = []
-    monkeypatch.setattr(
-        notifications,
-        "notify_trade_fill",
-        lambda *args, **kwargs: notified.append((args, kwargs)),
-    )
-
-    real_transaction = repo.transaction
-    transaction_calls = 0
-
-    @contextmanager
-    def _fail_first_transaction(*, immediate=False):
-        nonlocal transaction_calls
-        transaction_calls += 1
-        with real_transaction(immediate=immediate):
-            yield
-            if transaction_calls == 1:
-                raise RuntimeError("forced outer transaction failure")
-
-    monkeypatch.setattr(gateway, "transaction", _fail_first_transaction)
-
-    result = gateway._execute_proposal(proposal)
-
-    assert result["status"] == "error"
-    assert notified == []
-    assert repo.list_orders(limit=10) == []
-    assert repo.list_fills(limit=10) == []
-    assert repo.list_positions(limit=10) == []
-    assert repo.get_trade_proposal(proposal.id)["status"] == "error"
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-PN-03",
-        "pipeline_paper_notification_commit",
-        "post-commit audit failure",
-        "L2c",
-        "After a paper Order, Fill, Position, and executed Proposal commit, failure of the "
-        "secondary audit sink cannot rewrite the Proposal to error or change the executed response.",
-        status="implemented",
-    )
-)
-def test_post_commit_audit_failure_preserves_executed_paper_chain(
-    monkeypatch, caplog
-):
-    from aletheia.execution import gateway
-    from aletheia.storage import repositories as repo
-
-    proposal = _seed_gateway_entry(monkeypatch)
-
-    def fail_secondary_audit(_event):
-        raise RuntimeError("token=must-not-leak-from-audit-sink")
-
-    monkeypatch.setattr(gateway, "write_audit", fail_secondary_audit)
-
-    result = gateway._execute_proposal(proposal)
-
-    orders = [
-        row for row in repo.list_orders(limit=10)
-        if row.get("proposal_id") == proposal.id
-    ]
-    fills = repo.list_fills(limit=10)
-    positions = [
-        row for row in repo.list_positions(limit=10)
-        if row.get("proposal_id") == proposal.id
-    ]
-    assert result["status"] == "executed"
-    assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
-    assert len(orders) == len(fills) == len(positions) == 1
-    assert "must-not-leak" not in str(result)
-    assert "RuntimeError" in caplog.text
-    assert "must-not-leak" not in caplog.text
-
-
-@spec_claim(
-    SpecClaim(
         "PL-PN-04",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "exchange post-commit audit failure",
         "L2c",
         "After an exchange broker result is durably represented as submitted or executed, "
@@ -420,7 +224,7 @@ def test_post_commit_audit_failure_preserves_exchange_result(
 @spec_claim(
     SpecClaim(
         "PL-PN-05",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "unresolved exchange post-commit audit failure",
         "L2c",
         "After an uncertain exchange handoff is durably marked submission_unknown, failure "
@@ -459,7 +263,7 @@ def test_post_commit_audit_failure_preserves_submission_unknown(monkeypatch, cap
 @spec_claim(
     SpecClaim(
         "PL-PN-06",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "accepted exchange result read recovery",
         "L2c",
         "After the broker has returned an accepted result and persisted its Order, a transient "
@@ -527,7 +331,7 @@ def test_transient_post_acceptance_read_fault_recovers_durable_exchange_state(
 @spec_claim(
     SpecClaim(
         "PL-PN-07",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "accepted exchange result write recovery",
         "L2c",
         "After exchange acceptance, a transient Proposal status-write failure degrades to a "
@@ -597,7 +401,7 @@ def test_transient_post_acceptance_proposal_write_fault_becomes_unresolved(
 @spec_claim(
     SpecClaim(
         "PL-PN-08",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "exchange execution requires durable materialization",
         "L2c",
         "An exchange result can be marked executed only when its filled Order has one non-empty "
@@ -636,7 +440,7 @@ def test_exchange_result_ids_without_durable_chain_are_not_executed(monkeypatch)
 @spec_claim(
     SpecClaim(
         "PL-PN-09",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "broker before-return audit failure recovery",
         "L2c",
         "If a broker persists a retry-suppressing Order and then its secondary audit sink "
@@ -688,7 +492,7 @@ def test_broker_audit_failure_before_return_recovers_durable_order_without_retry
 @spec_claim(
     SpecClaim(
         "PL-PN-10",
-        "pipeline_paper_notification_commit",
+        "pipeline_exchange_commit",
         "broker evidence unavailable is not absent",
         "L2c",
         "If durable exchange evidence cannot be read after a broker failure, the Gateway "

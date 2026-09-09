@@ -789,7 +789,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
 @pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED"])
-def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
+def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
@@ -802,7 +802,7 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, pro
 
     cfg = load_config()
     cfg.agent.permission_mode = "Full"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     generation["producer_commit"] = "test-commit"
@@ -949,8 +949,8 @@ def test_full_internal_canonical_planner_persists_compiled_plan(monkeypatch, pro
     assert plan.behavior_fingerprint == generation["entry_behavior_fingerprint"]
     assert plan.analysis_context_fingerprint == context.context_fingerprint
     assert plan.thesis == "reversal grounded entry"
-    assert plan.required_permission == "Paper"
-    assert plan.execution_account_mode == "paper_internal"
+    assert plan.required_permission == "Full"
+    assert plan.execution_account_mode == "bitget_demo"
     assert stored["model_invoked"] == stored["compiler_invoked"] == 1
     assert stored["outcome_class"] == "entry_plan"
     assert len(requests) == 2
