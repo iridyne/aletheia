@@ -14,8 +14,6 @@ from aletheia.trading.trading_mandate import (
     EdgeScope,
     TradingMandate,
     assess_trading_mandate_fit,
-    build_trading_mandate_provenance,
-    freeze_trading_mandate_provenance,
     resolve_trading_mandate,
     validate_frozen_trading_mandate_provenance,
 )
@@ -96,6 +94,15 @@ def _setup_mandate_db(tmp_path, monkeypatch):
     return repo, sqlite_store, db, configured
 
 
+def _archived_mandate_evidence(*, configured, opportunity, decision, proposal):
+    return {
+        "trading_mandate_identity": configured.identity(),
+        "trading_mandate_fit": assess_trading_mandate_fit(
+            mandate=configured, opportunity=opportunity, decision=decision, proposal=proposal,
+        ),
+    }
+
+
 def _insert_mandate_proposal(
     repo,
     proposal_id: str,
@@ -116,6 +123,7 @@ def _insert_mandate_proposal(
     )
     proposal = TradeProposal(
         id=proposal_id,
+        execution_mode="paper_internal",
         opportunity_id=opportunity_id,
         symbol="BTC/USDT",
         market_type="spot",
@@ -128,7 +136,15 @@ def _insert_mandate_proposal(
         ),
         **({"created_at": created_at} if created_at is not None else {}),
     )
-    repo.insert_trade_proposal(proposal, mandate_config=configured)
+    # Historical rows are fixtures, never recreated through the active producer.
+    snapshot = json.loads(proposal.attribution_snapshot)
+    snapshot.update(_archived_mandate_evidence(
+        configured=resolve_trading_mandate(configured).mandate,
+        opportunity=repo.get_opportunity(opportunity_id), decision=None, proposal=proposal,
+    ))
+    proposal.attribution_snapshot = json.dumps(snapshot)
+    proposal.commit_hash = repo._compute_proposal_hash(proposal)
+    repo._insert("trade_proposals", proposal.model_dump())
     return proposal
 
 
@@ -255,7 +271,7 @@ def test_malformed_collection_and_horizon_types_fail_closed_without_type_error()
 
 def test_frozen_identity_requires_complete_contract_shape():
     opportunity, decision, proposal = _facts()
-    evidence = build_trading_mandate_provenance(
+    evidence = _archived_mandate_evidence(
         configured=_mandate(), opportunity=opportunity, decision=decision, proposal=proposal
     )
     for identity in (
@@ -273,7 +289,7 @@ def test_frozen_identity_requires_complete_contract_shape():
 
 def _frozen_mandate_snapshot() -> str:
     opportunity, decision, proposal = _facts()
-    evidence = build_trading_mandate_provenance(
+    evidence = _archived_mandate_evidence(
         configured=_mandate(),
         opportunity=opportunity,
         decision=decision,
@@ -391,76 +407,27 @@ def test_fit_optional_dimensions_missing_and_unconfigured_are_deterministic():
     assert result["behavior_changed"] is False
 
 
-def test_frozen_pair_is_idempotent_and_conflicts_fail_closed():
-    opportunity, decision, proposal = _facts()
-    evidence = build_trading_mandate_provenance(
-        configured=_mandate(), opportunity=opportunity, decision=decision, proposal=proposal
-    )
-    snapshot: dict = {}
-    freeze_trading_mandate_provenance(snapshot, evidence)
-    original = json.dumps(snapshot, sort_keys=True)
-    freeze_trading_mandate_provenance(snapshot, evidence)
-    assert json.dumps(snapshot, sort_keys=True) == original
-    conflicting = {
-        **evidence,
-        "trading_mandate_identity": {**evidence["trading_mandate_identity"], "mandate_version": 2},
-    }
-    with pytest.raises(ValueError, match="immutable"):
-        freeze_trading_mandate_provenance(snapshot, conflicting)
-
-
-def test_new_native_paper_proposal_freezes_once_and_config_changes_do_not_rewrite(
-    tmp_path, monkeypatch
-):
-    from aletheia.config import loader
-    from aletheia.storage import repositories as repo
-    from aletheia.storage import sqlite as sqlite_store
-    from aletheia.storage.migrations import apply_migrations
+def test_external_proposal_keeps_hypothesis_without_recreating_archived_mandate(tmp_path, monkeypatch):
     from aletheia.storage.models import Opportunity, TradeProposal
-    from aletheia.storage.proposal_hypothesis import freeze_position_hypothesis
 
-    sqlite_store.reset_db()
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    loader._invalidate_config_cache()
-    connection = sqlite3.connect(str(tmp_path / "app.db"))
-    connection.row_factory = sqlite3.Row
-    sqlite_store._db_conn = connection
-    apply_migrations()
-    repo.insert_opportunity(
-        Opportunity(id="opportunity-freeze", symbol="BTC/USDT", market="spot")
-    )
-    configured = AletheiaConfig.model_validate(
-        {"trading_mandate": {"enabled": True, **_mandate().model_dump(mode="json")}}
-    )
-    monkeypatch.setattr(loader, "load_config", lambda **_: configured)
+    repo, sqlite_store, db, _configured = _setup_mandate_db(tmp_path, monkeypatch)
+    repo.insert_opportunity(Opportunity(id="external-opp", symbol="BTC/USDT", market="spot"))
     proposal = TradeProposal(
-        id="proposal-freeze",
-        opportunity_id="opportunity-freeze",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
+        id="external-proposal", execution_mode="bitget_demo", opportunity_id="external-opp",
+        symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0, price=100.0,
     )
     repo.insert_trade_proposal(proposal)
-    stored = repo.get_trade_proposal(proposal.id)
-    snapshot = json.loads(stored["attribution_snapshot"])
-    assert snapshot["trading_mandate_identity"] == _mandate().identity()
-    assert snapshot["trading_mandate_fit"]["contract_version"] == TRADING_MANDATE_FIT_VERSION
-    original_hash = stored["commit_hash"]
-
-    # Current config is irrelevant to already-frozen evidence.
-    disabled = AletheiaConfig.model_validate({"trading_mandate": {"enabled": False}})
-    monkeypatch.setattr(loader, "load_config", lambda **_: disabled)
-    assert repo.get_trade_proposal(proposal.id)["commit_hash"] == original_hash
-
-    changed = dict(snapshot)
-    changed["trading_mandate_fit"] = dict(changed["trading_mandate_fit"])
-    changed["trading_mandate_fit"]["status"] = "out_of_scope"
-    proposal.attribution_snapshot = json.dumps(changed)
-    with pytest.raises(ValueError, match="immutable"):
-        freeze_position_hypothesis(proposal, db=connection)
+    snapshot = json.loads(repo.get_trade_proposal(proposal.id)["attribution_snapshot"])
+    assert "position_hypothesis" in snapshot
+    assert "trading_mandate_identity" not in snapshot
+    assert "trading_mandate_fit" not in snapshot
+    injected = proposal.model_copy(update={
+        "id": "injected-proposal", "commit_hash": None,
+        "attribution_snapshot": _frozen_mandate_snapshot(),
+    })
+    with pytest.raises(ValueError, match="production is retired"):
+        repo.insert_trade_proposal(injected)
+    assert repo.get_trade_proposal(injected.id) is None
     sqlite_store.reset_db()
 
 
@@ -653,7 +620,7 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
     from aletheia.analytics.trading_mandate_compliance import (
         build_mandate_compliance_report,
     )
-    from aletheia.storage.models import Order, Position
+    from aletheia.storage.models import Fill, Order, Position
 
     repo, sqlite_store, db, configured = _setup_mandate_db(tmp_path, monkeypatch)
     valid = _insert_mandate_proposal(repo, "proposal-valid", configured=configured)
@@ -665,7 +632,7 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
     for proposal in (valid, tampered):
         position_id = f"{proposal.id}-position"
         order_id = f"{proposal.id}-order"
-        repo.insert_order(
+        repo._insert("orders",
             Order(
                 id=order_id,
                 proposal_id=proposal.id,
@@ -679,9 +646,9 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
                 execution_mode="paper_internal",
                 status="filled",
                 source="adopted",
-            )
+            ).model_dump()
         )
-        repo.insert_position(
+        repo._insert("positions",
             Position(
                 id=position_id,
                 proposal_id=proposal.id,
@@ -709,8 +676,12 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
                 entry_fee=0.0,
                 exit_fee=0.0,
                 closed_at=datetime.now(timezone.utc).isoformat(),
-            )
+            ).model_dump()
         )
+        repo._insert("fills", Fill(
+            id=f"{order_id}-fill", order_id=order_id, fill_price=100.0,
+            fill_quantity=1.0, fee=0.0, paper_fill_model_version="paper-order-fill/v1",
+        ).model_dump())
     _tamper_mandate_snapshot(db, tampered.id)
 
     report = build_mandate_compliance_report(hours=720, db=db)
@@ -721,7 +692,7 @@ def test_compliance_aggregate_excludes_hash_mismatched_mandate_cohorts(
     assert report["counts"]["positions_by_fit_status"]["in_scope"] == 1
     assert report["denominators"]["proposal_fit_status_denominator"] == 1
     assert report["denominators"]["position_fit_status_denominator"] == 1
-    assert report["eligible_genuine_net_outcomes"]["total_eligible_count"] == 1
+    assert report["eligible_genuine_net_outcomes"]["total_eligible_count"] == 1, report["exclusions"]
     assert report["eligible_genuine_net_outcomes"]["by_fit_status"]["in_scope"] == {
         "eligible_count": 1,
         "net_pnl": 10.0,

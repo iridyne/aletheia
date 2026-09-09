@@ -11,11 +11,11 @@ second decision authority. The first supported contract is
 The System Operator remains the sole native entry decision role. The Risk Engine
 remains the sole approval authority. Observe-only mandate fit cannot block,
 admit, rank, resize, close, reduce, adjust, protect, or otherwise mutate
-trading behavior. It is stored as descriptive evidence only.
+trading behavior. Archived records contain descriptive evidence only.
 
-The active runtime scope is unchanged: crypto Spot/Perpetual local Paper
-execution remains the only admitted mainline. The existence of this schema is
-not proof that a mandate is configured or that this capability is active.
+Current execution uses registered external accounts. The former automatic
+mandate-provenance producer is retired; configuration and historical inspection
+do not imply active entry attribution or execution authority.
 
 ## Configuration
 
@@ -32,7 +32,7 @@ Example template (not enabled by default):
 trading_mandate:
   enabled: true
   contract_version: trading_mandate/v1
-  mandate_id: crypto-paper-observe
+  mandate_id: crypto-observe
   mandate_version: 1
   status: active
   enforcement_mode: observe_only
@@ -74,7 +74,7 @@ and hashed with SHA-256. The identity projection is:
 ```json
 {
   "contract_version": "trading_mandate/v1",
-  "mandate_id": "crypto-paper-observe",
+  "mandate_id": "crypto-observe",
   "mandate_version": 1,
   "content_hash": "sha256:<64 lowercase hex characters>",
   "enforcement_mode": "observe_only"
@@ -113,31 +113,15 @@ calibration evidence.
 
 ## Frozen Proposal and Position provenance
 
-For a new native local-Paper entry Proposal, the pair below is frozen in the
-existing hash-covered `trade_proposals.attribution_snapshot` JSON before the
-Proposal hash and existing `position_hypothesis/v1` snapshot are finalized:
+New entries do not produce the retired frozen mandate pair. They retain the
+independent `position_hypothesis/v1` snapshot. Supplying archived mandate evidence
+for a new Proposal is rejected; existing records remain immutable and are never
+backfilled from current configuration.
 
-```json
-{
-  "trading_mandate_identity": {},
-  "trading_mandate_fit": {}
-}
-```
-
-The pair is frozen exactly once. Equal repeated freezes are idempotent and a
-conflicting rewrite fails closed. The persistence path does not add a table or
-migration. Demo, adopted, administrative, legacy, and unsupported paths are not
-assigned guessed mandate evidence. Historical rows without the pair report
-`not_recorded`; there is no backfill or reconstruction from current config.
-
-Position Replay exposes the exact pair inherited through
-`positions.proposal_id -> trade_proposals.id`, and preserves explicit
-unavailable/malformed states. It does not re-evaluate old Positions using the
-current mandate.
-
-Adding this evidence to the existing hash-covered attribution snapshot rotates
-new Proposal `commit_hash` values. Behavior remaining observe-only does not make
-qualification or evidence identity automatically comparable.
+Position Replay and mandate-compliance inspection read the exact archived pair
+through `positions.proposal_id -> trade_proposals.id`, preserving missing,
+unavailable and malformed states. The former producer contract is
+[archived](../history/local_simulated_mandate.md).
 
 ## Read-only inspection
 

@@ -1826,7 +1826,6 @@ def insert_trade_proposal(
     p: TradeProposal,
     *,
     decision_inputs: object | None = None,
-    mandate_config: object | None = None,
 ) -> None:
     # Provenance is immutable Proposal identity, so stamp it on both the model
     # and persisted payload *before* computing the hash. Hashing first produced
@@ -1845,21 +1844,6 @@ def insert_trade_proposal(
     for field, value in normalized.model_dump().items():
         setattr(p, field, value)
 
-    # Config is read before the writer transaction; mandate assessment is
-    # evidence-only and must not hold the SQLite write lock across file I/O.
-    if (
-        mandate_config is None
-        and p.source == "native"
-        and p.execution_mode == "paper_internal"
-        and p.opportunity_id
-        and p.direction in {"long", "short"}
-        and p.quantity is not None
-        and p.quantity > 0
-    ):
-        from aletheia.config.loader import load_config
-
-        mandate_config = load_config(persist_migrations=False)
-
     # Parent lookup + insert is one short writer claim. Without this, two
     # concurrent proposals can both select the same parent and fork the global
     # append-only chain even though each individual hash is valid.
@@ -1871,7 +1855,6 @@ def insert_trade_proposal(
             p,
             db=db,
             decision=decision_inputs,
-            mandate_config=mandate_config,
         )
         row = db.execute(
             "SELECT commit_hash FROM trade_proposals WHERE commit_hash IS NOT NULL ORDER BY rowid DESC LIMIT 1"

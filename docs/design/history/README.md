@@ -17,3 +17,5 @@ reactivating a historical document in place.
 - [Local simulated contribution and qualification](local_simulated_qualification.md): retired Risk/Execution projections and frozen whole-policy compiler.
 
 - [Local simulated Risk and execution contracts](local_simulated_risk_execution.md): retired admission, matching, cash and protection definitions.
+
+- [Local simulated mandate provenance](local_simulated_mandate.md): retired automatic attribution producer; historical identities remain readable.
