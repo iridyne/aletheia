@@ -797,12 +797,14 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
         )
     )
 
-    assert (funding_count, oi_count) == ((0, False), (0, False))
+    assert (funding_count, oi_count) == ((2, False), (0, False))
     assert errors == [
         "funding_history_invalid BTC/USDT",
         "oi_history_invalid BTC/USDT",
     ]
-    assert repo._select_all("funding_rate_snapshots") == []
+    funding = repo._select_all("funding_rate_snapshots", order="observed_at ASC")
+    assert [row["funding_rate"] for row in funding] == [0.0001, 0.0002]
+    assert all(row["next_funding_time"] == row["observed_at"] for row in funding)
     assert repo._select_all("open_interest_snapshots") == []
     sq.close_db()
 
@@ -850,7 +852,10 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
         _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
     ))
     assert fetch_called["n"] == 1, "Binance fetch must occur when only Bybit rows exist"
-    assert result == (2, False), f"expected Binance event/transition inserts; got {result}"
+    assert result == (1, False)
+    rows = repo._select_all("funding_rate_snapshots", where="exchange=?", params=("binance",))
+    assert len(rows) == 1
+    assert rows[0]["next_funding_time"] == rows[0]["observed_at"]
     sq.close_db()
 
 

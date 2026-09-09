@@ -90,7 +90,7 @@ def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None
                 field_path="exchange.paper_execution_mode",
                 severity="warning",
                 message=f"paper_execution_mode={pem} but demo API credentials are missing",
-                fix_hint=f"{fix_hint}, or switch paper_execution_mode to 'paper_internal'",
+                fix_hint=fix_hint,
             )
     except Exception:  # noqa: BLE001 — secrets layer might not be available
         pass
@@ -195,17 +195,10 @@ def _check_live_state(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
 def _check_risk_caps_admit_sizing(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
     """Detect when risk caps would block every first entry at current account size."""
     try:
-        from aletheia.risk.engine import per_symbol_notional_ceiling
-        from aletheia.storage import repositories as _repo
+        from aletheia.risk.engine import account_available_for_execution, per_symbol_notional_ceiling
 
-        mode = getattr(cfg.exchange, "paper_execution_mode", None) or "paper_internal"
-        # For paper_internal read balance directly — get_paper_account() seeds on
-        # first call and would corrupt tests that expect a clean database.
-        if mode == "paper_internal":
-            available = _repo.get_paper_account_cash_balance()
-        else:
-            from aletheia.risk.engine import account_available_for_execution
-            available = account_available_for_execution(mode)
+        mode = cfg.exchange.paper_execution_mode
+        available = account_available_for_execution(mode)
         if not available or available <= 0:
             return None
 

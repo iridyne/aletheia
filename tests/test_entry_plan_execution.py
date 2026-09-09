@@ -1125,12 +1125,12 @@ def test_execution_lineage_keeps_position_and_requires_cash_convergence(tmp_path
                        ("close-event", position.id, 5))
     before = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert before["economics"]["status"] == "unavailable"
-    repo.insert_paper_account_event(PaperAccountEvent(action="position_closed", amount_usdt=4, cash_balance_before_usdt=100, cash_balance_after_usdt=104,
-                                                     position_id=position.id))
+    repo._insert("paper_account_events", PaperAccountEvent(action="position_closed", amount_usdt=4, cash_balance_before_usdt=100, cash_balance_after_usdt=104,
+                                                     position_id=position.id).model_dump())
     mismatch = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert mismatch["economics"]["status"] == "unavailable"
-    repo.insert_paper_account_event(PaperAccountEvent(action="manual_credit", amount_usdt=1, cash_balance_before_usdt=104, cash_balance_after_usdt=105,
-                                                     position_id=position.id))
+    repo._insert("paper_account_events", PaperAccountEvent(action="manual_credit", amount_usdt=1, cash_balance_before_usdt=104, cash_balance_after_usdt=105,
+                                                     position_id=position.id).model_dump())
     settled = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert settled["economics"]["status"] == "complete"
     assert settled["execution_state"] == "CLOSED"

@@ -1891,8 +1891,7 @@ def get_account_equity_history(
     recorded position notional rather than cash-account equity.
     """
     _ensure_db()
-    local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
-    execution_mode = "paper_internal" if local_paper else "exchange_account"
+    execution_mode = "exchange_account"
     cache_key = (days, limit, max_points, execution_mode)
     now = time.monotonic()
     with _equity_history_cache_lock:
@@ -1910,31 +1909,9 @@ def get_account_equity_history(
     capital_flow_markers: list[dict] = []
     adjusted_points: list[dict] = []
     if points:
-        if local_paper:
-            account_events = repo.list_paper_cash_events_between(
-                points[0]["time"], points[-1]["time"]
-            )
-            capital_events = [
-                {
-                    "id": event["id"],
-                    "detected_at": event["created_at"],
-                    "broker_id": "paper_internal",
-                    "event_type": (
-                        "deposit" if float(event["amount_usdt"]) > 0 else "withdraw"
-                    ),
-                    "amount_usdt": abs(float(event["amount_usdt"])),
-                    "signed_amount_usdt": float(event["amount_usdt"]),
-                    "change_type": event["action"],
-                    "balance_before_usdt": float(event["cash_balance_before_usdt"]),
-                    "balance_after_usdt": float(event["cash_balance_after_usdt"]),
-                    "note": event["note"],
-                }
-                for event in account_events
-            ]
-        else:
-            capital_events = repo.list_capital_events_between(
-                points[0]["time"], points[-1]["time"]
-            )
+        capital_events = repo.list_capital_events_between(
+            points[0]["time"], points[-1]["time"]
+        )
         event_index = 0
         cumulative_net_flow = 0.0
         for point in points:
@@ -1988,7 +1965,7 @@ def get_account_equity_history(
         adjusted_points = [adjusted_points[index] for index in selected]
 
     result = {
-        "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
+        "source": "exchange_account_snapshot",
         "state": "available" if points else "unavailable",
         "points": points,
         "adjusted_points": adjusted_points,
@@ -1999,7 +1976,7 @@ def get_account_equity_history(
             "scope": "aggregate_tracked_account_equity",
             "baseline_at": points[0]["time"] if points else None,
             "note": (
-                "Raw equity minus audited cash or administrative balance changes "
+                "Raw equity minus detected external capital flows "
                 "after the first visible snapshot. Verified trading PnL is unchanged."
             ),
         },

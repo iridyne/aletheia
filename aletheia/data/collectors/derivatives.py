@@ -462,79 +462,37 @@ def _parse_oi(
         return None
 
 
-def _insert_historical_funding_snapshot_pair(
-    sym: str,
-    exchange_name: str,
-    ts_ms: int,
-    rate: float,
-    *,
-    next_ts_ms: int | None = None,
+def _insert_historical_funding_snapshot(
+    sym: str, exchange_name: str, ts_ms: int, rate: float,
 ) -> int:
-    """Store a historical funding settlement as an event+transition anchor pair.
-
-    Each historical settlement at time T must produce two rows so that
-    compute_local_funding() can reconstruct funding for positions closed during
-    a collection outage:
-
-    - event anchor:      observed_at=T, next_funding_time=T
-      Satisfies the ``scheduled_at == current_target`` check in the accumulator
-      loop (current_target = T, observed_at=T ≤ T, gap=0 ≤ 15min).
-
-    - transition anchor: observed_at=T, next_funding_time=T_next
-      Satisfies the transition-candidates search after the event is processed
-      (observed_at=T ≥ current_target=T, scheduled_at=T_next > T).
-
-    Existing rows with the same (symbol, exchange, observed_at, next_funding_time)
-    are skipped for idempotency.  Returns the number of rows actually inserted.
-    """
+    """Store one observed historical rate; do not invent a subsequent settlement."""
     from aletheia.storage.repositories import _select_all, insert_funding_rate_snapshot
 
-    T = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-    T_iso = T.isoformat()
-    annualized = round(rate * 3 * 365, 4)
-
-    if next_ts_ms is not None:
-        T_next = datetime.fromtimestamp(next_ts_ms / 1000, tz=timezone.utc)
-    else:
-        T_next = T + timedelta(hours=8)
-    T_next_iso = T_next.isoformat()
-
-    n = 0
-    for nft in (T_iso, T_next_iso):
-        prior = _select_all(
-            "funding_rate_snapshots",
-            where="symbol=? AND exchange=? AND observed_at=? AND next_funding_time=?",
-            params=(sym, exchange_name, T_iso, nft),
-            limit=1,
-        )
-        if prior:
-            continue
-        snap = FundingRateSnapshot(
-            symbol=sym,
-            exchange=exchange_name,
-            funding_rate=rate,
-            funding_rate_annualized=annualized,
-            next_funding_time=nft,
-            mark_price=None,
-            observed_at=T_iso,
-        )
-        insert_funding_rate_snapshot(snap.model_dump())
-        n += 1
-    return n
+    observed_at = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
+    prior = _select_all(
+        "funding_rate_snapshots",
+        where="symbol=? AND exchange=? AND observed_at=? AND next_funding_time=?",
+        params=(sym, exchange_name, observed_at, observed_at),
+        limit=1,
+    )
+    if prior:
+        return 0
+    snapshot = FundingRateSnapshot(
+        symbol=sym, exchange=exchange_name, funding_rate=rate,
+        funding_rate_annualized=round(rate * 3 * 365, 4),
+        next_funding_time=observed_at, mark_price=None, observed_at=observed_at,
+    )
+    insert_funding_rate_snapshot(snapshot.model_dump())
+    return 1
 
 
 async def _maybe_backfill_funding_history(
     exchange, sym: str, perp_sym: str, exchange_name: str, since_hours: int,
     errors: list[str] | None = None,
 ) -> tuple[int, bool]:
-    """Backfill funding rate history when the local window is sparse.
+    """Backfill sparse public rate history for market context, not account settlement.
 
-    Idempotency (per spec MS-C05): no-op if ≥3 rows already exist within
-    since_hours for this symbol. Each historical entry is stored as an
-    event+transition anchor pair (via _insert_historical_funding_snapshot_pair)
-    so compute_local_funding() can reconstruct position economics even when
-    the real-time collector had a gap spanning a settlement window.
-    Already-covered symbol windows are reported separately from inserted rows.
+    A window with at least three stored observations skips this refresh.
     """
     from aletheia.storage.repositories import _select_all
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
@@ -566,14 +524,10 @@ async def _maybe_backfill_funding_history(
         code = f"funding_history_invalid {sym}"
         if errors is not None and code not in errors:
             errors.append(code)
-        # Funding rows form a settlement transition chain.  Removing an invalid
-        # middle row and joining its neighbours would falsely prove completeness.
-        return 0, False
     valid_items.sort(key=lambda item: item[0])
     n = 0
-    for i, (ts_ms, rate) in enumerate(valid_items):
-        next_ts_ms = valid_items[i + 1][0] if i + 1 < len(valid_items) else None
-        n += _insert_historical_funding_snapshot_pair(sym, exchange_name, ts_ms, rate, next_ts_ms=next_ts_ms)
+    for ts_ms, rate in valid_items:
+        n += _insert_historical_funding_snapshot(sym, exchange_name, ts_ms, rate)
     return n, False
 
 
