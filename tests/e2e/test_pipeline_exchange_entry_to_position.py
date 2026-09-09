@@ -257,9 +257,7 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
         **_execution_receipt_kwargs(now, depth=True),
     )
 
-    # Acknowledgement is not a fill. An exchange entry that the venue merely
-    # accepted must not invent economics: this is where paper and exchange modes
-    # genuinely diverge, and asserting it is the point of covering this segment.
+    # An acknowledgement alone must not create a Fill or Position.
     assert result["status"] == "submitted", result
 
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
@@ -320,6 +318,8 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     assert position["status"] == "open"
     assert position["order_id"] == order["id"]
     assert position["entry_price"] == pytest.approx(100.05)
+    assert position["expected_horizon_hours"] == plan.holding_horizon_hours
+    assert position["stop_source"] == "operator"
     assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 

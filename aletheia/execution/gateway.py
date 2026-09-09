@@ -1,42 +1,32 @@
 """Execution Gateway — all orders flow through here. No direct exchange access."""
 
-import hashlib
 import json
 import logging
-import math
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from uuid import uuid4
 
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
-from aletheia.execution.paper_broker import (
-    execute_paper_order,
-    materialize_paper_maker_fill,
-)
 from aletheia.execution import venue_capabilities as _venue_capabilities
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
 )
 from aletheia.trading.entry_snapshot import (
-    capture_attribution_snapshot as capture_paper_attribution_snapshot,
+    capture_attribution_snapshot,
 )
 from aletheia.storage.models import TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
-    get_authoritative_risk_decision,
     get_proposal_execution_claim,
     get_order,
     get_trade_proposal,
     has_order_for_proposal,
     insert_trade_proposal,
     insert_proposal_execution_claim,
-    proposal_execution_claim_owned,
     release_entry_risk_reservation,
     release_proposal_execution_claim,
     replace_proposal_execution_claim,
     transaction,
-    update_open_position_exit_plan,
     update_trade_proposal,
 )
 from aletheia.files.jsonl import write_audit
@@ -140,12 +130,7 @@ def _prepare_exchange_quantity(
     quantity: float,
     price: float,
 ) -> tuple[float, str | None]:
-    """Apply executable-venue minima before Risk Engine sees an exchange order.
-
-    Local paper fills intentionally have no exchange-side size constraints.
-    """
-    if execution_mode == "paper_internal":
-        return quantity, None
+    """Apply executable-venue minima before Risk Engine sees an exchange order."""
     from aletheia.execution.order_constraints import (
         ConstraintUnavailable,
         prepare_exchange_quantity,
@@ -166,43 +151,6 @@ def _prepare_exchange_quantity(
         return quantity, "Executable venue order rules are unavailable or do not support this order. No order was sent."
 
 
-def _prepare_paper_quantity(
-    *,
-    venue: str,
-    symbol: str,
-    market_type: str,
-    quantity: float,
-    price: float,
-) -> tuple[float, str | None]:
-    """Validate one local Order against the existing exact public registry row."""
-
-    from aletheia.storage import repositories as repo
-
-    rule = repo.get_active_universe_asset_for_instrument(venue, symbol, market_type)
-    if rule is None:
-        return quantity, "Exact active public venue rules are unavailable; no Paper order was created."
-    try:
-        amount_places = int(rule["amount_precision"])
-        price_places = int(rule["price_precision"])
-        minimum = Decimal(str(rule["min_notional"]))
-        amount_step = Decimal(1).scaleb(-amount_places)
-        price_step = Decimal(1).scaleb(-price_places)
-        requested_price = Decimal(str(price))
-        adjusted = Decimal(str(quantity)).quantize(amount_step, rounding=ROUND_DOWN)
-    except (InvalidOperation, KeyError, TypeError, ValueError):
-        return quantity, "Exact public venue precision or minimum-notional rules are unavailable."
-    if (
-        amount_places < 0
-        or price_places < 0
-        or minimum <= 0
-        or adjusted <= 0
-        or requested_price.quantize(price_step) != requested_price
-        or adjusted * requested_price < minimum
-    ):
-        return quantity, "Paper order does not satisfy exact public venue rules."
-    return float(adjusted), None
-
-
 def submit_proposal(
     symbol: str,
     market_type: str,
@@ -214,7 +162,7 @@ def submit_proposal(
     stop_price: float | None = None,
     take_profit: float | None = None,
     risk_reward: float | None = None,
-    execution_mode: str = "paper_internal",
+    execution_mode: str = "",
     strategy_id: str | None = None,
     opportunity_id: str | None = None,
     agent_rationale: str | None = None,
@@ -319,7 +267,7 @@ def submit_proposal(
 
 def execute_existing_proposal(
     proposal_id: str,
-    execution_mode: str = "paper_internal",
+    execution_mode: str = "",
     *,
     execution_receipt=None,
 ) -> dict:
@@ -424,20 +372,10 @@ def execute_existing_proposal(
                 "message": "Proposal execution is already in progress; no new order was created.",
             }
 
-        if proposal.status == "executing" and (
-            proposal.execution_mode != "paper_internal" or has_order_for_proposal(proposal.id)
-        ):
-            # An expired external claim may have crossed the exchange boundary;
-            # never infer that no order was sent. A paper claim with an Order is
-            # likewise not safe to replay because local materialization exists.
-            stored_status = (
-                "submission_unknown" if proposal.execution_mode != "paper_internal" else "materialization_missing"
-            )
-            reason_code = (
-                "execution_lease_expired_exchange_reconciliation_required"
-                if proposal.execution_mode != "paper_internal"
-                else "paper_execution_order_exists_reconciliation_required"
-            )
+        if proposal.status == "executing":
+            # An expired claim may have crossed the exchange boundary.
+            stored_status = "submission_unknown"
+            reason_code = "execution_lease_expired_exchange_reconciliation_required"
             update_trade_proposal(proposal.id, status=stored_status)
             if claim is not None:
                 release_proposal_execution_claim(proposal.id, str(claim.get("owner_token") or ""))
@@ -516,7 +454,6 @@ def execute_existing_proposal(
         try:
             return _execute_proposal(
                 proposal,
-                execution_claim_token=owner_token,
                 execution_receipt=receipt,
             )
         except ProposalIntegrityError as exc:
@@ -542,16 +479,7 @@ def execute_existing_proposal(
                 # Risk allowance in every working set. Known no-Order terminal
                 # states release it too. Ambiguous states deliberately retain the
                 # reservation so a crash cannot reopen capacity.
-                resting_paper_order = (
-                    has_order_for_proposal(proposal.id)
-                    and proposal.execution_mode == "paper_internal"
-                    and proposal.order_tactic == "POST_ONLY_LIMIT"
-                )
-                if (
-                    (has_order_for_proposal(proposal.id) and not resting_paper_order)
-                    or stored_status in {"rejected", "error"}
-                    or (stored_status == "executed" and not resting_paper_order)
-                ):
+                if has_order_for_proposal(proposal.id) or stored_status in {"rejected", "error", "executed"}:
                     release_entry_risk_reservation(proposal.id)
                 release_proposal_execution_claim(proposal.id, owner_token)
         except Exception as release_error:
@@ -592,19 +520,6 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
     def fully_filled(current_order: dict) -> bool:
         return filled_quantity(current_order) + 1e-12 >= float(current_order["quantity"])
-
-    if order.get("execution_mode") == "paper_internal":
-        with repo.transaction(immediate=True):
-            fresh_order = repo.get_order(order["id"])
-            if fresh_order is None:
-                return {"status": "not_cancellable", "entry_plan_id": plan_id}
-            if fresh_order.get("status") == "filled" or fully_filled(fresh_order):
-                return {"status": "filled", "entry_plan_id": plan_id}
-            if fresh_order.get("status") not in {"open", "partially_filled"}:
-                return {"status": fresh_order["status"], "entry_plan_id": plan_id}
-            repo.transition_order(order["id"], status="cancelled", error_reason=reason)
-            release_entry_risk_reservation(str(order["proposal_id"]))
-        return {"status": "cancelled", "entry_plan_id": plan_id}
 
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
@@ -739,175 +654,6 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     return {"status": "cancelled", "entry_plan_id": plan_id}
 
 
-def observe_paper_entry_order_event(event) -> list[dict]:
-    """Apply one exact public event to matching open Paper maker Orders."""
-
-    from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
-    from aletheia.storage import repositories as repo
-    from aletheia.trading.instruments import instrument_market_to_db_market
-    from aletheia.universe.fast_stream import FastMarketEvent
-
-    observed = FastMarketEvent.model_validate(event)
-    if (
-        observed.event_type != "trade"
-        or observed.price is None
-        or observed.side not in {"buy", "sell"}
-        or not observed.stream_generation_id
-        or not observed.subscription_generation_id
-    ):
-        return []
-    try:
-        event_size = float(observed.size)
-    except (TypeError, ValueError):
-        return []
-    if not math.isfinite(event_size) or event_size <= 0:
-        return []
-    market_type = instrument_market_to_db_market(observed.instrument.market_type)
-    direction = "long" if observed.side == "sell" else "short"
-    event_evidence = {
-        "venue": observed.instrument.exchange,
-        "symbol": observed.instrument.symbol,
-        "market_type": observed.instrument.market_type,
-        "stream_generation_id": observed.stream_generation_id,
-        "subscription_generation_id": observed.subscription_generation_id,
-        "event_type": observed.event_type,
-        "exchange_timestamp_ms": observed.exchange_timestamp_ms,
-        "received_timestamp_ms": observed.received_timestamp_ms,
-        "sequence": observed.sequence,
-        "side": observed.side,
-        "price": observed.price,
-        "size": event_size,
-    }
-    event_json = json.dumps(event_evidence, sort_keys=True, separators=(",", ":"))
-    market_event_id = hashlib.sha256(event_json.encode()).hexdigest()
-    matches: list[dict] = []
-    for order in repo.list_open_paper_maker_orders(
-        symbol=observed.instrument.symbol,
-        market_type=market_type,
-        direction=direction,
-    ):
-        try:
-            receipt = EntryExecutionReceiptV1.model_validate_json(
-                str(order["execution_receipt_json"])
-            )
-        except Exception:
-            continue
-        if (
-            not receipt.hash_is_valid()
-            or receipt.instrument.get("venue") != observed.instrument.exchange
-            or (order.get("matching_stream_generation_id") or receipt.stream_generation_id)
-            != observed.stream_generation_id
-            or (
-                order.get("matching_subscription_generation_id")
-                or receipt.subscription_generation_id
-            )
-            != observed.subscription_generation_id
-        ):
-            continue
-        quote = receipt.quote
-        if (
-            observed.received_timestamp_ms <= int(quote["received_timestamp_ms"])
-            or observed.exchange_timestamp_ms <= int(quote["exchange_timestamp_ms"])
-        ):
-            continue
-        limit_price = float(order["price"])
-        traded_through = (
-            order["direction"] in {"long", "buy"}
-            and observed.side == "sell"
-            and float(observed.price) < limit_price
-        ) or (
-            order["direction"] in {"short", "sell"}
-            and observed.side == "buy"
-            and float(observed.price) > limit_price
-        )
-        if not traded_through:
-            continue
-        with transaction(immediate=True):
-            available = event_size - repo.paper_market_event_consumed_quantity(
-                market_event_id
-            )
-            if available <= 1e-12:
-                break
-            current = get_order(str(order["id"]))
-            if current is None or current.get("status") not in {
-                "open",
-                "partially_filled",
-            }:
-                continue
-            proposal = get_trade_proposal(str(order["proposal_id"]))
-            if proposal is None:
-                continue
-            result = materialize_paper_maker_fill(
-                order_row=current,
-                proposal_row=proposal,
-                event_evidence=event_evidence,
-                fill_quantity=available,
-                market_event_id=market_event_id,
-            )
-            plan_row = repo.get_entry_plan(str(order["entry_plan_id"]))
-            if plan_row is None or plan_row.get("status") != result["order_status"]:
-                raise RuntimeError("paper_entry_plan_fill_transition_failed")
-        _notify_committed_paper_fill(result)
-        matches.append(result)
-    return matches
-
-
-def rebind_open_paper_orders_to_monitoring(instrument, monitoring: dict) -> int:
-    """Resume durable Paper matching only after a new exact stream is ready."""
-
-    from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
-    from aletheia.storage import repositories as repo
-    from aletheia.trading.instruments import instrument_market_to_db_market
-
-    if monitoring.get("state") != "ready":
-        return 0
-    stream_generation_id = str(monitoring.get("stream_generation_id") or "")
-    subscription_generation_id = str(
-        monitoring.get("subscription_generation_id") or ""
-    )
-    if not stream_generation_id or not subscription_generation_id:
-        return 0
-    rebound = 0
-    market_type = instrument_market_to_db_market(instrument.market_type)
-    for direction in ("long", "short"):
-        for order in repo.list_open_paper_maker_orders(
-            symbol=instrument.symbol,
-            market_type=market_type,
-            direction=direction,
-        ):
-            try:
-                receipt = EntryExecutionReceiptV1.model_validate_json(
-                    str(order["execution_receipt_json"])
-                )
-            except Exception:
-                continue
-            if (
-                not receipt.hash_is_valid()
-                or receipt.instrument.get("venue") != instrument.exchange
-                or (
-                    order.get("matching_stream_generation_id") == stream_generation_id
-                    and order.get("matching_subscription_generation_id")
-                    == subscription_generation_id
-                )
-            ):
-                continue
-            with transaction(immediate=True):
-                current = get_order(str(order["id"]))
-                if current is None or current.get("status") not in {
-                    "open",
-                    "partially_filled",
-                }:
-                    continue
-                repo.update_order_metadata(
-                    str(order["id"]),
-                    matching_stream_generation_id=stream_generation_id,
-                    matching_subscription_generation_id=subscription_generation_id,
-                    monitoring_gap_started_at=datetime.now(timezone.utc).isoformat(),
-                )
-            rebound += 1
-    return rebound
-
-
 def close_exchange_position(position_id: str, reason: str, *, close_reasoning: str | None = None) -> dict:
     """Route external closes through the qualified account coordinator."""
     from aletheia.execution.coordinator import close_position
@@ -958,13 +704,9 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
     """Return a rejection reason if the symbol is not available on the target exchange.
 
     Returns None when available, or when availability is unknown (fail-open).
-    paper_internal is always None — it does not route to a real exchange.
     The check is market-type-aware for all exchange modes: a symbol available
     only as spot will not pass a futures/perp order, and vice versa.
     """
-    if execution_mode == "paper_internal":
-        return None
-
     from aletheia.data.symbols import to_canonical
 
     canonical = to_canonical(symbol)
@@ -1037,25 +779,6 @@ def _receipt_only_risk_rejection(risk_result) -> bool:
     return bool(violations) and all(
         str(item).startswith("entry_execution_receipt_") for item in violations
     )
-
-
-def _stamp_exit_intent(result: dict, proposal: TradeProposal) -> None:
-    """Stamp the Operator's exit intent (expected_horizon_hours + stop provenance) from
-    the proposal onto the just-opened position (exit-intent plan M2). No-op when the
-    order rested unfilled (no position_id yet) or the proposal carries no intent —
-    mirrors the existing take_profit post-open stamp pattern in this function.
-    """
-    pid = result.get("position_id") if isinstance(result, dict) else None
-    if not pid:
-        return
-    updates: dict = {}
-    if getattr(proposal, "expected_horizon_hours", None) is not None:
-        updates["expected_horizon_hours"] = proposal.expected_horizon_hours
-    if getattr(proposal, "stop_source", None):
-        updates["stop_source"] = proposal.stop_source
-    if updates:
-        updates["exit_plan_version"] = 1
-        update_open_position_exit_plan(pid, **updates)
 
 
 def _exchange_order_matches_proposal(
@@ -1666,25 +1389,9 @@ def _record_unresolved_execution(
     }
 
 
-def _notify_committed_paper_fill(result: dict) -> None:
-    """Publish a paper fill only after its complete Gateway transaction commits."""
-    payload = result.pop("_notification_payload", None)
-    if not isinstance(payload, dict):
-        return
-    try:
-        from aletheia.notifications import notify_trade_fill
-
-        notify_trade_fill(**payload)
-    except Exception:
-        # Notifications remain best-effort and cannot change committed trading
-        # state or turn a successful execution into an API error.
-        pass
-
-
 def _execute_proposal(
     proposal: TradeProposal,
     *,
-    execution_claim_token: str | None = None,
     execution_receipt=None,
 ) -> dict:
     """Run risk and execution for an already-created proposal."""
@@ -1696,93 +1403,44 @@ def _execute_proposal(
             else {}
         )
 
-        if proposal.execution_mode == "paper_internal":
-            execution_proposal = proposal
-            if execution_receipt is not None:
-                adjusted_quantity, constraint_error = _prepare_paper_quantity(
-                    venue=str(execution_receipt.instrument.get("venue") or ""),
-                    symbol=proposal.symbol,
-                    market_type=proposal.market_type,
-                    quantity=proposal.quantity or 0.0,
-                    price=proposal.price or 0.0,
+        # Exchange-bound orders retain a fresh preflight hard gate before
+        # venue metadata or any other external preparation. That decision is
+        # never passed to a broker.
+        preflight_result = evaluate_proposal(
+            proposal,
+            decision_role="preflight",
+            **receipt_kwargs,
+        )
+        if not preflight_result.approved:
+            if _receipt_only_risk_rejection(preflight_result):
+                return _reject_retryable_execution_attempt(
+                    proposal,
+                    preflight_result,
                 )
-                if constraint_error:
-                    return _reject_for_exchange_constraints(proposal, constraint_error)
-                execution_proposal = proposal.model_copy(
-                    update={"quantity": adjusted_quantity}
-                )
-            # A durable authoritative row proves the immutable Proposal snapshot,
-            # but it cannot freeze dynamic gates such as kill switch, capacity,
-            # account loss, or active lessons across a worker crash. Paper has no
-            # venue normalization. The first authoritative evaluation is already
-            # fresh; only a replay of an existing authority needs an additional
-            # dispatch preflight. This preserves one RiskDecision on the normal
-            # paper path while still preventing stale approval after a crash.
-            existing_authority = get_authoritative_risk_decision(
-                proposal.id,
-                proposal.commit_hash,
-                execution_proposal.quantity,
-                execution_attempt_id=(
-                    execution_receipt.attempt_id if execution_receipt else None
-                ),
-            )
-            if existing_authority is not None:
-                preflight_result = evaluate_proposal(
-                    execution_proposal,
-                    decision_role="preflight",
-                    **receipt_kwargs,
-                )
-                if not preflight_result.approved:
-                    if _receipt_only_risk_rejection(preflight_result):
-                        return _reject_retryable_execution_attempt(
-                            proposal,
-                            preflight_result,
-                        )
-                    return _reject_for_risk(proposal, preflight_result)
-            risk_result = evaluate_proposal(
-                execution_proposal,
-                decision_role="authoritative",
-                **receipt_kwargs,
-            )
-        else:
-            # Exchange-bound orders retain a fresh preflight hard gate before
-            # venue metadata or any other external preparation. That decision is
-            # never passed to a broker.
-            preflight_result = evaluate_proposal(
-                proposal,
-                decision_role="preflight",
-                **receipt_kwargs,
-            )
-            if not preflight_result.approved:
-                if _receipt_only_risk_rejection(preflight_result):
-                    return _reject_retryable_execution_attempt(
-                        proposal,
-                        preflight_result,
-                    )
-                return _reject_for_risk(proposal, preflight_result)
+            return _reject_for_risk(proposal, preflight_result)
 
-            preflight_mode = preflight_result.allowed_execution_mode
-            adjusted_quantity, constraint_error = _prepare_exchange_quantity(
-                preflight_mode,
-                proposal.symbol,
-                proposal.market_type,
-                proposal.quantity or 0.0,
-                proposal.price or 0.0,
-            )
-            if constraint_error:
-                return _reject_for_exchange_constraints(proposal, constraint_error)
+        preflight_mode = preflight_result.allowed_execution_mode
+        adjusted_quantity, constraint_error = _prepare_exchange_quantity(
+            preflight_mode,
+            proposal.symbol,
+            proposal.market_type,
+            proposal.quantity or 0.0,
+            proposal.price or 0.0,
+        )
+        if constraint_error:
+            return _reject_for_exchange_constraints(proposal, constraint_error)
 
-            # quantity is hash-covered Proposal intent. Venue normalization
-            # creates an immutable evaluated snapshot; it never rewrites storage
-            # or mutates the caller's Proposal object. Every other causal field
-            # is preserved, including opportunity_id=proposal.opportunity_id and
-            # leverage=proposal.leverage.
-            execution_proposal = proposal.model_copy(update={"quantity": adjusted_quantity})
-            risk_result = evaluate_proposal(
-                execution_proposal,
-                decision_role="authoritative",
-                **receipt_kwargs,
-            )
+        # quantity is hash-covered Proposal intent. Venue normalization
+        # creates an immutable evaluated snapshot; it never rewrites storage
+        # or mutates the caller's Proposal object. Every other causal field
+        # is preserved, including opportunity_id=proposal.opportunity_id and
+        # leverage=proposal.leverage.
+        execution_proposal = proposal.model_copy(update={"quantity": adjusted_quantity})
+        risk_result = evaluate_proposal(
+            execution_proposal,
+            decision_role="authoritative",
+            **receipt_kwargs,
+        )
 
         if not risk_result.approved:
             if _receipt_only_risk_rejection(risk_result):
@@ -1794,7 +1452,7 @@ def _execute_proposal(
         allowed_mode = risk_result.allowed_execution_mode
 
         if execution_proposal.entry_plan_id:
-            if allowed_mode not in {"paper_internal", "bitget_demo"}:
+            if allowed_mode != "bitget_demo":
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan order tactics are unavailable for this execution mode.",
@@ -1890,110 +1548,7 @@ def _execute_proposal(
     accepted_exchange_result: dict | None = None
     accepted_exchange_channel: str | None = None
     try:
-        if allowed_mode == "paper_internal":
-            attribution_snapshot = _ensure_paper_attribution_snapshot(execution_proposal)
-            with transaction(immediate=True):
-                if execution_claim_token and not proposal_execution_claim_owned(proposal.id, execution_claim_token):
-                    return {
-                        "status": "already_claimed",
-                        "proposal_id": proposal.id,
-                        "message": ("A newer execution owner reclaimed this Proposal; no paper order was created."),
-                    }
-                result = execute_paper_order(
-                    proposal_id=proposal.id,
-                    risk_decision_id=risk_result.decision_id,
-                    symbol=execution_proposal.symbol,
-                    market_type=execution_proposal.market_type,
-                    direction=execution_proposal.direction,
-                    order_type=execution_proposal.order_type,
-                    quantity=execution_proposal.quantity or 0.0,
-                    price=execution_proposal.price or 0.0,
-                    execution_mode=allowed_mode,
-                    strategy_id=execution_proposal.strategy_id,
-                    stop_price=execution_proposal.stop_price,
-                    take_profit=execution_proposal.take_profit,
-                    leverage=execution_proposal.leverage,
-                    opportunity_id=execution_proposal.opportunity_id,
-                    trade_school=execution_proposal.trade_school,
-                    attribution_snapshot=attribution_snapshot,
-                    source=execution_proposal.source,
-                    entry_plan_id=execution_proposal.entry_plan_id,
-                    order_tactic=execution_proposal.order_tactic,
-                    time_in_force=execution_proposal.time_in_force,
-                    post_only=execution_proposal.post_only,
-                    execution_receipt=execution_receipt,
-                )
-                _stamp_exit_intent(result, proposal)
-                update_trade_proposal(proposal.id, status="executed")
-                if execution_proposal.entry_plan_id:
-                    from aletheia.storage import repositories as entry_repo
-
-                    if not entry_repo.transition_entry_plan(
-                        execution_proposal.entry_plan_id,
-                        expected_status="risk_reserved",
-                        status="ordered",
-                        order_id=result["order_id"],
-                    ):
-                        raise RuntimeError("paper_entry_plan_order_transition_failed")
-                    order_status = str(result.get("order_status") or "")
-                    if order_status == "filled":
-                        if not entry_repo.transition_entry_plan(
-                            execution_proposal.entry_plan_id,
-                            expected_status="ordered",
-                            status="filled",
-                            order_id=result["order_id"],
-                        ):
-                            raise RuntimeError("paper_entry_plan_fill_transition_failed")
-                    elif order_status == "partially_filled":
-                        if not entry_repo.transition_entry_plan(
-                            execution_proposal.entry_plan_id,
-                            expected_status="ordered",
-                            status="partially_filled",
-                            order_id=result["order_id"],
-                        ):
-                            raise RuntimeError("paper_entry_plan_partial_fill_transition_failed")
-                    elif order_status == "cancelled":
-                        if not entry_repo.transition_entry_plan(
-                            execution_proposal.entry_plan_id,
-                            expected_status="ordered",
-                            status="cancelled",
-                            order_id=result["order_id"],
-                            reason="paper_ioc_unfilled",
-                        ):
-                            raise RuntimeError("paper_entry_plan_cancel_transition_failed")
-            if result.get("fill_id"):
-                _notify_committed_paper_fill(result)
-            _write_post_commit_audit(
-                {
-                    "actor": "system",
-                    "source": "execution_gateway",
-                    "event_type": (
-                        "paper_order_filled"
-                        if result.get("fill_id")
-                        else "paper_order_placed"
-                    ),
-                    "entity_type": "order",
-                    "entity_id": result["order_id"],
-                    "before": {"status": proposal.status},
-                    "after": {"status": "executed"},
-                    "message": (
-                        f"Paper order {result.get('order_status')}: {execution_proposal.symbol} "
-                        f"{execution_proposal.direction} "
-                        f"{execution_proposal.quantity or 0.0}@"
-                        f"{execution_proposal.price or 0.0}"
-                    ),
-                },
-                proposal_id=proposal.id,
-                persisted_status="executed",
-            )
-            gateway_status = (
-                "ordered"
-                if result.get("order_status") == "open"
-                else "executed"
-            )
-            return {"status": gateway_status, "proposal_id": proposal.id, **result}
-
-        elif allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
+        if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard
             # (live_disabled gates real funds only; demo/testnet is risk-free). On any
             # failure we mark the proposal error and audit; we NEVER fall back to a
@@ -2303,14 +1858,6 @@ def _execute_proposal(
     return {"status": "unknown_mode", "proposal_id": proposal.id}
 
 
-def _ensure_paper_attribution_snapshot(proposal: TradeProposal) -> dict | None:
-    # New paper Proposals capture this before insert. A legacy stored Proposal
-    # with no snapshot must remain honestly missing: backfilling at execution
-    # time would mutate hash-covered intent and pretend late context existed at
-    # decision time.
-    return _loads_attribution_snapshot(proposal.attribution_snapshot)
-
-
 def _capture_attribution_snapshot_json(
     symbol: str,
     *,
@@ -2318,7 +1865,7 @@ def _capture_attribution_snapshot_json(
     opportunity_id: str | None = None,
 ) -> str | None:
     try:
-        snapshot = capture_paper_attribution_snapshot(
+        snapshot = capture_attribution_snapshot(
             symbol,
             market_type=market_type,
             opportunity_id=opportunity_id,
@@ -2326,13 +1873,3 @@ def _capture_attribution_snapshot_json(
         return json.dumps(snapshot, default=str)
     except Exception:
         return None
-
-
-def _loads_attribution_snapshot(raw: str | None) -> dict | None:
-    if not raw:
-        return None
-    try:
-        parsed = json.loads(raw)
-    except Exception:
-        return None
-    return parsed if isinstance(parsed, dict) else None
