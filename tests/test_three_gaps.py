@@ -1,7 +1,7 @@
 """Tests for the three remaining real gaps wired in this pass:
 
 1. agent_run_steps now populated automatically via log_tool/record_step.
-2. Stability monitor reports orphan/drift/uptime + score.
+2. Stability monitor reports orphan/uptime + score.
 3. Learning Ledger surfaces stage-1 quality signals (activation/retire/coverage).
 """
 
@@ -91,11 +91,10 @@ def test_stability_clean_state(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.agent_runtime.stability_monitor import compute_stability
     s = compute_stability()
-    # Empty DB = no orphans, no drift signal, no failure ratio → score stays 100.
+    # Empty DB = no orphans, no failure ratio → score stays 100.
     assert s["score"] == 100
     assert s["reasons"] == []
     assert s["orphans"]["orphan_fills"] == 0
-    assert s["strategy_id_drift"]["paper_proposals"] == 0
 
 
 def test_stability_detects_orphan_fill(tmp_path, monkeypatch):
@@ -120,18 +119,30 @@ def test_stability_detects_orphan_fill(tmp_path, monkeypatch):
     assert any("orphans" in r for r in s["reasons"])
 
 
-def test_stability_detects_strategy_id_drift(tmp_path, monkeypatch):
-    """Paper proposals without strategy_id are the exact dead-link signal."""
+def test_stability_does_not_require_retired_strategy_binding(tmp_path, monkeypatch):
+    """Neither archived proposals nor current Operator proposals need this binding."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.storage.models import TradeProposal
-    repo.insert_trade_proposal(TradeProposal(
+    from aletheia.storage.sqlite import get_db
+
+    proposal = TradeProposal(
         symbol="BTCUSDT", market_type="spot", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal", strategy_id=None,
-    ))
+        price=60000.0, execution_mode="bitget_demo", strategy_id=None,
+    )
+    repo.insert_trade_proposal(proposal)
+    db = get_db()
+    db.execute(
+        "INSERT INTO trade_proposals(id, symbol, market_type, direction, execution_mode) "
+        "VALUES('archived-proposal', 'BTCUSDT', 'spot', 'long', 'paper_internal')"
+    )
+    db.commit()
+
     from aletheia.agent_runtime.stability_monitor import compute_stability
     s = compute_stability()
-    assert s["strategy_id_drift"]["ratio"] == 1.0
-    assert s["score"] < 100
+    assert s["score"] == 100
+    assert s["reasons"] == []
+    assert "strategy_id_drift" not in s
+    assert repo.get_trade_proposal("archived-proposal")["execution_mode"] == "paper_internal"
 
 
 # === Gap 3: Learning Ledger quality block ===

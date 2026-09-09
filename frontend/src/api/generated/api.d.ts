@@ -288,7 +288,7 @@ export interface paths {
          * @description Trade-by-trade equity curve for the PnL chart on Overview.
          *
          *     Query params:
-         *       execution_mode — filter to a single mode (e.g. 'paper_internal', 'okx_demo')
+         *       execution_mode — filter current or archived records to one account mode
          *       days — only include positions closed within the last N days
          *       limit — max data points returned (default 5000)
          */
@@ -5924,7 +5924,7 @@ export interface paths {
         };
         /**
          * Stability
-         * @description Quantified stability report — orphan counts, strategy_id drift, 24h failure
+         * @description Quantified stability report — orphan counts, 24h failure
          *     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
          *     between 'process alive' (health) and 'data internally consistent' (north-star
          *     stage 0). Operator can poll this through 7-14 day stage-0 run.

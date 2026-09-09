@@ -278,7 +278,7 @@ def version():
 
 @router.get("/stability")
 def stability():
-    """Quantified stability report — orphan counts, strategy_id drift, 24h failure
+    """Quantified stability report — orphan counts, 24h failure
     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
     between 'process alive' (health) and 'data internally consistent' (north-star
     stage 0). Operator can poll this through 7-14 day stage-0 run."""

@@ -13,3 +13,10 @@ external accounts. Startup mode must be both registered and declared. Existing
 historical records retain their scope, hashes and economics; they do not become
 external-account qualification. The automatic-update gate retains only its
 existing Bitget Demo target; retirement does not authorize a new deployment route.
+
+The stability report also counted `paper*` proposals without `strategy_id` as
+strategy drift and deducted up to 30 points. That metric belongs to the retired
+strategy-to-simulator loop and has been removed from the current report and
+score. Current Operator proposals leave this historical binding empty; archived
+proposals remain readable without being graded by that retired requirement.
+The existing causal-chain and agent-run failure checks remain in place.

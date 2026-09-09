@@ -53,21 +53,6 @@ def _orphan_counts() -> dict[str, int]:
     }
 
 
-def _strategy_id_drift() -> dict[str, Any]:
-    """Fraction of paper trades NOT bound to a strategy — direct signal of the
-    causal-chain dead link the experience-loop work fixed. Pre-fix this was 100%."""
-    proposals = list_trade_proposals(limit=10000)
-    paper = [p for p in proposals if (p.get("execution_mode") or "").startswith("paper")]
-    if not paper:
-        return {"paper_proposals": 0, "without_strategy_id": 0, "ratio": None}
-    without = sum(1 for p in paper if not p.get("strategy_id"))
-    return {
-        "paper_proposals": len(paper),
-        "without_strategy_id": without,
-        "ratio": round(without / len(paper), 4),
-    }
-
-
 def _agent_run_failure_window() -> dict[str, Any]:
     """Agent-run health over the last 24h (window-bounded, not just last N rows)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -101,7 +86,7 @@ def _uptime_hours() -> float | None:
         return None
 
 
-def _score(orphans: dict[str, int], drift: dict, runs: dict) -> tuple[int, list[str]]:
+def _score(orphans: dict[str, int], runs: dict) -> tuple[int, list[str]]:
     """Compose a 0-100 stability score with explicit reason codes.
 
     Score is intentionally simple — it's a quick triage signal, not a black-box.
@@ -113,10 +98,6 @@ def _score(orphans: dict[str, int], drift: dict, runs: dict) -> tuple[int, list[
     if total_orphans:
         score -= min(40, total_orphans * 10)
         reasons.append(f"orphans:{total_orphans}")
-    drift_ratio = drift.get("ratio")
-    if drift_ratio is not None and drift_ratio > 0.1:
-        score -= int(min(30, drift_ratio * 30))
-        reasons.append(f"strategy_id_drift:{drift_ratio:.2f}")
     runs_ratio = runs.get("ratio")
     if runs_ratio is not None and runs_ratio > 0.2:
         score -= int(min(30, (runs_ratio - 0.2) * 100))
@@ -127,14 +108,12 @@ def _score(orphans: dict[str, int], drift: dict, runs: dict) -> tuple[int, list[
 def compute_stability() -> dict[str, Any]:
     """Compute the full stability report. Read-only; safe to call from API path."""
     orphans = _orphan_counts()
-    drift = _strategy_id_drift()
     runs = _agent_run_failure_window()
-    score, reasons = _score(orphans, drift, runs)
+    score, reasons = _score(orphans, runs)
     return {
         "score": score,
         "reasons": reasons,
         "orphans": orphans,
-        "strategy_id_drift": drift,
         "agent_runs_24h": runs,
         "uptime_hours": _uptime_hours(),
         "computed_at": datetime.now(timezone.utc).isoformat(),
