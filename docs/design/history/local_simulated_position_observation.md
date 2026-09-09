@@ -31,3 +31,10 @@ Portfolio review formerly read every open Position, including archived simulator
 rows. Its current model input and fresh mutation-target lookup both select only
 UTA account modes. An archived Position cannot become a review target through a
 model response or a stale wake. Stored simulator rows remain readable and unchanged.
+
+The former `test_pipeline_position_to_close.py` required four synchronous local
+stop-loss, take-profit and max-hold closes. Those simulator requirements are
+retired. External stop/target execution is covered by the exchange pipeline;
+max-hold is covered through private-fill reconciliation in `test_position_manager.py`.
+The signal-to-Operator review scenario remains, using an exact Bitget Demo
+instrument and no simulated execution.
