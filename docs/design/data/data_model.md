@@ -1,9 +1,9 @@
 # Data Model Reference
 
 > Complete index of Aletheia Trading OS data layer.
-> ~100 SQLite table declarations, 63 Pydantic models, WAL mode, versioned additive migrations.
+> SQLite tables and Pydantic models, WAL mode, versioned additive migrations.
 > Source of truth: `aletheia/storage/migrations.py` (DDL) + `models.py` (types).
-> Last updated: 2026-08-08
+> Last updated: 2026-09-10
 
 > Issue #2737: the [Phase 1 Migration Contract](../contracts/observation_experiment_ownership_v2.md) freezes current legacy storage, while the [accepted Proposal](../proposals/observation_experiment_ownership_v2.md) owns the future Lab V2 target. Before Phase 8, existing legacy Experiment tables and authority remain active; before Phase 11, no physical legacy retirement is implied.
 
@@ -27,50 +27,39 @@
 
 ## 2. Core Trading Pipeline (causal chain)
 
-```
-market_snapshots --> opportunities --> trade_proposals --> risk_decisions
-                                                              |
-                                              approved -------+------- rejected
-                                                |
-                                            orders --> fills --> positions
-                                                                    |
-                                                              close --> portfolio_snapshots
-                                                                    |
-                                                              knowledge_items (reviews)
-```
+Current entries pass from market evidence and planning into an immutable
+TradeProposal, then Risk approval, an exchange Order and exact private Fills.
+Position closure records economic evidence and queues eligible feedback;
+portfolio snapshots report current external exposure and available account equity.
+Historical simulation records remain separately readable (§11).
 
 ---
 
 ## 3. Table Groups
 
-### A. Trading Core (22 tables)
+### A. Trading Core
+
 | Table | Purpose | Key columns | Written by |
 |-------|---------|-------------|------------|
 | `opportunities` | Independent-producer carriers plus historical Universe compatibility rows. New Universe-linked opening work uses Candidate Planning Generation + Entry Plan and does not create executable Opportunity rows | symbol, direction, confidence, key_observations (JSON), historical setup/member/generation fields | independent producers / compatibility recovery |
 | `candidate_planning_generations` | Durable thesis-level planning identity and single on-demand claim/result owner; normal snapshot/rank/score/price churn does not reopen planning | planning key, material hash, current flag, claim lease, No-Plan/Entry Plan/stale result | Universe publication + Entry Planner |
 | `entry_plans` | Immutable generic approved plan and monotonic execution lifecycle for the current Candidate planning generation | exact instrument, plan JSON/hash, execution mode, status, Order link, terminal reason | Entry Planner + Fast Monitoring + Gateway/reconciliation |
-| `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | paper_trader / System Operator |
+| `trade_proposals` | Actionable trade candidates | symbol, direction, entry_price, stop_price, target_price, **`agent_rationale.entry_parameters`** (final entry/stop/target/notional/leverage reasons + value sources), **commit_hash**, **parent_hash** (TaG, P0-1) | Gateway / Entry Plan / external position adoption |
 | `proposal_execution_claims` | One durable, expiring execution owner per Proposal; kept outside the hash-covered Proposal intent and removed only by owner-token compare-and-set | proposal_id, owner_token, claimed_at, lease_expires_at | execution gateway |
 | `entry_risk_reservations` | Durable pre-Order allowance acquired atomically with authoritative Risk; retained after a worker crash and superseded by the first durable Order | proposal_id, proposal_commit_hash, symbol, market_type, execution_mode, quantity, price, leverage | risk engine / execution gateway |
 | `risk_decisions` | Risk engine approval/rejection | proposal_id, approved, reasons (JSON), decision_role, evaluated_quantity, proposal_commit_hash, risk_mode, policy_id, policy_revision, policy_hash | risk engine |
 | `approvals` | Human approval records | proposal_id, decision, decided_by | frontend |
 | `orders` | Execution orders; native exchange entry `pending` is an unresolved Risk reservation, not zero exposure | symbol, side, quantity, order_type, status | execution gateway |
 | `fills` | Order fill confirmations | order_id, fill_price, fill_quantity, fee | broker adapter |
-| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Delayed local funding materialization stores its versioned evidence fingerprint in reconciliation evidence. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **sizing_manifest** (hash-checked Persona/policy/step assignment copied from the Proposal), **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable projection to the current immutable ExitPlan; NULL means the dormant barrier has not been activated), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | position_manager / outcome closure / paper funding settler |
-| `position_exit_plan_versions` | Retained, append-only resolved ExitPlan history. `(position_id, version)` is contiguous and immutable; insert atomically advances the nullable Position projection. | position_id, version, effective_at, resolved stop/take-profit/exit-limit, plan_json, plan_hash, provenance, created_at | protection repository + new/forward-adopted Paper runtime |
-| `position_protection_state` | One retained row per newly protected local-paper Position. It freezes exact instrument identity and monotonic cursors, preserves gap history, and projects first-trigger plus exact close linkage. | position_id, venue, canonical symbol, physical market_type, timeframe=1m, activated_at, cursor/gap/status, trigger_id, close Order/Fill linkage | protection repository + protective scheduler |
-| `position_protection_triggers` | Append-only first-barrier evidence. One immutable row per protected Position contains the exact 1-minute bar, resolved ExitPlan and deterministic collision policy. | trigger_id, position_id, exact instrument/bar/provider/hash, ExitPlan identity/barriers, hit flags/reason | protective scheduler + native paper close |
-| `exit_breakeven_shadow_assignments` | Prospective immutable assignment for the read-only profit-capture experiment. The fixed +1.5% trigger and entry-price shadow stop are frozen with exact instrument, ExitPlan, cost and build provenance before any eligible bar. | position_id, treatment/rule hash, assigned_at, exact instrument, entry economics, trigger/stop, ExitPlan and runtime provenance, behavior_authority=0 | new protected local-paper activation |
-| `exit_breakeven_shadow_outcomes` | One immutable paired result after an eligible actual close. Missing exact 1m coverage, identity, ordering or funding remains unavailable; available rows contain actual, shadow and incremental net PnL under the frozen cost model. | position_id, disposition/reason, trigger/exit bars, shadow fill/costs, actual/shadow/incremental net PnL, evidence hash | durable outcome-hook replay |
-| `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. Delayed funding finalization atomically converges the unique full-close projection with Position and paper cash. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / paper account service |
+| `positions` | Open/closed positions; a closed future may keep net economics unavailable. Market-aware evaluation remains advisory: its structured evidence records the exact venue/symbol/physical-market identity and source rows used for an Operator wake. | symbol, direction, entry_price, quantity, status, nullable realized_pnl, funding_cost, funding_source, **sizing_manifest** (hash-checked Persona/policy/step assignment copied from the Proposal), **exit_reasoning** (actual close actor/source/trigger; NULL for historical absence), **exit_limit_source** ('human'|'system_operator'; author of a resting limit exit — selects human_limit_exit vs operator_limit_exit in close_reason for attribution honesty), **exit_plan_effective_at** (nullable historical barrier-plan projection; current broker protection does not activate the archived barrier), **last_market_signal_evidence** (versioned JSON; exact position/signal identities, Opportunity/member/asset/Feature provenance, evaluation and delivery result) | exchange materialization / position_manager / outcome closure / broker funding settler |
+| `position_close_events` | **Per-close economic ledger** (exit-intent R1) — one row per close EVENT (full close = 1 row; partial reduce = 1 row per reduction) so realized PnL sums from close events, unifying full + partial closes. The daily-loss breaker adds partial-close realized via this ledger (`is_partial=1`) on top of the verified full-close read | position_id, close_reason, exit_price, closed_qty, realized_pnl, entry_fee, exit_fee, is_partial, closed_at | `pnl.close_position` / `pnl.reduce_position` / verified outcome closure |
 | `outcome_hook_jobs` | Durable eligible-close feedback outbox; one row per Position and hook, with leased replay after failure | position_id, hook_type, status, attempts, next_attempt_at, claim_token, last_error | outcome close transaction / outcome_hook_replay |
 | `position_disappearance_candidates` | Durable account-scoped position-disappearance confirmation state; never authorizes close by itself | position_id, identity_key, broker_id, account_environment, non-secret account_fingerprint, instrument identity, confirmation_count, direct_query_state, semantics_version | position reconciler (OI-B01 target) |
 | `position_disappearance_observations` | Immutable idempotent evidence for a disappearance candidate | candidate_id, observation_hash, view_identity, completeness/absence flags, direct_query_state, evidence_json | position reconciler (OI-B01 target) |
 | `reconciliation_integrity_incidents` | Restart-safe close/reopen circuit breaker and explicit recovery evidence | scoped fingerprint, status, source mix, detected/clean timestamps, clean count, resolution actor/reason, semantics version | position reconciler + Learning control |
 | `broker_funding_settlement_cursor` | Singleton durable scheduling cursor for unresolved exchange-close funding recovery; it rotates retryable/conflicting prefixes without owning Position state | queue_id, last_closed_at, last_position_rowid, updated_at | broker funding settler |
 | `shadow_trades` | What-if trades for comparison. A legacy batch derived from a later-invalidated Position remains retained but is marked invalid and excluded from decision reads. | opportunity_id, venue, market_type, outcome_candidate_key, gross_return_pct, net_pnl_pct, estimated costs, invalidated_at, invalidation_reason | counterfactual |
-| `portfolio_snapshots` | Periodic portfolio/account snapshots; `account_equity_usdt` is the only field eligible for the Overview account-equity curve. Legacy local rows with only `total_value_usdt` are position notional and excluded from that curve. Realized PnL may be NULL when included close economics are incomplete. | total_value_usdt, account_equity_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
-| `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, economically complete realized-PnL settlements, owner-approved numeric correction deltas, and one position-linked `position_economics_invalidated` reversal when exit-price evidence is rejected. Numeric corrections reuse `manual_credit`/`manual_debit`; invalidation has its own unique append-only marker so cash, Position economics, and derived outcomes converge without rewriting history. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
+| `portfolio_snapshots` | Periodic portfolio/account snapshots; `account_equity_usdt` is the only field eligible for the Overview account-equity curve. Legacy local rows with only `total_value_usdt` are position notional and excluded from that curve. The schema admits NULL realized PnL; readers distinguish unknown economics from zero. | total_value_usdt, account_equity_usdt, unrealized_pnl, nullable realized_pnl, execution_mode | scheduler job |
 | `market_regimes` | Detected market regimes | regime_type, confidence, indicators (JSON) | market_observer |
 | `persona_rollouts` | Restart-safe progressive Persona authority state; one current identity per active rollout and immutable refreeze/step baseline | rollout_id, persona_id/fingerprint, policy_epoch/runtime_version, current_step/parameter, step_started_at, baseline_snapshot, evidence_watermark, status (`frozen`/`observing`/`eligible`/`unlocked`/`refrozen`/`completed`), authority/reason | Persona resolver / rollout scheduler |
 | `persona_rollout_events` | Append-only audit/evidence transitions for each rollout | rollout_id, step/parameter, status, event_type, authority, reason, evidence_json, actor/source, created_at | Persona resolver / rollout scheduler |
@@ -392,7 +381,7 @@ production trading state and cannot authorize a parameter change.
 
 ---
 
-## 4. Pydantic Model Index (62 models)
+## 4. Pydantic Model Index
 
 All models in `aletheia/storage/models.py`. Key mapping:
 
@@ -408,11 +397,6 @@ All models in `aletheia/storage/models.py`. Key mapping:
 | TradeProposal | trade_proposals | Trading |
 | RiskDecision | risk_decisions | Trading |
 | Order | orders | Trading |
-| PositionExitPlanVersion | position_exit_plan_versions | Trading protection storage |
-| PositionProtectionState | position_protection_state | Trading protection storage |
-| PositionProtectionTrigger | position_protection_triggers | Trading protection storage |
-| ExitBreakevenShadowAssignment | exit_breakeven_shadow_assignments | Observe-only exit experiment |
-| ExitBreakevenShadowOutcome | exit_breakeven_shadow_outcomes | Observe-only exit experiment |
 | Fill | fills | Trading |
 | Position | positions | Trading |
 | OutcomeHookJob | outcome_hook_jobs | Trading feedback |
@@ -556,7 +540,7 @@ current defaults; see `RETENTION_POLICY.md` for rationale and cascade details.
 
 Audit chain (12): `trade_proposals` · `risk_decisions` · `orders` · `fills` · `positions` ·
 `audit_events` · `capital_events` · `approvals` · `knowledge_items` · `ps_orders` · `ps_fills` ·
-Protective-barrier evidence (3): `position_exit_plan_versions` ·
+Archived protective-barrier evidence (3): `position_exit_plan_versions` ·
 `position_protection_state` · `position_protection_triggers`. All are retained
 and absent from `_PRUNABLE`.
 
@@ -652,24 +636,20 @@ samples and is labelled provisional until it spans at least seven days.
 | Field | Meaning | Default for legacy/unknown |
 |---|---|---|
 | `close_category` | `strategy` / `administrative` / `maintenance` / `unknown` | `unknown` |
-| `exit_price_source` | `broker_fill` / `local_fill` / `mark_fallback` / `unavailable` | `unavailable` |
+| `exit_price_source` | 当前关闭使用 `broker_fill` / `unavailable`；归档来源值保留原样，见 §11 | `unavailable` |
 | `exit_fill_verified` | 是否有不可变 execution/broker fill 原件 | `false` |
 | `outcome_eligible` | 是否允许 judgement/behavior consumer 使用 | `false` |
 | `outcome_exclusion_reason` | 行政关闭、fill 未验证、旧干净窗、归因缺失等稳定原因 | `unclassified` |
 | `reconciliation_identity` | 无凭证的 broker/environment/account/instrument identity JSON | `NULL` |
-| `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON；本地 funding 完成后含 `funding`、`funding_economics_fingerprint`、`funding_accounting_version=local-paper-funding-v2` | `NULL` |
+| `reconciliation_evidence` | observation/direct-query evidence 与确认版本 JSON；历史 funding 原件保留，当前资金费来自匹配账户的私有 ledger | `NULL` |
 | `outcome_semantics_version` | 生成 eligibility 的稳定语义版本 | `NULL` |
-| `funding_cost` | `broker_ledger` 的账户实际 funding，或 `local_simulation` 按完整结算快照窗与结算前已成交 entry Fill 名义额分段计算的确定性模拟值；正数为成本、负数为返还 | `NULL` |
-| `funding_source` | `not_applicable` / `broker_ledger` / `local_simulation` / `unavailable`；本地模拟的逐事件原件（active Fill ids/notional、事件成本和持有窗）在 `reconciliation_evidence.funding`，完整 handoff 由中央关闭入口复核 | `unavailable` |
+| `funding_cost` | `broker_ledger` 的账户实际 funding；正数为成本、负数为返还，未知保持 NULL，历史来源不重新分类 | `NULL` |
+| `funding_source` | 当前为 `not_applicable` / `broker_ledger` / `unavailable`；历史来源与 evidence 原件保留，见 §11 | `unavailable` |
 
-`funding_economics_fingerprint` 必须对已持久化的完整 `reconciliation_evidence.funding` 原件本身做
-canonical fingerprint，包括 close 时记录的 `seed_close_anchor`；历史 identity repair 不得重新计算或
-替换该 nested evidence，也不得借机改变任何经济、ledger、eligibility 或 hook 投影。
-
-`realized_pnl` 是原始关闭经济字段，不是缺失事实的默认值。open Position 可从 `0` 开始；closed futures
-在没有可信 broker ledger 或完整 local-simulation 时间窗时必须保留 `NULL`。这种关闭仍有真实 close Order/Fill 和 closed 生命周期，
-但固定为 `incomplete_funding_economics`、不得进入 eligible Outcome/outbox，也不得追加
-`paper_account_events.position_closed`。spot 明确写 funding `0/not_applicable`。
+`realized_pnl` 是原始关闭经济字段，不是缺失事实的默认值。open Position 可从 `0` 开始；
+closed futures 缺少可信 broker funding ledger 时保持 `NULL`。真实 close Order/Fill 和 closed
+生命周期不能替代完整经济证据；`incomplete_funding_economics` 不进入 eligible Outcome/outbox。
+spot 明确写 funding `0/not_applicable`。历史模拟值和证据不会被转换为 broker 来源。
 
 只有 matching UTA profile 明确返回 `funding_history_retention_expired` 时，exchange-backed
 Position 才可把自动重试状态改为 `broker_funding_history_expired`。该 terminal reason 仍保留
@@ -678,21 +658,9 @@ Position 才可把自动重试状态改为 `broker_funding_history_expired`。�
 的 funding audit 记录 retention 边界。任何其他 unavailable/partial/error、malformed
 evidence 或 identity/CAS conflict 都不得写这个 reason。
 
-`local-paper-funding-v2` 使用 `(exchange, canonical_symbol, UTC whole-second settlement)` 作为
-会计事件身份，只归一严格小于一秒的表示偏差。完整历史结算可作为 `historical_ledger` 恢复
-`paper_internal` 的本地模拟，但不能称为交易所账户 `broker_ledger`。完成时
-`materialize_position_economics()` 原子写入 Position、唯一 full close event、首次
-`position_closed` cash event、eligibility/outbox 和 SQLite audit。已有 numeric 结果只有 owner 明确
-批准才能修正；差额以 append-only `manual_credit`/`manual_debit` 记录，并由 source、position ID、
-fingerprint note 区别于普通人工调账。
-
-Portfolio 和 paper-account 是从这些原件计算的读模型。只要所含关闭中有 `realized_pnl=NULL`：
-
-- realized 总数及对应 PortfolioSnapshot 字段保持 `NULL`，并由 API 返回 complete=false 与缺失数量；
-- paper 现金账本余额、`available_balance_usdt`（已确认现金减预留保证金）和 `equity_usdt`（已确认现金加
-  未实现损益）均保持有限值并可用；仅未结平仓的资金损益 delta 未知，已知余额不得被清零或置 null；
-- `economics_complete=false` 是监控信号，直到缺失成本和对应现金结算都补齐不能把未知行按 0 求和；
-  参见 `docs/design/contracts/execution_contract.md` §11.6（#316）。
+Portfolio 结构化汇总返回已知部分合计、完整性标识和缺失数量；缺失经济字段不能被解释为零。
+`today_realized_pnl` 等没有完整性字段的标量接口在包含未知结果时返回 None。
+账户净值来自可用的交易所账户快照，不能以未知成交损益或仓位名义额代替。
 
 读模型还会重新核对历史 numeric `realized_pnl`，而不是只检查 NULL：方向、入场/退出价格、数量、
 entry/exit fee 和可信 funding 无法重算出相同净值时，`GET /positions` 与 CSV export 返回
@@ -708,7 +676,7 @@ entry/exit fee 和可信 funding 无法重算出相同净值时，`GET /position
 4. backfill 按 semantics version 和 batch id 记录，事务化且幂等；
 5. `positions`、`paper_account_events`、audit、knowledge 原件永不删除；污染派生内容只
    archive/supersede；
-6. paper cash remediation 默认只生成 compensation candidate，owner 明确批准后才能另行追加补偿事件。
+6. 历史模拟账户修复、补偿和资金费结算写入口均已退役；读取历史不会追加事件。
 
 ### Archived accounting records
 
@@ -721,6 +689,8 @@ with their original evidence.
 The local simulated-account repair commands are retired; see
 [the archived controls](../history/local_paper_account_controls.md).
 
+### Current reconciliation records
+
 disappearance confirmation 使用 `position_disappearance_candidates` 保存作用域身份和确认状态，使用
 `position_disappearance_observations` 保存 observation hash 去重的不可变证据。两者属于 trust-bearing
 state，不得进入 telemetry prune allowlist。`OI-B01` 已接入 reconciler：只有新鲜、完整、当前逻辑
@@ -729,23 +699,32 @@ state，不得进入 telemetry prune allowlist。`OI-B01` 已接入 reconciler�
 提供的 direct `confirmed_absent` 只代表“可进入 verified-exit 调查”。RG-T07 现将调查结果分为两条
 原子写入路径：`verified_fill` 且 identity/数量/fee 完整时写 strategy/eligible 与真实经济字段；
 `confirmed_absent_without_fill` 只写 administrative/ineligible，realized PnL、exit fee、slippage 保持
-`NULL`，不追加 paper cash。`inconclusive` 不改变 position/candidate。candidate 只在对应 position 收口
+`NULL`，不生成经济结算。`inconclusive` 不改变 position/candidate。candidate 只在对应 position 收口
 成功后标为 `settled_verified` 或 `settled_administrative`，重试不会重复结算。
 
 `reconciliation_integrity_incidents` 保存系统性行政关闭后重新出现的事故。每种事故最多一个 active
 行；重复探测只更新同一行并清零干净观察计数。恢复至少需要两次相隔五分钟的干净观察，再由明确
 actor/reason 执行 resolution。进程重启、一次干净轮询或配置中 Learning 为 enabled 均不能绕过该行。
 该表和两张 disappearance evidence 表一样属于不可裁剪的可信状态。
-When local-paper funding recovery becomes economically complete,
-positions.realized_pnl and the matching paper_account_events.position_closed
-row commit in one SQLite transaction. The periodic settler also scans orphaned
-rows even when no NULL-PnL close remains.
-
-Every paper cash delta and resulting cash balance must be finite. The HTTP
 
 ## 11. Archived simulation evidence
 
-The schema retains immutable historical protection and exit-shadow records for
-read-only reporting. Their retired runtime definitions are in
-[local simulated protection](../history/local_simulated_protection.md).
-Migration does not rewrite these records or reactivate their producers.
+The schema retains these tables for historical reads. Their construction models,
+producer services and runtime activation are retired. Migration does not rewrite
+the records or reactivate their producers.
+
+| Retained table | Historical evidence |
+|---|---|
+| `paper_account_events` | Original simulated cash events and balance projections |
+| `position_exit_plan_versions` | Immutable resolved plans used by the retired barrier |
+| `position_protection_state` | Recorded activation, cursor and gap state |
+| `position_protection_triggers` | Original first-barrier facts and close backlinks |
+| `exit_breakeven_shadow_assignments` | Frozen exit-experiment assignments |
+| `exit_breakeven_shadow_outcomes` | Persisted paired outcomes and unavailable reasons |
+
+Archived `paper_internal`, `local_fill`, `local_simulation`, and funding-version
+identities keep their original meaning and evidence; they do not qualify external
+exchange execution. Former table and cash-account definitions are in
+[archived account controls](../history/local_paper_account_controls.md); barrier
+and exit-experiment definitions are in
+[archived protection](../history/local_simulated_protection.md).
