@@ -946,7 +946,7 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
     return acknowledged
 
 def evaluate_open_positions() -> dict:
-    """Evaluate all open paper positions and manage triggered lifecycle rules.
+    """Evaluate external demo/testnet positions and manage triggered lifecycle rules.
 
     Price-based safety rules may close positions. Market-aware evaluation only
     requests an Operator review and reports a failed request explicitly.

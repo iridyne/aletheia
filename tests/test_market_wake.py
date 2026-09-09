@@ -144,7 +144,7 @@ def test_market_aware_wakes_not_closes(monkeypatch):
     get_db().execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status) VALUES "
-        "('mw1','BTC/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open')"
+        "('mw1','BTC/USDT','usdt_futures','long',1.0,100.0,'binance_testnet','open')"
     )
 
     cfg = load_config()
@@ -240,14 +240,13 @@ def test_future_market_signal_does_not_wake_or_persist_evidence(monkeypatch):
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status,opened_at,opportunity_id) VALUES "
         "('mw-future','BTC/USDT','usdt_futures','long',1.0,100.0,"
-        "'paper_internal','open',?,NULL)",
+        "'binance_testnet','open',?,NULL)",
         ((now - timedelta(hours=2)).isoformat(),),
     )
 
     cfg = load_config()
     cfg.trading.market_aware_exits.enabled = True
     monkeypatch.setattr(pm, "load_config", lambda: cfg)
-    monkeypatch.setattr(pm, "protective_price_venue", lambda *args, **kwargs: "binance")
     monkeypatch.setattr(
         pm,
         "get_fresh_price_for_protective_close",
@@ -262,6 +261,7 @@ def test_future_market_signal_does_not_wake_or_persist_evidence(monkeypatch):
 
     result = pm.evaluate_open_positions()
 
+    assert result["checked"] == 1
     assert result["market_signal_wakes"] == 0
     assert [wake for wake in wakes if getattr(wake, "kind", None) == ADVERSE_SIGNAL] == []
     persisted = _select_one("positions", "mw-future")
@@ -281,7 +281,7 @@ def test_market_aware_reports_operator_wake_unavailable(monkeypatch):
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status) VALUES "
         "('mw-failed','BTC/USDT','usdt_futures','long',1.0,100.0,"
-        "'paper_internal','open')"
+        "'binance_testnet','open')"
     )
     cfg = load_config()
     cfg.trading.market_aware_exits.enabled = True
@@ -341,7 +341,7 @@ def test_market_aware_identity_mismatch_never_wakes(monkeypatch):
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status) VALUES "
         "('mw-mismatch','BTC/USDT','usdt_futures','long',1.0,100.0,"
-        "'paper_internal','open')"
+        "'binance_testnet','open')"
     )
     cfg = load_config()
     cfg.trading.market_aware_exits.enabled = True
