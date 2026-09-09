@@ -1,8 +1,7 @@
-"""Durable evidence and read-only reporting for the Paper trailing holdout."""
+"""Read-only reporting of the archived Paper Internal trailing holdout."""
 
 from __future__ import annotations
 
-import asyncio
 from collections import Counter
 from datetime import datetime, timezone
 import hashlib
@@ -11,16 +10,34 @@ import math
 from statistics import mean
 from typing import Any
 
-from aletheia.analytics.trade_path import build_post_exit_path_observation
-from aletheia.data.symbols import InstrumentId, to_canonical
-from aletheia.portfolio.protective_barrier import (
-    _TRAILING_QUALIFICATION_VERSION,
-    _TRAILING_RECOVERY_THRESHOLD_PCT,
-    _TRAILING_RECOVERY_WINDOW_BARS,
-    _TRAILING_TREATMENT_BPS,
-    _trailing_qualification_assignment,
-)
+
 from aletheia.storage import repositories as repo
+
+
+_TRAILING_QUALIFICATION_VERSION = "paper-dynamic-profit-protection/v2"
+_TRAILING_TREATMENT_ID = "atr1.5-balance1.5-completed1m/v1"
+_TRAILING_TREATMENT_BPS = 9_000
+_TRAILING_RECOVERY_WINDOW_BARS = 30
+_TRAILING_RECOVERY_THRESHOLD_PCT = 1.0
+
+
+def _expected_archived_assignment(position_id: str) -> dict:
+    """Validate the original archived assignment identity without enrolling a Position."""
+    digest = hashlib.sha256(
+        f"{_TRAILING_QUALIFICATION_VERSION}:{position_id}".encode("utf-8")
+    ).hexdigest()
+    bucket = int(digest[:8], 16) % 10_000
+    return {
+        "policy_version": _TRAILING_QUALIFICATION_VERSION,
+        "treatment_id": _TRAILING_TREATMENT_ID,
+        "assignment_unit": position_id,
+        "assignment_hash": digest,
+        "arm": "treatment" if bucket < _TRAILING_TREATMENT_BPS else "control",
+        "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
+        "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,
+        "recovery_window_bars": _TRAILING_RECOVERY_WINDOW_BARS,
+        "recovery_threshold_pct": _TRAILING_RECOVERY_THRESHOLD_PCT,
+    }
 
 
 _QUALIFICATION_SELECT = (
@@ -126,34 +143,6 @@ def _arm_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _live_recovery_observation(
-    row: dict[str, Any],
-    assignment: dict[str, Any],
-) -> dict[str, Any]:
-    frozen_symbol = str(row.get("protection_symbol") or "").strip()
-    if (
-        not frozen_symbol
-        or to_canonical(str(row.get("symbol") or "")) != frozen_symbol
-    ):
-        return {
-            "status": "unavailable",
-            "reason": "recovery_instrument_identity_mismatch",
-            "mfe_pct": None,
-        }
-    return build_post_exit_path_observation(
-        {
-            "position_id": row["id"],
-            "symbol": frozen_symbol,
-            "market_type": row.get("protection_market_type"),
-            "exchange": row.get("protection_venue"),
-            "direction": row.get("direction"),
-            "exit_price": row.get("current_price"),
-            "closed_at": row.get("closed_at"),
-        },
-        post_exit_bars=int(assignment["recovery_window_bars"]),
-    )
-
-
 def _stored_recovery_observation(
     row: dict[str, Any],
     assignment: dict[str, Any],
@@ -211,51 +200,11 @@ def _recovery_observation(
     row: dict[str, Any],
     assignment: dict[str, Any],
 ) -> dict[str, Any]:
-    return _stored_recovery_observation(row, assignment) or _live_recovery_observation(
-        row,
-        assignment,
-    )
-
-
-def _refresh_recovery_window(
-    row: dict[str, Any],
-    assignment: dict[str, Any],
-) -> None:
-    """Fetch the frozen post-close range without crossing venue identity."""
-
-    frozen_symbol = str(row.get("protection_symbol") or "").strip()
-    if to_canonical(str(row.get("symbol") or "")) != frozen_symbol:
-        raise RuntimeError("trailing recovery instrument identity mismatch")
-    closed = parse_utc_strict(row.get("closed_at"))
-    if closed is None:
-        raise RuntimeError("trailing recovery close timestamp is unavailable")
-    start_ms = ((int(closed.timestamp() * 1000) + 59_999) // 60_000) * 60_000
-    bars = int(assignment["recovery_window_bars"])
-    instrument = InstrumentId.from_parts(
-        str(row.get("protection_venue") or ""),
-        frozen_symbol,
-        str(row.get("protection_market_type") or ""),
-    )
-
-    async def _fetch() -> None:
-        from aletheia.data.ccxt_provider import get_market_data_provider
-
-        provider = get_market_data_provider(
-            exchange=instrument.exchange,
-            native_ccxt=True,
-            fallback_exchange=instrument.exchange,
-        )
-        try:
-            await provider.get_ohlcv(
-                instrument,
-                timeframe="1m",
-                limit=min(500, bars + 1),
-                since=start_ms,
-            )
-        finally:
-            await provider.close()
-
-    asyncio.run(_fetch())
+    return _stored_recovery_observation(row, assignment) or {
+        "status": "unavailable",
+        "reason": "archived_recovery_not_recorded",
+        "mfe_pct": None,
+    }
 
 
 def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
@@ -269,7 +218,7 @@ def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | N
         return None, "assignment_contract_invalid"
     if assignment.get("policy_version") != _TRAILING_QUALIFICATION_VERSION:
         return None, None
-    expected = _trailing_qualification_assignment(str(row["id"]))
+    expected = _expected_archived_assignment(str(row["id"]))
     if assignment != expected:
         return None, "assignment_identity_invalid"
     arm = str(assignment["arm"])
@@ -355,86 +304,12 @@ def _qualified_item(row: dict[str, Any]) -> tuple[dict[str, Any] | None, str | N
     return item, None
 
 
-def materialize_exit_trailing_recovery(position: dict[str, Any]) -> dict[str, Any]:
-    """Persist one mature diagnostic observation without changing trading behavior."""
-
-    row_value = repo.get_db().execute(
-        _QUALIFICATION_SELECT + "WHERE position.id=? LIMIT 1",
-        (str(position.get("id") or ""),),
-    ).fetchone()
-    if row_value is None:
-        return {"materialized": False, "reason": "qualification_row_unavailable"}
-    row = dict(row_value)
-    item, invalid = _qualified_item(row)
-    if invalid or item is None or item.get("unavailable_reason") or not item["changed"]:
-        return {
-            "materialized": False,
-            "reason": invalid or (item or {}).get("unavailable_reason") or "not_applicable",
-        }
-    plan = json.loads(row["qualification_plan_json"])
-    assignment = plan["trailing"]["qualification"]
-    stored = _stored_recovery_observation(row, assignment)
-    if stored is not None:
-        return {**stored, "materialized": False}
-    recovery = item.get("_recovery_observation") or {}
-    if (
-        recovery.get("status") == "unavailable"
-        and recovery.get("reason") != "recovery_instrument_identity_mismatch"
-    ):
-        _refresh_recovery_window(row, assignment)
-        refreshed, refreshed_invalid = _qualified_item(row)
-        if refreshed_invalid or refreshed is None:
-            raise RuntimeError("trailing recovery qualification changed during refresh")
-        recovery = refreshed.get("_recovery_observation") or {}
-    if recovery.get("status") == "pending":
-        raise RuntimeError("trailing recovery window is not mature")
-    if recovery.get("reason") == "recovery_instrument_identity_mismatch":
-        return {**recovery, "materialized": False}
-    if recovery.get("status") != "available":
-        raise RuntimeError(
-            "trailing recovery exact window remains unavailable: "
-            f"{recovery.get('reason') or 'unknown'}"
-        )
-    recovery_mfe = _finite(recovery.get("mfe_pct"), nonnegative=True)
-    observed_at = datetime.now(timezone.utc).isoformat()
-    payload = {
-        "contract_version": "post-exit-recovery/v1",
-        "policy_version": _TRAILING_QUALIFICATION_VERSION,
-        "position_id": row["id"],
-        "observed_at": observed_at,
-        "venue": row["protection_venue"],
-        "symbol": row["protection_symbol"],
-        "market_type": row["protection_market_type"],
-        "timeframe": "1m",
-        "direction": row["direction"],
-        "exit_price": row["current_price"],
-        "closed_at": row["closed_at"],
-        "window_start_ts_ms": recovery.get("window_start_ts_ms"),
-        "window_end_ts_ms": recovery.get("window_end_ts_ms"),
-        "bars_requested": assignment["recovery_window_bars"],
-        "bars_observed": recovery.get("bars_observed", 0),
-        "status": recovery["status"],
-        "reason": recovery.get("reason") or "recovery_evidence_unavailable",
-        "mfe_pct": recovery_mfe,
-        "mae_pct": _finite(recovery.get("mae_pct")),
-        "recovery_threshold_pct": assignment["recovery_threshold_pct"],
-        "recovery_truncated": (
-            recovery_mfe >= float(assignment["recovery_threshold_pct"])
-            if recovery_mfe is not None
-            else None
-        ),
-    }
-    repo.persist_position_trailing_recovery_observation(row["id"], payload)
-    return {**payload, "materialized": True}
-
-
 def build_exit_trailing_qualification_report(
     limit: int = 10_000,
     *,
     opened_after: str | None = None,
 ) -> dict[str, Any]:
     """Report exact-build treatment/control economics without granting authority."""
-    from aletheia.config.loader import load_config
 
     if limit < 1 or limit > 10_000:
         raise ValueError("limit must be between 1 and 10000")
@@ -506,16 +381,11 @@ def build_exit_trailing_qualification_report(
     recovery_truncation_count = sum(
         1 for item in all_items if item.get("recovery_truncated") is True
     )
-    enrollment_enabled = bool(
-        load_config(persist_migrations=False).trading.trail_enabled
-    )
     return {
         "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
-        "enrollment_enabled": enrollment_enabled,
-        "enrollment_block_reason": (
-            None if enrollment_enabled else "trading.trail_enabled_false"
-        ),
+        "enrollment_enabled": False,
+        "enrollment_block_reason": "archived",
         "assignment_unit": "position_id",
         "treatment_allocation_bps": _TRAILING_TREATMENT_BPS,
         "control_holdout_bps": 10_000 - _TRAILING_TREATMENT_BPS,

@@ -18,7 +18,7 @@ def _insert(db, pid, *, direction="long", entry=100.0, stop=None, horizon=None,
     cols = {
         "id": pid, "symbol": "BTC/USDT", "market_type": "usdt_futures",
         "direction": direction, "quantity": 1.0, "entry_price": entry,
-        "execution_mode": "paper_internal", "status": "open", "exit_plan_version": version,
+        "execution_mode": "bitget_demo", "status": "open", "exit_plan_version": version,
     }
     if stop is not None:
         cols["stop_price"] = stop
@@ -62,7 +62,7 @@ def _insert_authorized(
         stop_price=proposal_stop,
         take_profit=proposal_target,
         risk_reward=4.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         source="native",
     )
     insert_trade_proposal(proposal)
@@ -71,8 +71,8 @@ def _insert_authorized(
         proposal_id=proposal.id,
         approved=True,
         violations="[]",
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal",
+        allowed_execution_mode="bitget_demo",
+        proposal_execution_mode="bitget_demo",
         decision_role="authoritative",
         evaluated_quantity=1.0,
         proposal_commit_hash=proposal.commit_hash,
@@ -80,6 +80,7 @@ def _insert_authorized(
     insert_risk_decision(decision)
     order = Order(
         id=f"order-{pid}",
+        client_order_id=proposal.id,
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
         symbol=proposal.symbol,
@@ -158,7 +159,7 @@ def test_adjust_updates_plan_and_bumps_version(monkeypatch):
     )
     assert res["updated"] is True
     assert res["version"] == 1
-    assert res["exchange_synced"] is False  # paper_internal has no exchange bracket
+    assert res["exchange_synced"] is False  # failed exchange synchronization is reported honestly
     assert len(observed_marks) == 1
     assert observed_marks[0][:2] == ("BTC/USDT", "usdt_futures")
     assert observed_marks[0][2]
@@ -182,11 +183,6 @@ def test_trailing_adjustment_preserves_frozen_system_contract():
         "activation_profit_pct": 1.5,
         "floor_at_breakeven": True,
         "fallback_pct": 1.0,
-        "floor_mode": "net_balance",
-        "observation": "completed_1m",
-        "cost_model_version": "paper-net-balance-v1",
-        "exit_fee_rate": 0.001,
-        "slippage_bps": 25.0,
     }
     get_db().execute(
         "UPDATE positions SET trailing_json=? WHERE id=?",

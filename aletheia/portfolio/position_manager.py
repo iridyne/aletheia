@@ -1,16 +1,8 @@
-"""Position manager — closes open PAPER positions by stop-loss / take-profit / max-hold.
+"""Manage demo-exchange exits through the Execution Gateway.
 
-This is the keystone that turns open positions into realized PnL, which in turn
-activates the daily-loss breaker (risk/engine.py §8) and the strategy promotion
-gates. It only updates the position projection + writes an audit event — it never
-places an exchange order, so it lives in portfolio/ (not the change-controlled
-execution/).
-
-Governance:
-- LIVE positions (bitget_live_limited) are NEVER auto-closed (future + human-only).
-- The kill switch does NOT block closing — closing reduces risk.
-- No latest price → skip the position (never fabricate an exit).
-- Layered pause keeps this scheduler job running so existing risk remains protected.
+The local loop evaluates stops, targets and holding horizons. Exchange fills own
+closure and realized economics; live positions are outside this scheduled loop.
+Layered pause and the kill switch do not disable risk-reducing exits.
 """
 
 import hashlib
@@ -33,7 +25,6 @@ from aletheia.execution.close_convergence import (
     pending_close_age_hours,
 )
 from aletheia.storage.repositories import (
-    PositionProtectionConflict,
     list_all_open_positions,
 )
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
@@ -83,16 +74,6 @@ def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
             "retain the claim and reconcile before any further close action."
         ),
     ))
-
-
-
-
-
-
-
-
-
-
 
 
 def close_position_routed(
@@ -288,13 +269,12 @@ def _get_atr_observation(
     cfg,
     *,
     observed_at: str | None,
-    protection_venue: str | None = None,
 ) -> dict | None:
     """Return one exact, completed 1h ATR observation available at decision time."""
     observed = parse_utc_strict(observed_at) if observed_at is not None else datetime.now(timezone.utc)
     if observed is None:
         return None
-    venue = str(protection_venue).lower() if protection_venue else protective_price_venue(
+    venue = protective_price_venue(
         position.get("execution_mode"),
         configured_data_venue=cfg.market_data.ccxt_exchange,
     )
@@ -365,6 +345,8 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
     trading = cfg.trading
     spec = load_exit_plan(position).trailing
     if spec is not None:
+        if spec.get("floor_mode", "entry") != "entry" or spec.get("observation", "sampled_mark") != "sampled_mark":
+            return None
         mode = str(spec.get("mode") or "").lower()
         if mode in ("off", "none", "disabled") or spec.get("enabled") is False:
             return None
@@ -378,65 +360,8 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
             "fallback_pct": float(spec.get("fallback_pct", trading.trail_pct)),
             "activation_profit_pct": spec.get("activation_profit_pct"),
             "floor_at_breakeven": bool(spec.get("floor_at_breakeven", True)),
-            "floor_mode": str(spec.get("floor_mode") or "entry"),
-            "observation": str(spec.get("observation") or "sampled_mark"),
-            "exit_fee_rate": spec.get("exit_fee_rate"),
-            "slippage_bps": spec.get("slippage_bps"),
         }
     return None
-
-
-def _net_balance_stop(
-    position: dict,
-    trailing: dict,
-    *,
-    observed_at: str | None,
-) -> float | None:
-    """Return the stop mark that covers modeled Paper costs, or fail closed."""
-    try:
-        entry = float(position["entry_price"])
-        quantity = float(position["quantity"])
-        entry_fee = float(position["entry_fee"])
-        fee_rate = float(trailing["exit_fee_rate"])
-        slip = float(trailing["slippage_bps"]) / 10_000.0
-    except (KeyError, TypeError, ValueError):
-        return None
-    if not all(math.isfinite(value) for value in (entry, quantity, entry_fee, fee_rate, slip)):
-        return None
-    if entry <= 0 or quantity <= 0 or entry_fee < 0 or not 0 <= fee_rate < 1 or not 0 <= slip < 1:
-        return None
-
-    if position.get("market_type") == "spot":
-        funding_cost = 0.0
-    else:
-        try:
-            from aletheia.portfolio.local_funding import compute_local_funding
-
-            funding = compute_local_funding(
-                position,
-                closed_at=observed_at or datetime.now(timezone.utc).isoformat(),
-            )
-        except Exception:
-            return None
-        if not funding.complete or funding.funding_cost is None:
-            return None
-        funding_cost = float(funding.funding_cost)
-        if not math.isfinite(funding_cost):
-            return None
-
-    direction = position.get("direction")
-    if direction in ("long", "buy"):
-        denominator = quantity * (1.0 - slip) * (1.0 - fee_rate)
-        balance = (quantity * entry + entry_fee + funding_cost) / denominator
-        return math.ceil(balance * 100_000_000) / 100_000_000
-    if direction not in ("short", "sell"):
-        return None
-    denominator = quantity * (1.0 + slip) * (1.0 + fee_rate)
-    numerator = quantity * entry - entry_fee - funding_cost
-    if numerator <= 0:
-        return None
-    balance = numerator / denominator
-    return math.floor(balance * 100_000_000) / 100_000_000
 
 
 def _maybe_update_trailing_stop(
@@ -444,9 +369,7 @@ def _maybe_update_trailing_stop(
     price: float,
     cfg,
     *,
-    completed_bar: bool = False,
     effective_at: str | None = None,
-    protection_venue: str | None = None,
     sync_exchange: bool = True,
 ) -> bool:
     """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
@@ -464,8 +387,6 @@ def _maybe_update_trailing_stop(
         return False
     tc = _resolve_trailing(position, cfg)
     if tc is None:
-        return False
-    if (tc["observation"] == "completed_1m") != completed_bar:
         return False
     direction = position["direction"]
     is_long = direction in ("long", "buy")
@@ -497,14 +418,6 @@ def _maybe_update_trailing_stop(
     # 1. Breakeven move (opt-out via floor_at_breakeven).
     if tc["floor_at_breakeven"] and current_stop is not None and entry > 0:
         floor = entry
-        if tc["floor_mode"] == "net_balance":
-            floor = _net_balance_stop(position, tc, observed_at=effective_at)
-            if floor is None:
-                logger.warning(
-                    "net balance unavailable; trailing not activated pos=%s",
-                    position.get("id"),
-                )
-                return False
         floor_trigger = (
             tc["activation_profit_pct"]
             if tc["activation_profit_pct"] is not None
@@ -524,7 +437,6 @@ def _maybe_update_trailing_stop(
             position,
             cfg,
             observed_at=effective_at,
-            protection_venue=protection_venue,
         )
         if atr_observation is not None:
             trail_distance = price * (atr_observation["atr_pct"] / 100.0) * tc["atr_mult"]
@@ -579,8 +491,8 @@ def _maybe_update_trailing_stop(
                     return False  # abort local DB update on exchange failure
             
             # Exchange succeeded (or sync_exchange=False) → persist to local DB
-            from aletheia.portfolio.protective_barrier import (
-                persist_position_exit_plan,
+            from aletheia.portfolio.exit_plan import (
+                save_exit_plan,
             )
 
             persisted_plan = load_exit_plan(position)
@@ -589,14 +501,12 @@ def _maybe_update_trailing_stop(
                 **(persisted_plan.trailing or {}),
                 "last_runtime_observation": runtime_observation,
             }
-            persist_position_exit_plan(
+            save_exit_plan(
                 position["id"],
                 persisted_plan,
-                provenance="deterministic_trailing_v2",
                 exit_plan_updates={
                     key: value for key, value in updates.items() if key != "stop_price"
                 },
-                effective_at=effective_at,
             )
             position["stop_price"] = float(new_stop)
         else:
@@ -1340,17 +1250,16 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     if pos is None or pos.get("status") != "open":
         return {"error": f"position {position_id} not found or not open"}
 
-    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+    from aletheia.portfolio.exit_plan import save_exit_plan
 
     plan = load_exit_plan(pos)
     plan.stop_price = round(float(new_stop_price), 8)
     try:
-        persist_position_exit_plan(
+        save_exit_plan(
             position_id,
             plan,
-            provenance="legacy_adjust_stop_v1",
         )
-    except PositionProtectionConflict:
+    except ValueError:
         return {"error": "exit_plan_conflict", "position_id": position_id}
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
@@ -1713,19 +1622,17 @@ def apply_operator_adjustment(
         provenance="operator",
         version=(plan.version or 0) + 1,
     )
-    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+    from aletheia.portfolio.exit_plan import save_exit_plan
 
     try:
-        new_plan = persist_position_exit_plan(
+        new_plan = save_exit_plan(
             position_id,
             new_plan,
-            provenance="system_operator_adjustment_v1",
-            expected_version=plan.version,
             observation_updates=(
                 {"horizon_wake_sent_at": None} if horizon_changed else None
             ),
         )
-    except (ValueError, PositionProtectionConflict):
+    except ValueError:
         return {
             "error": "exit_plan_persistence_blocked",
             "position_id": position_id,
@@ -1837,15 +1744,13 @@ def proactive_exit(
         level = round(level, 8)
         # exit_limit_source is persisted with the level so the executor can pick the
         # honest close_reason later, when the original caller is long gone.
-        from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+        from aletheia.portfolio.exit_plan import save_exit_plan
 
         try:
-            persist_position_exit_plan(
+            save_exit_plan(
                 position_id,
                 load_exit_plan(pos),
-                provenance=f"{actor}_limit_exit_v1",
-                exit_limit_price=level,
-                exit_limit_source=actor,
+                exit_plan_updates={"exit_limit_price": level, "exit_limit_source": actor},
             )
         except (ValueError, RuntimeError):
             return {

@@ -219,7 +219,7 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
 
 
 def _empty_exit_trailing_qualification(reason: str) -> dict:
-    from aletheia.portfolio.protective_barrier import (
+    from aletheia.analytics.exit_trailing_qualification import (
         _TRAILING_QUALIFICATION_VERSION,
         _TRAILING_RECOVERY_THRESHOLD_PCT,
         _TRAILING_RECOVERY_WINDOW_BARS,
@@ -228,8 +228,8 @@ def _empty_exit_trailing_qualification(reason: str) -> dict:
     return {
         "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
-        "enrollment_enabled": None,
-        "enrollment_block_reason": "qualification_report_unavailable",
+        "enrollment_enabled": False,
+        "enrollment_block_reason": "archived",
         "measurement_status": "not_measured",
         "causal_grade": "insufficient",
         "assignment_count": 0,

@@ -129,6 +129,13 @@ def test_archived_position_has_no_current_execution_authority():
     with pytest.raises(ValueError, match="unsupported position execution_mode"):
         close_position_routed("archived-open", reason="manual")
 
+    from aletheia.portfolio.exit_plan import ExitPlan, save_exit_plan
+    from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs, _load_eligible_position
+
+    with pytest.raises(ValueError, match="unsupported position execution mode"):
+        save_exit_plan("archived-open", ExitPlan(stop_price=95))
+    assert enqueue_outcome_hook_jobs({"id": "archived-open", "execution_mode": "paper_internal"}) == []
+    assert _load_eligible_position("archived-open") == (None, "archived_execution_mode")
     assert db.total_changes == before
 
     from aletheia.config.loader import load_config, save_config

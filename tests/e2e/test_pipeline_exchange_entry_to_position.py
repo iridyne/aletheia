@@ -626,7 +626,7 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
 
     from aletheia.config.loader import load_config, save_config
     from aletheia.data import price_feed
-    from aletheia.portfolio import exchange_sync, local_funding
+    from aletheia.portfolio import exchange_sync
     from aletheia.risk.policy import resolve_risk_policy
     from aletheia.storage.models import MarketSnapshot
 
@@ -667,9 +667,6 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
         price_feed,
         "get_fresh_price_for_protective_close",
         lambda *_args, **_kwargs: 100.05,
-    )
-    monkeypatch.setattr(
-        local_funding, "has_fresh_local_funding_schedule", lambda *a, **k: True
     )
 
     plan = _seeded_plan_with(
