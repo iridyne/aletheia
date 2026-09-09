@@ -1,8 +1,7 @@
-"""Tests for the per-close ledger (exit-intent R1, Stage 1).
+"""Recorded full-close and partial-reduction ledger accounting.
 
-Every close via close_position writes exactly one position_close_events row whose
-realized_pnl equals the position's realized_pnl — the equivalence the daily-loss
-breaker rewire (Stage 2) will rely on. Additive: no existing behavior changes.
+The partial accounting primitive is an isolated reference path; the product
+router authorizes full closes only. Missing economics remain unavailable.
 """
 
 from aletheia.portfolio.pnl import close_position
@@ -10,7 +9,6 @@ from aletheia.storage.repositories import _select_one, list_position_close_event
 
 
 def _insert_open(db, pid, *, entry=100.0, qty=1.0, direction="long", mode="bitget_demo"):
-    # bitget_demo avoids the paper_account settle path (which needs a prior open event).
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status,entry_fee) VALUES (?,?,?,?,?,?,?,?,?)",
@@ -19,7 +17,7 @@ def _insert_open(db, pid, *, entry=100.0, qty=1.0, direction="long", mode="bitge
     )
 
 
-def test_close_writes_one_ledger_event_matching_realized():
+def test_unverified_close_records_event_without_inventing_pnl():
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -34,8 +32,9 @@ def test_close_writes_one_ledger_event_matching_realized():
     assert ev["closed_qty"] == 1.0
     assert ev["is_partial"] == 0
     assert ev["exit_price"] == 110.0
-    # equivalence — the ledger event carries the SAME realized_pnl the breaker sums today
-    assert ev["realized_pnl"] == pos["realized_pnl"]
+    assert ev["realized_pnl"] is None
+    assert pos["realized_pnl"] is None
+    assert pos["outcome_eligible"] == 0
 
 
 def test_ledger_sum_equals_positions_sum_for_full_closes():
@@ -58,7 +57,7 @@ def test_ledger_sum_equals_positions_sum_for_full_closes():
     positions_sum = round(
         sum(p["realized_pnl"] for p in list_closed_positions() if p["realized_pnl"] is not None), 6
     )
-    assert ledger_sum == positions_sum
+    assert ledger_sum == positions_sum == -0.24
 
 
 # ── Stage 2: daily-loss breaker counts partial reductions (additive term) ────
@@ -145,9 +144,8 @@ def test_reduce_guards():
     assert reduce_position("missing", 0.1, 110.0).get("error") == "position_not_found"
 
 
-def test_reduce_rejected_on_paper_internal():
-    """Product boundary: paper_internal is limited to full closes — partial reduce is
-    honestly rejected because no execution mode has an authorized product path."""
+def test_archived_position_cannot_be_reduced():
+    """Archived positions remain readable and cannot acquire new close events."""
     from aletheia.storage.sqlite import get_db
     from aletheia.portfolio.pnl import reduce_position
     from aletheia.storage.repositories import list_position_close_events
@@ -155,7 +153,7 @@ def test_reduce_rejected_on_paper_internal():
     db = get_db()
     _insert_open_qty(db, "pi1", qty=2.0, mode="paper_internal")
     res = reduce_position("pi1", 0.5, 110.0)
-    assert res.get("error") == "partial_reduce_unsupported_on_paper_internal"
+    assert res.get("error") == "unsupported_position_execution_mode"
     assert "not production-authorized" in res.get("hint", "")
     # rejected before any side effect: no ledger event, position unchanged
     assert list_position_close_events(position_id="pi1") == []
