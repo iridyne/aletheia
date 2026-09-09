@@ -71,7 +71,7 @@ def test_spot_short_rejected(tmp_path, monkeypatch):
     from aletheia.risk.engine import evaluate_proposal
 
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="short",
-                      execution_mode="paper_internal", quantity=0.001, price=60000)
+                      execution_mode="bitget_demo", quantity=0.001, price=60000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
     assert "spot_short_not_allowed" in result.violations
@@ -87,7 +87,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
 
     # Inverted long: stop ABOVE entry, TP BELOW entry.
     bad = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                        execution_mode="paper_internal", quantity=0.001, price=100.0,
+                        execution_mode="bitget_demo", quantity=0.001, price=100.0,
                         order_type="limit", source="native", leverage=1,
                         stop_price=110.0, take_profit=90.0, risk_reward=2.0)
     repo.insert_trade_proposal(bad)
@@ -95,7 +95,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
 
     # Correct long geometry: stop below, TP above → no geometry violation.
     good = TradeProposal(symbol="ETH/USDT", market_type="usdt_futures", direction="long",
-                         execution_mode="paper_internal", quantity=0.01, price=100.0,
+                         execution_mode="bitget_demo", quantity=0.01, price=100.0,
                          order_type="limit", source="native", leverage=1,
                          stop_price=90.0, take_profit=120.0, risk_reward=2.0)
     repo.insert_trade_proposal(good)
@@ -103,7 +103,7 @@ def test_entry_plan_geometry_rejects_inverted_sides(tmp_path, monkeypatch):
 
     # Correct short geometry: TP below, stop above → no geometry violation.
     short_ok = TradeProposal(symbol="SOL/USDT", market_type="usdt_futures", direction="short",
-                             execution_mode="paper_internal", quantity=0.1, price=100.0,
+                             execution_mode="bitget_demo", quantity=0.1, price=100.0,
                              order_type="limit", source="native", leverage=1,
                              stop_price=110.0, take_profit=80.0, risk_reward=2.0)
     repo.insert_trade_proposal(short_ok)
@@ -137,7 +137,7 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
 
     def _eval_btc():
         p = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                          execution_mode="paper_internal", quantity=0.001, price=60000,
+                          execution_mode="bitget_demo", quantity=0.001, price=60000,
                           leverage=1)
         repo.insert_trade_proposal(p)
         return evaluate_proposal(p).violations
@@ -149,38 +149,6 @@ def test_lesson_hard_block_requires_risk_category(tmp_path, monkeypatch):
     # A risk-category applied lesson with the same action DOES hard-block.
     _applied_block_lesson("risk")
     assert any("lesson_block_symbol" in v for v in _eval_btc())
-
-
-def test_paper_internal_drawdown_ignores_external_account_snapshots(monkeypatch):
-    """Local paper must not borrow an unrelated exchange account's equity."""
-    from aletheia.risk.engine import _portfolio_drawdown_scale
-
-    # The local simulator's notional collapsed, while an unrelated cached
-    # exchange account has its own equity history. Neither is paper equity.
-    fake_snapshots = (
-        # paper_internal rows (notional — misleading)
-        [{"execution_mode": "paper_internal", "total_value_usdt": "272.0"}]
-        + [{"execution_mode": "paper_internal", "total_value_usdt": "16.0"}] * 4
-        # exchange_account rows (real equity — steady)
-        + [{"execution_mode": "exchange_account", "total_value_usdt": "88000.0"}] * 5
-    )
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.list_portfolio_snapshots",
-        lambda limit=50: fake_snapshots,
-    )
-    scale = _portfolio_drawdown_scale("paper_internal")
-    assert scale == 1.0
-
-
-def test_paper_internal_drawdown_evidence_is_unavailable():
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.risk.engine import _portfolio_drawdown_assessment
-    from aletheia.trading.sizing_policy import assess_persona_distress
-
-    cfg = AletheiaConfig()
-
-    assert _portfolio_drawdown_assessment("paper_internal", cfg) == (1.0, False)
-    assert assess_persona_distress(cfg) == "unavailable"
 
 
 @pytest.mark.parametrize(
@@ -222,41 +190,6 @@ def test_exchange_drawdown_requires_fresh_snapshot_time(
     )
 
     assert _portfolio_drawdown_assessment("okx_demo") == (1.0, available)
-
-
-def test_paper_internal_drawdown_ignores_local_notional_collapse(monkeypatch):
-    """A closed local paper position is not an account-equity drawdown."""
-    from aletheia.risk.engine import _portfolio_drawdown_scale
-
-    fake_snapshots = (
-        [{"execution_mode": "paper_internal", "total_value_usdt": "200.0"}] * 3
-        + [{"execution_mode": "paper_internal", "total_value_usdt": "0.0"}] * 3
-    )
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.list_portfolio_snapshots",
-        lambda limit=50: fake_snapshots,
-    )
-
-    scale = _portfolio_drawdown_scale("paper_internal")
-    assert scale == 1.0
-
-
-def test_paper_internal_drawdown_ignores_external_equity_drop(monkeypatch):
-    """External-account loss must not freeze the independent local simulator."""
-    from aletheia.risk.engine import _portfolio_drawdown_scale
-
-    # Exchange equity peaked at 100k, now at 85k → 15% DD → scale ~0.25
-    fake_snapshots = (
-        [{"execution_mode": "paper_internal", "total_value_usdt": "50.0"}] * 3
-        + [{"execution_mode": "exchange_account", "total_value_usdt": "100000.0"}] * 3
-        + [{"execution_mode": "exchange_account", "total_value_usdt": "85000.0"}] * 2
-    )
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.list_portfolio_snapshots",
-        lambda limit=50: fake_snapshots,
-    )
-    scale = _portfolio_drawdown_scale("paper_internal")
-    assert scale == 1.0
 
 
 def test_exchange_demo_rejects_stop_tighter_than_vol_target(tmp_path, monkeypatch):
