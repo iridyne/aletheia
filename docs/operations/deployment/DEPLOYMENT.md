@@ -65,6 +65,12 @@ hold、失败 Tag、settlement/Observer 门禁及失败恢复。`--no-restart` �
 HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
 也不以 master 的 ahead/behind 数量宣称已部署。
 
+已明确配置为 `paper` 角色的 runtime，只允许以下精确部署组合：
+`paper_internal` / `local_paper` 或 `bitget_demo` / `external_exchange`。
+两者都必须为 `live_disabled`；其他外部模式和交叉组合均拒绝。此准入同时
+适用于人工更新、自动更新及重启后的验证，不改变交易模式、Risk、凭据、
+健康、结算、备份、Observer continuity 或历史经济证据规则。
+
 实验 runtime registry/shadow/promote 控制面已退役。升级前先停 owned timer，持有部署锁，
 核实实际 backend cwd/SHA；将标准 checkout 对齐同一 SHA，完成正常停止、settlement 与
 联合 checkpoint/authoritative backup，再使旧版本的 current artifact 指向标准目录。
@@ -100,7 +106,7 @@ staging 目录、Smoke、Gateway 重启以及启动期 Migration/SQLite 校验�
 1. Fedora `git rev-parse HEAD` 等于预期 merge SHA；
 2. `/api/status` 的 `boot_commit == current_commit ==` 预期 SHA；
 3. `/api/health` 为 healthy，Gateway 与 scheduler 正在运行；
-4. 仍为 `paper_internal` / `local_paper`，`live_disabled`；
+4. 保持上述已批准的模式/target 组合不变，且为 `live_disabled`；
 5. Provider、Outcome settlement 和目标 Evaluation evidence 正常继续采集。
 
 每次部署都记录新的 Runtime provenance segment。只读审计、文档或不改变 behavior contract
@@ -152,7 +158,7 @@ GitHub API。
 旧 Gateway 继续服务期间完成依赖同步与前端 staging build。通过后才停止 Gateway、创建最终
 Backup、fast-forward 到固定 SHA、切换完整静态资源并启动。120 秒内必须证明
 `boot_commit == current_commit == tag_sha`、产品版本、migration ledger、Gateway/scheduler/
-provider/settlement health、`paper_internal` / `local_paper` 及 `live_disabled`。成功会写入
+provider/settlement health、上述已批准的模式/target 组合及 `live_disabled`。成功会写入
 runtime provenance/audit，scheduler 会自行继续 Observer，不需要人为重开。
 
 每个失败路径写入 `${ALETHEIA_DATA_DIR}/update/auto-deploy.json` 和 audit，且不会记录凭证：

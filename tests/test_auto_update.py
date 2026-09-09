@@ -629,7 +629,16 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     assert calls[0][0][:2] == [auto.sys.executable, "-c"]
 
 
-def test_runtime_gate_uses_public_health_response(monkeypatch):
+@pytest.mark.parametrize(("mode", "target", "live_state", "allowed"), [
+    ("paper_internal", "local_paper", "live_disabled", True),
+    ("bitget_demo", "external_exchange", "live_disabled", True),
+    ("bitget_demo", "local_paper", "live_disabled", False),
+    ("paper_internal", "external_exchange", "live_disabled", False),
+    ("binance_demo", "external_exchange", "live_disabled", False),
+    ("bitget_live", "external_exchange", "live_disabled", False),
+    ("bitget_demo", "external_exchange", "live_enabled", False),
+])
+def test_runtime_gate_uses_public_health_response(monkeypatch, mode, target, live_state, allowed):
     from aletheia.update import auto
 
     responses = {
@@ -637,9 +646,9 @@ def test_runtime_gate_uses_public_health_response(monkeypatch):
         "/api/status": {
             "gateway_running": True,
             "scheduler_running": True,
-            "paper_execution_mode": "paper_internal",
-            "execution_target": "local_paper",
-            "live_state": "live_disabled",
+            "paper_execution_mode": mode,
+            "execution_target": target,
+            "live_state": live_state,
             "boot_commit": "target-sha",
             "current_commit": "target-sha",
             "version": "1.2.3",
@@ -649,9 +658,9 @@ def test_runtime_gate_uses_public_health_response(monkeypatch):
 
     assert auto._runtime_gate(
         expected_sha="target-sha", expected_version="1.2.3"
-    ) == {"ok": True, "reason": None, "failed": []}
+    )["ok"] is allowed
     responses["/api/health"]["status"] = "degraded"
-    assert auto._runtime_gate()["failed"] == ["health"]
+    assert auto._runtime_gate()["ok"] is False
 
 
 def test_runtime_diagnostics_ignore_unrelated_warnings_but_keep_deployment_gates():
