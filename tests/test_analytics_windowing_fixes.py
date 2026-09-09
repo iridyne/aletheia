@@ -56,43 +56,18 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 
 def _seed_positions(days_ago_list: list[int], pnl: float = 1.0) -> None:
-    """Insert ordered post-clean-window closes for equity-curve truncation."""
+    """Seed ordered verified external closes through the shared outcome producer."""
     from datetime import datetime, timedelta, timezone
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     now = datetime.now(timezone.utc)
     for i, days_ago in enumerate(days_ago_list):
         closed_at = (now - timedelta(days=days_ago) + timedelta(minutes=i)).isoformat()
-        opened_at = (now - timedelta(days=days_ago) + timedelta(minutes=i - 1)).isoformat()
-        position_id = f"window-position-{i}"
-        symbol = f"SEED{i}/USDT"
-        opportunity_id, proposal_id, order_id = _insert_entry_chain(
-            position_id=position_id,
-            symbol=symbol,
-            market_type="usdt_futures",
-            direction="long",
-            quantity=1.0,
-            price=100.0,
-            execution_mode="paper_internal",
+        _insert_closed_position_via_producer(
+            position_id=f"window-position-{i}", symbol=f"SEED{i}/USDT",
+            market_type="spot", direction="long", quantity=1.0, entry_price=100.0,
+            realized_pnl=pnl, execution_mode="bitget_demo", closed_at=closed_at,
         )
-        pos = Position(
-            id=position_id, symbol=symbol,
-            market_type="usdt_futures", direction="long",
-            quantity=1.0, entry_price=100.0, current_price=100.0 + pnl,
-            realized_pnl=pnl, execution_mode="paper_internal",
-            status="closed", opened_at=opened_at, closed_at=closed_at,
-            entry_fee=0.0, exit_fee=0.0,
-            funding_cost=0.0, funding_source="local_simulation",
-            entry_price_source="local_fill", entry_fill_verified=True,
-            close_category="strategy", exit_price_source="local_fill",
-            exit_fill_verified=True, outcome_eligible=True,
-            outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
-            opportunity_id=opportunity_id, proposal_id=proposal_id,
-            order_id=order_id,
-        )
-        insert_position(pos)
 
 
 @pytest.fixture
@@ -134,7 +109,7 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
         )
 
 
-@pytest.mark.parametrize("execution_mode,upnl", [("paper_internal", 0.0), (None, 7.0)])
+@pytest.mark.parametrize("execution_mode,upnl", [("bitget_demo", 0.0), (None, 7.0)])
 def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monkeypatch, execution_mode, upnl):
     _setup_env(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
@@ -151,8 +126,8 @@ def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monk
         timezone(-timedelta(hours=4))
     ).isoformat()
     rows = [
-        {"closed_at": before, "realized_pnl": 1.0},
-        {"closed_at": after, "realized_pnl": 2.0},
+        {"closed_at": before, "realized_pnl": 1.0, "execution_mode": "bitget_demo"},
+        {"closed_at": after, "realized_pnl": 2.0, "execution_mode": "bitget_demo"},
     ]
     monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **kwargs: rows)
     monkeypatch.setattr(
@@ -169,7 +144,7 @@ def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monk
         "aletheia.config.loader.load_config",
         lambda: SimpleNamespace(
             app=SimpleNamespace(equity_curve_mode="full_cumulative"),
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+            exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
         ),
     )
 
@@ -386,7 +361,7 @@ def test_overview_funnels_share_the_same_parsed_iso_window(tmp_path, monkeypatch
             "(id, opportunity_id, symbol, market_type, direction, order_type, "
             "execution_mode, status, created_at) "
             "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', "
-            "'paper_internal', 'pending', ?)",
+            "'bitget_demo', 'pending', ?)",
             (f"proposal-{suffix}", f"opp-{suffix}", created_at),
         )
     _insert_overview_decision(
@@ -519,7 +494,7 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
             "(id, opportunity_id, symbol, market_type, direction, order_type, "
             "execution_mode, status, created_at) "
             "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', "
-            "'paper_internal', 'executed', ?)",
+            "'bitget_demo', 'executed', ?)",
             (proposal_id, opportunity_id, later),
         )
         db.execute(
@@ -533,7 +508,7 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
             "(id, proposal_id, symbol, market_type, direction, order_type, quantity, "
             "execution_mode, status, created_at, filled_at) "
             "VALUES (?, ?, 'BTC/USDT', 'spot', 'long', 'market', 1, "
-            "'paper_internal', 'filled', ?, ?)",
+            "'bitget_demo', 'filled', ?, ?)",
             (f"entry-{proposal_id}", proposal_id, later, later),
         )
         db.execute(
@@ -548,7 +523,7 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
         "(id, opportunity_id, symbol, market_type, direction, order_type, "
         "execution_mode, status, created_at) "
         "VALUES ('proposal-rejected', 'opp-rejected', 'BTC/USDT', 'spot', 'long', "
-        "'market', 'paper_internal', 'rejected', ?)",
+        "'market', 'bitget_demo', 'rejected', ?)",
         (later,),
     )
     db.execute(
@@ -572,7 +547,7 @@ def test_pipeline_funnel_tracks_one_opportunity_cohort_and_entry_fills_only(
         "(id, proposal_id, symbol, market_type, direction, order_type, quantity, "
         "execution_mode, status, close_reason, created_at, filled_at) "
         "VALUES ('close-filled', 'proposal-filled', 'BTC/USDT', 'spot', 'long', "
-        "'market', 1, 'paper_internal', 'filled', 'take_profit', ?, ?)",
+        "'market', 1, 'bitget_demo', 'filled', 'take_profit', ?, ?)",
         (later, later),
     )
     db.execute(
