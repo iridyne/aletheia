@@ -27,6 +27,8 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Retire the local simulated exchange](retire_local_simulated_exchange.md): accepted removal of the internal execution/account runtime while preserving historical data.
+
 - [Observation Experiment Ownership V2](observation_experiment_ownership_v2.md): moves registered Experiment definition, Generation, assignment, Exposure, Evaluation, lifecycle, retention, and archive ownership to Observation Lab through the serial #2737 migration while preserving Main production facts and trading trust boundaries.
 - [CN Equity Market Kernel](cn-equity-market-kernel.md): a second explicitly
   gated market using versioned identity, point-in-time market facts, the existing
