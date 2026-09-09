@@ -37,3 +37,7 @@ reactivating a historical document in place.
 - [Local simulator replay pack](local_simulated_replay.md): retired generator and qualification claims; frozen artifacts remain readable.
 
 - [Former execution and architecture diagrams](diagrams/README.md): original local-simulator and Operator-entry diagrams, including their rendered assets.
+
+- [Original v1 implementation specification](implementation_guide_v1.md): archived local-simulator tools, API examples, project layout and milestones.
+
+- [June 2026 execution-path analysis](execution_path_honesty_202606.md): historical Paper Trader, RuleSet and local-simulator findings.

@@ -353,3 +353,193 @@ is readiness evidence, not permission to trade.
 
 Runtime values and observation progress belong in runtime evidence and GitHub,
 not in this file.
+
+---
+
+# Former strategy-promotion computation rules
+
+Archived from `docs/governance/policies/trust_and_change_control.md` at commit
+`50dbaa772`. The following local-simulator and strategy-lifecycle gates no longer
+admit current runtime, Learning or Live authority. Human-controlled Live unlock
+and the current Risk/Execution contracts remain required.
+
+## 5. Promotion Gate Computation Spec
+
+Strategy promotion gates must be computed from stored records, not from strategy
+state labels alone.
+
+### 5.1 Gate Source Tables
+
+Use these data sources:
+
+- `strategy_records`: current strategy state and timestamps.
+- `trade_proposals`: strategy-linked proposals via `strategy_id`.
+- `risk_decisions`: risk decisions linked through proposals.
+- `orders`: paper/demo/live order records linked through proposals.
+- `fills`: fills linked through orders.
+- `positions`: realized PnL and closed position history via `strategy_id`.
+- `knowledge_items`: post-trade review existence via
+  `item_type="post_trade_review"`.
+
+If the current schema cannot compute a metric honestly, fail the gate with an
+explicit `insufficient_*` reason. Do not pass by assumption.
+
+### 5.2 Paper Runtime Days
+
+Default gate:
+
+```text
+min_paper_runtime_days = 14
+```
+
+Computation:
+
+- Consider only orders linked to the strategy through
+  `orders.proposal_id -> trade_proposals.id -> strategy_id`.
+- Consider only paper/demo execution modes: `paper_internal` and `bitget_demo`.
+- Runtime starts at the earliest strategy-linked paper/demo order `created_at`.
+- Runtime ends at current UTC time.
+- Pass if elapsed full days is greater than or equal to 14.
+- Fail with `insufficient_paper_runtime_days:<actual><14` if too short.
+- Fail with `no_strategy_paper_orders` if no order exists.
+
+### 5.3 Paper Trade Count
+
+Default gate:
+
+```text
+min_paper_trades = 30
+```
+
+Computation:
+
+- Count strategy-linked paper/demo filled orders, or fills if fill data is the
+  more precise available source.
+- Prefer fills when present.
+- Pass if count is greater than or equal to 30.
+- Fail with `insufficient_paper_trades:<actual><30`.
+
+### 5.4 Positive Expectancy
+
+Default gate:
+
+```text
+positive_expectancy_required = true
+```
+
+Computation:
+
+- Use closed `positions` with matching `strategy_id`.
+- Sum `positions.realized_pnl`.
+- Pass if total realized PnL is greater than 0.
+- Fail with `non_positive_expectancy:<pnl>` if total realized PnL is less than
+  or equal to 0.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if no closed
+  strategy-linked positions exist.
+
+### 5.5 Max Drawdown
+
+Default gate:
+
+```text
+max_drawdown_pct_allowed = 5.0
+```
+
+MVP computation:
+
+- Use closed strategy-linked positions ordered by `closed_at`.
+- Build an equity curve from cumulative `realized_pnl`.
+- Resolve the Demo risk policy capital base through its configured source.
+  The shipped and migrated default follows the matching paper/demo account
+  equity; `custom` uses the explicitly stored `capital.base_usdt`.
+- If account-equity mode has no fresh, positive authoritative snapshot, treat
+  the capital base as unavailable and fail the dependent gate closed. Never
+  silently fall back to the stored custom amount.
+- Compute drawdown as peak-to-trough cumulative PnL decline divided by capital
+  base.
+- Pass if drawdown percentage is less than or equal to 5.0.
+- Fail with `max_drawdown_exceeded:<actual>>5.0`.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
+  are absent.
+
+The resolved base and source must remain auditable and covered by tests.
+
+### 5.6 Max Consecutive Losses
+
+Default gate:
+
+```text
+max_consecutive_losses_allowed = 5
+```
+
+Computation:
+
+- Use closed strategy-linked positions ordered by `closed_at`.
+- A loss is `realized_pnl < 0`.
+- Count the longest run of consecutive losses.
+- Pass if the longest run is less than or equal to 5.
+- Fail with `max_consecutive_losses_exceeded:<actual>>5`.
+- Fail with `insufficient_closed_positions_for_pnl_checks` if closed positions
+  are absent.
+
+### 5.7 Critical Risk Violations
+
+Default gate:
+
+```text
+critical_risk_violations_allowed = 0
+```
+
+Computation:
+
+- Read risk decisions linked to the strategy through proposals.
+- Parse `risk_decisions.violations`.
+- Any rejected live execution decision is critical.
+- Any violation containing these tokens is critical:
+  `live_disabled`, `kill_switch_active`, `account_mode_mismatch`,
+  `exceeds_max_position_notional`, `exceeds_single_trade_risk`,
+  `max_daily_loss_exceeded`, `stale_market_data`, `strategy_not_live_eligible`.
+- Pass if critical violation count is 0.
+- Fail with `critical_risk_violations:<actual>>0`.
+
+### 5.8 Post-Trade Reviews
+
+Default gate:
+
+```text
+post_trade_reviews_required = true
+```
+
+MVP computation:
+
+- Require at least one active `knowledge_items` row with
+  `item_type="post_trade_review"`.
+- If the review is strategy-specific in metadata/tags, prefer matching the
+  strategy ID.
+- Until strategy-specific metadata is standardized, a global active
+  `post_trade_review` satisfies the MVP gate.
+- Fail with `post_trade_review_required` if no active review exists.
+
+### 5.9 Live Candidate Promotion
+
+Promotion from `paper_passed` to `live_candidate` passes only if:
+
+- Current state is exactly `paper_passed`.
+- All gates in this section pass.
+- An audit event is written for the promotion.
+
+Do not allow `paper_passed -> live_candidate` based only on state name.
+
+### 5.10 Live Limited Promotion
+
+Promotion from `live_candidate` to `live_limited` additionally requires:
+
+- `live.state != "live_disabled"`.
+- `live.first_live_confirmation_done == true`.
+- Permission mode allows the promotion path.
+- Risk Engine permits live-limited execution.
+- Audit event records the actor and source.
+
+First live unlock must remain human-controlled.
+
+---

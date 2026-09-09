@@ -197,7 +197,7 @@ policy version：`available-balance-risk-budget/v1`（换代用于隔离 learnin
 
 ## 8. 目标态差距(意图领先代码)
 
-- [execution_path_honesty §1.2](../../governance/policies/execution_path_honesty.md):LLM 的 `direction_bias` 直接驱动下单方向,Risk Engine **不验证方向是否合理**——它只管账户/订单安全,不管"这个方向对不对"。这是有意的职责边界(risk 不依赖市场状态判断),但意味着"方向正确性"无硬约束。
+- Planner 的入场方向通过 Entry Plan 进入订单。Risk 验证账户和订单安全边界，不证明方向具有收益优势；旧 Paper Trader 的调用链说明仅作为[历史分析](../history/execution_path_honesty_202606.md)保留。
 - ⚠️ 不要把 market-state guard(如资金费率熔断)塞进 Risk Engine——见 [external systems comparison §10.6](../../references/external-systems/comparative_systems.md),那属策略层。
 
 ---

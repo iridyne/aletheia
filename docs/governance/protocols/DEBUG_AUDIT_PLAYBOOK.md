@@ -287,17 +287,17 @@ fail-open，效果完全相反。
 **陷阱**：把"某文件源码不得出现 `aletheia.execution`"读成"该文件到不了 Execution"。
 在耦合密的包里这两件事没有关系。
 
-**真实案例（2026-09-07 DCLS-S01）**：模拟器合同把 Execution 列在边界外，#2945 却把
+**历史案例（2026-09-07 DCLS-S01；相关机制已[归档](../../design/history/deterministic_control_loop_simulation.md)）**：当时的模拟器合同把 Execution 列在边界外，#2945 却把
 合成入场接到了 `execution.paper_broker`。在"回退代码"和"改合同"之间选择前先测传递闭包：
 
 | 入口 | aletheia 闭包 | exchanges | secrets | risk | gateway |
 | --- | --- | --- | --- | --- | --- |
 | `portfolio.paper_account`（#2945 之前的 seam） | 359 | 5 | 1 | 5 | 13 |
-| `execution.paper_broker`（当前 seam） | 359 | 5 | 1 | 5 | 13 |
+| `execution.paper_broker`（当时的 seam） | 359 | 5 | 1 | 5 | 13 |
 | `simulation.control_loop.runner` | 366 | 5 | 1 | 5 | 13 |
 
 **闭包完全相同** ⇒ 回退只买到文本卫生，一点真隔离都买不到；该前缀规则从未执行它看起来
-在执行的意图。结论是留代码、把 spec 收窄到它真正执行的东西（`runner.py` 自身源码的直接
+在执行的意图。当时结论是留代码、把 spec 收窄到它真正执行的东西（`runner.py` 自身源码的直接
 导入卫生），并把测量写进合同作为 Contract Delta 的依据。
 
 **SOP**：
@@ -329,8 +329,8 @@ fail-open，效果完全相反。
 **陷阱**：spec 红是因为它调了一个被删的 wrapper，把它改指向存活的等价实现就绿了。但
 "等价实现存在"不等于"该能力存在"——被删的可能是整条接线。
 
-**真实案例（2026-09-07）**：`spec_live_unlock` 两个测试改一行即绿；但有效的 live unlock
-**确实无法**把新 Proposal 路由到实盘（entry-plan compiler 裸读
+**历史案例（2026-09-07）**：`spec_live_unlock` 两个测试改一行即绿；但有效的 live unlock
+**当时确实无法**把新 Proposal 路由到实盘（entry-plan compiler 裸读
 `paper_execution_mode` 且只接受 `{paper_internal, bitget_demo}`，gateway
 `submit_proposal` 已无生产调用方）。我据此把它列为"待所有者决策"并搁置——**这也是错的**，
 因为合同早已记录并追踪（#418）。正确动作是：改测试 + 把 claim 文本改成合同真实承诺的
