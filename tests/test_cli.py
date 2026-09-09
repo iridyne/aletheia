@@ -296,7 +296,7 @@ def test_inspect_pnl_labels_today_sample_as_bounded(monkeypatch):
         for i in range(201)
     ]
 
-    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "paper_internal")
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "bitget_demo")
     monkeypatch.setattr(outcome_integrity, "raw_account_events", lambda **_kwargs: rows)
     monkeypatch.setattr(
         outcome_integrity,
@@ -485,8 +485,8 @@ def test_inspect_filtered_fills_apply_filter_before_limit(cli_db):
     assert all(row["order_id"] == "target-order" for row in rows)
 
 
-def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
-    """Closed positions must not publish raw realized PnL as verified economics."""
+def test_inspect_archived_positions_separates_recorded_and_reconstructed_economics(cli_db):
+    """Archived accounting keeps recorded, incomplete and reconstructed values distinct."""
     import json as json_mod
 
     from aletheia.storage.models import Position
@@ -507,7 +507,7 @@ def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
     }
     repo._insert("positions", Position(
         **common,
-        id="verified",
+        id="recorded-complete",
         symbol="BTC/USDT",
         realized_pnl=10.0,
         funding_cost=0.0,
@@ -557,8 +557,8 @@ def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
 
     assert result.exit_code == 0, result.output
     rows = {row["id"]: row for row in json_mod.loads(result.output)}
-    assert rows["verified"]["realized_pnl"] == 10.0
-    assert rows["verified"]["realized_pnl_complete"] is True
+    assert rows["recorded-complete"]["realized_pnl"] == 10.0
+    assert rows["recorded-complete"]["realized_pnl_complete"] is True
     assert rows["missing-funding"]["realized_pnl"] is None
     assert rows["missing-funding"]["realized_pnl_complete"] is False
     assert (

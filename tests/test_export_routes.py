@@ -397,8 +397,8 @@ def test_config_redaction_missing_file(tmp_path, monkeypatch):
 
 # ─── data with rows ───────────────────────────────────────────────────────────
 
-def test_download_with_data_rows(client):
-    """Insert a row and verify it appears in the export CSV."""
+def test_download_preserves_archived_order_mode(client):
+    """Raw archival export preserves the original order mode and identity."""
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -413,8 +413,10 @@ def test_download_with_data_rows(client):
     assert resp.status_code == 200
     files = _unzip(resp.content)
     text = files["orders.csv"].decode("utf-8")
-    assert "ord_test_1" in text
-    assert "BTC/USDT" in text
+    row = next(csv.DictReader(io.StringIO(text)))
+    assert row["id"] == "ord_test_1"
+    assert row["symbol"] == "BTC/USDT"
+    assert row["execution_mode"] == "paper_internal"
 
 
 def test_table_csv_writer_streams_cursor_without_fetchall():
@@ -445,7 +447,7 @@ def test_table_csv_writer_streams_cursor_without_fetchall():
     ]
 
 
-def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(client):
+def test_positions_api_and_export_mask_archived_unknown_funding_pnl(client):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
 
@@ -500,67 +502,25 @@ def test_positions_api_and_export_mask_legacy_unknown_funding_pnl(client):
 
 
 def test_positions_and_export_expose_signed_funding_contract(client):
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
+    from datetime import datetime, timezone
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    rows = (
-        Position(
-            id="complete-funding-debit",
-            symbol="BTC/USDT",
-            market_type="usdt_futures",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            current_price=110.0,
-            unrealized_pnl=0.0,
-            realized_pnl=-2.0,
-            execution_mode="paper_internal",
-            status="closed",
-            entry_fee=1.0,
-            exit_fee=1.0,
-            funding_cost=10.0,
-            funding_source="local_simulation",
-        ),
-        Position(
-            id="complete-funding-credit",
-            symbol="ETH/USDT",
-            market_type="usdt_futures",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            current_price=110.0,
-            unrealized_pnl=0.0,
-            realized_pnl=11.0,
-            execution_mode="paper_internal",
-            status="closed",
-            entry_fee=1.0,
-            exit_fee=1.0,
-            funding_cost=-3.0,
-            funding_source="local_simulation",
-        ),
-        Position(
-            id="complete-spot-no-funding",
-            symbol="SOL/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            current_price=110.0,
-            unrealized_pnl=0.0,
-            realized_pnl=8.0,
-            execution_mode="paper_internal",
-            status="closed",
-            entry_fee=1.0,
-            exit_fee=1.0,
-            funding_cost=0.0,
-            funding_source="not_applicable",
-        ),
+    cases = (
+        ("complete-funding-debit", "BTC/USDT", "usdt_futures", -2.0, 10.0),
+        ("complete-funding-credit", "ETH/USDT", "usdt_futures", 11.0, -3.0),
+        ("complete-spot-no-funding", "SOL/USDT", "spot", 8.0, 0.0),
     )
-    for position in rows:
-        repo._insert("positions", position.model_dump())
+    for position_id, symbol, market, pnl, funding in cases:
+        _insert_closed_position_via_producer(
+            position_id=position_id, symbol=symbol, market_type=market,
+            direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode="bitget_demo", realized_pnl=pnl,
+            entry_fee=1.0, exit_fee=1.0, funding_cost=funding,
+            closed_at=datetime.now(timezone.utc).isoformat(),
+        )
 
     positions_response = client.get("/api/positions")
-    export_response = client.get("/api/trades/export?fmt=csv&execution_mode=paper_internal")
+    export_response = client.get("/api/trades/export?fmt=csv&execution_mode=bitget_demo")
 
     assert positions_response.status_code == 200
     position_by_id = {
@@ -568,7 +528,7 @@ def test_positions_and_export_expose_signed_funding_contract(client):
     }
     assert position_by_id["complete-funding-debit"]["funding_cost"] == 10.0
     assert position_by_id["complete-funding-debit"]["funding_source"] == (
-        "local_simulation"
+        "broker_ledger"
     )
     assert position_by_id["complete-funding-debit"]["funding_status"] == "complete"
     assert position_by_id["complete-funding-credit"]["funding_cost"] == -3.0
@@ -586,10 +546,10 @@ def test_positions_and_export_expose_signed_funding_contract(client):
         row["position_id"]: row
         for row in csv.DictReader(io.StringIO(export_response.text))
     }
-    assert set(exported) == {position.id for position in rows}
+    assert set(exported) == {case[0] for case in cases}
     assert exported["complete-funding-debit"]["funding_cost"] == "10.0"
     assert exported["complete-funding-debit"]["funding_source"] == (
-        "local_simulation"
+        "broker_ledger"
     )
     assert exported["complete-funding-debit"]["funding_status"] == "complete"
     assert exported["complete-funding-debit"]["realized_pnl"] == "-2.0"
