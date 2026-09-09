@@ -367,8 +367,6 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
-    "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
 
 # Caller-specific capability guard for the Operator service identity (Issue #1100).
