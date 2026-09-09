@@ -7,9 +7,7 @@ Contract: pipeline_risk_gate
 Claim prefix: PL-RG
 """
 
-import math
 import threading
-import time
 
 import pytest
 
@@ -51,12 +49,20 @@ def _setup_db(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-RG-01", "pipeline_risk_gate", "§1 happy_path", "L2b",
-        "paper_internal proposal with stop_price → approved → RiskDecision row "
+        "External Demo proposal with stop_price → approved → RiskDecision row "
         "persisted with approved=True → audit row exists in audit_events",
     ),
 )
 def test_risk_gate_happy_path(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+
+    from tests.specs.spec_pipeline_middle_state_integrity import _risk_config
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _stub_uta_execution, _patch_filled_place_order,
+    )
+    _risk_config(monkeypatch)
+    _stub_uta_execution(monkeypatch)
+    submitted = _patch_filled_place_order(monkeypatch, fill_price=60_000.0)
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage.sqlite import get_db
@@ -68,7 +74,7 @@ def test_risk_gate_happy_path(tmp_path, monkeypatch):
         quantity=0.001,
         price=60000.0,
         stop_price=58000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     proposal_id = result.get("proposal_id")
@@ -76,20 +82,21 @@ def test_risk_gate_happy_path(tmp_path, monkeypatch):
 
     db = get_db()
 
-    # Verify exactly one RiskDecision row exists for this proposal
+    # One authoritative decision owns submission; preflight is a separate fact
     decisions = db.execute(
-        "SELECT * FROM risk_decisions WHERE proposal_id = ?", (proposal_id,)
+        "SELECT * FROM risk_decisions WHERE proposal_id = ? "
+        "AND decision_role='authoritative'", (proposal_id,)
     ).fetchall()
     assert len(decisions) == 1, (
-        f"Expected exactly 1 risk_decision for proposal {proposal_id}, "
+        f"Expected exactly 1 authoritative risk_decision for proposal {proposal_id}, "
         f"got {len(decisions)}"
     )
 
-    # For approved proposals the decision approved column should be 1
-    if result.get("status") == "executed":
-        assert decisions[0]["approved"] == 1, (
-            "Risk decision approved flag must be 1 for executed proposals"
-        )
+    assert result["status"] == "materialization_missing", result
+    assert decisions[0]["approved"] == 1
+    assert decisions[0]["decision_role"] == "authoritative"
+    assert decisions[0]["allowed_execution_mode"] == "bitget_demo"
+    assert len(submitted) == 1
 
     # Audit event must exist — gateway writes audit for proposal (proposal_id)
     # or for the resulting order (order_id). Check both entity_ids.
@@ -135,7 +142,7 @@ def test_risk_gate_reject_propagation(tmp_path, monkeypatch):
             direction="long",
             quantity=0.001,
             price=60000.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
 
         assert result.get("status") == "rejected", (
@@ -221,7 +228,7 @@ def test_risk_gate_eval_lock_serialization(tmp_path, monkeypatch):
         try:
             p = TradeProposal(
                 symbol="BTC/USDT", market_type="spot", direction="long",
-                execution_mode="paper_internal", quantity=0.001, price=60000,
+                execution_mode="bitget_demo", quantity=0.001, price=60000,
             )
             repo.insert_trade_proposal(p)
             eng.evaluate_proposal(p)
@@ -255,11 +262,12 @@ def test_risk_gate_eval_lock_serialization(tmp_path, monkeypatch):
 )
 def test_risk_gate_always_persists_exactly_one_row(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
+    from tests.specs.spec_pipeline_middle_state_integrity import _risk_config
+    cfg = _risk_config(monkeypatch)
 
     from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
     from aletheia.risk.engine import evaluate_proposal
-    from aletheia.risk.kill_switch import activate, deactivate
     from aletheia.storage.sqlite import get_db
 
     db = get_db()
@@ -271,31 +279,31 @@ def test_risk_gate_always_persists_exactly_one_row(tmp_path, monkeypatch):
     before_a = _count()
     p_a = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(p_a)
-    evaluate_proposal(p_a)
+    approved = evaluate_proposal(p_a)
+    assert approved.approved, approved.violations
     after_a = _count()
     assert after_a - before_a == 1, (
         f"Expected delta=1 for approved proposal, got delta={after_a - before_a}"
     )
 
     # Case B: kill-switched proposal (rejected path)
-    activate("pl_rg_04", actor="human")
-    try:
-        before_b = _count()
-        p_b = TradeProposal(
-            symbol="ETH/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal", quantity=0.01, price=3000,
-        )
-        repo.insert_trade_proposal(p_b)
-        evaluate_proposal(p_b)
-        after_b = _count()
-        assert after_b - before_b == 1, (
-            f"Expected delta=1 for rejected proposal, got delta={after_b - before_b}"
-        )
-    finally:
-        deactivate(actor="human")
+    cfg.runtime.kill_switch_active = True
+    before_b = _count()
+    p_b = TradeProposal(
+        symbol="ETH/USDT", market_type="spot", direction="long",
+        execution_mode="bitget_demo", quantity=0.01, price=3000,
+    )
+    repo.insert_trade_proposal(p_b)
+    rejected = evaluate_proposal(p_b)
+    assert not rejected.approved
+    assert "kill_switch_active" in rejected.violations
+    after_b = _count()
+    assert after_b - before_b == 1, (
+        f"Expected delta=1 for rejected proposal, got delta={after_b - before_b}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -354,440 +362,14 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PL-RG-06  L2c  local-paper futures require complete funding economics
+# PL-RG-06 through 11: retired simulator-only claims are archived
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "PL-RG-06", "pipeline_risk_gate", "§4 local paper funding boundary", "L2c",
-        "A new paper_internal futures entry is durably rejected before Order or "
-        "Position materialization while no trustworthy local funding producer exists.",
-        status="implemented",
-    ),
-)
-def test_local_paper_futures_entry_fails_closed_before_order(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
-
-    result = submit_proposal(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.001,
-        price=60_000.0,
-        stop_price=58_000.0,
-        leverage=1,
-        execution_mode="paper_internal",
-    )
-
-    assert result["status"] == "rejected"
-    proposal_id = result["proposal_id"]
-    db = get_db()
-    decision = db.execute(
-        "SELECT approved, violations FROM risk_decisions WHERE proposal_id=?",
-        (proposal_id,),
-    ).fetchone()
-    assert decision is not None
-    assert decision["approved"] == 0
-    assert "local_paper_futures_funding_unavailable" in decision["violations"]
-    assert db.execute(
-        "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (proposal_id,)
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal_id,)
-    ).fetchone()[0] == 0
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-07", "pipeline_risk_gate", "§4 local paper market authority", "L2c",
-        "A paper_internal entry reaches authoritative Risk with a fresh exact-venue, exact-symbol, "
-        "exact-physical-market mark; stale, missing, wrong-venue, or spot/perp-mismatched data "
-        "rejects before Order, Fill, or Position materialization.",
-        status="implemented",
-    )
-)
-def test_local_paper_stale_exact_market_rejects_before_materialization(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
-
-    calls = []
-
-    def unavailable(symbol, market_type, *, venue):
-        calls.append((symbol, market_type, venue))
-        return None
-
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close", unavailable,
-    )
-    result = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60_000.0,
-        stop_price=58_000.0, execution_mode="paper_internal",
-    )
-
-    assert result["status"] == "rejected"
-    assert calls == [("BTC/USDT", "spot", "binance")]
-    assert "paper_market_data_unavailable:binance:spot" in result["risk_violations"]
-    proposal_id = result["proposal_id"]
-    db = get_db()
-    decision = db.execute(
-        "SELECT approved FROM risk_decisions WHERE proposal_id=?", (proposal_id,),
-    ).fetchone()
-    assert decision is not None and decision["approved"] == 0
-    for table in ("orders", "fills", "positions"):
-        assert db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE proposal_id=?" if table != "fills"
-            else "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id WHERE o.proposal_id=?",
-            (proposal_id,),
-        ).fetchone()[0] == 0
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-08", "pipeline_risk_gate", "§4 local paper executable order types", "L2c",
-        "paper_internal limit entries are rejected as unsupported before authoritative approval "
-        "or materialization; native exchange demo limit entries retain their existing path.",
-        status="implemented",
-    )
-)
-def test_local_paper_limit_rejects_before_materialization(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.sqlite import get_db
-
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 60_000.0,
-    )
-    result = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="limit", quantity=0.001, price=60_000.0,
-        stop_price=58_000.0, take_profit=64_000.0, risk_reward=2.0,
-        execution_mode="paper_internal",
-    )
-
-    assert result["status"] == "rejected"
-    assert "paper_internal_limit_not_supported" in result["risk_violations"]
-    proposal_id = result["proposal_id"]
-    db = get_db()
-    decision = db.execute(
-        "SELECT approved FROM risk_decisions WHERE proposal_id=?", (proposal_id,),
-    ).fetchone()
-    assert decision is not None and decision["approved"] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM orders WHERE proposal_id=?", (proposal_id,),
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal_id,),
-    ).fetchone()[0] == 0
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-09", "pipeline_risk_gate", "§4 local paper causal authority", "L2c",
-        "A native paper Proposal has exactly one durable Opportunity source across the normal and "
-        "Serenity tables, and its canonical symbol, physical market, and direction all match; "
-        "missing, absent, ambiguous, or mismatched identity rejects before materialization.",
-        status="implemented",
-    )
-)
-@pytest.mark.parametrize(
-    ("case", "expected"),
-    (
-        ("missing_id", "proposal_opportunity_required"),
-        ("not_found", "proposal_opportunity_not_found"),
-        ("ambiguous", "proposal_opportunity_ambiguous"),
-        ("symbol_mismatch", "proposal_opportunity_symbol_mismatch"),
-        ("market_mismatch", "proposal_opportunity_market_mismatch"),
-        ("direction_mismatch", "proposal_opportunity_direction_mismatch"),
-    ),
-)
-def test_local_paper_requires_one_exact_opportunity_carrier(
-    tmp_path, monkeypatch, case, expected,
-):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, SerenityOpportunity, SerenityTheme
-    from aletheia.storage.sqlite import get_db
-
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 60_000.0,
-    )
-    opportunity_id = None if case == "missing_id" else f"carrier-{case}"
-    if case not in {"missing_id", "not_found"}:
-        source = Opportunity(
-            id=opportunity_id,
-            symbol="ETH/USDT" if case == "symbol_mismatch" else "BTC/USDT",
-            market="usdt_futures" if case == "market_mismatch" else "spot",
-            direction_bias="short" if case == "direction_mismatch" else "long",
-            status="queued",
-        )
-        repo.insert_opportunity(source)
-    if case == "ambiguous":
-        theme = SerenityTheme(id="theme-ambiguous", name="ambiguous carrier")
-        repo.insert_serenity_theme(theme)
-        repo.insert_serenity_opportunity(SerenityOpportunity(
-            id=opportunity_id,
-            theme_id=theme.id,
-            symbol="BTC/USDT",
-            direction="long",
-            market_type="spot",
-        ))
-
-    result = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60_000.0,
-        stop_price=58_000.0, execution_mode="paper_internal",
-        opportunity_id=opportunity_id,
-    )
-
-    assert result["status"] == "rejected"
-    assert expected in result["risk_violations"]
-    proposal_id = result["proposal_id"]
-    db = get_db()
-    for table in ("orders", "positions"):
-        assert db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE proposal_id=?", (proposal_id,),
-        ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id WHERE o.proposal_id=?",
-        (proposal_id,),
-    ).fetchone()[0] == 0
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-10", "pipeline_risk_gate", "§4 local paper causal round trip", "L2c",
-        "A native paper Proposal with one exact durable Opportunity can open through Gateway and "
-        "close through the production local router with an eligible, causally linked Outcome.",
-        status="implemented",
-    )
-)
-def test_exact_opportunity_carrier_opens_and_closes_eligible(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity
-
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 60_000.0,
-    )
-    monkeypatch.setattr(
-        "aletheia.portfolio.position_manager.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 61_000.0,
-    )
-    source = Opportunity(
-        id="carrier-valid", symbol="BTC/USDT", market="spot",
-        direction_bias="long", status="queued",
-    )
-    repo.insert_opportunity(source)
-    opened = submit_proposal(
-        symbol=source.symbol, market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60_000.0,
-        stop_price=58_000.0, take_profit=64_000.0, risk_reward=2.0,
-        execution_mode="paper_internal",
-        opportunity_id=source.id,
-    )
-    assert opened["status"] == "executed", opened
-
-    closed = close_position_routed(
-        opened["position_id"], "take_profit", fallback_exit_price=61_000.0,
-        decision_source="spec_exact_opportunity_carrier",
-    )
-    assert closed["closed"] is True
-    position = repo._select_one("positions", opened["position_id"])
-    assert position["opportunity_id"] == source.id
-    assert position["outcome_eligible"] == 1
-    assert position["outcome_exclusion_reason"] == "eligible"
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-11", "pipeline_risk_gate", "§4 local paper executable price", "L2c",
-        "A native paper market Proposal price equals the fresh exact-instrument mark at the "
-        "authoritative Risk pass. A mismatched requested price rejects with no materialized "
-        "facts, while an exact mark is approved and only the broker's configured slippage "
-        "changes the resulting Fill price.",
-        status="implemented",
-    )
-)
-def test_local_paper_price_matches_fresh_mark_before_broker_slippage(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.config.loader import load_config
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.sqlite import get_db
-
-    mark = 60_000.0
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: mark,
-    )
-    for opportunity_id in ("price-mismatch", "price-valid"):
-        repo.insert_opportunity(Opportunity(
-            id=opportunity_id,
-            symbol="BTC/USDT",
-            market="spot",
-            direction_bias="long",
-            status="queued",
-        ))
-
-    mismatched = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=59_000.0,
-        stop_price=57_000.0, take_profit=63_000.0, risk_reward=2.0,
-        execution_mode="paper_internal", opportunity_id="price-mismatch",
-    )
-    assert mismatched["status"] == "rejected"
-    assert "proposal_price_not_current_mark" in mismatched["risk_violations"]
-
-    db = get_db()
-    for table in ("orders", "positions"):
-        assert db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE proposal_id=?",
-            (mismatched["proposal_id"],),
-        ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
-        "WHERE o.proposal_id=?",
-        (mismatched["proposal_id"],),
-    ).fetchone()[0] == 0
-
-    valid = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=mark,
-        stop_price=58_000.0, take_profit=63_333.33, risk_reward=1.67,
-        execution_mode="paper_internal", opportunity_id="price-valid",
-    )
-    assert valid["status"] == "executed", valid
-    fill = db.execute(
-        "SELECT fill_price FROM fills WHERE id=?", (valid["fill_id"],),
-    ).fetchone()
-    expected_fill = round(
-        mark * (1 + float(load_config().trading.slippage_bps) / 10_000.0),
-        8,
-    )
-    assert math.isclose(fill["fill_price"], expected_fill, rel_tol=1e-12)
-    assert fill["fill_price"] != mark
-
-
-@pytest.mark.parametrize(
-    ("changed_fact", "expected_violation"),
-    (
-        ("mark_unavailable", "paper_market_data_unavailable:binance:spot"),
-        ("mark_changed", "proposal_price_not_current_mark"),
-        ("opportunity_missing", "proposal_opportunity_not_found"),
-        ("opportunity_ambiguous", "proposal_opportunity_ambiguous"),
-    ),
-)
-def test_local_paper_crash_replay_rechecks_mutable_execution_facts(
-    tmp_path, monkeypatch, changed_fact, expected_violation,
-):
-    db = _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import execute_existing_proposal
-    from aletheia.risk.engine import evaluate_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import (
-        Opportunity,
-        SerenityOpportunity,
-        SerenityTheme,
-        TradeProposal,
-    )
-
-    mark = {"value": 60_000.0}
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda *_args, **_kwargs: mark["value"],
-    )
-    opportunity = Opportunity(
-        id=f"replay-{changed_fact}",
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        status="queued",
-    )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        id=f"proposal-{changed_fact}",
-        opportunity_id=opportunity.id,
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=0.001,
-        price=60_000.0,
-        stop_price=58_000.0,
-        take_profit=64_000.0,
-        risk_reward=2.0,
-        execution_mode="paper_internal",
-        source="native",
-    )
-    repo.insert_trade_proposal(proposal)
-    approved = evaluate_proposal(proposal, decision_role="authoritative")
-    assert approved.approved
-    assert repo.get_entry_risk_reservation(proposal.id) is not None
-    assert repo.has_order_for_proposal(proposal.id) is False
-
-    if changed_fact == "mark_unavailable":
-        mark["value"] = None
-    elif changed_fact == "mark_changed":
-        mark["value"] = 61_000.0
-    elif changed_fact == "opportunity_missing":
-        db.execute("DELETE FROM opportunities WHERE id=?", (opportunity.id,))
-    else:
-        theme = SerenityTheme(id="theme-replay", name="replay ambiguity")
-        repo.insert_serenity_theme(theme)
-        repo.insert_serenity_opportunity(
-            SerenityOpportunity(
-                id=opportunity.id,
-                theme_id=theme.id,
-                symbol="BTC/USDT",
-                direction="long",
-                market_type="spot",
-            )
-        )
-
-    replay = execute_existing_proposal(proposal.id, "paper_internal")
-
-    assert replay["status"] == "rejected"
-    assert expected_violation in replay["risk_violations"]
-    assert repo.get_trade_proposal(proposal.id)["status"] == "rejected"
-    assert db.execute(
-        "SELECT COUNT(*) FROM risk_decisions WHERE proposal_id=? "
-        "AND decision_role='authoritative'",
-        (proposal.id,),
-    ).fetchone()[0] == 1
-    assert repo.has_order_for_proposal(proposal.id) is False
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
-        "WHERE o.proposal_id=?",
-        (proposal.id,),
-    ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM positions WHERE proposal_id=?", (proposal.id,)
-    ).fetchone()[0] == 0
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-RG-12", "pipeline_risk_gate", "§4 local paper complete entry plan", "L2c",
-        "Every native paper market entry commits a finite positive entry, stop, take-profit, "
+        "PL-RG-12", "pipeline_risk_gate", "§4 native exchange limit plan", "L2c",
+        "Every native exchange limit entry commits a finite positive entry, stop, take-profit, "
         "and reward:risk value before approval; side geometry and the rounded reward:risk math "
         "must agree with those immutable prices. Invalid plans reject before materialization.",
         status="implemented",
@@ -812,57 +394,34 @@ def test_local_paper_crash_replay_rechecks_mutable_execution_facts(
         ),
     ),
 )
-def test_local_paper_market_entry_requires_complete_consistent_plan(
+def test_native_limit_entry_requires_complete_consistent_plan(
     tmp_path, monkeypatch, case, updates, expected,
 ):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution.gateway import submit_proposal
+    from aletheia.risk.engine import evaluate_proposal
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity
-    from aletheia.storage.sqlite import get_db
+    from aletheia.storage.models import TradeProposal
 
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 60_000.0,
-    )
-    opportunity_id = f"entry-plan-{case}"
-    repo.insert_opportunity(Opportunity(
-        id=opportunity_id,
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        status="queued",
-    ))
     proposal = {
         "symbol": "BTC/USDT",
         "market_type": "spot",
         "direction": "long",
-        "order_type": "market",
+        "order_type": "limit",
         "quantity": 0.001,
         "price": 60_000.0,
         "stop_price": 58_000.0,
         "take_profit": 64_000.0,
         "risk_reward": 2.0,
-        "execution_mode": "paper_internal",
-        "opportunity_id": opportunity_id,
+        "execution_mode": "bitget_demo",
     }
     proposal.update(updates)
-    result = submit_proposal(**proposal)
-
-    assert result["status"] == "rejected"
-    assert expected in result["risk_violations"]
-    db = get_db()
-    proposal_id = result["proposal_id"]
-    for table in ("orders", "positions"):
-        assert db.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE proposal_id=?", (proposal_id,),
-        ).fetchone()[0] == 0
-    assert db.execute(
-        "SELECT COUNT(*) FROM fills f JOIN orders o ON o.id=f.order_id "
-        "WHERE o.proposal_id=?",
-        (proposal_id,),
-    ).fetchone()[0] == 0
+    candidate = TradeProposal(**proposal)
+    repo.insert_trade_proposal(candidate)
+    result = evaluate_proposal(candidate, decision_role="authoritative")
+    assert not result.approved
+    assert expected in result.violations
+    assert repo.get_entry_risk_reservation(candidate.id) is None
 
 
 @spec_claim(
@@ -900,7 +459,7 @@ def test_native_entry_plan_risk_reward_has_fail_closed_envelope(
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.01,
         price=100.0,
         order_type="limit",
@@ -925,13 +484,12 @@ def test_native_entry_plan_risk_reward_has_fail_closed_envelope(
 @spec_claim(
     SpecClaim(
         "PL-RG-13", "pipeline_risk_gate", "§4 entry-plan scope", "L2c",
-        "The complete local market plan gate applies only to native paper entries. Native "
-        "exchange market rows and reconciler-adopted rows retain their existing plan semantics "
-        "and never inherit local mark, Opportunity, or complete-plan violations.",
+        "The complete plan gate applies to native limit entries. Native market entries "
+        "and adopted exchange facts do not inherit complete-limit-plan requirements.",
         status="implemented",
     )
 )
-def test_local_market_plan_gate_does_not_capture_exchange_or_adopted_rows(
+def test_limit_plan_gate_excludes_market_entries_and_adopted_facts(
     tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
@@ -941,14 +499,14 @@ def test_local_market_plan_gate_does_not_capture_exchange_or_adopted_rows(
     from aletheia.storage.models import TradeProposal
 
     adopted = TradeProposal(
-        id="adopted-paper-plan-exempt",
+        id="adopted-exchange-plan-exempt",
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        order_type="market",
+        order_type="limit",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         source="adopted",
     )
     repo.insert_trade_proposal(adopted)
@@ -969,9 +527,6 @@ def test_local_market_plan_gate_does_not_capture_exchange_or_adopted_rows(
     exchange_result = evaluate_proposal(exchange_market, decision_role="preflight")
 
     forbidden_prefixes = (
-        "paper_market_data_unavailable",
-        "proposal_price_not_current_mark",
-        "proposal_opportunity_",
         "incomplete_entry_plan",
         "entry_plan_geometry",
         "entry_plan_risk_reward_mismatch",

@@ -264,3 +264,18 @@ accepted execution mode. The current v4 definition removes that promise while
 retaining the external Demo thresholds and the separate live family gate.
 Normal epoch rotation preserves stored v3 values and hashes; historical cohorts
 are not relabelled as v4.
+
+## Retired Risk Gate pipeline specs
+
+PL-RG-06 through PL-RG-11 and the local crash-replay matrix are retired with the
+simulator. Their local funding admission, public-mark execution authority,
+local-limit rejection, generic Opportunity-carrier requirement, local close
+round trip and configured simulated slippage are not external exchange rules.
+Current external submission/materialization/close regressions use the existing
+UTA test boundaries rather than recreate that simulator.
+
+PL-RG-01 now requires actual external submission plus one approved authoritative
+RiskDecision and audit evidence; preflight is a separate record. PL-RG-12 through
+PL-RG-14 retain the current native **limit** plan completeness, geometry and
+reward:risk envelope. Native market intent and adopted exchange facts do not
+inherit the retired local-market plan gate.
