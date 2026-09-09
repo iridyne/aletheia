@@ -570,7 +570,7 @@ def test_resume_gate_keeps_real_reconciliation_incident_paused(tmp_path, monkeyp
 
     cfg = _cfg_with({"anthropic_compatible": True}, "anthropic_compatible")
     cfg.health.startup_behavior_gate_enabled = True
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.runtime.paused = True
     cfg.learning.paper_influence_enabled = False
     cfg.learning.lifecycle_automation_enabled = False

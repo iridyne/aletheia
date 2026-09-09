@@ -432,29 +432,14 @@ def test_external_proposal_keeps_hypothesis_without_recreating_archived_mandate(
 
 
 def test_assessment_does_not_mutate_behavior_inputs():
+    from copy import deepcopy
+
     opportunity, decision, proposal = _facts()
-    behavior = {
-        "action": "trade",
-        "direction": "long",
-        "score": 87,
-        "conviction": 82,
-        "quantity": 0.1,
-        "notional": 100.0,
-        "leverage": 1,
-        "stop_loss": 95.0,
-        "take_profit": 110.0,
-        "expected_horizon_hours": 4.0,
-        "risk_decision": "approved",
-        "execution_path": "paper_internal",
-        "position_protection": "unchanged",
-        "learning_assignment": "static_baseline",
-        "universe_family_calibration": "unchanged",
-    }
-    before = json.loads(json.dumps(behavior))
+    before = deepcopy((opportunity, decision, proposal))
     assess_trading_mandate_fit(
         mandate=_mandate(), opportunity=opportunity, decision=decision, proposal=proposal
     )
-    assert behavior == before
+    assert (opportunity, decision, proposal) == before
 
 
 def test_compliance_aggregate_is_read_only_and_keeps_denominators(tmp_path, monkeypatch):
