@@ -158,3 +158,10 @@ including in-memory Portfolio and CLI projections. Their stored observations
 remain unchanged. The former local mark/cash-equity requirements in
 `test_pnl_pipeline.py` are retired; external tests retain price-read consistency,
 account/instrument matching, mode isolation and snapshot-window behavior.
+
+Outcome Feedback claims `PL-OF-03`, `PL-OF-12`, `PL-OF-13C`, and `PL-OF-20`
+are retired with simulated cash settlement and local funding provenance. Existing
+external close/outbox tests retain attribution-read recovery; the remaining
+causal-identity and funding-completeness claims use external close evidence.
+Serenity feedback tests now verify external closes, exactly-once PostMortem
+creation, opportunity status and loss buckets without a simulated account.

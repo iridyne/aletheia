@@ -62,13 +62,16 @@ class TestP0AutoPromote:
         return theme.id, opp.id
 
     def test_auto_promote_publishes_candidate_when_score_sufficient(self):
-        from aletheia.config.loader import load_config
+        from aletheia.config.loader import load_config, save_config
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
         from aletheia.agents.research_worker import _auto_promote_serenity_opportunities
         from aletheia.storage import repositories as repo
 
-        theme, opportunity = _serenity_publication_source()
         cfg = load_config()
+        cfg.exchange.paper_execution_mode = "bitget_demo"
+        cfg.market_data.ccxt_exchange = "bitget"
+        save_config(cfg)
+        theme, opportunity = _serenity_publication_source()
         cfg.serenity.min_score_for_pi = 0
         notify_calls = []
         with patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
@@ -139,7 +142,7 @@ class TestP1ThesisInvalidation:
             "stop_price": None,
             "take_profit_price": None,
             "symbol": "ETH/USDT",
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
         }
         return position, opp.id, theme.id
 
@@ -344,134 +347,83 @@ class TestP3FlowContextBlock:
 
 
 class TestSerenityFeedbackLoop:
-    """Verify close_position writes PostMortem + updates opp status for serenity."""
+    """Verified external closes write Serenity feedback once."""
 
-    def _setup_serenity_position(self):
-        """Create a serenity position with linked opportunity, ready to close."""
-        from aletheia.portfolio.paper_account import record_position_opened
+    def _setup_serenity_position(self, *, entry_price=100.0):
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import Position, SerenityTheme, SerenityOpportunity
         from tests.test_outcome_closure import _insert_entry_chain
 
         theme = SerenityTheme(name="Feedback loop test", status="promoted")
         repo.insert_serenity_theme(theme)
-
         opp = SerenityOpportunity(
-            theme_id=theme.id,
-            symbol="BTC/USDT",
-            direction="long",
-            status="active",
-            asset_class="crypto",
-            confidence_score=80,
+            theme_id=theme.id, symbol="BTC/USDT", direction="long",
+            status="active", asset_class="crypto", confidence_score=80,
         )
         repo.insert_serenity_opportunity(opp)
-
-        from aletheia.storage.models import new_id
-        pos_id = new_id()
         opened = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
-        opportunity_id, proposal_id, order_id = _insert_entry_chain(
-            position_id=pos_id,
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=0.01,
-            price=60000.0,
-            execution_mode="paper_internal",
-            entry_fee=0.36,
-            opportunity_id=opp.id,
+        position = Position(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            quantity=2.0, entry_price=entry_price, current_price=entry_price,
+            execution_mode="bitget_demo", trade_school="serenity",
+            opened_at=opened, entry_fee=0.2,
+            entry_price_source="broker_fill", entry_fill_verified=True,
+            funding_cost=0.0, funding_source="not_applicable",
         )
-        repo.insert_position(Position(
-            id=pos_id,
-            symbol="BTC/USDT",
-            direction="long",
-            quantity=0.01,
-            entry_price=60000.0,
-            current_price=62000.0,
-            status="open",
-            execution_mode="paper_internal",
-            trade_school="serenity",
-            opportunity_id=opportunity_id,
-            proposal_id=proposal_id,
-            order_id=order_id,
-            opened_at=opened,
-            unrealized_pnl=20.0,
-            market_type="spot",
-            entry_fee=0.36,
-            entry_price_source="local_fill",
-            entry_fill_verified=True,
-            funding_cost=0.0,
-            funding_source="not_applicable",
-        ))
-        record_position_opened(pos_id)
-        return pos_id, opp.id, theme.id
+        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+            position_id=position.id, symbol=position.symbol,
+            market_type=position.market_type, direction=position.direction,
+            quantity=position.quantity, price=position.entry_price,
+            execution_mode=position.execution_mode, entry_fee=position.entry_fee,
+            opportunity_id=opp.id, opened_at=opened,
+        )
+        position.opportunity_id = opportunity_id
+        position.proposal_id = proposal_id
+        position.order_id = order_id
+        repo.insert_position(position)
+        return position, opp.id
 
     def test_close_serenity_position_writes_post_mortem(self):
-        """Closing a serenity position automatically creates a SerenityPostMortem."""
-        from aletheia.portfolio.pnl import close_position
+        from aletheia.portfolio.outcome_closure import close_position_verified
         from aletheia.storage import repositories as repo
+        from tests.test_outcome_closure import _verified_result
 
-        pos_id, opp_id, _ = self._setup_serenity_position()
-        result = close_position(pos_id, exit_price=62000.0, reason="take_profit")
-
+        position, opp_id = self._setup_serenity_position()
+        evidence = _verified_result(position)
+        result = close_position_verified(position.id, evidence, reason="take_profit")
         assert result["realized_pnl"] > 0
+        assert close_position_verified(
+            position.id, evidence, reason="take_profit",
+        )["already_closed"] is True
 
-        # PostMortem should be written
-        pms = repo.list_serenity_post_mortems(opportunity_id=opp_id)
-        assert len(pms) == 1, f"Expected 1 PostMortem, got {len(pms)}"
-        pm = pms[0]
+        [pm] = repo.list_serenity_post_mortems(opportunity_id=opp_id)
         assert pm["outcome"] == "win"
         assert pm["opportunity_id"] == opp_id
         assert "BTC/USDT" in pm["summary"]
         assert "take_profit" in pm["summary"]
-
-    def test_close_serenity_position_updates_opp_status(self):
-        """Closing a serenity position sets opportunity status to 'traded_closed'."""
-        from aletheia.portfolio.pnl import close_position
-        from aletheia.storage import repositories as repo
-
-        pos_id, opp_id, _ = self._setup_serenity_position()
-        close_position(pos_id, exit_price=62000.0, reason="stop_loss")
-
-        opp = repo.get_serenity_opportunity(opp_id)
-        assert opp["status"] == "traded_closed"
+        assert repo.get_serenity_opportunity(opp_id)["status"] == "traded_closed"
 
     def test_close_serenity_loss_has_failure_bucket(self):
-        """A losing serenity close records the correct failure_bucket."""
-        from aletheia.portfolio.pnl import close_position
+        from aletheia.portfolio.outcome_closure import close_position_verified
         from aletheia.storage import repositories as repo
+        from tests.test_outcome_closure import _verified_result
 
-        pos_id, opp_id, _ = self._setup_serenity_position()
-        # Close below entry → loss
-        result = close_position(pos_id, exit_price=58000.0, reason="stop_loss")
+        position, opp_id = self._setup_serenity_position(entry_price=120.0)
+        result = close_position_verified(
+            position.id, _verified_result(position), reason="stop_loss",
+        )
         assert result["realized_pnl"] < 0
-
-        pms = repo.list_serenity_post_mortems(opportunity_id=opp_id)
-        assert pms[0]["outcome"] == "loss"
-        assert pms[0]["failure_bucket"] == "stop_hit"
+        [pm] = repo.list_serenity_post_mortems(opportunity_id=opp_id)
+        assert pm["outcome"] == "loss"
+        assert pm["failure_bucket"] == "stop_hit"
 
     def test_close_short_term_position_no_post_mortem(self):
-        """Non-serenity positions do NOT write PostMortem (no pollution)."""
+        from aletheia.portfolio.outcome_closure import close_position_verified
         from aletheia.storage import repositories as repo
-        from aletheia.storage.sqlite import get_db
-        from aletheia.storage.models import new_id
+        from tests.test_outcome_closure import _position, _verified_result
 
-        pos_id = new_id()
-        db = get_db()
-        opened = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        db.execute(
-            "INSERT INTO positions (id, symbol, direction, quantity, entry_price, "
-            "current_price, status, execution_mode, trade_school, opportunity_id, "
-            "opened_at, unrealized_pnl, market_type) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (pos_id, "ETH/USDT", "long", 0.1, 3000.0, 3100.0,
-             "open", "paper_internal", "short_term", None, opened, 10.0, "spot"),
-        )
-        db.commit()
+        position = _position()
+        repo.insert_position(position)
+        close_position_verified(position.id, _verified_result(position))
 
-        from aletheia.portfolio.pnl import close_position
-        close_position(pos_id, exit_price=3100.0, reason="take_profit")
-
-        # No PostMortems should exist for short_term
-        all_pms = repo.list_serenity_post_mortems(limit=100)
-        for pm in all_pms:
-            assert pm.get("opportunity_id") != pos_id
+        assert repo.list_serenity_post_mortems(limit=100) == []
