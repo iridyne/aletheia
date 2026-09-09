@@ -37,14 +37,14 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+
 logger = logging.getLogger("aletheia.startup_behavior_gate")
 
 STATE_FILENAME = "startup_gate.json"
 
-# Recognised paper execution modes. `paper_internal` is the declared active-scope
-# mode; the others are supported demo adapters (see ACTIVE_RUNTIME_SCOPE.md). An
-# execution mode outside this set is treated as config drift.
-_KNOWN_EXECUTION_MODES = {"paper_internal", "bitget_demo", "okx_demo", "binance_testnet"}
+# Startup supports the registered external demo/testnet account modes.
+_KNOWN_EXECUTION_MODES = {mode for _, mode in EXCHANGE_UNIFICATION_MAP.values()}
 
 _IMMEDIATE_CORE_ENTRY_ORDER_STATES = {"submission_unknown", "materialization_missing"}
 
@@ -203,8 +203,8 @@ def _check_active_runtime_scope(cfg) -> tuple[bool, str]:
     """The actual config must be consistent with the declared active runtime scope.
 
     We verify the scope document exists and is active, and that the configured
-    paper execution mode is one the scope declares or an explicitly supported
-    adapter — an unrecognised mode is config drift (a mismatch with the scope).
+    execution mode is both declared by the scope and registered as an external
+    account — an unrecognised mode is config drift (a mismatch with the scope).
     Exchange-sync completeness for a demo adapter is checked separately.
     """
     scope = _load_scope()
@@ -214,14 +214,14 @@ def _check_active_runtime_scope(cfg) -> tuple[bool, str]:
         return False, f"active runtime scope status={scope.get('status')!r} (not active)"
 
     mode = (cfg.exchange.paper_execution_mode or "").strip()
-    allowed = set(scope.get("execution_modes") or []) | _KNOWN_EXECUTION_MODES
+    allowed = set(scope.get("execution_modes") or []) & _KNOWN_EXECUTION_MODES
     if mode not in allowed:
         return False, f"execution mode {mode!r} not in active scope {sorted(allowed)}"
     return True, f"config within scope {scope.get('scope_id')} (mode={mode})"
 
 
 def _check_exchange_sync(cfg) -> tuple[bool, str]:
-    """Exchange sync must be complete, OR we are explicitly running paper_internal."""
+    """The selected external account must have a complete exchange view."""
     try:
         from aletheia.portfolio.exchange_sync import active_broker_view_complete
 

@@ -1,6 +1,6 @@
 ---
 schema_version: 2
-scope_id: crypto-stock-linked-paper-mainline-v2
+scope_id: crypto-stock-linked-exchange-mainline-v3
 status: active
 authorized_extensions:
   cn_equity:
@@ -31,8 +31,10 @@ instrument_profiles:
       - perp
     identity_status: complete
 execution_modes:
-  - paper_internal
-decision_authority: aletheia.agent_shell.trading_decision.evaluate_trading_opportunity
+  - bitget_demo
+  - okx_demo
+  - binance_testnet
+decision_authority: aletheia.agent_shell.entry_planner.system_operator_entry_planner
 risk_authority: aletheia.risk.engine.evaluate_proposal
 execution_entrypoint: aletheia.execution.gateway.submit_proposal
 outcome_entrypoint: aletheia.portfolio.outcome_closure.close_position_verified
@@ -64,19 +66,19 @@ exchange-listed `stock_linked_perp` profile. For the latter, a complete
 does not declare ordinary equities, indices, commodities, prediction markets, or
 arbitrary exchange derivatives executable. All active instruments share one
 System Operator, one Risk Engine, and one Execution Gateway. The active execution
-mode is the local `paper_internal` simulator. Exchange demo modes remain supported
-adapters, but are not part of this active-scope proof until an owner-selected demo
-mode is added here with matching Golden Path and replay evidence.
+targets are explicitly configured external demo/testnet accounts. The declaration
+lists registered routes; it does not certify credentials, instrument capabilities,
+Golden Path completion, replay evidence or economic qualification for an account.
+The local simulator and its former scope are [archived](../design/history/local_simulated_runtime_scope.md).
 
 For Universe-linked entry, the same System Operator authority is expressed as
 Candidate → canonical Planning Cycle → immutable Entry Plan → Proposal. All new
 typed Candidates use one bounded Context/Hypothesis/Compiler implementation;
 historical numeric planner labels are compatibility data, not runtime selectors.
-The active `paper_internal` route requires at least Paper permission; the proven
-Bitget Demo route requires Full permission. Observe, unsupported routes, and any
-effective Live state fail closed before model invocation. This is not an
-additional decision authority and does not alter the independent-Opportunity
-path declared in the front matter.
+Entry Plan admission follows the registered capability/permission map. The current
+Bitget Demo route requires Full permission; registering an account in this document
+does not enable Entry Plan on another route. Observe, unsupported routes and any
+effective Live state fail closed before model invocation.
 
 The `authorized_extensions.cn_equity` declaration admits only the bounded
 implementation work approved by its Proposal. It does not add CN Equity to the
@@ -84,7 +86,7 @@ active instrument profiles or current Runtime proof. CN starts semantically
 `disabled`: no CN V2 producer, Candidate, Proposal, reservation, Order, Fill,
 Position, Outcome, or qualification fact may be created until the corresponding
 Contract, executable SpecClaim, feature state, and preceding Phase Gate are
-merged. Later `observe`, `shadow`, and internal `paper` states must continue
+merged. Later permitted states must continue
 through the same System Operator/Risk/Gateway authorities. No `live` state,
 broker route, cross-currency netting, or support claim is admitted here.
 
@@ -98,8 +100,9 @@ direct risk, execution, credential, or live-unlock authority.
 
 - Scanner and observer code may create evidence, opportunities, and pending
 signals; it cannot submit or execute an order.
-- The System Operator is the only native entry decision maker. It submits a paper
-proposal through the paper wrapper, which reaches the Execution Gateway.
+- The System Operator is the only native entry decision maker. Entry Plan execution
+creates immutable Order Intent and enters the Execution Gateway for Risk approval
+and UTA submission.
 - The Risk Engine is the only approval authority. Guard output is advisory or a
 pre-risk candidate filter and cannot replace Risk Engine approval.
 - Frontend and Operator surfaces cannot call an exchange order adapter directly.

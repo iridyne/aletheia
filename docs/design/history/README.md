@@ -19,3 +19,5 @@ reactivating a historical document in place.
 - [Local simulated Risk and execution contracts](local_simulated_risk_execution.md): retired admission, matching, cash and protection definitions.
 
 - [Local simulated mandate provenance](local_simulated_mandate.md): retired automatic attribution producer; historical identities remain readable.
+
+- [Local simulated runtime scope](local_simulated_runtime_scope.md): retired startup and update exemptions, replaced by explicit external-account scope.

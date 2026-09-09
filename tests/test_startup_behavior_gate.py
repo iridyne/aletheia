@@ -27,12 +27,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.config.schema import AletheiaConfig
+from aletheia.portfolio import exchange_sync
 from aletheia.config.loader import save_config, load_config, _invalidate_config_cache
 
 
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers
 # --------------------------------------------------------------------------- #
+
+def _healthy_exchange_view():
+    return {"sync_status": "ok", "age_seconds": 0, "accounts": [{"broker_id": "bitget_demo"}]}
+
 
 def setup_env(tmp_path, monkeypatch):
     """Point DATA_DIR/CONFIG_PATH at tmp and init a real DB (integrity naturally ok)."""
@@ -53,15 +58,16 @@ def setup_env(tmp_path, monkeypatch):
     conn.execute("PRAGMA foreign_keys=ON")
     sq._db_conn = conn
     run_migrations()
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", _healthy_exchange_view)
     _invalidate_config_cache()
 
 
 def _healthy_cfg(**overrides) -> AletheiaConfig:
-    """A config that should PASS every gate check: gate enabled, paper_internal,
+    """A config that should PASS every gate check: gate enabled, explicit Bitget Demo,
     learning influence off, not paused, no kill switch."""
     cfg = AletheiaConfig()
     cfg.health.startup_behavior_gate_enabled = True
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.runtime.paused = False
     cfg.runtime.kill_switch_active = False
     cfg.learning.paper_influence_enabled = False
@@ -118,7 +124,7 @@ def _mock_scheduler(monkeypatch):
 # 1. Pure verdict — the healthy baseline
 # --------------------------------------------------------------------------- #
 
-def test_evaluate_passes_on_healthy_paper_internal(tmp_path, monkeypatch):
+def test_evaluate_passes_on_healthy_external_account(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
@@ -185,12 +191,13 @@ def test_sqlite_integrity_failure_blocks(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 3. Exchange sync timeout / incomplete (non-paper_internal, no cached view)
+# 3. External exchange sync timeout / incomplete view
 # --------------------------------------------------------------------------- #
 
 def test_exchange_sync_incomplete_blocks(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     # No unified cache exists on a fresh DB → active_broker_view_complete is False.
@@ -199,15 +206,14 @@ def test_exchange_sync_incomplete_blocks(tmp_path, monkeypatch):
     assert "exchange_sync" in verdict["blockers"]
 
 
-def test_paper_internal_needs_no_exchange(tmp_path, monkeypatch):
+def test_retired_internal_mode_cannot_pass_scope_or_exchange_check(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="paper_internal")
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     verdict = gate.evaluate_startup_gate()
-    ex = next(c for c in verdict["checks"] if c["name"] == "exchange_sync")
-    assert ex["ok"] is True
-    assert "passed" in verdict and verdict["passed"] is True
+    assert verdict["passed"] is False
+    assert {"active_runtime_scope", "exchange_sync"} <= set(verdict["blockers"])
 
 
 # --------------------------------------------------------------------------- #
@@ -251,7 +257,7 @@ def test_unresolved_order_intent_blocks(tmp_path, monkeypatch):
     store = GatewayStateStore()
     store.create_order_intent(
         PSOrderIntent(
-            proposal_id="p1", strategy_id="s1", mode="paper", venue="paper_internal",
+            proposal_id="p1", strategy_id="s1", mode="demo", venue="bitget_demo",
             symbol="BTC/USDT", side="buy", order_type="market", quantity="1",
             status="created", client_order_id="c1", idempotency_key="k1",
         )
@@ -371,7 +377,7 @@ def test_unknown_status_position_blocks_as_pending_close(tmp_path, monkeypatch):
     db.execute(
         "INSERT INTO ps_positions (position_id, mode, strategy_id, venue, symbol, "
         "side, quantity, status, updated_at) VALUES "
-        "('pos1','paper','s1','paper_internal','BTC/USDT','long','1','unknown','2026-01-01T00:00:00Z')"
+        "('pos1','demo','s1','bitget_demo','BTC/USDT','long','1','unknown','2026-01-01T00:00:00Z')"
     )
     db.commit()
 
@@ -484,7 +490,7 @@ def test_open_position_alone_does_not_block(tmp_path, monkeypatch):
     db.execute(
         "INSERT INTO ps_positions (position_id, mode, strategy_id, venue, symbol, "
         "side, quantity, status, updated_at) VALUES "
-        "('pos2','paper','s1','paper_internal','ETH/USDT','long','1','open','2026-01-01T00:00:00Z')"
+        "('pos2','demo','s1','bitget_demo','ETH/USDT','long','1','open','2026-01-01T00:00:00Z')"
     )
     db.commit()
 
@@ -557,6 +563,7 @@ def test_user_pause_without_gate_marker_is_user_blocked(tmp_path, monkeypatch):
 def test_gate_pauses_layered_and_records_durable_blocker(tmp_path, monkeypatch, _mock_scheduler):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")  # exchange_sync will fail
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     # Stop the recheck loop from actually looping in the test.
@@ -645,6 +652,7 @@ def test_gate_disabled_is_noop(tmp_path, monkeypatch, _mock_scheduler):
 def test_gate_allows_startup_false_when_blocked(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")  # exchange_sync fails
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     assert gate.gate_allows_startup() is False
@@ -678,6 +686,7 @@ def test_blocker_survives_restart_and_resumes_when_clear(tmp_path, monkeypatch, 
     condition is now clear → the recheck resume path resumes and clears the blocker."""
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     monkeypatch.setattr(gate, "_start_recheck_loop", lambda *a, **k: None)
@@ -688,11 +697,8 @@ def test_blocker_survives_restart_and_resumes_when_clear(tmp_path, monkeypatch, 
     assert state is not None and state["paused_by_gate"] is True
     assert load_config().runtime.paused is True
 
-    # "Restart": condition now clear (operator switched to paper_internal).
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-    _invalidate_config_cache()
+    # The selected account view becomes complete after the restart.
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", _healthy_exchange_view)
 
     # One recheck tick resumes and clears the durable blocker.
     resumed = asyncio.run(gate.recheck_once())
@@ -709,6 +715,7 @@ def test_blocker_survives_restart_and_resumes_when_clear(tmp_path, monkeypatch, 
 def test_health_surfaces_gate_blocker(tmp_path, monkeypatch, _mock_scheduler):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
     from aletheia.agent_runtime.health import compute_health
 
@@ -722,6 +729,7 @@ def test_health_surfaces_gate_blocker(tmp_path, monkeypatch, _mock_scheduler):
 def test_doctor_probe_reports_gate_blocker(tmp_path, monkeypatch, _mock_scheduler):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
     from aletheia.diagnostics.doctor import Report, _probe_startup_behavior_gate
 
@@ -907,6 +915,7 @@ def test_apply_block_stops_running_pi_daemon(tmp_path, monkeypatch, _mock_schedu
     """When _apply_block() fires on a system failure it must stop a running PI daemon."""
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg(exchange__paper_execution_mode="bitget_demo")
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: None)
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
     stopped = []

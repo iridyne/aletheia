@@ -760,7 +760,7 @@ def _probe_config_gates(report: Report) -> None:
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
-        and paper_mode in {"paper_internal", "bitget_demo", "okx_demo", "binance_testnet"}
+        and paper_mode in {"bitget_demo", "okx_demo", "binance_testnet"}
         and demo_cap is not None
         and float(demo_cap) <= 0
     ):
@@ -836,8 +836,7 @@ def _probe_credentials(report: Report) -> None:
         # Missing demo creds only BLOCKS if the system is configured to place demo orders.
         sev: Severity = "blocker" if (mode == "demo" and pem == "bitget_demo") else "info"
         report.add("creds.bitget_demo", sev,
-                   "no bitget demo credentials — bitget_demo orders cannot reach the exchange "
-                   "(paper_internal local fill still works)",
+                   "no bitget demo credentials — bitget_demo orders cannot reach the exchange",
                    "Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` + api_secret, passphrase)")
 
     provider = getattr(cfg.models, "default_provider", "")

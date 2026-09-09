@@ -640,7 +640,7 @@ async def lifespan(app: FastAPI):
 
     # Startup Behavior Gate — hold AI decisions + new trading PAUSED until a set
     # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
-    # sync / paper_internal, no unexplained pending orders/closes, no active
+    # sync, no unexplained pending orders/closes, no active
     # reconciliation incident, learning influence within bounds, no user
     # pause/kill switch). Runs as a post-yield task (so the port binds first) but
     # its checks are all LOCAL/fast reads. On failure it applies a layered pause
