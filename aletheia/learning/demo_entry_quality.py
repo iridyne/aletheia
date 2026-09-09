@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
 
-POLICY_EPOCH_LABEL = "demo_entry_quality/v3"
+POLICY_EPOCH_LABEL = "demo_entry_quality/v4"
 _EPOCH_KIND = "demo_entry_quality"
 _EFFECTIVE_VALUES = {
-    "version": "v3",
+    "version": "v4",
     "applies_to": ["bitget_demo", "okx_demo", "binance_testnet"],
-    "paper_internal_unchanged": True,
     "live_family_gate_unchanged": True,
     "open_positions_unchanged": True,
     "min_regime_confidence_to_enter": 0.60,
@@ -29,7 +28,7 @@ _AFFECTED_PATHS = (
 
 
 def ensure_demo_entry_quality_policy_epoch() -> str:
-    """Return the durable epoch id, rotating only when effective behavior changes."""
+    """Return the durable epoch id, rotating when the policy definition changes."""
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,

@@ -255,3 +255,12 @@ unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
 only after this authority check.
 
 Former simulated tactic clause (retired): `paper_internal` 只以 `paper-order-fill/v1` 模拟：IOC 仅消费 receipt 中已知 opposing depth，Maker 先落 durable open Order，之后仅由同 instrument 的 later strict opposite-aggressor trade-through 按真实事件 size 有界成交；不宣称外部 queue position。
+
+## Archived Demo quality policy scope
+
+`demo_entry_quality/v3` included `paper_internal_unchanged: true` in its persisted
+policy definition. The retired local-mode exemption tests no longer describe an
+accepted execution mode. The current v4 definition removes that promise while
+retaining the external Demo thresholds and the separate live family gate.
+Normal epoch rotation preserves stored v3 values and hashes; historical cohorts
+are not relabelled as v4.

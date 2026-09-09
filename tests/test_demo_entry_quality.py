@@ -1,7 +1,7 @@
 """Exchange-demo entry quality: regime stand-down + family expectancy.
 
 Boundary: new entries on bitget_demo / okx_demo / binance_testnet only.
-paper_internal and live check #14 stay unchanged. Open positions are not closed.
+The live family gate remains separate. Open positions are not closed.
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ def _tokens(violations):
     return [v.split(":", 1)[0] for v in violations]
 
 
-def test_evaluate_ignores_paper_internal_and_live():
+def test_evaluate_ignores_live():
     eligibility = _eligibility()
-    for mode in ("paper_internal", "bitget_live_limited", "okx_live_limited"):
+    for mode in ("bitget_live_limited", "okx_live_limited"):
         assert evaluate_demo_entry_quality(
             execution_mode=mode,
             eligibility=eligibility,
@@ -460,15 +460,6 @@ def test_risk_bitget_demo_rejects_published_sideways(tmp_path, monkeypatch):
     assert any(v.startswith(REGIME_CONFIDENCE_STANDDOWN) for v in result.violations)
 
 
-def test_risk_paper_internal_ignores_published_sideways(tmp_path, monkeypatch):
-    from aletheia.risk.engine import evaluate_proposal
-
-    setup_env(tmp_path, monkeypatch)
-    _publish_regime(monkeypatch, state="sideways", confidence=0.50)
-    result = evaluate_proposal(_proposal("paper_internal"))
-    assert not any(is_demo_entry_quality_skip(v) for v in result.violations), result.violations
-
-
 def test_risk_live_keeps_family_gate_not_demo_tokens(tmp_path, monkeypatch):
     from aletheia.config.loader import load_config, save_config
     from aletheia.risk.engine import evaluate_proposal
@@ -569,3 +560,35 @@ def test_flat_demo_aliases_write_nested_eligibility():
     assert risk.demo.eligibility.min_regime_confidence_to_enter == 0.0
     assert risk.demo.eligibility.family_min_samples == 0
     assert risk.demo.eligibility.family_min_expectancy is None
+
+
+def test_retired_scope_rotates_epoch_without_rewriting_history():
+    import json
+    from aletheia.learning import demo_entry_quality as policy
+    from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+    from aletheia.storage.sqlite import get_db
+
+    # The previous persisted policy included a promise about the local simulator.
+    legacy_values = {
+        **policy.demo_entry_quality_policy_context(),
+        "version": "v3", "paper_internal_unchanged": True,
+    }
+    legacy = build_policy_epoch(
+        "demo_entry_quality", legacy_values,
+        affected_path_ids=policy._AFFECTED_PATHS, safety_required=True,
+    )
+    legacy_id = persist_policy_epoch(legacy)
+    current_id = policy.ensure_demo_entry_quality_policy_epoch()
+    assert current_id != legacy_id
+    assert policy.ensure_demo_entry_quality_policy_epoch() == current_id
+    rows = {row["epoch_id"]: dict(row) for row in get_db().execute(
+        "SELECT * FROM learning_policy_epochs WHERE epoch_kind='demo_entry_quality'"
+    )}
+    assert len(rows) == 2
+    assert rows[legacy_id]["effective_values_hash"] == legacy.epoch_hash
+    assert json.loads(rows[legacy_id]["effective_values_json"]) == legacy_values
+    assert rows[legacy_id]["ended_at"] is not None
+    assert rows[current_id]["ended_at"] is None
+    current_values = json.loads(rows[current_id]["effective_values_json"])
+    assert current_values["version"] == "v4"
+    assert "paper_internal_unchanged" not in current_values
