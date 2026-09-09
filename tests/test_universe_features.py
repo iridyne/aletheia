@@ -420,8 +420,9 @@ def test_only_explicit_derivative_market_types_read_derivative_enrichment(monkey
         (-0.0002, 0.0001, 16, 0.0001, None),
     ],
 )
+@pytest.mark.parametrize("venue", ["okx", "bitget"])
 async def test_live_funding_override_requires_finite_rate(
-    monkeypatch, live_rate, fallback_rate, source_age, expected, expected_oi,
+    monkeypatch, live_rate, fallback_rate, source_age, expected, expected_oi, venue,
 ):
     from aletheia.storage import repositories as repo
     from aletheia.universe.features import _fetch_single_feature
@@ -444,7 +445,7 @@ async def test_live_funding_override_requires_finite_rate(
     monkeypatch.setattr(repo, "get_latest_feature_snapshot", lambda *args: None)
 
     class Exchange:
-        id = "okx"
+        id = venue
 
         async def fetch_ohlcv(self, *args, **kwargs):
             return [[int((now - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
@@ -454,7 +455,7 @@ async def test_live_funding_override_requires_finite_rate(
                 "fundingRate": live_rate,
                 "timestamp": int(
                     (now - timedelta(minutes=source_age)).timestamp() * 1000
-                ),
+                ) if venue != "bitget" else None,
             }
 
         async def fetch_open_interest(self, *args, **kwargs):
@@ -470,10 +471,14 @@ async def test_live_funding_override_requires_finite_rate(
         {
             "id": "asset-btc",
             "symbol": "BTC/USDT",
-            "venue": "okx",
+            "venue": venue,
             "market_type": "perp",
         },
-        {"quoteVolume": 1_000_000, "bid": 100, "ask": 101},
+        {
+            "quoteVolume": 1_000_000, "bid": 100, "ask": 101,
+            "timestamp": int((now - timedelta(minutes=source_age)).timestamp() * 1000),
+            "info": {"fundingRate": live_rate},
+        },
         now,
         lambda symbol: f"{symbol}:USDT",
     )

@@ -8,6 +8,7 @@ their own independent versions.
 
 ### Changed
 
+* **market-data:** restore Bitget Candidate funding enrichment from the existing perpetual ticker and its exchange timestamp, without changing freshness policy or historical outcomes.
 * **entry:** make Candidate/PlanningGeneration/EntryPlan the sole new-entry authority, including source-scoped Serenity publication and separate timing/holding horizons; retain historical decisions and unresolved execution evidence.
 * **uta:** route all six external account modes through UTA and the execution coordinator, retire the legacy/shadow selector, and bind private order recovery to durable exact account identity; unproven historical mappings block new entry without rewriting old orders.
 * **learning:** make Observation Lab the sole online experiment authority; retire legacy evaluation/lifecycle writers while preserving proof-gated imports and historical evidence. Missing canonical qualifications remain unavailable.

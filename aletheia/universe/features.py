@@ -758,10 +758,18 @@ async def _fetch_single_feature(
         perp_sym = to_ccxt_perp(symbol)
         mark_price = None
         try:
-            fr_data = await asyncio.wait_for(
-                exchange.fetch_funding_rate(perp_sym),
-                timeout=5.0,
-            )
+            if exchange.id == "bitget":
+                info = ticker.get("info") or {}
+                fr_data = {
+                    "fundingRate": info.get("fundingRate"),
+                    "markPrice": info.get("markPrice"),
+                    "timestamp": ticker.get("timestamp"),
+                }
+            else:
+                fr_data = await asyncio.wait_for(
+                    exchange.fetch_funding_rate(perp_sym),
+                    timeout=5.0,
+                )
             received_at = datetime.now(timezone.utc)
             if fr_data:
                 mark_price = fr_data.get("markPrice")
