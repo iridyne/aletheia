@@ -125,7 +125,7 @@ def _check_trade_volume() -> dict:
 
 
 def count_consecutive_zero_fill_days() -> int:
-    """Count consecutive calendar days with zero new position opens (D8-S04 / product §8 K2).
+    """Count consecutive UTC calendar days with zero new position opens (D8-S04 / product §8 K2).
 
     Walks backwards from today counting days with no new opens. Returns the integer
     day count. Three or more → trading loop is stalled (K2 kill condition).
@@ -144,8 +144,7 @@ def count_consecutive_zero_fill_days() -> int:
             (mode,),
         ).fetchall()
         open_dates = {r[0] for r in rows if r[0]}
-        from datetime import date, timedelta
-        day = date.today()
+        day = datetime.now(timezone.utc).date()
         consecutive = 0
         for _ in range(30):  # check at most 30 days back
             if day.isoformat() in open_dates:

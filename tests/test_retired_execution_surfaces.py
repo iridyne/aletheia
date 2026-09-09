@@ -216,10 +216,13 @@ def test_current_analytics_cannot_select_archived_or_missing_account(monkeypatch
 
 def test_scorecard_uses_external_cohort_without_archived_activity(monkeypatch):
     from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
     from aletheia.analytics import go_live_scorecard
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage.sqlite import get_db
 
+    now = datetime(2026, 1, 10, 18, tzinfo=timezone.utc)
+    monkeypatch.setattr(go_live_scorecard, "datetime", SimpleNamespace(now=lambda _tz: now))
     cfg = AletheiaConfig()
     cfg.exchange.paper_execution_mode = "bitget_demo"
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
@@ -238,7 +241,7 @@ def test_scorecard_uses_external_cohort_without_archived_activity(monkeypatch):
     for mode, age, violations in [("paper_internal", 0, '["archived"]'), ("bitget_demo", 2, '[]')]:
         db.execute(
             "INSERT INTO positions(id,symbol,market_type,direction,execution_mode,opened_at,quantity,entry_price) VALUES (?,?,?,?,?,?,1,100)",
-            (mode, "BTC/USDT", "spot", "long", mode, (datetime.now(timezone.utc) - timedelta(days=age)).isoformat()),
+            (mode, "BTC/USDT", "spot", "long", mode, (now - timedelta(days=age)).isoformat()),
         )
         from aletheia.storage import repositories as repo
         from aletheia.storage.models import RiskDecision, TradeProposal
@@ -248,6 +251,7 @@ def test_scorecard_uses_external_cohort_without_archived_activity(monkeypatch):
         ).model_dump())
         repo._insert("risk_decisions", RiskDecision(
             id=mode, proposal_id=mode, approved=True, proposal_execution_mode=mode, violations=violations,
+            created_at=now.isoformat(),
         ).model_dump())
     assert go_live_scorecard.count_consecutive_zero_fill_days() == 2
     assert go_live_scorecard._check_risk_violations()["score"] == 100
