@@ -545,6 +545,16 @@ def test_uta_v1_default_cache_never_falls_back_to_legacy_bitget(tmp_path, monkey
     assert es.get_unified_cached_state() is None
 
 
+@pytest.mark.parametrize("execution_mode", ["", "paper_internal", "unknown_demo"])
+def test_active_broker_requires_configured_external_account(execution_mode):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = execution_mode
+    assert es.active_broker_view_complete(cfg) == (False, "execution account not configured")
+
+
 def test_active_broker_rejects_generation_mismatch(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.portfolio import exchange_sync as es
@@ -570,8 +580,7 @@ def test_active_broker_rejects_generation_mismatch(monkeypatch):
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     """No exchange creds shouldn't break the locally-managed portfolio view."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the path where
-    # an external exchange is expected but creds are absent (→ "unconfigured").
+    # An external account is selected, but its credentials are absent.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -734,7 +743,11 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
 def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.config.loader import load_config, save_config
 
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
     opened_at_ms = 1784044800000
     result = adopt_position({
         "symbol": "BTCUSDT", "side": "long", "quantity": 0.1,
@@ -753,9 +766,7 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     """An adopted LIVE position must get execution_mode=bitget_live_limited, which
     position_manager skips — so live stays human-only by construction."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed exchange.name to "paper_internal"; _execution_mode_for("live")
-    # resolves via _LIVE_EXECUTION_MODES[cfg.exchange.name], which requires "bitget" to
-    # return "bitget_live_limited".
+    # The explicitly selected exchange determines the live account identity.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.name = "bitget"

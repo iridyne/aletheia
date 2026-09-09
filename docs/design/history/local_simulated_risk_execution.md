@@ -214,3 +214,13 @@ UTC accounting day, not the later cash-event append time. A delayed settlement
 for an older valid close is excluded from today only when its amount matches the
 Position realized_pnl; a newly appended event without valid matching economics
 remains an unavailable ledger mismatch.
+
+## Former runtime exemptions
+
+The retired runtime treated a missing or `paper_internal` account as a complete
+exchange view without a broker. Fast streams could use the configured public-data
+venue independently of the execution account, and public funding collection added
+symbols from open simulated futures positions. Interrupted local execution could
+release pre-Order authority after its claim expired. These exemptions are removed;
+current stream/account selection requires a registered external account, and
+uncertain execution remains owned by Gateway reconciliation.

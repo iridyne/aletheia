@@ -1126,7 +1126,7 @@ def test_run_reconcile_circuit_breaker_suspends(tmp_path, monkeypatch):
         "PL-ADOPT-19", "pipeline_adopted_position", "§19 active_broker_view_complete", "L2b",
         "active_broker_view_complete() returns False when the active paper broker "
         "(okx_demo) is NOT among the unified view's connected accounts (its API "
-        "failed), True when it is, and True for paper_internal (no exchange).",
+        "failed), and True when it is present in a healthy view.",
     ),
 )
 def test_active_broker_view_complete(tmp_path, monkeypatch):
@@ -1148,10 +1148,6 @@ def test_active_broker_view_complete(tmp_path, monkeypatch):
     complete, _ = es.active_broker_view_complete()
     assert complete is True, "okx present in unified must be complete"
 
-    # paper_internal → always complete (no exchange view needed).
-    _write_config(tmp_path, monkeypatch, "paper_internal")
-    complete, _ = es.active_broker_view_complete()
-    assert complete is True, "paper_internal needs no exchange view"
 
 
 @spec_claim(

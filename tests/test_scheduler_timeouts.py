@@ -1326,3 +1326,17 @@ def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):
 
     assert result is None
     assert elapsed < 0.5, f"_bounded stalled {elapsed:.2f}s; slow-cancel must not block caller"
+
+
+def test_derivative_collection_does_not_expand_from_archived_positions(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "list_all_open_positions", lambda: [{
+        "execution_mode": "paper_internal", "market_type": "usdt_futures",
+        "status": "open", "symbol": "ETH/USDT",
+    }])
+    assert scheduler._get_derivative_symbols([
+        SimpleNamespace(symbol="BTC/USDT"), SimpleNamespace(symbol="BTC/USDT"),
+    ]) == ["BTC/USDT"]

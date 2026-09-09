@@ -59,27 +59,19 @@ aletheia-trading-os/
 
 ## Data Flow（简版）
 
+```mermaid
+flowchart TD
+    D[Data Collectors] --> U[Universe candidate planning]
+    U --> O[System Operator]
+    O --> P[Immutable Entry Plan / TradeProposal]
+    P --> R[Risk Engine]
+    R --> G[Execution Gateway]
+    G --> C[Coordinator / UTA]
+    C --> F[Exchange Order / Private Fill / Position]
+    F --> M[Position Manager]
 ```
-Bitget spot/perpetual 市场事实与活动 Universe
-    ↓
-Data Collectors → 快照、结构化上下文与来源证据
-    ↓
-Universe signal emitter → deterministic eligibility → opportunities
-    ↓
-Market Observer（每10min）→ 可选 LLM advisory enrichment
-    ↓
-Paper Ranker（确定性筛选）→ signal_pending PiDecision
-    ↓
-System Operator → trade / skip
-    ↓
-不可变 TradeProposal
-    ↓
-Risk Engine（⚠️ 信任边界）→ approve / reject
-    ↓
-Execution Gateway（⚠️ 信任边界）→ paper_internal order/fill/position
-    ↓
-Position Manager（保护性止损/止盈/追踪与平仓）
-```
+
+本地模拟执行已退役，旧定义见[历史归档](../history/local_simulated_risk_execution.md)。
 
 ## Unified Trading Account migration
 

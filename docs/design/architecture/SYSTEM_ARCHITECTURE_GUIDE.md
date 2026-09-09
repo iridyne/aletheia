@@ -144,9 +144,10 @@ stop_price = price × (1 - stop_loss_pct%)
 
 ### Step 3: 下单执行
 
-当前 Supported execution mode 只有 `paper_internal`，由本地 Paper broker 模拟成交。
-Exchange demo/live adapter 代码的存在不构成 Supported 能力；Live 默认关闭，且任何未来
-启用仍必须保留显式人工授权和完整 Risk/Execution 信任边界。
+当前订单经 Execution Gateway → Coordinator → UTA 进入外部交易所账户。已注册模式为
+Bitget/OKX demo、Binance testnet 及对应的 live-limited；模式注册本身不代表账户已配置或通过
+资格验证。Live 默认关闭，启用仍需显式人工授权和完整 Risk/Execution 信任边界。
+旧本地模拟执行定义已[归档](../history/local_simulated_risk_execution.md)。
 
 ### Step 4: 成交链路
 ```

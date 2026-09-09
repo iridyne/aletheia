@@ -356,7 +356,7 @@ def _invalidate_pre_order_entry_plan(
             proposal_id = str(proposal["id"])
             if repo.has_order_for_proposal(proposal_id):
                 return "order_present"
-            if proposal["execution_mode"] != "paper_internal" and proposal["status"] in {
+            if proposal["status"] in {
                 "executing",
                 "submission_unknown",
                 "materialization_missing",

@@ -439,7 +439,7 @@ def test_market_structure_v2_state_projection_choch_and_exact_staleness():
     assert stale["reason"] == "swing_stale"
 
 
-def test_local_paper_uses_configured_public_fast_stream():
+def test_selected_external_account_uses_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_stream
     from aletheia.universe.fast_stream import (
@@ -449,7 +449,7 @@ def test_local_paper_uses_configured_public_fast_stream():
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
     cfg.market_data.ccxt_exchange = "binance"
 
     assert fast_market_data_venue_for_config(cfg) == "binance"
@@ -468,7 +468,7 @@ def test_legacy_mode_off_does_not_disable_current_entry_plan_monitoring():
     cfg = AletheiaConfig()
     cfg.fast_trigger.enabled = True
     cfg.fast_trigger.mode = "off"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
     cfg.market_data.ccxt_exchange = "binance"
 
     assert validate_fast_trigger_stream(cfg) is None
@@ -482,7 +482,7 @@ def test_fast_trigger_refuses_observe_permission():
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
     cfg.agent.permission_mode = "Observe"
 
     assert validate_fast_trigger_stream(cfg) == "entry_plan_permission_revoked"
@@ -519,48 +519,6 @@ async def test_blocked_start_cancels_open_entry_plans(monkeypatch):
     assert cancellations == ["entry_plan_permission_revoked"]
 
 
-def test_local_paper_selects_configured_public_data_adapter():
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe.fast_stream import (
-        BinanceFastMarketStream,
-        fast_market_data_venue_for_config,
-        fast_market_stream_for_config,
-    )
-
-    cfg = AletheiaConfig()
-    cfg.fast_trigger.mode = "shadow"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.market_data.ccxt_exchange = "binance"
-
-    stream = fast_market_stream_for_config(cfg)
-
-    assert fast_market_data_venue_for_config(cfg) == "binance"
-    assert isinstance(stream, BinanceFastMarketStream)
-
-    cfg.market_data.ccxt_exchange = "bitget"
-    assert fast_market_data_venue_for_config(cfg) == "bitget"
-    from aletheia.universe.fast_stream import BitgetFastMarketStream
-
-    assert isinstance(fast_market_stream_for_config(cfg), BitgetFastMarketStream)
-
-
-def test_local_paper_unsupported_market_data_venue_fails_closed():
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe.fast_stream import (
-        fast_market_data_unavailability_reason,
-        fast_market_stream_for_config,
-    )
-
-    cfg = AletheiaConfig()
-    cfg.fast_trigger.mode = "shadow"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.market_data.ccxt_exchange = "okx"
-
-    assert fast_market_data_unavailability_reason(cfg, "okx") == "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
-    with pytest.raises(RuntimeError, match="fast_trigger_stream_unavailable:okx"):
-        fast_market_stream_for_config(cfg)
-
-
 def test_external_execution_mode_keeps_execution_venue_authority():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_stream import fast_market_data_venue_for_config
@@ -570,9 +528,11 @@ def test_external_execution_mode_keeps_execution_venue_authority():
     cfg.market_data.ccxt_exchange = "binance"
 
     assert fast_market_data_venue_for_config(cfg) == "bitget"
+    cfg.exchange.paper_execution_mode = "paper_internal"
+    assert fast_market_data_venue_for_config(cfg) == "unknown"
 
 
-def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_visible(tmp_path, monkeypatch):
+def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visible(tmp_path, monkeypatch):
     _prepare(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage import repositories as repo
@@ -584,11 +544,11 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
     now = datetime.now(timezone.utc)
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    cfg.market_data.ccxt_exchange = "binance"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.market_data.ccxt_exchange = "bitget"
     snapshot = UniverseSnapshot(
-        id="binance-planning-snapshot",
-        exchange="binance",
+        id="bitget-planning-snapshot",
+        exchange="bitget",
         market_type="spot",
         status="active",
         expires_at=(now + timedelta(hours=1)).isoformat(),
@@ -596,7 +556,7 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
     )
     repo.insert_universe_snapshot(snapshot)
     opportunity = CandidateOpportunityContextV1(
-        candidate_id="binance-planning-candidate",
+        candidate_id="bitget-planning-candidate",
         candidate_selection={
             "policy": "candidate_selection_utility_v1",
             "policy_epoch": "epoch-1",
@@ -622,18 +582,18 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
         },
         context={"regime": "trending"},
     )
-    binance = UniverseMember(
-        id="binance-planning-candidate",
+    bitget = UniverseMember(
+        id="bitget-planning-candidate",
         snapshot_id=snapshot.id,
-        asset_id="binance-asset",
-        venue="binance",
+        asset_id="bitget-asset",
+        venue="bitget",
         symbol="BTC/USDT",
         market_type="spot",
         rank=1,
         total_score=90,
         scanner_family="momentum",
         scanner_direction="long",
-        execution_eligible=fast_market_data_unavailability_reason(cfg, "binance") is None,
+        execution_eligible=fast_market_data_unavailability_reason(cfg, "bitget") is None,
         candidate_selection_policy="candidate_selection_utility_v1",
         candidate_selection_policy_epoch="epoch-1",
         candidate_selection_utility_pct=1.0,
@@ -662,18 +622,18 @@ def test_binance_candidate_enters_planning_while_unsupported_candidate_stays_vis
         risk_flags='["fast_market_data_venue_unavailable"]',
         expires_at=snapshot.expires_at,
     )
-    repo.insert_universe_member(binance)
+    repo.insert_universe_member(bitget)
     repo.insert_universe_member(unsupported)
 
     selected, _created, count = _ensure_planning_generations(
-        [binance, unsupported],
+        [bitget, unsupported],
         soft_lease_sec=300,
         max_attention_age_sec=300,
         now=now,
     )
 
     assert count == 1 and len(selected) == 1
-    assert repo.get_candidate_planning_generation(next(iter(selected)))["last_candidate_id"] == binance.id
+    assert repo.get_candidate_planning_generation(next(iter(selected)))["last_candidate_id"] == bitget.id
     assert (
         repo.get_db()
         .execute(

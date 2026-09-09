@@ -4658,35 +4658,8 @@ def _get_observed_instruments(cfg):
 
 
 def _get_derivative_symbols(instruments) -> list[str]:
-    """Add every open local futures liability to primary funding collection.
-
-    This is intentionally narrower than ``_get_observed_instruments``: an open
-    Position that has rotated out of the active universe needs continued funding
-    schedules, but it must not re-enter microstructure scans, volume ranking, or
-    any other candidate-producing surface.
-    """
-    from aletheia.data.symbols import to_canonical
-
-    result = [item.symbol for item in instruments]
-    try:
-        from aletheia.storage import repositories as repo
-
-        for position in repo.list_all_open_positions():
-            if (
-                position.get("execution_mode") != "paper_internal"
-                or position.get("market_type") != "usdt_futures"
-                or position.get("status") not in {None, "open"}
-                or not position.get("symbol")
-            ):
-                continue
-            try:
-                result.append(to_canonical(position["symbol"]))
-            except ValueError:
-                continue
-    except Exception:
-        pass
-
-    return list(dict.fromkeys(result))
+    """Public funding collection follows the currently observed instruments."""
+    return list(dict.fromkeys(item.symbol for item in instruments))
 
 
 def _get_observed_symbols(cfg) -> list[str]:
