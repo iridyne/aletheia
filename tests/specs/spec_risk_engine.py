@@ -230,7 +230,7 @@ def test_risk_always_persists_decision(tmp_path, monkeypatch):
 
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(p)
     before = len(repo.list_risk_decisions(limit=100))
@@ -269,7 +269,7 @@ def test_risk_kill_switch_blocks(tmp_path, monkeypatch):
     activate("test", actor="human")
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -319,7 +319,7 @@ def test_lesson_constraints_error_produces_violation(monkeypatch):
     from aletheia.risk.engine import _check_lesson_constraints
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     violations = _check_lesson_constraints(p)
     assert any("lesson_check_error" in v for v in violations), (
@@ -381,13 +381,13 @@ def test_correlation_exposure_error_produces_violation(monkeypatch):
 
     from unittest.mock import patch
     with patch(
-        "aletheia.storage.repositories.list_all_open_positions",
+        "aletheia.risk.engine.list_all_open_positions",
         side_effect=RuntimeError("DB gone"),
     ):
         cfg = load_config()
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal", quantity=0.001, price=60000,
+            execution_mode="bitget_demo", quantity=0.001, price=60000,
         )
         violations = _check_correlation_exposure(p, cfg)
         assert any("correlation_check_error" in v for v in violations), (
@@ -421,6 +421,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
 
     cfg = AletheiaConfig()
     cfg.agent.permission_mode = "Paper"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.risk.correlation_guard_enabled = True
     cfg.risk.max_sector_concentration_pct = 60.0
     cfg.risk.max_portfolio_beta = 3.0
@@ -430,6 +431,8 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     cfg.risk.demo.correlation.min_positions_for_concentration = 1
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    monkeypatch.setattr(eng, "_account_equity", lambda *_args: 1_000.0)
+    monkeypatch.setattr(eng, "_market_data_age_seconds", lambda *_args, **_kwargs: 0.0)
     monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
     # BTC beta low enough to pass alone; ETH beta pushes the combined portfolio over the limit.
     monkeypatch.setattr(
@@ -475,10 +478,10 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
             order_type="market",
             quantity=1.0,
             price=100.0,
-            stop_price=99.0,
-            take_profit=102.0,
+            stop_price=98.0,
+            take_profit=104.0,
             risk_reward=2.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         repo.insert_trade_proposal(proposal)
         proposals.append(proposal)
@@ -491,6 +494,7 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
         repo.insert_order(Order(
             id="sector-reservation-unresolved-order",
             proposal_id=proposals[0].id,
+            client_order_id=proposals[0].id,
             risk_decision_id=first.decision_id,
             symbol=proposals[0].symbol,
             market_type=proposals[0].market_type,
@@ -535,11 +539,11 @@ def test_correlation_guards_include_unmaterialized_entry_exposure(
     [
         pytest.param(
             "okx_live_limited",
-            "paper_internal",
+            "bitget_demo",
             id="live-not-diluted-by-demo",
         ),
         pytest.param(
-            "paper_internal",
+            "bitget_demo",
             "okx_live_limited",
             id="demo-not-diluted-by-live",
         ),
@@ -673,13 +677,13 @@ def test_beta_enforced_below_concentration_depth_gate(monkeypatch):
     cfg.risk.demo.correlation.min_positions_for_concentration = 4
     monkeypatch.setattr(eng, "_lookup_beta", lambda _symbol: 4.0)
 
-    with patch("aletheia.storage.repositories.list_all_open_positions", return_value=[]):
+    with patch("aletheia.risk.engine.list_all_open_positions", return_value=[]):
         violations = eng._check_correlation_exposure(
             TradeProposal(
                 symbol="BTC/USDT",
                 market_type="spot",
                 direction="long",
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 quantity=1.0,
                 price=100.0,
             ),
@@ -828,7 +832,7 @@ def test_symbol_blacklist_rejects(tmp_path, monkeypatch):
 
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -863,7 +867,7 @@ def test_risk_rejects_non_usdt_or_malformed_trading_symbol(
         symbol=symbol,
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=1.0,
         price=1.0,
     )
@@ -889,7 +893,7 @@ def test_risk_accepts_usdt_quote_currency_boundary(tmp_path, monkeypatch):
         symbol="btc-usdt",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60_000.0,
     )
@@ -1001,7 +1005,7 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
     # notional = 1.0 * 200.0 = 200 > 100
     p = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=1.0, price=200.0,
+        execution_mode="bitget_demo", quantity=1.0, price=200.0,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -1081,18 +1085,18 @@ def test_max_open_demo_positions_blocks(tmp_path, monkeypatch):
     cfg.risk.max_demo_position_margin_usdt = 10_000.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
-    # Insert 2 open paper positions (reaching the limit)
+    # Insert 2 open external Demo positions (reaching the limit)
     for i in range(2):
         pos = Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=0.01, entry_price=2000.0,
-            execution_mode="paper_internal", status="open",
+            execution_mode="bitget_demo", status="open",
         )
         repo.insert_position(pos)
 
     p = TradeProposal(
         symbol="SOL/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.01, price=100.0,
+        execution_mode="bitget_demo", quantity=0.01, price=100.0,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -1127,7 +1131,7 @@ def test_short_not_allowed_demo_fires(tmp_path, monkeypatch):
 
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="short",
-        execution_mode="paper_internal", quantity=0.001, price=60000,
+        execution_mode="bitget_demo", quantity=0.001, price=60000,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -2486,7 +2490,7 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg.exchange.enabled_markets = {"spot": False, "usdt_futures": True}
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                      execution_mode="paper_internal", quantity=0.001, price=60000)
+                      execution_mode="bitget_demo", quantity=0.001, price=60000)
     repo.insert_trade_proposal(p)
     r = evaluate_proposal(p)
     assert any("spot_market_disabled" in v for v in r.violations), (
@@ -2498,7 +2502,7 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg2.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
     monkeypatch.setattr(eng, "load_config", lambda: cfg2)
     p2 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                       execution_mode="paper_internal", quantity=0.001, price=60000)
+                       execution_mode="bitget_demo", quantity=0.001, price=60000)
     repo.insert_trade_proposal(p2)
     r2 = evaluate_proposal(p2)
     assert not any("spot_market_disabled" in v for v in r2.violations), (
@@ -2510,7 +2514,7 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg3.exchange.enabled_markets = {"spot": True, "usdt_futures": False}
     monkeypatch.setattr(eng, "load_config", lambda: cfg3)
     p3 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                       execution_mode="paper_internal", quantity=0.001, price=60000,
+                       execution_mode="bitget_demo", quantity=0.001, price=60000,
                        leverage=1)
     repo.insert_trade_proposal(p3)
     r3 = evaluate_proposal(p3)
@@ -2523,7 +2527,7 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
     cfg4.exchange.enabled_markets = {"spot": True, "usdt_futures": True}
     monkeypatch.setattr(eng, "load_config", lambda: cfg4)
     p4 = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
-                       execution_mode="paper_internal", quantity=0.001, price=60000,
+                       execution_mode="bitget_demo", quantity=0.001, price=60000,
                        leverage=1)
     repo.insert_trade_proposal(p4)
     r4 = evaluate_proposal(p4)

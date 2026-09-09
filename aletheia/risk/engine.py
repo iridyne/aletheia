@@ -1877,9 +1877,6 @@ def _check_correlation_exposure(
         return []
     violations: list[str] = []
     try:
-        from aletheia.storage.repositories import (
-            list_all_open_positions,
-        )
         from aletheia.storage.sqlite import get_db
 
         proposal_is_live = _is_live(proposal.execution_mode)
