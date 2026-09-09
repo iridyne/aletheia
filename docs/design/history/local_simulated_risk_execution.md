@@ -299,3 +299,10 @@ cash-ledger loss query to become available after that close. These simulator
 requirements are retired. Current calculation tests supply fees explicitly and
 retain unverified status without private evidence; external verified-close tests
 own fill provenance, eligibility, exact economics and idempotency.
+
+The former Position Manager regressions converted public marks into fills with
+configured adverse slippage and used a public funding schedule to make futures
+net PnL available immediately. Current regressions submit an external close,
+retain open state until private Fill reconciliation, and use its reported price
+and fees. A just-closed futures window remains economically unavailable until
+the private funding ledger is mature; public schedules do not supply that proof.
