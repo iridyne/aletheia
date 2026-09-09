@@ -113,7 +113,7 @@ def build_sizing_context(
         try:
             from aletheia.risk.engine import _portfolio_drawdown_scale
             from aletheia.config.loader import load_config as _lc
-            _mode = (cfg or _lc()).exchange.paper_execution_mode or "paper_internal"
+            _mode = (cfg or _lc()).exchange.paper_execution_mode or ""
             dd = _portfolio_drawdown_scale(_mode)
             if dd < 1.0:
                 appetite -= (1.0 - dd) * 0.3

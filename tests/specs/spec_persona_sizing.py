@@ -679,10 +679,13 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     cfg.trading.persona_sizing_enabled = True
     cfg.trading.active_persona = "roll"   # max_adds init 2, add_fraction init 0.5
     cfg.trading.persona_pyramid_add_trigger_pct = 1.0
-    cfg.risk.max_per_symbol_entries = 4
+    cfg.risk.demo.capital.base_source = "custom"
+    cfg.risk.demo.capital.base_usdt = 1000.0
+    cfg.risk.demo.loss.max_single_trade_risk_pct = 10.0
+    cfg.risk.demo.capital.max_per_symbol_entries = 4
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
 
-    winner = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 5.0}  # +5% → past trigger
+    winner = {"execution_mode": "bitget_demo", "entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 5.0}  # +5% → past trigger
 
     # Disabled → no add.
     assert sizing_policy.pyramid_plan(winner, adds_done=0, cfg=cfg)["add"] is False
@@ -693,7 +696,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     assert plan["add"] is True and abs(plan["add_notional"] - 50.0) < 1e-6, plan
 
     # Not a winner (0 profit) → no add.
-    flat = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 0.0}
+    flat = {"execution_mode": "bitget_demo", "entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 0.0}
     assert sizing_policy.pyramid_plan(flat, adds_done=0, cfg=cfg)["add"] is False
 
     # TOTAL added ≤ 1× base (owner 2026-07-02): after 2 adds of 0.5×base each, the
@@ -704,7 +707,7 @@ def test_pyramid_plan(tmp_path, monkeypatch):
     assert sizing_policy.pyramid_plan(winner, adds_done=3, cfg=cfg)["add"] is False
 
     # HARD CAP: a huge base near the per-symbol cap → add clamped to remaining room.
-    big = {"entry_price": 100.0, "quantity": 3.9, "unrealized_pnl": 20.0}  # base 390, cap 400
+    big = {"execution_mode": "bitget_demo", "entry_price": 100.0, "quantity": 3.9, "unrealized_pnl": 20.0}  # base 390, cap 400
     capped = sizing_policy.pyramid_plan(big, adds_done=0, cfg=cfg)
     assert capped["add_notional"] <= 10.0 + 1e-6, f"add must be clamped to per-symbol cap room: {capped}"
 
@@ -767,12 +770,12 @@ def test_pyramid_never_exceeds_exposure_cap(tmp_path, monkeypatch):
     cfg.trading.persona_pyramid_enabled = True
     cfg.trading.active_persona = "roll"
     # Derived ceiling = equity x risk_pct x leverage x entries = 1000 x 10% x 1 x 3 = 300
-    cfg.risk.max_per_symbol_entries = 3
+    cfg.risk.demo.capital.max_per_symbol_entries = 3
     cfg.risk.demo.loss.max_single_trade_risk_pct = 10.0
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 1_000.0)
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
 
-    base = {"entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 10.0}  # base 100
+    base = {"execution_mode": "bitget_demo", "entry_price": 100.0, "quantity": 1.0, "unrealized_pnl": 10.0}  # base 100
     total = 100.0
     for i in range(5):  # try to over-add
         plan = sizing_policy.pyramid_plan(base, adds_done=i, cfg=cfg)

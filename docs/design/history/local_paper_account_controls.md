@@ -9,6 +9,7 @@ restoration of the product feature. See the [accepted retirement](../proposals/r
 
 | Method | Path | Historical behavior |
 |---|---|---|
+| POST | `/proposals/{id}/approve-paper` | Former owner approval and execution of a stored local simulated proposal, preserving its ID. Removed with the simulator; no replacement approval alias. |
 | GET | `/settings/paper-account` | Local simulated cash, reserved margin, available balance, equity, economic-completeness state, and recent ledger events. Available only when `paper_internal` is active. |
 | POST | `/settings/paper-account/credit` | Add local simulated USDT: `{"amount_usdt": number, "note"?: string}`. Human/audit logged; never touches an exchange. |
 | POST | `/settings/paper-account/debit` | Remove local simulated USDT; cannot make cash negative. Human/audit logged. |

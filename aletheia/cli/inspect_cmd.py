@@ -1643,20 +1643,12 @@ def agent_runs(
 def equity(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window in days"),
     limit: int = typer.Option(50, "--limit", "-n"),
-    execution_mode: Optional[str] = typer.Option(None, "--execution-mode", help="Account series: paper_internal | exchange_account"),
+    execution_mode: Optional[str] = typer.Option("exchange_account", "--execution-mode", help="Account series identifier; historical series are read-only"),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show one explicit account-equity time series."""
-    from aletheia.config.loader import load_config
     from aletheia.storage.repositories import list_account_equity_snapshots
 
-    if execution_mode is None:
-        cfg = load_config()
-        execution_mode = (
-            "paper_internal"
-            if cfg.exchange.paper_execution_mode == "paper_internal"
-            else "exchange_account"
-        )
     rows = list_account_equity_snapshots(execution_mode=execution_mode, days=days, limit=limit)
     display = [{
         "snapshot_at": r.get("snapshot_at"),

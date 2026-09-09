@@ -118,7 +118,7 @@ def assess_persona_distress(cfg=None) -> DistressAssessment:
         cfg = cfg or load_config()
         if getattr(cfg.runtime, "kill_switch_active", False):
             return "distressed"
-        mode = cfg.exchange.paper_execution_mode or "paper_internal"
+        mode = cfg.exchange.paper_execution_mode or ""
         from aletheia.risk.engine import _portfolio_drawdown_assessment
 
         scale, available = _portfolio_drawdown_assessment(mode, cfg)
@@ -281,7 +281,7 @@ def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
     # policy, silently applying demo limits to a live position.
     from aletheia.risk.engine import per_symbol_notional_ceiling
     cap = per_symbol_notional_ceiling(
-        str(position.get("execution_mode") or "paper_internal"),
+        str(position.get("execution_mode") or ""),
         leverage=float(position.get("leverage") or 1),
         cfg=cfg,
     )

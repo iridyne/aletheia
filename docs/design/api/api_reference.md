@@ -33,7 +33,7 @@
 | 400 | Malformed request / invalid parameter |
 | 403 | Blocked by permission mode or a safety gate (e.g. live action without unlock) |
 | 404 | Entity not found |
-| 409 | State conflict (e.g. unlocking live when already unlocked; approving an already-executed proposal) |
+| 409 | State conflict (e.g. unlocking live when already unlocked; rejecting an already-executed proposal) |
 | 422 | Pydantic validation failure (FastAPI default) |
 | 503 | Backend dependency unavailable (DB/scheduler/exchange/model) — per [UI truthfulness](../../governance/policies/trust_and_change_control.md), surface as `not available`, never as healthy |
 
@@ -52,7 +52,7 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 | `POST /settings/permission-mode` · `/risk` | writes audit; cannot grant `FORBIDDEN_INTENTS` | [live_unlock_contract §6](../contracts/live_unlock_contract.md) |
 | `PUT /settings/risk-policies/{mode}` · `POST /settings/risk-policies/copy` | explicit confirmation, optimistic revision check and target-scoped audit; never copies live authority or runtime state | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
 | `POST /risk/brakes/{global\|demo\|live}` | engage is immediate; release requires `confirm_release=true`; mode brake never releases global brake | [risk_engine_contract §1.1](../contracts/risk_engine_contract.md) |
-| `POST /proposals/{id}/approve-paper` · `/reject` | must preserve original proposal ID (no duplicate row); paper approval accepts only a `pending` proposal whose stored mode is already `paper_internal` and never rewrites exchange intent; isolated preview API returns `403 preview_execution_blocked` before mutation | [execution_contract §1](../contracts/execution_contract.md) |
+| `POST /proposals/{id}/reject` | preserves the original proposal ID; commits rejection, reservation release and audit together; already submitted/executed orders cannot be rejected through this route | [execution_contract §1](../contracts/execution_contract.md) |
 | `POST /gateway/restart` · `/update/apply` · `/update/rollback` | May control machine-level gateway/code state only outside preview mode; preview returns a stable `403` before side effects | [Development preview](../../operations/development/DEVELOPMENT_PREVIEW.md) |
 
 ---
@@ -70,7 +70,7 @@ These endpoints cross a [trust boundary](../../governance/policies/trust_and_cha
 action, and observation time. This probe is independent from the configured
 exchange, so a venue-only failure is not reported as a global outage. The route
 also exposes `execution_exchange`, `market_data_exchange`,
-`exchange_alignment` (`local_paper|aligned|diverged`), and `exchange_diverged` so
+`exchange_alignment` (`aligned|diverged|not_configured|unavailable`), and `exchange_diverged` so
 operators do not infer the real order target from the retained exchange preference.
 | GET | `/version` | Build version info |
 | GET | `/stability` | Uptime and restart history |
@@ -87,13 +87,12 @@ operators do not infer the real order target from the retained exchange preferen
 | GET | `/opportunities` | List recent opportunities (scanner output) |
 | GET | `/proposals` | List trade proposals |
 | GET | `/proposals/{id}` | Get one proposal by id (404 when absent) |
-| POST | `/proposals/{id}/approve-paper` | Approve a pending, already-`paper_internal` proposal; non-paper or unresolved proposals return 409 without mutation; isolated preview API returns 403 before mutation |
 | POST | `/proposals/{id}/reject` | Reject proposal with reason |
 | GET | `/proposals/{id}/risk-decision` | View risk engine decision for proposal |
 | GET | `/positions` | List positions; closed rows expose only reproducible net PnL plus explicit completeness/reason fields |
 | GET | `/positions/reconciliation` | Local vs exchange position comparison |
 | POST | `/positions/reconcile` | Trigger position reconciliation |
-| POST | `/positions/{id}/close` | Owner-initiated manual close of one open position. `paper_internal` uses a fresh configured-venue mark; `*_demo`/`*_testnet` places a real exchange close order. `*_live_limited` returns HTTP 409 `live_position_requires_exchange_close` — close live positions from the exchange UI. Body: `{ order_type: "market"|"limit", limit_price?: number, reason?: string }`. Writes `actor=human`, `close_reason=human_manual_close` or `human_limit_exit`, keeping the attribution separate from AI exit discretion. Guarded by `_PROTECTED_METHOD_PREFIXES POST /api/positions/` when Remote Control / tunnel is enabled. |
+| POST | `/positions/{id}/close` | Owner-initiated manual close of one open position. External demo/testnet modes place a real exchange close order; archived or unknown modes are unavailable. `*_live_limited` returns HTTP 409 `live_position_requires_exchange_close` — close live positions from the exchange UI. Body: `{ order_type: "market"|"limit", limit_price?: number, reason?: string }`. Writes `actor=human`, `close_reason=human_manual_close` or `human_limit_exit`, keeping the attribution separate from AI exit discretion. Guarded by `_PROTECTED_METHOD_PREFIXES POST /api/positions/` when Remote Control / tunnel is enabled. |
 | GET | `/trades` | List orders/trades; optional `entry_plan_id` performs an exact server-side Entry Plan identity filter |
 | GET | `/trades/export` | CSV export of trade history; incomplete legacy PnL is blank and labelled, never exported as a valid tax/PnL number |
 

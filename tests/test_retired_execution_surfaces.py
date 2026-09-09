@@ -185,3 +185,14 @@ def test_new_proposal_and_snapshot_require_an_explicit_execution_mode():
         TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long")
     with pytest.raises(ValidationError, match="execution_mode"):
         PortfolioSnapshot(total_value_usdt=100)
+
+
+@pytest.mark.asyncio
+async def test_simulated_approval_route_is_removed():
+    from aletheia.server.routes import data
+
+    app = FastAPI()
+    app.include_router(data.router)
+    async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
+        response = await client.post("/api/proposals/archived/approve-paper")
+    assert response.status_code == 404

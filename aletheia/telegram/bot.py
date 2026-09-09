@@ -123,10 +123,12 @@ class TelegramBot:
 
     def _cmd_status(self) -> str:
         cfg = load_config()
+        from aletheia.config.exchange_alignment import exchange_alignment
+        alignment = exchange_alignment(cfg)
+        execution_exchange = alignment.execution_exchange
         exchange_label = (
-            "Local paper (no external exchange)"
-            if cfg.exchange.paper_execution_mode == "paper_internal"
-            else f"{cfg.exchange.name} ({cfg.exchange.mode})"
+            f"{execution_exchange} ({cfg.exchange.mode})" if execution_exchange
+            else "Not configured" if alignment.status == "not_configured" else "Unavailable"
         )
         # Issue #1745: plain text; _handle_update sends with parse_mode=None.
         return (

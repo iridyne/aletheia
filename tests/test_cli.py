@@ -66,20 +66,20 @@ def test_gateway_open_dashboard_succeeds_when_browser_launches(tmp_path, monkeyp
     assert launched == ["http://127.0.0.1:8787"]
 
 
-def test_gateway_status_labels_local_paper_without_an_exchange(tmp_path, monkeypatch):
+def test_gateway_status_reports_unconfigured_execution(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     cfg = loader.load_config()
     cfg.exchange.name = "okx"  # Retained preference, not an active connection.
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = ""
     loader.save_config(cfg)
 
     result = runner.invoke(app, ["gateway", "status"])
 
     assert result.exit_code == 1
-    assert "Exchange: Local paper (no external exchange)" in result.output
+    assert "Exchange: Not configured" in result.output
     assert "Exchange: okx" not in result.output
 
 
@@ -194,6 +194,10 @@ def cli_db(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    cfg = loader.load_config()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    loader.save_config(cfg)
     yield tmp_path
     reset_db()
 
@@ -373,6 +377,7 @@ def test_inspect_filtered_proposals_apply_filter_before_limit(cli_db):
 
     repo.insert_trade_proposal(
         TradeProposal(
+            execution_mode="bitget_demo",
             id="old-pending-proposal",
             symbol="BTC/USDT",
             market_type="spot",
@@ -383,6 +388,7 @@ def test_inspect_filtered_proposals_apply_filter_before_limit(cli_db):
     for idx in range(25):
         repo.insert_trade_proposal(
             TradeProposal(
+                execution_mode="bitget_demo",
                 id=f"new-approved-proposal-{idx}",
                 symbol="ETH/USDT",
                 market_type="spot",
@@ -433,7 +439,7 @@ def test_inspect_filtered_orders_apply_filter_before_limit(cli_db):
             direction="long",
             order_type="market",
             quantity=1,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             status="failed",
             source="adopted",
         )
@@ -447,7 +453,7 @@ def test_inspect_filtered_orders_apply_filter_before_limit(cli_db):
                 direction="short",
                 order_type="market",
                 quantity=1,
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 status="filled",
                 source="adopted",
             )
@@ -485,7 +491,7 @@ def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
 
     from aletheia.storage.models import Position
     from aletheia.storage.sqlite import get_db
-    from aletheia.storage.repositories import insert_position
+    from aletheia.storage import repositories as repo
 
     common = {
         "market_type": "usdt_futures",
@@ -499,38 +505,32 @@ def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
         "status": "closed",
         "closed_at": "2026-08-26T00:00:00+00:00",
     }
-    insert_position(
-        Position(
-            **common,
-            id="verified",
-            symbol="BTC/USDT",
-            realized_pnl=10.0,
-            funding_cost=0.0,
-            funding_source="local_simulation",
-        )
-    )
-    insert_position(
-        Position(
-            **common,
-            id="missing-funding",
-            symbol="ETH/USDT",
-            realized_pnl=10.0,
-            funding_cost=None,
-            funding_source="unavailable",
-            outcome_exclusion_reason="incomplete_funding_economics",
-        )
-    )
-    insert_position(
-        Position(
-            **common,
-            id="mismatched-raw",
-            symbol="SOL/USDT",
-            realized_pnl=999.0,
-            funding_cost=0.0,
-            funding_source="local_simulation",
-            outcome_exclusion_reason="",
-        )
-    )
+    repo._insert("positions", Position(
+        **common,
+        id="verified",
+        symbol="BTC/USDT",
+        realized_pnl=10.0,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+    ).model_dump())
+    repo._insert("positions", Position(
+        **common,
+        id="missing-funding",
+        symbol="ETH/USDT",
+        realized_pnl=10.0,
+        funding_cost=None,
+        funding_source="unavailable",
+        outcome_exclusion_reason="incomplete_funding_economics",
+    ).model_dump())
+    repo._insert("positions", Position(
+        **common,
+        id="mismatched-raw",
+        symbol="SOL/USDT",
+        realized_pnl=999.0,
+        funding_cost=0.0,
+        funding_source="local_simulation",
+        outcome_exclusion_reason="",
+    ).model_dump())
     get_db().execute(
         """INSERT INTO historical_accounting_reconciliations
            (position_id,reconciliation_version,status,reconstructed_realized_pnl,
@@ -569,7 +569,7 @@ def test_inspect_positions_uses_verified_realized_pnl_projection(cli_db):
     assert rows["mismatched-raw"]["realized_pnl_complete"] is False
     assert rows["mismatched-raw"]["historical_accounting_pnl"] == 9.5
 
-    human = runner.invoke(app, ["inspect", "positions", "--status", "closed"])
+    human = runner.invoke(app, ["inspect", "positions", "--status", "closed", "--execution-mode", "paper_internal"])
     assert human.exit_code == 0, human.output
     assert "realized_pnl=999.0" not in human.output
     assert "historical_accounting_pnl=9.5" in human.output
@@ -841,24 +841,24 @@ def test_inspect_equity_uses_current_account_equity_series(cli_db):
     assert result.exit_code == 0, result.output
     rows = json_mod.loads(result.output)
     assert len(rows) == 1
-    assert rows[0]["execution_mode"] == "paper_internal"
-    assert rows[0]["account_equity_usdt"] == 1000
-    assert rows[0]["positions_count"] == 2
+    assert rows[0]["execution_mode"] == "exchange_account"
+    assert rows[0]["account_equity_usdt"] == 2000
+    assert rows[0]["positions_count"] == 1
     assert "equity_usdt" not in rows[0]
     assert "open_positions" not in rows[0]
 
-    exchange = runner.invoke(
+    archived = runner.invoke(
         app,
-        ["inspect", "equity", "--execution-mode", "exchange_account", "--json"],
+        ["inspect", "equity", "--execution-mode", "paper_internal", "--json"],
     )
-    assert exchange.exit_code == 0, exchange.output
-    assert json_mod.loads(exchange.output)[0]["account_equity_usdt"] == 2000
+    assert archived.exit_code == 0, archived.output
+    assert json_mod.loads(archived.output)[0]["account_equity_usdt"] == 1000
 
     human = runner.invoke(app, ["inspect", "equity"])
     assert human.exit_code == 0, human.output
-    assert "mode=paper_internal" in human.output
-    assert "eq=$1000" in human.output
-    assert "pos=2" in human.output
+    assert "mode=exchange_account" in human.output
+    assert "eq=$2000" in human.output
+    assert "pos=1" in human.output
     assert "9999" not in human.output
 
 

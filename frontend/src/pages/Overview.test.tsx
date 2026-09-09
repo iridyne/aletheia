@@ -45,7 +45,7 @@ describe('Overview', () => {
           unavailable_row_count: 45, freshness_state_counts: { invalid: 45 } },
       }],
     }
-    client.setQueryData(['ui-shell-bootstrap'], { connectivity: { state: 'unknown', reason: 'No recent probe' } })
+    client.setQueryData(['ui-shell-bootstrap'], { connectivity: { state: 'unknown', reason: 'No recent probe' }, exchange: { status: 'not_configured', data_exchange: 'okx', execution_exchange: null } })
     client.setQueryData(['ui-overview-bootstrap'], {})
     client.setQueryData(['collector-health'], health)
     client.setQueryData(['market-data-coverage'], coverage)
@@ -54,6 +54,9 @@ describe('Overview', () => {
     const root = createRoot(host)
     try {
       await act(async () => root.render(<MemoryRouter><QueryClientProvider client={client}><Overview /></QueryClientProvider></MemoryRouter>))
+      const exchange = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Exchange'))!
+      expect(exchange.textContent).toContain('Not configured')
+      expect(exchange.textContent).not.toContain('okx')
       const collector = [...host.querySelectorAll<HTMLElement>('[role="button"]')].find(row => row.textContent?.startsWith('Collectors'))!
       expect(collector.textContent).toContain('Attention')
       expect(collector.getAttribute('aria-expanded')).toBe('false')

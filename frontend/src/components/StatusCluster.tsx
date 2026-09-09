@@ -44,17 +44,6 @@ function heartbeatAge(operator: any, fallback?: ShellBootstrap['operator']): str
   return minutes < 1 ? '<1m' : `${minutes}m`
 }
 
-function exchangeLabel(data: ShellBootstrap, status: any): string {
-  if (status) {
-    const mode = String(status.exchange_mode || '')
-    const exchange = String(status.exchange || '')
-    return status.uses_external_exchange ? `${exchange || '—'}${mode ? ` · ${mode}` : ''}` : 'Local paper · no exchange'
-  }
-  const exchange = data.exchange?.execution_exchange || data.exchange?.data_exchange
-  if (exchange) return `${exchange}${data.exchange?.paper_execution_mode ? ` · ${data.exchange.paper_execution_mode}` : ''}`
-  return data.exchange?.paper_execution_mode ? `Local paper · ${data.exchange.paper_execution_mode}` : 'Local paper · no exchange'
-}
-
 export default function StatusCluster({
   data,
   realtime,

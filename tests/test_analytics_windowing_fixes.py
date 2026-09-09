@@ -134,7 +134,8 @@ async def test_equity_curve_returns_recent_points_when_over_limit(tmp_path, monk
         )
 
 
-def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monkeypatch):
+@pytest.mark.parametrize("execution_mode,upnl", [("paper_internal", 0.0), (None, 7.0)])
+def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monkeypatch, execution_mode, upnl):
     _setup_env(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -172,7 +173,12 @@ def test_full_cumulative_equity_window_compares_absolute_instants(tmp_path, monk
         ),
     )
 
-    result = get_equity_curve(execution_mode="paper_internal", days=7)
+    from aletheia.portfolio import exchange_sync
+
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {"total_unrealized_pnl": 7.0})
+    monkeypatch.setattr(exchange_sync, "status_for", lambda state: "ok")
+    result = get_equity_curve(execution_mode=execution_mode, days=7)
+    assert result["current_unrealized"] == upnl
 
     assert [point["time"] for point in result["raw_recorded_points"]] == [after]
     assert [point["time"] for point in result["genuine_points"]] == [after]

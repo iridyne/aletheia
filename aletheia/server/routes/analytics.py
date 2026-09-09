@@ -651,11 +651,9 @@ def get_equity_curve(
     db = get_db()
 
     mode = "full_cumulative"
-    uses_external_exchange = False
     try:
         config = load_config()
         mode = config.app.equity_curve_mode
-        uses_external_exchange = config.exchange.paper_execution_mode != "paper_internal"
     except Exception:
         pass
 
@@ -728,7 +726,7 @@ def get_equity_curve(
     # Prefer authoritative cross-broker exchange uPnL (real mark-price + funding)
     # when not filtering by a single mode — keeps the chart's end point consistent
     # with the Overview UNREALIZED card, which also reads UTA uPnL.
-    if not execution_mode and uses_external_exchange:
+    if not execution_mode:
         try:
             from aletheia.portfolio import exchange_sync
             unified = exchange_sync.get_unified_cached_state()

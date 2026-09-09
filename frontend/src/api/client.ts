@@ -2070,7 +2070,6 @@ export const api = {
 	},
 	getProposals: () => fetchJson<any[]>("/proposals"),
 	getProposal: (id: string) => fetchJson<any>(`/proposals/${id}`),
-	approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
 	rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
 	getProposalRiskDecision: (id: string) =>
 		fetchJson<{
@@ -2840,7 +2839,7 @@ export type TradeInsights = components["schemas"]["TradeInsightsResponse"];
 
 
 export interface AccountEquityHistory {
-	source: "local_paper_ledger" | "exchange_account_snapshot";
+	source: "exchange_account_snapshot";
 	state: "available" | "unavailable";
 	points: { time: string; equity_usdt: number }[];
 	adjusted_points: {

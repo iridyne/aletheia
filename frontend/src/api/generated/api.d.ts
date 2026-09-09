@@ -4090,26 +4090,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/proposals/{proposal_id}/approve-paper": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Proposal
-         * @description Approve a stored local-paper proposal through the execution gateway.
-         */
-        post: operations["approve_proposal_api_proposals__proposal_id__approve_paper_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/proposals/{proposal_id}/reject": {
         parameters: {
             query?: never;
@@ -19580,37 +19560,6 @@ export interface operations {
         };
     };
     get_proposal_api_proposals__proposal_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_proposal_api_proposals__proposal_id__approve_paper_post: {
         parameters: {
             query?: never;
             header?: never;

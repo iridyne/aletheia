@@ -1522,7 +1522,7 @@ def _horizon_due_allow_hold(execution_mode: str | None) -> bool:
     """Safer default is True: expiry is not a forced flatten."""
     from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 
-    mode = str(execution_mode or "paper_internal")
+    mode = str(execution_mode or "")
     try:
         resolved = resolve_risk_policy(config_loader.load_config(), mode)
     except UnknownRiskExecutionMode:
@@ -1551,7 +1551,7 @@ def _horizon_hold_roll_hours(position: dict) -> float | None:
     try:
         resolved = resolve_risk_policy(
             config_loader.load_config(),
-            str(position.get("execution_mode") or "paper_internal"),
+            str(position.get("execution_mode") or ""),
         )
         backstop = float(resolved.policy.exits.horizon_hard_backstop_mult or 3.0)
     except (UnknownRiskExecutionMode, TypeError, ValueError):
@@ -1655,7 +1655,7 @@ async def review_portfolio_state(params: dict) -> dict:
     allow_horizon_hold = bool(
         horizon_due_review
         and _horizon_due_allow_hold(
-            sample_horizon.get("execution_mode") if sample_horizon else "paper_internal"
+            sample_horizon.get("execution_mode") if sample_horizon else ""
         )
     )
     portfolio_context["review_scope_positions"] = len(open_positions)

@@ -298,9 +298,9 @@ def status():
     )
 
     paper_execution_mode = cfg.exchange.paper_execution_mode
-    uses_external_exchange = paper_execution_mode != "paper_internal"
     from aletheia.config.exchange_alignment import exchange_alignment
     alignment = exchange_alignment(cfg)
+    uses_external_exchange = alignment.execution_exchange is not None
     try:
         h = _cached_compute_health()
     except Exception as e:
@@ -408,7 +408,7 @@ def status():
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
         "paper_execution_mode": paper_execution_mode,
-        "execution_target": "external_exchange" if uses_external_exchange else "local_paper",
+        "execution_target": "external_exchange" if uses_external_exchange else alignment.status,
         "uses_external_exchange": uses_external_exchange,
         "execution_exchange": alignment.execution_exchange,
         "market_data_exchange": alignment.data_exchange,

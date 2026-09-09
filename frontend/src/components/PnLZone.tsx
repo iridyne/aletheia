@@ -7,8 +7,6 @@ import type { AssetItem, PortfolioAccount, UTAAccount } from '../types'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 import { useCellFlash } from '../lib/useCellFlash'
 
-// Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
-
 const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
 const PnLChart = lazy(() => import('../charts/PnLChart'))
 // Bootstrap refresh replaces the old portfolio query cadence:

@@ -1,13 +1,13 @@
 """Tunnel-auth protection for owner-facing Proposal mutation routes.
 
 Covers the acceptance criteria from issue #394:
-- POST /api/proposals/{id}/approve-paper and POST /api/proposals/{id}/reject
+- POST /api/proposals/{id}/reject
   require X-Aletheia-Token when tunnel.enabled=True.
 - Missing/wrong token → 401, proposal unchanged, no Order/Fill/Position created.
-- Correct token → existing approval/rejection semantics work.
+- Correct token → existing rejection semantics work.
 - Tunnel disabled → local frictionless behavior preserved.
 - Actor source recorded as "owner" on authenticated tunnel calls, "dashboard" locally.
-- GET reads are never blocked by the proposal mutation guard.
+- GET reads also require authentication when tunnel mode is enabled.
 """
 
 import pytest
@@ -70,7 +70,7 @@ def _make_pending_proposal() -> TradeProposal:
         direction="long",
         quantity=0.001,
         price=60_000,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(p)
     return p
@@ -92,7 +92,6 @@ def _enable_tunnel(tmp_path, secret: str = "TUNNELSECRET42"):
 # ---------------------------------------------------------------------------
 
 _PROPOSAL_MUTATION_ROUTES = [
-    ("POST", "/api/proposals/{id}/approve-paper"),
     ("POST", "/api/proposals/{id}/reject"),
 ]
 
@@ -158,18 +157,6 @@ async def test_proposal_reject_with_correct_token_succeeds(client, tmp_path):
     assert repo.list_orders() == []
 
 
-@pytest.mark.anyio
-async def test_proposal_approve_no_token_creates_no_order(client, tmp_path):
-    """Unauthenticated approve-paper must not create any Order, Fill, or Position."""
-    _enable_tunnel(tmp_path)
-    proposal = _make_pending_proposal()
-
-    response = await client.post(f"/api/proposals/{proposal.id}/approve-paper")
-    assert response.status_code == 401
-
-    assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
-    assert repo.list_orders() == []
-    assert repo.list_positions(status="open") == []
 
 
 @pytest.mark.anyio
