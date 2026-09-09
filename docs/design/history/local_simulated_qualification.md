@@ -87,3 +87,11 @@ Learning consumer. It has been removed. Current consumer tests use verified
 external outcomes and assert administrative exclusions. The guard-promotion
 pipeline now uses the same external close producer for its losing cohort and
 still requires owner authority rather than promoting a loss correlation.
+
+The former anti-hallucination pipeline fabricated an internal-mode verified exit
+and required a StrategyRecord for high-confidence case studies. It now uses the
+shared external close producer and the current Proposal/Opportunity attribution
+contract. A reconciler-adopted position with a verified exit but unknown entry
+economics remains excluded from case creation and FTS retrieval. Symbol and daily
+loss rejection tests use external Demo configuration while retaining durable Risk
+and rejected-Proposal assertions.
