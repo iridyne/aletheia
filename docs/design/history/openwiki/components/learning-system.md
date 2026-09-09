@@ -1,3 +1,6 @@
+> Archived OpenWiki snapshot from `b7ec0d670`. This page is historical context,
+> not current code, configuration, execution authority or acceptance criteria.
+
 ---
 type: component
 title: Learning System (AT-01)

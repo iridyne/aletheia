@@ -1,18 +1,23 @@
+> Archived OpenWiki snapshot from `b7ec0d670`. This page is historical context,
+> not current code, configuration, execution authority or acceptance criteria.
+
 ---
 type: component
-title: Investment Committee System
-description: Multi-agent evaluation system (Trend/Macro/News/Risk + LLM) that reviews trading candidates before the System Operator decides; produces structured, auditable opinions with rule-gated explainability and quality-aware position sizing.
-tags: [committee, agents, evaluation]
+title: Investment Committee
+description: Multi-agent evaluation system (Trend/Macro/News/Risk + LLM) that produces structured, auditable trading opinions with rule-gated explainability and quality-aware position sizing.
+tags: [committee, decisions, evaluation, capital-allocation, explainability]
 ---
 
-# Investment Committee System
+# Investment Committee
 
-The Investment Committee (`aletheia/agents/committee/`) is a **multi-agent evaluation system** that reviews trading candidates before the System Operator makes the final decision. Each committee member evaluates opportunities through a different lens (Trend, Macro, News, Risk, or an LLM), producing structured, evidence-backed opinions that are aggregated by a deterministic rule engine. Two post-decision quality adjustments (short penalty + UNI variance cap) are applied to position sizing. The output is advisory and persisted to the append-only `committee_reports` table; the AI Jury page renders it via the read-only `/api/committee/reports` route.
+The **Investment Committee** (`aletheia/agents/committee/`) is Aletheia's multi-agent decision-making layer. It evaluates market opportunities through specialized agents that each produce structured, evidence-backed opinions. A deterministic rule engine gates decisions, and two post-decision quality adjustments (short penalty + UNI variance cap) are applied to position sizing. Committee output is advisory and persisted to the append-only `committee_reports` table; the AI Jury page (`frontend/src/pages/Committee.tsx`) renders it via the read-only `/api/committee/reports` route.
+
+## Architecture
 
 <!-- openwiki: mermaid parse failed and this diagram was converted to a text fence so it does not break rendering. Fix the diagram source and restore the mermaid fence. Parser error: Heuristic: an unescaped angle bracket inside a label breaks rendering; rephrase the label. -->
 ```text
 flowchart TD
-    A[Opportunity Candidates] --> B[InvestmentCommittee.evaluate / evaluate_with_llm]
+    A[Universe Candidates] --> B[InvestmentCommittee.evaluate / evaluate_with_llm]
     B --> C1[Trend Agent]
     B --> C2[Macro Agent]
     B --> C3[News Agent]
@@ -74,16 +79,6 @@ Deterministic post-decision checks over the preliminary `DecisionReport`. Rules 
 
 Default `total_timeout=240.0` and `max_concurrency=3` in `paper_trader.py` (down from 10) keep CPU headroom for API responses while the 5-minute cadence sweeps the full queue over time.
 
-## Committee Process
-
-1. **Convened:** `InvestmentCommittee` runs the selected mode (deterministic or LLM).
-2. **Assess:** Each agent (Trend/Macro/News/Risk/LLM) produces an `AgentOpinion` with structured evidence.
-3. **Aggregate:** `decision_core.decide()` aggregates opinions into a `DecisionResult`.
-4. **Gate:** `rule_engine.run_rules()` applies deterministic checks.
-5. **Adjust:** Quality adjustments (short penalty, UNI cap) are applied to `position_size_factor`.
-6. **Persist:** `report_generator.generate_report()` writes to the append-only `committee_reports` table.
-7. **Consume:** Candidates flow to the System Operator for final decision; AI Jury renders via `/api/committee/reports`.
-
 ## Committee Reports
 
 Evaluations are persisted to the append-only `committee_reports` table. Two read paths consume them:
@@ -116,7 +111,14 @@ Evaluations are persisted to the append-only `committee_reports` table. Two read
 
 ## Relationship to Other Components
 
-- [Committee](committee.md) — Canonical committee page with the same source-of-truth content
-- [Serenity Lens](../components/serenity-lens.md) — Regime assessment context
-- [Risk Engine](../components/risk-engine.md) — Downstream risk checks
+- [Serenity Lens](serenity-lens.md) — Regime assessment context for committee evaluation
+- [Risk Engine](risk-engine.md) — Portfolio/position risk checks beyond committee advisory scope
+<!-- openwiki: broken internal link [components/knowledge-base.md] file "components/knowledge-base.md" does not exist. Fix the href or restore the target, then delete this comment. -->
+- [Knowledge Base](components/knowledge-base.md) — Guardrails consulted alongside committee decisions
+- [Market Observer](market-observer.md) — Per-symbol LLM analysis feeding candidates
+- [Position Manager](position-manager.md) — Receives approved proposals downstream of committee
+<!-- openwiki: broken internal link [components/learning-system.md] file "components/learning-system.md" does not exist. Fix the href or restore the target, then delete this comment. -->
+- [Learning System](components/learning-system.md) — AT-01 measurement of committee outcomes
+<!-- openwiki: broken internal link [components/model-provider.md] file "components/model-provider.md" does not exist. Fix the href or restore the target, then delete this comment. -->
+- [Model Provider](components/model-provider.md) — LLM routing for `evaluate_with_llm`
 - [AI Jury Workbench](../frontend/overview.md#ai-jury-committee-workbench) — Read-only UI rendering committee data

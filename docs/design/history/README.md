@@ -45,3 +45,5 @@ reactivating a historical document in place.
 - [June 2026 framework module map](framework_module_map_202606.md): retired simulator-centered module inventory and promotion loop.
 
 - [Former Universe Fast Trigger Watch proposal](universe_fast_trigger_watch.md): retired Setup adapter, local execution and acceptance requirements.
+
+- [Former OpenWiki architecture snapshot](openwiki/README.md): original simulator, account, entry-loop, Learning and configuration pages, retained as a linked historical set.
