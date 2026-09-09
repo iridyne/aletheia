@@ -1,23 +1,4 @@
-"""Shared entry-time enrichment for execution brokers.
-
-The four brokers (paper / okx / binance / bitget) are structural clones. On OPEN
-each must stamp the new Position row with the same entry-time context so the
-downstream learning/analytics layer treats every venue identically:
-
-- ``btc_entry_price`` — BTC benchmark at entry (Edge Lab alpha/beta separation;
-  family_scorecard's alpha column is gated on this being non-null).
-- ``regime_tag``      — macro regime at entry (per-regime bucketing key in
-  reasoning_feedback / insight_synthesizer / post_trade_reviewer).
-- ``entry_market_summary`` — market-context JSON snapshot for post-trade review.
-- ``decision_reasoning``    — the originating proposal's agent rationale
-  (post-trade reviewer context + UI explainability).
-- ``entry_fee`` / ``slippage_cost`` — cost visibility at open time.
-
-Keeping this in ONE place means a live-broker clone can no longer silently drop
-these fields the way it dropped stop_price before ca782c7. paper_broker was the
-reference implementation; this is that logic factored out verbatim so all four
-brokers stamp identical metadata.
-"""
+"""Entry metadata and liquidation-price helpers for exchange execution."""
 
 from __future__ import annotations
 
@@ -31,8 +12,7 @@ def liquidation_price_for(
     """Estimated isolated-margin liquidation price for a futures open, or None.
 
     Returns None for spot / 1x (no liquidation) and on any computation failure —
-    a missing estimate must never break order recording. Shared across all four
-    brokers (clone rule) so paper/okx/binance/bitget store an identical estimate.
+    a missing estimate must never break order recording.
     """
     if not leverage or leverage <= 1 or not entry_price:
         return None
@@ -124,7 +104,7 @@ def build_entry_enrichment(
 ) -> dict:
     """Return the entry-time metadata fields every broker must stamp on a new Position.
 
-    Mirrors paper_broker's open path exactly. All sub-lookups are best-effort and
+    All sub-lookups are best-effort and
     never raise — a metadata lookup failure must never break order execution (this
     runs AFTER the exchange fill is already confirmed). ``requested_price`` is the
     pre-slippage requested entry; ``fill_price`` is the actual fill, so slippage_cost

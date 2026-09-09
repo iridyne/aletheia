@@ -51,10 +51,9 @@ def test_observe_tools_permitted_in_all_modes():
         assert is_tool_permitted("create_research_note", mode)
 
 
-def test_paper_tool_blocked_in_observe():
+def test_retired_order_tool_is_not_registered():
     init_tool_registry()
-    assert not is_tool_permitted("run_paper_order", "Observe")
-    assert is_tool_permitted("run_paper_order", "Paper")
+    assert "run_paper_order" not in TOOL_REGISTRY
 
 
 def test_restricted_tools_always_blocked():

@@ -8658,7 +8658,6 @@ def get_candidate_planning_for_candidate(
 
 def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
     """Read exact execution and settlement links from one SQLite snapshot."""
-    from aletheia.portfolio.paper_account import _TERMINAL_ECONOMICS_EXCLUSIONS
     from aletheia.portfolio.pnl import _realized_economics_value
     from aletheia.trading.trading_mandate import normalize_physical_market_type
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
@@ -8810,7 +8809,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                     item["execution_state"] = "POSITION_CLOSING" if position.get("pending_close_order_id") or position.get("pending_close_status") else "POSITION_OPEN"
                     continue
                 exclusion = str(position.get("outcome_exclusion_reason") or "")
-                if exclusion in _TERMINAL_ECONOMICS_EXCLUSIONS:
+                if exclusion in {"funding_permanently_unrecoverable", "invalid_exit_price_evidence"}:
                     item["economics"] = {"status": "excluded", "reason": exclusion}
                     item["execution_state"] = "OUTCOME_EXCLUDED"
                     continue

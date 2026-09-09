@@ -55,7 +55,7 @@ text changes:
 - If a source-text scan is genuinely the only option, its docstring must state
   **what it guarantees and what it does not**. A prefix/import denylist is
   direct-import hygiene, never a reachability guarantee — measure the transitive
-  closure before claiming otherwise (`DCLS-S01`).
+  closure before claiming otherwise.
 - Use AST, not substring matching, for anything about imports:
   `from a.b import c` and `from a.b.c import d` name different modules.
 - "String must be absent" stands alone. "String must be present" must be paired

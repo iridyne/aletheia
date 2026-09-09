@@ -1,3 +1,8 @@
+> Archived with Paper Internal retirement. This harness selected the retired
+> Python Operator, generated simulated fills and maintained its own cash ledger.
+> It and its dedicated tests are removed; this document is historical evidence,
+> not a current implementation or verification requirement.
+
 # Deterministic Control-Loop Simulation Contract
 
 ## Purpose

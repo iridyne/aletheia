@@ -129,7 +129,7 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
     assert e2e["mode"] == "deep"
     assert e2e["required"]["e2e"] is True
 
-    simulation = _plan(["tests/simulation/control_loop/test_stateful_control_loop.py"])
+    simulation = _plan(["tests/simulation/example.py"])
     assert simulation["mode"] == "deep"
     assert simulation["required"]["runtime"] is True
 

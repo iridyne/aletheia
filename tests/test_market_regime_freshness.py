@@ -96,7 +96,6 @@ def test_entry_quality_does_not_use_stale_cached_regime(monkeypatch):
     [
         ("aletheia.trading.entry_snapshot", "_current_regime"),
         ("aletheia.execution.position_enrichment", "current_regime"),
-        ("aletheia.execution.paper_broker", "_current_regime"),
     ],
 )
 def test_stale_regime_never_falls_back_to_macro_as_current(monkeypatch, module_name, function_name):

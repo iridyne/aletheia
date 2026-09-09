@@ -57,7 +57,6 @@ def _snapshot(monkeypatch, *, symbol: str, stock_linked: bool):
 
 
 def test_stock_linked_snapshot_omits_crypto_benchmark_and_regime(monkeypatch):
-    from aletheia.execution.paper_broker import _paper_position_attribution
     from aletheia.portfolio.pnl import _btc_benchmark_applicable
 
     snapshot = _snapshot(monkeypatch, symbol="SOXL/USDT", stock_linked=True)
@@ -68,13 +67,7 @@ def test_stock_linked_snapshot_omits_crypto_benchmark_and_regime(monkeypatch):
     assert context["analysis_context"]["kind"] == "stock_linked_perp"
     assert context["instrument_background"]["reference_asset"] == "SOXL"
 
-    attribution = _paper_position_attribution("SOXL/USDT", 100.0, snapshot)
-    assert attribution["btc_entry_price"] is None
-    assert attribution["regime_tag"] is None
-    summary = json.loads(attribution["entry_market_summary"])
-    assert "regime" not in summary
-    assert summary["analysis_context"]["kind"] == "stock_linked_perp"
-    assert _btc_benchmark_applicable({"entry_market_summary": attribution["entry_market_summary"]}) is False
+    assert _btc_benchmark_applicable({"entry_market_summary": json.dumps(context)}) is False
 
 
 def test_crypto_snapshot_keeps_btc_benchmark_and_regime(monkeypatch):
