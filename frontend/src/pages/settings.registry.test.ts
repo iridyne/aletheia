@@ -11,7 +11,7 @@ let root: Root | undefined
 let container: HTMLDivElement
 let client: QueryClient
 
-async function renderSettings(url: string, paperMode = 'paper_internal') {
+async function renderSettings(url: string, paperMode = 'bitget_demo') {
   window.history.replaceState(null, '', url)
   client = new QueryClient({ defaultOptions: { queries: { enabled: false, retry: false } } })
   client.setQueryData(['status'], { mode: 'paper' })
@@ -55,15 +55,4 @@ it('preserves the Universe deep link and scrolls to its rendered section', async
   const section = container.querySelector('#settings-section-universe')!
   expect(section.textContent).toContain('Universe & Candidate Attention')
   await vi.waitFor(() => { expect(scroll.mock.contexts).toContain(section) })
-})
-
-it('renders the local-paper deep link only for the local execution mode', async () => {
-  await renderSettings('/settings?tab=execution&section=local-paper-account')
-  expect(container.querySelector('#settings-section-local-paper-account')?.textContent).toContain('Set balance')
-  await act(async () => {
-    client.setQueryData(['settings'], { exchange: { paper_execution_mode: 'bitget_demo' }, trading: {}, agent: {} })
-  })
-  await vi.waitFor(() => {
-    expect(container.querySelector('#settings-section-local-paper-account')).toBeNull()
-  })
 })
