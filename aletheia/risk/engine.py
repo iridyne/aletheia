@@ -312,8 +312,11 @@ def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:
     """
     reservations: list[_UnresolvedEntryReservation] = []
     for row in list_unresolved_native_entry_orders_for_risk():
-        if row.get("execution_mode") == "paper_internal":
-            continue  # Archived order; no current account reservation.
+        if (
+            row.get("execution_mode") == "paper_internal"
+            and row.get(f"{_RISK_PROPOSAL_PREFIX}execution_mode") in (None, "paper_internal")
+        ):
+            continue  # An external Proposal cannot be hidden by a changed Order label.
         invalid: list[str] = []
         authority_valid = False
         proposal_snapshot: dict = {}
@@ -495,8 +498,11 @@ def _pre_order_entry_reservations(
     for row in list_active_entry_risk_reservations_for_risk(
         exclude_proposal_id=exclude_proposal_id,
     ):
-        if row.get("execution_mode") == "paper_internal":
-            continue  # Preserve the archived row without restoring its allowance.
+        if (
+            row.get("execution_mode") == "paper_internal"
+            and row.get(f"{_RISK_PROPOSAL_PREFIX}execution_mode") in (None, "paper_internal")
+        ):
+            continue  # Preserve archived allowances, not mislabeled external authority.
         invalid: list[str] = []
         if not _pre_order_reservation_has_exact_authority(row):
             invalid.append("entry_risk_reservation_authority_invalid")

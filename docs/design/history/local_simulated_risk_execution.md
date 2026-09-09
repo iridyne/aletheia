@@ -279,3 +279,14 @@ RiskDecision and audit evidence; preflight is a separate record. PL-RG-12 throug
 PL-RG-14 retain the current native **limit** plan completeness, geometry and
 reward:risk envelope. Native market intent and adopted exchange facts do not
 inherit the retired local-market plan gate.
+
+## Retired unresolved-order price exemption
+
+PL-UEE-15 allowed a simulated Order to carry a slipped price while reserving at
+least the original Proposal price without an authority violation. That local
+price exemption is retired. External Order price mutations must fail the existing
+immutable-authority check, which remains covered by PL-UEE-10.
+
+Archived Orders and pre-Order reservations remain stored but consume no current
+capacity. A row relabelled as `paper_internal` beneath an external Proposal is
+not an archived chain: the existing authority checks still apply to it.
