@@ -618,7 +618,7 @@ def _seed_closed_position(realized_pnl: float) -> None:
         quantity=0.01,
         entry_price=60000.0,
         realized_pnl=realized_pnl,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         closed_at=closed_at.isoformat(),
         close_reason="take_profit",
     )
