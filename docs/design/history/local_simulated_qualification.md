@@ -124,3 +124,9 @@ doctor or opportunity reports. Raw counts, selection labels and rejection
 reasons remain readable; absent historical stages do not diagnose current
 Entry Workbench health. The report no longer recommends repairing the retired
 pipeline and directs current-state inspection to `aletheia inspect entry-status`.
+
+Ranker Alpha retains its fixed-horizon candidate comparisons as historical
+analysis. Reports mark that layer as `historical_ranker` and no longer identify
+the deleted Ranker implementation or its former helpers as current repair
+targets. The filter registry still resolves archived entry filter IDs while
+excluding those stages from current controls.

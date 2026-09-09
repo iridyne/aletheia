@@ -653,8 +653,7 @@ _HISTORICAL_FILTER_REGISTRY: tuple[FilterSpec, ...] = (
         auto_tunable=False,
         authority_class="risk_or_safety",
         drop_share_hint=0.0,
-        note="Exchange-demo only. paper_internal and live #14 stay unchanged. "
-             "Risk records the same tokens as the authoritative backstop.",
+        note="Historical exchange-demo Ranker gate; original reason codes remain readable.",
     ),
     FilterSpec(
         name="risk_family_live_eligibility",

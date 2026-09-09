@@ -41,11 +41,6 @@ _MODULES_BY_LAYER = {
         "aletheia/universe/filters.py",
         "aletheia/universe/service.py",
     ],
-    "Ranker Alpha": [
-        "aletheia/agents/paper_trader_ranker.py",
-        "aletheia/analytics/factor_feedback.py",
-        "aletheia/knowledge/guards.py",
-    ],
     "System Operator Alpha": [
         "aletheia/agent_shell/trading_decision.py",
         "aletheia/agent_shell/trading_context.py",
@@ -553,7 +548,7 @@ def render_alpha_audit(report: dict) -> str:
     lines = ["Alpha Attribution Audit", "", f"Window: {report.get('window_days')}d", ""]
     ordered = [
         ("Universe", "universe"),
-        ("Ranker", "ranker"),
+        ("Ranker (historical)", "ranker"),
         ("System Operator", "system_operator"),
         ("Learning", "learning"),
         ("Serenity", "serenity"),
@@ -1435,7 +1430,6 @@ def _main_bottleneck(verdicts: dict) -> dict:
 def _next_action(key: str) -> str:
     return {
         "universe": "Do not tune the decision prompt first. Inspect universe scanner selection and its tradable-symbol baseline.",
-        "ranker": "Ranker top1 underperforms lower-ranked candidates. Inspect scoring weights, penalties, and eligibility filters.",
         "system_operator": "Do not change scanner. Improve System Operator decision prompt, model, and context selection.",
         "learning": "Learning artifacts are not reducing repeated losses. Inspect memo/guard consumption before adding more memories.",
         "serenity": "Serenity opportunities underperform baseline. Inspect the lens, evidence gating, and equity opportunity criteria.",
@@ -1462,6 +1456,7 @@ def _verdict(
     )
     return {
         "name": name,
+        **({"scope": "historical_ranker"} if name == "Ranker Alpha" else {}),
         "verdict": status,
         "sample_size": int(sample_size or 0),
         "baseline": _round_or_none(baseline),
