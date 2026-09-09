@@ -15,10 +15,11 @@ async API behavior.
   `busy_timeout`, one thread-local connection, and `was_in_tx` captured before
   writes; commit only when it was false. Keep scheduler `max_workers <= 3`; no
   transaction may span `await` or network/I/O.
-- Every `paper_internal` close writes both `positions.realized_pnl` and
-  `paper_account_events` through `settle_position_closed()`. Never repair one
-  table alone; use `settle_unsettled_paper_closes()` and the
-  `aletheia/portfolio/account_loss.py` module procedure.
+- Current external closes use verified exchange evidence through
+  `aletheia/portfolio/outcome_closure.py`; preserve Position, Order, Fill and
+  outcome identity. Retired simulator accounting is read-only history, not a
+  repair or settlement path; see [archived account controls](../../../design/history/local_paper_account_controls.md).
+  Never rewrite historical account events or convert them into external evidence.
 - New config fields require Settings controls; users do not edit config files.
   After frontend changes run `cd frontend && npm run build`.
 - Async FastAPI handlers never block the event loop. Read

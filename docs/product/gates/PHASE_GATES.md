@@ -187,7 +187,7 @@ The following are not current admission criteria:
 - counts of legacy strategies or strategy lifecycle transitions;
 - RuleSet/DSL/backtest promotion;
 - a top-level `knowledge_items.item_type='risk_lesson'` query;
-- exchange-demo visibility as a requirement for the active `paper_internal` proof;
+- the former internal-simulator proof profile or its adapter-visibility exclusions;
 - lesson/artifact counts as evidence of positive Learning contribution;
 - the June 2026 Round 1 calendar, tags, or MVP script.
 
