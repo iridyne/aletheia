@@ -12,10 +12,10 @@
 > 本文件仍保留有效的 CLI/目录结构/部分实现细节作参考;**契约层冲突时以 L2 design 文档为准**。
 > 长期不变的开发红线在 [trust_and_change_control](../../governance/policies/trust_and_change_control.md)。文档分层见 [DOC_SYSTEM_PLAN](../../product/documentation/DOC_SYSTEM_PLAN.md)。
 
-> **Target implementer:** Claude Code / Codex / Cursor / other AI coding agents  
-> **Target user:** one-person local AI-native trading system  
-> **Product name:** **Aletheia Trading OS**  
-> **CLI name:** `aletheia`, with optional short alias `ato`  
+> **Target implementer:** Claude Code / Codex / Cursor / other AI coding agents\
+> **Target user:** one-person local AI-native trading system\
+> **Product name:** **Aletheia Trading OS**\
+> **CLI name:** `aletheia`, with optional short alias `ato`\
 > **Primary objective:** build a local-first, file-based, Trading-as-Git, self-learning agentic trading OS for BTC / ETH / SOL on Bitget, starting in paper/demo mode and supporting strictly bounded live-limited execution later.
 
 ---
@@ -24,27 +24,27 @@
 
 Read this section before writing any code.
 
-1. **Do not build a heavy Docker/Postgres/Redis platform for MVP.**  
+1. **Do not build a heavy Docker/Postgres/Redis platform for MVP.**\
    MVP must run locally from a CLI gateway and serve a local dashboard.
 
-2. **Do not fork OpenAlice as the production base.**  
+2. **Do not fork OpenAlice as the production base.**\
    Use OpenAlice only as an inspiration for local-first design, Trading-as-Git, transparent reasoning, and guardrails.
 
-3. **Do not make Hermes Agent a production dependency.**  
+3. **Do not make Hermes Agent a production dependency.**\
    Recreate only the trading-specific subset: gateway, scheduler, model routing, memory, playbooks, dreaming, and tool calling.
 
-4. **Do not enable live trading by default.**  
+4. **Do not enable live trading by default.**\
    Initial state is always `live_disabled`. First live-limited activation requires explicit human action from Dashboard or CLI.
 
 5. **Do not expose API keys or secrets to agents, logs, Knowledge Base, reports, or prompt context.**
 
-6. **Agent autonomy is real but bounded.**  
+6. **Agent autonomy is real but bounded.**\
    The agent may generate research, modify paper strategy configs, create playbook drafts, and propose live-limited promotion. It may not modify hard risk limits, credentials, execution gateway logic, or signer/credential code.
 
-7. **Human controls boundaries, not strategy details.**  
+7. **Human controls boundaries, not strategy details.**\
    Human sets risk boundaries, allowed markets, live unlock, and feedback. The agent controls strategy design, parameter selection, timeframe selection, and paper experimentation inside those boundaries.
 
-8. **All actions must be auditable.**  
+8. **All actions must be auditable.**\
    Write to JSONL audit logs and SQLite state tables.
 
 ---

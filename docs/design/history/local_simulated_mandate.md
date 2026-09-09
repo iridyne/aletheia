@@ -33,4 +33,3 @@ current mandate.
 Adding this evidence to the existing hash-covered attribution snapshot rotates
 new Proposal `commit_hash` values. Behavior remaining observe-only does not make
 qualification or evidence identity automatically comparable.
-

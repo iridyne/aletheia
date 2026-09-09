@@ -88,5 +88,3 @@ def test_cost_summary_uses_half_open_adjacent_windows(run_id):
         "right-cost",
     }
     assert left["known_cost_subtotal_usd"] + right["known_cost_subtotal_usd"] == 3.0
-
-
