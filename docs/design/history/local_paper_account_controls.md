@@ -5,6 +5,11 @@ This is historical documentation for the retired Settings/API controls of
 does not authorize account mutation, simulated execution, settlement or
 restoration of the product feature. See the [accepted retirement](../proposals/retire_local_simulated_exchange.md).
 
+The former `PaperAccountEvent` construction model is deleted; historical ledger
+queries continue to read the stored rows. The unused UTA `local_paper` environment
+label is removed from current account identities; UTA profiles represent external
+exchange accounts. Existing raw records and migration history are unchanged.
+
 ## Former API
 
 | Method | Path | Historical behavior |

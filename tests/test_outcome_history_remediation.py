@@ -8,22 +8,22 @@ import pytest
 
 def _seed_polluted_history() -> None:
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import KnowledgeItem, PaperAccountEvent, Position
+    from aletheia.storage.models import KnowledgeItem, Position
 
     common = {
         "symbol": "BTC/USDT", "market_type": "spot", "direction": "long",
         "quantity": 1.0, "entry_price": 100.0, "execution_mode": "paper_internal",
         "status": "closed", "closed_at": "2026-07-10T12:00:00+00:00",
     }
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         **common, id="admin-close", realized_pnl=12.0,
         close_reason="reconciled_gone",
-    ))
-    repo.insert_position(Position(
+    ).model_dump())
+    repo._insert("positions", Position(
         **common, id="ambiguous-close", realized_pnl=-4.0,
         close_reason="manual",
-    ))
-    repo.insert_paper_account_event(PaperAccountEvent(
+    ).model_dump())
+    repo._insert("paper_account_events", dict(
         id="cash-admin", action="position_closed", amount_usdt=12.0,
         cash_balance_before_usdt=1000.0, cash_balance_after_usdt=1012.0,
         position_id="admin-close",

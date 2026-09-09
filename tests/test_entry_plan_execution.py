@@ -1095,7 +1095,7 @@ def test_execution_lineage_does_not_mix_concurrent_fill_commit(tmp_path, monkeyp
 
 def test_archived_execution_lineage_keeps_position_and_checks_cash_evidence(tmp_path, monkeypatch):
     from tests.test_sqlite_writer import _setup_db
-    from aletheia.storage.models import Position, PaperAccountEvent
+    from aletheia.storage.models import Position
 
     _setup_db(tmp_path, monkeypatch)
     plan, order = _persist_ordered_plan()
@@ -1125,12 +1125,12 @@ def test_archived_execution_lineage_keeps_position_and_checks_cash_evidence(tmp_
                        ("close-event", position.id, 5))
     before = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert before["economics"]["status"] == "unavailable"
-    repo._insert("paper_account_events", PaperAccountEvent(action="position_closed", amount_usdt=4, cash_balance_before_usdt=100, cash_balance_after_usdt=104,
-                                                     position_id=position.id).model_dump())
+    repo._insert("paper_account_events", dict(id="archived-close-cash", action="position_closed", amount_usdt=4, cash_balance_before_usdt=100, cash_balance_after_usdt=104,
+                                                     position_id=position.id))
     mismatch = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert mismatch["economics"]["status"] == "unavailable"
-    repo._insert("paper_account_events", PaperAccountEvent(action="manual_credit", amount_usdt=1, cash_balance_before_usdt=104, cash_balance_after_usdt=105,
-                                                     position_id=position.id).model_dump())
+    repo._insert("paper_account_events", dict(id="archived-manual-cash", action="manual_credit", amount_usdt=1, cash_balance_before_usdt=104, cash_balance_after_usdt=105,
+                                                     position_id=position.id))
     settled = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert settled["economics"]["status"] == "complete"
     assert settled["execution_state"] == "CLOSED"

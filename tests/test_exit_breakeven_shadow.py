@@ -11,10 +11,7 @@ from aletheia.analytics.exit_breakeven_shadow import (
     build_exit_breakeven_shadow_report,
 )
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import (
-    ExitBreakevenShadowAssignment,
-    Position,
-)
+from aletheia.storage.models import Position
 
 
 OPENED = "2026-08-08T00:00:00+00:00"
@@ -43,11 +40,14 @@ def _seed_position(position_id: str = "exit-shadow-position", *, direction: str 
     return repo.get_position(position.id)
 
 
-def _assignment(position: dict, *, direction: str = "long") -> ExitBreakevenShadowAssignment:
+def _assignment(position: dict, *, direction: str = "long") -> dict:
     rule_json = json.dumps({"test": True}, sort_keys=True, separators=(",", ":"))
     import hashlib
 
-    return ExitBreakevenShadowAssignment(
+    return dict(
+        experiment_version="exit-breakeven-shadow/v1",
+        treatment_id="entry-lock-after-1.5pct/v1",
+        timeframe="1m",
         position_id=position["id"],
         assigned_at=ASSIGNED,
         venue="bitget",
@@ -119,7 +119,7 @@ def test_report_bootstrap_is_deterministic_by_position(monkeypatch):
 
 def test_report_counts_closed_assignment_without_outcome_as_unsettled():
     position = _seed_position()
-    repo._insert("exit_breakeven_shadow_assignments", _assignment(position).model_dump())
+    repo._insert("exit_breakeven_shadow_assignments", _assignment(position))
     _close(position["id"])
 
     before = repo.get_db().total_changes

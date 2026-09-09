@@ -11,6 +11,11 @@ remain intact. Reports read stored outcomes and recovery observations; an absent
 observation remains unavailable and is not fetched or reconstructed. New closes
 do not enroll in these experiments or enqueue their retired outcome hooks.
 
+The former `PositionExitPlanVersion`, `PositionProtectionState`,
+`PositionProtectionTrigger`, `ExitBreakevenShadowAssignment` and
+`ExitBreakevenShadowOutcome` construction models are deleted as well. Historical
+reports read stored rows directly; the schema and its immutable evidence remain.
+
 ## Former data-model contract
 
 ## 11. Protective Barrier Contract (schema v9 storage; Paper runtime active)

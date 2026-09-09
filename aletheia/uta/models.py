@@ -109,7 +109,7 @@ class UTAAccountIdentity(UTAModel):
     account_id: str = Field(min_length=1)
     execution_mode: str = Field(min_length=1)
     venue: str = Field(min_length=1)
-    environment: Literal["sandbox", "demo", "testnet", "live", "local_paper"]
+    environment: Literal["sandbox", "demo", "testnet", "live"]
     profile: str = Field(min_length=1)
     account_fingerprint: str | None = None
     credential_generation: int = Field(ge=0)
