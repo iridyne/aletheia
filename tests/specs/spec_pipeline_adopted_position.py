@@ -460,13 +460,13 @@ def test_no_open_adopted_position_has_null_stop(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-ADOPT-08", "pipeline_adopted_position", "§8 demo_adopted_stop_fires", "L2b",
-        "A demo adopted position whose stop level is breached is closed by "
-        "evaluate_open_positions() with close_reason='stop_loss'. "
-        "End-to-end: adopt → price hits SL → position closed.",
+        "A demo adopted position whose stop level is breached submits one reduce-only "
+        "close via evaluate_open_positions(); private-fill reconciliation then closes "
+        "the position with close_reason='stop_loss'.",
     ),
 )
 def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
-    conn = _setup_db(tmp_path, monkeypatch)
+    _setup_db(tmp_path, monkeypatch)
     _stub_notifications(monkeypatch)
     _stub_audit(monkeypatch, tmp_path)
 
@@ -480,9 +480,8 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
     import aletheia.config.loader as loader_mod
     from aletheia.config.schema import AletheiaConfig
 
-    # Use paper_internal so close routing stays local (no exchange call needed).
     cfg = AletheiaConfig()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     monkeypatch.setattr(loader_mod, "load_config", lambda: cfg)
 
     from aletheia.portfolio.position_reconciler import adopt_position
@@ -531,12 +530,20 @@ def test_demo_adopted_position_stop_fires(tmp_path, monkeypatch):
         lambda symbol, market_type, *, venue: breach_price,
     )
 
-    result = evaluate_open_positions()
+    from aletheia.storage.models import Position
+    from aletheia.storage import repositories as repo
+    from tests.test_position_manager import _prepare_exchange_close
 
-    assert result["closed"] >= 1, (
-        f"Expected position_manager to close adopted short position when price "
-        f"({breach_price}) breached stop ({stop_level}). result={result}"
-    )
+    position = Position.model_validate(repo._select_one("positions", position_id))
+    submitted = _prepare_exchange_close(monkeypatch, position, breach_price)
+    result = evaluate_open_positions()
+    assert len(submitted) == 1
+    assert submitted[0].reduce_only is True
+
+    assert result["closed"] == 0
+    assert repo.get_position(position_id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
 
     closed_row = db.execute(
         "SELECT status, close_reason FROM positions WHERE id=?", (position_id,)

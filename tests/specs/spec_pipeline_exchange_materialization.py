@@ -746,7 +746,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(tmp_path, monke
         direction="long",
         quantity=0.1,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(root)
 
@@ -757,7 +757,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(tmp_path, monke
             direction="long",
             quantity=0.1 + index,
             price=3000.0 + index,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             parent_hash=root.commit_hash,
         )
         for index in range(2)
