@@ -16,6 +16,7 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ValidationError
 
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
 from aletheia.data.symbols import to_canonical
 from aletheia.storage.models import (
     AgentRun,
@@ -90,6 +91,12 @@ _PHYSICAL_PROTECTION_MARKETS = {
 }
 
 POSITION_PATH_MAX_RETRY_ATTEMPTS = 3
+_POSITION_PATH_EXECUTION_SCOPE_SQL = "p.execution_mode IN (" + ",".join(
+    f"'{mode}'" for mode in (
+        *(demo_mode for _, demo_mode in EXCHANGE_UNIFICATION_MAP.values()),
+        *LIVE_EXECUTION_MODES.values(),
+    )
+) + ")"
 
 
 class PositionProtectionConflict(RuntimeError):
@@ -3144,8 +3151,9 @@ def enqueue_position_path_observation_buckets_through(
             bucket_open = datetime.fromtimestamp(bucket_open_ms / 1000, tz=timezone.utc).isoformat()
             bucket_end = datetime.fromtimestamp((bucket_open_ms + 300_000) / 1000, tz=timezone.utc).isoformat()
             positions = db.execute(
-                "SELECT id,opened_at,status,closed_at FROM positions "
-                "WHERE aletheia_instant_us(opened_at) <= ? "
+                "SELECT id,opened_at,status,closed_at FROM positions p "
+                f"WHERE {_POSITION_PATH_EXECUTION_SCOPE_SQL} "
+                "AND aletheia_instant_us(opened_at) <= ? "
                 "AND (status='open' OR ("
                 "status='closed' AND aletheia_instant_us(closed_at) >= ?)) "
                 "ORDER BY rowid",
@@ -3220,9 +3228,12 @@ def list_positions_for_path_observation_bucket(*, bucket_open: str, bucket_end: 
 
 
 def list_positions_for_path_observation_recovery() -> list[dict]:
-    """Return every open/closed Position whose expected path may need recovery."""
+    """Return external open/closed Positions whose expected path may need recovery."""
 
-    rows = get_db().execute("SELECT * FROM positions WHERE status IN ('open','closed') ORDER BY rowid DESC").fetchall()
+    rows = get_db().execute(
+        "SELECT p.* FROM positions p WHERE status IN ('open','closed') "
+        f"AND {_POSITION_PATH_EXECUTION_SCOPE_SQL} ORDER BY p.rowid DESC"
+    ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -3321,9 +3332,10 @@ def list_exhausted_deferred_position_path_buckets(*, limit: int = 2_000) -> list
     rows = (
         get_db()
         .execute(
-            "SELECT * FROM position_path_observation_deferred_buckets "
-            "WHERE attempt_count >= ? "
-            "ORDER BY bucket_open_ms, position_id LIMIT ?",
+            "SELECT d.* FROM position_path_observation_deferred_buckets d "
+            "JOIN positions p ON p.id=d.position_id "
+            f"WHERE {_POSITION_PATH_EXECUTION_SCOPE_SQL} AND d.attempt_count >= ? "
+            "ORDER BY d.bucket_open_ms, d.position_id LIMIT ?",
             (POSITION_PATH_MAX_RETRY_ATTEMPTS, bounded_limit),
         )
         .fetchall()
@@ -3345,7 +3357,8 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
     bounded_limit = max(1, min(int(limit), 2_000))
     due_sql = (
         "SELECT d.* FROM position_path_observation_deferred_buckets d "
-        "WHERE d.attempt_count < ? "
+        "JOIN positions p ON p.id=d.position_id "
+        f"WHERE {_POSITION_PATH_EXECUTION_SCOPE_SQL} AND d.attempt_count < ? "
         "AND NOT EXISTS ("
         "SELECT 1 FROM position_path_observation_deferred_buckets earlier "
         "WHERE earlier.position_id=d.position_id "
@@ -3383,22 +3396,26 @@ def list_oldest_deferred_position_path_bucket(*, limit: int = 2_000) -> list[dic
 
 
 def count_deferred_position_path_observation_buckets() -> int:
-    """Return the durable Position/bucket retry queue size."""
+    """Return the active external Position/bucket retry queue size."""
 
-    row = get_db().execute("SELECT COUNT(*) AS count FROM position_path_observation_deferred_buckets").fetchone()
+    row = get_db().execute(
+        "SELECT COUNT(*) AS count FROM position_path_observation_deferred_buckets d "
+        "JOIN positions p ON p.id=d.position_id "
+        f"WHERE {_POSITION_PATH_EXECUTION_SCOPE_SQL}"
+    ).fetchone()
     return int(row["count"]) if row else 0
 
 
 def count_position_path_observations_since(since_bucket_open_ms: int) -> dict[str, int]:
-    """Count immutable facts whose bucket starts in the trailing window."""
+    """Count external-account observations in the trailing window."""
 
     rows = (
         get_db()
         .execute(
-            "SELECT evidence_status, COUNT(*) AS count "
-            "FROM position_path_observations "
-            "WHERE bucket_open_ms >= ? "
-            "GROUP BY evidence_status",
+            "SELECT o.evidence_status, COUNT(*) AS count "
+            "FROM position_path_observations o JOIN positions p ON p.id=o.position_id "
+            f"WHERE {_POSITION_PATH_EXECUTION_SCOPE_SQL} AND o.bucket_open_ms >= ? "
+            "GROUP BY o.evidence_status",
             (int(since_bucket_open_ms),),
         )
         .fetchall()

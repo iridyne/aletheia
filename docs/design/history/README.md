@@ -21,3 +21,5 @@ reactivating a historical document in place.
 - [Local simulated mandate provenance](local_simulated_mandate.md): retired automatic attribution producer; historical identities remain readable.
 
 - [Local simulated runtime scope](local_simulated_runtime_scope.md): retired startup and update exemptions, replaced by explicit external-account scope.
+
+- [Local simulated position observation](local_simulated_position_observation.md): retired simulated path recovery and protection-derived observation identity.
