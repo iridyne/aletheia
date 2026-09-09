@@ -97,6 +97,30 @@ def test_detector_matches_native_and_adopted_reopens_with_scoped_identity():
     assert all(row["execution_mode"] == "okx_demo" for row in detected["churned_identities"])
 
 
+def test_archived_churn_does_not_enter_current_incidents():
+    from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.sqlite import get_db
+
+    now = datetime.now(timezone.utc)
+    for symbol in ("BTC/USDT", "ETH/USDT"):
+        for state in ("closed", "reopened"):
+            repo._insert("positions", _position(
+                pid=f"archived-{state}-{symbol}", symbol=symbol, source="native",
+                execution_mode="paper_internal",
+                opened_at=(now - timedelta(minutes=10 if state == "closed" else 1)).isoformat(),
+                closed_at=(now - timedelta(minutes=2)).isoformat() if state == "closed" else None,
+                close_reason="reconciled_gone" if state == "closed" else None,
+            ).model_dump())
+    writes = get_db().total_changes
+    detected = detect_reconcile_thrash()
+    assert detected["detector_available"] is True
+    assert detected["is_thrashing"] is False
+    assert detected["administrative_close_recent"] == detected["reopened_recent"] == 0
+    assert detected["churned_identities"] == []
+    assert get_db().total_changes == writes
+
+
 def test_structured_administrative_category_triggers_without_hardcoded_reason():
     from aletheia.portfolio.position_reconciler import detect_reconcile_thrash
 
@@ -324,7 +348,7 @@ def test_operator_prompt_progressive_unlock_and_rollout_share_incident_refreeze(
         ),
         runtime=SimpleNamespace(kill_switch_active=False),
         exchange=SimpleNamespace(
-            paper_execution_mode="paper_internal",
+            paper_execution_mode="bitget_demo",
         ),
     )
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: rollout_cfg)

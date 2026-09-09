@@ -1188,33 +1188,36 @@ def test_fresh_but_incomplete_unified_never_orphans(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "PL-ADOPT-22", "pipeline_adopted_position", "§22 execution_account_scope", "L2c",
-        "Reconciliation scopes local rows to the active execution account; paper_internal "
-        "positions are local-only and can never become exchange orphans.",
+        "Reconciliation scopes rows to registered external accounts; archived accounts "
+        "cannot become managed positions or exchange orphans.",
         status="implemented",
     )
 )
-def test_paper_internal_is_outside_exchange_reconciliation_scope(tmp_path, monkeypatch):
+def test_archived_account_is_outside_active_reconciliation_scope(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     _write_config(tmp_path, monkeypatch, "paper_internal")
 
     from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         symbol="VIRTUAL/USDT", market_type="usdt_futures", direction="short",
         quantity=100.0, entry_price=0.6, execution_mode="paper_internal", status="open",
-    ))
+    ).model_dump())
 
     from aletheia.portfolio import position_reconciler as pr
     monkeypatch.setattr(pr.exchange_sync, "get_unified_cached_state", lambda: {
         "positions": [], "accounts": [], "age_seconds": 1.0,
     })
-    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda *args, **kwargs: "ok")
+    from aletheia.storage.sqlite import get_db
+    before = [dict(row) for row in get_db().execute("SELECT * FROM positions")]
 
     result = pr.classify_positions("demo")
-    assert result.sync_status == "local_only"
-    assert len(result.managed) == 1
+    assert result.sync_status == "unconfigured"
+    assert result.managed == []
     assert result.orphaned == []
     assert result.external == []
+
+    assert [dict(row) for row in get_db().execute("SELECT * FROM positions")] == before
 
 
 @spec_claim(

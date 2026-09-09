@@ -11,3 +11,11 @@ registered external accounts, with venue derived from execution mode. Simulated
 positions, prior observations, protection plans, deferred queues and hashes remain
 unchanged and readable as history. Current lifecycle projection still uses actual
 entry/reduction/close facts; it does not recreate protection or settlement history.
+
+## Reconciliation
+
+The retired reconciler classified simulated positions as managed with a
+`local_only` status. Administrative-close/reopen detection also scanned simulated
+history. Both paths are removed: active classification and incident detection use
+registered external accounts. Retired account configuration is unconfigured for
+reconciliation, while existing positions and incident records remain unchanged.

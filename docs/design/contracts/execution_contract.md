@@ -241,7 +241,9 @@ Position reconciler 的匹配身份必须包含执行账户作用域：`executio
 account_environment + canonical symbol + market_type + direction`；双方都带非敏感 account fingerprint
 且值不同时禁止匹配。`source=native/adopted` 只解释仓位如何重新出现，不得限制事故探测。
 外部 Demo/Live 只比较当前执行账户对应的本地仓；其他账户仓位不进入本次分类，不能被当前账户关闭。
-归档本地账户没有交易所对应物，外部缓存不得将其分类为 `orphaned` 或关闭其历史仓位。
+当前分类只接受已注册的外部执行模式；退役账户配置返回 `unconfigured`，不产生受管仓位分类。
+归档本地账户不参与当前对账事故检测，外部缓存不得将其分类为 `orphaned` 或关闭其历史仓位。
+历史记录保持原样，旧分类定义见[归档](../history/local_simulated_position_observation.md#reconciliation)。
 Live 作用域从 `exchange.name` 派生对应的 `*_live_limited`，不得硬编码某一家交易所（`PL-ADOPT-23`）。
 统一 Demo 快照中的每条非零仓位必须有 `broker_id`，且只匹配当前执行账户；账户标签缺失时必须降级为
 不可用，不能据此推断本地仓已从交易所消失（`PL-ADOPT-24`）。统一快照当前不包含 Live 账户，禁止用
