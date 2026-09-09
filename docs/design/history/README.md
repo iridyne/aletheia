@@ -31,3 +31,5 @@ reactivating a historical document in place.
 - [Former product scope](local_simulated_product_scope.md): superseded simulator mainline, support claims and duplicated Learning gates.
 
 - [Local simulated Alpha audit](local_simulated_alpha_audit.md): former report outputs and contribution definitions.
+
+- [Former product gates and metrics](local_simulated_product_gates.md): retired simulator accounting prerequisites and legacy Learning promotion definitions.
