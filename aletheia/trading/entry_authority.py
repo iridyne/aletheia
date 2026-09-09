@@ -23,7 +23,7 @@ def resolve_entry_runtime_authority(cfg) -> EntryRuntimeAuthority:
     """Resolve capability and target independently; Live stays a separate gate."""
 
     route = str(cfg.exchange.paper_execution_mode or "").strip()
-    minimum = "Paper" if route == "paper_internal" else ENTRY_EXECUTION_MINIMUM_PERMISSION.get(route)
+    minimum = ENTRY_EXECUTION_MINIMUM_PERMISSION.get(route)
     if str(cfg.live.state) != "live_disabled":
         return EntryRuntimeAuthority(False, route, minimum, "entry_live_authority_unavailable")
     if minimum is None:

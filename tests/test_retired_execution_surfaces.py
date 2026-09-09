@@ -7,6 +7,29 @@ from httpx import ASGITransport, AsyncClient
 from aletheia.server.routes import settings
 
 
+def test_new_config_has_no_implicit_execution_account():
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    assert cfg.exchange.name == cfg.exchange.paper_execution_mode == cfg.risk.allowed_exchange == ""
+
+
+@pytest.mark.parametrize("mode", ["paper_internal", ""])
+def test_retired_or_unconfigured_mode_has_no_entry_or_risk_authority(mode):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
+    from aletheia.trading.entry_authority import resolve_entry_runtime_authority
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = mode
+    cfg.agent.permission_mode = "Full"
+    with pytest.raises(UnknownRiskExecutionMode):
+        resolve_risk_policy(cfg, mode)
+    authority = resolve_entry_runtime_authority(cfg)
+    assert not authority.allowed
+    assert authority.reason == "entry_execution_route_unsupported"
+
+
 @pytest.mark.parametrize("method,path", [
     ("GET", "/paper-account"),
     ("POST", "/paper-account/credit"),

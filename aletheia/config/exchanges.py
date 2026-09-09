@@ -9,7 +9,7 @@ EXCHANGE_UNIFICATION_MAP: dict[str, tuple[str, str]] = {
     "binance": ("binance", "binance_testnet"),
 }
 
-VALID_EXCHANGES: list[str] = sorted(EXCHANGE_UNIFICATION_MAP.keys()) + ["paper_internal"]
+VALID_EXCHANGES: list[str] = sorted(EXCHANGE_UNIFICATION_MAP)
 
 # The live account is deliberately a different execution mode from the paper
 # broker.  Keep this mapping beside the paper unification map so every trust,

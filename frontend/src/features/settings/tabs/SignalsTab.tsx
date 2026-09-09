@@ -64,7 +64,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const executionExchange = executionExchangeFromPaperMode(
     String(exchangeSettings.paper_execution_mode || ''),
-    String(exchangeSettings.name || ''),
   )
   const createsDivergence = executionExchange !== null
     && primary !== executionExchange

@@ -1,35 +1,8 @@
-"""Pipeline: exchange-mode EntryPlan → Risk → Gateway → Order → Fill → Position.
+"""Exchange EntryPlan → Risk → Gateway → Order → private Fill → Position.
 
-The entry counterpart of `test_pipeline_exchange_position_to_close.py`. Every
-existing test that drives an entry as far as an Order runs on `paper_internal`
-(#2993), so the segment that *opens* a position has no coverage at all on the
-modes it will actually run on. `_persist_waiting_plan` already defaults to
-`bitget_demo`, but every caller that reaches the order path overrides it back to
-paper — including `test_controlled_grounded_candidate_through_real_paper_close`,
-which asserts `list_positions(execution_mode="paper_internal")`.
-
-Offline by construction: the venue is the same UTA adapter double the coordinator
-tests use. No network, no credentials, no recorded fixtures.
-
-Routing under test — `bitget_demo`, NOT paper:
-
-    execute_entry_plan()              # real Entry Plan owner
-      → gateway.submit_proposal()     # real Risk gate, claim, dispatch
-      → coordinator.execute_order()   # exchange modes only
-      → adapter submit → Order acknowledgement → private Fill → Position
-
-What this asserts beyond "it worked": the Order carries the exact
-`uta_account_identity_json` of the account that acknowledged it, which is the
-identity link the whole close/reconciliation chain later depends on
-(execution_contract.md:235 — 提交前持久化 exact `uta_account_identity_json`).
-
-Scope boundary, stated so this is not mistaken for more than it proves: Risk is
-represented by an approving double, as in the paper counterpart. This file proves
-that *given* an approved RiskDecision the exchange path persists a truthful
-identity chain. Whether the real Risk gate approves an exchange-mode Entry Plan
-is a separate claim, and its paper counterpart
-(`test_paper_internal_entry_plan_passes_real_risk_gate`) has no exchange-mode
-equivalent yet either.
+Uses the existing UTA adapter double without network or credentials. Covers
+account identity, acknowledgements, partial fills, replay and database reconnect.
+The final Risk cases exercise the real gate; routing cases supply a Risk decision.
 """
 
 from datetime import datetime, timezone
@@ -347,8 +320,7 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     assert position["status"] == "open"
     assert position["order_id"] == order["id"]
     assert position["entry_price"] == pytest.approx(100.05)
-    # Paper never appears anywhere in this lineage.
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 
 @pytest.mark.parametrize(
@@ -407,7 +379,7 @@ def test_non_acknowledged_entry_invents_no_economics(
     # Nothing economic, whatever the venue said.
     assert repo.list_fills(order_id=order["id"]) == []
     assert repo.list_positions(execution_mode=_MODE) == []
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 
 def test_partial_private_fill_does_not_report_a_complete_entry(e2e_db, monkeypatch):
@@ -431,7 +403,7 @@ def test_partial_private_fill_does_not_report_a_complete_entry(e2e_db, monkeypat
     # Whatever the partial state is called, it must not claim the full quantity.
     fills = repo.list_fills(order_id=order["id"])
     assert sum(float(row["fill_quantity"]) for row in fills) < requested
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 
 def test_replayed_private_fill_evidence_stays_idempotent(e2e_db, monkeypatch):
@@ -540,7 +512,7 @@ def test_acknowledged_entry_recovers_after_the_connection_is_reopened(
     positions = repo.list_positions(execution_mode=_MODE)
     assert len(positions) == 1
     assert positions[0]["order_id"] == order_id
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 
 @pytest.mark.parametrize(
@@ -606,24 +578,12 @@ def test_entry_with_unavailable_cost_is_not_reported_as_complete(
 def test_real_risk_refuses_an_exchange_entry_the_runtime_is_not_configured_for(
     e2e_db, monkeypatch
 ):
-    """The real Risk engine, not an approving double, and it fails closed.
+    """A Demo order cannot execute against an explicitly selected live mode."""
+    from aletheia.config.loader import load_config, save_config
 
-    Every other entry test here represents Risk by a decision that always
-    approves, which proves routing but says nothing about whether Risk itself
-    admits an exchange-mode Entry Plan. `evaluate_proposal` is left in place here.
-
-    What it refuses is worth recording, because it is the same wall the Bitget Demo
-    runtime proof sits behind (#2899): with `exchange.mode = "paper"` Risk rejects
-    a `bitget_demo` order as `account_mode_mismatch`, before and independently of
-    the missing account equity and market snapshot it also names. Switching the
-    runtime's execution mode is therefore not cosmetic — Risk enforces the
-    agreement between the configured venue and the order's execution mode, and no
-    amount of credentials substitutes for it.
-
-    The approving-path counterpart (real Risk *admitting* an exchange entry) needs
-    a configured demo mode plus known account equity plus a fresh venue snapshot,
-    and is not covered here.
-    """
+    cfg = load_config()
+    cfg.exchange.mode = "live"
+    save_config(cfg)
     submitted, _ = _wire_venue(monkeypatch)
     plan = _seeded_plan()
 
@@ -636,7 +596,7 @@ def test_real_risk_refuses_an_exchange_entry_the_runtime_is_not_configured_for(
     # Nothing reached the venue and nothing durable was created.
     assert submitted == []
     assert repo.list_positions(execution_mode=_MODE) == []
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
     decisions = repo.list_risk_decisions(limit=20)
     assert decisions, "Risk must record its refusal, not stay silent"
     assert not any(row["approved"] for row in decisions), decisions
@@ -739,7 +699,7 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
     assert UTAAccountIdentity.model_validate_json(
         order["uta_account_identity_json"]
     ) == identity_of(_MODE)
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())
 
 
 def test_exchange_entry_lineage_links_candidate_to_order_by_exact_ids(
@@ -790,4 +750,4 @@ def test_exchange_entry_lineage_links_candidate_to_order_by_exact_ids(
         row for row in repo.list_orders(limit=50) if row["execution_mode"] == _MODE
     ]
     assert len(orders) == 1, orders
-    assert repo.list_positions(execution_mode="paper_internal") == []
+    assert all(row["execution_mode"] == _MODE for row in repo.list_positions())

@@ -18,16 +18,16 @@ def test_exchange_alignment_uses_actual_execution_mode_not_preference_name():
     assert result.diverged is True
 
 
-def test_exchange_alignment_local_paper_never_fabricates_divergence():
+def test_exchange_alignment_unconfigured_target_never_fabricates_a_venue():
     from aletheia.config.exchange_alignment import exchange_alignment
 
     cfg = AletheiaConfig()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = ""
     cfg.market_data.ccxt_exchange = "okx"
 
     result = exchange_alignment(cfg)
     assert result.execution_exchange is None
-    assert result.status == "local_paper"
+    assert result.status == "not_configured"
     assert result.diverged is False
 
 
@@ -100,7 +100,7 @@ def test_exchange_markets_route_rejects_uta_credential_profiles():
         set_exchange_markets,
     )
 
-    for profile in ("binance_live", "okx_live"):
+    for profile in ("binance_live", "okx_live", "paper_internal"):
         with pytest.raises(HTTPException) as excinfo:
             set_exchange_markets(
                 ExchangeMarketsRequest(
@@ -110,5 +110,4 @@ def test_exchange_markets_route_rejects_uta_credential_profiles():
         assert excinfo.value.status_code == 400
         assert "paper_execution_mode must be one of" in str(excinfo.value.detail)
 
-    # paper_internal must stay admissible: it is the local-simulation mode.
-    assert "paper_internal" in DEMO_EXECUTION_MODES
+    assert DEMO_EXECUTION_MODES == {"bitget_demo", "binance_testnet", "okx_demo"}

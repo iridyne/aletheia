@@ -93,7 +93,6 @@ def test_nested_risk_policy_is_authoritative_over_legacy_projection():
 @pytest.mark.parametrize(
     ("execution_mode", "expected"),
     [
-        ("paper_internal", "demo"),
         ("bitget_demo", "demo"),
         ("binance_testnet", "demo"),
         ("okx_demo", "demo"),

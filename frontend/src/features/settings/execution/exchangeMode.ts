@@ -1,11 +1,12 @@
-export function executionExchangeFromPaperMode(mode: string, configuredExchange = ''): string | null {
-  if (mode === 'paper_internal') return null
+export function executionExchangeFromPaperMode(mode: string): string | null {
+  if (!mode) return null
   const byMode: Record<string, string> = {
     bitget_demo: 'bitget',
     binance_testnet: 'binance',
-    binance_live: 'binance',
+    bitget_live_limited: 'bitget',
+    binance_live_limited: 'binance',
     okx_demo: 'okx',
-    okx_live: 'okx',
+    okx_live_limited: 'okx',
   }
-  return byMode[mode] || configuredExchange || null
+  return byMode[mode] || null
 }

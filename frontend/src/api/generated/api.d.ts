@@ -8537,17 +8537,17 @@ export interface components {
             futures_symbols?: string[];
             /**
              * Mode
-             * @default paper
+             * @default demo
              */
             mode: string;
             /**
              * Name
-             * @default paper_internal
+             * @default
              */
             name: string;
             /**
              * Paper Execution Mode
-             * @default paper_internal
+             * @default
              */
             paper_execution_mode: string;
             /**
@@ -11435,7 +11435,7 @@ export interface components {
             allow_short_live: boolean;
             /**
              * Allowed Exchange
-             * @default paper_internal
+             * @default
              */
             allowed_exchange: string;
             /**

@@ -11,7 +11,6 @@ from aletheia.config.schema import ModeRiskPolicy
 
 
 DEMO_EXECUTION_MODES = frozenset({
-    "paper_internal",
     "bitget_demo",
     "binance_testnet",
     "okx_demo",

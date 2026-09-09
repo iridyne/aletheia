@@ -44,7 +44,7 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
   const isVisible = (id: string) => !sectionId || sectionId === id
   const currentPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
-    currentPaperMode, String(settings?.exchange?.name || ''),
+    currentPaperMode,
   )
   const currentDataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const currentDiverged = currentExecutionExchange !== null
@@ -102,7 +102,7 @@ const PRIMARY_EXCHANGES = [
 
 function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   const confirm = useConfirm()
-  const exchangeName = String(settings?.exchange?.name || 'bitget')
+  const exchangeName = String(settings?.exchange?.name || '')
   const effective = exchangeName
 
   const [err, setErr] = useState<string | null>(null)
@@ -135,6 +135,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
           disabled={mut.isPending}
           className="w-auto"
         >
+          <option value="" disabled>Select an exchange</option>
           {PRIMARY_EXCHANGES.map(ex => (
             <option key={ex.id} value={ex.id}>{ex.label}</option>
           ))}
@@ -147,7 +148,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
 
 export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   const confirm = useConfirm()
-  const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
+  const paperMode = String(settings?.exchange?.paper_execution_mode || '')
   const modeLabel: Record<string, string> = {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
     binance_testnet: 'Binance Testnet',
@@ -163,7 +164,7 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   })
   const selectedMode = mut.isPending && mut.variables ? mut.variables : String(status.exchange_mode)
   return (
-    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? paperMode}.`}>
+    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? (paperMode || 'not configured')} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? (paperMode || 'not configured')}.`}>
       <select value={selectedMode} onChange={async e => {
         const next = e.target.value
         if (next === 'live' && !(await confirm({
@@ -185,7 +186,7 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
 
 function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   const markets = settings?.exchange?.enabled_markets || { spot: true, usdt_futures: true }
-  const serverPaperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
+  const serverPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
   const [paperMode, setPaperMode] = useState(serverPaperMode)
@@ -194,7 +195,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const dataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const executionExchange = executionExchangeFromPaperMode(
-    paperMode, String(settings?.exchange?.name || ''),
+    paperMode,
   )
   const createsDivergence = paperMode !== serverPaperMode
     && executionExchange !== null
@@ -240,6 +241,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
           setConfirmExchangeDivergence(false)
           setMsg(null)
         }} className="w-auto">
+          <option value="" disabled>Select an exchange environment</option>
           <option value="okx_demo">OKX Demo</option>
           <option value="binance_testnet">Binance Testnet</option>
           <option value="bitget_demo">Bitget Demo</option>

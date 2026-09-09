@@ -261,17 +261,17 @@ export interface components {
             futures_symbols?: string[];
             /**
              * Mode
-             * @default paper
+             * @default demo
              */
             mode: string;
             /**
              * Name
-             * @default paper_internal
+             * @default
              */
             name: string;
             /**
              * Paper Execution Mode
-             * @default paper_internal
+             * @default
              */
             paper_execution_mode: string;
             /**
@@ -1396,7 +1396,7 @@ export interface components {
             allow_short_live: boolean;
             /**
              * Allowed Exchange
-             * @default paper_internal
+             * @default
              */
             allowed_exchange: string;
             /**
@@ -1994,7 +1994,6 @@ export interface components {
             risk: components["schemas"]["RiskConfig"];
             runtime: components["schemas"]["RuntimeConfig"];
             serenity: components["schemas"]["SerenityConfig"];
-            strategy_factory: components["schemas"]["SettingsStrategyFactoryResponse"];
             telegram: components["schemas"]["TelegramConfig"];
             trading: components["schemas"]["TradingConfig"];
             trading_mandate?: components["schemas"]["SettingsTradingMandateResponse"] | null;
@@ -2002,89 +2001,6 @@ export interface components {
             universe: components["schemas"]["UniverseConfig"];
             update: components["schemas"]["UpdateConfig"];
             webhook: components["schemas"]["SettingsWebhookResponse"];
-        };
-        /**
-         * SettingsStrategyFactoryResponse
-         * @description Deprecated config projection with its explicit UI deprecation marker.
-         */
-        SettingsStrategyFactoryResponse: {
-            /**
-             * Deprecated
-             * @default true
-             */
-            _deprecated: boolean;
-            /**
-             * Reason
-             * @default
-             */
-            _reason: string;
-            /**
-             * Backtest Gate Enabled
-             * @default true
-             */
-            backtest_gate_enabled: boolean;
-            /**
-             * Event Cooldown Minutes
-             * @default 30
-             */
-            event_cooldown_minutes: number;
-            /**
-             * Event Driven Enabled
-             * @default true
-             */
-            event_driven_enabled: boolean;
-            /**
-             * Event Min Score
-             * @default 60
-             */
-            event_min_score: number;
-            /**
-             * High Trade Count Threshold
-             * @default 30
-             */
-            high_trade_count_threshold: number;
-            /**
-             * Min Runtime Days Relaxed
-             * @default 3
-             */
-            min_runtime_days_relaxed: number;
-            /**
-             * Sweep Enabled
-             * @default true
-             */
-            sweep_enabled: boolean;
-            /**
-             * Sweep Max Variants
-             * @default 100
-             */
-            sweep_max_variants: number;
-            /**
-             * Sweep N Trials
-             * @default 60
-             */
-            sweep_n_trials: number;
-            /**
-             * Sweep Top K
-             * @default 10
-             */
-            sweep_top_k: number;
-            /**
-             * Walk Forward Enabled
-             * @default true
-             */
-            walk_forward_enabled: boolean;
-            /**
-             * Walk Forward Folds
-             * @default 3
-             */
-            walk_forward_folds: number;
-            /**
-             * Walk Forward Min Bars
-             * @default 150
-             */
-            walk_forward_min_bars: number;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * SettingsTradingMandateResponse

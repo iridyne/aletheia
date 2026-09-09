@@ -55,8 +55,8 @@ const TAB_ALIASES: Record<string, Tab> = {
 function getSectionSummary(id: string, settings: any, status: any): string | null {
   switch (id) {
     case 'exchange-connection': {
-      const name = String(settings?.exchange?.name || 'bitget')
-      return name.toUpperCase()
+      const name = String(settings?.exchange?.name || '')
+      return name ? name.toUpperCase() : 'Not configured'
     }
     case 'trading-mode':
       return status?.exchange_mode ? `Mode: ${status.exchange_mode}` : null
