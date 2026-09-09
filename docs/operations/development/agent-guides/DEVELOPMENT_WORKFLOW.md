@@ -31,12 +31,13 @@ uv run aletheia doctor
 Before changing code:
 
 1. **Identify the SDD depth**:
-   - D0 — implementation conformance repair (no externally observable behavior
-     change; state the existing Contract being repaired)
-   - D1 — externally observable behavior change (state explicit
-     `ADDED / MODIFIED / REMOVED` deltas)
-   - D2 — substantial design change (requires accepted
-     `docs/design/proposals/` before target state enters current Contract)
+   - **D0 = restore truth** — existing Contract / invariant already defines the target
+     behavior; current code, tests, docs, or runtime facts are non-conformant.
+     Repairing that gap is `Contract Delta: NONE`.
+   - **D1 = change semantics** — the target behavior semantics change while long-lived
+     structure and ownership remain stable.
+   - **D2 = change structure** — state ownership, mainline, subsystem topology,
+     authority, or product scope changes.
 2. **Identify the changed boundary** and what remains unchanged.
 3. **State current facts**: existing code paths, tests, durable data, runtime
    observations, or relevant Contract.
@@ -46,6 +47,11 @@ Before changing code:
 5. **Identify Non-goals**: what this change explicitly does not modify.
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
+
+SDD depth is a semantic classifier, not an approval process. AI implementation
+should pause at a Human Decision Point (scope expansion, ambiguity, or D1/D2
+approval needed) and return facts + one recommended decision rather than broadening
+scope to resolve it.
 
 For D1/D2 or an explicitly selected high-risk D0, an optional pre-change shadow
 audit may be run before step 1 to surface semantic gaps early. Run convergence

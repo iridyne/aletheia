@@ -10,11 +10,12 @@
 
 <!--
 D0: write `NONE` and reference the existing Contract/invariant being repaired.
-D1/D2: summarize the approved `ADDED / MODIFIED / REMOVED` behavior delta.
+D1/D2: summarize the approved semantic delta (`ADDED / MODIFIED / REMOVED`) and, if
+applicable, structural ownership/mainline changes.
 Do not repeat the full Change Contract from the linked Issue.
 -->
 
-## Does this change externally observable behavior?
+## Does this change alter semantics or structure?
 
 <!-- Yes (D1/D2) / No (D0) -->
 
@@ -49,8 +50,8 @@ D0 — Conformance Repair:
   Fix: code returned partial numeric PnL; corrected + regression test added.
   Runtime qualification: Not required.
 
-D1 — Contract Change:
+D1 — Semantics/Structure Change:
   SDD Depth: D1
-  MODIFIED: condition A previously returned X; now returns `unavailable` per updated Contract.
-  Contract updated, SpecClaim updated, backward-compatibility verified.
+  MODIFIED: condition A previously returned X; now returns `unavailable` per updated semantics.
+  Contract / Proposal / SpecClaims updated together, backward-compatibility verified.
 -->

@@ -11,10 +11,30 @@ hardened, not expanded. Preserve this order of priorities:
 `State consistency > Safety > Auditability > Semantic honesty > Tests >
 Capability > Agent autonomy`.
 
-Before changing code, identify SDD depth (D0 conformance repair, D1 contract
-behavior change, D2 substantial design change), the changed boundary, what is
-unchanged, and the Contract Delta (`NONE` for D0). Analysis does not authorize
-changes; stop if an invariant cannot be proved safely.
+### Human decision sovereignty
+
+Before changing code, classify each change by semantic nature:
+
+- **D0 = restore truth (conformance repair)**: an existing Contract / invariant already
+  defines the target behavior, and current code, tests, docs, or runtime facts are
+  non-conformant. Repair it without changing behavior. `Contract Delta` is `NONE`.
+- **D1 = change semantics**: the target behavior or meaning changes while long-lived
+  structure and ownership stay largely stable.
+- **D2 = change structure**: state ownership, mainline, subsystem topology, authority,
+  or product scope changes.
+
+AI execution authority is constrained by the following:
+
+- Owner alone defines current problem statement, root-cause acceptance, completion
+  criteria, phase promotion, and any D1/D2 semantic/structure decision.
+- A new Issue records evidence or a defect; it is not execution authorization for
+  changed scope.
+- AI may investigate, reproduce, test, review, and implement only inside an owner-approved
+  issue scope.
+- If investigation reaches a D1/D2, ambiguity, or scope expansion, implementation stops
+  and a decision packet is produced:
+  facts, inference with confidence, unresolved uncertainty, one recommended decision,
+  changed boundary, and required evidence.
 
 - Orders reach exchanges only through the backend Execution Gateway; Risk approval always precedes execution.
 - Live trading is off by default. Agents cannot expand tool, credential, Risk, Gateway, or live-unlock authority.

@@ -122,15 +122,36 @@ classification:
 
 | Depth | When | Contract Delta |
 |---|---|---|
-| D0 — Conformance Repair | Bug, narrow refactor, internal change; no externally observable behavior change | `NONE` — reference the existing Contract being repaired |
-| D1 — Contract Behavior Change | Externally observable semantics, API/schema, state transitions, failure semantics, Risk/Execution invariants, authority surfaces | Explicit `ADDED / MODIFIED / REMOVED` with old→new semantic description |
-| D2 — Substantial Design Change | Major new capability, cross-domain change, trust-boundary change | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
+| D0 — Restore truth (Conformance Repair) | Existing Contract / invariant already defines required behavior; current code, docs, tests, or runtime is non-conformant | `NONE` — reference the existing Contract / invariant being repaired |
+| D1 — Change Semantics | Behavior semantics, state transitions, API/schema, failure semantics, or authority surfaces change | Explicit `ADDED / MODIFIED / REMOVED` semantic delta |
+| D2 — Change Structure | State ownership, long-lived mainline, subsystem topology, authority, or product scope changes | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
+
+SDD depth is a semantic classifier only; it does not replace owner approval for
+a D1/D2 decision.
 
 **Contract update rule.** Code changing does not require a Contract change.
-Update a Contract only when an approved, externally observable behavior changes.
+Update a Contract only when an approved D1/D2 change is accepted.
 A D0 repair that brings code back into conformance with an existing Contract
 MUST NOT modify that Contract. Internal refactors, algorithm replacements,
 race-condition repairs, and performance optimizations do not change Contracts.
+
+### D0 / D1 / D2 walkthrough examples
+
+- **D0 (restore truth):** Runtime observed non-conforming behavior (`Position`
+  records missing `execution_mode` despite existing spec requiring it). Fixing that
+  field population is a D0 repair with `NONE`.
+- **D0 (externally visible but no semantic change):** A public endpoint leaks
+  `500` instead of `400` for input already prohibited by current contract. Aligning
+  response handling to the contract is still D0.
+- **D1 (change semantics):** Decision engine changes `compiler_refused` to become
+  retryable under the same ownership and state model. Semantics changed; update the
+  contract and accepted behavior delta.
+- **D1/D2 boundary:** Changing `compiler_refused` handling plus adding a new
+  policy epoch switch requires more than syntax repair. If policy ownership stays in
+  place and only entry-state meaning changes, classify D1.
+- **D2 (change structure):** Moving Entry lifecycle authority from one component to
+  another or changing the governance mainline is a structural change requiring
+  Proposal/owner acceptance.
 
 **Convergence.** After implementation, verify:
 

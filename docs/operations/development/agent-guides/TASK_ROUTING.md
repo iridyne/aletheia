@@ -7,14 +7,15 @@
 The A/B/C classification decides when to act. SDD depth decides how deep the
 specification must go. They are independent.
 
-- **D0** — implementation conformance repair; Contract Delta = `NONE`
-- **D1** — externally observable behavior change; requires explicit
-  `ADDED / MODIFIED / REMOVED` Contract Delta
-- **D2** — substantial design change; requires accepted Proposal before target
-  state enters Contract
+- **D0** — restore truth / conformance repair; Contract Delta = `NONE`
+- **D1** — change semantics; requires explicit `ADDED / MODIFIED / REMOVED`
+  semantic delta and owner acceptance
+- **D2** — change structure; requires accepted Proposal before target state
+  enters Contract
 
-For D1/D2 or an explicitly selected high-risk D0, an optional advisory shadow
-audit is available; read
+SDD depth is classification only. Human owner approval is separate and required before
+any D1/D2 implementation proceeds. For D1/D2 or an explicitly selected
+high-risk D0, an optional advisory shadow audit is available; read
 [SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md) before using it.
 
 See [documentation governance](../../../governance/policies/documentation_governance.md)

@@ -20,9 +20,12 @@ Do not maintain numbered implementation stages, a prescribed work order, a "curr
 or a future delivery sequence in the Issue body. If A depends on B, state that dependency
 directly. Open a focused child only when future work becomes independently actionable.
 
-D0: implementation conformance repair — Contract Delta is NONE. Reference the existing Contract.
-D1: externally observable behavior change — state ADDED / MODIFIED / REMOVED deltas.
-D2: substantial design change — requires accepted docs/design/proposals/ Proposal first.
+D0: restore truth / conformance repair — existing Contract / invariant already
+  defines target behavior; no semantic change.
+D1: change semantics — behavior semantics change. State ADDED / MODIFIED / REMOVED
+  deltas.
+D2: change structure — authority ownership, mainline, subsystem topology, or product
+  scope changes; requires accepted docs/design/proposals/ Proposal first.
 
 Delete sections that do not apply. For D0, delete the Contract Delta subsections.
 -->
@@ -50,9 +53,9 @@ Delete this section when there are no material dependencies.
 
 <!--
 Select one and explain:
-- [ ] D0 — Implementation Conformance Repair (Contract Delta: NONE)
-- [ ] D1 — Contract Behavior Change
-- [ ] D2 — Substantial Design Change (requires accepted Proposal)
+- [ ] D0 — Restore truth / implementation conformance repair (Contract Delta: NONE)
+- [ ] D1 — Change semantics
+- [ ] D2 — Change structure (requires accepted Proposal)
 -->
 
 ## Contract Delta
