@@ -25,6 +25,12 @@ their own independent versions.
 * **entry:** canonicalize non-authoritative execution fields after a model selects `NO_PLAN`, preserving the decision across strict-schema model defaults ([#2557](https://github.com/iridyne/aletheia/issues/2557)).
 * **risk:** enforce Entry Plan stop provenance and directional worst-price bounds at the canonical Plan-to-Proposal authority seam ([#2332](https://github.com/iridyne/aletheia/issues/2332)).
 
+## [0.8.6](https://github.com/iridyne/aletheia/compare/v0.8.5...v0.8.6) (2026-09-09)
+
+### Changed
+
+* **deployment:** admit explicitly classified Paper-role Bitget Demo runtimes through the shared release transaction, requiring the exact `bitget_demo` / `external_exchange` pair and `live_disabled`; preserve all health, settlement, backup and continuity checks.
+
 ## [0.8.5](https://github.com/iridyne/aletheia/compare/v0.8.4...v0.8.5) (2026-09-09)
 
 
