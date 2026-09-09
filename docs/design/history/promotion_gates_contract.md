@@ -3,6 +3,12 @@
 > **Historical document**: this file describes a retired mechanism. It is not a
 > current Contract and must not authorize new strategy-promotion behavior.
 
+> **Implementation retirement**: Paper Internal retirement deletes the dormant create/promote/gate
+> implementation, mixed `paper_internal + bitget_demo` Order/Fill queries and its sole remaining
+> diagnostic caller, `scripts/stability_drive.py`. Only read-only strategy status helpers used
+> by market observers remain. The descriptions below preserve the former mechanism, including
+> the earlier decision to leave dormant functions in place; they do not describe current code.
+
 > **角色**:定义策略从假设到实盘的晋级门槛——这是 [Product Direction](../../product/definition/DIRECTION.md) 所要求的受控验证与逐级获得自主权的质量闸。
 > **基线**:意图源 [trust §5](../../governance/policies/trust_and_change_control.md) 已是近完整规范,代码 100% 吻合;一处残余偏差(偏差1)标 ⚠️;偏差2(PI 审批门)已于 2026-06-23 确认实现,标 ✅。
 > Last updated: 2026-06-21 · 维护者:Aletheia Dev
@@ -99,3 +105,11 @@ post_trade_reviews_required = True
 > ⚠️ 门阈值当前**硬编码**(`DEFAULT_PROMOTION_GATES`),未在 config.yaml 暴露。按 [CLAUDE.md Config↔UI 规则](../../../CLAUDE.md),若要做成用户可调需同步加 schema 字段 + 前端控件。
 >
 > **裁决(2026-07-02):LEGACY 冻结,不暴露。** Position C 删除规则引擎后,策略"创建→回测→晋级"生产路径已废:`promote_strategy()` 全仓**无活调用者**(agents/routes/前端均无),前端策略生命周期页已删,这 7 个阈值现仅被只读诊断命令 `aletheia strategy gates <id>` 读取,不参与任何活决策。给死参数做 config 暴露 + 前端控件属反向过度工程化,故**暂不做**;**待策略晋级路径复活时再一并实现**(见 EVO 评估报告 P2-4)。
+
+## Retired autonomous loop drive
+
+`stability_drive.py` created a temporary database, invoked the removed `strategy_designer`
+and `paper_trader` agents, injected market snapshots/directional Opportunities and checked
+old strategy-linked Order/Fill/Position counts plus promotion metrics. Its dedicated tests
+are removed with the script. These synthetic loop checks do not establish current external
+account execution, deployment health or economic qualification.

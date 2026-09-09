@@ -2773,32 +2773,6 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def list_strategy_orders(
-    strategy_id: str,
-    execution_mode_prefix: str | None = None,
-    limit: int = 1000,
-) -> list[dict]:
-    db = get_db()
-    sql = """
-        SELECT o.*
-        FROM orders o
-        JOIN trade_proposals p ON p.id = o.proposal_id
-        WHERE p.strategy_id = ?
-    """
-    params: list[object] = [strategy_id]
-    if execution_mode_prefix:
-        if execution_mode_prefix == "paper":
-            sql += " AND (o.execution_mode = ? OR o.execution_mode = ?)"
-            params.extend(["paper_internal", "bitget_demo"])
-        else:
-            sql += " AND o.execution_mode LIKE ?"
-            params.append(f"{execution_mode_prefix}%")
-    sql += " ORDER BY o.created_at ASC LIMIT ?"
-    params.append(limit)
-    rows = db.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
-
-
 # --- Fills ---
 
 
@@ -2872,33 +2846,6 @@ def list_fills(limit: int = 100, order_id: str | None = None) -> list[dict]:
     if order_id:
         return _select_all("fills", where="order_id = ?", params=(order_id,), limit=limit)
     return _select_all("fills", limit=limit)
-
-
-def list_strategy_fills(
-    strategy_id: str,
-    execution_mode_prefix: str | None = None,
-    limit: int = 1000,
-) -> list[dict]:
-    db = get_db()
-    sql = """
-        SELECT f.*
-        FROM fills f
-        JOIN orders o ON o.id = f.order_id
-        JOIN trade_proposals p ON p.id = o.proposal_id
-        WHERE p.strategy_id = ?
-    """
-    params: list[object] = [strategy_id]
-    if execution_mode_prefix:
-        if execution_mode_prefix == "paper":
-            sql += " AND (o.execution_mode = ? OR o.execution_mode = ?)"
-            params.extend(["paper_internal", "bitget_demo"])
-        else:
-            sql += " AND o.execution_mode LIKE ?"
-            params.append(f"{execution_mode_prefix}%")
-    sql += " ORDER BY f.filled_at ASC LIMIT ?"
-    params.append(limit)
-    rows = db.execute(sql, params).fetchall()
-    return [dict(r) for r in rows]
 
 
 # --- Positions ---

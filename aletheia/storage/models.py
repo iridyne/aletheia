@@ -556,12 +556,8 @@ class RiskDecision(_Provenanced):
     risk_score: float = 0.0
     violations: str = "[]"
     allowed_execution_mode: str | None = None
-    # The proposal's ORIGINAL execution_mode, preserved verbatim. Distinct from
-    # allowed_execution_mode, which carries no execution authority on rejection
-    # — that downgrade destroyed the only record of whether a REJECTED proposal
-    # was a live order, making strategy_lifecycle's "live rejection = critical"
-    # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
-    # proposal_execution_mode = what was requested.
+    # Preserve the requested mode independently of any execution allowance.
+    # A rejection has no allowed mode; the request remains historical evidence.
     proposal_execution_mode: str | None = None
     # ``preflight`` is a fresh, advisory check before venue quantity
     # normalization. ``authoritative`` is the one decision an Order may consume.
