@@ -118,41 +118,22 @@ System Operator 由 committed event 唤醒，并保留约 15 分钟的 fallback�
 
 ---
 
-## 第五章：执行与风控 — 从决策到下单
+## 第五章：执行与风控 — 从 Entry Plan 到外部账户
 
-![Execution and Risk](../../diagrams/rendered/05_execution_and_risk.png)
+![Execution and Risk](../../diagrams/rendered/readme_execution_risk.svg)
 
-System Operator 说 `trade ETH/USDT long conviction=8` 之后：
+当前入场主线是 Candidate、Planning Generation、Planner、Compiler 和 Entry Plan。
+Compiler 依据明确的价格、风险与执行上下文形成计划；Entry Plan 执行仍须产生可追溯的
+Proposal 和 RiskDecision，并通过 Execution Gateway、Coordinator 和 UTA 下单。
+完整审批项以 [Risk Engine 契约](../contracts/risk_engine_contract.md) 为准。
 
-### Step 1: 仓位计算
-```
-波动率目标 Sizing:
-notional = target_risk_per_trade / ATR%
-quantity = notional / current_price
-stop_price = price × (1 - stop_loss_pct%)
-```
+Entry Plan 当前只获准使用 Bitget Demo。UTA 的外部账户模式还包括 OKX Demo、Binance
+Testnet 及对应的 Live Limited；注册模式不代表该账户已经配置，也不扩大 Entry Plan 的
+路由权限。Live 默认关闭，启用仍需显式人工授权和完整 Risk/Execution 边界。
 
-### Step 2: Risk Engine 五关审批
-
-| 关卡 | 检查 | 失败后果 |
-|------|------|----------|
-| 1 | 持仓数量 < max_positions? | 拒绝 |
-| 2 | 同方向暴露 < directional_limit? | 拒绝 |
-| 3 | 与现有持仓相关性 < threshold? | 拒绝 |
-| 4 | 当日已亏 < daily_loss_limit? | 拒绝 |
-| 5 | Kill Switch 未激活? | 拒绝 |
-
-### Step 3: 下单执行
-
-当前订单经 Execution Gateway → Coordinator → UTA 进入外部交易所账户。已注册模式为
-Bitget/OKX demo、Binance testnet 及对应的 live-limited；模式注册本身不代表账户已配置或通过
-资格验证。Live 默认关闭，启用仍需显式人工授权和完整 Risk/Execution 信任边界。
-旧本地模拟执行定义已[归档](../history/local_simulated_risk_execution.md)。
-
-### Step 4: 成交链路
-```
-Proposal → Order → Fill → Position → Exchange TPSL 挂单
-```
+Order 提交与真实成交是不同事实。只有匹配的交易所私有成交证据才能驱动 Fill 和 Position
+物化；缺失成交或费用证据时必须保留未决或不可用状态。历史本地模拟执行定义和原流程图
+已[归档](../history/diagrams/README.md)，不能作为当前账户或成交资格。
 
 ---
 
@@ -219,9 +200,10 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 
 ---
 
-## 完整交易流程图
+## 历史交易流程图
 
-![Full Trading Flow](../../diagrams/rendered/trading_flow_pi_sole_decision_maker.png)
+旧 Operator 入场与本地模拟执行全流程图保存在[历史图集](../history/diagrams/README.md)。
+当前执行链路见第五章。
 
 ---
 

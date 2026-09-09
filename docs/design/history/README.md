@@ -35,3 +35,5 @@ reactivating a historical document in place.
 - [Former product gates and metrics](local_simulated_product_gates.md): retired simulator accounting prerequisites and legacy Learning promotion definitions.
 
 - [Local simulator replay pack](local_simulated_replay.md): retired generator and qualification claims; frozen artifacts remain readable.
+
+- [Former execution and architecture diagrams](diagrams/README.md): original local-simulator and Operator-entry diagrams, including their rendered assets.
