@@ -2355,21 +2355,6 @@ export const api = {
 		note?: string;
 	}) => post<any>("/capital/events", body),
 
-	// Local paper account (available only in Paper internal / No exchange mode)
-	getPaperAccount: () => fetchJson<any>("/settings/paper-account"),
-	creditPaperAccount: (amount_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/credit", { amount_usdt, note }),
-	debitPaperAccount: (amount_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/debit", { amount_usdt, note }),
-	setPaperAccountBalance: (cash_balance_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/set-balance", {
-			cash_balance_usdt,
-			note,
-		}),
-	closeAllPaperPositions: () => post<any>("/settings/paper-account/close-all"),
-	closePaperSpotPositions: () =>
-		post<any>("/settings/paper-account/close-spot"),
-
 	// Manual single-position close (human actor, paper/demo only; live returns 409).
 	// order_type: 'market' (immediate) | 'limit' (rest exit_limit_price locally)
 	closePosition: (

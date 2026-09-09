@@ -29,7 +29,7 @@ function deferred<T = void>() {
 }
 
 function renderExecutionTab(
-  paperMode = 'paper_internal',
+  paperMode = 'bitget_demo',
 ) {
   const client = new QueryClient()
   return renderToStaticMarkup(
@@ -52,9 +52,11 @@ function renderExecutionTab(
 }
 
 describe('ExecutionTab', () => {
-  it('preserves section order and conditional local-paper anchor', () => {
+  it('preserves external-exchange section order without local account controls', () => {
     const html = renderExecutionTab()
-    const ids = ['exchange-connection', 'trading-mode', 'paper-trading-parameters', 'capital-events', 'local-paper-account']
+    const ids = ['exchange-connection', 'trading-mode', 'paper-trading-parameters', 'capital-events']
+    expect(html).not.toContain('Paper (internal)')
+    expect(html).not.toContain('local-paper-account')
     let previous = -1
     for (const id of ids) {
       const position = html.indexOf(`id="settings-section-${id}"`)
@@ -77,7 +79,7 @@ describe('ExecutionTab', () => {
       <QueryClientProvider client={client}>
         <ExchangeModeRow
           status={{ exchange_mode: exchangeMode }}
-          settings={{ exchange: { paper_execution_mode: 'paper_internal' } }}
+          settings={{ exchange: { paper_execution_mode: 'bitget_demo' } }}
           qc={qc as any}
         />
       </QueryClientProvider>,

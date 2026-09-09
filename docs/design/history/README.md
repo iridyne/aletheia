@@ -6,3 +6,5 @@ for provenance, not current implementation authority.
 Do not update these files as live contracts or work trackers. A mechanism that
 returns requires a new qualifying Proposal and current Contract rather than
 reactivating a historical document in place.
+
+- [Local simulated account controls](local_paper_account_controls.md): retired Settings/API surfaces, preserved only as history.
