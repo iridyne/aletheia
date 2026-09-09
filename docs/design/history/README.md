@@ -23,3 +23,7 @@ reactivating a historical document in place.
 - [Local simulated runtime scope](local_simulated_runtime_scope.md): retired startup and update exemptions, replaced by explicit external-account scope.
 
 - [Local simulated position observation](local_simulated_position_observation.md): retired simulated path recovery and protection-derived observation identity.
+
+- [Former Paper Internal development unblock runbook](paper-trading-dev-unblock.md): historical commands and repair guidance; not a current operating procedure.
+
+- [Previous local-exchange capability review](local_simulated_capability_review.md): original capability labels and evidence, superseded by the external-account scope.

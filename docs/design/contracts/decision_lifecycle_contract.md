@@ -176,11 +176,11 @@ Position→close Order→close Fill 读取执行事实；冲突、缺失或多�
 重复查询。attention、planning、execution、economics 并列显示；attention 终态
 不覆盖已激活执行。零成交确认终态为 NO_FILL，Fill 缺 Position 为 UNAVAILABLE，
 open Position 优先于 entry 余单；closed 仍须区别成本待结算、terminal exclusion
-和已完成。paper_internal CLOSED 必须以既有只读经济一致性规则核对最终关闭
-事件、净现金及可复算 PnL（1e-8），GET 不补写。Position realized economics 与
+和已完成。归档模拟关闭仍按既有只读经济一致性规则读取，GET 不补写；
+其历史规则见[归档账户定义](../history/local_paper_account_controls.md)。Position realized economics 与
 entry-fill:<fill_id> 的固定四小时 Entry outcome 分离，不以选择 T0 forward return
 冒充开仓结果。所有开平仓仍由既有 Risk/Gateway/Position/accounting owner 执行。
-本地资金结算保留不可变 Proposal 的请求数量；Risk 批准数量必须与 Order
+当前外部执行保留不可变 Proposal 的请求数量；Risk 批准数量必须与 Order
 执行数量一致且不得超过请求。只有 filled 或 cancelled 终态 Entry Order
 可计入关闭账本；filled 的成交量必须等于执行数量，cancelled 只计真实已成交量，
 余单不构成敞口。全部精确 Fills 的数量及成本仍须与 Position 对齐。
@@ -233,7 +233,7 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 - **DL-INV-8 无方向不学收益**:无事前 `long/short` 时只衡量能力和覆盖，禁止事后选最赚方向。
 - **DL-INV-30 TriggerSpec 权限**:EntryHypothesis 只能选择 registry Profile；Compiler 固定 TriggerSpec id/version 与 bounded params；Fast Monitoring 不解释模型 prose。新增 Trigger economics/threshold 必须走经济研究权限，不能借 lifecycle refactor 上线。
 - **DL-INV-31 Fast Monitoring 精确场地与新鲜度**:Trigger 与 Order Intent 必须使用 Entry Plan 同一 `venue + symbol + market_type` 的已确认订阅和 latest exact state；stale quote/depth/trade、sequence 异常、越出 envelope 或 adapter 不可用均 fail closed，禁止跨 venue 或 REST 热替代。
-- **DL-INV-32 单次执行与真实 tactic**:Entry Plan 与 Proposal/Order 唯一约束禁止 duplicate execute。Maker 必须为 true Post-Only；Urgent 默认 opposing-BBO IOC Limit 且不得越过 plan envelope；plain GTC Limit 不得标 Maker。`paper_internal` 只以 `paper-order-fill/v1` 模拟：IOC 仅消费 receipt 中已知 opposing depth，Maker 先落 durable open Order，之后仅由同 instrument 的 later strict opposite-aggressor trade-through 按真实事件 size 有界成交；不宣称外部 queue position。
+- **DL-INV-32 单次执行与真实 tactic**:Entry Plan 与 Proposal/Order 唯一约束禁止 duplicate execute。Maker 必须为 true Post-Only；Urgent 默认 opposing-BBO IOC Limit 且不得越过 plan envelope；plain GTC Limit 不得标 Maker。成交只接受匹配账户的私有 Fill 证据；已退役模拟撮合不构成当前 tactic。
 - **DL-INV-33 Entry Plan 不可变与单调**:plan JSON/hash 与 planning generation 不可改写；status 只可前进。rank/score/snapshot refresh 不终结 plan；只有 structural invalidation、incompatible new generation、expiry、permission/pause/kill-switch、Risk revocation、execution completion 或 manual cancel 可终结，终态不得 revive。
 - **DL-INV-34 Gateway 撤单与 Fill 优先**:Fast Monitoring 只决定 invalidation 并向 Gateway 请求 cancel；Gateway 才可调用 broker/adapter。网络调用后必须重查 private Fill/Order facts。完整 Fill 赢得 cancel race；partial fill 保留真实 Position 并只取消 remainder，不得因 cancel acknowledgement 覆盖经济事实或升级为 Taker。
 - **DL-INV-38 Planner admission 与抢占**:普通 Candidate batch 只能占用 broker 可用的 normal-priority capacity，local backpressure 或 portfolio wake 抢占不得消费物理 model attempt。父 batch 返回前必须 cancel-and-await 全部 child task；urgent portfolio wake 立即跳过普通 cooldown，同时仍只有一个 Operator authority。

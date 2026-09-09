@@ -192,3 +192,16 @@ builder are deleted. Current external materialization takes attribution from
 the stored Proposal snapshot. BTC/regime snapshot reads remain owned by
 `trading.entry_snapshot`; the execution helper retains only the liquidation-price
 estimate used by external position materialization.
+
+## Former scheduler contract
+
+`paper_funding_settler` runs every 30 minutes on `io`, starts three minutes after boot, is essential
+during layered pause, has `max_instances=1`, and is bounded by a 60-second async timeout. It retries
+closed `paper_internal + usdt_futures` rows whose net economics remain unavailable, optionally
+persists bounded public funding history, then uses `historical_ledger` completeness and the atomic
+paper-economics materializer. A coroutine must reacquire its thread-local SQLite connection after
+each `await`; no writer transaction spans provider I/O. Only explicit structural lineage failures
+may become terminal after the bounded retry window; elapsed time or missing source history alone is
+not structural proof. Durable scheduler success/failure is recorded by the normal guarded-job health
+path. Eligible results enqueue durable outcome hooks, and `outcome_hook_replay` remains their
+independent one-minute delivery path.

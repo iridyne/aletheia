@@ -66,8 +66,8 @@ HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，�
 也不以 master 的 ahead/behind 数量宣称已部署。
 
 已明确配置为 `paper` 角色的 runtime，只允许以下精确部署组合：
-`paper_internal` / `local_paper` 或 `bitget_demo` / `external_exchange`。
-两者都必须为 `live_disabled`；其他外部模式和交叉组合均拒绝。此准入同时
+`bitget_demo` / `external_exchange`，并且必须为 `live_disabled`。
+其他模式和交叉组合均拒绝。此准入同时
 适用于人工更新、自动更新及重启后的验证，不改变交易模式、Risk、凭据、
 健康、结算、备份、Observer continuity 或历史经济证据规则。
 

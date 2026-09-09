@@ -1,10 +1,11 @@
 # Aletheia Trading OS
 
 Aletheia is an internal, local-first AI trading system that turns market
-evidence into risk-gated decisions, paper execution, cost-complete outcomes,
-and measurable learning evidence. The supported core is intentionally narrow:
-crypto spot/perpetual with `paper_internal`; live trading and other research
-surfaces are outside that core.
+evidence into risk-gated decisions, external Demo/Testnet execution, cost-complete
+outcomes, and measurable learning evidence. The active scope covers crypto
+spot/perpetuals and the narrowly declared stock-linked perpetual profile through
+explicitly configured `bitget_demo`, `okx_demo`, or `binance_testnet` accounts.
+Live trading and other research surfaces remain outside that core.
 
 The canonical support contracts are [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md)
 and [`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md).
@@ -51,7 +52,7 @@ flowchart LR
     D --> E[Risk Engine]
     E -->|approved| F[Execution Gateway]
     E -->|rejected| G[Risk evidence]
-    F --> H[paper_internal]
+    F --> H[Configured exchange Demo/Testnet]
     H --> I[Fill / position / settlement]
     I --> J[Cost-complete genuine outcome]
     J --> K[Attribution and learning measurement]
@@ -62,19 +63,23 @@ The System Operator owns entry decisions, Risk approval precedes every
 execution, and orders use the Execution Gateway. Learning, research, and
 Observation Lab evidence cannot grant trading authority.
 
-## Current support boundary
+## Current declared boundary
 
 | Area | Position |
 | --- | --- |
 | Local runtime, scheduler, market data, dynamic universe | Supported core |
-| Opportunity → Operator → Risk → `paper_internal` | Supported core |
-| Position lifecycle and cost-complete outcomes | Supported core |
+| Candidate / Opportunity → Operator → Risk → configured external Demo/Testnet | Declared active flow; exact route qualification required |
+| Position lifecycle and cost-complete outcomes | External Fill and verified economic evidence required |
 | Observation Lab | Evidence infrastructure; zero trading authority |
-| Serenity, equity, prediction-market, exchange-demo paths | Experimental / outside active crypto scope |
+| Declared stock-linked perpetual profile | Bounded active scope; exact instrument capability required |
+| Serenity research and preferences | Experimental |
+| Other equity and prediction-market execution | Outside active scope |
 | Live execution | Outside Supported core; explicit owner authority required |
 
-The support contracts linked above are authoritative when deeper documents
-disagree.
+Registered routes do not certify account credentials, instrument capability or
+economic qualification. The support contracts linked above are authoritative
+when deeper documents disagree. The former internal simulator is
+[archived](docs/design/history/local_simulated_runtime_scope.md).
 
 ## Development and preview
 

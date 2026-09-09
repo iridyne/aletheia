@@ -229,11 +229,9 @@ introduced.
 A Candidate is execution-eligible only when the configured Fast Monitoring path
 can consume its exact physical `(venue, symbol, market_type)` stream for the
 selected execution mode. No configured venue may be silently substituted.
-For `paper_internal`, normalized `market_data.ccxt_exchange` is the public
-fast-data authority: Bitget and Binance are supported. Binance uses public Spot
-and USD-M quote, aggregate trade, one-minute Kline, and depth streams; Spot depth
-is unavailable until its REST snapshot and diff stream form a continuous local
-book. External execution modes retain their execution venue as the authority.
+The selected external execution mode determines the Fast Monitoring venue.
+An unconfigured or unsupported mode has no monitoring authority; the configured
+public data venue does not substitute for an execution account.
 
 An unmonitorable Candidate remains visible in Universe and Workbench, but is
 persisted with `execution_eligible=false` and the
@@ -368,24 +366,12 @@ no production write, Risk, Gateway, or activation authority.
 
 `tests/specs/spec_entry_plan_contract.py::test_momentum_geometry_measurement_is_read_only_and_fail_closed`
 is the executable claim for this boundary.
-## Historical Momentum geometry v2 controlled Paper boundary
+## Archived Momentum geometry experiment
 
-The following records the former controlled experiment, not a current Planner
-selector or fallback. Current Grounded profiles and fingerprints above own entry.
+The former controlled geometry experiment is [archived](../history/local_simulated_risk_execution.md).
+Current Grounded profiles and fingerprints above own entry; the archived profile
+is not a selector or fallback.
 
-The planner continues to request `momentum-retrace-reclaim/v1`. For an exact
-Momentum Candidate with 21 completed causal bars, the existing Learning allocator
-may assign the same PlanIntent to `momentum-retrace-reclaim/v2`. Control remains
-v1. Missing or invalid geometry records an unavailable denominator unit and keeps
-the v1 behavior.
-
-A v2 Entry Plan persists its immutable treatment-exposure receipt, exact geometry,
-and source fingerprints. Execution fails closed unless that receipt proves an
-applied `momentum_entry_geometry` treatment. Only `paper_internal` and
-`bitget_demo` are eligible; Live remains unavailable. The existing sizing formula,
-Risk policy, Gateway, quantity-at-trigger calculation, and protective exit path are
-unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
-only after this authority check.
 ## Non-goals
 
 This convergence adds source/retirement migrations, but no execution exchange,

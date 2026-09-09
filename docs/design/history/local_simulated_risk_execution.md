@@ -102,7 +102,7 @@ Paper Internal 的入场、撮合、账户现金、保护与恢复机制已退�
 > **唯一硬门 & guard 澄清(2026-06-30)**:订单通路(`submit_proposal`→执行)上,**`evaluate_proposal()` 是唯一硬门**。另有两套也叫 "guard" 的东西**不在执行通路上裁决**:
 > (1) 历史 `trading_decision` 守卫链曾只写 `decision_meta['guards']`、提供 advisory；该旧入场消费者已删除，不是当前执行入口；
 > (2) ~~`trust/guard_chain.py:run_guards()`~~ → **已于 2026-09-07 删除**。它从未被任何生产代码调用，因此并不观测任何东西，且其自带的 `max_daily_loss_pct` 默认 `5.0` 与 schema 的 `1.0` 矛盾。spec `EX-C03` 保留并继续生效：它扫的是 `gateway.py`，守的是「唯一硬门是 `risk/engine.py:evaluate_proposal`」这个不变式，而不是该文件的存在。
-> 区分：knowledge `trading_guards` 曾在旧 Ranker 排序阶段剔除候选；该消费者现已退役（见 [knowledge_contract §4.5](knowledge_contract.md)），历史 guard 命中不授予当前 Entry Plan 执行权，**不是**执行硬门。若未来要把某条 guard 升为硬拦,必须改本契约 + 接线 gateway + 改 EX-C03,不可静默接线。
+> 区分：knowledge `trading_guards` 曾在旧 Ranker 排序阶段剔除候选；该消费者现已退役（见 [knowledge_contract §4.5](../contracts/knowledge_contract.md)），历史 guard 命中不授予当前 Entry Plan 执行权，**不是**执行硬门。若未来要把某条 guard 升为硬拦,必须改本契约 + 接线 gateway + 改 EX-C03,不可静默接线。
 
 ---
 
@@ -234,3 +234,24 @@ settlement and the deleted `paper_tools` mode set. These requirements are retire
 calculator. `RE-B18` retains external Demo/Live balance isolation and the existing
 advisory-cache fallback. Current daily-loss and percentage-denominator checks use
 external account identities; they do not require a simulated cash ledger.
+
+## Historical Momentum geometry v2 controlled Paper boundary
+
+The following records the former controlled experiment, not a current Planner
+selector or fallback. Current Grounded profiles and fingerprints above own entry.
+
+The planner continues to request `momentum-retrace-reclaim/v1`. For an exact
+Momentum Candidate with 21 completed causal bars, the existing Learning allocator
+may assign the same PlanIntent to `momentum-retrace-reclaim/v2`. Control remains
+v1. Missing or invalid geometry records an unavailable denominator unit and keeps
+the v1 behavior.
+
+A v2 Entry Plan persists its immutable treatment-exposure receipt, exact geometry,
+and source fingerprints. Execution fails closed unless that receipt proves an
+applied `momentum_entry_geometry` treatment. Only `paper_internal` and
+`bitget_demo` are eligible; Live remains unavailable. The existing sizing formula,
+Risk policy, Gateway, quantity-at-trigger calculation, and protective exit path are
+unchanged. Fast Monitoring uses the same v2 state machine and forwards a trigger
+only after this authority check.
+
+Former simulated tactic clause (retired): `paper_internal` 只以 `paper-order-fill/v1` 模拟：IOC 仅消费 receipt 中已知 opposing depth，Maker 先落 durable open Order，之后仅由同 instrument 的 later strict opposite-aggressor trade-through 按真实事件 size 有界成交；不宣称外部 queue position。

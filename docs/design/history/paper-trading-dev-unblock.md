@@ -1,4 +1,9 @@
-# Paper Trading 执行通道解封手册
+# Archived Paper Internal development unblock runbook
+
+> **Archived — do not execute.** This records retired simulator operations. Its
+> commands, configuration advice and repair paths are historical and do not
+> authorize current account, Risk or database changes. Current operations use
+> [RUNBOOK.md](../../operations/runbooks/RUNBOOK.md).
 
 > 适用场景：开发/迭代阶段 paper_internal 提案被批量拒绝，需快速恢复交易流水。
 > 来源：2026-07-13 MON-011/012/013 事件，RC-011/012/013 根因分析。
