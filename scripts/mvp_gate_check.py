@@ -3,7 +3,7 @@
 运行: uv run python scripts/mvp_gate_check.py
 
 This script preserves the terminated June 2026 okx_demo checklist. It is not a
-current admission gate and cannot qualify the paper_internal Active Runtime Scope.
+current admission gate and cannot qualify the current external-account Runtime Scope.
 See docs/product/experiments/EXPERIMENT_MVP_GATE.md.
 """
 

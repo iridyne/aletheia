@@ -33,3 +33,5 @@ reactivating a historical document in place.
 - [Local simulated Alpha audit](local_simulated_alpha_audit.md): former report outputs and contribution definitions.
 
 - [Former product gates and metrics](local_simulated_product_gates.md): retired simulator accounting prerequisites and legacy Learning promotion definitions.
+
+- [Local simulator replay pack](local_simulated_replay.md): retired generator and qualification claims; frozen artifacts remain readable.

@@ -113,5 +113,8 @@ Integrity has verified its economic evidence.
 `aletheia/trust/behavior_authority.py` and pass its consumer-side gate. A lesson,
 historical auto-guard, or inline historical ranker condition has no block authority.
 
-The executable proof lives in `tests/specs/spec_active_runtime_scope.py`, the
-Golden Path test, the production reachability tests, and the runtime replay pack.
+The executable checks live in `tests/specs/spec_active_runtime_scope.py`, the
+external-exchange Golden Path and entry/close pipeline tests, and production
+reachability tests. They establish only their declared software claims.
+`runtime_replay_v1` is an [archived simulator pack](../design/history/local_simulated_replay.md),
+not current runtime or external-account qualification evidence.
