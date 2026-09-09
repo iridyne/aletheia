@@ -93,10 +93,10 @@ def test_disabled_no_action():
 
 
 def test_get_watched_symbols_includes_positions():
-    """get_watched_symbols always includes open position symbols."""
+    """get_watched_symbols includes supported external position symbols."""
     positions = [
-        {"symbol": "BTC/USDT", "market_type": "spot", "execution_mode": "paper_internal"},
-        {"symbol": "ETH/USDT", "market_type": "spot", "execution_mode": "paper_internal"},
+        {"symbol": "BTC/USDT", "market_type": "spot", "execution_mode": "binance_testnet"},
+        {"symbol": "ETH/USDT", "market_type": "spot", "execution_mode": "binance_testnet"},
     ]
     cfg = MagicMock()
     cfg.event_triggers.enabled = False

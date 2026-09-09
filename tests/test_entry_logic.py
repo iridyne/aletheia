@@ -1,8 +1,7 @@
-"""Tests for the entry-logic upgrade (Component 2).
+"""Observer advisory enrichment and structured-model failure behavior.
 
-Goal: trades stop being noise. The deterministic emitter owns Opportunity
-admission; market_observer adds structured advisory context; paper_trader skips
-neutral and low-confidence signals while preserving lifecycle evidence.
+An existing Opportunity retains its identity while Observer adds advisory
+assessment. Current entry execution belongs to the separate Entry Plan path.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -41,15 +40,6 @@ def setup_env(tmp_path, monkeypatch):
     sq._db_conn = conn
     run_migrations()
     init_tool_registry()
-
-
-def _set_paperauto(monkeypatch):
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    # Local paper_internal fallback path (default is now bitget_demo / real exchange).
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
 
 
 def _seed_admitted_opportunity(
@@ -228,87 +218,3 @@ async def test_observer_skips_opportunity_on_llm_failure(tmp_path, monkeypatch):
     opps = repo.list_opportunities()
     assert opps == []
     assert result["errors"] == []
-
-
-# --- paper_trader honors direction + confidence; records non-traded signals ---
-
-async def test_paper_trader_skips_neutral_but_keeps_signal(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    _set_paperauto(monkeypatch)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="neutral",
-                      confidence="high", source_agent="market_observer")
-    repo.insert_opportunity(opp)
-
-    await run_agent("paper_trader", trigger_type="manual")
-    assert len(repo.list_trade_proposals()) == 0  # neutral → no trade
-    # signal preserved (not deleted); marked as reviewed
-    row = repo.get_opportunity(opp.id)
-    assert row is not None
-    assert row["status"] != "open"
-
-
-async def test_paper_trader_skips_low_confidence(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    _set_paperauto(monkeypatch)  # min_confidence_to_trade default "medium"
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
-                      confidence="speculative", source_agent="market_observer")
-    repo.insert_opportunity(opp)
-
-    await run_agent("paper_trader", trigger_type="manual")
-    assert len(repo.list_trade_proposals()) == 0  # speculative < medium → skip
-    assert repo.get_opportunity(opp.id)["status"] != "open"  # still recorded
-
-
-async def test_paper_trader_trades_directional_and_sets_stop(tmp_path, monkeypatch):
-    """Phase 4a: Paper trader Path B now writes signal_pending entries for System Operator."""
-    setup_env(tmp_path, monkeypatch)
-    _set_paperauto(monkeypatch)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
-                      confidence="medium", source_agent="divergence_scanner")
-    repo.insert_opportunity(opp)
-
-    result = await run_agent("paper_trader", trigger_type="manual")
-    # Phase 4a: Path B writes signal_pending instead of creating proposals directly
-    from aletheia.storage.repositories import list_pi_decisions
-    decisions = list_pi_decisions(limit=5)
-    pending = [d for d in decisions if d.get("action") == "signal_pending"]
-    assert len(pending) >= 1
-    assert pending[0]["symbol"] == "BTC/USDT"
-
-
-async def test_full_observer_to_paper_trader_loop(tmp_path, monkeypatch):
-    """Emitter owner → Observer enrichment → Ranker pending preserves identity."""
-    setup_env(tmp_path, monkeypatch)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
-
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-    owner = _seed_admitted_opportunity()
-
-    async def fake_structured(system, user, *, schema, max_tokens=400, **kw):
-        return {"direction_bias": "long", "confidence": "high", "rationale": "uptrend"}, None
-
-    monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
-    monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
-
-    # Step 1: Observer enriches, but does not create or relabel the owner.
-    await run_agent("market_observer", trigger_type="manual")
-    opps = repo.list_opportunities()
-    assert len(opps) == 1
-    assert opps[0]["id"] == owner.id
-    assert opps[0]["source_agent"] == "universe_scanner"
-    assert opps[0]["symbol"] == "BTC/USDT"
-
-    # Step 2: paper_trader writes signal_pending for System Operator (Phase 4a)
-    await run_agent("paper_trader", trigger_type="manual")
-    from aletheia.storage.repositories import list_pi_decisions
-    decisions = list_pi_decisions(limit=5)
-    pending = [d for d in decisions if d.get("action") == "signal_pending"]
-    assert len(pending) >= 1
-    assert pending[0]["symbol"] == "BTC/USDT"

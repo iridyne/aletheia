@@ -855,7 +855,6 @@ def priority_for_agent(agent_name: str, trigger_type: str) -> InferencePriority:
     if trigger_type == "manual":
         return InferencePriority.INTERACTIVE
     if agent_name in {
-        "paper_trader",
         "pi_trading_decision",
         "position_manager",
     }:

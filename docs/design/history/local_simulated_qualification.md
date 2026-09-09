@@ -105,3 +105,15 @@ PaperTrader/Ranker consumers are retired and it had no production caller at
 `build_factor_feedback` remains the read-only CLI diagnostic, with verified
 external closes and administrative-record exclusions. Historical factor labels
 and persisted experiment identities are unchanged.
+
+The old `test_entry_logic.py` PaperTrader tests required neutral/low-confidence
+handling and `signal_pending` production through the retired agent. Those four
+tests and their local-account setup are removed. Observer advisory enrichment
+and model-unavailable behavior remain covered separately; they do not restore
+entry authority. Notification, price-watch and post-trade review fixtures now
+use external execution modes, with the existing verified-close producer for
+review evidence.
+
+The retired `paper_trader` name also no longer receives a budget exemption or
+trading-priority inference slot. Current registered callers retain their existing
+policies; historical economics attribution labels remain readable.
