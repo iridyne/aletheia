@@ -125,7 +125,7 @@ def test_deeper_test_tiers_do_not_get_unit_only_plans() -> None:
     assert spec["mode"] == "deep"
     assert spec["required"]["specifications"] is True
 
-    e2e = _plan(["tests/e2e/test_pipeline_feedback_loop.py"])
+    e2e = _plan(["tests/e2e/test_pipeline_guard_promotion.py"])
     assert e2e["mode"] == "deep"
     assert e2e["required"]["e2e"] is True
 

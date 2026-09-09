@@ -20,7 +20,7 @@ def test_pytest_tier_classifier_sample_accuracy():
         "tests/test_hypothesis_properties.py": "tier_unit",
         "tests/test_operator_routes.py": "tier_integration",
         "tests/test_universe_service.py": "tier_integration",
-        "tests/e2e/test_pipeline_feedback_loop.py": "tier_e2e",
+        "tests/e2e/test_pipeline_guard_promotion.py": "tier_e2e",
         "tests/test_anti_hallucination_e2e.py": "tier_e2e",
         "tests/specs/spec_risk_engine.py": "tier_spec",
     }
@@ -77,7 +77,7 @@ def test_fast_integration_slow_classifier_sample_accuracy():
     assert pytest_conftest._classify_test_tier("tests/test_hypothesis_properties.py") == "tier_unit"
     assert pytest_conftest._is_slow_test("tests/test_hypothesis_properties.py") is False
     assert pytest_conftest._is_slow_test("tests/test_serenity_workbench.py") is True
-    assert pytest_conftest._is_slow_test("tests/e2e/test_pipeline_feedback_loop.py") is True
+    assert pytest_conftest._is_slow_test("tests/e2e/test_pipeline_guard_promotion.py") is True
     assert pytest_conftest._is_slow_test("tests/specs/spec_hyperliquid.py::test_hyperliquid_live_e2e") is True
 
 

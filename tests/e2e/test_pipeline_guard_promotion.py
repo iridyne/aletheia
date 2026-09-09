@@ -17,29 +17,20 @@ The corrected chain (verified end-to-end here, real DB, no module mocking):
 
 from datetime import datetime, timezone
 
-from aletheia.storage.models import Opportunity, TradeProposal, Position
-from aletheia.storage import repositories as repo
 
 
 def _losing_momentum_long_trade(i: int):
     """One closed momentum/long trade that lost money, with the full causal chain
     so build_trade_attribution_rows surfaces scanner_family + direction."""
-    opp = Opportunity(symbol="SOL/USDT", market="usdt_futures", direction_bias="long",
-                      confidence="high", source_agent="market_observer", scanner_family="momentum")
-    repo.insert_opportunity(opp)
-    prop = TradeProposal(symbol="SOL/USDT", market_type="usdt_futures", direction="long",
-                         execution_mode="paper_internal", quantity=1.0, price=100.0,
-                         opportunity_id=opp.id)
-    repo.insert_trade_proposal(prop)
-    pos = Position(symbol="SOL/USDT", market_type="usdt_futures", direction="long",
-                   quantity=1.0, entry_price=100.0, current_price=95.0,
-                   execution_mode="paper_internal", status="closed", realized_pnl=-5.0,
-                   close_reason="stop_loss", proposal_id=prop.id, opportunity_id=opp.id,
-                   closed_at=datetime.now(timezone.utc).isoformat(),
-                   close_category="strategy", exit_price_source="local_fill",
-                   exit_fill_verified=True, outcome_eligible=True,
-                   outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1")
-    repo.insert_position(pos)
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    return _insert_closed_position_via_producer(
+        position_id=f"loss-{i}", symbol="SOL/USDT", market_type="usdt_futures",
+        direction="long", quantity=1.0, entry_price=100.0,
+        execution_mode="bitget_demo", realized_pnl=-5.0,
+        close_reason="stop_loss", scanner_family="momentum",
+        closed_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 class TestGuardPromotionChain:
@@ -77,9 +68,11 @@ class TestGuardPromotionChain:
 
         # 5) even with auto_promote_enabled=True and strong loss evidence, a learned
         #    shadow guard is NOT auto-promoted — it lacks experiment authority (fail-closed).
-        from aletheia.config.loader import load_config
+        from aletheia.config.loader import load_config, save_config
         cfg = load_config()
+        cfg.exchange.paper_execution_mode = "bitget_demo"
         cfg.guard.auto_promote_enabled = True
+        save_config(cfg)
         result = run_promotion_check()
         assert result.get("promotions", 0) == 0, f"learned guard must not auto-promote: {result}"
 

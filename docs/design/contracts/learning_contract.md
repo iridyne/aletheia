@@ -785,7 +785,7 @@ Primary executable claims:
 - `tests/specs/spec_learning_verdict_runtime.py`
 - `tests/specs/spec_learning_final_consumers.py`
 - `tests/specs/spec_learning_observability.py` (`LCO-*` implemented/partial registry claims)
-- `tests/e2e/test_pipeline_feedback_loop.py`
+- `tests/test_outcome_consumers.py` (verified external outcomes and excluded administrative rows)
 - `tests/e2e/test_pipeline_guard_promotion.py`
 - `tests/e2e/test_learning_paper_lifecycle.py`
 

@@ -80,3 +80,10 @@ slippage、fee、broker、Risk 或 Live 配置；
 数量，而不是用 0 提供一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
 `funding_source='not_applicable'`，不受此冻结影响。
 
+
+The retired `test_pipeline_feedback_loop.py` inserted simulated PnL rows and
+computed its own sums and win rates; it did not execute a review, scorecard or
+Learning consumer. It has been removed. Current consumer tests use verified
+external outcomes and assert administrative exclusions. The guard-promotion
+pipeline now uses the same external close producer for its losing cohort and
+still requires owner authority rather than promoting a loss correlation.

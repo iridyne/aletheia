@@ -259,8 +259,8 @@ def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
     TWO independent defences, asserted separately, because the first one hides the
     second and an earlier version of this test only proved the hiding:
 
-    1. `evaluate_open_positions` filters on `_PAPER_MODES`
-       (`{paper_internal, bitget_demo, binance_testnet, okx_demo}`), so a
+    1. `evaluate_open_positions` filters on `_DEMO_MODES`
+       (`{bitget_demo, binance_testnet, okx_demo}`), so a
        `*_live_limited` position is never even *checked* — `checked == 0`.
        Asserting only "no command reached the venue" therefore passes trivially
        and would keep passing with the second defence removed.
