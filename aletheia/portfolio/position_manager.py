@@ -274,10 +274,7 @@ def _get_atr_observation(
     observed = parse_utc_strict(observed_at) if observed_at is not None else datetime.now(timezone.utc)
     if observed is None:
         return None
-    venue = protective_price_venue(
-        position.get("execution_mode"),
-        configured_data_venue=cfg.market_data.ccxt_exchange,
-    )
+    venue = protective_price_venue(position.get('execution_mode'))
     market = str(position.get("market_type") or "").lower()
     market = "perp" if market in {"perp", "swap", "futures", "usdt_futures"} else market
     symbol = str(position.get("symbol") or "")
@@ -1008,10 +1005,7 @@ def evaluate_open_positions() -> dict:
                 if position.get("execution_mode") not in _DEMO_MODES:
                     continue
                 try:
-                    venue = protective_price_venue(
-                        position.get("execution_mode"),
-                        configured_data_venue=cfg.market_data.ccxt_exchange,
-                    )
+                    venue = protective_price_venue(position.get('execution_mode'))
                     request = MarketSignalRequest.from_parts(
                         venue or "",
                         position["symbol"],
@@ -1057,10 +1051,7 @@ def evaluate_open_positions() -> dict:
                     p.get("pending_close_status"),
                 )
         try:
-            price_venue = protective_price_venue(
-                p.get("execution_mode"),
-                configured_data_venue=cfg.market_data.ccxt_exchange,
-            )
+            price_venue = protective_price_venue(p.get('execution_mode'))
             price = get_fresh_price_for_protective_close(
                 p["symbol"],
                 p.get("market_type") or "spot",
@@ -1404,10 +1395,7 @@ def _risk_approved_entry_plan(position: dict) -> tuple[float, float] | None:
 
 def _fresh_adjustment_mark(position: dict, cfg) -> float | None:
     """Read one exact fresh mark shared by stop and target validation."""
-    venue = protective_price_venue(
-        position.get("execution_mode"),
-        configured_data_venue=cfg.market_data.ccxt_exchange,
-    )
+    venue = protective_price_venue(position.get('execution_mode'))
     if venue is None:
         return None
     try:

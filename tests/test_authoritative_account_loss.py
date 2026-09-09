@@ -62,7 +62,7 @@ def _closed_position(
         "outcome_exclusion_reason": "administrative_close",
         "outcome_semantics_version": "oi-v1",
     })
-    repo.insert_position(Position(**kwargs))
+    repo._insert("positions", Position(**kwargs).model_dump())
 
 
 def _archived_cash_event(position_id: str, amount: float) -> None:
@@ -199,7 +199,7 @@ def _pending_paper_close(
     from aletheia.storage.models import Position
 
     closed_at = datetime.now(timezone.utc).isoformat()
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         id=position_id,
         symbol="ETH/USDT",
         market_type="usdt_futures",
@@ -222,7 +222,7 @@ def _pending_paper_close(
         outcome_exclusion_reason="missing_event_observation",
         outcome_semantics_version="oi-v1",
         closed_at=closed_at,
-    ))
+    ).model_dump())
 
 
 def test_null_realized_pnl_makes_daily_loss_unavailable():
@@ -273,7 +273,7 @@ def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
     from aletheia.storage.models import Position
 
     closed_at = datetime.now(timezone.utc).isoformat()
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         id=position_id,
         symbol="BTC/USDT",
         market_type="usdt_futures",
@@ -296,7 +296,7 @@ def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
         outcome_exclusion_reason="",
         outcome_semantics_version="oi-v1",
         closed_at=closed_at,
-    ))
+    ).model_dump())
     # Deliberately omit settle_position_closed() to simulate the orphan condition.
 
 

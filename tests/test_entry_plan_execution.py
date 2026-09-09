@@ -1093,7 +1093,7 @@ def test_execution_lineage_does_not_mix_concurrent_fill_commit(tmp_path, monkeyp
     assert after["fills"]["ids"] == ["concurrent-fill"]
 
 
-def test_execution_lineage_keeps_position_and_requires_cash_convergence(tmp_path, monkeypatch):
+def test_archived_execution_lineage_keeps_position_and_checks_cash_evidence(tmp_path, monkeypatch):
     from tests.test_sqlite_writer import _setup_db
     from aletheia.storage.models import Position, PaperAccountEvent
 
@@ -1104,7 +1104,7 @@ def test_execution_lineage_keeps_position_and_requires_cash_convergence(tmp_path
                         quantity=1, entry_price=100, current_price=105, execution_mode="paper_internal",
                         order_id=order.id, proposal_id=order.proposal_id, entry_fee=0, exit_fee=0,
                         funding_cost=0, funding_source="local_simulation", realized_pnl=5)
-    repo.insert_position(position)
+    repo._insert("positions", position.model_dump())
     repo.execute_write("UPDATE orders SET position_id=? WHERE id=?", (position.id, order.id))
     missing_fill = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
     assert missing_fill["execution_state"] == "UNAVAILABLE"
@@ -1117,7 +1117,7 @@ def test_execution_lineage_keeps_position_and_requires_cash_convergence(tmp_path
     close = Order(symbol=order.symbol, market_type=order.market_type, direction="short", order_type="market",
                   quantity=1, price=105, execution_mode="paper_internal", source="adopted",
                   position_id=position.id, close_reason="take_profit", status="filled")
-    repo.insert_order(close)
+    repo._insert("orders", close.model_dump())
     close_fill = Fill(order_id=close.id, fill_price=105, fill_quantity=1)
     repo.insert_fill(close_fill)
     repo.execute_write("UPDATE positions SET status='closed', closed_at=? WHERE id=?", (close_fill.filled_at, position.id))

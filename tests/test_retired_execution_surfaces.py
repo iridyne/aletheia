@@ -13,6 +13,11 @@ def test_new_config_has_no_implicit_execution_account():
     cfg = AletheiaConfig()
     assert cfg.exchange.name == cfg.exchange.paper_execution_mode == cfg.risk.allowed_exchange == ""
 
+    from aletheia.risk.engine import _config_active_execution_mode
+
+    cfg.exchange.mode = "live"
+    assert _config_active_execution_mode(cfg) == ""
+
 
 @pytest.mark.parametrize("mode", ["paper_internal", ""])
 def test_retired_or_unconfigured_mode_has_no_entry_or_risk_authority(mode):
@@ -150,3 +155,33 @@ def test_archived_position_has_no_current_execution_authority():
         quantity=0.01, price=100, execution_mode="bitget_demo",
     ))
     assert not any(item.startswith("max_demo_positions_reached") for item in result.violations)
+
+
+@pytest.mark.parametrize("mode", ["paper_internal", "", "bitget_unknown"])
+def test_unsupported_modes_cannot_create_trading_state_or_supply_a_protective_venue(mode):
+    from aletheia.data.price_feed import protective_price_venue
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, PortfolioSnapshot
+
+    assert protective_price_venue(mode) is None
+    before = repo.get_db().total_changes
+    with pytest.raises(ValueError, match="unsupported Order execution mode"):
+        repo.validate_native_order_authority({"execution_mode": mode})
+    with pytest.raises(ValueError, match="unsupported Position execution mode"):
+        repo.insert_position(Position(
+            symbol="BTC/USDT", market_type="spot", direction="long",
+            quantity=1, entry_price=100, execution_mode=mode,
+        ))
+    with pytest.raises(ValueError, match="unsupported PortfolioSnapshot execution mode"):
+        repo.insert_portfolio_snapshot(PortfolioSnapshot(total_value_usdt=100, execution_mode=mode))
+    assert repo.get_db().total_changes == before
+
+
+def test_new_proposal_and_snapshot_require_an_explicit_execution_mode():
+    from pydantic import ValidationError
+    from aletheia.storage.models import TradeProposal, PortfolioSnapshot
+
+    with pytest.raises(ValidationError, match="execution_mode"):
+        TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long")
+    with pytest.raises(ValidationError, match="execution_mode"):
+        PortfolioSnapshot(total_value_usdt=100)

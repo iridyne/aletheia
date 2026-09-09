@@ -20,7 +20,7 @@ def _archived_position(arm, pnl, *, changed=False, recovery=False, provenance="d
         "treatment": ("qualification-treatment-0", "a8910def5c41ba11cd6af185b3d841346bff5e70d11751edb705f557f2827d8a"),
         "control": ("qualification-control-2", "62515f2af61d1c16be56e01bb6c3e67744f24bd105ac6eebf61956a7f030b3fb"),
     }[arm]
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         id=position_id, symbol="BTC/USDT", market_type="spot", direction="long",
         quantity=1, entry_price=100, current_price=102, execution_mode="paper_internal",
         status="open", opened_at=OPENED, closed_at=CLOSED, realized_pnl=pnl,
@@ -28,7 +28,7 @@ def _archived_position(arm, pnl, *, changed=False, recovery=False, provenance="d
         outcome_exclusion_reason="eligible" if pnl is not None else "funding_unavailable",
         producer_commit="archived-sha", closed_producer_commit="archived-sha",
         behavior_fingerprint="archived-behavior", closed_behavior_fingerprint="archived-behavior",
-    ))
+    ).model_dump())
     assignment = {
         "policy_version": "paper-dynamic-profit-protection/v2",
         "treatment_id": "atr1.5-balance1.5-completed1m/v1",

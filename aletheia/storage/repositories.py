@@ -2350,16 +2350,14 @@ def _validate_native_entry_order_snapshot(
         proposal_price = float(stored.price)
     except (TypeError, ValueError):
         raise ValueError("native entry Order price lacks Proposal authority") from None
-    # Exchange Orders persist the exact submitted plan price. Local paper keeps
-    # the deterministic slipped fill price on its Order and the original price
-    # on the Proposal, so positivity (not equality) is the honest invariant there.
+    # Every exchange Order preserves the submitted Proposal price.
     if (
         proposal_price <= 0
         or order_price <= 0
-        or (execution_mode != "paper_internal" and order_price != proposal_price)
+        or order_price != proposal_price
     ):
         raise ValueError("native entry Order price does not match Proposal")
-    if execution_mode != "paper_internal" and data.get("client_order_id") != proposal_id:
+    if data.get("client_order_id") != proposal_id:
         raise ValueError("exchange entry Order client identity is not durable")
 
 
@@ -2371,7 +2369,11 @@ def validate_native_order_authority(order: Order | Mapping[str, object]) -> None
     is deliberately exempt because its synthetic chain records observation, not
     a new Aletheia trading decision.
     """
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
     data = _to_payload_dict(order)
+    if data.get("execution_mode") not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported Order execution mode")
     if data.get("source", "native") != "native":
         return
 
@@ -2920,6 +2922,10 @@ def list_strategy_fills(
 
 
 def insert_position(p: Position) -> None:
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
+    if p.execution_mode not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported Position execution mode")
     _insert("positions", _stamp_provenance(p.model_dump()))
 
 
@@ -5104,6 +5110,10 @@ def latest_market_snapshot_groups() -> list[dict]:
 
 
 def insert_portfolio_snapshot(snap) -> None:
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
+    if snap.execution_mode not in {*UTA_EXECUTION_MODES, "exchange_account"}:
+        raise ValueError("unsupported PortfolioSnapshot execution mode")
     _insert("portfolio_snapshots", snap.model_dump())
 
 

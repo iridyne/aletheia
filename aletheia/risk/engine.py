@@ -2513,8 +2513,9 @@ def _config_active_execution_mode(cfg) -> str:
     fallbacks all work correctly.
     """
     if cfg.exchange.mode == "live":
-        broker = (getattr(cfg.exchange, "name", None) or "bitget").lower()
-        return f"{broker}_live_limited"
+        from aletheia.config.exchanges import live_execution_mode_for_exchange
+
+        return live_execution_mode_for_exchange(cfg.exchange.name) or ""
     return getattr(cfg.exchange, "paper_execution_mode", None) or ""
 
 

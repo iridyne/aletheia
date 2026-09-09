@@ -39,7 +39,7 @@ def _seed_position(position_id: str = "exit-shadow-position", *, direction: str 
         entry_fee=0.06,
         opened_at=OPENED,
     )
-    repo.insert_position(position)
+    repo._insert("positions", position.model_dump())
     return repo.get_position(position.id)
 
 

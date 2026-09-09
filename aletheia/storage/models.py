@@ -501,9 +501,9 @@ class TradeProposal(_Provenanced):
     # + must-answer wake and the default-provenance reback work. NULL on legacy rows.
     expected_horizon_hours: float | None = None
     stop_source: str | None = None
-    execution_mode: str = "paper_internal"
+    execution_mode: str
     agent_rationale: str | None = None
-    # JSON snapshot captured at proposal/decision time for replay-stable paper
+    # JSON snapshot captured at proposal/decision time for replay-stable
     # position attribution (BTC benchmark, regime, market context).
     attribution_snapshot: str | None = None
     status: str = "pending"
@@ -557,7 +557,7 @@ class RiskDecision(_Provenanced):
     violations: str = "[]"
     allowed_execution_mode: str | None = None
     # The proposal's ORIGINAL execution_mode, preserved verbatim. Distinct from
-    # allowed_execution_mode, which is downgraded to "paper_internal" on rejection
+    # allowed_execution_mode, which carries no execution authority on rejection
     # — that downgrade destroyed the only record of whether a REJECTED proposal
     # was a live order, making strategy_lifecycle's "live rejection = critical"
     # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
@@ -1119,7 +1119,7 @@ class PortfolioSnapshot(BaseModel):
     unrealized_pnl: float = 0.0
     realized_pnl: float | None = 0.0
     positions_count: int = 0
-    execution_mode: str = "paper_internal"
+    execution_mode: str
     exchange_equity_usdt: float | None = None
     # A deliberately explicit account-balance reading.  `total_value_usdt` on
     # legacy local rows was position notional, so it cannot safely power an

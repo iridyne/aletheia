@@ -3727,7 +3727,6 @@ export interface paths {
          * @description Owner-initiated manual close of one open position.
          *
          *     Routing and constraints (execution_contract.md §10.2):
-         *     - `paper_internal` → resolved-mark local close via paper_broker.
          *     - `*_demo` / `*_testnet` → real exchange close order via the matching broker.
          *     - `*_live_limited` → HTTP 409 with code ``live_position_requires_exchange_close``;
          *       live positions hold REAL funds and must be closed from the exchange UI.

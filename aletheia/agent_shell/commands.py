@@ -1677,16 +1677,12 @@ async def review_portfolio_state(params: dict) -> dict:
         protective_price_venue,
     )
 
-    configured_data_venue = config_loader.load_config().market_data.ccxt_exchange
     review_marks: dict[str, dict | None] = {}
     review_mark_evidence: list[dict] = []
     review_now = datetime.now(timezone.utc)
     for position in open_positions:
         position_id = str(position.get("id") or "")
-        venue = protective_price_venue(
-            position.get("execution_mode"),
-            configured_data_venue=configured_data_venue,
-        )
+        venue = protective_price_venue(position.get('execution_mode'))
         mark = (
             get_fresh_mark_for_protective_close(
                 str(position.get("symbol") or ""),

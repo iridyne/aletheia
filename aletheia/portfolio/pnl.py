@@ -422,9 +422,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     positions = list_all_open_positions()
     exc_upnl_index = _build_exchange_upnl_index()
     from aletheia.data.symbols import to_canonical
-    from aletheia.config.loader import load_config as _load_cfg
     from aletheia.data import price_feed as _pf
-    _default_exchange = _load_cfg().market_data.ccxt_exchange or "binance"
 
     # A venue Position is an aggregate exposure. Without a direct broker
     # Position identity, one aggregate uPnL cannot be allocated independently to
@@ -457,7 +455,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     updated = []
     for p in positions:
         _exec_mode = str(p.get("execution_mode") or "")
-        _venue = _pf.protective_price_venue(_exec_mode, configured_data_venue=_default_exchange)
+        _venue = _pf.protective_price_venue(_exec_mode)
         exact_mark = (
             _pf.get_fresh_price_for_protective_close(
                 p["symbol"], str(p.get("market_type") or ""), venue=_venue,
