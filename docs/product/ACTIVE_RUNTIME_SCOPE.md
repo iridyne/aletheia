@@ -12,7 +12,6 @@ authorized_extensions:
       - disabled
       - observe
       - shadow
-      - paper
     live_allowed: false
 instrument_profiles:
   crypto:
@@ -86,8 +85,8 @@ active instrument profiles or current Runtime proof. CN starts semantically
 `disabled`: no CN V2 producer, Candidate, Proposal, reservation, Order, Fill,
 Position, Outcome, or qualification fact may be created until the corresponding
 Contract, executable SpecClaim, feature state, and preceding Phase Gate are
-merged. Later permitted states must continue
-through the same System Operator/Risk/Gateway authorities. No `live` state,
+merged. Observation and Shadow grant no executable approval, account reservation,
+order submission, fill or account mutation authority. No `live` state,
 broker route, cross-currency netting, or support claim is admitted here.
 
 Learning measurement, lifecycle automation, and the sole measured Paper influence

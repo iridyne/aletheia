@@ -235,7 +235,7 @@ def semantic_truth_failures() -> list[str]:
         Path("docs/product/experiments/EXPERIMENT_PROTOCOL.md"):
             "Mechanism Entry Learning uses Planning Generation as its ITT unit",
         Path("docs/product/CAPABILITY_GROUND_TRUTH.md"):
-            "LN-08 | Learned guard generation and observation",
+            "Retired simulator | Archived; no current execution",
         Path("docs/product/capability-integrity/CAPABILITY_INVENTORY.md"):
             "LN-08 | Learned guard generation and observation",
         Path("docs/product/capability-integrity/FACT_CARDS.md"):

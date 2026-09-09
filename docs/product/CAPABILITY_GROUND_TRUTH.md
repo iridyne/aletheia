@@ -44,6 +44,5 @@ and [archived definitions](../design/history/README.md).
 Current external-route qualification must name the exact account environment and
 instrument capability, exercise the Risk/Gateway/private Fill/verified-close
 chain, and identify the tested commit. Deployment claims additionally require
-observed runtime identity and health. The retirement audit is still in progress;
-this document does not assert a refreshed whole-project support count or a
-completed Fedora deployment.
+observed runtime identity and health. Repository retirement alone does not prove
+whole-project qualification or a completed Fedora deployment.

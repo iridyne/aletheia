@@ -52,22 +52,18 @@ authorizes implementation of `market_id=cn_equity` under Issue #2572. This is
 an implementation boundary, not a claim that any current Runtime observes,
 trades, accounts for, or qualifies mainland equities.
 
-The bounded target is CNY-denominated Shanghai and Shenzhen A-shares, long-only,
-through `disabled -> observe -> shadow -> paper`, with `disabled` as the
-default. Initial entry eligibility is limited to ordinary Shanghai and Shenzhen
-main-board shares. ST/*ST, IPO/listing-stage, STAR Market, and ChiNext shares are
-observation-only for new entry while canonical close-only handling remains
-mandatory for an existing Position whose classification changes. Unknown
-classification, B-shares, Beijing Stock Exchange, and every non-CNY or other
-instrument class fail closed.
+The bounded target is CNY-denominated Shanghai and Shenzhen A-share market
+identity, calendar/rules, tradability and point-in-time evidence. The permitted
+states are `disabled`, `observe` and non-executing `shadow`, defaulting to
+`disabled`. Observation and Shadow cannot reserve account resources, issue
+executable approvals, submit orders, produce fills or mutate account positions.
+No CN execution route or broker connectivity is authorized. Future execution
+requires a separate accepted design and qualification against an external account.
 
-CN evidence, strategy, and Paper accounting must reuse the existing Candidate →
-Plan → Proposal → Risk → Execution Gateway → Order/Fill/Position → Outcome →
-Learning authority chain. Research and execution Sidecars remain replaceable
-tools with no Risk, accounting, credential, route, or decision authority. No
-broker route or `live` state is authorized. Capability Ground Truth may report
-CN support only after the exact implementation, Runtime, accounting, and strategy
-qualification gates record their separate results.
+Research tools and Sidecars remain replaceable and gain no Risk, accounting,
+credential, route or decision authority. CN support is reported only from the
+corresponding implementation and Runtime evidence. The former internal-account
+and qualification design is [archived](../design/history/cn_equity_internal_paper.md).
 
 ## Current Learning scope
 

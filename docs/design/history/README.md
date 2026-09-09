@@ -47,3 +47,5 @@ reactivating a historical document in place.
 - [Former Universe Fast Trigger Watch proposal](universe_fast_trigger_watch.md): retired Setup adapter, local execution and acceptance requirements.
 
 - [Former OpenWiki architecture snapshot](openwiki/README.md): original simulator, account, entry-loop, Learning and configuration pages, retained as a linked historical set.
+
+- [Former CN Equity Internal Paper proposal](cn_equity_internal_paper.md): retired CNY simulator/account and execution qualification design.

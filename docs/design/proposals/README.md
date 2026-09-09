@@ -32,8 +32,8 @@ Proposal as stable decision history.
 - [Observation Experiment Ownership V2](observation_experiment_ownership_v2.md): moves registered Experiment definition, Generation, assignment, Exposure, Evaluation, lifecycle, retention, and archive ownership to Observation Lab through the serial #2737 migration while preserving Main production facts and trading trust boundaries.
 - [CN Equity Market Kernel](cn-equity-market-kernel.md): a second explicitly
   gated market using versioned identity, point-in-time market facts, the existing
-  Risk/Gateway authority chain, and independently qualified Paper accounting and
-  strategy evidence.
+  non-executing observation and Shadow boundaries; external-account execution
+  requires a separate accepted design.
 - [Complete Unified Trading Account](unified_trading_account.md): one private
   external-account read/write boundary beneath Gateway authority, with explicit
   evidence, reconciliation and profile qualification semantics.
