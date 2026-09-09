@@ -57,7 +57,6 @@ _LLM_EVIDENCE_MIN_SAMPLE = 3
 _LLM_DEGRADED_SUCCESS_RATE = 0.5
 
 
-
 @contextmanager
 def _read_only_diagnostics():
     """Fence passive Doctor reports against config and SQLite writes."""
@@ -1739,8 +1738,6 @@ def _probe_trading_loop(report: Report) -> None:
         report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
 
 
-
-
 def _probe_skip_halt(report: Report) -> None:
     """Expose candidate-skip evidence gaps without changing trading behavior.
 
@@ -2172,63 +2169,6 @@ def _probe_outcome_history_integrity(report: Report) -> None:
             report.add("loop.outcome_history", "ok", detail)
     except Exception as e:
         report.add("loop.outcome_history", "info", f"probe error: {e}")
-
-
-def _probe_paper_funding_accounting(report: Report) -> None:
-    """Read-only convergence check for local futures funding economics."""
-    try:
-        from aletheia.maintenance.paper_funding_reconciliation import (
-            paper_funding_diagnostic_summary,
-        )
-
-        result = paper_funding_diagnostic_summary(limit=100)
-        summary = result["summary"]
-        identity = int(summary["funding_identity_mismatch"])
-        numeric = int(summary["duplicate_settlement_numeric_mismatch"])
-        ledgers = int(summary["close_event_projection_mismatch"]) + int(
-            summary["paper_cash_ledger_mismatch"]
-        )
-        recoverable = int(summary["recoverable_null_pnl"]) + int(
-            summary["terminal_now_recoverable"]
-        )
-        missing_hooks = int(summary["missing_outcome_hooks"])
-        outcome_projection = int(summary["outcome_projection_mismatch"])
-        incomplete = int(summary["still_incomplete"])
-        truncated = bool(result.get("truncated"))
-        detail = (
-            f"version={result['accounting_version']}; scanned={result['scanned']}; "
-            f"truncated={str(truncated).lower()}; "
-            f"identity_mismatch={identity}; "
-            f"numeric_mismatch={numeric}; ledger_mismatch={ledgers}; "
-            f"recoverable={recoverable}; incomplete={incomplete}; "
-            f"outcome_mismatch={outcome_projection}; missing_hooks={missing_hooks}"
-        )
-        if numeric or ledgers:
-            report.add(
-                "accounting.paper_funding", "blocker", detail,
-                "run `aletheia data reconcile-paper-funding` and review the dry run",
-            )
-        elif (
-            identity
-            or recoverable
-            or incomplete
-            or outcome_projection
-            or missing_hooks
-            or truncated
-        ):
-            report.add(
-                "accounting.paper_funding", "warn", detail,
-                (
-                    "run the complete dry run before trusting the sampled result"
-                    if truncated
-                    else "review the dry run; apply requires explicit position IDs "
-                    "and fingerprint"
-                ),
-            )
-        else:
-            report.add("accounting.paper_funding", "ok", detail)
-    except Exception as e:
-        report.add("accounting.paper_funding", "info", f"probe error: {e}")
 
 
 def _probe_sizing_policy(report: Report) -> None:
@@ -3133,7 +3073,6 @@ def _probe_network(report: Report) -> None:
     leak_note = f"; egress {proxy_ip} ≠ direct {direct_ip}" if (proxy_ip and direct_ip) else ""
     report.add("network.proxy", "ok",
                f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
-
 
 
 def _probe_runtime_session_provenance(report: Report) -> None:
@@ -4118,7 +4057,6 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_knowledge_flood,
         _probe_learning_retrieval,
         _probe_outcome_history_integrity,
-        _probe_paper_funding_accounting,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
         _probe_sizing_policy,

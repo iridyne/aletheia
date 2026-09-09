@@ -618,47 +618,16 @@ demo auto-adopt/orphan-close 之前运行；active 事故写入 `reconciliation_
 
 ### 11.6 期货资金费用的可证来源与诚实关闭
 
-`paper_internal` 合约使用明确标为 `local_simulation` 的确定性模型：两分钟衍生品采集持续覆盖
-所有未平仓本地合约；按 `opened_at < next_funding_time <= closed_at` 的每个结算事件，采用同一
-主 venue 在结算前 15 分钟内的最后持久快照。每次结算的名义金额只来自该时刻之前已经成交、
-且反链到同一 Position 的 entry Order/Fill；多腿加仓按真实成交时间分段，不能用最终 Position
-名义金额回溯早期结算。Order、Proposal、Risk、Position 的币对、市场、方向、执行模式以及每单
-与整仓数量必须闭合；首笔/primary Fill 必须与 Position `opened_at` 在一秒持久化写序容差内对齐，
-更早且超出该容差的 Fill 视为损坏事实；Fill 恰好落在结算时刻也视为边界不明并 fail closed。完整事件按多头成本为
-正、空头返还为负聚合。开仓锚点、每次结算后的下一 schedule 和平仓后的未来 schedule 必须完整，
-事件快照随 close Order/Fill 在同一事务写入 `reconciliation_evidence.funding`。中央关闭入口再次
-核对证据的 source、Position、symbol、持有时间窗和逐事件合计；不完整/异常结果必须显式覆盖旧
-funding 为 `NULL/unavailable`。这只是可复现的本地模拟，不冒充交易所账户扣款。
+本地模拟资金费率模型及其修复流程已退役，旧定义见
+[历史归档](../history/local_paper_account_controls.md#retired-funding-model)。历史数据保持原始证据，
+当前执行只接受对应交易所账户的资金费用事实。
 
-资金费会计身份使用
-`(exchange, canonical_symbol, canonical_settlement_at)`；解析后的时间统一为 UTC，并只把严格小于
-一秒的序列化偏差归一到同一整秒边界。原始 snapshot ID 和时间戳继续保留在 evidence 中；同一
-canonical bucket 的明确历史结算值优先于结算前 live observation，两个不同历史费率则
-`conflicting_settlement_rates` fail closed，绝不静默选值或重复计费。
-
-正常关闭使用 `live_coverage` 证明开仓锚点、逐次 schedule transition 和关闭锚点。延迟恢复可使用
-`historical_ledger`：只有精确 entry Fill lineage 和持仓窗内完整、单调、被关闭后首个实际结算
-bracket 的历史序列才可完成；公开历史费率在这里仍是本地模拟证据，不是 `broker_ledger`。
-恢复成功后 `materialize_position_economics()` 在一个 SQLite writer transaction 中同步 Position、
-唯一 full close event、paper cash、reconciliation fingerprint/version、eligibility、outcome-hook outbox
-和权威 audit。相同 fingerprint/result 为 no-op；已有数字的 owner-approved 修正保留原 cash 事实，
-以带 position/source/fingerprint 的 `manual_credit` 或 `manual_debit` 追加差额，不删除旧事件。
-`aletheia data reconcile-paper-funding` 默认只读；apply 必须显式列出 Position IDs 并匹配当次 report
-fingerprint。
-
-Funding 会计状态与 audit delivery 状态彼此独立。新 paper/broker funding settlement audit 在上述
+Funding 会计状态与 audit delivery 状态彼此独立。broker funding settlement audit 在上述
 会计 transaction 内以 stable ID 写入 `audit_events` 并标记 JSONL mirror `pending`；transaction
-提交后才尝试 hash-chain append。文件失败保留已提交的 Position/PnL/cash/hook authority，同时返回
+提交后才尝试 hash-chain append。文件失败保留已提交的 Position/PnL/hook authority，同时返回
 `audit_mirror_status=pending` 并使对应 scheduler/audit job health degraded；不得把 accounting status
 改写为 error 或触发会计重放。`already_current` 只重试已有 pending mirror。append 后 ack 前崩溃由
 stable ID 去重恢复，成功状态单调为 `mirrored`。历史无共享 ID 的 audit 不自动 replay。
-
-已完成数值、full-close、paper cash、eligibility 和 outcome hook 都一致，但顶层 funding version/fingerprint
-缺失或不匹配的旧行，必须单独报告为 `funding_identity_mismatch`。只有它是唯一差异、且原始 nested
-funding evidence 仍可按持仓窗与逐事件合计复核时，apply 才可走 identity-only repair：保留该 nested
-evidence（包括 close 时的 `seed_close_anchor`）不变，只补它自身的 canonical version/fingerprint 和
-权威 repair audit。任何 funding/PnL、close event、cash、eligibility/reason 或必需 hook 差异都不得被
-identity-only 路径吸收；已经 current 的行再次 apply 必须为 no-op。
 
 exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 

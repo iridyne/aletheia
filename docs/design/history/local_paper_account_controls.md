@@ -44,3 +44,63 @@ be interpreted as zeroing spendable balance or equity. See also
 `tests/specs/spec_pipeline_paper_close_materialization.py` (regression
 `test_unknown_paper_perp_funding_closes_without_zero_equivalent_cash_settlement`).
 
+
+## Retired accounting maintenance
+
+The following commands and automatic repairs belonged to the archived simulator.
+They are removed from the active runtime; historical records remain readable.
+
+- `data reconcile-local-paper-accounting`
+- `data repair-paper-close-timestamps`
+- `data reconcile-paper-funding`
+- Scheduled `paper_funding_settler` and inline cash-ledger repair during loss queries.
+
+Former data-model definition:
+
+`aletheia data reconcile-local-paper-accounting` is dry-run by default; `--apply`
+may only restore an exact missing reverse backlink and write this table, inside a
+transaction.  It never changes raw `positions.realized_pnl`, eligibility, Risk,
+paper cash events, or exchange data.  Its amounts are exposed as historical
+reconciled accounting, never combined with verified strategy PnL, Learning,
+PortfolioSnapshot, or cash settlement.
+
+## Retired funding model
+
+Historical definition only; the simulator repair commands are retired.
+
+`paper_internal` 合约使用明确标为 `local_simulation` 的确定性模型：两分钟衍生品采集持续覆盖
+所有未平仓本地合约；按 `opened_at < next_funding_time <= closed_at` 的每个结算事件，采用同一
+主 venue 在结算前 15 分钟内的最后持久快照。每次结算的名义金额只来自该时刻之前已经成交、
+且反链到同一 Position 的 entry Order/Fill；多腿加仓按真实成交时间分段，不能用最终 Position
+名义金额回溯早期结算。Order、Proposal、Risk、Position 的币对、市场、方向、执行模式以及每单
+与整仓数量必须闭合；首笔/primary Fill 必须与 Position `opened_at` 在一秒持久化写序容差内对齐，
+更早且超出该容差的 Fill 视为损坏事实；Fill 恰好落在结算时刻也视为边界不明并 fail closed。完整事件按多头成本为
+正、空头返还为负聚合。开仓锚点、每次结算后的下一 schedule 和平仓后的未来 schedule 必须完整，
+事件快照随 close Order/Fill 在同一事务写入 `reconciliation_evidence.funding`。中央关闭入口再次
+核对证据的 source、Position、symbol、持有时间窗和逐事件合计；不完整/异常结果必须显式覆盖旧
+funding 为 `NULL/unavailable`。这只是可复现的本地模拟，不冒充交易所账户扣款。
+
+资金费会计身份使用
+`(exchange, canonical_symbol, canonical_settlement_at)`；解析后的时间统一为 UTC，并只把严格小于
+一秒的序列化偏差归一到同一整秒边界。原始 snapshot ID 和时间戳继续保留在 evidence 中；同一
+canonical bucket 的明确历史结算值优先于结算前 live observation，两个不同历史费率则
+`conflicting_settlement_rates` fail closed，绝不静默选值或重复计费。
+
+正常关闭使用 `live_coverage` 证明开仓锚点、逐次 schedule transition 和关闭锚点。延迟恢复可使用
+`historical_ledger`：只有精确 entry Fill lineage 和持仓窗内完整、单调、被关闭后首个实际结算
+bracket 的历史序列才可完成；公开历史费率在这里仍是本地模拟证据，不是 `broker_ledger`。
+恢复成功后 `materialize_position_economics()` 在一个 SQLite writer transaction 中同步 Position、
+唯一 full close event、paper cash、reconciliation fingerprint/version、eligibility、outcome-hook outbox
+和权威 audit。相同 fingerprint/result 为 no-op；已有数字的 owner-approved 修正保留原 cash 事实，
+以带 position/source/fingerprint 的 `manual_credit` 或 `manual_debit` 追加差额，不删除旧事件。
+`aletheia data reconcile-paper-funding` 默认只读；apply 必须显式列出 Position IDs 并匹配当次 report
+fingerprint。
+
+
+已完成数值、full-close、paper cash、eligibility 和 outcome hook 都一致，但顶层 funding version/fingerprint
+缺失或不匹配的旧行，必须单独报告为 `funding_identity_mismatch`。只有它是唯一差异、且原始 nested
+funding evidence 仍可按持仓窗与逐事件合计复核时，apply 才可走 identity-only repair：保留该 nested
+evidence（包括 close 时的 `seed_close_anchor`）不变，只补它自身的 canonical version/fingerprint 和
+权威 repair audit。任何 funding/PnL、close event、cash、eligibility/reason 或必需 hook 差异都不得被
+identity-only 路径吸收；已经 current 的行再次 apply 必须为 no-op。
+

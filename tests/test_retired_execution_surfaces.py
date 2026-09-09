@@ -81,3 +81,32 @@ def test_external_exchange_selection_keeps_all_axes_aligned(monkeypatch, exchang
     assert cfg.market_data.ccxt_exchange == cfg.market_data.ccxt_fallback == exchange
     assert cfg.exchange.paper_execution_mode == mode
     assert audits[0]["event_type"] == "primary_exchange_changed"
+
+
+def test_archived_accounting_is_readable_without_reconstruction():
+    from aletheia.maintenance.historical_accounting import (
+        historical_accounting_for_position,
+        historical_accounting_summary,
+    )
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    db.execute(
+        "INSERT INTO positions(id,symbol,market_type,direction,quantity,entry_price,execution_mode,status) "
+        "VALUES ('archived','BTC/USDT','spot','long',1,100,'paper_internal','closed')"
+    )
+    db.execute(
+        "INSERT INTO historical_accounting_reconciliations "
+        "(position_id,reconciliation_version,status,reconstructed_realized_pnl,method,evidence_json) "
+        "VALUES ('archived','original-version','reconstructed',-3.5,'original-method',?)",
+        ('{"source":"archive"}',),
+    )
+    before = db.total_changes
+
+    row = historical_accounting_for_position("archived")
+    totals = historical_accounting_summary(execution_mode="paper_internal")
+
+    assert row["reconciliation_version"] == "original-version"
+    assert row["evidence"] == {"source": "archive"}
+    assert row["reconstructed_realized_pnl"] == totals["historical_reconciled_pnl"] == -3.5
+    assert db.total_changes == before

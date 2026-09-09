@@ -65,7 +65,6 @@ _ESSENTIAL_JOBS: set[str] = {
     "position_reconcile",
     "tpsl_fill_check",
     "outcome_settler",
-    "paper_funding_settler",
     "broker_funding_settler",
     "funding_audit_reconciler",
     "outcome_hook_replay",
@@ -143,7 +142,6 @@ _ASYNC_JOB_TIMEOUT_SEC: dict[str, float] = {
     # 600s interval with max_instances=1, so a 300s ceiling still cannot overlap
     # its own next fire.
     "outcome_settler": 300.0,
-    "paper_funding_settler": 60.0,
     "broker_funding_settler": 120.0,
     "funding_audit_reconciler": 15.0,
     "universe_scanner_audit_reconciler": 15.0,
@@ -1444,13 +1442,6 @@ def init_scheduler() -> BackgroundScheduler | None:
         next_run_time=datetime.now() + timedelta(minutes=1),
     )
     _scheduler.add_job(
-        _guarded("paper_funding_settler", _run_paper_funding_settler),
-        "interval", minutes=30,
-        id="paper_funding_settler", misfire_grace_time=120, max_instances=1,
-        executor="io",
-        next_run_time=datetime.now() + timedelta(minutes=3),
-    )
-    _scheduler.add_job(
         _guarded("broker_funding_settler", _run_broker_funding_settler),
         "interval", minutes=30,
         id="broker_funding_settler", misfire_grace_time=120, max_instances=1,
@@ -2435,16 +2426,10 @@ def _run_position_manager():
     # `if cfg.runtime.paused: return` here is a safety regression.
     # Invariant: execution_contract §10 + spec PL-PM-07.
     try:
-        from aletheia.portfolio.protective_barrier import (
-            run_due_position_protection_cycle,
-        )
         from aletheia.portfolio.position_manager import evaluate_open_positions
 
-        barrier_summary = run_due_position_protection_cycle()
         summary = evaluate_open_positions()
-        reported_errors = list(barrier_summary.get("errors") or [])
-        if isinstance(summary, dict):
-            reported_errors.extend(summary.get("errors") or [])
+        reported_errors = list(summary.get("errors") or []) if isinstance(summary, dict) else []
         if reported_errors:
             error_facts = [
                 {
@@ -3794,51 +3779,6 @@ def _run_outcome_settler():
         logger.warning("outcome_settler failed: %s", e)
         _record_job_failure("outcome_settler", str(e))
         raise  # #1817: re-raise so APScheduler records EVENT_JOB_ERROR
-
-
-async def _async_paper_funding_settler():
-    from aletheia.portfolio.paper_account import settle_unsettled_paper_closes
-    result = await settle_unsettled_paper_closes()
-    logger.debug(
-        "paper_funding_settler: settled=%d revived=%d still_pending=%d errors=%d",
-        result["settled"], result.get("revived", 0),
-        result["still_pending"], len(result["errors"]),
-    )
-    return result
-
-
-def _run_paper_funding_settler():
-    """Retry funding economics for paper_internal futures positions that closed
-    during a collection outage (realized_pnl=NULL, funding_source='unavailable').
-
-    Fetches historical funding rates from the exchange when a gap is detected,
-    then re-computes and settles the cash ledger.  Runs unconditionally — the
-    paper account health must not depend on the runtime being unpaused.
-    """
-    try:
-        result = _run_async_with_timeout(
-            "paper_funding_settler", _async_paper_funding_settler()
-        )
-        if result.get("errors"):
-            _record_job_failure(
-                "paper_funding_settler", "paper_funding_settler_reported_errors"
-            )
-        elif result.get("audit_pending"):
-            _record_job_failure(
-                "paper_funding_settler",
-                f"audit_mirror_pending:{result['audit_pending']}",
-            )
-        else:
-            _record_job_success("paper_funding_settler")
-    except TimeoutError:
-        logger.warning(
-            "paper_funding_settler timed out after %.0fs",
-            _ASYNC_JOB_TIMEOUT_SEC["paper_funding_settler"],
-        )
-        _record_job_failure("paper_funding_settler", "timed out")
-    except Exception as e:
-        logger.warning("paper_funding_settler failed: %s", e)
-        _record_job_failure("paper_funding_settler", str(e))
 
 
 async def _async_broker_funding_settler():

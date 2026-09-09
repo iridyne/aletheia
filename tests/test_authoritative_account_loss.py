@@ -85,7 +85,7 @@ def _proposal():
 
     return TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.01, price=100.0,
+        execution_mode="bitget_demo", quantity=0.01, price=100.0,
     )
 
 
@@ -132,7 +132,7 @@ def test_unverified_close_blocks_risk_without_fabricating_breach_or_tripping(mon
     cfg = load_config()
     cfg.risk.kill_switch_enabled_demo = True
     save_config(cfg)
-    _closed_position("administrative", -10_000.0, eligible=False)
+    _closed_position("administrative", -10_000.0, mode="bitget_demo", eligible=False)
 
     proposal = _proposal()
     repo.insert_trade_proposal(proposal)
@@ -149,10 +149,11 @@ def test_genuine_authoritative_loss_keeps_existing_threshold_and_trip(monkeypatc
     from aletheia.storage import repositories as repo
 
     cfg = load_config()
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args: 200.0)
     cfg.risk.max_daily_loss_pct = 1.0
     cfg.risk.kill_switch_enabled_demo = True
     save_config(cfg)
-    _closed_position("verified-loss", -10.0)
+    _closed_position("verified-loss", -10.0, mode="bitget_demo")
 
     proposal = _proposal()
     repo.insert_trade_proposal(proposal)
@@ -245,24 +246,6 @@ def test_null_realized_pnl_with_settled_rows_still_unavailable():
     assert snapshot.realized_pnl_usdt is None
 
 
-def test_pending_funding_economics_blocks_risk_fail_closed():
-    """Risk emits account_loss_unavailable:pending_funding_economics for unresolved funding."""
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.risk.engine import evaluate_proposal
-    from aletheia.storage import repositories as repo
-
-    cfg = load_config()
-    cfg.risk.kill_switch_enabled_demo = True
-    save_config(cfg)
-    _pending_paper_close("pending-risk", entry_price=100.0, exit_price=102.0,
-                         quantity=0.1, direction="short")
-
-    proposal = _proposal()
-    repo.insert_trade_proposal(proposal)
-    result = evaluate_proposal(proposal)
-    assert "account_loss_unavailable:pending_funding_economics" in result.violations
-    assert not any(v.startswith("max_daily_loss_exceeded") for v in result.violations)
-
 
 def test_funding_materialization_restores_daily_loss_availability():
     """After funding settles, the exact net amount becomes available."""
@@ -329,40 +312,20 @@ def _orphaned_paper_close(position_id: str, realized_pnl: float) -> None:
     # Deliberately omit settle_position_closed() to simulate the orphan condition.
 
 
-def test_orphaned_ledger_entry_is_inline_reconciled_and_does_not_block():
-    """An orphaned position (realized_pnl set, no ledger entry) is auto-fixed inline.
-
-    The daily-loss check must not block paper trades when the only mismatch is a
-    missing position_closed event that can be deterministically reconstructed from
-    positions.realized_pnl.
-    """
+def test_archived_ledger_read_does_not_repair_missing_events():
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-    from aletheia.portfolio.paper_account import ensure_paper_account
     from aletheia.storage import repositories as repo
 
-    ensure_paper_account()
     _orphaned_paper_close("orphan-1", -5.0)
-
-    # Verify the orphan state: position exists with realized_pnl, no ledger entry.
     db = repo.get_db()
-    ledger_before = db.execute(
-        "SELECT COUNT(*) FROM paper_account_events "
-        "WHERE action='position_closed' AND position_id='orphan-1'"
-    ).fetchone()[0]
-    assert ledger_before == 0, "Test setup error: ledger entry should be absent"
+    before = db.total_changes
 
     snapshot = authoritative_account_realized_loss("paper_internal")
 
-    # After the call, the ledger entry must have been written inline.
-    ledger_after = db.execute(
-        "SELECT COUNT(*) FROM paper_account_events "
-        "WHERE action='position_closed' AND position_id='orphan-1'"
-    ).fetchone()[0]
-    assert ledger_after == 1, "Inline reconcile should have written the ledger entry"
-
-    assert snapshot.available is True, f"Expected available, got: {snapshot.reason}"
-    assert snapshot.source == "paper_account_ledger"
-    assert abs(snapshot.realized_pnl_usdt - (-5.0)) < 1e-6
+    assert not snapshot.available
+    assert snapshot.reason == "paper_ledger_mismatch"
+    assert db.total_changes == before
+    assert db.execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
 def test_funding_settler_repairs_orphan_when_no_unsettled_rows_exist():
