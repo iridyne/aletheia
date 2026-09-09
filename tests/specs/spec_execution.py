@@ -5,17 +5,10 @@ is the most critical invariant in the entire system.
 """
 
 import ast
-import textwrap
 
 import pytest
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
-from tests.async_test_utils import closing_coro_runner
-
-
-# ---------------------------------------------------------------------------
-# L2a — Structural claims
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -56,7 +49,6 @@ def test_execution_internal_is_private():
     assert callable(gateway._execute_proposal)
 
 
-
 @spec_claim(
     SpecClaim(
         "EX-S04", "execution_contract", "§4 reconciliation", "L2a",
@@ -67,11 +59,6 @@ def test_reconciliation_module():
     from aletheia.execution.reconciliation import reconcile
 
     assert callable(reconcile)
-
-
-# ---------------------------------------------------------------------------
-# L2b — Behavioral claims
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -103,7 +90,7 @@ def test_submit_calls_risk_first(tmp_path, monkeypatch):
 
     result = submit_proposal(
         symbol="BTC/USDT", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal",
+        price=60000.0, execution_mode="bitget_demo",
         market_type="spot",
     )
     decisions = repo.list_risk_decisions(limit=10)
@@ -127,7 +114,7 @@ def test_preview_runtime_blocks_execution_before_persistence(tmp_path, monkeypat
     with pytest.raises(gateway.PreviewExecutionBlockedError, match="preview mode"):
         gateway.submit_proposal(
             symbol="BTC/USDT", direction="long", quantity=0.001,
-            price=60_000.0, execution_mode="paper_internal", market_type="spot",
+            price=60_000.0, execution_mode="bitget_demo", market_type="spot",
         )
     with pytest.raises(gateway.PreviewExecutionBlockedError, match="preview mode"):
         gateway.execute_existing_proposal("does-not-matter")
@@ -151,7 +138,7 @@ def test_gateway_rejects_non_native_execution_before_side_effects(tmp_path, monk
     for source in ("adopted", "human", "adopte"):
         submitted = submit_proposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            quantity=0.001, price=60_000.0, execution_mode="paper_internal",
+            quantity=0.001, price=60_000.0, execution_mode="bitget_demo",
             source=source,
         )
         assert submitted == {
@@ -164,12 +151,12 @@ def test_gateway_rejects_non_native_execution_before_side_effects(tmp_path, monk
 
     adopted = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
-        quantity=0.01, price=3_000.0, execution_mode="paper_internal",
+        quantity=0.01, price=3_000.0, execution_mode="bitget_demo",
         source="adopted",
     )
     repo.insert_trade_proposal(adopted)
 
-    executed = execute_existing_proposal(adopted.id)
+    executed = execute_existing_proposal(adopted.id, "bitget_demo")
     assert executed == {
         "status": "rejected",
         "reason_code": "non_native_proposal_not_executable",
@@ -193,7 +180,7 @@ def test_proposal_default_status():
 
     p = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=1, price=3000,
+        execution_mode="bitget_demo", quantity=1, price=3000,
     )
     assert p.status == "pending"
 
@@ -222,58 +209,6 @@ def test_exchange_order_constraint_gate_is_wired_before_submission():
     assert calls.count("evaluate_proposal") >= 2, "adjusted quantity must be re-checked by Risk Engine"
 
 
-# ---------------------------------------------------------------------------
-# L2c — Invariant claims
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-C01", "execution_contract", "§1 causal chain", "L2c",
-        "After paper execution: proposal -> risk_decision -> order chain is unbroken",
-    ),
-)
-def test_causal_chain_integrity(tmp_path, monkeypatch):
-    import sqlite3
-
-    import aletheia.config.loader as loader
-    import aletheia.storage.sqlite as sq
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage.migrations import run_migrations
-    from aletheia.storage import repositories as repo
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-
-    sq._db_conn = None
-    conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    monkeypatch.setattr(sq, "_db_conn", conn)
-    run_migrations()
-
-    result = submit_proposal(
-        symbol="BTC/USDT", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal",
-        market_type="spot",
-    )
-    proposal_id = result.get("proposal_id")
-    if not proposal_id:
-        pytest.skip("Proposal rejected by risk - cannot verify full chain")
-
-    proposals = repo.list_trade_proposals(limit=10)
-    assert any(p["id"] == proposal_id for p in proposals)
-
-    decisions = repo.list_risk_decisions(limit=10)
-    assert any(d.get("proposal_id") == proposal_id for d in decisions)
-
-
-# ---------------------------------------------------------------------------
-# Helper: shared DB setup for behavioral claims
-# ---------------------------------------------------------------------------
-
 def _setup_db(tmp_path, monkeypatch):
     import sqlite3
 
@@ -292,11 +227,6 @@ def _setup_db(tmp_path, monkeypatch):
     conn.execute("PRAGMA busy_timeout=5000")
     monkeypatch.setattr(sq, "_db_conn", conn)
     run_migrations()
-
-
-# ---------------------------------------------------------------------------
-# EX-B03 — atomicity: Order row written before exchange call
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -360,11 +290,6 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     assert "exchange unavailable" not in (row["error_reason"] or "")
 
 
-# ---------------------------------------------------------------------------
-# EX-B04 — idempotency: re-executing an already-executed proposal is rejected
-# ---------------------------------------------------------------------------
-
-
 @spec_claim(
     SpecClaim(
         "EX-B04", "execution_contract", "§5 idempotency", "L2b",
@@ -372,35 +297,27 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
     ),
 )
 def test_re_execute_already_executed_proposal_rejected(tmp_path, monkeypatch):
-    """gateway.execute_existing_proposal checks proposal.status=='executed' and short-
-    circuits with status='already_executed' (gateway.py:61-66)."""
+    """A persisted completed Proposal cannot re-enter execution."""
     _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal, execute_existing_proposal
+    from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
+    from aletheia.storage.models import TradeProposal
 
-    result = submit_proposal(
-        symbol="BTC/USDT", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal",
-        market_type="spot",
+    proposal = TradeProposal(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=0.001, price=60000.0, execution_mode="bitget_demo",
+        status="executed",
     )
-    proposal_id = result.get("proposal_id")
-    if result.get("status") != "executed":
-        pytest.skip("Proposal not executed (risk rejected) — cannot test re-execute guard")
+    repo.insert_trade_proposal(proposal)
 
-    orders_before = repo.list_orders(limit=200)
-    order_count_before = sum(1 for o in orders_before if o.get("proposal_id") == proposal_id)
+    def should_not_run(*_args, **_kwargs):
+        raise AssertionError("completed Proposal reached the execution pipeline")
 
-    second = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
-
-    assert second["status"] == "already_executed", (
-        f"Expected 'already_executed', got {second['status']!r}"
-    )
-    orders_after = repo.list_orders(limit=200)
-    order_count_after = sum(1 for o in orders_after if o.get("proposal_id") == proposal_id)
-    assert order_count_after == order_count_before, (
-        "Re-executing an already-executed proposal must not create additional order rows"
-    )
+    monkeypatch.setattr(gateway, "_execute_proposal", should_not_run)
+    result = gateway.execute_existing_proposal(proposal.id, "bitget_demo")
+    assert result["status"] == "already_executed"
+    assert repo.list_orders(limit=10) == []
+    assert repo.get_proposal_execution_claim(proposal.id) is None
 
 
 @spec_claim(
@@ -426,7 +343,7 @@ def test_fresh_execution_lease_blocks_duplicate_pipeline(tmp_path, monkeypatch):
         direction="long",
         quantity=0.001,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executing",
     )
     repo.insert_trade_proposal(proposal)
@@ -445,86 +362,11 @@ def test_fresh_execution_lease_blocks_duplicate_pipeline(tmp_path, monkeypatch):
         raise AssertionError("fresh lease reached execution pipeline")
 
     monkeypatch.setattr(gateway, "_execute_proposal", should_not_run)
-    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
+    result = gateway.execute_existing_proposal(proposal.id, "bitget_demo")
 
     assert result["status"] == "already_claimed"
     assert pipeline_calls == 0
     assert repo.list_orders(limit=10) == []
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-B14", "execution_contract", "§5 local paper crash recovery", "L2b",
-        "An expired paper_internal execution lease with zero Orders can be CAS-reclaimed "
-        "and materializes exactly one Order, Fill, and Position.",
-        status="implemented",
-    ),
-)
-def test_expired_paper_execution_lease_recovers_exactly_once(tmp_path, monkeypatch):
-    from datetime import datetime, timedelta, timezone
-
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution import gateway
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, TradeProposal
-
-    monkeypatch.setattr(
-        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
-        lambda symbol, market_type, *, venue: 100.0,
-    )
-    opportunity = Opportunity(
-        id="opportunity-expired-paper-lease",
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        status="queued",
-    )
-    repo.insert_opportunity(opportunity)
-
-    proposal = TradeProposal(
-        id="proposal-expired-paper-lease",
-        opportunity_id=opportunity.id,
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.001,
-        price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
-        risk_reward=2.0,
-        execution_mode="paper_internal",
-        status="executing",
-    )
-    repo.insert_trade_proposal(proposal)
-    expired = datetime.now(timezone.utc) - timedelta(minutes=20)
-    assert repo.insert_proposal_execution_claim(
-        proposal.id,
-        "dead-paper-owner",
-        (expired - timedelta(minutes=10)).isoformat(),
-        expired.isoformat(),
-    )
-
-    result = gateway.execute_existing_proposal(proposal.id, "paper_internal")
-
-    assert result["status"] == "executed"
-    assert len([
-        row for row in repo.list_orders(limit=20)
-        if row.get("proposal_id") == proposal.id
-    ]) == 1
-    assert len(repo.list_fills(limit=20)) == 1
-    assert len([
-        row for row in repo.list_positions(limit=20)
-        if row.get("proposal_id") == proposal.id
-    ]) == 1
-    assert repo.get_trade_proposal(proposal.id)["status"] == "executed"
-    assert repo.get_proposal_execution_claim(proposal.id) is None
-
-    replay = gateway.execute_existing_proposal(proposal.id, "paper_internal")
-    assert replay["status"] == "already_executed"
-    assert len([
-        row for row in repo.list_orders(limit=20)
-        if row.get("proposal_id") == proposal.id
-    ]) == 1
 
 
 @spec_claim(
@@ -579,11 +421,6 @@ def test_expired_exchange_execution_lease_never_resubmits(tmp_path, monkeypatch)
     assert repo.get_proposal_execution_claim(proposal.id) is None
 
 
-# ---------------------------------------------------------------------------
-# EX-C04 — reconciliation never imports place_order
-# ---------------------------------------------------------------------------
-
-
 @spec_claim(
     SpecClaim(
         "EX-C04", "execution_contract", "§6 reconciliation invariant", "L2c",
@@ -608,11 +445,6 @@ def test_reconciliation_never_imports_place_order():
                 )
 
 
-# ---------------------------------------------------------------------------
-# EX-B06 — reconciliation never inserts a Fill row directly
-# ---------------------------------------------------------------------------
-
-
 @spec_claim(
     SpecClaim(
         "EX-B06", "execution_contract", "§6 reconciliation", "L2c",
@@ -632,11 +464,6 @@ def test_reconciliation_never_inserts_fill():
             f"reconciliation.py contains {token!r} — "
             "reconciliation must not create Fill rows directly (contract §6)"
         )
-
-
-# ---------------------------------------------------------------------------
-# EX-S05 — _is_live() is defined and private in risk/engine.py
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -666,182 +493,12 @@ def test_is_live_defined_and_private():
     assert "_is_live".startswith("_"), "_is_live must start with a single underscore"
 
 
-# ---------------------------------------------------------------------------
-# EX-B07 — paper_broker reachable only through gateway in production code
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-B07", "execution_contract", "§1 entry", "L2b",
-        "In production (non-test) code only gateway.py imports execute_paper_order from paper_broker",
-    ),
-)
-def test_paper_broker_only_imported_by_gateway():
-    """AST-scan all .py files under aletheia/ (excluding tests/).  The only file
-    that may import execute_paper_order from paper_broker is gateway.py — all other
-    callers must go through submit_proposal / execute_existing_proposal
-    (contract §1: 'all orders must flow through Execution Gateway')."""
-    from pathlib import Path
-
-    root = Path(__file__).parents[2] / "aletheia"
-    violators = []
-    for py_file in root.rglob("*.py"):
-        if py_file.name == "gateway.py":
-            continue
-        text = py_file.read_text(encoding="utf-8", errors="replace")
-        if "execute_paper_order" not in text:
-            continue
-        tree = ast.parse(text, filename=str(py_file))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                imported_names = [alias.name for alias in node.names]
-                if "execute_paper_order" in imported_names:
-                    violators.append(str(py_file.relative_to(root.parent)))
-    assert not violators, (
-        "execute_paper_order imported outside gateway.py in production code: "
-        + ", ".join(violators)
-    )
-
-
-# ---------------------------------------------------------------------------
-# EX-C02 — every Order row has a proposal_id matching a trade_proposals row
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-C02", "execution_contract", "§1 causal chain", "L2c",
-        "Every Order row in DB has a proposal_id that matches an existing trade_proposals row",
-    ),
-)
-def test_order_proposal_foreign_key_integrity(tmp_path, monkeypatch):
-    """Build one full execution chain via submit_proposal, then assert every
-    orders.proposal_id resolves to a row in trade_proposals."""
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.sqlite import get_db
-
-    result = submit_proposal(
-        symbol="BTC/USDT", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal",
-        market_type="spot",
-    )
-
-    db = get_db()
-    orders = db.execute("SELECT id, proposal_id FROM orders").fetchall()
-    if not orders:
-        pytest.skip("No order rows created (proposal may have been risk-rejected)")
-
-    proposal_ids_in_proposals = {
-        row["id"]
-        for row in db.execute("SELECT id FROM trade_proposals").fetchall()
-    }
-
-    for order_row in orders:
-        pid = order_row["proposal_id"]
-        assert pid is not None, f"Order {order_row['id']} has NULL proposal_id"
-        assert pid in proposal_ids_in_proposals, (
-            f"Order {order_row['id']} references proposal_id={pid!r} "
-            "which does not exist in trade_proposals"
-        )
-
-
-# ---------------------------------------------------------------------------
-# EX-B08 — fee honesty: fills declare fee_source provenance ('estimated' vs 'reconciled')
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-B08", "execution_contract", "§5 fee honesty", "L2b",
-        "Fills carry a fee_source provenance marker defaulting to 'estimated' (the "
-        "flat-rate computed fee used by paper + all exchange brokers) so estimated "
-        "fees are never mistaken for the exchange's real fee; reconciliation may "
-        "later backfill the actual fee and set fee_source='reconciled'.",
-        status="implemented",
-    ),
-)
-def test_fill_fee_source_marks_estimated(tmp_path, monkeypatch):
-    """A paper execution's fill must round-trip with fee_source='estimated'."""
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.execution.gateway import submit_proposal
-    from aletheia.storage import repositories as repo
-
-    result = submit_proposal(
-        symbol="BTC/USDT", direction="long", quantity=0.001,
-        price=60000.0, execution_mode="paper_internal", market_type="spot",
-    )
-    if result.get("status") != "executed":
-        pytest.skip("Proposal not executed (risk rejected) — no fill to inspect")
-
-    fills = repo.list_fills(limit=10)
-    assert fills, "paper execution must produce a fill row"
-    for f in fills:
-        assert f.get("fee_source") == "estimated", (
-            f"Fill must declare fee_source='estimated' (flat-rate estimate), "
-            f"got {f.get('fee_source')!r}. Estimated fees must be distinguishable "
-            "from reconciled exchange fees (honesty)."
-        )
-
-
 def test_fill_model_defaults_fee_source_estimated():
-    """All brokers construct Fill(...) without fee_source — the model default is the
-    single source of the 'estimated' marker (clone-path guard: bitget/okx/binance/
-    paper all rely on it)."""
+    """A Fill without explicit provenance must not claim reconciled exchange fees."""
     from aletheia.storage.models import Fill
 
     f = Fill(order_id="o1", fill_price=100.0, fill_quantity=1.0, fee=0.06)
     assert f.fee_source == "estimated"
-
-
-# ---------------------------------------------------------------------------
-# CR-EX-03 — opportunity_id threaded onto the Position (causal chain / §16 sector)
-# ---------------------------------------------------------------------------
-
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-B09", "execution_contract", "§16 sector concentration", "L2b",
-        "execute_paper_order records opportunity_id on the opened Position so the "
-        "risk engine sector-concentration check (#16) can resolve scanner_family",
-    ),
-)
-def test_paper_open_records_opportunity_id(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.paper_broker import execute_paper_order
-    from aletheia.storage import repositories as repo
-    from tests.execution_authority import seed_order_authority
-
-    seed_order_authority(
-        proposal_id="po1",
-        risk_decision_id="ro1",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=0.001,
-        price=60000.0,
-        execution_mode="paper_internal",
-    )
-
-    r = execute_paper_order(
-        proposal_id="po1", risk_decision_id="ro1",
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60000.0,
-        execution_mode="paper_internal", opportunity_id="opp-123",
-    )
-    pos = repo._select_one("positions", r["position_id"])
-    assert pos["opportunity_id"] == "opp-123"
-
-
-# ---------------------------------------------------------------------------
-# EX-S07 — symbol availability pre-check exists and covers all exchange modes
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -866,30 +523,6 @@ def test_symbol_availability_check_structure():
         f"Missing modes in _EXECUTION_MODE_TO_VENUE: "
         f"{required_modes - set(gateway._EXECUTION_MODE_TO_VENUE)}"
     )
-
-
-# ---------------------------------------------------------------------------
-# EX-B10 — paper_internal always passes (no exchange symbol lookup)
-# ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim(
-        "EX-B10", "execution_contract", "§3.2 symbol filter", "L2b",
-        "paper_internal always returns None from _check_symbol_availability "
-        "(virtual fills — exchange symbol list irrelevant)",
-    ),
-)
-def test_symbol_check_paper_internal_always_passes():
-    from aletheia.execution.gateway import _check_symbol_availability
-
-    assert _check_symbol_availability("WLDUSDT", "paper_internal") is None
-    assert _check_symbol_availability("ANYTOKEN/USDT", "paper_internal") is None
-
-
-# ---------------------------------------------------------------------------
-# EX-B11 — OKX demo: absent symbol rejected, present symbol passes
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -932,11 +565,6 @@ def test_symbol_check_okx_demo_absent_and_present(monkeypatch):
     assert reason_no_spot is not None, (
         "Loaded OKX demo cache with no spot key must reject spot orders (issue #1222)"
     )
-
-
-# ---------------------------------------------------------------------------
-# EX-B12 — Registry-based modes: absent symbol rejected; empty registry fail-open
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(
@@ -1042,11 +670,6 @@ def test_symbol_check_does_not_truncate_large_registry(monkeypatch):
     ) is None
     assert observed_limits == [None]
     gw._registry_symbol_cache.clear()
-
-
-# ---------------------------------------------------------------------------
-# EX-C03 — gateway is the sole hard gate: trust/guard_chain is NOT wired in
-# ---------------------------------------------------------------------------
 
 
 @spec_claim(

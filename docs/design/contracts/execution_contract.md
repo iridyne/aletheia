@@ -190,7 +190,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 - 交易所模式租约过期时，无论本地是否已有 Order，都不得推断“未发送”并自动重试；Proposal 转为 `submission_unknown`，返回 `reconciliation_required`，等待对账。
 - 正常完成或终态失败只允许当前 owner 以 token compare-and-set 释放自己的租约，旧 owner 不能删除新 owner 的租约。
 
-可执行检查：`EX-B13`（新鲜租约不重复）、`EX-B15`（交易所过期租约零重发）。
+可执行检查：`EX-B17`（新鲜租约不重复）、`EX-B15`（交易所过期租约零重发）。
 
 **下单序列(关键:交易所订单数 ≥ 本地记录,永不出现无本地 trace 的真实成交):**
 

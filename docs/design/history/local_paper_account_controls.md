@@ -139,3 +139,9 @@ and Position backlink. Cross-school fills remain separate. The local one-Proposa
 one-Position assertion must not silently become an external contract during
 retirement. Mixed-Proposal attribution and whether to change aggregation ownership
 need a separate owner decision; this retirement does not change either behavior.
+
+The old Execution claims for simulated broker reachability, symbol-check bypass,
+local expired-lease replay and estimated simulator fills are retired. Current
+claims use external modes. Completed-Proposal idempotency is checked directly,
+without skipping when a simulated entry fails; actual causal links and reconciled
+fees are checked through the existing external private-fill materializer.

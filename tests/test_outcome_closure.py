@@ -773,7 +773,7 @@ def _verified_result(position: Position):
     return classify_verified_exit(
         request, position_absent=True, history_complete=True,
         close_fills=fills, ambiguous_activity=False, pages=1,
-        source_endpoint="local-fill-fixture",
+        source_endpoint="private-fill-fixture",
     )
 
 
