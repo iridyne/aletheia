@@ -647,8 +647,6 @@ def apply_update(*, restart: bool = False, progress=None, preactivation_backup: 
         )
         return {"mode": "packaged", **result}
 
-    if sys.platform == "linux":
-        return {"applied": False, "mode": "source_release", "reason": "source_update_requires_auto"}
     # This object is PRE-PULL ONLY. It is used for eligibility and branch
     # selection, then deliberately never written after source switches.
     cfg = load_config()

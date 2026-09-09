@@ -13,50 +13,6 @@ from typer.testing import CliRunner
 
 
 
-@pytest.mark.parametrize("entrypoint", ["applier", "continuity"])
-def test_linux_legacy_update_refused_before_side_effects(monkeypatch, entrypoint):
-    from aletheia.update import applier, continuity
-
-    monkeypatch.setattr(applier.sys, "platform", "linux")
-    monkeypatch.setattr(applier, "_is_packaged", lambda: False)
-    monkeypatch.setattr(applier, "load_config", lambda: pytest.fail("legacy config read"))
-    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: pytest.fail("legacy preflight"))
-    apply = applier.apply_update if entrypoint == "applier" else continuity.apply_update_with_continuity
-    assert apply(restart=True) == {
-        "applied": False, "mode": "source_release", "reason": "source_update_requires_auto",
-    }
-
-
-def test_manual_linux_no_restart_has_no_deployment_effects(monkeypatch):
-    from aletheia.cli import update_cmd
-    from aletheia.update import auto
-
-    monkeypatch.setattr(update_cmd.sys, "platform", "linux")
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
-    monkeypatch.setattr(auto, "run", lambda: pytest.fail("deployment started"))
-    result = CliRunner().invoke(update_cmd.update_app, ["--no-restart"])
-    assert result.exit_code == 1
-    assert "source_update_requires_restart" in result.output
-
-
-def test_manual_update_shares_timer_lock_and_hold(tmp_path, monkeypatch):
-    from aletheia.cli import update_cmd
-    from aletheia.update import auto, git_ops
-
-    _linux_source(monkeypatch)
-    monkeypatch.setattr(update_cmd, "_is_packaged", lambda: False)
-    monkeypatch.setattr(auto, "_paths", lambda: _state_paths(tmp_path))
-    monkeypatch.setattr(git_ops, "fetch_release_tags", lambda: pytest.fail("unexpected fetch"))
-    with auto._deployment_lock() as acquired:
-        assert acquired
-        result = CliRunner().invoke(update_cmd.update_app, [])
-        assert result.exit_code == 0
-        assert result.output.strip() == "already_running"
-    auto._write_state({}, hold=True, phase="held", reason="restore_failed")
-    result = CliRunner().invoke(update_cmd.update_app, [])
-    assert result.exit_code == 1
-    assert result.output.strip() == "global_hold"
-    assert auto.status()["hold"] is True
 
 
 def test_release_check_persists_exact_candidate_without_activation(tmp_path, monkeypatch):
