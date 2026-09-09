@@ -117,3 +117,10 @@ review evidence.
 The retired `paper_trader` name also no longer receives a budget exemption or
 trading-priority inference slot. Current registered callers retain their existing
 policies; historical economics attribution labels remain readable.
+
+The standalone Trade Funnel audit reads the retired Ranker/pending-signal
+pipeline as `historical_signal_pipeline`, including when embedded in deep
+doctor or opportunity reports. Raw counts, selection labels and rejection
+reasons remain readable; absent historical stages do not diagnose current
+Entry Workbench health. The report no longer recommends repairing the retired
+pipeline and directs current-state inspection to `aletheia inspect entry-status`.

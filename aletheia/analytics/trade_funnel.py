@@ -1,6 +1,7 @@
-"""Read-only Trade Funnel Audit.
+"""Historical signal-pipeline Trade Funnel Audit.
 
-Answers where opportunity flow is lost before it becomes opened positions.
+Projects stored events onto the retired Ranker/pending-signal pipeline.
+Missing stages do not diagnose the current Entry Workbench.
 This module only reads local SQLite state. It does not submit orders, create
 proposals, update opportunities, call agents, call LLMs, or call exchanges.
 """
@@ -53,7 +54,7 @@ def build_trade_funnel_audit(
     days: int | None = None,
     min_sample_size: int = 3,
 ) -> dict:
-    """Build a JSON-serializable opportunity-to-position funnel report."""
+    """Build a read-only historical signal-pipeline projection."""
     import aletheia.storage.sqlite as sqlite_store
 
     window = _window(hours=hours, days=days)
@@ -66,7 +67,6 @@ def build_trade_funnel_audit(
             "insufficient_data",
             "insufficient_data",
             "No local trading database is available.",
-            "Start the system and collect opportunities/signals before auditing the funnel.",
         )
         return report
 
@@ -78,7 +78,6 @@ def build_trade_funnel_audit(
             "insufficient_data",
             "insufficient_data",
             f"Trading database could not be opened: {exc}",
-            "Fix database availability before auditing trading flow.",
         )
         return report
 
@@ -177,7 +176,6 @@ def build_trade_funnel_audit(
             "insufficient_data",
             "insufficient_data",
             f"Required funnel evidence is unavailable: {exc}",
-            "Run migrations or collect more trading evidence before interpreting the funnel.",
         )
     return report
 
@@ -185,7 +183,12 @@ def build_trade_funnel_audit(
 def render_trade_funnel_audit(report: dict) -> str:
     """Render the report for the standalone CLI."""
     window = report.get("window") or {}
-    lines = ["Trade Funnel Audit", "", f"Window: {_window_label(window)}", ""]
+    lines = [
+        "Trade Funnel Audit — historical signal pipeline",
+        "Current entry state: aletheia inspect entry-status",
+        "Missing historical stages do not diagnose current entry health.",
+        "", f"Window: {_window_label(window)}", "",
+    ]
     if report.get("schema_errors"):
         lines.append("Evidence:")
         for err in report["schema_errors"]:
@@ -252,7 +255,7 @@ def render_trade_funnel_audit(report: dict) -> str:
     choke = report.get("main_choke_point") or {}
     lines.extend([
         "",
-        "Main choke point:",
+        "Historical pipeline gap:",
         f"  {choke.get('summary', 'insufficient data')}",
         "",
         "Next action:",
@@ -276,6 +279,7 @@ def compact_trade_funnel_summary(report: dict) -> dict:
     ))
     return {
         "available": has_evidence or not bool(report.get("schema_errors")),
+        "scope": "historical_signal_pipeline",
         "reason": "; ".join(report.get("schema_errors") or []),
         "main_choke_point": report.get("main_choke_point"),
         "counts": report.get("counts"),
@@ -298,10 +302,11 @@ def _base_report(generated_at: str, window: dict) -> dict:
     counts = _empty_counts()
     return {
         "generated_at": generated_at,
+        "scope": "historical_signal_pipeline",
         "window": window,
         "counts": counts,
         "count_semantics": {
-            "counts": "independent event rows in the clock window; operational throughput only",
+            "counts": "independent event rows projected onto the historical signal pipeline",
             "causal_cohort_counts": (
                 "distinct opportunities created in the window, joined downstream by opportunity_id"
             ),
@@ -336,7 +341,6 @@ def _base_report(generated_at: str, window: dict) -> dict:
             "insufficient_data",
             "insufficient_data",
             "Not enough trading evidence to identify a choke point.",
-            "Collect opportunities, decisions, proposals, and executions before tuning behavior.",
         ),
         "schema_errors": [],
     }
@@ -621,8 +625,8 @@ def _conversion_rates(counts: dict) -> dict:
 def _top_dropoffs(counts: dict) -> list[dict]:
     trade_decisions = _trade_decision_count(counts)
     stages = [
-        ("opportunity_to_signal_pending", counts["opportunities_created"], counts["signal_pending_written"], "Ranker/paper_trader gate is filtering or deduping candidates."),
-        ("signal_pending_to_evaluated", counts["signal_pending_written"], counts["system_operator_evaluated"], "System Operator daemon/scheduler is not consuming pending signals."),
+        ("opportunity_to_signal_pending", counts["opportunities_created"], counts["signal_pending_written"], "Recorded opportunities have no linked historical pending signals."),
+        ("signal_pending_to_evaluated", counts["signal_pending_written"], counts["system_operator_evaluated"], "Historical pending signals have no recorded Operator evaluation."),
         ("evaluated_to_trade_decision", counts["system_operator_evaluated"], trade_decisions, "System Operator is mostly deferring or choosing skip/watch."),
         ("trade_decision_to_proposal", trade_decisions, counts["proposals_created"], "Decision-to-proposal submission path is not producing proposals."),
         ("proposal_to_risk_approved", counts["proposals_created"], counts["risk_approved"], "Risk Engine or configured constraints are blocking proposals."),
@@ -807,35 +811,30 @@ def _main_choke_point(
             "sizing_tiny_positions",
             "warn",
             f"{positions} positions opened, but median notional is {median_notional}U.",
-            "Run Sizing Trace Audit to inspect base notional, Kelly, ATR, conviction, and risk caps.",
         )
     if int(counts["opportunities_created"] or 0) < min_sample_size:
         return _choke(
             "no_opportunities",
             "insufficient_data",
             f"Only {counts['opportunities_created']} opportunities were created in this window.",
-            "Collect more market/news/observer output before changing ranker, System Operator, or sizing behavior.",
         )
     if int(counts["proposals_created"] or 0) >= min_sample_size and int(counts["risk_rejected"] or 0) > int(counts["risk_approved"] or 0):
         return _choke(
             "risk_engine",
             "warn",
             f"{counts['risk_rejected']} of {counts['proposals_created']} proposals were rejected by risk.",
-            "Inspect top risk rejection reasons before changing sizing or execution behavior.",
         )
     if int(counts["risk_approved"] or 0) >= min_sample_size and int(counts["orders_executed"] or 0) == 0:
         return _choke(
             "execution_gateway",
             "warn",
             f"{counts['risk_approved']} risk-approved proposals produced 0 executed orders.",
-            "Inspect Execution Gateway and broker/demo exchange errors.",
         )
     if int(counts["proposals_created"] or 0) >= min_sample_size and positions == 0:
         return _choke(
             "position_opening",
             "warn",
             f"{counts['proposals_created']} proposals produced 0 opened positions.",
-            "Inspect order fill handling and position creation after execution.",
         )
     if int(counts["proposals_created"] or 0) > 0 and positions == 0:
         proposals = int(counts["proposals_created"] or 0)
@@ -845,13 +844,11 @@ def _main_choke_point(
                 "risk_engine",
                 "insufficient_data",
                 f"Only {proposals} linked proposals are in this cohort; {rejected} were rejected by risk.",
-                f"Collect at least {min_sample_size} linked proposals before treating this as a stable choke point.",
             )
         return _choke(
             "position_opening",
             "insufficient_data",
             f"Only {proposals} linked proposals and 0 positions are in this cohort.",
-            f"Collect at least {min_sample_size} linked proposals before tuning execution behavior.",
         )
     if trade_decisions > 0 and int(counts["proposals_created"] or 0) == 0:
         reasons = proposal_submission_reasons or []
@@ -863,7 +860,6 @@ def _main_choke_point(
             "proposal_submission",
             "warn" if trade_decisions >= min_sample_size else "insufficient_data",
             f"{trade_decisions} trade-like decisions produced 0 proposals.{suffix}",
-            "Inspect the structured proposal-submission reasons before changing System Operator behavior.",
         )
     if int(counts["system_operator_evaluated"] or 0) >= min_sample_size and trade_decisions == 0:
         if int(counts["operator_deferred"] or 0) > 0 and terminal_decisions == 0:
@@ -871,20 +867,17 @@ def _main_choke_point(
                 "system_operator_deferred",
                 "warn",
                 f"{counts['operator_deferred']} observed signals remain deferred with 0 terminal decisions.",
-                "Await the durable defer deadlines or inspect defer reasons before changing System Operator behavior.",
             )
         return _choke(
             "system_operator_decision",
             "warn",
             f"{counts['system_operator_evaluated']} evaluated signals produced 0 trade decisions.",
-            "Inspect System Operator defer/skip/watch reasons and prompt/context constraints.",
         )
     if int(counts["signal_pending_written"] or 0) > 0 and int(counts["system_operator_evaluated"] or 0) == 0:
         return _choke(
             "system_operator_consumption",
             "warn",
             f"{counts['signal_pending_written']} signal_pending rows were written, but none were evaluated.",
-            "Inspect System Operator daemon/scheduler consumption of pending signals.",
         )
     if int(counts["signal_pending_written"] or 0) == 0:
         reasons = selection_rejection_reasons or []
@@ -896,19 +889,16 @@ def _main_choke_point(
                 "paper_trader_selection",
                 "insufficient_data",
                 f"0 signals were admitted; known selection rejections: {reason_text}.",
-                "Inspect the structured selection reasons before changing ranker or trading behavior.",
             )
         return _choke(
-            "ranker_or_paper_trader",
+            "historical_signal_gap",
             "warn",
             f"{counts['opportunities_created']} opportunities produced 0 signal_pending rows.",
-            "Inspect ranker eligibility, paper_trader dedupe, symbol filters, and opportunity status handling.",
         )
     return _choke(
         "ok",
         "ok",
         f"{counts['positions_opened']} positions opened from {counts['opportunities_created']} opportunities in this window.",
-        "No single funnel choke point is obvious; inspect standalone reports before changing behavior.",
     )
 
 
@@ -937,12 +927,12 @@ def _json_list(raw: Any) -> list:
     return [value]
 
 
-def _choke(stage: str, severity: str, summary: str, next_action: str) -> dict:
+def _choke(stage: str, severity: str, summary: str) -> dict:
     return {
         "stage": stage,
         "severity": severity,
         "summary": summary,
-        "next_action": next_action,
+        "next_action": "Inspect current entry state with `aletheia inspect entry-status`.",
     }
 
 

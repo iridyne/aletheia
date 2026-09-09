@@ -1,4 +1,4 @@
-"""`aletheia funnel` - read-only trade funnel diagnostics."""
+"""`aletheia funnel` - read-only historical signal-pipeline diagnostics."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ def audit(
     days: int | None = typer.Option(None, "--days", help="Lookback window in days. Overrides --hours."),
     json_output: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
-    """Print the read-only opportunity-to-position funnel report."""
+    """Print the historical signal-pipeline report; current entry uses inspect entry-status."""
     from aletheia.analytics.trade_funnel import build_trade_funnel_audit, render_trade_funnel_audit
 
     report = build_trade_funnel_audit(hours=hours, days=days)
