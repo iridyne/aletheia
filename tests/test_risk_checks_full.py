@@ -2,8 +2,7 @@
 
 Covers: max_daily_loss (global + kill-switch trip), data_freshness (live),
 account_mode_match, strategy_lifecycle_state (live), max_leverage (futures),
-max_single_trade_risk (live, stop-based). Each new check must NOT break the
-existing paper flow, which stays permissive.
+max_single_trade_risk (live, stop-based), and bounded external Demo trades.
 """
 
 import sqlite3
@@ -15,12 +14,7 @@ from aletheia.risk.engine import evaluate_proposal
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
-    Fill,
     MarketSnapshot,
-    Opportunity,
-    Order,
-    Position,
-    RiskDecision,
     TradeProposal,
 )
 from aletheia.storage.sqlite import reset_db
@@ -38,6 +32,10 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    cfg = loader.load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    loader.save_config(cfg)
+    monkeypatch.setattr("aletheia.risk.engine._account_equity", lambda *_args: 100.0)
 
 
 def _unlock_live_auto(tmp_path):
@@ -50,134 +48,17 @@ def _unlock_live_auto(tmp_path):
     save_config(cfg)
 
 
-def _verified_paper_position(
-    *,
-    position_id: str,
-    symbol: str,
-    quantity: float,
-    entry_price: float,
-    entry_fee: float = 0.0,
-) -> Position:
-    """Seed one real native entry chain suitable for an eligible close."""
-    opportunity = Opportunity(
-        id=f"opportunity-{position_id}",
-        symbol=symbol,
-        market="spot",
-        direction_bias="long",
-        source_agent="risk-test",
-    )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        id=f"proposal-{position_id}",
-        opportunity_id=opportunity.id,
-        symbol=symbol,
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=quantity,
-        price=entry_price,
-        execution_mode="paper_internal",
-        status="approved",
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        id=f"risk-{position_id}",
-        proposal_id=proposal.id,
-        approved=True,
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal",
-        decision_role="authoritative",
-        evaluated_quantity=quantity,
-        proposal_commit_hash=proposal.commit_hash,
-    )
-    repo.insert_risk_decision(decision)
-    order = Order(
-        id=f"order-{position_id}",
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        symbol=symbol,
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=quantity,
-        price=entry_price,
-        execution_mode="paper_internal",
-        status="filled",
-    )
-    repo.insert_order(order)
-    repo.insert_fill(Fill(
-        id=f"entry-fill-{position_id}",
-        order_id=order.id,
-        fill_price=entry_price,
-        fill_quantity=quantity,
-        fee=entry_fee,
-        fee_source="reconciled",
-    ))
-    position = Position(
-        id=position_id,
-        symbol=symbol,
-        market_type="spot",
-        direction="long",
-        quantity=quantity,
-        entry_price=entry_price,
-        current_price=entry_price,
-        entry_fee=entry_fee,
-        funding_cost=0.0,
-        funding_source="not_applicable",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        execution_mode="paper_internal",
-        opportunity_id=opportunity.id,
-        proposal_id=proposal.id,
-        order_id=order.id,
-    )
-    repo.insert_position(position)
-    repo.update_order_metadata(order.id, position_id=position.id)
-    return position
-
-
-def _verified_paper_close(position: Position, exit_price: float) -> None:
-    from aletheia.execution.verified_exit import VerifiedExitFill, VerifiedExitResult
-    from aletheia.portfolio.outcome_closure import close_position_verified
-
-    filled_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    result = close_position_verified(
-        position.id,
-        VerifiedExitResult(
-            state="verified_fill", reason="test_local_fill",
-            broker_id="paper_internal", account_environment="local",
-            account_scope="risk-test", execution_mode="paper_internal",
-            position_id=position.id, symbol=position.symbol,
-            market_type=position.market_type, direction=position.direction,
-            position_absent=True, history_complete=True,
-            history_start_ms=filled_at_ms - 1,
-            history_end_ms=filled_at_ms,
-            pages=1,
-            source_endpoint="test_local_fill",
-            fills=(VerifiedExitFill(
-                fill_id=f"exit-{position.id}",
-                order_id=f"local-paper-exit-{position.id}",
-                price=exit_price,
-                quantity=position.quantity, fee=0.0, fee_currency="USDT",
-                realized_pnl=None, filled_at_ms=filled_at_ms,
-            ),),
-        ),
-        reason="stop_loss",
-    )
-    assert result["outcome_eligible"] is True
-
-
 # --- max_daily_loss (global brake) ---
 
 def test_daily_loss_within_limit_approves(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    # No closed positions today → realized pnl 0 → paper proposal still approves.
+    # No closed positions today → realized pnl 0 → external Demo proposal still approves.
     from tests.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
         monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
     )
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                      execution_mode="paper_internal", quantity=0.001, price=60000, **trade)
+                      execution_mode="bitget_demo", quantity=0.001, price=60000, **trade)
     repo.insert_trade_proposal(p)
     assert evaluate_proposal(p).approved is True
 
@@ -187,21 +68,24 @@ def test_daily_loss_exceeded_blocks_and_trips_kill_switch(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     from aletheia.risk import kill_switch
     cfg = load_config()
-    cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
+    cfg.risk.kill_switch_enabled_demo = True  # default False; bitget_demo is demo-mode
     save_config(cfg)
 
-    # The default Demo denominator is authoritative paper account equity; this
+    # The Demo denominator in this test is stubbed external account equity ($100); this
     # $10 loss is well beyond the default 1% daily-loss limit.
-    pos = _verified_paper_position(
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    _insert_closed_position_via_producer(
         position_id="daily-loss-position",
         symbol="BTC/USDT",
         quantity=1.0,
         entry_price=100.0,
+        market_type="spot", direction="long", execution_mode="bitget_demo",
+        realized_pnl=-10.0, closed_at=datetime.now(timezone.utc).isoformat(),
     )
-    _verified_paper_close(pos, 90.0)
 
     p = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="long",
-                      execution_mode="paper_internal", quantity=0.001, price=3000)
+                      execution_mode="bitget_demo", quantity=0.001, price=3000)
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
     assert result.approved is False
@@ -621,15 +505,19 @@ def test_live_family_gate_does_not_pool_old_cost_models(tmp_path, monkeypatch):
     )
 
 
-# --- demo/paper bounds (§2.3: paper evidence must be built from bounded trades) ---
+# --- external Demo bounds ---
 
 def test_demo_position_notional_bounded(tmp_path, monkeypatch):
-    """A paper order above the demo margin cap is rejected (was unbounded)."""
+    """An external Demo order above the demo margin cap is rejected (was unbounded)."""
     setup_env(tmp_path, monkeypatch)
-    # default max_demo_position_margin_usdt = 200; 0.01 * 60000 = 600 > 200
+    from aletheia.config.loader import load_config, save_config
+    cfg = load_config()
+    cfg.risk.max_demo_position_margin_usdt = 200.0
+    save_config(cfg)
+    # Configured margin cap $200; 0.01 * 60000 = $600 exceeds it.
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.01, price=60000,
+        execution_mode="bitget_demo", quantity=0.01, price=60000,
     )
     repo.insert_trade_proposal(p)
     result = evaluate_proposal(p)
@@ -639,18 +527,18 @@ def test_demo_position_notional_bounded(tmp_path, monkeypatch):
 
 
 def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
-    """A paper order whose loss-at-stop exceeds the demo risk cap is rejected."""
+    """An external Demo order whose loss-at-stop exceeds the demo risk cap is rejected."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.risk.max_demo_single_trade_risk_pct = 2.0
     save_config(cfg)
-    # demo cap = starting_capital(100) * 2% = $2. Stop 10% away on $150 notional
+    # demo cap = account_equity(100) * 2% = $2. Stop 10% away on $150 notional
     # = 0.0025 * 60000 * 0.10 = $15 risk > $2. Notional 150 < 200 so only the
     # risk check should trip.
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.0025, price=60000,
+        execution_mode="bitget_demo", quantity=0.0025, price=60000,
         stop_price=54000,
     )
     repo.insert_trade_proposal(p)
@@ -660,7 +548,7 @@ def test_demo_single_trade_risk_bounded(tmp_path, monkeypatch):
 
 
 def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
-    """A normal small paper trade with a sane stop is still approved."""
+    """A normal small external Demo trade with a sane stop is still approved."""
     setup_env(tmp_path, monkeypatch)
     from tests.risk_trade_fixture import approvable_risk_trade
     trade = approvable_risk_trade(
@@ -668,7 +556,7 @@ def test_demo_bounds_within_limits_approve(tmp_path, monkeypatch):
     )
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.0004, price=60000,
+        execution_mode="bitget_demo", quantity=0.0004, price=60000,
         # 2% stop -> risk = 0.0004*60000*0.02 = $0.48 < $2
         **trade,
     )
@@ -688,18 +576,18 @@ def test_evaluate_proposal_is_serialized(tmp_path, monkeypatch):
     seen_locked = {"v": False}
     real_locked = engine._evaluate_proposal_locked
 
-    def spy(proposal):
+    def spy(proposal, **kwargs):
         # While inside the evaluation, the module lock must be held (non-acquirable).
         seen_locked["v"] = not engine._eval_lock.acquire(blocking=False)
         if not seen_locked["v"]:
             engine._eval_lock.release()
-        return real_locked(proposal)
+        return real_locked(proposal, **kwargs)
 
     monkeypatch.setattr(engine, "_evaluate_proposal_locked", spy)
 
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800,
+        execution_mode="bitget_demo", quantity=0.0004, price=60000, stop_price=58800,
     )
     repo.insert_trade_proposal(p)
     engine.evaluate_proposal(p)
@@ -717,25 +605,28 @@ def test_kill_switch_trip_blocks_subsequent_proposal(tmp_path, monkeypatch):
     # Seed a closed losing position large enough to breach max_daily_loss.
     cfg = load_config()
     cfg.risk.max_daily_loss_pct = 1.0  # 1% of cap(100) = $1 limit
-    cfg.risk.kill_switch_enabled_demo = True  # default False; paper_internal is demo-mode
+    cfg.risk.kill_switch_enabled_demo = True  # default False; bitget_demo is demo-mode
     save_config(cfg)
-    loss_position = _verified_paper_position(
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    _insert_closed_position_via_producer(
         position_id="kill-switch-loss-position",
         symbol="BTC/USDT",
         quantity=0.01,
         entry_price=60000,
+        market_type="spot", direction="long", execution_mode="bitget_demo",
+        realized_pnl=-60.0, closed_at=datetime.now(timezone.utc).isoformat(),
     )
-    _verified_paper_close(loss_position, 54000.0)
 
     p1 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                       execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)
+                       execution_mode="bitget_demo", quantity=0.0004, price=60000, stop_price=58800)
     repo.insert_trade_proposal(p1)
     r1 = evaluate_proposal(p1)
     assert any("max_daily_loss_exceeded" in v for v in r1.violations)
 
     # The Demo brake is now persisted; a brand-new Demo proposal is rejected.
     p2 = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
-                       execution_mode="paper_internal", quantity=0.0004, price=60000, stop_price=58800)
+                       execution_mode="bitget_demo", quantity=0.0004, price=60000, stop_price=58800)
     repo.insert_trade_proposal(p2)
     r2 = evaluate_proposal(p2)
     assert "demo_brake_active" in r2.violations
