@@ -1333,6 +1333,7 @@ def init_scheduler() -> BackgroundScheduler | None:
     _scheduler.add_job(
         _guarded("health_check", _run_health_check), "interval", minutes=10, id="health_check",
         misfire_grace_time=120, executor="io",
+        next_run_time=datetime.now() + timedelta(seconds=15),
     )
     # Persona rollout state machine: retained on the 8h schedule as a bounded
     # evidence recheck; it can only advance one exact step or refreeze.

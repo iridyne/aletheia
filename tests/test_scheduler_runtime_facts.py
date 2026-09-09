@@ -98,3 +98,22 @@ def test_scheduled_job_status_reports_explicit_pause_blockers(monkeypatch) -> No
     assert paused["registered"] is True
     assert paused["paused"] is True
     assert paused["blocker"] == "scheduler_paused"
+
+
+def test_health_check_samples_before_update_readiness_deadline(monkeypatch) -> None:
+    from apscheduler.schedulers.background import BackgroundScheduler
+
+    cfg = scheduler.load_config(persist_migrations=False)
+    monkeypatch.setattr(scheduler, "load_config", lambda **_: cfg)
+    monkeypatch.setattr(scheduler, "_recover_interrupted_serenity_run", lambda: None)
+    monkeypatch.setattr(scheduler, "_recover_interrupted_universe_scanner_runs", lambda **_: 0)
+    monkeypatch.setattr(scheduler, "_mirror_universe_scanner_recovery_audits", lambda: True)
+    monkeypatch.setattr(scheduler, "_scheduler", None)
+    monkeypatch.setattr(BackgroundScheduler, "start", lambda self: None)
+
+    instance = scheduler.init_scheduler()
+    assert instance is not None
+    job = instance.get_job("health_check")
+
+    assert job.trigger.interval.total_seconds() == 600
+    assert 0 < (job.next_run_time - datetime.now(timezone.utc)).total_seconds() < 120
