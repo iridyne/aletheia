@@ -70,7 +70,7 @@ def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monke
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
     before = dict(db.execute(
@@ -86,13 +86,13 @@ def test_existing_proposal_mode_mismatch_does_not_rewrite_intent(tmp_path, monke
     )
 
     result = gateway.execute_existing_proposal(
-        proposal.id, execution_mode="bitget_demo"
+        proposal.id, execution_mode="okx_demo"
     )
     after = dict(db.execute(
         "SELECT * FROM trade_proposals WHERE id=?", (proposal.id,)
     ).fetchone())
 
-    assert after["execution_mode"] == before["execution_mode"] == "paper_internal"
+    assert after["execution_mode"] == before["execution_mode"] == "bitget_demo"
     assert after["commit_hash"] == before["commit_hash"]
     assert execution_calls == []
     assert result["status"] == "rejected"
@@ -247,6 +247,8 @@ def test_normalized_quantity_uses_snapshot_without_mutating_proposal(tmp_path, m
 )
 def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, monkeypatch):
     db = _setup_db(tmp_path, monkeypatch)
+    from tests.specs.spec_pipeline_middle_state_integrity import _risk_config
+    _risk_config(monkeypatch)
 
     from aletheia.risk.engine import evaluate_proposal
     from aletheia.storage import repositories as repo
@@ -258,7 +260,7 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
         direction="long",
         quantity=0.0011,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
 
@@ -266,6 +268,10 @@ def test_risk_decision_roles_snapshot_and_authoritative_idempotency(tmp_path, mo
     evaluated = proposal.model_copy(update={"quantity": 0.003})
     authoritative = evaluate_proposal(evaluated, decision_role="authoritative")
     retry = evaluate_proposal(evaluated, decision_role="authoritative")
+
+    assert preflight.approved, preflight.violations
+    assert authoritative.approved, authoritative.violations
+    assert retry.approved, retry.violations
 
     rows = [dict(row) for row in db.execute(
         "SELECT * FROM risk_decisions WHERE proposal_id=? ORDER BY rowid",
@@ -311,7 +317,7 @@ def test_authoritative_risk_rejection_terminalizes_proposal_atomically(
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
 
@@ -402,7 +408,7 @@ def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, mon
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
 
@@ -429,7 +435,7 @@ def test_concurrent_execute_existing_proposal_enters_pipeline_once(tmp_path, mon
 
     def _run():
         try:
-            results.append(gateway.execute_existing_proposal(proposal.id))
+            results.append(gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode))
         except BaseException as exc:  # pragma: no cover - assertion reports it
             errors.append(exc)
 
@@ -926,25 +932,30 @@ def test_close_rejection_retains_one_claim_without_resubmission(tmp_path, monkey
     SpecClaim(
         "PL-RX-11",
         "pipeline_risk_execution_integrity",
-        "§9 native paper adjacent-chain proof",
+        "§9 native exchange adjacent-chain proof",
         "L2b",
-        "One native paper Proposal reaches exactly one authoritative RiskDecision and one "
+        "One native external Proposal reaches exactly one authoritative RiskDecision and one "
         "Order/Fill/Position chain with immutable intent and complete causal identity.",
         status="implemented",
     )
 )
-def test_native_paper_chain_consumes_one_authoritative_decision(
+def test_native_exchange_chain_consumes_one_authoritative_decision(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
+    from tests.specs.spec_pipeline_middle_state_integrity import _risk_config
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _stub_uta_execution, _patch_filled_place_order,
+        _patch_private_fill_history, _materialize_exchange_result,
+    )
+    _risk_config(monkeypatch)
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=60_000.0)
+    _patch_private_fill_history(monkeypatch, fill_price=60_000.0)
 
     from aletheia.execution.gateway import submit_proposal
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import MarketSnapshot, Opportunity, TradeProposal
-
-    repo.insert_market_snapshot(MarketSnapshot(
-        symbol="BTC/USDT", market_type="spot", exchange="binance", price=60_000.0,
-    ))
+    from aletheia.storage.models import Opportunity, TradeProposal
 
     opportunity = Opportunity(
         symbol="BTC/USDT",
@@ -968,13 +979,14 @@ def test_native_paper_chain_consumes_one_authoritative_decision(
         stop_price=58_000.0,
         take_profit=64_000.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         strategy_id="strategy-rx-11",
         opportunity_id=opportunity.id,
         agent_rationale="sanitized replay rationale",
     )
 
-    assert result["status"] == "executed"
+    assert result["status"] == "materialization_missing", result
+    position_id = _materialize_exchange_result(result)
     proposal = dict(db.execute(
         "SELECT * FROM trade_proposals WHERE id=?", (result["proposal_id"],)
     ).fetchone())
@@ -991,15 +1003,15 @@ def test_native_paper_chain_consumes_one_authoritative_decision(
         "SELECT * FROM orders WHERE id=?", (result["order_id"],)
     ).fetchone())
     fill = dict(db.execute(
-        "SELECT * FROM fills WHERE id=?", (result["fill_id"],)
+        "SELECT * FROM fills WHERE order_id=?", (result["order_id"],)
     ).fetchone())
     position = dict(db.execute(
-        "SELECT * FROM positions WHERE id=?", (result["position_id"],)
+        "SELECT * FROM positions WHERE id=?", (position_id,)
     ).fetchone())
     decision = authoritative[0]
 
     assert proposal["status"] == "executed"
-    assert proposal["execution_mode"] == "paper_internal"
+    assert proposal["execution_mode"] == "bitget_demo"
     assert repo._compute_proposal_hash(TradeProposal.model_validate(proposal)) == proposal["commit_hash"]
     assert decision["approved"] == 1
     assert decision["evaluated_quantity"] == pytest.approx(proposal["quantity"])
@@ -1015,7 +1027,7 @@ def test_native_paper_chain_consumes_one_authoritative_decision(
         assert row["symbol"] == "BTC/USDT"
         assert row["market_type"] == "spot"
         assert row["direction"] == "long"
-        assert row["execution_mode"] == "paper_internal"
+        assert row["execution_mode"] == "bitget_demo"
 
 
 @spec_claim(
@@ -1051,7 +1063,7 @@ def test_proposal_hash_covers_persisted_runtime_provenance(tmp_path, monkeypatch
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
 
@@ -1091,7 +1103,7 @@ def test_authoritative_risk_rejects_tampered_stored_proposal(tmp_path, monkeypat
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         attribution_snapshot="{}",
     )
     repo.insert_trade_proposal(proposal)
@@ -1100,7 +1112,7 @@ def test_authoritative_risk_rejects_tampered_stored_proposal(tmp_path, monkeypat
         (0.002, proposal.id),
     )
 
-    result = gateway.execute_existing_proposal(proposal.id)
+    result = gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode)
     stored = repo.get_trade_proposal(proposal.id)
 
     assert result["status"] == "error"
@@ -1131,6 +1143,13 @@ def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
     tmp_path, monkeypatch
 ):
     db = _setup_db(tmp_path, monkeypatch)
+    from tests.specs.spec_pipeline_middle_state_integrity import _risk_config
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _stub_uta_execution, _patch_filled_place_order,
+    )
+    _risk_config(monkeypatch)
+    _stub_uta_execution(monkeypatch)
+    _patch_filled_place_order(monkeypatch, fill_price=60_000.0)
 
     from aletheia.execution import gateway
     from aletheia.storage import repositories as repo
@@ -1142,44 +1161,22 @@ def test_execution_does_not_backfill_hash_covered_attribution_snapshot(
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         attribution_snapshot=None,
     )
     repo.insert_trade_proposal(proposal)
     original_hash = proposal.commit_hash
     monkeypatch.setattr(
         gateway,
-        "evaluate_proposal",
-        lambda _proposal, *, decision_role: SimpleNamespace(
-            approved=True,
-            allowed_execution_mode="paper_internal",
-            decision_id="risk-rx-14",
-            violations=[],
-            message="Approved",
-        ),
-    )
-    monkeypatch.setattr(
-        gateway,
         "_capture_attribution_snapshot_json",
         lambda _symbol, **_kwargs: json.dumps({"regime_tag": "late-context"}),
     )
-    monkeypatch.setattr(
-        gateway,
-        "execute_paper_order",
-        lambda **_kwargs: {
-            "order_id": "order-rx-14",
-            "fill_id": "fill-rx-14",
-            "position_id": "position-rx-14",
-        },
-    )
-    monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
-
-    result = gateway._execute_proposal(proposal)
+    result = gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode)
     stored = dict(db.execute(
         "SELECT * FROM trade_proposals WHERE id=?", (proposal.id,)
     ).fetchone())
 
-    assert result["status"] == "executed"
+    assert result["status"] == "materialization_missing", result
     assert stored["attribution_snapshot"] is None
     assert stored["commit_hash"] == original_hash
     assert repo._compute_proposal_hash(TradeProposal.model_validate(stored)) == original_hash
@@ -1451,7 +1448,7 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
         "stop_price": 59_000.0,
         "take_profit": 63_000.0,
         "risk_reward": 2.0,
-        "execution_mode": "bitget_demo",
+        "execution_mode": "okx_demo",
         "agent_rationale": "altered rationale",
         "attribution_snapshot": '{"regime_tag":"altered"}',
         "source": "adopted",
@@ -1469,6 +1466,7 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
             direction="long",
             quantity=0.001,
             price=60_000.0,
+            execution_mode="bitget_demo",
         ).model_dump(exclude=repo._PROPOSAL_HASH_EXCLUDES)
     )
     assert set(mutations) == model_fields - {"quantity"}
@@ -1484,7 +1482,7 @@ def test_authoritative_risk_rejects_every_non_quantity_hash_field_mismatch(
             order_type="market",
             quantity=0.001,
             price=60_000.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         repo.insert_trade_proposal(proposal)
         proposal_ids.append(proposal.id)
