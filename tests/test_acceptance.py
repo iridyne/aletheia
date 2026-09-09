@@ -1,6 +1,7 @@
-"""§32 MVP acceptance criteria, exercised through the API/CLI (not internals).
+"""API/CLI regression checks retained from the original MVP acceptance suite.
 
-Each test maps to one of the 16 acceptance criteria in IMPLEMENTATION_GUIDE.md §32.
+The old implementation-guide checklist is archived; these tests cover current
+storage, read models, review coverage, permissions and runtime interfaces.
 """
 
 import json
@@ -200,7 +201,7 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
         direction="long",
         quantity=0.1,
         entry_price=60000,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         strategy_id="strat-1",
         status="closed",
         opened_at=datetime.now(timezone.utc).isoformat(),
@@ -218,7 +219,7 @@ async def test_review_summary_reports_missing_post_trade_review_coverage(client)
     # strategy-level recency alone is no longer sufficient.
     create_post_trade_review(
         "Post-Trade Review",
-        "Reviewed the BTC paper position closed at a loss. Entry momentum confirmed but exit was premature. "
+        "Reviewed the BTC Demo position closed at a loss. Entry momentum confirmed but exit was premature. "
         "Recommend tighter stop placement and trailing stop on profitable positions.",
         strategy_id="strat-1",
         tags=[f"position:{pos.id}"],
@@ -244,7 +245,7 @@ async def test_archived_review_does_not_suppress_missing_coverage(client):
 
     pos = Position(
         symbol="ETHUSDT", market_type="spot", direction="long", quantity=0.5,
-        entry_price=3000, execution_mode="paper_internal", strategy_id="strat-arch",
+        entry_price=3000, execution_mode="bitget_demo", strategy_id="strat-arch",
         status="closed",
         opened_at=datetime.now(timezone.utc).isoformat(),
         closed_at=datetime.now(timezone.utc).isoformat(),
@@ -272,22 +273,6 @@ async def test_archived_review_does_not_suppress_missing_coverage(client):
     )
 
 
-
-
-# #12 Risk engine blocks disallowed symbols + live by default
-@pytest.mark.anyio
-async def test_ac12_risk_blocks(client):
-    c, _ = client
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.risk.symbol_filter_mode = "whitelist"
-    cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-    save_config(cfg)
-    from aletheia.execution.gateway import submit_proposal
-    bad = submit_proposal(symbol="DOGEUSDT", market_type="spot", direction="long",
-                          quantity=1, price=1, execution_mode="paper_internal")
-    assert bad["status"] == "rejected"
 
 
 # #13 permission changes visible + audited

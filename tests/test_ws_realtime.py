@@ -29,7 +29,7 @@ def test_position_fingerprint_changes_on_insert_and_update():
     db.execute(
         "INSERT INTO positions "
         "(id,symbol,market_type,direction,quantity,entry_price,execution_mode) "
-        "VALUES ('position-ws','BTC/USDT','spot','long',1,100,'paper_internal')"
+        "VALUES ('position-ws','BTC/USDT','spot','long',1,100,'bitget_demo')"
     )
     inserted = ws_routes._run_fingerprints(query)["positions"]
     db.execute(

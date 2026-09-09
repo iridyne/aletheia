@@ -1,9 +1,8 @@
 """Shared test fixtures + safety guards.
 
-`paper_internal` is the default `paper_execution_mode`; `bitget_demo` places REAL
-orders on Bitget's demo API. Secrets are read from the OS keyring first, which the per-test `tmp_path`
-DATA_DIR monkeypatch does NOT sandbox — so without a guard an unmocked test that runs
-paper_trader to a trade could fire a real demo order over the network during pytest.
+External Demo and testnet adapters submit orders to exchange APIs. A per-test
+`tmp_path` DATA_DIR alone does not isolate credentials or network access, so
+execution tests must provide exchange-response fakes at the existing boundaries.
 
 This autouse guard makes "tests never touch the real exchange" structural: it replaces
 `BitgetClient.place_order` with a loud error by default. Tests that exercise the
@@ -309,8 +308,7 @@ def _block_real_exchange_orders(request, monkeypatch):
     async def _blocked(self, order):  # noqa: ARG001
         raise RuntimeError(
             "BitgetClient.place_order reached the real exchange in a test. "
-            "Mock it with monkeypatch.setattr(BitgetClient, 'place_order', fake) "
-            "or route the proposal through paper_internal."
+            "Mock it with monkeypatch.setattr(BitgetClient, 'place_order', fake)."
         )
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", _blocked)
