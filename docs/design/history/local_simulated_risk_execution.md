@@ -290,3 +290,12 @@ immutable-authority check, which remains covered by PL-UEE-10.
 Archived Orders and pre-Order reservations remain stored but consume no current
 capacity. A row relabelled as `paper_internal` beneath an external Proposal is
 not an archived chain: the existing authority checks still apply to it.
+
+## Retired local close test contract
+
+The former close tests inferred both fees from a fixed simulated round-trip rate,
+labelled locally generated exits as verified `local_fill`, and expected the local
+cash-ledger loss query to become available after that close. These simulator
+requirements are retired. Current calculation tests supply fees explicitly and
+retain unverified status without private evidence; external verified-close tests
+own fill provenance, eligibility, exact economics and idempotency.
