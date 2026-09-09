@@ -74,19 +74,31 @@ def test_verified_structured_strategy_close_is_eligible():
     assert assessment.evidence_source == "structured"
 
 
-def test_legacy_paper_fill_is_excluded_from_the_current_economic_cohort():
-    from aletheia.analytics.outcome_integrity import assess_reportable_outcome
-
-    assessment = assess_reportable_outcome(
-        _closed_row(
-            execution_mode="paper_internal", funding_source="local_simulation",
-            entry_price_source="local_fill", exit_price_source="local_fill",
-            _paper_fill_model_version=None,
-        )
+@pytest.mark.parametrize("fill_model_version", [None, "paper-order-fill/v1"])
+def test_archived_fill_models_preserve_economics_without_current_learning_authority(
+    fill_model_version,
+):
+    from aletheia.analytics.outcome_integrity import (
+        assess_position_closure,
+        assess_reportable_outcome,
     )
+    from aletheia.learning.outcomes import assess_realized_position
 
-    assert assessment.eligible is False
-    assert assessment.reason == "unverified_paper_fill_model"
+    archived = _closed_row(
+        execution_mode="paper_internal", funding_source="local_simulation",
+        entry_price_source="local_fill", exit_price_source="local_fill",
+        closed_at="2026-07-12T08:00:00+00:00",
+        _paper_fill_model_version=fill_model_version,
+    )
+    original = archived.copy()
+    historical = assess_position_closure(archived)
+    assert historical.eligible is True
+    assert historical.net_return_pct == pytest.approx(0.5)
+    for assess in (assess_reportable_outcome, assess_realized_position):
+        current = assess(archived)
+        assert current.eligible is False
+        assert current.reason == "archived_execution_mode"
+    assert archived == original
 
 
 @pytest.mark.parametrize(

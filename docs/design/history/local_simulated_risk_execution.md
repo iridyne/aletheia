@@ -3,6 +3,10 @@
 Paper Internal 的入场、撮合、账户现金、保护与恢复机制已退役。以下旧契约摘录仅解释历史记录，
 不定义当前功能，不授予任何执行或经济资格；数据库历史行与 immutable identity 不作改写。
 
+旧 `paper-order-fill/v1` 比较门槛也已退役。无论历史成交模型版本是否完整，
+当前收益与 Learning 资格评估均将模拟记录排除为 `archived_execution_mode`。
+底层经济分类、原始成交版本和历史排除原因仍可读取，不修改历史记录。
+
 ## Former Risk checks and decision schema
 
 旧表包含共享风控关卡，保留上下文用于理解已经退役的本地子关；当前外部账户规则见

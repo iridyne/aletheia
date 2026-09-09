@@ -280,26 +280,6 @@ def test_momentum_geometry_measurement_is_read_only_and_fail_closed():
 
 @spec_claim(
     SpecClaim(
-        "EP-S11",
-        "execution_contract",
-        "§3.0a Entry Plan Order Policy",
-        "L2a",
-        "Legacy instant-fill Paper outcomes cannot enter the paper-order-fill/v1 economic cohort.",
-        status="implemented",
-    )
-)
-def test_paper_outcome_cohort_requires_the_current_entry_fill_model():
-    from aletheia.analytics import outcome_integrity
-
-    source = inspect.getsource(outcome_integrity.assess_reportable_outcome)
-    read_source = inspect.getsource(outcome_integrity.raw_account_events)
-    assert "CURRENT_PAPER_FILL_MODEL_VERSION" in source
-    assert "_paper_fill_model_version" in read_source
-    assert "unverified_paper_fill_model" in outcome_integrity.OUTCOME_EXCLUSION_REASONS
-
-
-@spec_claim(
-    SpecClaim(
         "EP-S13", "entry_plan_contract", "Contract identity and planning cycles", "L2b",
         "Stable discovery ownership permits one successor on newer confirmed structure, preserving the old failed input and outcome.",
         status="implemented",
