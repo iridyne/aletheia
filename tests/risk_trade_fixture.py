@@ -1,4 +1,4 @@
-"""Explicit prerequisites for native ``paper_internal`` approval tests.
+"""Explicit prerequisites for Risk evaluation tests.
 
 These helpers deliberately create the same durable identity, fresh mark, and
 complete entry plan required in production.  They are test data builders, not
@@ -11,7 +11,7 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import MarketSnapshot, Opportunity
 
 
-def approvable_paper_trade(
+def approvable_risk_trade(
     monkeypatch,
     *,
     symbol: str,
@@ -20,7 +20,7 @@ def approvable_paper_trade(
     price: float,
     opportunity_id: str | None = None,
 ) -> dict[str, float | str]:
-    """Seed the fail-closed prerequisites for one native local-paper entry."""
+    """Seed the fail-closed prerequisites for one proposal with explicit Risk prerequisites."""
     if direction == "long":
         stop_price = price * 0.98
         take_profit = price * 1.04

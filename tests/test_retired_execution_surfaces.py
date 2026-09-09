@@ -196,3 +196,60 @@ async def test_simulated_approval_route_is_removed():
     async with AsyncClient(transport=ASGITransport(app), base_url="http://test") as client:
         response = await client.post("/api/proposals/archived/approve-paper")
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("mode", ["", "paper_internal", "unknown_exchange"])
+def test_current_analytics_cannot_select_archived_or_missing_account(monkeypatch, mode):
+    from aletheia.analytics import execution_mode, go_live_scorecard
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = mode
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
+    monkeypatch.setattr(go_live_scorecard, "eligible_strategy_outcomes", lambda **kwargs: pytest.fail("unresolved selection must not query all-mode outcomes"))
+
+    assert execution_mode.resolve_selected_execution_mode() is None
+    assert go_live_scorecard._genuine_closed_pnls() == []
+    assert go_live_scorecard._check_exchange_connectivity()["score"] == 0
+    assert go_live_scorecard._check_risk_violations()["score"] == 0
+
+
+def test_scorecard_uses_external_cohort_without_archived_activity(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from aletheia.analytics import go_live_scorecard
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage.sqlite import get_db
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
+    modes = []
+
+    def outcomes(*, execution_mode):
+        modes.append(execution_mode)
+        return [{"realized_pnl": 7.0, "trade_school": "short_term"}]
+
+    monkeypatch.setattr(go_live_scorecard, "eligible_strategy_outcomes", outcomes)
+    assert go_live_scorecard._genuine_closed_pnls() == [7.0]
+    assert go_live_scorecard.compute_pnl_by_trade_school()["short_term"]["count"] == 1
+    assert modes == ["bitget_demo", "bitget_demo"]
+
+    db = get_db()
+    for mode, age, violations in [("paper_internal", 0, '["archived"]'), ("bitget_demo", 2, '[]')]:
+        db.execute(
+            "INSERT INTO positions(id,symbol,market_type,direction,execution_mode,opened_at,quantity,entry_price) VALUES (?,?,?,?,?,?,1,100)",
+            (mode, "BTC/USDT", "spot", "long", mode, (datetime.now(timezone.utc) - timedelta(days=age)).isoformat()),
+        )
+        from aletheia.storage import repositories as repo
+        from aletheia.storage.models import RiskDecision, TradeProposal
+
+        repo._insert("trade_proposals", TradeProposal(
+            id=mode, symbol="BTC/USDT", market_type="spot", direction="long", execution_mode=mode,
+        ).model_dump())
+        repo._insert("risk_decisions", RiskDecision(
+            id=mode, proposal_id=mode, approved=True, proposal_execution_mode=mode, violations=violations,
+        ).model_dump())
+    assert go_live_scorecard.count_consecutive_zero_fill_days() == 2
+    assert go_live_scorecard._check_risk_violations()["score"] == 100
+    db.execute("UPDATE risk_decisions SET violations='[\"current\"]' WHERE id='bitget_demo'")
+    assert go_live_scorecard._check_risk_violations()["score"] == 0

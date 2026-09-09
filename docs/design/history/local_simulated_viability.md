@@ -1,3 +1,15 @@
+# Archived local simulated economic viability
+
+Paper Internal System/Operator viability generation is retired. The former
+`audit viability` command, `GET /api/economics/viability`, report writer and
+`ALETHEIA_VIABILITY_AUDIT` switch are removed. Existing `viability_reports`
+remain readable via `audit viability-list`, `audit viability-show` and
+`GET /api/economics/viability/reports`, with their original identity and amounts.
+No old verdict qualifies an external exchange account.
+
+The following is the historical V1 definition, not current implementation authority.
+Current runtime cost accounting is documented [separately](../../references/RUNTIME_COST_ACCOUNTING.md).
+
 # Economic Viability Audit V1
 
 ## Purpose

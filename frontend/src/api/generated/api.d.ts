@@ -1324,7 +1324,7 @@ export interface paths {
         };
         /**
          * Economics Status
-         * @description Report kill-switch state for the two economics subsystems.
+         * @description Report the current runtime cost tracing state.
          */
         get: operations["economics_status_api_economics_status_get"];
         put?: never;
@@ -1367,30 +1367,6 @@ export interface paths {
          * @description Exact aggregate-only usage projection; never reads prompts or responses.
          */
         get: operations["usage_insights_api_economics_usage_insights_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/economics/viability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Viability
-         * @description Compute a viability report on demand.
-         *
-         *     Persistence is intentionally disabled on the GET path: this endpoint
-         *     exists for dashboards, not for producing audit rows. `aletheia audit
-         *     viability` remains the persisted-write path.
-         */
-        get: operations["viability_api_economics_viability_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -15570,45 +15546,6 @@ export interface operations {
             query?: {
                 days?: number;
                 group?: "summary" | "operations";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    viability_api_economics_viability_get: {
-        parameters: {
-            query?: {
-                scope?: string;
-                days?: number;
-                execution_mode?: "paper_internal";
-                data_cost_usd?: number | null;
-                infrastructure_cost_usd?: number | null;
-                other_cost_usd?: number | null;
-                as_of?: string | null;
             };
             header?: never;
             path?: never;

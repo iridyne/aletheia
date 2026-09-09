@@ -82,7 +82,6 @@ legacy authority 下，反事实模块的兼容持久化状态在下列三张表
 | `analytics.risk_contribution.build_risk_policy_contribution` | authoritative `risk_decisions` + Risk `filter_decisions` + exact `filter_candidate_outcomes` | 在 Proposal 单位上比较实际 Risk policy 与 pass-all shadow，固定 `24h` 成本后结果；不改 Risk |
 | `analytics.execution_contribution.build_execution_cost_contribution` | immutable Order reference + exact Risk/Order/Fill/Position chain + eligible Outcome | 在 Position 单位上比较实际 Paper fills/fees 与同开平时点零摩擦 reference；不改 Execution |
 | `analytics.thesis_lineage` | `shadow_trades` | per-opp shadow 汇总 |
-| `economics.viability` | `shadow_trades` | 单 opp/batch 的选中 vs 对照的净收益比较 |
 | `server.routes.data GET /analytics/shadow-trades` | `shadow_trades` | 只读 API |
 | `analytics.filter_controller.evaluate_active_shadow_experiments` | `filter_shadow_experiments` / `_evaluations` | 前瞻实验周期评估 |
 
@@ -148,3 +147,5 @@ Position 配对、frictionless requested-fill cost control。不同 estimand
 - Phase 2 / L4 覆盖扩展：`filter_experiments.py` 目前只支持 `family_ttl`；扩展到其他 filter kind 的工作在 #497 Phase 2 checkbox 内。
 - Observation Lab v1（#1072）：`ranker_confidence_gate` 已解耦生产 `filter_version`；将 `family_ttl` / `observer_pre_filter` 迁到同一 adapter identity 模型属于 Phase 2，见 [observation_lab_contract.md](observation_lab_contract.md) §8。
 - Phase 3 / L5 反向联动：反事实证据 → policy epoch rotate 建议路径尚未存在，见 #497 Phase 3。
+
+Paper Internal 的旧经济可行性生成器已[归档](../history/local_simulated_viability.md)，不再作为当前反事实消费者。

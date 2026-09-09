@@ -1,4 +1,4 @@
-"""Economic runtime accounting and viability audits."""
+"""Economic runtime accounting and historical reports."""
 
 from aletheia.economics.schema import ECONOMICS_SCHEMA_VERSION, ensure_economics_schema
 

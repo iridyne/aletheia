@@ -11,3 +11,5 @@ reactivating a historical document in place.
 - [Deterministic control-loop simulator](deterministic_control_loop_simulation.md): retired Python-Operator harness and its simulated-account tests.
 
 - [Local simulated protection and exit experiments](local_simulated_protection.md) — archived runtime and evidence definitions.
+
+- [Local simulated economic viability](local_simulated_viability.md): retired report generation; persisted reports remain readable.

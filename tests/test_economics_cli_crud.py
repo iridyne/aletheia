@@ -4,7 +4,7 @@ every mutable-facing tokenomics data source.
 Existing coverage:
     - public-catalog pricing sync (model and provider-native tool rates)
     - budget-set / -list / -disable / -enable (via test_economics_budgets)
-    - costs / viability (compute, via test_economic_cli)
+    - costs (compute, via test_economic_cli)
 
 This file locks the missing reads + delete:
     - pricing-list                     (R for immutable catalog snapshots)
@@ -28,7 +28,7 @@ from aletheia.economics.tracing import (
     add_catalog_pricing_snapshot,
     list_pricing_snapshots,
 )
-from aletheia.economics.viability import (
+from aletheia.economics.historical_viability import (
     get_viability_report,
     list_viability_reports,
 )
@@ -174,8 +174,12 @@ def test_list_viability_reports_scope_and_pagination():
 def test_get_viability_report_returns_row_or_none():
     ensure_economics_schema()
     _seed_viability_report(report_id="rep-1")
-    assert get_viability_report("rep-1")["id"] == "rep-1"
+    db = get_db()
+    original = dict(db.execute("SELECT * FROM viability_reports WHERE id='rep-1'").fetchone())
+    before = db.total_changes
+    assert get_viability_report("rep-1") == original
     assert get_viability_report("nope") is None
+    assert db.total_changes == before
 
 
 # ── CLI: catalog pricing is read-only ────────────────────────────────────────

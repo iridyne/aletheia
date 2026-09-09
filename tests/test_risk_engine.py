@@ -1,4 +1,4 @@
-"""Tests for Risk Engine + Paper Broker + Execution Gateway."""
+"""Tests for Risk Engine + external Execution Gateway."""
 
 import pytest
 import json
@@ -7,11 +7,10 @@ from unittest.mock import patch
 
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.storage.models import RiskDecision, TradeProposal
+from aletheia.storage.models import TradeProposal
 from aletheia.storage import repositories as repo
 from aletheia.risk.engine import evaluate_proposal
 from aletheia.execution.gateway import submit_proposal
-from aletheia.execution.paper_broker import execute_paper_order
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -27,17 +26,32 @@ def setup_test_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
+    cfg = loader.load_config()
+    cfg.exchange.name = cfg.risk.allowed_exchange = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    loader.save_config(cfg)
+    from decimal import Decimal
+    from aletheia.execution.order_constraints import OrderConstraints
+    monkeypatch.setattr("aletheia.execution.order_constraints.get_order_constraints", lambda _mode, symbol, market_type: OrderConstraints(
+        venue="bitget", symbol=symbol, market_type=market_type,
+        min_quantity=Decimal("0.0001"), max_quantity=None,
+        amount_step=Decimal("0.0001"), min_notional=Decimal("5"),
+    ))
+    monkeypatch.setattr("aletheia.portfolio.exchange_sync.get_unified_cached_state", lambda: {
+        "age_seconds": 1.0, "sync_status": "ok",
+        "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 10000.0, "available_usdt": 10000.0}],
+    })
 
 
-def test_risk_approves_valid_paper_proposal(tmp_path, monkeypatch):
+def test_risk_approves_valid_demo_proposal(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    from tests.paper_trade_fixture import approvable_paper_trade
-    trade = approvable_paper_trade(
+    from tests.risk_trade_fixture import approvable_risk_trade
+    trade = approvable_risk_trade(
         monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000,
     )
     proposal = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=60000, **trade,
+        execution_mode="bitget_demo", quantity=0.001, price=60000, **trade,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -93,9 +107,9 @@ def test_risk_rejects_invalid_exit_intent_before_side_effects(
     violation,
 ):
     setup_test_env(tmp_path, monkeypatch)
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -106,7 +120,7 @@ def test_risk_rejects_invalid_exit_intent_before_side_effects(
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60000,
         **trade,
@@ -146,7 +160,7 @@ def test_gateway_rejects_invalid_exit_intent_before_persisting(
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60000,
         **intent,
@@ -162,9 +176,9 @@ def test_gateway_rejects_invalid_exit_intent_before_persisting(
 def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -175,7 +189,7 @@ def test_authoritative_risk_decision_identity_includes_policy_hash(tmp_path, mon
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60000,
         **trade,
@@ -212,9 +226,9 @@ def test_authoritative_risk_identity_uses_evaluated_policy_snapshot(
     import aletheia.config.loader as loader
     import aletheia.risk.engine as eng
     from aletheia.risk.policy import resolve_risk_policy
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -225,7 +239,7 @@ def test_authoritative_risk_identity_uses_evaluated_policy_snapshot(
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60000,
         **trade,
@@ -250,6 +264,8 @@ def test_authoritative_risk_identity_uses_evaluated_policy_snapshot(
         return policy_a_cfg
 
     monkeypatch.setattr(eng, "load_config", read_config)
+    # Account cache reading is independent of the policy snapshot being tested.
+    monkeypatch.setattr(eng, "_cached_available_balance_usdt", lambda *_args, **_kwargs: 10000.0)
 
     result = eng.evaluate_proposal(proposal)
 
@@ -277,9 +293,9 @@ def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatc
     import aletheia.risk.policy as policy_module
     from aletheia.config.loader import load_config
     from aletheia.risk.policy import ResolvedRiskPolicy
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -299,8 +315,7 @@ def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatc
     )
     broker_calls = []
     monkeypatch.setattr(
-        gateway,
-        "execute_paper_order",
+        "aletheia.execution.coordinator.execute_order",
         lambda **kwargs: broker_calls.append(kwargs),
     )
 
@@ -310,7 +325,7 @@ def test_missing_authoritative_risk_identity_blocks_gateway(tmp_path, monkeypatc
         direction="long",
         quantity=0.001,
         price=60000,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         **trade,
     )
 
@@ -330,9 +345,9 @@ def test_authoritative_filter_evidence_failure_blocks_execution(
     setup_test_env(tmp_path, monkeypatch)
     import aletheia.analytics.filter_evidence as filter_evidence
     import aletheia.execution.gateway as gateway
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -350,8 +365,7 @@ def test_authoritative_filter_evidence_failure_blocks_execution(
     )
     broker_calls = []
     monkeypatch.setattr(
-        gateway,
-        "execute_paper_order",
+        "aletheia.execution.coordinator.execute_order",
         lambda **kwargs: broker_calls.append(kwargs) or {},
     )
 
@@ -361,7 +375,7 @@ def test_authoritative_filter_evidence_failure_blocks_execution(
         direction="long",
         quantity=0.001,
         price=60000,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         **trade,
     )
 
@@ -369,7 +383,7 @@ def test_authoritative_filter_evidence_failure_blocks_execution(
     proposal = repo.list_trade_proposals(limit=1)[0]
     assert proposal["status"] == "error"
     assert broker_calls == []
-    assert repo.list_risk_decisions(limit=10) == []
+    assert all(row["decision_role"] == "preflight" for row in repo.list_risk_decisions(limit=10))
     assert repo.list_orders() == []
     assert repo.list_positions(status="open") == []
     assert repo._select_all("filter_decisions") == []
@@ -384,9 +398,9 @@ def test_authoritative_risk_and_filter_evidence_commit_together(
 ):
     setup_test_env(tmp_path, monkeypatch)
     import aletheia.analytics.filter_evidence as filter_evidence
-    from tests.paper_trade_fixture import approvable_paper_trade
+    from tests.risk_trade_fixture import approvable_risk_trade
 
-    trade = approvable_paper_trade(
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
@@ -402,7 +416,7 @@ def test_authoritative_risk_and_filter_evidence_commit_together(
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.001,
         price=60000,
         **trade,
@@ -436,7 +450,7 @@ def test_risk_rejects_disallowed_symbol(tmp_path, monkeypatch):
     save_config(cfg)
     proposal = TradeProposal(
         symbol="DOGE/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=1.0, price=0.1,
+        execution_mode="bitget_demo", quantity=1.0, price=0.1,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -453,13 +467,13 @@ def test_risk_blacklist_mode_allows_non_blocked(tmp_path, monkeypatch):
     cfg.risk.symbol_list = ["DOGE/USDT"]
     cfg.agent.permission_mode = "Paper"
     save_config(cfg)
-    from tests.paper_trade_fixture import approvable_paper_trade
-    trade = approvable_paper_trade(
+    from tests.risk_trade_fixture import approvable_risk_trade
+    trade = approvable_risk_trade(
         monkeypatch, symbol="XRP/USDT", market_type="spot", direction="long", price=1.0,
     )
     proposal = TradeProposal(
         symbol="XRP/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.1, price=1.0, **trade,
+        execution_mode="bitget_demo", quantity=0.1, price=1.0, **trade,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -478,7 +492,7 @@ def test_risk_blacklist_mode_rejects_blocked(tmp_path, monkeypatch):
     save_config(cfg)
     proposal = TradeProposal(
         symbol="DOGE/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=100, price=0.1,
+        execution_mode="bitget_demo", quantity=100, price=0.1,
     )
     repo.insert_trade_proposal(proposal)
     result = evaluate_proposal(proposal)
@@ -518,77 +532,6 @@ def test_risk_rejects_insufficient_permission(tmp_path, monkeypatch):
     reset_db()
 
 
-def test_paper_broker_full_flow(tmp_path, monkeypatch):
-    setup_test_env(tmp_path, monkeypatch)
-    proposal = TradeProposal(
-        id="prop-1",
-        symbol="ETH/USDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=0.5,
-        price=3000.0,
-        execution_mode="paper_internal",
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        id="risk-1",
-        proposal_id=proposal.id,
-        approved=True,
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal",
-        decision_role="authoritative",
-        evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=proposal.commit_hash,
-    )
-    repo.insert_risk_decision(decision)
-    result = execute_paper_order(
-        proposal_id=proposal.id, risk_decision_id=decision.id,
-        symbol="ETH/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.5, price=3000.0,
-    )
-    assert result["fill_price"] == pytest.approx(3000.0, rel=0.01)  # slippage shifts slightly
-    assert result["fill_quantity"] == 0.5
-
-    orders = repo.list_orders()
-    assert len(orders) == 1
-    assert orders[0]["status"] == "filled"
-
-    fills = repo.list_fills()
-    assert len(fills) == 1
-
-    positions = repo.list_positions(status="open")
-    assert len(positions) == 1
-    assert positions[0]["symbol"] == "ETH/USDT"
-    assert positions[0]["entry_price"] == pytest.approx(3000.0, rel=0.01)  # slippage
-    reset_db()
-
-
-def test_execution_gateway_paper_flow(tmp_path, monkeypatch):
-    setup_test_env(tmp_path, monkeypatch)
-    # Change permission to PaperAuto to allow paper execution
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    save_config(cfg)
-    from tests.paper_trade_fixture import approvable_paper_trade
-    trade = approvable_paper_trade(
-        monkeypatch, symbol="SOL/USDT", market_type="spot", direction="long", price=150.0,
-    )
-
-    result = submit_proposal(
-        symbol="SOL/USDT", market_type="spot", direction="long",
-        quantity=0.5, price=150.0, execution_mode="paper_internal", **trade,
-    )
-    assert result["status"] == "executed"
-    assert "order_id" in result
-    assert "fill_price" in result
-
-    positions = repo.list_positions(status="open")
-    assert len(positions) == 1
-    reset_db()
-
-
 def test_execution_gateway_rejects_disallowed(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
@@ -598,7 +541,7 @@ def test_execution_gateway_rejects_disallowed(tmp_path, monkeypatch):
     save_config(cfg)
     result = submit_proposal(
         symbol="XRP/USDT", market_type="spot", direction="long",
-        quantity=10.0, price=0.5, execution_mode="paper_internal",
+        quantity=10.0, price=0.5, execution_mode="bitget_demo",
     )
     assert result["status"] == "rejected"
     assert "symbol_not_allowed" in str(result["risk_violations"])

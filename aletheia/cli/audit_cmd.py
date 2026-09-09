@@ -308,7 +308,7 @@ def viability_list(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """List persisted viability reports."""
-    from aletheia.economics.viability import list_viability_reports
+    from aletheia.economics.historical_viability import list_viability_reports
 
     rows = list_viability_reports(scope=scope, limit=limit, offset=offset)
     if output_json:
@@ -335,7 +335,7 @@ def viability_show(
     output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
 ):
     """Show one persisted viability report."""
-    from aletheia.economics.viability import get_viability_report, render_viability
+    from aletheia.economics.historical_viability import get_viability_report, render_viability
 
     row = get_viability_report(report_id)
     if row is None:
@@ -448,54 +448,6 @@ def context(
         typer.echo(f"  {kind}: artifacts={bucket['artifacts']} rendered_chars={bucket['rendered_chars']}")
     freshness = ", ".join(f"{key}={value}" for key, value in sorted(report["freshness"].items()))
     typer.echo(f"Freshness: {freshness or 'none'}")
-
-
-@audit_app.command("viability")
-def viability(
-    scope: str = typer.Option("system", "--scope", help="system or operator"),
-    days: int = typer.Option(7, "--days", min=1, help="Lookback window in days."),
-    execution_mode: str = typer.Option("paper_internal", "--execution-mode"),
-    data_cost_usd: Optional[float] = typer.Option(None, "--data-cost", min=0, help="Explicit cost allocated to this window."),
-    infrastructure_cost_usd: Optional[float] = typer.Option(None, "--infrastructure-cost", min=0, help="System scope only."),
-    other_cost_usd: Optional[float] = typer.Option(None, "--other-cost", min=0, help="System scope only."),
-    as_of: Optional[str] = typer.Option(None, "--as-of", help="Fixed ISO window end for reproducible reruns."),
-    output_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON."),
-):
-    """Calculate deterministic System or Operator economic viability."""
-    from aletheia.economics.viability import (
-        build_operator_viability,
-        build_system_viability,
-        render_viability,
-        require_supported_execution_mode,
-    )
-
-    normalized = scope.strip().lower()
-    try:
-        require_supported_execution_mode(execution_mode)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--execution-mode") from exc
-    if normalized == "system":
-        report = build_system_viability(
-            days=days,
-            execution_mode=execution_mode,
-            data_cost_usd=data_cost_usd,
-            infrastructure_cost_usd=infrastructure_cost_usd,
-            other_cost_usd=other_cost_usd,
-            window_end=as_of,
-        )
-    elif normalized == "operator":
-        report = build_operator_viability(
-            days=days,
-            execution_mode=execution_mode,
-            data_cost_usd=data_cost_usd,
-            window_end=as_of,
-        )
-    else:
-        raise typer.BadParameter("scope must be 'system' or 'operator'")
-    if output_json:
-        typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
-        return
-    typer.echo(render_viability(report))
 
 
 @audit_app.command("learning-context-b1")

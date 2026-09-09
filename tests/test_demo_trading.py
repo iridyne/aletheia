@@ -220,8 +220,8 @@ def test_paper_internal_fallback_never_calls_exchange(tmp_path, monkeypatch):
     save_config(cfg)
     captured = []
     _patch_place_order(monkeypatch, captured)
-    from tests.paper_trade_fixture import approvable_paper_trade
-    trade = approvable_paper_trade(
+    from tests.risk_trade_fixture import approvable_risk_trade
+    trade = approvable_risk_trade(
         monkeypatch,
         symbol="BTC/USDT",
         market_type="spot",
