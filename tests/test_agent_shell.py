@@ -41,7 +41,7 @@ def _init_agent_shell_db(tmp_path, monkeypatch):
 def _review_mark(
     *,
     price: float = 100.0,
-    venue: str = "binance",
+    venue: str = "bitget",
     symbol: str = "BTC/USDT",
     market_type: str = "perp",
 ) -> dict:
@@ -156,7 +156,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         quantity=1.0,
         entry_price=100.0,
         unrealized_pnl=-0.25,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     unrelated = Position(
         id="wake-review-unrelated",
@@ -166,7 +166,7 @@ async def test_wake_driven_portfolio_review_scopes_and_persists_hold(
         quantity=1.0,
         entry_price=2000.0,
         unrealized_pnl=1.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     insert_position(unrelated)
@@ -245,7 +245,7 @@ async def test_portfolio_review_uses_fresh_exact_mark_and_persists_provenance(
         entry_price=100.0,
         current_price=999.0,
         unrealized_pnl=777.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         stop_price=95.0,
         take_profit_price=110.0,
         opened_at=opened_at.isoformat(),
@@ -287,7 +287,7 @@ async def test_portfolio_review_uses_fresh_exact_mark_and_persists_provenance(
     monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_hold)
     result = await review_portfolio_state({})
 
-    assert calls == [(target.symbol, target.market_type, "binance")]
+    assert calls == [(target.symbol, target.market_type, "bitget")]
     row = conn.execute(
         "SELECT evidence_manifest_json FROM pi_decisions WHERE id=?",
         (result["position_review_decision_id"],),
@@ -304,7 +304,7 @@ async def test_portfolio_review_uses_fresh_exact_mark_and_persists_provenance(
         "source": "instrument_price_cache",
         "status": "available",
         "symbol": target.symbol,
-        "venue": "binance",
+        "venue": "bitget",
     }]
 
 
@@ -325,7 +325,7 @@ async def test_portfolio_review_missing_mark_rejects_adjustment_without_mutation
         quantity=1.0,
         entry_price=100.0,
         stop_price=90.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -363,7 +363,7 @@ async def test_portfolio_review_missing_mark_rejects_adjustment_without_mutation
         "position_id": target.id,
         "requested_market_type": "spot",
         "requested_symbol": target.symbol,
-        "requested_venue": "binance",
+        "requested_venue": "bitget",
         "status": "unavailable",
     }]
     assert evidence["effect"] == {
@@ -387,7 +387,7 @@ async def test_stale_horizon_wake_does_not_restrict_open_adverse_review(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -442,7 +442,7 @@ async def test_portfolio_review_does_not_coerce_missing_global_pnl_to_zero(
         direction="long",
         quantity=0.1,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     conn.execute(
@@ -495,7 +495,7 @@ async def test_wake_driven_portfolio_review_adjusts_exact_position(
         quantity=0.1,
         entry_price=100.0,
         stop_price=90.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -654,7 +654,7 @@ async def test_portfolio_review_requires_exact_id_for_mutating_action(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -709,7 +709,7 @@ def test_proactive_exit_never_defaults_an_unconfirmed_close_to_success(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -742,7 +742,7 @@ async def test_wake_driven_portfolio_review_persists_unavailable_result(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -807,7 +807,7 @@ async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
         entry_price=100.0,
         current_price=102.0,
         unrealized_pnl=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         stop_price=95.0,
         take_profit_price=110.0,
     )
@@ -818,7 +818,7 @@ async def test_horizon_hold_rolls_horizon_and_acknowledges_wake(
         direction="short",
         quantity=1.0,
         entry_price=200.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     insert_position(sibling)
@@ -883,7 +883,7 @@ async def test_horizon_hold_disabled_stays_incomplete(tmp_path, monkeypatch):
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     force_update_position(target.id, expected_horizon_hours=10.0)
@@ -942,7 +942,7 @@ async def test_horizon_extension_beyond_current_age_acknowledges_target(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -1010,7 +1010,7 @@ async def test_horizon_mutation_acknowledges_only_the_effective_target(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     sibling = Position(
         id=f"horizon-{action}-sibling",
@@ -1019,7 +1019,7 @@ async def test_horizon_mutation_acknowledges_only_the_effective_target(
         direction="long",
         quantity=1.0,
         entry_price=200.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     insert_position(sibling)
@@ -1091,7 +1091,7 @@ async def test_horizon_due_stop_only_adjustment_is_rejected_without_extension(
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -1152,7 +1152,7 @@ async def test_horizon_due_close_can_reach_execution_when_review_mark_is_unavail
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     monkeypatch.setattr(
@@ -1220,7 +1220,6 @@ async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untou
 ):
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
-    from aletheia.config.loader import load_config
     from aletheia.storage.models import MarketSnapshot, Position
     from aletheia.storage.repositories import (
         _select_one,
@@ -1236,14 +1235,13 @@ async def test_portfolio_review_stale_mark_leaves_position_and_close_facts_untou
         quantity=1.0,
         entry_price=100.0,
         current_price=999.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     insert_position(target)
-    cfg = load_config()
     insert_market_snapshot(MarketSnapshot(
         symbol=target.symbol,
         market_type="spot",
-        exchange=cfg.market_data.ccxt_exchange or "binance",
+        exchange="bitget",
         price=120.0,
         snapshot_at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
     ))
@@ -1290,6 +1288,7 @@ async def test_portfolio_review_legacy_reduce_exposure_cannot_full_close(
 
     position = {
         "id": "legacy-reduce-target",
+        "execution_mode": "bitget_demo",
         "symbol": "BTC/USDT",
         "market_type": "spot",
         "direction": "long",
@@ -1358,7 +1357,7 @@ def test_operator_assessment_counts_all_open_positions_above_one_hundred(
             direction="long",
             quantity=1.0,
             entry_price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         ))
 
     assessment = build_system_assessment()
@@ -1885,7 +1884,7 @@ async def test_runtime_handles_what_is_the_system_doing_with_operator_evidence(t
             direction="long",
             quantity=0.01,
             entry_price=65000,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
     )
     task_id = create_task(
