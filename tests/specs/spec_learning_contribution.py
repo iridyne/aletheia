@@ -340,8 +340,8 @@ def test_learning_alpha_cannot_manufacture_confidence_from_duplicate_lessons(mon
     db = get_db()
     event_at = _iso(10)
     for idx in range(5):
-        _insert_trade(db, idx, -2.0, _iso(15))
-        _insert_trade(db, idx + 100, 2.0, _iso(5))
+        _insert_trade(idx, -2.0, _iso(15))
+        _insert_trade(idx + 100, 2.0, _iso(5))
     evidence = '{"scanner_family":"momentum","direction":"long","symbol":"BTC/USDT"}'
     for idx in range(6):
         db.execute(
@@ -388,59 +388,25 @@ def test_learning_alpha_cannot_manufacture_confidence_from_duplicate_lessons(mon
         )
 
 
-def _insert_trade(db, idx: int, pnl_pct: float, closed_at: str) -> None:
-    from aletheia.storage.models import Position
-    from aletheia.storage.repositories import insert_position
-    from tests.test_outcome_closure import _insert_entry_chain
+def _insert_trade(idx: int, pnl_pct: float, closed_at: str) -> None:
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    opp = f"le-opp-{idx}"
-    proposal = f"le-prop-{idx}"
-    position_id = f"le-pos-{idx}"
-    opportunity_id, proposal_id, order_id = _insert_entry_chain(
-        position_id=position_id,
-        opportunity_id=opp,
-        proposal_id=proposal,
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-    )
-    db.execute(
-        "UPDATE opportunities SET scanner_family='momentum' WHERE id=?",
-        (opportunity_id,),
-    )
-    insert_position(Position(
-        id=position_id,
+    _insert_closed_position_via_producer(
+        position_id=f"le-pos-{idx}",
+        opportunity_id=f"le-opp-{idx}",
+        proposal_id=f"le-prop-{idx}",
+        scanner_family="momentum",
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        current_price=100.0 + pnl_pct,
         realized_pnl=pnl_pct,
-        execution_mode="paper_internal",
-        status="closed",
+        execution_mode="bitget_demo",
         close_reason="signal_exit",
-        entry_fee=0.0,
-        exit_fee=0.0,
-        funding_cost=0.0,
-        funding_source="local_simulation",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        close_category="strategy",
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
         opened_at=_iso(20),
         closed_at=closed_at,
-        opportunity_id=opportunity_id,
-        proposal_id=proposal_id,
-        order_id=order_id,
-    ))
+    )
 
 
 @spec_claim(
