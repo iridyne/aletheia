@@ -602,7 +602,7 @@ def test_invalid_native_proposal_fails_closed(
         "order_type": "market",
         "quantity": 0.001,
         "price": 60_000.0,
-        "execution_mode": "paper_internal",
+        "execution_mode": "bitget_demo",
     }
     payload.update(override)
 

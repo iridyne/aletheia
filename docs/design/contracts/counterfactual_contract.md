@@ -129,7 +129,6 @@ estimand。不同 estimand
 - `tests/test_shadow_trade_economics_enrichment.py` — `_compute_shadow_economics` 与 cost-model 字段。
 - `tests/specs/spec_pipeline_outcome_shadow_anchor.py` — Position 关闭锚点、CAS 幂等、historical snapshot 时间钉。
 - `tests/specs/spec_pipeline_outcome_feedback.py` — hook replay + shadow batch 完整或全失败的语义。
-- `tests/specs/spec_pipeline_paper_close_materialization.py` — paper 结算路径与 shadow 结算的对齐。
 - `tests/test_filter_shadow_experiments.py` — 前瞻实验的 register / evaluate / status 转换。
 - `tests/test_filter_replay.py` — 有界回放的边界 (`_MAX_ALTERNATIVES`, `_MAX_CANDIDATES`, `read_only`).
 - `tests/specs/spec_filter_evidence.py` — 全模块的 `production_mutation_allowed=0` 与 `first exposure` 断言。

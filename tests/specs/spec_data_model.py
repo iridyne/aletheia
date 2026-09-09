@@ -241,24 +241,6 @@ def test_capital_events_table():
     assert "capital_events" in source
 
 
-@spec_claim(
-    SpecClaim(
-        "DM-S23", "data_model", "§3 local paper account", "L2a",
-        "Local paper cash is an append-only ledger, separate from cross-broker capital "
-        "events, and every appended amount and resulting balance are finite.",
-    ),
-)
-def test_local_paper_account_ledger_contract():
-    from pathlib import Path
-
-    root = Path(__file__).parent.parent.parent
-    migration = (root / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
-    account = (root / "aletheia" / "portfolio" / "paper_account.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS paper_account_events" in migration
-    assert "INITIAL_PAPER_CASH_USDT = 200.0" in account
-    assert "manual_set_balance" in account
-    assert "math.isfinite(amount_usdt)" in account
-    assert "math.isfinite(after)" in account
 
 
 @spec_claim(

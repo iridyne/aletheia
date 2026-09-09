@@ -110,3 +110,15 @@ evidence（包括 close 时的 `seed_close_anchor`）不变，只补它自身的
 权威 repair audit。任何 funding/PnL、close event、cash、eligibility/reason 或必需 hook 差异都不得被
 identity-only 路径吸收；已经 current 的行再次 apply 必须为 no-op。
 
+
+## Retired executable requirements
+
+The former `spec_pipeline_paper_close_materialization.py` and
+`test_pipeline_futures_leverage.py` required local cash, synthetic fills, local
+funding settlement/revival and the removed bulk-close API. Those tests and their
+simulator fixtures are deleted. Current native input rejection stays in
+`spec_pipeline_risk_execution_integrity.py` using an external execution mode.
+Historical unknown funding and signed funding projections remain exercised through
+the Position API and CSV export in `tests/test_export_routes.py`, with archived
+rows loaded directly. The former `DM-S23` constructor/source-text claim is retired;
+actual history-read checks cover the surviving ledger.
