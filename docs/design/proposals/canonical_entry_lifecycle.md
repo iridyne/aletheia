@@ -34,12 +34,12 @@ Order, Fill, reconciliation ambiguity, or Position remains.
 ## Runtime authority
 
 One resolver separates worker capability from the configured execution route.
-`Paper` and `Full` may use `paper_internal`; only `Full` may use a registered and
-Entry-supported exchange Demo route. `Observe`, unknown routes, and effective
-Live remain fail-closed. Internal Paper plans persist minimum permission `Paper`;
-Demo plans persist the minimum required by their registered route. Planner
-preflight, post-inference validation, Fast Monitoring, and Execution consume the
-same result while Risk and Gateway retain exclusive approval/submission authority.
+The current Entry-supported route is `bitget_demo`, with minimum permission
+`Full`. `Observe` and `Paper` cannot execute it; unknown, retired and effective
+Live routes remain unavailable. Planner preflight, post-inference validation,
+Fast Monitoring and Execution consume the same result while Risk and Gateway
+retain exclusive approval/submission authority. The former local-simulator
+permission path is [archived](../history/local_simulated_risk_execution.md).
 
 ## Compatibility, rollback, and non-goals
 

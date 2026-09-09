@@ -71,7 +71,7 @@ Non-goals:
    applies the preflighted migration to the authoritative database, starts the
    Runtime, and runs a bounded health soak.
 5. Activation succeeds only when the observed commit, migration ledger,
-   provider, scheduler, outcome settlement, `paper_internal`, and
+   provider, scheduler, outcome settlement, exact external-account identity, and
    `live_disabled` facts all match the approved release contract. Otherwise the
    host restores the previous release and, where schema recovery requires it,
    the verified pre-update backup.
@@ -106,7 +106,7 @@ must prove:
 - crash recovery before selection, during migration, during startup, and during
   health soak;
 - exact commit and schema provenance after restart;
-- provider, scheduler, settlement, `paper_internal`, and `live_disabled` health;
+- provider, scheduler, external-account identity/settlement, and `live_disabled` health;
 - unchanged Runtime on check, download, signature, capacity, and preflight
   failures;
 - bounded rollback to the previous immutable release and required database

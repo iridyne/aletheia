@@ -11,21 +11,21 @@ meaning of every opportunity. A silent split is therefore a semantic-honesty bug
 target is derived from `exchange.paper_execution_mode`. All alignment checks now use
 `aletheia/config/exchange_alignment.py`:
 
-| Paper execution mode | Actual execution exchange |
+| Configured execution mode | Resolved execution exchange |
 |---|---|
-| `paper_internal` | none (local simulator) |
 | `bitget_demo` | Bitget |
-| `binance_testnet` / `binance_live` | Binance |
-| `okx_demo` / `okx_live` | OKX |
+| `binance_testnet` | Binance |
+| `okx_demo` | OKX |
+| Registered `*_live_limited` mode | The retained `exchange.name` value; Live authority remains separately gated |
 
-Unknown future external modes fall back to `exchange.name` until explicitly added.
+Missing, retired and unknown modes resolve to no execution exchange. They do not
+fall back to `exchange.name` or create a local account. Credential-profile names
+`binance_live` and `okx_live` are not execution modes.
 
 ## State model
 
-- `local_paper`: no external execution exchange. The normalized
-  `market_data.ccxt_exchange` is both slow and fast public market-data authority
-  without a divergence warning. Fast Monitoring supports Bitget and Binance;
-  any other venue remains visible but fails closed without substitution.
+- `not_configured`: no execution mode was selected.
+- `unavailable`: a selected mode has no supported execution exchange.
 - `aligned`: execution and `market_data.ccxt_exchange` are the same exchange.
 - `diverged`: external execution and market data use different exchanges.
 
@@ -37,7 +37,7 @@ connection probe targets `execution_exchange`, not the retained preference name.
 Both ways of creating a split are guarded:
 
 1. Changing `market_data.ccxt_exchange` while an external execution mode is active.
-2. Changing `paper_execution_mode` from local/aligned to an exchange different from
+2. Changing `paper_execution_mode` from missing/aligned to an exchange different from
    the current market-data source.
 
 The backend returns HTTP 409 with code
@@ -59,8 +59,9 @@ data, execution, and risk allowlist.
 
 When diverged, Overview shows `X exec · Y data` with a yellow status light and a
 persistent explanation. Settings shows the same split at the top of Execution.
-Doctor reports the actual execution venue and data venue. Local paper continues to
-show `Local paper · no exchange` and does not invent an external connection warning.
+Doctor reports the resolved execution venue and data venue. Missing or retired
+execution modes remain explicitly unconfigured/unavailable. The former local-account
+alignment definition is [archived](../history/local_simulated_runtime_scope.md#former-execution-and-market-data-alignment).
 
 ## Non-goals
 

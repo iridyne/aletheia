@@ -55,9 +55,9 @@ surface, live authority, Risk policy, or wire-version migration.
 - `RESTING_MAKER` and Triggered Maker require venue Post-Only semantics.
   Urgent execution is an explicitly authorized, opposing-BBO IOC Limit within a
   bounded price envelope. A plain Limit is never called Maker.
-- V1 exchange execution capability is Bitget Demo only. `paper_internal` remains
-  useful for deterministic lifecycle and Risk tests but does not claim queueing
-  or maker-fill fidelity.
+- V1 exchange execution capability is Bitget Demo only. Deterministic lifecycle
+  and Risk tests use external-account fixtures and faked UTA responses; they do
+  not require a local simulator or prove exchange queueing/maker-fill fidelity.
 - Fast Monitoring consumes public exact market events and decides trigger,
   invalidation and expiry. It requests cancel through Gateway; it never calls an
   exchange client directly. Private Fill evidence wins a cancel race.

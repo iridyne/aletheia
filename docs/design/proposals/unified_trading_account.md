@@ -27,8 +27,9 @@ profiles. There is no legacy/shadow selector or private broker fallback.
 Exact mutation qualification and Live Trust gates remain mandatory; account reads
 do not grant mutation authority. No credential-backed qualification or remote
 deployment is claimed by this local cutover.
-Existing `submission_unknown`, `materialization_missing`, Risk-before-Gateway
-authority and `paper_internal` behavior remain authoritative.
+Existing `submission_unknown`, `materialization_missing` and Risk-before-Gateway
+authority remain authoritative. The local simulator is [retired](retire_local_simulated_exchange.md);
+its historical records retain their original identity without account or mutation authority.
 
 ## Goals and non-goals
 

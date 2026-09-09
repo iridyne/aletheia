@@ -175,8 +175,7 @@ async def test_uta_state_unconfigured_is_null_not_zero(tmp_path, monkeypatch):
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
-    # path where an external exchange cache drives compute_portfolio.
+    # Select Bitget Demo explicitly for the external-account portfolio cache.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -618,7 +617,7 @@ def test_archived_portfolio_read_never_initializes_an_account(tmp_path, monkeypa
 def test_external_position_count_surfaces_drift(tmp_path, monkeypatch):
     """If the exchange shows positions we didn't open via aletheia, expose the delta."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
+    # This test explicitly selects the Bitget Demo
     # path so classify_positions can match positions against the exchange cache.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -659,7 +658,7 @@ async def test_positions_reconciliation_endpoint(tmp_path, monkeypatch):
     """GET /api/positions/reconciliation classifies external positions the system
     did not open."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
+    # This test explicitly selects the Bitget Demo
     # path so classify_positions can read the exchange cache and surface externals.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -706,7 +705,7 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     instead of forbidding entry. See docs/governance/decisions/DECISIONS.md
     (2026-06-12)."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; set paper_execution_mode = "bitget_demo"
+    # Select paper_execution_mode = "bitget_demo" explicitly
     # so that adopt_position("demo") maps to bitget_demo execution_mode, matching the
     # assertion below (demo account → bitget_demo so position_manager auto-manages it).
     from aletheia.config.loader import load_config, save_config

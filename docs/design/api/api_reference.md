@@ -367,7 +367,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/webhook` | Webhook notification config |
 | POST | `/settings/update-config` | Auto-update settings |
 | POST | `/settings/permission-mode` | **Worker/agent permission mode only** (Observe/Paper/Full — writes to `cfg.agent.permission_mode`). Operator permission (ReadOnly/Research/PaperAuto/AllowEditing/Auto) is a SEPARATE surface at `cfg.operator.permission_mode` — this endpoint does not change it. See [live_unlock_contract §5](../contracts/live_unlock_contract.md). |
-| POST | `/settings/exchange-mode` | Exchange mode (paper_internal/paper_demo/live) |
+| POST | `/settings/exchange-mode` | Sets `exchange.mode` to `demo` or `live`; Live unlock remains separate |
 | POST | `/settings/risk` | Risk limit parameters |
 | POST | `/settings/symbols` | Crypto symbol config |
 | POST | `/settings/equities` | xStocks / equity config |

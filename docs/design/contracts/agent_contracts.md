@@ -62,11 +62,10 @@ Historical job-health rows are evidence only, never active schedules.
 After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
 `last_failure_reason` preserve the most recent failure.
 
-`paper_funding_settler` is accounting maintenance, not an agent decision or exchange-account
-collector. It runs during layered pause, keeps incomplete facts `NULL`, and may use public historical
-settlements only as `local_simulation` evidence. It never labels age alone as structural failure.
-When evidence becomes complete it calls the single atomic materializer; downstream feedback is
-durably queued and independently retried by `outcome_hook_replay`.
+The former local-simulator funding settler and its public-rate settlement path
+are [archived](../history/local_simulated_risk_execution.md). They are not active
+jobs. Current verified-close feedback is durably queued and independently
+retried by `outcome_hook_replay`.
 
 `broker_funding_settler` is exchange-accounting recovery, not trading authority. It runs during
 layered pause and rotates a durable scheduling cursor so expired, transient, malformed, or
