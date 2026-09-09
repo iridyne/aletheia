@@ -15,3 +15,5 @@ reactivating a historical document in place.
 - [Local simulated economic viability](local_simulated_viability.md): retired report generation; persisted reports remain readable.
 
 - [Local simulated contribution and qualification](local_simulated_qualification.md): retired Risk/Execution projections and frozen whole-policy compiler.
+
+- [Local simulated Risk and execution contracts](local_simulated_risk_execution.md): retired admission, matching, cash and protection definitions.

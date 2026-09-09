@@ -17,7 +17,7 @@
 
 **契约**:所有 proposal 必须且仅能通过 `evaluate_proposal` 取得放行;同一时刻只有一个 proposal 在评估(序列化)。
 
-**唯一入口不变式(RE-B17)**:执行网关 `_execute_proposal` 中每一条调用 broker 下单函数(`execute_paper_order` / `execute_live_order`)的代码路径,必须在 `risk_result.approved` 检查通过后才能到达——即 risk evaluation 必须前置且其结果被显式消费。不存在绕过 `evaluate_proposal` 直接触达 broker 的路径。可执行测试:spec `RE-B17`。
+**唯一入口不变式(RE-B17)**:执行网关 `_execute_proposal` 中每一条调用 broker 下单函数（Gateway → Coordinator → UTA）的代码路径,必须在 `risk_result.approved` 检查通过后才能到达——即 risk evaluation 必须前置且其结果被显式消费。不存在绕过 `evaluate_proposal` 直接触达 broker 的路径。可执行测试:spec `RE-B17`。
 
 ### 1.1 Demo / Live policy identity（v2）
 
@@ -41,7 +41,7 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 
 ---
 
-## 2. 检查关卡(代码实际 20 个主关卡，另含本地纸面入场子关与 6b)
+## 2. 检查关卡（主关卡与 Entry Plan 子关）
 
 > ⚠️ **偏差**:[SYSTEM_ARCHITECTURE_GUIDE](../architecture/SYSTEM_ARCHITECTURE_GUIDE.md) 第五章称"五关审批",代码实际是 20 关(0–16 + 6b/17/18/19)。
 > 以下 20 个主关卡及表内子关为金标准;ARCH_GUIDE 的"五关"是简化叙事,待该文档批次3标注。
@@ -56,14 +56,12 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 |---|------|------|------------|---------|------|
 | 0 | Trading Brakes | global brake 阻断全部；demo/live mode brake 只阻断对应 pool；三者同时以带 scope/generation 的 durable pause owner 投影，resume authority 仍先检查独立 brake | `runtime.kill_switch_active/demo_brake_active/live_brake_active` + `runtime.pause_owners` | `kill_switch_active` / `demo_brake_active` / `live_brake_active` | engine.py / pause_ownership.py |
 | 1 | Symbol Filter | white/blacklist | `risk.symbol_filter_mode/symbol_list` | `symbol_blocked/not_allowed:{sym}` | :83 |
-| 1a | Local Paper Market Authority | generic `native + paper_internal` 仍要求 exact fresh mark 与 Proposal.price 一致。Entry Plan Limit 改为验证短期 `EntryExecutionReceiptV1`：exact Plan/instrument/generation/channel、fresh BBO、Maker passive 或 IOC BBO+depth 边界；Proposal.price 是 order constraint，不是第二条 current-mark 声明 | `market_data.ccxt_exchange` + execution receipt | `paper_market_data_unavailable:*` / `proposal_price_not_current_mark`（generic）/ `entry_execution_receipt_*`（Entry Plan） | engine.py local-paper authority block |
-| 1b | Local Paper Causal Identity | authoritative `native + paper_internal` 必须在 `opportunities` 与 `serenity_opportunities` 中恰有一个 durable carrier，且 canonical symbol、physical market、direction 完全一致 | —（始终启用） | `proposal_opportunity_required/not_found/ambiguous/symbol_mismatch/market_mismatch/direction_mismatch/check_error` | engine.py `_paper_opportunity_identity_violations` |
+| 1a | Entry Plan Authority | 绑定 immutable Plan、current generation、生命周期与有效期、exact instrument/account、价格/保护/tactic envelope、Risk policy identity 与资本上限；execution receipt 的类型、Proposal/Plan identity 与 hash 由 Gateway 验证并绑定 RiskDecision | Entry Plan + execution receipt | `entry_plan_*` / `entry_execution_receipt_*` | engine.py `_entry_plan_authority_violations` / gateway.py |
 | 2 | Market Allowed | spot/futures 开关 | `exchange.enabled_markets` | `spot_market_disabled`（market_type=='spot' 且 enabled_markets['spot']==False）/ `futures_market_disabled`（market_type=='usdt_futures' 且 enabled_markets['usdt_futures']==False） | :93 |
-| 2a | Local Futures Funding Ready | `paper_internal` 合约开仓前须有该 symbol 15 分钟内的主 venue 下一结算快照 | `funding_rate_snapshots` | `local_paper_futures_funding_unavailable` | engine.py check #2a |
-| 2b | Complete Entry Plan | 每个 native 本地纸面 market 入场及 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)` 且该结果必须在包含边界的 `[1.00, 10.00]` 合理性包络内。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` / `entry_plan_risk_reward_outside_envelope` | engine.py check #2b/#2c |
+| 2b | Complete Entry Plan | 每个 native exchange limit 入场必须在 Risk 前固定有限正数的 entry/stop/take-profit/risk_reward；多空几何正确，risk_reward 必须等于 `round(abs(tp-entry)/abs(entry-stop), 2)` 且该结果必须在包含边界的 `[1.00, 10.00]` 合理性包络内。exchange market close/reduce 与 adopted chain 豁免 | —（Proposal immutable fields） | `incomplete_entry_plan:{fields}` / `entry_plan_geometry:*` / `entry_plan_risk_reward_mismatch` / `entry_plan_risk_reward_outside_envelope` | engine.py check #2b/#2c |
 | 3 | Live State | 非 `live_disabled` | `live.state` | `live_disabled` | :99 |
-| 4 | Permission Mode | Observe 仅 paper_internal | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
-| 5 | Max Position Margin | live/demo 配置上限与对应账户的本地可用 USDT 取较小值，再应用回撤缩放；`paper_internal` 必须读取本地纸面账户账本，读取失败不可退回配置资金。Demo 默认 100,000 USDT，设置 API 只保留正数下限、不施加应用层最大值；live 边界不变 | `risk.max_{live/demo}_position_margin_usdt` + local exchange-account cache / paper-account ledger | `exceeds_max_position_margin:{n}>{cap}` (live path); `exceeds_demo_position_margin:{n}>{cap}` (demo path); `paper_account_balance_unavailable` | :109 |
+| 4 | Permission Mode | Observe 不允许提交订单 | `agent.permission_mode` | `permission_mode_insufficient:{mode}` | :104 |
+| 5 | Max Position Margin | live/demo 配置上限与对应账户缓存的可用 USDT 取较小值，再应用回撤缩放；无可用缓存时保留配置上限。Demo 默认 100,000 USDT，设置 API 只保留正数下限；live 边界不变 | `risk.max_{live/demo}_position_margin_usdt` + local exchange-account cache | `exceeds_max_position_margin:{n}>{cap}` / `exceeds_demo_position_margin:{n}>{cap}` | engine.py `_effective_position_margin_cap` |
 | 6 | Max Open Positions | live/demo 持仓数；demo 默认 200，设置 API 只保留正整数下限 | `risk.max_open_positions_{live/demo}` | `max_{live/demo}_positions_reached:{n}` | :127 |
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
@@ -72,10 +70,10 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` (live path); `stale_market_data_demo:age={a}` (demo path for bitget_demo/okx_demo only, engine.py:238-241) | :188 |
-| 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；`paper_internal` 独立、每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |
+| 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |
 | 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
-| 14b | Exchange-demo entry quality | 仅 `bitget_demo`/`okx_demo`/`binance_testnet` 的**新开仓**：已发布 regime confidence ≤ 门槛（mean_reversion 豁免 confidence）、已发布 regime 为 sideways（**含 mean_reversion**）、family×direction 在干净窗 n≥门槛且 expectancy&lt;0、或同标的 24h 内 `stop_loss` 后反向，则拒。未发布 regime / 样本不足 fail-open；policy epoch、regime、family-edge、recent-stop authority 读取失败则 fail-closed 并保留来源 token。`paper_internal` 与 live #14 不变；不平已有仓 | `risk.demo.eligibility.min_regime_confidence_to_enter`(0.60) / `sideways_standdown`(true) / `family_min_samples`(20) / `family_min_expectancy`(0.0) | `regime_confidence_standdown:*` / `regime_sideways_standdown:*` / `family_not_demo_eligible:*` / `reverse_after_stop:*` / `demo_entry_quality_unavailable:<source>` | `aletheia/risk/demo_entry_quality.py` |
+| 14b | Exchange-demo entry quality | 仅 `bitget_demo`/`okx_demo`/`binance_testnet` 的**新开仓**：已发布 regime confidence ≤ 门槛（mean_reversion 豁免 confidence）、已发布 regime 为 sideways（**含 mean_reversion**）、family×direction 在干净窗 n≥门槛且 expectancy&lt;0、或同标的 24h 内 `stop_loss` 后反向，则拒。未发布 regime / 样本不足 fail-open；policy epoch、regime、family-edge、recent-stop authority 读取失败则 fail-closed 并保留来源 token。live #14 不变；不平已有仓 | `risk.demo.eligibility.min_regime_confidence_to_enter`(0.60) / `sideways_standdown`(true) / `family_min_samples`(20) / `family_min_expectancy`(0.0) | `regime_confidence_standdown:*` / `regime_sideways_standdown:*` / `family_not_demo_eligible:*` / `reverse_after_stop:*` / `demo_entry_quality_unavailable:<source>` | `aletheia/risk/demo_entry_quality.py` |
 | 15 | Lesson Constraints | 已接受且未过期的 manual/owner/human block 规则保持静态硬约束；自动来源默认 advisory，只有 exact `risk_lesson_constraint` prospective treatment 可阻断该 Proposal，control/default/error 不得阻断 | `LessonStore.recommendation_json` + Learning path authority | `lesson_block_{symbol/...}:{id}:{v}` / `lesson_check_error:internal_failure` | engine.py `_check_lesson_constraints` |
 | 16 | Portfolio Correlation | 部门集中度 + 组合 BTC beta；持仓数低于 `correlation.min_positions_for_concentration`(默认 4)时跳过，少于 4 个持仓时浓度百分比粒度不足以区分信号 | `risk.correlation_guard_enabled/max_sector_concentration_pct/max_portfolio_beta/min_positions_for_concentration` | `sector_concentration/portfolio_beta:...` | :245,387 |
 | 17 | Account Leverage Ratio | 期货:同一账户池的 Position + 未决 entry Order + pre-Order reservation 的 Σ(notional)/同账户 equity ≤ 上限；不同 demo broker 不混算；外部 equity 必须来自新鲜健康的具名缓存；相关 Position 的 market type/数量/价格/杠杆非法时拒绝，不能当零敞口（spot 的 NULL leverage 按其结构语义计 1x，显式非 1x 反而拒绝）。Demo 默认 10x，设置 API 只保留正数下限；live 保持 1.5x | `risk.max_account_leverage_{live/demo}` + named local cache | `account_leverage_ratio:{r}x>{cap}x` / `account_equity_unavailable:{mode}` / `account_leverage_check_error:invalid_position_exposure:position={id}:field={category}` / `account_leverage_check_error:internal_failure` | engine.py check #17 (RE-B23~28) |
@@ -84,29 +82,22 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
 >
-> **本地纸面入场不是“有一条新鲜行情就够了”**：generic Proposal 仍重新读取精确 venue+symbol+
-> physical-market mark；Entry Plan 则只消费 hash-valid、未过期、exact instrument/generation/channel 的
-> execution receipt，并按 Maker/IOC tactic 验证 immutable order constraint，避免两条异步价格权威。
-> 报价/receipt 不一致、行情缺失/过期、两张 Opportunity 表发生同 ID
-> 冲突，或入场计划缺字段/数学自相矛盾/RR 超出 `[1.00, 10.00]` 合理性包络，都会在 authoritative RiskDecision 中拒绝且保持零
-> Order/Fill/Position。generic Proposal 获批后仍走既有 mark+slippage；Entry Plan 则由
-> `paper-order-fill/v1` 仅按 receipt depth 或后续 strict trade-through 形成模拟 Fill。spec:
-> `PL-RG-07~14`、`PL-EC-01~05`。
+> **Entry Plan 入场**：Risk 验证已持久化的 Plan 与 Proposal 意图、当前 generation、policy identity 和
+> 价格/风险边界。Gateway 只接收 identity/hash 有效的 typed execution receipt；成交事实来自 UTA
+> 私有交易所回执。旧本地入场门与撮合规则见[归档](../history/local_simulated_risk_execution.md)。
 >
-> ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。paper_internal 没有可信的模拟账户权益序列：本地快照是持仓名义金额，外部账户快照属于另一账户，因此它跳过回撤缩放并继续受固定上限、日损和持仓数限制。spec: RE-B05(分段)+ RE-B05a(交易所数据源)+ RE-B05b(本地模拟)。
+> ⚠️ 关卡 #5 的回撤缩放(`_portfolio_drawdown_scale`, engine.py:356):缩放系数(0-5% DD→1.0, 5-10%→1.0→0.5, 10-20%→0.5→0.0, >20%→0)由组合回撤驱动。**回撤的数据源**:交易所模式(okx_demo/*_demo/live)读 `portfolio_snapshots` 的 `exchange_account` 行(真实账户 equity),**不读**每个 mode 自己的行——后者的 `total_value_usdt` 是持仓 notional(Σqty×price)而非 equity,平掉盈利持仓会让 notional 暴跌被误判成回撤、把 cap 缩到 $0 锁死开仓。spec: RE-B05（分段）+ RE-B05a（交易所数据源）。
 
-> 关卡 #5 的账户余额收紧:不在下单时请求交易所，只读取本地缓存/账本的可用 USDT。Bitget demo/live 分别读各自模式缓存；OKX/Binance 读统一缓存中与 execution mode 同名的账户；`paper_internal` 读独立纸面现金账本。有效上限始终是 `min(configured_hard_cap, available_usdt)`，因此余额数据只能收紧、不能抬高配置上限。外部账户没有缓存时仍保留配置上限，因为缓存只是额外收紧信息；本地纸面账本本身就是资金权威，读取失败必须以 `paper_account_balance_unavailable` 拒绝，不能假装仍有配置资金。本地纸面账户若存在尚未补齐 funding/关闭成本的已关闭仓位，则返回可用余额 0 并阻止继续扩张。spec: RE-B18、RE-B29、PL-PCM-06。
+> 关卡 #5 的账户余额收紧：下单时只读本地交易所账户缓存。Bitget demo/live 分别读各自模式缓存；
+> OKX/Binance 读统一缓存中与 execution mode 同名的账户。有效上限是
+> `min(configured_hard_cap, available_usdt)`；没有可用缓存时保留配置上限。缓存只能收紧上限。
 >
 > 关卡 #5 的比较量：比较的是 **pledged cash（保证金）= notional / leverage**，而非原始名义价值。原始名义价值与可用现金相比时，任何杠杆 > `1/risk_pct` 的单子都会被错误拒绝（20% 风险时为 5x）；以保证金比较后，有效杠杆上限由账户余额自然决定，不受 per_trade_risk_pct 的隐式 cap。spec: RE-B05c、RE-B05d。
 
-> **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`；其他值在 Risk admission 以 `invalid_spot_leverage` 稳定拒绝，paper proposal helper 也必须在持久化前拒绝。历史矛盾 spot Position 即使带有非 1x leverage，本地 paper 账本仍按完整 spot 名义占用现金，不能因坏数据释放购买力。期货的合法杠杆与保证金计算不变。spec: RE-B32。
+> **Spot 杠杆身份**：原生 spot Proposal 的 leverage 只能为 `NULL` 或显式 `1x`，其他值在 Risk admission
+> 以 `invalid_spot_leverage` 拒绝。期货的合法杠杆与保证金计算不变。
 
-> **本地合约资金费前置门**：`paper_internal + usdt_futures` 只有在配置的 exact physical venue、
-> canonical symbol、perp 上存在 source-time provided、近期采集且下一结算仍在未来的 schedule 时才可
-> 开仓；跨 venue、aggregate/predicted、stale 或 malformed 行均不可满足。通过只代表本地模拟器已有
-> 起始锚点；平仓仍逐事件验证完整时间窗，任何断档都关闭仓位但保持净收益不可用。spec: RE-B22、PL-LF-01~06。
-
-> **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；`paper_internal` 独立、每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 market_type/quantity/entry_price/current_price/leverage 只要缺失、非正数、非有限数或自相矛盾，也会稳定拒绝而不是从分子消失。拒绝 token 携带 sanitized Position id 与稳定 field category，避免一条坏仓位只产生无法定位的泛化重复告警。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~28。
+> **账户杠杆身份**：check #17 使用同一个账户池判断 open Position、未决 entry Order 和 pre-Order reservation；每个 demo execution mode 独立，live 保持合并池。分母只读同一具名账户的新鲜健康本地 equity，过期、异常或具名账户缺失时拒绝，不以 starting capital 代替；相关 Position 的 market_type/quantity/entry_price/current_price/leverage 只要缺失、非正数、非有限数或自相矛盾，也会稳定拒绝而不是从分子消失。拒绝 token 携带 sanitized Position id 与稳定 field category，避免一条坏仓位只产生无法定位的泛化重复告警。唯一结构化例外是 spot Position：spot 本身无杠杆，历史/当前模型以 `leverage=NULL` 表示 1x，因此按 1x 计入；若 spot 显式写入非 1x，则视为数据矛盾并拒绝。合约或未知 market_type 的 NULL leverage 仍拒绝。spec: RE-B23~28。
 
 > **公共杠杆监控不得伪装安全**：`check_account_leverage()` 与 `/api/risk/account-leverage` 使用和 check #17 相同的账户池、Position 数值完整性与未决占用口径；除 open Position 外，还计入尚未形成 Position 的 unresolved entry Order 和 pre-Order Risk reservation。完整数据返回 `status=available`、`reason=null` 和布尔 `violation`；相关 Position/未决占用损坏、读取失败或具名 equity 不可用时返回 `status=unavailable`，同时 `ratio=null`、`violation=null` 并给出稳定 `reason`。当损坏来自 Position 时另返回 `invalid_position={position_id, field_category}`；不得包含账户凭证或原始交易所 payload。不能把未知结果表达成 `violation=false`，System Operator 上下文也只展示空比率。spot 的 `leverage=NULL` 仍是明确的 1x 例外。spec: RE-B28。
 
@@ -114,22 +105,13 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 > 此时交易所是否已经接受仍未知，不能把它当成零敞口。`pending` 与其他未决状态一样，在对应
 > live/demo 池中继续占用持仓槽位、保留同符号互斥，并把尚未由 open Position 表示的数量计入
 > 名义敞口。若未决 Order 已有部分数量投影为 Position，只补计剩余数量，且不重复占一个槽位；
-> 平仓 Order 不占新增入场容量。Demo 总敞口使用与资本基数相同的精确账户池，不把
-> `paper_internal` 和 exchange demo 账户混算。spec: `PL-UEE-01~17`。
+> 平仓 Order 不占新增入场容量。Demo 总敞口使用与资本基数相同的精确账户池，不同 exchange demo 账户不混算。spec: `PL-UEE-01~17`。
 
-> **关卡 #8 的权威损失源**：Risk 不再读取 `today_realized_pnl` 或任何策略表现聚合。
-> `paper_internal` 的 verified close 必须与 append-only `paper_account_events` 一一对应且金额一致；
-> exchange-backed mode 只接受当前 outcome semantics 下经济字段完整的 broker-fill close。当天出现
-> administrative、maintenance、legacy、费用/身份不完整或 paper ledger 不一致的 close 时，snapshot
-> 返回 unavailable，Risk 以 `account_loss_unavailable:*` 拒绝新 proposal，但不会伪造
-> `max_daily_loss_exceeded` 或自动触发 kill switch。无 closed account event 的完整空集为已知 0。
-> spec: RE-B20 / OI-C03。
-
-> 延迟 funding 恢复必须通过统一原子物化入口同时收敛 `positions.realized_pnl`、唯一 full
-> `position_close_events.realized_pnl` 和 paper cash。Owner-approved numeric correction 不改写旧 cash
-> event，而追加带 causal evidence 的 `manual_credit`/`manual_debit` 差额；authoritative loss 按该
-> Position 的 settlement 加补偿净额核对。任一投影不一致继续返回 `paper_ledger_mismatch`，不得在
-> 尚未收敛的中间状态释放新 Risk 容量。
+> **关卡 #8 的权威损失源**：Risk 不读取 `today_realized_pnl` 或策略表现聚合。只接受当前
+> outcome semantics 下经济字段完整的 broker-fill close；归档账户不参与当前账户损失。当天出现
+> administrative、maintenance、legacy 或费用/身份不完整的 close 时，snapshot 返回 unavailable，
+> Risk 以 `account_loss_unavailable:*` 拒绝新 proposal，不伪造日损突破或自动触发 kill switch。
+> 无 closed account event 的完整空集为已知 0。spec: RE-B20 / OI-C03。
 
 > **唯一硬门 & guard 澄清(2026-06-30)**:订单通路(`submit_proposal`→执行)上,**`evaluate_proposal()` 是唯一硬门**。另有两套也叫 "guard" 的东西**不在执行通路上裁决**:
 > (1) 历史 `trading_decision` 守卫链曾只写 `decision_meta['guards']`、提供 advisory；该旧入场消费者已删除，不是当前执行入口；
@@ -146,7 +128,7 @@ class RiskCheckResult:
     approved: bool = False
     risk_score: float = 0.0          # len(violations)*0.2, cap 1.0
     violations: list[str]            # 所有失败标签(见 §2)
-    allowed_execution_mode: str = "paper_internal"  # approved=原模式; rejected=降级 paper_internal
+    allowed_execution_mode: str = ""  # approved=原模式; rejected=空，无执行授权
     message: str = ""
     decision_id: str | None          # 持久化的 RiskDecision.id
 ```
@@ -180,8 +162,7 @@ authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome s
 
 ## 5. 仓位计算(当前权威路径)
 
-当前新建仓位的生产消费者只有 System Operator。`paper_trader._atr_adjusted_notional()`
-仍保留为 helper，但没有生产调用者，不构成第二条权威 sizing 路径。
+当前新入场的规划消费者为 System Operator，Entry Plan 经 Risk / Gateway 执行。
 
 System Operator 的权威 sizing 路径为 `available_balance_risk_budget_size()`：用账户**可用余额**（available balance，非 equity）× `max_single_trade_risk_pct` × leverage 得到名义价值。使用可用余额而非净值，可实现几何自收敛——每笔入场后余额减少，下一笔 sizing 自动变小，保证金永不耗尽。
 
@@ -197,7 +178,7 @@ policy version：`available-balance-risk-budget/v1`（换代用于隔离 learnin
 
 ## 6. 硬限不可绕过的保证
 
-1. **入口白名单**:`create_paper_proposal()` 硬编码 `_PAPER_MODES`,非 paper 模式抛 ValueError(`paper_tools.py:11-35`)——agent 无法构造 live proposal。
+1. **执行模式**：native Proposal 仅接受六种已注册外部模式；Live 还需人工解锁及配置身份验证。
 2. **序列化锁**:`_eval_lock` 防 TOCTOU(§1)。
 3. **纵深防御**:Risk Engine 放行后,Execution Gateway 再查一次 live/account mode(`gateway.py:201`)。
 4. **持久化**:kill switch 落盘,重启保持。
@@ -244,8 +225,3 @@ policy version：`available-balance-risk-budget/v1`（换代用于隔离 learnin
 - 不存在绕过 risk engine 直接下单的代码路径
 
 spec：`D2-C01`（L2c，spec_risk_engine.py）持续锁住此不变式。
-For paper_internal daily membership, the linked Position.closed_at defines the
-UTC accounting day, not the later cash-event append time. A delayed settlement
-for an older valid close is excluded from today only when its amount matches the
-Position realized_pnl; a newly appended event without valid matching economics
-remains an unavailable ledger mismatch.
