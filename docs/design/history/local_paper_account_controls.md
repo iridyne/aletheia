@@ -186,3 +186,9 @@ records. None of the listed simulated producers remains active.
 | `exit_breakeven_shadow_assignments` | Prospective immutable assignment for the read-only profit-capture experiment. The fixed +1.5% trigger and entry-price shadow stop are frozen with exact instrument, ExitPlan, cost and build provenance before any eligible bar. | position_id, treatment/rule hash, assigned_at, exact instrument, entry economics, trigger/stop, ExitPlan and runtime provenance, behavior_authority=0 | new protected local-paper activation |
 | `exit_breakeven_shadow_outcomes` | One immutable paired result after an eligible actual close. Missing exact 1m coverage, identity, ordering or funding remains unavailable; available rows contain actual, shadow and incremental net PnL under the frozen cost model. | position_id, disposition/reason, trigger/exit bars, shadow fill/costs, actual/shadow/incremental net PnL, evidence hash | durable outcome-hook replay |
 | `paper_account_events` | **Local `paper_internal` cash ledger only**; immutable starting funds, human adjustments, economically complete realized-PnL settlements, owner-approved numeric correction deltas, and one position-linked `position_economics_invalidated` reversal when exit-price evidence is rejected. Numeric corrections reuse `manual_credit`/`manual_debit`; invalidation has its own unique append-only marker so cash, Position economics, and derived outcomes converge without rewriting history. | action, amount_usdt, cash_balance_before_usdt, cash_balance_after_usdt, actor, source, position_id, note | paper account service |
+
+The unused local-compatible position lookup and execution-time entry-enrichment
+builder are deleted. Current external materialization takes attribution from
+the stored Proposal snapshot. BTC/regime snapshot reads remain owned by
+`trading.entry_snapshot`; the execution helper retains only the liquidation-price
+estimate used by external position materialization.

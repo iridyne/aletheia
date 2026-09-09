@@ -37,14 +37,10 @@ from tests.specs.spec_pipeline_stop_propagation import (
 
 
 def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
-    """Pin the best-effort btc/regime lookups so the enrichment is deterministic.
-
-    build_entry_enrichment resolves these as module globals at call time, so patching
-    them on position_enrichment is what every broker sees.
-    """
-    import aletheia.execution.position_enrichment as pe
-    monkeypatch.setattr(pe, "btc_price_now", lambda: btc)
-    monkeypatch.setattr(pe, "current_regime", lambda: regime)
+    """Pin current proposal-context reads independently of stored snapshots."""
+    from aletheia.trading import entry_snapshot
+    monkeypatch.setattr(entry_snapshot, "_btc_price_now", lambda: btc)
+    monkeypatch.setattr(entry_snapshot, "_current_regime", lambda: regime)
     from aletheia.execution import gateway
 
     monkeypatch.setattr(
