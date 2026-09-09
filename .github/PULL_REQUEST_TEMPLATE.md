@@ -10,14 +10,16 @@
 
 <!--
 D0: write `NONE` and reference the existing Contract/invariant being repaired.
-D1/D2: summarize the approved semantic delta (`ADDED / MODIFIED / REMOVED`) and, if
-applicable, structural ownership/mainline changes.
+D1: summarize the approved semantic delta (`ADDED / MODIFIED / REMOVED`) and required
+Contract/spec updates.
+D2: summarize the approved structural delta and link the accepted Proposal; update
+affected Contracts and SpecClaims where required.
 Do not repeat the full Change Contract from the linked Issue.
 -->
 
 ## Does this change alter semantics or structure?
 
-<!-- Yes (D1/D2) / No (D0) -->
+<!-- Semantics (D1) / Structure (D2) / Neither (D0 conformance repair) -->
 
 ## Contract convergence
 
@@ -27,8 +29,8 @@ For D0, the canonical Contract / SpecClaim / Proposal rows are normally not appl
 -->
 
 - [ ] The implementation satisfies the Change Contract in the linked Issue.
-- [ ] D1/D2: Canonical Contract in `docs/design/contracts/` is updated in this PR.
-- [ ] D1/D2: Executable SpecClaims in `tests/specs/` are updated or added.
+- [ ] D1: Canonical Contract in `docs/design/contracts/` is updated in this PR.
+- [ ] D1: Executable SpecClaims in `tests/specs/` are updated or added.
 - [ ] D2: This change is covered by an accepted `docs/design/proposals/` Proposal.
 - [ ] Product Capability Ground Truth updated — only if a production capability
       genuinely changed (test-level conformance alone does not qualify).
@@ -50,8 +52,8 @@ D0 — Conformance Repair:
   Fix: code returned partial numeric PnL; corrected + regression test added.
   Runtime qualification: Not required.
 
-D1 — Semantics/Structure Change:
+D1 — Semantics Change:
   SDD Depth: D1
   MODIFIED: condition A previously returned X; now returns `unavailable` per updated semantics.
-  Contract / Proposal / SpecClaims updated together, backward-compatibility verified.
+  Contract and SpecClaims updated as needed; obsolete callers removed.
 -->

@@ -21,8 +21,8 @@ for `tests/specs/`.
 
 ## When to use it
 
-Use pre-change for a D1/D2 Change Contract or an explicitly selected high-risk
-D0. Use convergence against the exact candidate head after implementation. Do
+If the owner/task explicitly selects it, use pre-change for a D1/D2 Change Contract
+or selected high-risk D0. Use convergence against the exact candidate head after implementation. Do
 not spend this ceremony on an ordinary low-risk D0 typo or rename.
 
 The launcher accepts a frozen Change Contract and an optional convergence base

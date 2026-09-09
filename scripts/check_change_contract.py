@@ -1,12 +1,13 @@
 """Verify pull request Change Contract structure.
 
-Runs in CI on every PR. Checks PR description for required SDD Depth and
-Contract Delta structure. Exempts docs-only / governance-only PRs and trusted
-release-please PRs from the requirement.
+Checks PR description for required SDD Depth and Contract Delta structure.
+Exempts docs-only / governance-only PRs and trusted release-please PRs from the
+requirement.
 
 Exit 0: compliant or exempt
 Exit 1: missing or malformed Change Contract
 """
+
 
 from __future__ import annotations
 
@@ -148,8 +149,8 @@ def structured_check_pr(
 
     Returns a list of ``{"code": ..., "message": ...}`` failure objects. Empty
     list means pass. This is the single source of Change-Contract semantics;
-    the local :mod:`scripts.ci_preflight` and the GitHub metadata gate both
-    consume it so they can never diverge from each other.
+    the local :mod:`scripts.ci_preflight` consumes it so local metadata enforcement
+    and any PR-check entrypoint use the same rules.
     """
     failures: list[dict[str, str]] = []
 
@@ -187,7 +188,7 @@ def structured_check_pr(
 
 
 def main() -> int:
-    """Run from CI. Reads GitHub event payload from GITHUB_EVENT_PATH."""
+    """Run from a PR-check entrypoint. Reads GitHub event payload from GITHUB_EVENT_PATH."""
     event_name = os.getenv("GITHUB_EVENT_NAME", "")
     if event_name != "pull_request":
         # Merge queue / workflow_dispatch: skip check

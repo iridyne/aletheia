@@ -123,7 +123,7 @@ classification:
 | Depth | When | Contract Delta |
 |---|---|---|
 | D0 — Restore truth (Conformance Repair) | Existing Contract / invariant already defines required behavior; current code, docs, tests, or runtime is non-conformant | `NONE` — reference the existing Contract / invariant being repaired |
-| D1 — Change Semantics | Behavior semantics, state transitions, API/schema, failure semantics, or authority surfaces change | Explicit `ADDED / MODIFIED / REMOVED` semantic delta |
+| D1 — Change Semantics | Behavior semantics, state transitions, API/schema, or result meaning changes within existing ownership | Explicit `ADDED / MODIFIED / REMOVED` semantic delta |
 | D2 — Change Structure | State ownership, long-lived mainline, subsystem topology, authority, or product scope changes | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
 
 SDD depth is a semantic classifier only; it does not replace owner approval for
@@ -134,24 +134,33 @@ Update a Contract only when an approved D1/D2 change is accepted.
 A D0 repair that brings code back into conformance with an existing Contract
 MUST NOT modify that Contract. Internal refactors, algorithm replacements,
 race-condition repairs, and performance optimizations do not change Contracts.
+D1 may update Contract and executable SpecClaims as part of semantic repair; Proposal
+is required only for D2 structural changes.
 
 ### D0 / D1 / D2 walkthrough examples
 
-- **D0 (restore truth):** Runtime observed non-conforming behavior (`Position`
-  records missing `execution_mode` despite existing spec requiring it). Fixing that
-  field population is a D0 repair with `NONE`.
-- **D0 (externally visible but no semantic change):** A public endpoint leaks
-  `500` instead of `400` for input already prohibited by current contract. Aligning
-  response handling to the contract is still D0.
-- **D1 (change semantics):** Decision engine changes `compiler_refused` to become
-  retryable under the same ownership and state model. Semantics changed; update the
-  contract and accepted behavior delta.
-- **D1/D2 boundary:** Changing `compiler_refused` handling plus adding a new
-  policy epoch switch requires more than syntax repair. If policy ownership stays in
-  place and only entry-state meaning changes, classify D1.
-- **D2 (change structure):** Moving Entry lifecycle authority from one component to
-  another or changing the governance mainline is a structural change requiring
-  Proposal/owner acceptance.
+- **D0 — stale tests:** [PR #2999](https://github.com/iridyne/aletheia/pull/2999)
+  realigned specs after the approved cutover without changing production code. Inside
+  that approved scope, AI may repair conformance with Delta `NONE`, without a new decision.
+- **D0 — externally visible repair:** [PR #3003](https://github.com/iridyne/aletheia/pull/3003)
+  restored Entry monitoring liveness after an ordering fault, retaining the watcher as
+  lifecycle owner and requiring fresh evidence. Observable recovery is not new semantics.
+- **D1 — new lifecycle rule:** [#2720](https://github.com/iridyne/aletheia/issues/2720)
+  specifies planner-version-based generation supersession within the existing owner.
+  That new reuse/terminal rule needs owner acceptance; implementation commits do not
+  each need reapproval.
+- **Investigation and D1/D2 boundary:** [#3009](https://github.com/iridyne/aletheia/issues/3009)
+  records silence after compiler refusal, not a proven recovery policy. If investigation
+  requires a new retry rule within existing ownership, stop for D1 acceptance; if it
+  requires a new durable recovery owner/mainline, stop for D2 Proposal/owner decision.
+  The symptom and Issue do not authorize either implementation or a Gate B promotion.
+- **D2 — authority convergence:** [#2299](https://github.com/iridyne/aletheia/issues/2299)
+  makes UTA the sole private external-account boundary and assigns coordinator/UTA/storage
+  responsibilities. This structural direction requires an accepted Proposal and owner
+  decision, not autonomous selection disguised as mechanical cleanup.
+
+These are classification walkthroughs, not authorization to reopen or implement the
+referenced work; the human decision boundary is inherited from root `AGENTS.md`.
 
 **Convergence.** After implementation, verify:
 
