@@ -667,6 +667,19 @@ async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(clie
         direction="long", quantity=1.0, entry_price=10.0, current_price=13.0,
         unrealized_pnl=3.0, execution_mode="bitget_demo", status="open",
     ))
+    from aletheia.storage.sqlite import get_db
+    get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+        "unrealized_pnl,realized_pnl,execution_mode,status,closed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            ("archived-open", "SOL/USDT", "spot", "long", 1, 10, 90,
+             80, 0, "paper_internal", "open", None),
+            ("archived-close", "SOL/USDT", "spot", "long", 1, 10, 35,
+             0, 25, "paper_internal", "closed", (now - timedelta(minutes=1)).isoformat()),
+        ],
+    )
     # A cross-account aggregate cache must not replace an explicitly selected mode mark.
     import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
@@ -684,6 +697,25 @@ async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(clie
     assert mark["current_unrealized"] == 3.0
     assert mark["cumulative_pnl"] == 8.0
     assert body["total_realized"] == 5.0
+
+
+    # An unavailable external cache falls back only to current external rows.
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {})
+    aggregate = (await c.get("/api/analytics/equity-curve")).json()
+    assert aggregate["raw_total_recorded_realized"] == 30.0
+    assert aggregate["current_unrealized"] == 3.0
+    assert aggregate["current_mark_point"]["closed_raw_pnl"] == 5.0
+    assert aggregate["current_mark_point"]["cumulative_pnl"] == 8.0
+
+    archive = (await c.get("/api/analytics/equity-curve?execution_mode=paper_internal")).json()
+    assert archive["raw_total_recorded_realized"] == 25.0
+    assert archive["current_unrealized"] == 0.0
+    assert archive["current_mark_point"] is None
+    assert dict(get_db().execute(
+        "SELECT execution_mode,status,unrealized_pnl FROM positions WHERE id='archived-open'"
+    ).fetchone()) == {
+        "execution_mode": "paper_internal", "status": "open", "unrealized_pnl": 80.0,
+    }
 
 
 # ---------- P1-3: compute_and_store_snapshot consistency ----------
