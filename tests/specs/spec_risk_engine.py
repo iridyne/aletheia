@@ -2414,11 +2414,11 @@ def test_same_symbol_duplicate_position_rejected():
     from aletheia.storage.models import Position, TradeProposal
     from aletheia.storage import repositories as repo
 
-    # Existing demo position for ETHUSDT (paper_internal broker).
+    # Existing external demo position for ETHUSDT (Bitget account).
     repo.insert_position(Position(
         symbol="ETH/USDT", market_type="usdt_futures", direction="short",
         quantity=0.01, entry_price=1580.0, current_price=1567.0,
-        execution_mode="paper_internal", status="open",
+        execution_mode="bitget_demo", status="open",
     ))
 
     # New proposal for same symbol on a different demo broker → must be rejected.

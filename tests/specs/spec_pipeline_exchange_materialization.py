@@ -1775,11 +1775,13 @@ def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
         quantity=0.5,
         expected_horizon_hours=24.0,
         stop_source="operator",
+        take_profit=110.0,
     )
     reconcile()
 
     row = dict(repo.get_db().execute("SELECT * FROM positions WHERE proposal_id=?", (proposal.id,)).fetchone())
     assert row["expected_horizon_hours"] == pytest.approx(24.0), "expected_horizon_hours missing on exchange position"
+    assert row["take_profit_price"] == proposal.take_profit == 110.0
     assert row["stop_source"] == "operator", "stop_source missing on exchange position"
     assert row["exit_plan_version"] == 1, "exit_plan_version not stamped on exchange position"
 

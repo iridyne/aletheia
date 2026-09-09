@@ -122,3 +122,20 @@ Historical unknown funding and signed funding projections remain exercised throu
 the Position API and CSV export in `tests/test_export_routes.py`, with archived
 rows loaded directly. The former `DM-S23` constructor/source-text claim is retired;
 actual history-read checks cover the surviving ledger.
+
+
+The former `pipeline_paper_trade` suite is also retired. Its surviving atomic TTL
+expiry claims now live in `spec_pipeline_opportunity_expiry.py`. Shared causal backlinks, approved take-profit inheritance and leverage persistence
+are checked through external private-fill materialization; same-symbol Risk
+rejection uses external Demo accounts. Local-only broker limit rules and the
+`paper_tools` signature/constructor requirements are deleted.
+
+### Distinct historical position semantics
+
+The removed local broker kept a separate Position per Proposal. External entry
+materialization currently aggregates compatible entry legs by account, symbol,
+market, direction, strategy and trade school; each Order retains its own Proposal
+and Position backlink. Cross-school fills remain separate. The local one-Proposal
+one-Position assertion must not silently become an external contract during
+retirement. Mixed-Proposal attribution and whether to change aggregation ownership
+need a separate owner decision; this retirement does not change either behavior.

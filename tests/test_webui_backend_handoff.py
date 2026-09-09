@@ -1,6 +1,7 @@
 """Tests for the WEBUI_BACKEND_HANDOFF backend gaps that were implemented.
 
-#1 position → proposal/order causal back-link (schema + execution path).
+#1 position → proposal/order causal back-link schema.
+Execution lineage is covered by spec_pipeline_exchange_materialization.
 #2 GET /api/agent-runs/{id}/steps read-only reasoning-trace endpoint.
 
 (#3 exchange equity touches change-controlled client.py — not built, needs auth.
@@ -31,70 +32,6 @@ def setup_env(tmp_path, monkeypatch):
 
 
 # --- #1 position causal back-link ---
-
-def test_paper_position_carries_proposal_and_order_fk(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.execution.paper_broker import execute_paper_order
-    from tests.execution_authority import seed_order_authority
-
-    seed_order_authority(
-        proposal_id="prop-1", risk_decision_id="rd-1",
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60000.0,
-        execution_mode="paper_internal", strategy_id="strat-1",
-        stop_price=58800.0,
-    )
-    r = execute_paper_order(
-        proposal_id="prop-1", risk_decision_id="rd-1", symbol="BTC/USDT",
-        market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=60000.0, execution_mode="paper_internal",
-        strategy_id="strat-1", stop_price=58800.0,
-    )
-    pos = repo.list_positions(status="open")
-    assert len(pos) == 1
-    assert pos[0]["proposal_id"] == "prop-1"
-    assert pos[0]["order_id"] == r["order_id"]
-
-
-def test_same_symbol_proposals_keep_separate_position_lineage(tmp_path, monkeypatch):
-    """Each local-paper Position retains exactly one Proposal and opening Order."""
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.execution.paper_broker import execute_paper_order
-    from tests.execution_authority import seed_order_authority
-
-    seed_order_authority(
-        proposal_id="prop-open", risk_decision_id="rd-1",
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=60000.0,
-        execution_mode="paper_internal", strategy_id="strat-1",
-        stop_price=58800.0,
-    )
-    r1 = execute_paper_order(
-        proposal_id="prop-open", risk_decision_id="rd-1", symbol="BTC/USDT",
-        market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=60000.0, execution_mode="paper_internal",
-        strategy_id="strat-1", stop_price=58800.0,
-    )
-    # A second Proposal on the same symbol/direction/strategy remains separate.
-    seed_order_authority(
-        proposal_id="prop-add", risk_decision_id="rd-2",
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        order_type="market", quantity=0.001, price=61000.0,
-        execution_mode="paper_internal", strategy_id="strat-1",
-        stop_price=59000.0,
-    )
-    r2 = execute_paper_order(
-        proposal_id="prop-add", risk_decision_id="rd-2", symbol="BTC/USDT",
-        market_type="spot", direction="long", order_type="market",
-        quantity=0.001, price=61000.0, execution_mode="paper_internal",
-        strategy_id="strat-1", stop_price=59000.0,
-    )
-    pos = sorted(repo.list_positions(status="open"), key=lambda row: row["proposal_id"])
-    assert len(pos) == 2
-    assert pos[0]["proposal_id"] == "prop-add"
-    assert pos[0]["order_id"] == r2["order_id"]
-    assert pos[1]["proposal_id"] == "prop-open"
-    assert pos[1]["order_id"] == r1["order_id"]
 
 
 def test_positions_migration_has_fk_columns(tmp_path, monkeypatch):
