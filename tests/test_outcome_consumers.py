@@ -6,6 +6,17 @@ from datetime import datetime, timedelta, timezone
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _external_account():
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+
 
 def _unavailable_cohort():
     from aletheia.analytics.outcome_integrity import CompleteOutcomeCohort
@@ -19,7 +30,7 @@ def _unavailable_cohort():
         cohort_state="unavailable",
         ordered_source_digest=None,
         identity={
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "runtime_session_id": None,
             "closed_after": None,
             "closed_before": None,
@@ -36,67 +47,31 @@ def _insert_closed(
     proposal_id: str | None = None,
 ) -> None:
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     now = datetime.now(timezone.utc)
-    kwargs = {
-        "id": position_id,
-        "symbol": "BTC/USDT",
-        "market_type": "usdt_futures",
-        "direction": "long",
-        "quantity": 1.0,
-        "entry_price": 100.0,
-        "current_price": 100.0 + float(pnl or 0.0),
-        "execution_mode": "paper_internal",
-        "strategy_id": strategy_id,
-        "proposal_id": proposal_id,
-        "status": "closed",
-        "realized_pnl": pnl,
-        "opened_at": (now - timedelta(hours=2)).isoformat(),
-        "closed_at": now.isoformat(),
-    }
     if eligible:
-        opportunity_id, proposal_id, order_id = _insert_entry_chain(
-            position_id=position_id,
-            symbol="BTC/USDT",
-            market_type="usdt_futures",
-            direction="long",
-            quantity=1.0,
-            price=100.0,
-            execution_mode="paper_internal",
-            proposal_id=proposal_id,
-            strategy_id=strategy_id,
+        _insert_closed_position_via_producer(
+            position_id=position_id, symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode="bitget_demo", strategy_id=strategy_id,
+            proposal_id=proposal_id, realized_pnl=pnl,
+            closed_at=now.isoformat(),
         )
-        kwargs.update({
-            "opportunity_id": opportunity_id,
-            "proposal_id": proposal_id,
-            "order_id": order_id,
-            "close_reason": "verified_exit",
-            "close_category": "strategy",
-            "entry_price_source": "local_fill",
-            "entry_fill_verified": True,
-            "exit_price_source": "local_fill",
-            "exit_fill_verified": True,
-            "entry_fee": 0.0,
-            "exit_fee": 0.0,
-            "funding_cost": 0.0,
-            "funding_source": "local_simulation",
-            "outcome_eligible": True,
-            "outcome_exclusion_reason": "eligible",
-            "outcome_semantics_version": "oi-v1",
-        })
-    else:
-        kwargs.update({
-            "close_reason": "reconciled_gone",
-            "close_category": "administrative",
-            "exit_price_source": "unavailable",
-            "exit_fill_verified": False,
-            "outcome_eligible": False,
-            "outcome_exclusion_reason": "administrative_close",
-            "outcome_semantics_version": "oi-v1",
-        })
-    repo.insert_position(Position(**kwargs))
+        return
+
+    # Historical administrative records may carry numbers; consumers must exclude them.
+    repo._insert("positions", {
+        "id": position_id, "symbol": "BTC/USDT", "market_type": "usdt_futures",
+        "direction": "long", "quantity": 1.0, "entry_price": 100.0,
+        "execution_mode": "bitget_demo", "strategy_id": strategy_id,
+        "proposal_id": proposal_id, "status": "closed", "realized_pnl": pnl,
+        "opened_at": (now - timedelta(hours=2)).isoformat(), "closed_at": now.isoformat(),
+        "close_reason": "reconciled_gone", "close_category": "administrative",
+        "exit_price_source": "unavailable", "exit_fill_verified": False,
+        "outcome_eligible": False, "outcome_exclusion_reason": "administrative_close",
+        "outcome_semantics_version": "oi-v1",
+    })
 
 
 def test_trade_and_strategy_stats_ignore_administrative_rows():
@@ -282,7 +257,7 @@ def test_current_fresh_calibration_report_is_accepted():
 
     # #1939: a persisted calibration report is only returned when its
     # execution_mode matches the resolved selected mode.  Stamp the fixture
-    # so it is accepted under the paper_internal identity.
+    # so it is accepted under the bitget_demo identity.
     current = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
@@ -290,7 +265,7 @@ def test_current_fresh_calibration_report_is_accepted():
         "total_executed": 5,
         "ece": 0.1,
         "ece_grade": "fair",
-        "execution_mode": "paper_internal",
+        "execution_mode": "bitget_demo",
         "execution_mode_status": "resolved",
     }
     insert_knowledge_item(KnowledgeItem(
@@ -298,7 +273,7 @@ def test_current_fresh_calibration_report_is_accepted():
         title="current calibration",
         content=json.dumps(current),
     ))
-    assert get_latest_calibration_report(execution_mode="paper_internal") == current
+    assert get_latest_calibration_report(execution_mode="bitget_demo") == current
 
 
 def test_old_memo_and_reasoning_feedback_are_rejected():
@@ -331,7 +306,7 @@ def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeyp
         lambda **_: _unavailable_cohort(),
     )
     assert insight_synthesizer._gather_statistics(
-        30, execution_mode="paper_internal"
+        30, execution_mode="bitget_demo"
     ) is None
 
 
@@ -353,5 +328,5 @@ def test_reasoning_feedback_does_not_persist_an_unavailable_cohort(monkeypatch):
     monkeypatch.setattr(reasoning_feedback, "_persist_feedback", unexpected_persist)
 
     assert reasoning_feedback.build_reasoning_feedback(
-        execution_mode="paper_internal"
+        execution_mode="bitget_demo"
     ) is None
