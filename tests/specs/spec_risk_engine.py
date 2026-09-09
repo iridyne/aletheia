@@ -106,55 +106,22 @@ def test_risk_engine_has_minimum_check_count():
         "risk_engine_contract",
         "§2 spot leverage identity",
         "L2b",
-        "Native spot proposals accept only NULL or 1x leverage; contradictory "
-        "legacy paper positions still reserve their full spot notional.",
+        "Native spot proposals accept only NULL or 1x leverage.",
         status="implemented",
     ),
 )
-def test_spot_leverage_is_rejected_and_reserved_at_one_x(monkeypatch):
-    from aletheia.execution import paper_tools
-    from aletheia.portfolio.paper_account import _reserved_margin_usdt
+def test_spot_leverage_rejects_non_unit_values():
     from aletheia.risk.engine import _native_input_violations
     from aletheia.storage.models import TradeProposal
 
     proposal = TradeProposal(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
-        leverage=10,
-        execution_mode="paper_internal",
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, price=100.0, leverage=10, execution_mode="bitget_demo",
     )
-
     assert "invalid_spot_leverage" in _native_input_violations(proposal)
-    side_effects = []
-    monkeypatch.setattr(
-        paper_tools, "insert_trade_proposal", lambda _: side_effects.append("proposal")
-    )
-    monkeypatch.setattr(
-        paper_tools, "execute_existing_proposal", lambda *_: side_effects.append("order")
-    )
-    with pytest.raises(ValueError, match="spot leverage must be 1"):
-        paper_tools.submit_prepared_paper_proposal(proposal)
-    assert side_effects == []
-    assert _reserved_margin_usdt(
-        [{"market_type": "spot", "quantity": 1.0, "entry_price": 100.0, "leverage": 10}]
-    ) == 100.0
-
     for leverage in (None, 1):
         valid_spot = proposal.model_copy(update={"leverage": leverage})
         assert "invalid_spot_leverage" not in _native_input_violations(valid_spot)
-    assert _reserved_margin_usdt(
-        [
-            {
-                "market_type": "usdt_futures",
-                "quantity": 1.0,
-                "entry_price": 100.0,
-                "leverage": 10,
-            }
-        ]
-    ) == 10.0
 
 
 @spec_claim(
@@ -172,7 +139,7 @@ def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
 
     proposal = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal", quantity=0.001, price=100.0,
+        execution_mode="bitget_demo", quantity=0.001, price=100.0,
     )
     repo.insert_trade_proposal(proposal)
     monkeypatch.setattr(
@@ -190,9 +157,10 @@ def test_daily_loss_uses_authoritative_account_snapshot(monkeypatch):
         eng, "authoritative_account_realized_loss",
         lambda mode: AccountLossSnapshot(
             available=True, realized_pnl_usdt=-100.0, loss_usdt=100.0,
-            source="paper_account_ledger", reason="available", event_count=1,
+            source="verified_position_economics", reason="available", event_count=1,
         ),
     )
+    monkeypatch.setattr(eng, "_account_equity", lambda *_args: 200.0)
     breached = eng.evaluate_proposal(proposal, decision_role="preflight")
     assert any(v.startswith("max_daily_loss_exceeded:-100.0") for v in breached.violations)
 
@@ -232,46 +200,6 @@ def test_daily_loss_fails_closed_when_account_event_window_is_truncated():
     assert snapshot.reason == "account_event_window_truncated"
     assert snapshot.realized_pnl_usdt is None
     assert snapshot.event_count == 10_001
-
-
-@spec_claim(
-    SpecClaim(
-        "RE-B22", "risk_engine_contract", "§2 local paper funding authority", "L2b",
-        "Risk durably rejects a new native paper_internal futures entry when the "
-        "exact symbol has no fresh primary-venue funding schedule anchor.",
-        status="implemented",
-    )
-)
-def test_risk_rejects_local_paper_futures_without_fresh_schedule(
-    tmp_path, monkeypatch
-):
-    _setup_db(tmp_path, monkeypatch)
-
-    from aletheia.risk.engine import evaluate_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
-
-    proposal = TradeProposal(
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        execution_mode="paper_internal",
-        quantity=0.001,
-        price=60_000.0,
-        leverage=1,
-    )
-    repo.insert_trade_proposal(proposal)
-
-    result = evaluate_proposal(proposal)
-
-    assert result.approved is False
-    assert "local_paper_futures_funding_unavailable" in result.violations
-    stored = [
-        row for row in repo.list_risk_decisions(limit=10)
-        if row["proposal_id"] == proposal.id
-    ]
-    assert len(stored) == 1
-    assert stored[0]["approved"] == 0
 
 
 @spec_claim(
@@ -818,28 +746,6 @@ def test_drawdown_scale_piecewise(monkeypatch):
 
 
 @spec_claim(
-    SpecClaim("RE-B05b", "risk_engine_contract", "§2 check #5 drawdown source", "L2b",
-              "paper_internal skips drawdown scaling because neither local notional nor "
-              "external account snapshots are its simulated equity"),
-)
-def test_paper_internal_drawdown_never_uses_snapshot_notional(monkeypatch):
-    from aletheia.risk.engine import _portfolio_drawdown_scale
-
-    monkeypatch.setattr(
-        "aletheia.storage.repositories.list_portfolio_snapshots",
-        lambda limit=50: [
-            {"total_value_usdt": 200.0, "execution_mode": "paper_internal"},
-            {"total_value_usdt": 200.0, "execution_mode": "paper_internal"},
-            {"total_value_usdt": 0.0, "execution_mode": "paper_internal"},
-            {"total_value_usdt": 100000.0, "execution_mode": "exchange_account"},
-            {"total_value_usdt": 167.0, "execution_mode": "exchange_account"},
-        ],
-    )
-
-    assert _portfolio_drawdown_scale("paper_internal") == 1.0
-
-
-@spec_claim(
     SpecClaim("RE-B05a", "risk_engine_contract", "§2 check #5 drawdown source", "L2b",
               "exchange-backed drawdown uses exchange_account equity, not per-mode notional"),
 )
@@ -1035,15 +941,15 @@ def test_live_disabled_rejects_live_proposal(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# RE-B08 — §2 check #4: permission_mode=Observe blocks non-paper proposals
+# RE-B08 — §2 check #4: permission_mode=Observe blocks execution proposals
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim("RE-B08", "risk_engine_contract", "§2 check #4", "L2b",
-              "permission_mode=Observe rejects any non-paper_internal proposal"),
+              "permission_mode=Observe rejects execution proposals"),
 )
-def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
+def test_observe_mode_rejects_execution(tmp_path, monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.storage.models import TradeProposal
     from aletheia.storage import repositories as repo
@@ -1056,7 +962,7 @@ def test_observe_mode_rejects_non_paper(tmp_path, monkeypatch):
     cfg.agent.permission_mode = "Observe"
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
-    # bitget_demo is non-paper_internal and must be blocked by Observe
+    # Observe cannot submit a Bitget Demo proposal
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
         execution_mode="bitget_demo", quantity=0.001, price=60000,
@@ -1109,10 +1015,10 @@ def test_demo_notional_cap_fires(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim("RE-B18", "risk_engine_contract", "§2 check #5", "L2b",
               "Exchange-backed orders use the lower of the configured hard cap and the "
-              "matching account's cached available USDT; paper_internal uses the configured cap"),
+              "matching account's cached available USDT"),
 )
 def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
-    """Demo/live must read separate cached accounts; local paper has no account."""
+    """Demo and live must read separate cached accounts."""
     from aletheia.config.schema import AletheiaConfig
     import aletheia.portfolio.exchange_sync as sync
     import aletheia.risk.engine as eng
@@ -1136,7 +1042,6 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
 
     assert eng._effective_position_margin_cap(cfg.risk, "bitget_demo") == 80.0
     assert eng._effective_position_margin_cap(cfg.risk, "bitget_live_limited") == 30.0
-    assert eng._effective_position_margin_cap(cfg.risk, "paper_internal") == 200.0
 
     proposal = TradeProposal(
         symbol="ETH/USDT", market_type="spot", direction="long",
@@ -1145,81 +1050,11 @@ def test_account_balance_tightens_matching_mode_cap(tmp_path, monkeypatch):
     repo.insert_trade_proposal(proposal)
     result = eng.evaluate_proposal(proposal)
     assert any(v == "exceeds_demo_position_margin:100.0>80.0" for v in result.violations)
+    def unreadable_cache(**_kwargs):
+        raise RuntimeError("account cache unavailable")
 
-
-@spec_claim(
-    SpecClaim(
-        "RE-B29",
-        "risk_engine_contract",
-        "§2 check #5 local paper balance authority",
-        "L2b",
-        "An authoritative paper_internal Proposal is rejected when the local paper "
-        "balance cannot be read; external account cache absence retains its existing "
-        "configured-cap fallback.",
-        status="implemented",
-    )
-)
-def test_local_paper_balance_reader_failure_rejects_authoritative_proposal(
-    tmp_path,
-    monkeypatch,
-):
-    import aletheia.portfolio.exchange_sync as sync
-    import aletheia.portfolio.paper_account as paper_account
-    import aletheia.risk.engine as eng
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import TradeProposal
-
-    _setup_db(tmp_path, monkeypatch)
-    cfg = AletheiaConfig()
-    cfg.agent.permission_mode = "Paper"
-    cfg.risk.max_demo_position_margin_usdt = 200.0
-    cfg.risk.max_open_positions_demo = 10
-    cfg.risk.max_per_symbol_entries = 20
-    monkeypatch.setattr(eng, "load_config", lambda: cfg)
-    monkeypatch.setattr(eng, "_portfolio_drawdown_scale", lambda _mode: 1.0)
-    monkeypatch.setattr(eng, "_check_lesson_constraints", lambda _proposal: [])
-
-    def _balance_failure(*_args, **_kwargs):
-        raise RuntimeError("local paper balance reader failed")
-
-    monkeypatch.setattr(paper_account, "get_paper_account", _balance_failure)
-
-    # External accounts intentionally keep the existing advisory-cache fallback.
-    monkeypatch.setattr(sync, "get_unified_cached_state", _balance_failure)
-    assert (
-        eng._effective_position_margin_cap(cfg.risk, "bitget_demo")
-        == cfg.risk.max_demo_position_margin_usdt
-    )
-
-    proposal = TradeProposal(
-        id="paper-balance-unavailable-proposal",
-        symbol="ETH/USDT",
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        execution_mode="paper_internal",
-        quantity=1.0,
-        price=100.0,
-    )
-    repo.insert_trade_proposal(proposal)
-
-    result = eng.evaluate_proposal(proposal, decision_role="authoritative")
-
-    assert result.approved is False
-    assert "paper_account_balance_unavailable" in result.violations
-    decisions = [
-        row for row in repo.list_risk_decisions(limit=20)
-        if row["proposal_id"] == proposal.id
-    ]
-    assert len(decisions) == 1
-    assert decisions[0]["decision_role"] == "authoritative"
-    assert decisions[0]["approved"] == 0
-    assert not [
-        row for row in repo.list_orders(limit=20)
-        if row["proposal_id"] == proposal.id
-    ]
-    assert repo.get_entry_risk_reservation(proposal.id) is None
+    monkeypatch.setattr(sync, "get_unified_cached_state", unreadable_cache)
+    assert eng._effective_position_margin_cap(cfg.risk, "bitget_demo") == 200.0
 
 
 # ---------------------------------------------------------------------------
@@ -1345,44 +1180,7 @@ def test_live_missing_stop_price_fires(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# RE-C02 — §6 bypass: create_paper_proposal cannot accept bitget_live_limited
 # ---------------------------------------------------------------------------
-
-
-@spec_claim(
-    SpecClaim("RE-C02", "risk_engine_contract", "§6 bypass", "L2c",
-              "create_paper_proposal() hardcodes _PAPER_MODES; bitget_live_limited is never in that set"),
-)
-def test_paper_proposal_cannot_accept_live_mode():
-    """AST-scan paper_tools.py: _PAPER_MODES must not contain any live mode string."""
-    import ast
-    from pathlib import Path
-
-    src = (
-        Path(__file__).parent.parent.parent
-        / "aletheia" / "execution" / "paper_tools.py"
-    )
-    tree = ast.parse(src.read_text(encoding="utf-8"))
-
-    # Find the _PAPER_MODES set literal
-    paper_modes: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "_PAPER_MODES":
-                    if isinstance(node.value, ast.Set):
-                        for elt in node.value.elts:
-                            if isinstance(elt, ast.Constant):
-                                paper_modes.add(elt.value)
-
-    assert paper_modes, "Could not locate _PAPER_MODES set in paper_tools.py"
-
-    live_modes = {"bitget_live_limited", "okx_live_limited", "binance_live_limited"}
-    overlap = paper_modes & live_modes
-    assert not overlap, (
-        f"INVARIANT VIOLATION: live mode(s) {overlap} found inside _PAPER_MODES — "
-        "autonomous agents could bypass the live-path guard"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1403,14 +1201,14 @@ def test_default_capital_base_tracks_account_equity_and_fails_closed(monkeypatch
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(eng, "_account_equity", lambda *_: 4321.0)
-    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    value, reason = eng._resolve_capital_base("bitget_demo", cfg.risk.demo, cfg)
     assert value == 4321.0
     assert reason is None
 
     monkeypatch.setattr(eng, "_account_equity", lambda *_: None)
-    value, reason = eng._resolve_capital_base("paper_internal", cfg.risk.demo, cfg)
+    value, reason = eng._resolve_capital_base("bitget_demo", cfg.risk.demo, cfg)
     assert value is None
-    assert reason == "account_equity_unavailable:paper_internal"
+    assert reason == "account_equity_unavailable:bitget_demo"
 
 
 @spec_claim(
@@ -2219,8 +2017,6 @@ def test_account_leverage_monitor_and_gate_reject_invalid_reservation(
     assert gate == ["account_leverage_check_error:invalid_entry_reservation"]
 
 
-
-
 def test_account_leverage_is_gross_notional_over_equity_not_leverage_squared(monkeypatch):
     """Regression for issue #1164: qty*price is already gross notional; a second
     *leverage multiply turns account leverage into a leverage-squared metric that
@@ -2934,8 +2730,8 @@ def test_re_b17_check14_is_family_evidence_gate():
         "Exchange-demo new entries are refused when a published regime is sideways "
         "or at/below risk.demo.eligibility.min_regime_confidence_to_enter, or when "
         "family×direction expectancy is negative with enough samples, or when a "
-        "same-symbol reverse follows a stop_loss inside 24h. paper_internal "
-        "and live #14 stay unchanged. Tokens: regime_confidence_standdown / "
+        "same-symbol reverse follows a stop_loss inside 24h. Live #14 stays "
+        "unchanged. Tokens: regime_confidence_standdown / "
         "regime_sideways_standdown / family_not_demo_eligible / reverse_after_stop. "
         "Authority read failures emit demo_entry_quality_unavailable:<source> "
         "and fail closed; honestly absent evidence remains fail-open.",
@@ -2955,112 +2751,6 @@ def test_re_s07_demo_entry_quality_gate_is_wired():
     assert "family_not_demo_eligible" in quality
     assert "reverse_after_stop" in quality
     assert "demo_entry_quality_unavailable" in quality
-    assert "paper_internal" in quality
-
-
-@spec_claim(
-    SpecClaim(
-        "RE-B30",
-        "risk_engine_contract",
-        "§2 paper equity not zeroed by unsettled funding",
-        "L2b",
-        "A paper_internal proposal submitted within the funding-settler window "
-        "(economics_complete=False) must not be rejected with account_equity_unavailable "
-        "or exceeds_demo_position_margin:X>0.0 when the account has sufficient cash (#316).",
-        status="implemented",
-    ),
-)
-def test_paper_internal_proposal_not_rejected_during_funding_settler_window(
-    tmp_path, monkeypatch
-):
-    """Regression: unsettled funding economics must not zero available_balance_usdt."""
-    _setup_db(tmp_path, monkeypatch)
-
-    import math
-
-    from aletheia.portfolio.paper_account import (
-        ensure_paper_account,
-        record_position_opened,
-    )
-    from aletheia.risk.engine import evaluate_proposal
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position, TradeProposal
-    from aletheia.storage.sqlite import get_db
-
-    ensure_paper_account()
-
-    # Insert a closed futures position with unsettled funding (mimics post-close window).
-    closed_at = "2026-07-22T10:00:00+00:00"
-    pos = Position(
-        id="unsettled-close-pos",
-        symbol="ETH/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.1,
-        entry_price=3000.0,
-        current_price=3010.0,
-        unrealized_pnl=0.0,
-        realized_pnl=None,
-        execution_mode="paper_internal",
-        status="closed",
-        close_reason="take_profit",
-        close_category="strategy",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        outcome_eligible=False,
-        outcome_exclusion_reason="incomplete_funding_economics",
-        entry_fee=0.0,
-        exit_fee=0.0,
-        funding_cost=None,
-        funding_source="unavailable",
-        opened_at="2026-07-22T09:00:00+00:00",
-        closed_at=closed_at,
-    )
-    repo.insert_position(pos)
-    record_position_opened(pos.id)
-    # Do NOT call settle_position_closed — simulating the settler window
-
-    from aletheia.portfolio.paper_account import get_paper_account
-    account = get_paper_account(event_limit=0)
-    assert account["economics_complete"] is False, "test setup: economics must be incomplete"
-    assert account["available_balance_usdt"] > 0, (
-        "available_balance_usdt must reflect actual cash, not zero (#316)"
-    )
-
-    from aletheia.storage.models import Opportunity
-    opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long",
-                      thesis="test", source_agent="market_observer", scanner_family="test")
-    repo.insert_opportunity(opp)
-
-    proposal = TradeProposal(
-        opportunity_id=opp.id,
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        execution_mode="paper_internal",
-        order_type="market",
-        quantity=0.001,
-        price=100.0,
-        leverage=1,
-        status="approved",
-    )
-    repo.insert_trade_proposal(proposal)
-
-    result = evaluate_proposal(proposal)
-
-    violation_strings = " ".join(result.violations)
-    assert "account_equity_unavailable" not in violation_strings, (
-        f"account_equity_unavailable must not fire during settler window; "
-        f"violations: {result.violations}"
-    )
-    assert "exceeds_demo_position_margin" not in violation_strings or (
-        ">0.0" not in violation_strings
-    ), (
-        f"effective_cap must not collapse to 0.0 during settler window; "
-        f"violations: {result.violations}"
-    )
 
 
 @spec_claim(

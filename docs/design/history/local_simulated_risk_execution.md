@@ -224,3 +224,13 @@ symbols from open simulated futures positions. Interrupted local execution could
 release pre-Order authority after its claim expired. These exemptions are removed;
 current stream/account selection requires a registered external account, and
 uncertain execution remains owned by Gateway reconciliation.
+
+## Retired executable Risk claims
+
+`RE-B22`, `RE-B05b`, `RE-B29`, `RE-B30`, and `RE-C02` described simulated
+funding anchors, local drawdown exemptions, cash-reader authority, delayed local
+settlement and the deleted `paper_tools` mode set. These requirements are retired.
+`RE-B32` retains native spot leverage validation without the local reservation
+calculator. `RE-B18` retains external Demo/Live balance isolation and the existing
+advisory-cache fallback. Current daily-loss and percentage-denominator checks use
+external account identities; they do not require a simulated cash ledger.
