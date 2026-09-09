@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.position_fixture import force_update_position
 from httpx import ASGITransport, AsyncClient
 
 from aletheia.agent_shell.runtime import CommandResponse
@@ -44,91 +43,15 @@ async def client(tmp_path, monkeypatch):
 
 
 def _insert_eligible_closed_position(*, position_id: str, strategy_id: str) -> None:
-    """Seed the real causal/economic chain consumed by Outcome read models."""
-    from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import (
-        Fill, Opportunity, Order, Position, RiskDecision, TradeProposal,
-    )
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    opened_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    closed_at = datetime.now(timezone.utc).isoformat()
-    opportunity = Opportunity(
-        id=f"opp-{position_id}", symbol="BTC/USDT", market="spot",
-        direction_bias="long", scanner_family="operator-fixture", status="closed",
-        created_at=opened_at,
-    )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        id=f"proposal-{position_id}", opportunity_id=opportunity.id,
-        strategy_id=strategy_id, symbol="BTC/USDT", market_type="spot",
-        direction="long", order_type="market", quantity=0.1, price=60000.0,
-        execution_mode="paper_internal", status="executed", created_at=opened_at,
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        id=f"risk-{position_id}", proposal_id=proposal.id, approved=True,
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal", decision_role="authoritative",
-        evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=proposal.commit_hash, created_at=opened_at,
-    )
-    repo.insert_risk_decision(decision)
-    order = Order(
-        id=f"order-{position_id}", proposal_id=proposal.id,
-        risk_decision_id=decision.id, symbol=proposal.symbol,
-        market_type=proposal.market_type, direction=proposal.direction,
-        order_type=proposal.order_type, quantity=0.1, price=60000.0,
-        execution_mode="paper_internal", position_id=position_id,
-        status="filled", created_at=opened_at, filled_at=opened_at,
-    )
-    repo.insert_order(order)
-    repo.insert_fill(Fill(
-        id=f"fill-{position_id}", order_id=order.id, fill_price=60000.0,
-        fill_quantity=0.1, fee=0.0, filled_at=opened_at,
-    ))
-    repo.insert_position(Position(
-        id=position_id, symbol="BTC/USDT", market_type="spot",
-        direction="long", quantity=0.1, entry_price=60000.0,
-        current_price=60000.0,
-        execution_mode="paper_internal", strategy_id=strategy_id,
-        proposal_id=proposal.id, order_id=order.id,
-        opportunity_id=opportunity.id, status="open",
-        entry_price_source="local_fill", entry_fill_verified=True,
-        entry_fee=0.0, funding_cost=0.0,
-        funding_source="not_applicable",
-        opened_at=opened_at,
-    ))
-    close_order = Order(
-        id=f"close-order-{position_id}", proposal_id=proposal.id,
-        symbol=proposal.symbol, market_type=proposal.market_type,
-        direction=proposal.direction, order_type="market", quantity=0.1,
-        price=60010.0, execution_mode="paper_internal",
-        client_order_id=f"close-{position_id}", position_id=position_id,
-        close_reason="take_profit", status="filled",
-        created_at=closed_at, filled_at=closed_at,
-    )
-    repo.insert_order(close_order)
-    repo.insert_fill(Fill(
-        id=f"close-fill-{position_id}", order_id=close_order.id,
-        fill_price=60010.0, fill_quantity=0.1, fee=0.0,
-        filled_at=closed_at,
-    ))
-    force_update_position(
-        position_id,
-        current_price=60010.0,
-        unrealized_pnl=0.0,
-        realized_pnl=1.0,
-        status="closed",
-        close_reason="take_profit",
-        close_category="strategy",
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        exit_fee=0.0,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
-        outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
-        closed_at=closed_at,
+    _insert_closed_position_via_producer(
+        position_id=position_id, strategy_id=strategy_id,
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=0.1, entry_price=60000.0, realized_pnl=1.0,
+        execution_mode="bitget_demo", close_reason="take_profit",
+        scanner_family="operator-fixture",
+        closed_at=datetime.now(timezone.utc).isoformat(),
     )
 
 
@@ -930,7 +853,7 @@ async def test_operator_recommendations_include_risk_critique_due_for_recent_rej
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.005,
         price=60000,
     )
@@ -972,7 +895,7 @@ async def test_operator_recommendations_include_portfolio_snapshot_refresh_due_w
             entry_price=60000,
             current_price=60500,
             unrealized_pnl=5.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             status="open",
         )
     )
@@ -1004,7 +927,7 @@ async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest
             entry_price=60000,
             current_price=60500,
             unrealized_pnl=5.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             status="open",
         )
     )
@@ -1012,6 +935,7 @@ async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest
     for i in range(60):
         insert_portfolio_snapshot(
             PortfolioSnapshot(
+                execution_mode="exchange_account",
                 total_value_usdt=1000 + i,
                 positions_count=1,
                 snapshot_at=(base + timedelta(minutes=i)).isoformat(),
@@ -1019,6 +943,7 @@ async def test_operator_recommendations_use_latest_portfolio_snapshot_not_oldest
         )
     insert_portfolio_snapshot(
         PortfolioSnapshot(
+            execution_mode="exchange_account",
             total_value_usdt=2000,
             positions_count=1,
             snapshot_at=datetime.now(timezone.utc).isoformat(),
@@ -1057,7 +982,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.005,
         price=60000,
     )
@@ -1065,7 +990,7 @@ async def test_operator_recommendations_include_risk_boundary_change_proposal_du
         symbol="ETHUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.1,
         price=3000,
     )
@@ -1112,7 +1037,7 @@ async def test_operator_recommendations_include_risk_review_report_refresh_due_w
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.005,
         price=60000,
     )
@@ -1138,8 +1063,9 @@ async def test_operator_recommendations_include_risk_review_report_refresh_due_w
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("execution_mode", ["bitget_demo", "okx_demo", "binance_testnet"])
 async def test_operator_recommendations_include_symbol_observe_only_due_for_repeated_rejected_symbol(
-    client, monkeypatch
+    client, monkeypatch, execution_mode
 ):
     import aletheia.config.loader as loader
     from aletheia.storage.models import RiskDecision, TradeProposal
@@ -1155,7 +1081,7 @@ async def test_operator_recommendations_include_symbol_observe_only_due_for_repe
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode=execution_mode,
         quantity=0.005,
         price=60000,
     )
@@ -1163,7 +1089,7 @@ async def test_operator_recommendations_include_symbol_observe_only_due_for_repe
         symbol="BTCUSDT",
         market_type="spot",
         direction="short",
-        execution_mode="paper_internal",
+        execution_mode=execution_mode,
         quantity=0.006,
         price=61000,
     )

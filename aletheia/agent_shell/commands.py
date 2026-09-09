@@ -1570,6 +1570,7 @@ async def review_portfolio_state(params: dict) -> dict:
 
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
 
     params = params or {}
     wake_batches = [
@@ -1607,7 +1608,10 @@ async def review_portfolio_state(params: dict) -> dict:
     # This is execution authority, not a display context. build_app_context()
     # intentionally truncates and projects positions for UI/LLM summaries, so it
     # omits the exact id and market_type required for safe position selection.
-    all_open_positions = list_all_open_positions()
+    all_open_positions = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
     total_unrealized_pnl = 0.0
     unrealized_pnl_available = True
     for position in all_open_positions:
@@ -1815,7 +1819,7 @@ async def review_portfolio_state(params: dict) -> dict:
         if wake_batches
         else ""
     )
-    system = "You are a portfolio risk reviewer for an autonomous paper trading system."
+    system = "You are a portfolio risk reviewer for an automated trading system using external exchange accounts."
     if not horizon_due_review:
         horizon_hold_contract = ""
     elif allow_horizon_hold:
@@ -1939,7 +1943,10 @@ Return JSON: {_json.dumps(schema)}"""
     mkt = review.get("target_market_type")
     direction = review.get("target_direction")
     target_id = review.get("target_position_id")
-    candidates = list_all_open_positions()
+    candidates = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
     if wake_position_ids:
         wake_ids = set(wake_position_ids)
         candidates = [p for p in candidates if p["id"] in wake_ids]

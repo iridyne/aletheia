@@ -62,87 +62,81 @@ def _review_mark(
 async def test_portfolio_review_can_close_old_target_beyond_default_position_page(
     tmp_path, monkeypatch
 ):
-    """Execution authority must search every open position, not the UI-sized page."""
+    """Review finds all external positions and never selects archived simulator rows."""
     conn = _init_agent_shell_db(tmp_path, monkeypatch)
     from aletheia.agent_shell.commands import review_portfolio_state
-    from aletheia.config.loader import load_config
-    from aletheia.storage.models import MarketSnapshot, Position
-    from aletheia.storage.repositories import (
-        insert_market_snapshot,
-        insert_position,
-        list_positions,
-        _select_one,
-    )
+    from aletheia.storage.models import Position
+    from aletheia.storage.repositories import insert_position, list_positions, _select_one
 
     target = Position(
-        id="oldest-target-beyond-fifty",
-        symbol="OLD/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        execution_mode="paper_internal",
+        id="oldest-target-beyond-fifty", symbol="OLD/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=100.0,
+        execution_mode="bitget_demo",
     )
     insert_position(target)
     for index in range(50):
         insert_position(Position(
-            id=f"newer-open-{index:02d}",
-            symbol=f"NEW{index}/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=1.0,
-            entry_price=100.0,
-            execution_mode="paper_internal",
+            id=f"newer-open-{index:02d}", symbol=f"NEW{index}/USDT",
+            market_type="spot", direction="long", quantity=1.0, entry_price=100.0,
+            execution_mode="bitget_demo",
         ))
-
-    assert target.id not in {
-        row["id"] for row in list_positions(status="open")
-    }, "fixture no longer crosses the default 50-row boundary"
-
+    # Raw historical data remains readable, without using a retired runtime writer.
+    archived = Position(
+        id="archived-simulator", symbol="ARCHIVE/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=100.0,
+        execution_mode="bitget_demo",
+    )
+    insert_position(archived)
+    conn.execute("UPDATE positions SET execution_mode='paper_internal' WHERE id=?", (archived.id,))
+    conn.commit()
+    archived_before = _select_one("positions", archived.id)
+    assert target.id not in {row["id"] for row in list_positions(status="open")}
     monkeypatch.setattr(
         "aletheia.agent_shell.context.build_app_context",
-        lambda sections=None: {
-            "trading": {"open_positions": [_select_one("positions", target.id)]},
-            "risk": {"max_open_positions_demo": 3, "kill_switch": False},
-        },
+        lambda sections=None: {"risk": {"max_open_positions_demo": 3, "kill_switch": False}},
     )
+    selected_id = target.id
 
-    async def choose_old_target(_system, _user, *, schema, **_kwargs):
-        return ({
-            "action": "close_one",
-            "target_symbol": target.symbol,
-            "target_market_type": target.market_type,
-            "target_direction": target.direction,
-            "target_position_id": target.id,
-            "reasoning": "close the explicitly selected old position",
-        }, None)
+    async def choose_target(_system, user, *, schema, **_kwargs):
+        assert archived.id not in user
+        assert "Positions in this review scope (51 of 51 total open positions)" in user
+        return ({"action": "close_one", "target_position_id": selected_id,
+                 "reasoning": "close the explicitly selected position"}, None)
 
+    submitted = []
+
+    def submit_close(position_id, **kwargs):
+        submitted.append(position_id)
+        assert position_id == target.id
+        assert kwargs["decision_actor"] == "system_operator"
+        force_update_position(position_id, pending_close_order_id="external-close",
+                              pending_close_status="submitted")
+        return {"closed": False, "status": "submitted", "order_id": "external-close"}
+
+    monkeypatch.setattr("aletheia.agents.helpers.llm_structured", choose_target)
     monkeypatch.setattr(
-        "aletheia.agents.helpers.llm_structured", choose_old_target
+        "aletheia.data.price_feed.get_fresh_mark_for_protective_close",
+        lambda symbol, market_type, *, venue: _review_mark(
+            venue=venue, symbol=symbol, market_type=market_type,
+        ),
     )
-    cfg = load_config()
-    insert_market_snapshot(
-        MarketSnapshot(
-            symbol=target.symbol,
-            market_type="spot",
-            exchange=cfg.market_data.ccxt_exchange or "binance",
-            price=110.0,
-        )
-    )
-
+    monkeypatch.setattr("aletheia.portfolio.position_manager.close_position_routed", submit_close)
     result = await review_portfolio_state({})
+    assert submitted == [target.id]
+    assert result["positions_closed"] == 0
+    assert result["close"]["status"] == "submitted"
+    assert result["review_completed"] is True
+    assert _select_one("positions", target.id)["status"] == "open"
 
-    stored = _select_one("positions", target.id)
-    close_rows = conn.execute(
-        "SELECT o.position_id, f.fill_price FROM orders o JOIN fills f "
-        "ON f.order_id=o.id WHERE o.position_id=? AND o.close_reason=?",
-        (target.id, "pi_agent_portfolio_review"),
-    ).fetchall()
-    assert result["positions_closed"] == 1
-    assert stored["status"] == "closed"
-    assert [dict(row) for row in close_rows] == [
-        {"position_id": target.id, "fill_price": pytest.approx(109.945)}
-    ]
+    # A model-selected archive id must also fail the fresh candidate lookup.
+    selected_id = archived.id
+    rejected = await review_portfolio_state({})
+    assert rejected["close_one_error"] == "no_target_position"
+    assert submitted == [target.id]
+    stale_wake = await review_portfolio_state({"wake_batches": [{"position_id": archived.id}]})
+    assert stale_wake["reason"] == "wake_positions_not_open"
+    assert stale_wake["review_completed"] is True
+    assert _select_one("positions", archived.id) == archived_before
 
 
 @pytest.mark.asyncio

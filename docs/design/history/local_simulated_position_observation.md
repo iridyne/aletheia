@@ -19,3 +19,15 @@ The retired reconciler classified simulated positions as managed with a
 history. Both paths are removed: active classification and incident detection use
 registered external accounts. Retired account configuration is unconfigured for
 reconciliation, while existing positions and incident records remain unchanged.
+
+## Operator consumption
+
+The former Operator observe-only recommendation selected risk rejections with a
+`paper` execution-mode prefix. Current recommendations use the three registered
+external Demo/Testnet accounts. This recommendation remains advice; it neither
+changes Risk policy nor grants Live execution authority.
+
+Portfolio review formerly read every open Position, including archived simulator
+rows. Its current model input and fresh mutation-target lookup both select only
+UTA account modes. An archived Position cannot become a review target through a
+model response or a stale wake. Stored simulator rows remain readable and unchanged.
