@@ -38,3 +38,11 @@ retired. External stop/target execution is covered by the exchange pipeline;
 max-hold is covered through private-fill reconciliation in `test_position_manager.py`.
 The signal-to-Operator review scenario remains, using an exact Bitget Demo
 instrument and no simulated execution.
+
+Position Manager specs formerly demanded same-cycle simulated closure and allowed
+the local mode to take prices from the configured market-data venue. PL-PM now
+uses explicit external identities, pending exchange submission and private-fill
+confirmation. Bitget, OKX and Binance marks remain isolated even when the global
+market-data venue differs. The deleted local protection-worker hooks and ATR
+venue override are no longer test requirements; current manager error logging,
+paused protection and pending-close convergence remain covered.
