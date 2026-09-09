@@ -63,7 +63,7 @@ const universe: UniverseCurrentResponse = {
 const positions: Position[] = [{
   id: 'eth-position', symbol: 'ETH/USDT', market_type: 'perp', direction: 'long', quantity: 1,
   entry_price: 100, current_price: 105, unrealized_pnl: 5, realized_pnl: null,
-  execution_mode: 'paper', strategy_id: null, status: 'open', stop_price: 90,
+  execution_mode: 'bitget_demo', strategy_id: null, status: 'open', stop_price: 90,
   take_profit_price: 120, close_reason: null, opened_at: '2026-08-13T00:00:00Z', closed_at: null,
   liquidation_price: 70,
 }]
@@ -165,7 +165,7 @@ describe('Markets workbench', () => {
         order_tactic: 'OPPOSING_BBO_IOC', time_in_force: 'IOC', price_rule: 'OPPOSING_BBO',
         max_wait_sec: 0, partial_fill_policy: 'KEEP_PARTIAL_CANCEL_REMAINDER', max_notional: 100,
         max_risk_pct: 0.25, max_leverage: 2, required_permission: 'Paper',
-        execution_account_mode: 'paper_internal', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
+        execution_account_mode: 'bitget_demo', risk_policy_id: 'demo-v1', risk_policy_revision: 1,
       },
     }
     const node = renderCharts(

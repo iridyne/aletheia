@@ -144,7 +144,7 @@ const order: Order = {
   order_type: 'market',
   quantity: 0.001,
   price: 60_000,
-  execution_mode: 'paper_internal',
+  execution_mode: 'bitget_demo',
   exchange_order_id: null,
   status: 'filled',
   created_at: '2026-08-26T00:00:00Z',

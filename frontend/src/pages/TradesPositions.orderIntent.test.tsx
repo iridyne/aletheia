@@ -34,7 +34,7 @@ function makeOrder(overrides: Partial<Order>): Order {
 		order_type: "market",
 		quantity: 1,
 		price: 100,
-		execution_mode: "paper",
+		execution_mode: "bitget_demo",
 		exchange_order_id: null,
 		status: "filled",
 		created_at: createdAt,
@@ -73,7 +73,7 @@ const positions: Position[] = [{
 	current_price: 101,
 	unrealized_pnl: null,
 	realized_pnl: 1,
-	execution_mode: "paper",
+	execution_mode: "bitget_demo",
 	strategy_id: "strategy-a",
 	proposal_id: "proposal-entry",
 	order_id: "order-entry",
@@ -99,7 +99,7 @@ const proposals: TradeProposal[] = [{
 	stop_price: 90,
 	take_profit: 110,
 	risk_reward: null,
-	execution_mode: "paper",
+	execution_mode: "bitget_demo",
 	agent_rationale: null,
 	status: "executed",
 	created_at: createdAt,
@@ -117,7 +117,7 @@ function makeClient() {
 		orphaned: [],
 	});
 	client.setQueryData(["ui-overview-bootstrap"], {
-		account: { execution_mode: "paper" },
+		account: { execution_mode: "bitget_demo" },
 	});
 	client.setQueryData(["proposals"], proposals);
 	client.setQueryData(["risk-decision", "proposal-entry"], {
