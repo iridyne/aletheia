@@ -49,7 +49,6 @@
 | `POST /settings/live-unlock` | `confirm=true` + 首次确认 + selected-account preflight + scorecard + 写 audit |
 | `POST /risk/kill-switch` | 仅人工操作 + 写 audit |
 | `POST /settings/exchange-credentials` | 只写不读（GET 不得返回明文密钥）|
-| `POST /proposals/{id}/approve-paper` | 保留原始 proposal ID，不得创建重复行 |
 
 ---
 
