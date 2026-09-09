@@ -52,7 +52,7 @@ def _missing(reason: str):
         "§1 retained source protections",
         "L2b",
         "The outcome-integrity contract retains the existing wrong-broker, incomplete-view, "
-        "paper_internal local-only, and execution-account isolation regression claims.",
+        "archived-simulator exclusion, and execution-account isolation regression claims.",
         status="implemented",
     )
 )
@@ -193,7 +193,7 @@ def test_all_broker_clients_implement_verified_position_exit():
     SpecClaim(
         "OI-B03", "outcome_integrity", "§6 close/accounting split", "L2b",
         "Administrative-unverified closure may converge state and audit but does not fabricate "
-        "fees, slippage, realized PnL, paper cash settlement, or outcome-only hooks; verified "
+        "fees, slippage, realized PnL, archived-ledger entries, or outcome-only hooks; verified "
         "strategy close retains exact economic settlement and causal ids.",
         status="implemented",
     )
@@ -206,14 +206,14 @@ def test_portfolio_has_separate_verified_and_administrative_close_paths():
     position = Position(
         id="oi-b03-admin", symbol="BTC/USDT", market_type="usdt_futures",
         direction="long", quantity=1.0, entry_price=100.0, current_price=101.0,
-        execution_mode="paper_internal", realized_pnl=5.0,
+        execution_mode="bitget_demo", realized_pnl=5.0,
     )
     repo.insert_position(position)
     result = close_position_administrative(
         position.id, reason="reconciled_gone",
         reconciliation_identity={
-            "broker_id": "paper_internal", "account_environment": "local",
-            "account_scope": "oi-b03", "execution_mode": "paper_internal",
+            "broker_id": "bitget_demo", "account_environment": "demo",
+            "account_scope": "oi-b03", "execution_mode": "bitget_demo",
             "position_id": position.id, "symbol": position.symbol,
             "market_type": position.market_type, "direction": position.direction,
         },
@@ -225,7 +225,7 @@ def test_portfolio_has_separate_verified_and_administrative_close_paths():
     assert stored["exit_fee"] is None
     assert stored["slippage_cost"] is None
     assert stored["outcome_eligible"] == 0
-    assert not repo.has_paper_account_position_event("position_closed", position.id)
+    assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
     reconciler = _source("aletheia/portfolio/position_reconciler.py")
     assert "settle_ready_disappearance_candidates" in reconciler
     assert "def reconcile_close_orphan" not in reconciler
