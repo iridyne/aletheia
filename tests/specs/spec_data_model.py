@@ -526,7 +526,7 @@ def test_insert_trade_proposal_id_format(tmp_path, monkeypatch):
     for _ in range(5):
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         repo.insert_trade_proposal(p)
         assert p.id, "id must be non-empty"
@@ -698,7 +698,7 @@ def test_trade_proposal_has_hash_chain_fields():
     # Both must be optional (additive — legacy proposals have NULL).
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     assert p.commit_hash is None
     assert p.parent_hash is None
@@ -758,7 +758,7 @@ def test_insert_trade_proposal_links_hash_chain(tmp_path, monkeypatch):
     for i in range(3):
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             agent_rationale=f"test proposal {i}",
         )
         repo.insert_trade_proposal(p)
@@ -816,7 +816,7 @@ def test_proposal_hash_chain_integrity(tmp_path, monkeypatch):
         p = TradeProposal(
             symbol="ETH/USDT", market_type="spot",
             direction="long" if i % 2 == 0 else "short",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             agent_rationale=f"chain test {i}",
             quantity=0.1 * (i + 1),
         )
