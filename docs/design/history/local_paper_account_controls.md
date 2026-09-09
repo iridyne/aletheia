@@ -205,3 +205,14 @@ may become terminal after the bounded retry window; elapsed time or missing sour
 not structural proof. Durable scheduler success/failure is recorded by the normal guarded-job health
 path. Eligible results enqueue durable outcome hooks, and `outcome_hook_replay` remains their
 independent one-minute delivery path.
+
+## Retired middle-state test assumptions
+
+The former PL-MSI-15 simulator regression retried an `executing` Proposal after a
+crash and expected current Risk to decide dispatch. External execution may
+already have reached the venue: the current Gateway requires reconciliation for
+that state and does not inherit simulator resubmission. PL-MSI-15 now checks that
+an approved, not-yet-executing external Demo Proposal cannot reuse stored approval
+to bypass a newly active kill switch. Capacity/race and reservation-cleanup tests
+use external account inputs; an exchange acknowledgement does not create a
+Position before matched private Fill materialization.
