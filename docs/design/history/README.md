@@ -13,3 +13,5 @@ reactivating a historical document in place.
 - [Local simulated protection and exit experiments](local_simulated_protection.md) — archived runtime and evidence definitions.
 
 - [Local simulated economic viability](local_simulated_viability.md): retired report generation; persisted reports remain readable.
+
+- [Local simulated contribution and qualification](local_simulated_qualification.md): retired Risk/Execution projections and frozen whole-policy compiler.

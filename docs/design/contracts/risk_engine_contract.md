@@ -162,24 +162,6 @@ authoritative `RiskDecision` 的最终 Risk filter trace 与 canonical outcome s
 漂移都会抛出 `ProposalIntegrityError`，且不得写 authoritative RiskDecision 或 Order。原始 Proposal
 不因数量对齐而被改写，RiskDecision 仍保存它的 `proposal_commit_hash`。spec: `PL-RX-03/04/05/18`。
 
-### 3.1 只读贡献测量
-
-`analytics.risk_contribution.build_risk_policy_contribution` 只读消费已经存在的
-authoritative `RiskDecision`、其 exact Risk filter trace 与 canonical settled
-`24h` candidate outcome。对每个 Proposal，control 是不执行的
-`pass-all-candidates/v1` shadow：approved 时 treatment/control 同值；rejected
-是实际 Risk intervention，treatment 为零暴露、control 为该候选的成本后
-`net_return_pct`。报告因此得到 Proposal 统计单位上的 paired policy-value
-delta。
-
-测量必须锁定单一 Demo policy id/revision/hash、producer commit、behavior
-fingerprint 与 cost model，并逐笔验证 Proposal→RiskDecision 的 runtime session、
-producer commit、behavior fingerprint 及 Proposal commit/quantity、instrument、
-entry、24h horizon、settlement 与净收益算术。一个窗口可跨 clean Gateway
-restart，因此 runtime session 不要求全 cohort 相同，但每条因果链必须完全匹配。
-身份混杂、成本缺失、样本不足或实际 rejection 不足一律 `insufficient_data`。该 projection 不调用 Risk Engine，
-不改任何 check，不提交 Order，也不授予自动 policy 修改；portfolio capacity /
-interference 与 downstream Execution/Exit 不在其 estimand 内。
 
 ---
 

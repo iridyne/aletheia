@@ -27,9 +27,6 @@ from aletheia.learning.outcomes import (
     candidate_outcome_temporal_reason,
 )
 from aletheia.learning.verdicts import METRIC_VERSION
-from aletheia.analytics.execution_contribution import (
-    _paired_position_cost,
-)
 from aletheia.analytics.position_replay import build_position_replay
 from aletheia.analytics.profit_gradient import (
     LAYERS,
@@ -1226,134 +1223,6 @@ def _position_cost_sample(
     }, None
 
 
-def _position_execution_sample(
-    db: Any,
-    fact: Mapping[str, Any],
-    *,
-    cutoff: datetime,
-    epoch_start: datetime,
-    cost_model_id: str,
-    epoch_id: str,
-    registration: Mapping[str, Any] | None = None,
-    layer: str = "Execution",
-) -> tuple[dict[str, Any] | None, str | None]:
-    unit_id, opened_at, closed_at = _position_identity(fact)
-    if not unit_id or opened_at is None:
-        return None, "missing_identity"
-    if opened_at < epoch_start:
-        return None, "outside_epoch"
-    if closed_at is None:
-        return None, "missing_identity"
-    if closed_at < epoch_start:
-        return None, "outside_epoch"
-    if closed_at > cutoff:
-        return None, "outside_cutoff"
-    economics = fact.get("economics")
-    stages = fact.get("stages")
-    execution = stages.get("execution") if isinstance(stages, Mapping) else None
-    exit_stage = stages.get("exit") if isinstance(stages, Mapping) else None
-    if not isinstance(economics, Mapping) or not isinstance(execution, Mapping) or not isinstance(exit_stage, Mapping):
-        return None, "paired_evidence_unavailable"
-    if economics.get("availability") != "available":
-        return None, "unverified_or_unsettled_outcome"
-    if economics.get("residual_within_tolerance") is not True:
-        return None, "accounting_mismatch"
-    entry_order = execution.get("entry_order")
-    entry_fills = execution.get("entry_fills")
-    close_orders = exit_stage.get("close_orders")
-    close_fills = exit_stage.get("close_fills")
-    if not isinstance(entry_order, Mapping) or not isinstance(entry_fills, list) or len(entry_fills) != 1:
-        return None, "incomplete_path"
-    if not isinstance(close_orders, list) or len(close_orders) != 1 or not isinstance(close_fills, list) or len(close_fills) != 1:
-        return None, "incomplete_path"
-    close_order = close_orders[0]
-    entry_reference = _finite(entry_order.get("reference_price"), positive=True)
-    close_reference = _finite(close_order.get("reference_price"), positive=True)
-    quantity = _finite(((exit_stage.get("position") or {}).get("quantity")), positive=True)
-    entry_fee = _finite(economics.get("entry_fee"))
-    exit_fee = _finite(economics.get("exit_fee"))
-    funding = _finite(economics.get("funding_cost"))
-    actual_gross = _finite(economics.get("gross_pnl"))
-    entry_price = _finite(entry_reference, positive=True)
-    if None in (entry_reference, close_reference, quantity, entry_fee, exit_fee, funding, actual_gross, entry_price):
-        return None, "cost_incomplete"
-    position = exit_stage.get("position") if isinstance(exit_stage.get("position"), Mapping) else {}
-    try:
-        _, chain_reason = _paired_position_cost(db, dict(position))
-    except (KeyError, OSError, TypeError, ValueError, sqlite3.Error):
-        chain_reason = "incomplete_path"
-    if chain_reason is not None:
-        return None, "incomplete_path"
-    direction = str(position.get("direction") or "").lower()
-    if direction == "long":
-        reference_gross = (close_reference - entry_reference) * quantity
-    elif direction == "short":
-        reference_gross = (entry_reference - close_reference) * quantity
-    else:
-        return None, "missing_identity"
-    # Execution owns fill/routing deviation only.  Fees, funding and other
-    # settled costs remain outside this component and cannot be double-counted.
-    delta_quote = reference_gross - actual_gross
-    notional = entry_reference * quantity
-    delta_bp = delta_quote / notional * 10_000.0
-    if not math.isfinite(delta_quote) or not math.isfinite(delta_bp):
-        return None, "nonfinite_delta"
-    expected_cost_model = _fact_cost_model_id(fact)
-    if registration is not None and expected_cost_model != cost_model_id:
-        return None, "cost_incomplete"
-    if registration is not None and not _position_provenance_matches(fact, registration):
-        return None, "epoch_mismatch"
-    assignment_metadata: dict[str, str] = {}
-    arm, cluster, pair_id, policy_epoch, producer_commit, assignment_reason = _position_assignment(
-        db, fact, cutoff, epoch_start, epoch_id,
-        observed_at=opened_at,
-        registration=registration,
-        layer=layer,
-        metadata=assignment_metadata,
-    )
-    if assignment_reason is not None:
-        return None, assignment_reason
-    return {
-        "fact_unit": "position_fact",
-        "economic_unit": "verified_settled_net_economics",
-        "unit_id": unit_id,
-        "cluster_id": pair_id or cluster or closed_at.date().isoformat(),
-        "pair_id": pair_id,
-        "occurred_at": _iso(closed_at),
-        "arm": arm,
-        "policy_epoch": policy_epoch,
-        "producer_commit": producer_commit,
-        "outcome_contract_version": assignment_metadata.get("outcome_contract_version"),
-        "stage": assignment_metadata.get("stage"),
-        "arm_net_delta_bp": delta_quote / notional * 10_000.0,
-        "arm_net_delta_quote": delta_quote,
-        "paired_net_delta_bp": delta_bp,
-        "paired_net_delta_quote": delta_quote,
-        "cost_model_id": cost_model_id,
-        "cost_applied_once": False,
-        "costs_excluded": True,
-        "notional_quote": notional,
-        "cohort_id": pair_id.rsplit("|", 1)[0] if pair_id and "|" in pair_id else None,
-        "pairing": "requested_reference_vs_actual_gross_execution",
-        "harm_event_id": f"position:{unit_id}:execution",
-        "attribution_event_id": f"position:{unit_id}:execution",
-        "position_id": unit_id,
-        "component": "execution_fill",
-        "ownership": {"stage": "execution", "decision": "exit_authorized", "loss_component": "fill_or_execution"},
-        "stage_window": _stage_window(opened_at, closed_at),
-        "evidence_refs": [f"position_fact:{unit_id}", f"entry_order:{entry_order.get('order_id') or unit_id}", f"close_order:{close_order.get('order_id') or unit_id}"],
-        "execution_evidence": {
-            "fees_excluded": True,
-            "funding_excluded": True,
-            "baseline_id": f"requested_reference:{unit_id}",
-            "incremental_fill_loss_quote": max(delta_quote, 0.0),
-        },
-        "reconciliation": _exclusive_reconciliation(
-            f"position:{unit_id}:execution", delta_quote, delta_bp
-        ),
-    }, None
-
-
 def _pair_arm_evidence(raw: Mapping[str, Any]) -> dict[str, Any]:
     evidence = {
         "unit_id": raw.get("unit_id"),
@@ -1657,18 +1526,9 @@ def _add_layer_samples(
             )
 
     for fact in position_facts:
-        # There is no confirmatory Holding/Exit pair in the current durable
-        # contracts.  Keep those layers explicit and empty rather than importing
-        # exploratory counterfactuals as if they were settled economics.
-        record("Execution", *_position_execution_sample(
-            db,
-            fact,
-            cutoff=cutoff,
-            epoch_start=epoch_start,
-            cost_model_id=cost_model_id,
-            epoch_id=epoch_id,
-            registration=registration,
-        ) if cost_status == "available" else (None, "cost_incomplete"))
+        # Execution has no external-exchange paired reference. Holding/Exit
+        # likewise have no confirmatory pair in the current durable contracts.
+        record("Execution", None, "paired_evidence_unavailable")
         record("Costs", *_position_cost_sample(
             db,
             fact,

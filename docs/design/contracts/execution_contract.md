@@ -648,41 +648,16 @@ Position 或另一 execution mode；cursor 只改变 scheduler 的下一扫描�
 state。每轮仍有明确 scan/I/O 上限，不能以扩大 `LIMIT` 代替公平性。
 
 真实 close Order/Fill 可以结束执行生命周期，但它不能证明持仓期间的 funding。期货没有可信账户
-账单，或本地模拟的事件窗口不完整时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
+账单时，关闭仍保留真实 Order/Fill 并把 Position 标为 `closed`，同时必须写：
 
 - `funding_cost=NULL`、`funding_source='unavailable'`；
 - `realized_pnl=NULL`，不得把未知 funding 当成 0；
 - `outcome_eligible=false`、`outcome_exclusion_reason='incomplete_funding_economics'`；
-- 不写 `paper_account_events.position_closed`，不创建 eligible Outcome hook，也不进入 Attribution、
+- 不创建 eligible Outcome hook，也不进入 Attribution、
   Feedback 或 Learning。
 
-因此本地 paper 账户继续以已结算的现金账本为权威，并明确返回
-`economics_complete=false` 和 `unsettled_closed_positions_count`。`available_balance_usdt` 仍反映
-已确认现金减预留资金，`equity_usdt` 仍反映已确认现金加未实现损益；两者都不补入这笔未完成的
-关闭损益，也不得被解释为完整经济结果。Portfolio 的相关 realized 汇总同样返回 `NULL` 并附未完成
-数量，而不是用 0 提供一个看似完整的数字。spot 不产生 funding，关闭时明确写 `funding_cost=0`、
-`funding_source='not_applicable'`，不受此冻结影响。
-
-### 11.7 Native Paper paired execution-cost measurement（schema v16）
-
-新建 native `paper_internal` entry Order 在 slippage 前持久化
-`reference_price=Risk 已核验的 Proposal.price` 与来源
-`risk_verified_proposal_price`；close Order 在 slippage 前持久化 exact fresh
-mark 与来源 `paper_close_mark`。两个字段由数据库 trigger 禁止更新，不回填历史行，
-也不参与 broker 的提交价、Risk 判定或 Position 行为。
-
-`analytics.execution_contribution.build_execution_cost_contribution` 只读消费
-`eligible_strategy_outcomes`，并再次闭合 authoritative Risk、entry/close
-Order/Fill、Position、数量、费用、runtime/build/behavior provenance 与 funding。
-同一 Position 的 control 固定相同数量、方向、开平时点和 funding，但假设在两个
-reference price 零费用成交；treatment 使用真实 local Fill 与 fee。差值因此只归因于
-Paper 执行价格影响与费用，单位同时报告 `net_return_pct` 和 quote-currency PnL。
-
-该结果不证明当前 router 相对另一算法的正向价值，不覆盖 exchange/demo/live、legacy、
-multi-entry、partial close 或 adopted Position；multi-entry 以
-`unsupported_execution_multi_entry` 明确排除，不伪装成数据链缺失。该测量不授权改变
-slippage、fee、broker、Risk 或 Live 配置；
-任一身份/经济字段缺失均为 `insufficient_data`。
+未知的关闭损益不得被当作完整经济结果。spot 不产生 funding，关闭时明确写
+`funding_cost=0`、`funding_source='not_applicable'`。
 
 ---
 
