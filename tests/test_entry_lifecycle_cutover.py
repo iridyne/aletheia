@@ -73,11 +73,11 @@ def _typed_candidate(
 @pytest.mark.parametrize(
     ("permission", "route", "allowed", "minimum", "reason"),
     [
-        ("Paper", "paper_internal", True, "Paper", None),
-        ("Full", "paper_internal", True, "Paper", None),
+        ("Paper", "paper_internal", False, None, "entry_execution_route_unsupported"),
+        ("Full", "paper_internal", False, None, "entry_execution_route_unsupported"),
         ("Paper", "bitget_demo", False, "Full", "entry_permission_insufficient"),
         ("Full", "bitget_demo", True, "Full", None),
-        ("Observe", "paper_internal", False, "Paper", "entry_permission_insufficient"),
+        ("Observe", "bitget_demo", False, "Full", "entry_permission_insufficient"),
         ("Full", "binance_testnet", False, None, "entry_execution_route_unsupported"),
     ],
 )
@@ -96,7 +96,7 @@ def test_entry_runtime_authority_keeps_live_separate(permission):
     from aletheia.trading.entry_authority import resolve_entry_runtime_authority
 
     authority = resolve_entry_runtime_authority(
-        _cfg(permission, "paper_internal", "live_limited")
+        _cfg(permission, "bitget_demo", "live_limited")
     )
 
     assert authority.allowed is False
@@ -284,7 +284,7 @@ def test_unresolved_prior_order_prevents_successor_cycle(_inmemory_db):
     )
     order = Order(
         symbol="BTC/USDT", market_type="perp", direction="long",
-        order_type="limit", quantity=1, price=100, execution_mode="paper_internal",
+        order_type="limit", quantity=1, price=100, execution_mode="bitget_demo",
         entry_plan_id="expired-with-order", status="submission_unknown",
     )
     repo._insert("orders", order.model_dump())
@@ -315,7 +315,7 @@ def test_owner_candidate_projection_hides_numeric_planner_labels(_inmemory_db):
     assert detail["lifecycle"]["lifecycle_state"] == "PLANNING_QUEUED"
 
 
-def test_full_internal_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatch):
+def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatch):
     from aletheia.agent_shell.entry_planner import PlanIntentError, plan_next_candidate
     from aletheia.storage import repositories as repo
     from aletheia.trading.entry_analysis import fingerprint
@@ -360,7 +360,7 @@ def test_full_internal_route_reaches_one_model_and_compiler(_inmemory_db, monkey
         }
 
     result = asyncio.run(plan_next_candidate(
-        planner, cfg=_cfg("Full", "paper_internal"), owner_token="owner"
+        planner, cfg=_cfg("Full", "bitget_demo"), owner_token="owner"
     ))
     stored = repo.get_candidate_planning_generation(generation["id"])
 
@@ -390,7 +390,7 @@ def test_current_economic_no_plan_is_terminal_and_not_retried(_inmemory_db, monk
             "risk_tier": "NONE", "horizon": "NONE",
         }
 
-    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "paper_internal")))
+    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "bitget_demo")))
     stored = repo.get_candidate_planning_generation(generation["id"])
 
     assert result["status"] == "no_plan"
@@ -415,7 +415,7 @@ def test_current_schema_failure_is_non_economic_and_terminal(_inmemory_db, monke
     async def planner(_context):
         return {"decision": "ENTRY_PLAN"}
 
-    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "paper_internal")))
+    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "bitget_demo")))
     stored = repo.get_candidate_planning_generation(generation["id"])
 
     assert result["status"] == "failed"
@@ -443,7 +443,7 @@ def test_current_broker_backpressure_consumes_no_attempt(_inmemory_db, monkeypat
     async def planner(_context):
         raise PlannerBackpressure("inference_queue_full")
 
-    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "paper_internal")))
+    result = asyncio.run(plan_next_candidate(planner, cfg=_cfg("Full", "bitget_demo")))
     stored = repo.get_candidate_planning_generation(generation["id"])
 
     assert result["status"] == "backpressure"
@@ -463,7 +463,7 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
         "aletheia.agent_shell.entry_planner.fast_market_data_unavailability_reason",
         lambda *_args: None,
     )
-    cfg = _cfg("Full", "paper_internal")
+    cfg = _cfg("Full", "bitget_demo")
 
     async def planner(_context):
         cfg.agent.permission_mode = "Observe"
@@ -610,14 +610,14 @@ def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
         repo.execute_write("UPDATE entry_plans SET status=? WHERE id='plan-b1'", (execution,))
     else:
         order = Order(symbol="BTC/USDT", market_type="perp", direction="long", order_type="limit",
-            quantity=1, price=100, execution_mode="paper_internal", entry_plan_id="plan-b1",
+            quantity=1, price=100, execution_mode="bitget_demo", entry_plan_id="plan-b1",
             status="submission_unknown" if execution == "order" else "filled")
         repo._insert("orders", order.model_dump())
         if execution == "fill":
             repo._insert("fills", Fill(order_id=order.id, fill_price=100, fill_quantity=.5).model_dump())
         if execution == "position":
             repo._insert("positions", Position(symbol="BTC/USDT", market_type="perp", direction="long",
-                quantity=1, entry_price=100, execution_mode="paper_internal", order_id=order.id).model_dump())
+                quantity=1, entry_price=100, execution_mode="bitget_demo", order_id=order.id).model_dump())
     repo.execute_write("UPDATE candidate_planning_generations SET attention_status='terminal' WHERE id=?", (first["id"],))
     later = _legacy_structure_candidate(later_at.isoformat())
     same, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)

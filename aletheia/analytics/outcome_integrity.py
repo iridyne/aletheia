@@ -145,10 +145,10 @@ def validated_funding_economics(
 ) -> tuple[float | None, str]:
     """Return funding only when its provenance matches the account boundary.
 
-    A numeric value alone is not evidence. Local paper futures can only use the
-    local simulation ledger; exchange-backed demo/live futures can only use the
-    broker ledger. Unknown execution modes fail closed rather than inheriting a
-    plausible-looking source label.
+    A numeric value alone is not evidence. This reader preserves the recorded
+    local funding provenance of archived simulator rows. External demo/live
+    futures require broker-ledger evidence. Unknown execution modes do not
+    inherit a plausible-looking source label.
     """
     market = _normalize(market_type)
     mode = _normalize(execution_mode)

@@ -22,10 +22,9 @@ def _closed_row(**overrides) -> dict:
         "entry_fee": 0.0,
         "exit_fee": 0.0,
         "funding_cost": 0.0,
-        "funding_source": "local_simulation",
+        "funding_source": "broker_ledger",
         "realized_pnl": 25.0,
-        "execution_mode": "paper_internal",
-        "_paper_fill_model_version": "paper-order-fill/v1",
+        "execution_mode": "bitget_demo",
         "opportunity_id": "opportunity-1",
         "proposal_id": "proposal-1",
         "order_id": "order-1",
@@ -33,9 +32,9 @@ def _closed_row(**overrides) -> dict:
         "close_reason": "take_profit",
         "closed_at": "2026-07-12T05:00:00+00:00",
         "close_category": "strategy",
-        "entry_price_source": "local_fill",
+        "entry_price_source": "broker_fill",
         "entry_fill_verified": True,
-        "exit_price_source": "local_fill",
+        "exit_price_source": "broker_fill",
         "exit_fill_verified": True,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
@@ -79,7 +78,11 @@ def test_legacy_paper_fill_is_excluded_from_the_current_economic_cohort():
     from aletheia.analytics.outcome_integrity import assess_reportable_outcome
 
     assessment = assess_reportable_outcome(
-        _closed_row(_paper_fill_model_version=None)
+        _closed_row(
+            execution_mode="paper_internal", funding_source="local_simulation",
+            entry_price_source="local_fill", exit_price_source="local_fill",
+            _paper_fill_model_version=None,
+        )
     )
 
     assert assessment.eligible is False
@@ -95,6 +98,7 @@ def test_legacy_paper_fill_is_excluded_from_the_current_economic_cohort():
         "eligible",
     ),
     [
+        # Archived rows retain their recorded funding provenance.
         ("spot", "paper_internal", 0.0, "not_applicable", True),
         ("spot", "paper_internal", 0.0, "local_simulation", False),
         ("usdt_futures", "paper_internal", 0.0, "local_simulation", True),
@@ -204,44 +208,23 @@ def test_explicit_read_models_partition_closed_positions():
     )
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     common = {
         "symbol": "BTC/USDT", "market_type": "usdt_futures", "direction": "long",
         "quantity": 0.1, "entry_price": 50_000.0, "realized_pnl": 10.0,
-        "execution_mode": "paper_internal", "status": "closed",
+        "execution_mode": "bitget_demo", "status": "closed",
     }
-    eligible_opportunity, eligible_proposal, eligible_order = _insert_entry_chain(
-        position_id="eligible",
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.1,
-        price=50_000.0,
-        execution_mode="paper_internal",
-    )
-    other_opportunity, other_proposal, other_order = _insert_entry_chain(
-        position_id="other-mode",
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=0.1,
-        price=50_000.0,
-        execution_mode="okx_demo",
-    )
+    for position_id, mode, closed_at in (
+        ("eligible", "bitget_demo", "2026-07-12T08:00:00+00:00"),
+        ("other-mode", "okx_demo", "2026-07-12T08:00:30+00:00"),
+    ):
+        _insert_closed_position_via_producer(
+            position_id=position_id, symbol="BTC/USDT", market_type="usdt_futures",
+            direction="long", quantity=0.1, entry_price=50_000.0, realized_pnl=10.0,
+            execution_mode=mode, closed_at=closed_at, close_reason="take_profit",
+        )
     rows = [
-        Position(
-            **common, id="eligible", close_reason="take_profit",
-            closed_at="2026-07-12T08:00:00+00:00", close_category="strategy",
-            current_price=50_100.0, entry_fee=0.0, exit_fee=0.0,
-            funding_cost=0.0, funding_source="local_simulation",
-            entry_price_source="local_fill", entry_fill_verified=True,
-            exit_price_source="local_fill", exit_fill_verified=True,
-            outcome_eligible=True, outcome_exclusion_reason="eligible",
-            outcome_semantics_version="oi-v1",
-            opportunity_id=eligible_opportunity, proposal_id=eligible_proposal,
-            order_id=eligible_order,
-        ),
         Position(
             **common, id="admin", close_reason="reconciled_gone",
             closed_at="2026-07-12T08:01:00+00:00",
@@ -254,24 +237,12 @@ def test_explicit_read_models_partition_closed_positions():
             **common, id="unknown", close_reason="manual",
             closed_at="2026-07-12T08:03:00+00:00",
         ),
-        Position(
-            **{**common, "execution_mode": "okx_demo"}, id="other-mode",
-            close_reason="take_profit", closed_at="2026-07-12T08:04:00+00:00",
-            close_category="strategy", exit_price_source="broker_fill",
-            current_price=50_100.0, entry_fee=0.0, exit_fee=0.0,
-            funding_cost=0.0, funding_source="broker_ledger",
-            entry_price_source="broker_fill", entry_fill_verified=True,
-            exit_fill_verified=True, outcome_eligible=True,
-            outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
-            opportunity_id=other_opportunity, proposal_id=other_proposal,
-            order_id=other_order,
-        ),
     ]
     for row in rows:
         repo.insert_position(row)
 
     kwargs = {
-        "execution_mode": "paper_internal",
+        "execution_mode": "bitget_demo",
         "closed_after": "2026-07-12T08:00:00+00:00",
         "closed_before": "2026-07-12T08:04:00+00:00",
     }
@@ -282,17 +253,9 @@ def test_explicit_read_models_partition_closed_positions():
     assert {row["id"] for row in administrative_closures(**kwargs)} == {
         "admin", "maintenance",
     }
-    repo.get_db().execute(
-        "UPDATE fills SET paper_fill_model_version=NULL WHERE order_id=?",
-        (eligible_order,),
-    )
-    repo.get_db().commit()
-    legacy = next(row for row in raw_account_events(**kwargs) if row["id"] == "eligible")
-    assert legacy["_paper_fill_model_version"] is None
-    assert eligible_strategy_outcomes(**kwargs) == []
 
 
-def test_raw_account_events_caps_the_latest_rows_then_restores_chronological_order():
+def test_archived_account_events_caps_the_latest_rows_then_restores_chronological_order():
     from aletheia.analytics.outcome_integrity import raw_account_events
     from aletheia.storage.sqlite import get_db
 
@@ -346,7 +309,7 @@ def test_complete_outcome_cohort_has_no_10000_boundary_ambiguity(row_count):
             id, symbol, market_type, direction, quantity, entry_price,
             execution_mode, status, closed_at
         ) VALUES (?, 'BTC/USDT', 'spot', 'long', 1, 100,
-                  'paper_internal', 'closed', ?)
+                  'bitget_demo', 'closed', ?)
         """,
         (
             (f"complete-{index:05d}", (start + timedelta(seconds=index)).isoformat())
@@ -355,7 +318,7 @@ def test_complete_outcome_cohort_has_no_10000_boundary_ambiguity(row_count):
     )
     db.commit()
 
-    cohort = read_complete_outcome_cohort(execution_mode="paper_internal", db=db)
+    cohort = read_complete_outcome_cohort(execution_mode="bitget_demo", db=db)
 
     assert cohort.source_raw_event_count == row_count
     assert cohort.loaded_raw_event_count == row_count
@@ -372,7 +335,7 @@ def test_complete_outcome_cohort_preserves_read_failure_as_unavailable(monkeypat
     monkeypatch.setattr(outcome_integrity, "raw_account_events", fail_read)
 
     cohort = outcome_integrity.read_complete_outcome_cohort(
-        execution_mode="paper_internal"
+        execution_mode="bitget_demo"
     )
 
     assert cohort.source_raw_event_count is None
@@ -382,7 +345,7 @@ def test_complete_outcome_cohort_preserves_read_failure_as_unavailable(monkeypat
     assert cohort.ordered_source_digest is None
 
 
-def test_raw_account_events_preserves_exact_subsecond_instants():
+def test_archived_account_events_preserves_exact_subsecond_instants():
     from aletheia.analytics.outcome_integrity import raw_account_events
     from aletheia.storage.sqlite import get_db
 
