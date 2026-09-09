@@ -1,7 +1,7 @@
 """Factor feedback — group attribution rows by factor, compute statistics.
 
 Classifies each factor as: watch / blocked_candidate / active / preferred.
-Used by PaperTrader v2 to avoid losing factors and prioritize winning ones.
+Exposed by inspect factor-feedback as retrospective diagnostics.
 
 Read-only. No DB mutations. No LLM calls.
 """
@@ -70,89 +70,6 @@ def build_factor_feedback(limit: int = 500, min_trades: int = 3) -> list[dict]:
         results.append(fb)
 
     return results
-
-
-def lookup_factor_signal(candidate: dict) -> dict:
-    """Look up factor feedback for a specific candidate opportunity.
-
-    Returns the signal for the most specific matching factor (exact key).
-    Broader scanner cohorts are diagnostic only and never substitute for the
-    candidate's exact factor scope. Returns a neutral signal if no exact history.
-    """
-    rows = _genuine_rows(build_trade_attribution_rows(limit=500))
-    if not rows:
-        return _watch_signal(factor_key(candidate))
-
-    # Build exact-key group
-    target_key = factor_key(candidate)
-    exact_rows = [r for r in rows if factor_key(r) == target_key]
-    if exact_rows:
-        stats = _compute_group_stats(target_key, "exact", exact_rows, min_trades=3)
-        observed_status = stats["status"]
-        proposed_delta = (
-            -10.0 if observed_status in {"blocked_candidate", "hard_blocked"}
-            else 5.0 if observed_status == "preferred"
-            else 0.0
-        )
-        authority = None
-        candidate_key = candidate.get("opportunity_id") or candidate.get("candidate_key")
-        if proposed_delta and candidate_key:
-            from aletheia.learning.experiments import apply_numeric_treatment
-            member_id = candidate.get("universe_member_id")
-            learning_candidate_key = candidate.get("learning_candidate_key")
-            authority = apply_numeric_treatment(
-                path_id="ranker_factor_filter",
-                scope={"factor_key": target_key},
-                action={
-                    "type": "candidate_block" if observed_status == "hard_blocked" else "score_delta",
-                    "delta": proposed_delta,
-                },
-                source_cohort="factor_feedback:clean_exact:v2",
-                target_horizon="4h",
-                candidate_key=f"opportunity:{candidate_key}",
-                baseline=0.0,
-                treatment=proposed_delta,
-                consumer="paper_ranker",
-                consumer_stage="factor_score",
-                opportunity_id=str(candidate.get("opportunity_id") or "") or None,
-                outcome_candidate_key=(
-                    f"{learning_candidate_key}:4h" if learning_candidate_key
-                    else f"universe_member:{member_id}:4h" if member_id
-                    else None
-                ),
-                manifest={"factor_key": target_key, "observed_status": observed_status},
-            )
-        applied = bool(authority and authority.applied)
-        return {
-            "factor_key": target_key,
-            "status": observed_status if applied else "watch",
-            "observed_status": observed_status,
-            "authority_applied": applied,
-            "score_delta": authority.value if authority else 0.0,
-            "hypothesis_id": authority.hypothesis_id if authority else None,
-            "experiment_id": authority.experiment_id if authority else None,
-            "exposure_id": authority.exposure_id if authority else None,
-            "expectancy": stats["expectancy"],
-            "win_rate": stats["win_rate"],
-            "trade_count": stats["trade_count"],
-            "reason": stats["reason"],
-        }
-
-    return _watch_signal(target_key)
-
-
-def _watch_signal(fk: str) -> dict:
-    return {
-        "factor_key": fk,
-        "status": "watch",
-        "observed_status": "watch",
-        "authority_applied": False,
-        "score_delta": 0.0,
-        "expectancy": None,
-        "win_rate": None,
-        "trade_count": 0,
-        "reason": "no_history",
-    }
 
 
 def _compute_group_stats(

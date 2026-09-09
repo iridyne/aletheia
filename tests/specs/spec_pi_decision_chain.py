@@ -270,7 +270,7 @@ def test_risk_engine_does_not_read_operator_permission_mode(tmp_path, monkeypatc
     from aletheia.storage.models import TradeProposal
 
     # 构造一个违反 kill_switch 的 proposal（最简单的违规）
-    def _make_violating_proposal(execution_mode: str = "paper_internal") -> TradeProposal:
+    def _make_violating_proposal(execution_mode: str = "bitget_demo") -> TradeProposal:
         return TradeProposal(
             symbol="BTC/USDT",
             direction="long",

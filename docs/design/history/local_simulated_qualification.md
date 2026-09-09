@@ -95,3 +95,13 @@ contract. A reconciler-adopted position with a verified exit but unknown entry
 economics remains excluded from case creation and FTS retrieval. Symbol and daily
 loss rejection tests use external Demo configuration while retaining durable Risk
 and rejected-Proposal assertions.
+
+## Former factor-to-entry signal consumer
+
+`lookup_factor_signal` translated retrospective factor status into Ranker score
+changes or candidate blocking through `ranker_factor_filter` experiments. Its
+PaperTrader/Ranker consumers are retired and it had no production caller at
+`b6007795f`; the unused consumer and its dedicated tests are removed.
+`build_factor_feedback` remains the read-only CLI diagnostic, with verified
+external closes and administrative-record exclusions. Historical factor labels
+and persisted experiment identities are unchanged.

@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 from aletheia.analytics.factor_feedback import (
     build_factor_feedback,
-    lookup_factor_signal,
     _classify_factor,
     _compute_group_stats,
     _max_consecutive_losses,
@@ -229,62 +228,6 @@ def test_compute_group_stats_only_losses_reports_finite_zero():
 
     assert stats["profit_factor"] == 0.0
     assert stats["profit_factor_state"] == "finite"
-
-
-# ---------------------------------------------------------------------------
-# lookup_factor_signal
-# ---------------------------------------------------------------------------
-
-def test_lookup_factor_signal_no_history():
-    """Missing factor history returns watch status."""
-    with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=[]):
-        signal = lookup_factor_signal({
-            "scanner_family": "momentum",
-            "symbol": "BTC/USDT",
-            "direction": "long",
-            "confidence_score": 75,
-            "confidence": "high",
-            "late_entry_penalty": None,
-        })
-    assert signal["status"] == "watch"
-    assert signal["trade_count"] == 0
-    assert signal["reason"] == "no_history"
-
-
-def test_lookup_factor_signal_with_matching_history():
-    """Matching history returns computed status."""
-    fake_rows = [
-        _eligible_factor_row(
-            position_id="p1", symbol="BTC/USDT", direction="long",
-            realized_pnl=5.0, holding_hours=4.0, close_reason="take_profit",
-            closed_at="2026-07-12T08:01:00+00:00", confidence_score=75,
-            confidence="high", late_entry_penalty=None,
-        ),
-        _eligible_factor_row(
-            position_id="p2", symbol="BTC/USDT", direction="long",
-            realized_pnl=3.0, holding_hours=2.0, close_reason="take_profit",
-            closed_at="2026-07-12T08:02:00+00:00", confidence_score=75,
-            confidence="high", late_entry_penalty=None,
-        ),
-        _eligible_factor_row(
-            position_id="p3", symbol="BTC/USDT", direction="long",
-            realized_pnl=-1.0, holding_hours=1.0, close_reason="stop_loss",
-            closed_at="2026-07-12T08:03:00+00:00", confidence_score=75,
-            confidence="high", late_entry_penalty=None,
-        ),
-    ]
-    with patch("aletheia.analytics.factor_feedback.build_trade_attribution_rows", return_value=fake_rows):
-        signal = lookup_factor_signal({
-            "scanner_family": "momentum",
-            "symbol": "BTC/USDT",
-            "direction": "long",
-            "confidence_score": 75,
-            "confidence": "high",
-            "late_entry_penalty": None,
-        })
-    assert signal["trade_count"] == 3
-    assert signal["observed_status"] == "active"
-    assert signal["status"] == "watch"  # retrospective history has no authority
 
 
 # ---------------------------------------------------------------------------

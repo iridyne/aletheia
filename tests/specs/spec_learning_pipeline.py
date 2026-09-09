@@ -1082,87 +1082,56 @@ def test_dreaming_agent_lesson_evidence_populated():
 
 
 # ---------------------------------------------------------------------------
-# LP-S15 — factor_feedback (signal gate) excludes synthetic/thrash closes
+# LP-S15 — factor feedback excludes administrative closes
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
-    SpecClaim("LP-S15", "learning_pipeline", "§factor_feedback excludes synthetic closes", "L2b",
-              "build_factor_feedback / lookup_factor_signal must exclude synthetic "
-              "closes (reconciled_gone etc.) from win-rate/expectancy — reconciler "
-              "orphan sweeps are not trade outcomes and were mis-teaching the signal "
-              "gate. See ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.",
-              status="implemented"),
+    SpecClaim("LP-S15", "learning_pipeline", "§factor feedback excludes administrative closes", "L2b",
+              "build_factor_feedback excludes reconciled_gone administrative records "
+              "from trade count, win rate and expectancy; only verified external "
+              "closes contribute to current statistics.", status="implemented"),
 )
 def test_factor_feedback_excludes_synthetic_closes():
-    """Mock attribution rows (no DB): a factor whose rows are ALL reconciled_gone
-    must read as no-history (watch, trade_count 0); a mixed factor counts only the
-    genuine rows."""
+    """Administrative cleanup contributes no trade history or economic weight."""
+    from datetime import datetime, timezone
     from unittest.mock import patch
 
     from aletheia.analytics import factor_feedback as ff
-    from tests.test_outcome_closure import _insert_entry_chain
+    from aletheia.learning.outcomes import assess_realized_position
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    genuine_index = 0
-    def _row(reason, pnl):
-        nonlocal genuine_index
-        synthetic = reason == "reconciled_gone"
-        opportunity_id = proposal_id = order_id = None
-        position_id = f"{reason}:{pnl}"
-        if not synthetic:
-            position_id = f"factor-feedback-{genuine_index}"
-            genuine_index += 1
-            opportunity_id, proposal_id, order_id = _insert_entry_chain(
-                position_id=position_id,
-                symbol="BTC/USDT",
-                market_type="usdt_futures",
-                direction="long",
-                quantity=1.0,
-                price=100.0,
-                execution_mode="paper_internal",
-            )
-        return {"id": position_id, "position_id": position_id,
-                "opportunity_id": opportunity_id, "proposal_id": proposal_id,
-                "order_id": order_id,
-                "scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
-                "confidence": "high", "late_entry_penalty": 0,
-                "market_type": "usdt_futures", "execution_mode": "paper_internal",
-                "status": "closed", "entry_price": 100.0,
-                "current_price": 100.0 + pnl, "quantity": 1.0,
-                "entry_fee": 0.0, "exit_fee": 0.0,
-                "funding_cost": 0.0, "funding_source": "local_simulation",
-                "entry_price_source": "unavailable" if synthetic else "local_fill",
-                "entry_fill_verified": not synthetic,
-                "closed_at": "2026-07-12T08:00:00+00:00",
-                "realized_pnl": pnl, "close_reason": reason,
-                "close_category": "administrative" if synthetic else "strategy",
-                "exit_price_source": "unavailable" if synthetic else "local_fill",
-                "exit_fill_verified": not synthetic, "outcome_eligible": not synthetic,
-                "outcome_exclusion_reason": "administrative_close" if synthetic else "eligible",
-                "outcome_semantics_version": "oi-v1"}
+    synthetic = [{
+        "id": "administrative-close", "status": "closed",
+        "execution_mode": "bitget_demo", "close_reason": "reconciled_gone",
+        "close_category": "administrative", "realized_pnl": -99.0,
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "scanner_family": "momentum", "direction": "long", "symbol": "BTC/USDT",
+        "confidence": "high", "late_entry_penalty": 0,
+    }]
+    assert assess_realized_position(synthetic[0]).reason == "administrative_close"
+    with patch.object(ff, "build_trade_attribution_rows", return_value=synthetic):
+        assert ff.build_factor_feedback() == []
 
-    # All-synthetic factor → excluded → no history.
-    all_synth = [_row("reconciled_gone", p) for p in (5.0, -3.0, 4.0, -2.0, 6.0)]
-    with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: all_synth):
-        sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
-                                       "symbol": "BTC/USDT", "confidence": "high",
-                                       "late_entry_penalty": 0})
-        assert sig["trade_count"] == 0, (
-            f"reconciled_gone rows must be excluded from the signal gate, got "
-            f"trade_count={sig['trade_count']}"
+    genuine = []
+    for i, pnl in enumerate((5.0, -2.0, 4.0)):
+        row = _insert_closed_position_via_producer(
+            position_id=f"factor-feedback-{i}", symbol="BTC/USDT",
+            market_type="usdt_futures", direction="long", quantity=1.0,
+            entry_price=100.0, realized_pnl=pnl, execution_mode="bitget_demo",
+            closed_at=datetime.now(timezone.utc).isoformat(),
+            close_reason="take_profit" if pnl > 0 else "stop_loss",
+            scanner_family="momentum", confidence="high",
         )
-        assert sig["status"] == "watch", "all-synthetic factor must read as no-history/watch"
+        row.update(scanner_family="momentum", confidence="high", late_entry_penalty=0)
+        genuine.append(row)
 
-    # Mixed factor → only the 3 genuine rows count.
-    mixed = ([_row("take_profit", 5.0), _row("stop_loss", -2.0), _row("take_profit", 4.0)]
-             + [_row("reconciled_gone", -99.0) for _ in range(5)])
-    with patch.object(ff, "build_trade_attribution_rows", lambda limit=500: mixed):
-        sig = ff.lookup_factor_signal({"scanner_family": "momentum", "direction": "long",
-                                       "symbol": "BTC/USDT", "confidence": "high",
-                                       "late_entry_penalty": 0})
-        assert sig["trade_count"] == 3, (
-            f"only genuine closes must count, got trade_count={sig['trade_count']}"
-        )
+    with patch.object(ff, "build_trade_attribution_rows", return_value=genuine + synthetic):
+        groups = ff.build_factor_feedback()
+    exact, = [group for group in groups if group["group_type"] == "exact"]
+    assert exact["trade_count"] == 3
+    assert exact["win_rate"] == pytest.approx(2 / 3, abs=0.0001)
+    assert exact["total_pnl"] == 7.0
 
 
 # ---------------------------------------------------------------------------
