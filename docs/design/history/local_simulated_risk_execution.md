@@ -306,3 +306,12 @@ net PnL available immediately. Current regressions submit an external close,
 retain open state until private Fill reconciliation, and use its reported price
 and fees. A just-closed futures window remains economically unavailable until
 the private funding ledger is mature; public schedules do not supply that proof.
+
+The former opportunity-to-position pipeline tests requested internal-mode Risk
+approval and called a direct Position insert an order-execution test. Those
+simulator requirements have been removed. Current exchange entry coverage follows
+Entry Plan through real Risk approval/refusal, Gateway and private Fill identity;
+the external demo margin-cap regression owns the corresponding limit check.
+PnL pipeline tests now seed verified external closes through the shared producer
+fixture and call the actual equity-curve endpoint, instead of repeating a SQL sum
+and treating that arithmetic as endpoint coverage.

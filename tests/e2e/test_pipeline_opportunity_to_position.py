@@ -1,28 +1,14 @@
-"""Pipeline 2: opportunity → ranker → risk engine → position 开仓.
+"""Opportunity producer fields remain readable by downstream consumers."""
 
-Verifies the SEAM between modules: field names match, filters align,
-and a valid opportunity can actually flow through to become a position.
-"""
-
-import pytest
-from datetime import datetime, timezone
-
-from aletheia.storage.models import (
-    MarketSnapshot,
-    Opportunity,
-    Position,
-    TradeProposal,
-    RiskDecision,
-    Order,
-)
+from aletheia.storage.models import Opportunity
 from aletheia.storage import repositories as repo
 
 
-class TestOpportunityToRankerSeam:
-    """An independent non-Universe producer can be consumed by the Ranker."""
+class TestOpportunityReadFields:
+    """An independent producer persists its opportunity evidence."""
 
-    def test_opportunity_fields_match_ranker_expectations(self, e2e_db):
-        """Ranker queries by status='open', asset_class='crypto', execution_eligible=True."""
+    def test_opportunity_fields_survive_repository_read(self, e2e_db):
+        """Status, confidence, direction and eligibility survive the repository read."""
         opp = Opportunity(
             symbol="ETH/USDT",
             market="spot",
@@ -45,106 +31,3 @@ class TestOpportunityToRankerSeam:
         assert found[0]["confidence_score"] == 78
         assert found[0]["direction_bias"] == "short"
         assert found[0]["execution_eligible"] == 1
-
-
-
-class TestRiskEngineSeam:
-    """Trade proposals from ranker flow through risk engine correctly."""
-
-    def test_proposal_approved_by_risk_engine(self, e2e_db, monkeypatch):
-        """A well-formed proposal passes the risk engine."""
-        from aletheia.config.loader import load_config
-
-        # paper_internal + native proposals require:
-        #   1. a fresh market snapshot at cfg.market_data.ccxt_exchange ("binance")
-        #   2. a valid opportunity_id that matches symbol/market/direction
-        #   3. a complete entry plan (stop_price, take_profit, risk_reward)
-        cfg = load_config()
-        repo.insert_market_snapshot(MarketSnapshot(
-            id="risk-seam-snapshot",
-            symbol="ETH/USDT",
-            market_type="spot",
-            exchange=cfg.market_data.ccxt_exchange,
-            price=1740.0,
-            volume_24h=500_000_000.0,
-            snapshot_at=datetime.now(timezone.utc).isoformat(),
-        ))
-        opp = Opportunity(
-            symbol="ETH/USDT",
-            market="spot",
-            direction_bias="long",
-            confidence="high",
-            confidence_score=78,
-            source_agent="market_observer",
-            scanner_family="momentum",
-        )
-        repo.insert_opportunity(opp)
-
-        proposal = TradeProposal(
-            symbol="ETH/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=0.01,
-            price=1740.0,
-            execution_mode="paper_internal",
-            stop_price=round(1740 * 0.98, 4),
-            take_profit=round(1740 * 1.04, 4),
-            risk_reward=2.0,
-            opportunity_id=opp.id,
-        )
-        repo.insert_trade_proposal(proposal)
-
-        from aletheia.risk.engine import evaluate_proposal
-        result = evaluate_proposal(proposal)
-        assert result.approved is True
-
-    def test_proposal_rejected_exceeds_notional(self, e2e_db, monkeypatch):
-        """Proposal exceeding max notional is rejected."""
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        monkeypatch.setattr(cfg.risk, "max_demo_position_margin_usdt", 10.0)
-
-        proposal = TradeProposal(
-            symbol="ETH/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=1.0,
-            price=1740.0,
-            execution_mode="paper_internal",
-            stop_price=1740 * 0.98,
-        )
-        repo.insert_trade_proposal(proposal)
-
-        from aletheia.risk.engine import evaluate_proposal
-        result = evaluate_proposal(proposal)
-        assert result.approved is False
-        assert any(
-            violation.startswith("exceeds_demo_position_margin:")
-            for violation in result.violations
-        ), result.violations
-
-
-class TestPositionCreationSeam:
-    """Order execution creates a position with correct fields."""
-
-    def test_paper_order_creates_position(self, e2e_db):
-        """A filled order results in a position with matching fields."""
-        pos = Position(
-            symbol="ETH/USDT",
-            market_type="usdt_futures",
-            direction="short",
-            quantity=0.01,
-            entry_price=1740.0,
-            execution_mode="paper_internal",
-            status="open",
-        )
-        repo.insert_position(pos)
-
-        positions = repo.list_positions(status="open")
-        found = [p for p in positions if p["symbol"] == "ETH/USDT"]
-        assert len(found) == 1
-        assert found[0]["direction"] == "short"
-        assert found[0]["execution_mode"] == "paper_internal"
-        assert found[0]["entry_price"] == 1740.0
