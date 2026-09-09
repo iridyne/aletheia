@@ -713,9 +713,6 @@ def test_proactive_exit_never_defaults_an_unconfirmed_close_to_success(
     )
     insert_position(target)
     monkeypatch.setattr(
-        "aletheia.portfolio.position_manager._latest_price", lambda _symbol: 101.0
-    )
-    monkeypatch.setattr(
         "aletheia.portfolio.position_manager.close_position_routed",
         lambda *_args, **_kwargs: {"error": "close_not_confirmed"},
     )
@@ -1188,7 +1185,6 @@ async def test_horizon_due_close_can_reach_execution_when_review_mark_is_unavail
     assert result["positions_closed"] == 1
     assert "close_one_error" not in result
     assert close_calls[0][0] == target.id
-    assert close_calls[0][1]["fallback_exit_price"] is None
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,7 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
 )
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
-from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
+from aletheia.portfolio.pnl import build_exit_reasoning, close_position
 logger = logging.getLogger("aletheia.position_manager")
 
 _DEMO_MODES = {"bitget_demo", "binance_testnet", "okx_demo"}
@@ -79,7 +79,6 @@ def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
 def close_position_routed(
     position_id: str,
     reason: str,
-    fallback_exit_price: float | None = None,
     *,
     allow_live: bool = False,
     decision_reasoning: str | None = None,
@@ -1201,12 +1200,9 @@ def evaluate_open_positions() -> dict:
                     p.get("pending_close_status"),
                 )
                 continue
-            reason, exit_price = decision
+            reason, _trigger_price = decision
             try:
-                # Route through the shared helper so the exchange leg is never skipped
-                # (live positions are already filtered out above; demo modes still need
-                # their real exchange close, paper closes locally).
-                close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
+                close_result = close_position_routed(p["id"], reason)
                 if close_result.get("closed") is True:
                     closed += 1
             except Exception as e:
@@ -1680,8 +1676,8 @@ def proactive_exit(
     OCO with the stop (whichever level price hits first wins).
 
     A true resting reduce-only limit order + exchange-native OCO is a follow-on
-    refinement; the locally-watched limit works uniformly across paper/demo/live and
-    needs no untested broker order path.
+    refinement; the locally-watched limit is supported for external Demo accounts;
+    live limit exits are rejected.
 
     ``actor`` distinguishes the two legitimate authors of a proactive exit and is the
     ONLY thing that decides attribution: ``system_operator`` is the AI's own
@@ -1757,11 +1753,9 @@ def proactive_exit(
         }
 
     # market: close now.
-    price = _latest_price(pos["symbol"])
     result = close_position_routed(
         position_id,
         reason="human_manual_close" if is_human else "operator_close",
-        fallback_exit_price=float(price) if price else None,
         decision_reasoning=reason,
         decision_actor=actor,
         decision_source="dashboard_manual_close" if is_human else "operator_proactive_exit",

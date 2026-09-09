@@ -108,15 +108,15 @@ def test_catastrophic_preempts_and_routes_close(monkeypatch):
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status) VALUES "
-        "('c1','BTC/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open')"
+        "('c1','BTC/USDT','usdt_futures','long',1.0,100.0,'bitget_demo','open')"
     )
 
     monkeypatch.setattr(pm, "get_fresh_price_for_protective_close", lambda sym, market_type, *, venue="": 85.0)  # -15% crash
 
     calls = []
 
-    def _fake_route(position_id, reason, fallback_exit_price=None, **kw):
-        calls.append((position_id, reason, fallback_exit_price))
+    def _fake_route(position_id, reason, **kw):
+        calls.append((position_id, reason))
         return {"closed": True}
 
     monkeypatch.setattr(pm, "close_position_routed", _fake_route)
@@ -124,4 +124,4 @@ def test_catastrophic_preempts_and_routes_close(monkeypatch):
     result = pm.evaluate_open_positions()
 
     assert result["catastrophic_exits"] == 1
-    assert calls == [("c1", "catastrophic_stop", 85.0)]
+    assert calls == [("c1", "catastrophic_stop")]

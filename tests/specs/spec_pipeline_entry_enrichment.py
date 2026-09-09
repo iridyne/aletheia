@@ -237,7 +237,7 @@ def test_close_routes_through_exchange(tmp_path, monkeypatch, exec_mode):
     position_id = _materialize_exchange_result(opened)
 
     # Route the close. A local-only close would NOT create a second (close) order row.
-    close_position_routed(position_id, reason="spec_close", fallback_exit_price=100.0)
+    close_position_routed(position_id, reason="spec_close")
     from aletheia.execution.reconciliation import reconcile
 
     reconcile()
@@ -303,13 +303,13 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
 
     # Default (autonomous) path MUST refuse — no exchange close order placed.
     with pytest.raises(RuntimeError, match="live"):
-        close_position_routed(position_id, reason="auto_should_refuse", fallback_exit_price=100.0)
+        close_position_routed(position_id, reason="auto_should_refuse")
     assert repo._select_one("positions", position_id)["status"] == "open", (
         "live position must remain open after a refused autonomous close"
     )
 
     # Explicit human override routes to the real exchange close.
-    close_position_routed(position_id, reason="human_close", fallback_exit_price=100.0, allow_live=True)
+    close_position_routed(position_id, reason="human_close", allow_live=True)
     from aletheia.execution.reconciliation import reconcile
 
     reconcile()

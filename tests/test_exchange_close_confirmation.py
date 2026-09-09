@@ -156,8 +156,8 @@ def test_position_manager_counts_only_confirmed_exchange_closes(tmp_path, monkey
 
     calls = []
 
-    def fake_close(position_id, reason, fallback_exit_price=None, *, allow_live=False):
-        calls.append((position_id, reason, fallback_exit_price, allow_live))
+    def fake_close(position_id, reason, *, allow_live=False):
+        calls.append((position_id, reason, allow_live))
         return {"closed": False, "status": "submitted"}
 
     monkeypatch.setattr(pm, "close_position_routed", fake_close)
@@ -196,8 +196,8 @@ def test_position_manager_skips_positions_with_pending_exchange_close(tmp_path, 
 
     calls = []
 
-    def fake_close(position_id, reason, fallback_exit_price=None, *, allow_live=False):
-        calls.append((position_id, reason, fallback_exit_price, allow_live))
+    def fake_close(position_id, reason, *, allow_live=False):
+        calls.append((position_id, reason, allow_live))
         raise AssertionError("pending close should suppress repeat close routing")
 
     monkeypatch.setattr(pm, "close_position_routed", fake_close)

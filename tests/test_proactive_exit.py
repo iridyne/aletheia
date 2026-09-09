@@ -29,7 +29,7 @@ def _pos(**over):
 def _insert_open(db, pid, **cols):
     base = {
         "id": pid, "symbol": "BTC/USDT", "market_type": "usdt_futures", "direction": "long",
-        "quantity": 1.0, "entry_price": 100.0, "execution_mode": "paper_internal", "status": "open",
+        "quantity": 1.0, "entry_price": 100.0, "execution_mode": "bitget_demo", "status": "open",
     }
     base.update(cols)
     keys = ",".join(base)

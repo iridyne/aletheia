@@ -2120,7 +2120,6 @@ Return JSON: {_json.dumps(schema)}"""
                     close_result = close_position_routed(
                         pos["id"],
                         reason="pi_agent_portfolio_review",
-                        fallback_exit_price=None,
                         decision_reasoning=reasoning,
                         decision_actor="system_operator",
                         decision_source="portfolio_review",
