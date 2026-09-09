@@ -179,12 +179,6 @@ def _run_update(*, restart: bool, verbose: bool = False) -> None:
         typer.echo("Aletheia Tray will complete the short switch and automatic health check.")
         return
 
-    if sys.platform == "linux":
-        if not restart:
-            typer.echo("source_update_requires_restart", err=True)
-            raise typer.Exit(1)
-        auto_run()
-        return
 
     from aletheia.update.continuity import apply_update_with_continuity
 

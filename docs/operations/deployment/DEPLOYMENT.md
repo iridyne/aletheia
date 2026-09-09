@@ -60,8 +60,8 @@ Actions 批处理，合并到 `master` 的 release-bearing 提交才会进入该
    它只接受严格 SemVer，并执行精确 SHA、迁移、SQLite、Smoke、Gateway 和
    Paper/live-disabled 健康门禁。qualification runtime 默认锁定，不随正式 Tag 自动改变。
 
-Linux source 的人工 `aletheia update` 与 timer 使用同一个 `auto.run` 事务、部署锁、
-hold、失败 Tag、settlement/Observer 门禁及失败恢复。`--no-restart` 在副作用前拒绝。
+Linux source 的人工 `aletheia update` 拉取配置的 `origin/<update.branch>` HEAD；timer
+单独使用 `auto.run` 的稳定 Tag 事务。两条路径都保留 settlement/Observer 门禁及失败恢复。
 HTTP source apply 仅返回 CLI 指引；status/progress 只读持久事实，不 fetch、不清 hold，
 也不以 master 的 ahead/behind 数量宣称已部署。
 
