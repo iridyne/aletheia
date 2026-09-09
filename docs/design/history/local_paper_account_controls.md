@@ -152,3 +152,9 @@ feedback and selected-mode profitability checks use Bitget Demo and OKX Demo;
 archived ledger read-only checks remain in `test_authoritative_account_loss.py`.
 The duplicate simulated daily-loss activation test is removed; the existing
 external-account loss test retains the threshold and mode-specific brake claim.
+
+Open archived positions no longer enter current mark-to-market calculations,
+including in-memory Portfolio and CLI projections. Their stored observations
+remain unchanged. The former local mark/cash-equity requirements in
+`test_pnl_pipeline.py` are retired; external tests retain price-read consistency,
+account/instrument matching, mode isolation and snapshot-window behavior.

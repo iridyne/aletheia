@@ -408,7 +408,7 @@ def _select_exchange_upnl(
 
 
 def mark_positions_to_market(persist: bool = False) -> list[dict]:
-    """Compute unrealized PnL on open positions.
+    """Compute unrealized PnL on current external-account open positions.
 
     Prefers exchange uPnL (includes funding fees and mark-price basis) when the
     exchange cache is available. Falls back to the local (price - entry) * qty
@@ -419,7 +419,10 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     When persist=True (used by scheduler's portfolio_snapshot job), also writes
     the updated price/PnL back to the positions table.
     """
-    positions = list_all_open_positions()
+    positions = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
     exc_upnl_index = _build_exchange_upnl_index()
     from aletheia.data.symbols import to_canonical
     from aletheia.data import price_feed as _pf
@@ -431,8 +434,6 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
     local_identity_match_counts: dict[tuple[str, str, str, str, str, str], int] = {}
     for position in positions:
         execution_mode = str(position.get("execution_mode") or "")
-        if execution_mode == "paper_internal":
-            continue
         direction = position["direction"]
         norm_dir = "long" if direction in ("long", "buy") else "short"
         market_type = _normalize_upnl_market_type(position.get("market_type"))
@@ -481,7 +482,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
         account_fingerprint, broker_position_id, identity_valid = _local_upnl_identity(p)
         upnl_source = "local_estimate"
         exc_val = None
-        if execution_mode != "paper_internal" and market_type is not None and identity_valid:
+        if market_type is not None and identity_valid:
             exc_val, upnl_source = _select_exchange_upnl(
                 exc_upnl_index,
                 match_key,
@@ -493,7 +494,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
                     0,
                 ),
             )
-        elif execution_mode != "paper_internal" and not identity_valid:
+        elif not identity_valid:
             upnl_source = "unavailable"
         if exc_val is not None:
             upnl = exc_val
@@ -501,7 +502,7 @@ def mark_positions_to_market(persist: bool = False) -> list[dict]:
             upnl = (price - entry) * qty
         else:
             upnl = (entry - price) * qty
-        if persist and execution_mode in UTA_EXECUTION_MODES:
+        if persist:
             _persist_fields: dict = {"unrealized_pnl": upnl, "unrealized_pnl_source": upnl_source}
             if exact_mark is not None:
                 _persist_fields["current_price"] = exact_mark
@@ -1423,7 +1424,7 @@ def _compute_portfolio(
     today_closed = _closed_today(selected_mode)
     total_today_realized, today_realized_unavailable_count = _complete_realized_total(today_closed)
 
-    # Realized PnL: per-mode for the requested execution_mode (paper dashboard),
+    # Realized PnL: per-mode for the requested execution_mode,
     # plus all-mode total for the exchange_account row.
     all_closed = _all_closed_positions()
     if selected_mode:
@@ -1558,8 +1559,7 @@ def _compute_portfolio(
         "all_realized_pnl_complete": all_realized_unavailable_count == 0,
         "all_realized_pnl_unavailable_count": all_realized_unavailable_count,
         # Historical reconstruction is explicitly separate from strict verified
-        # realized PnL.  It cannot affect Risk, Learning, equity snapshots, or
-        # local paper cash until an independently authorized settlement process.
+        # realized PnL. It cannot affect Risk, Learning, or equity snapshots.
         **historical_accounting,
         "all_historical_reconciled_pnl": all_historical_accounting["historical_reconciled_pnl"],
         "all_historical_reconciled_count": all_historical_accounting["historical_reconciled_count"],

@@ -27,7 +27,7 @@ def test_long_position_pnl(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
         symbol="BTCUSDT", market_type="spot", direction="long",
-        quantity=2.0, entry_price=100.0, execution_mode="paper_internal",
+        quantity=2.0, entry_price=100.0, execution_mode="bitget_demo",
     ))
     # Simulate a fresh exact instrument mark at 110.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
@@ -42,7 +42,7 @@ def test_short_position_pnl(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     repo.insert_position(Position(
         symbol="ETHUSDT", market_type="usdt_futures", direction="short",
-        quantity=3.0, entry_price=200.0, execution_mode="paper_internal",
+        quantity=3.0, entry_price=200.0, execution_mode="bitget_demo",
     ))
     # Simulate a fresh exact instrument mark at 180; short profit = (200-180)*3 = 60.
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 180.0)
@@ -59,7 +59,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
         direction="long",
         quantity=1.0,
         entry_price=90.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     ))
     repo.insert_position(Position(
         symbol="BTCUSDT",
@@ -67,7 +67,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
         direction="short",
         quantity=1.0,
         entry_price=90.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     ))
     repo.insert_position(Position(
         symbol="ETHUSDT",
@@ -75,7 +75,7 @@ def test_unrealized_by_symbol_preserves_zero_and_sums_same_symbol_legs(tmp_path,
         direction="long",
         quantity=1.0,
         entry_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     ))
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
@@ -108,7 +108,7 @@ def test_mark_to_market_updates_every_open_position_beyond_display_limit(
             direction="long",
             quantity=1.0,
             entry_price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         ))
     monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
     monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
@@ -126,14 +126,14 @@ def test_snapshot_persisted(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     repo.insert_position(Position(
         symbol="SOLUSDT", market_type="spot", direction="long",
-        quantity=10.0, entry_price=150.0, execution_mode="paper_internal",
+        quantity=10.0, entry_price=150.0, execution_mode="bitget_demo",
     ))
     repo.insert_market_snapshot(MarketSnapshot(symbol="SOLUSDT", market_type="spot", price=155.0))
-    snap = compute_and_store_snapshot()
+    snap = compute_and_store_snapshot(execution_mode="bitget_demo")
     assert snap.positions_count == 1
     assert len(repo.list_portfolio_snapshots()) == 1
     reset_db()
@@ -145,7 +145,7 @@ def test_portfolio_snapshots_return_latest_window_in_ascending_order(tmp_path, m
     for i in range(61):
         repo.insert_portfolio_snapshot(
             PortfolioSnapshot(
-                total_value_usdt=1000 + i,
+                total_value_usdt=1000 + i, execution_mode="exchange_account",
                 snapshot_at=(base + timedelta(minutes=i)).isoformat(),
             )
         )
@@ -179,7 +179,7 @@ def test_snapshot_day_windows_compare_iso_instants(tmp_path, monkeypatch):
         (after_fractional.isoformat(), 3.0),
     ):
         repo.insert_portfolio_snapshot(
-            PortfolioSnapshot(total_value_usdt=value, snapshot_at=snapshot_at)
+            PortfolioSnapshot(total_value_usdt=value, execution_mode="exchange_account", snapshot_at=snapshot_at)
         )
 
     rows = repo.list_portfolio_snapshots(days=7)
@@ -210,12 +210,12 @@ def test_account_equity_day_windows_compare_iso_instants(tmp_path, monkeypatch):
             PortfolioSnapshot(
                 total_value_usdt=value,
                 account_equity_usdt=value,
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 snapshot_at=snapshot_at,
             )
         )
 
-    rows = repo.list_account_equity_snapshots("paper_internal", days=7)
+    rows = repo.list_account_equity_snapshots("bitget_demo", days=7)
 
     assert [row["account_equity_usdt"] for row in rows] == [2.0, 3.0]
     reset_db()
@@ -236,7 +236,7 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
         funding_cost=0.0,
         funding_source="not_applicable",
         status="closed",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         closed_at=datetime.now(timezone.utc).isoformat(),
     ))
     repo.insert_position(Position(
@@ -245,7 +245,7 @@ def test_today_pnl_includes_closed_pnl_only(tmp_path, monkeypatch):
         direction="long",
         quantity=2.0,
         entry_price=50.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="open",
     ))
     # open ETH position at 60 => unrealized +10
