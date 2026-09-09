@@ -183,7 +183,6 @@ def _default_schedule_for(agent_name: str) -> str | None:
     schedules = {
         "market_data": "every 5 minutes",
         "market_observer": "every 15 minutes",
-        "paper_trader": "every 15 minutes",
         "position_manager": "every 5 minutes",
         "exchange_sync": "every 5 minutes",
         "portfolio_snapshot": "every 10 minutes",

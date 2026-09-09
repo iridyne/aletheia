@@ -3817,7 +3817,7 @@ def _probe_serenity_pipeline(report: Report) -> None:
 
 
 def _probe_volume_ranking(report: Report) -> None:
-    """Volume ranking snapshot freshness — drives universe ordering for paper_trader."""
+    """Volume ranking snapshot freshness for universe ordering."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()

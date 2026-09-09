@@ -526,20 +526,21 @@ async def test_operator_recommendations_include_prompt_change_proposal_due_for_r
 
 
 @pytest.mark.anyio
-async def test_operator_recommendations_include_schedule_change_proposal_due_for_repeated_manual_runs(client):
+@pytest.mark.parametrize("agent_name, expected", [("market_observer", True), ("paper_trader", False)])
+async def test_operator_recommendations_include_schedule_change_proposal_due_for_repeated_manual_runs(client, agent_name, expected):
     from aletheia.storage.models import AgentRun
     from aletheia.storage.repositories import insert_agent_run
 
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name=agent_name,
             trigger_type="manual",
             status="completed",
         )
     )
     insert_agent_run(
         AgentRun(
-            agent_name="market_observer",
+            agent_name=agent_name,
             trigger_type="manual",
             status="completed",
         )
@@ -549,7 +550,7 @@ async def test_operator_recommendations_include_schedule_change_proposal_due_for
     assert recommendations.status_code == 200
 
     kinds = {item["kind"] for item in recommendations.json()}
-    assert "agent_schedule_change_proposal_due" in kinds
+    assert ("agent_schedule_change_proposal_due" in kinds) is expected
 
 
 @pytest.mark.anyio

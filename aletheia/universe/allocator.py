@@ -39,11 +39,8 @@ _FAMILY_CALIBRATION_HORIZON = {
 }
 _DEFAULT_CALIBRATION_HORIZON = "1h"
 
-# Legacy per-family membership TTL (seconds). No longer drives entry_ttl_sec
-# (now unified via config.universe.entry_ttl_sec). Retained only for the
-# soft-penalty decay in paper_trader_ranker, which uses family-specific TTL
-# as the half-life denominator. Will be removed once ranker switches to
-# config-driven entry_ttl_sec (#1325).
+# Historical per-family TTL values (seconds), exposed by analytics readers.
+# Current entry TTL comes from config.universe.entry_ttl_sec.
 _FAMILY_TTL = {
     "momentum": 1800,       # 30 min
     "mean_reversion": 3600, # 1 hour

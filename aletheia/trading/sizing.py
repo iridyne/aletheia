@@ -8,8 +8,8 @@ estimate Kelly-optimal exposure: it consumes neither calibrated win probability
 nor payoff odds/return distributions.  The field is a bounded policy scaling
 factor until a separately measured Kelly policy exists.
 
-Legacy helpers can be called from paper_trader for RuleSet-driven entries. The
-active System Operator path uses ``available_balance_risk_budget_size`` instead.
+The System Operator path uses ``available_balance_risk_budget_size``.
+The conviction formula remains available for sizing analysis.
 All proposals still pass through Risk Engine gates after sizing.
 """
 from __future__ import annotations

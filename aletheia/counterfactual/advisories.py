@@ -255,8 +255,7 @@ def _epoch_start(policy_epoch_id: str) -> datetime | None:
     """Return the earliest shadow_trades.created_at for a given policy epoch.
 
     Used as the effective epoch-activation time for windowed comparison.
-    Approximates true policy_epoch activation closely enough (the gap between
-    activation and the first shadow row is bounded by one paper_trader tick).
+    This is the first recorded shadow sample, not proof of policy activation.
     """
     from aletheia.storage.sqlite import get_db
 
