@@ -70,7 +70,9 @@ This prevents aggregate OI from silently replacing the execution venue's OI.
   live funding fetch may replace the fallback; a failed fetch cannot revive a
   stale cached value. Live funding and OI use a receipt time captured after each
   response, while the feature snapshot timestamp records completed assembly;
-  the scan-start clock remains the OHLCV cutoff and DB-fallback reference.
+  the scan-start clock remains the OHLCV cutoff and DB-fallback reference. Bitget
+  live funding uses the rate and exchange timestamp from the same already-fetched
+  perpetual ticker; its untimed funding-rate response is not a live observation.
 
 ## Non-goals
 
