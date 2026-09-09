@@ -116,6 +116,7 @@ def test_opportunity_crud(tmp_path):
 def test_trade_proposal_to_order_flow(tmp_path):
     setup_test_db(tmp_path)
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         symbol="ETH/USDT",
         market_type="spot",
         direction="long",
@@ -128,8 +129,8 @@ def test_trade_proposal_to_order_flow(tmp_path):
         proposal_id=proposal.id,
         approved=True,
         risk_score=0.5,
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal",
+        allowed_execution_mode="bitget_demo",
+        proposal_execution_mode="bitget_demo",
         decision_role="authoritative",
         evaluated_quantity=0.01,
         proposal_commit_hash=proposal.commit_hash,
@@ -138,9 +139,10 @@ def test_trade_proposal_to_order_flow(tmp_path):
 
     order = Order(
         proposal_id=proposal.id, risk_decision_id=decision.id,
+        client_order_id=proposal.id,
         symbol="ETH/USDT", market_type="spot", direction="long",
         order_type="market", quantity=0.01, price=proposal.price,
-        execution_mode="paper_internal"
+        execution_mode="bitget_demo"
     )
     repo.insert_order(order)
 
@@ -173,7 +175,7 @@ def test_order_transition_table(tmp_path, current, target, allowed):
         order_type="market",
         quantity=0.01,
         price=3000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status=current,
         source="adopted",
     )
@@ -191,6 +193,7 @@ def test_order_transition_table(tmp_path, current, target, allowed):
 def test_native_close_consumes_position_not_entry_risk_decision(tmp_path):
     setup_test_db(tmp_path)
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         symbol="ETH/USDT",
         market_type="spot",
         direction="long",
@@ -202,8 +205,8 @@ def test_native_close_consumes_position_not_entry_risk_decision(tmp_path):
         proposal_id=proposal.id,
         approved=True,
         risk_score=0.5,
-        allowed_execution_mode="paper_internal",
-        proposal_execution_mode="paper_internal",
+        allowed_execution_mode="bitget_demo",
+        proposal_execution_mode="bitget_demo",
         decision_role="authoritative",
         evaluated_quantity=proposal.quantity,
         proposal_commit_hash=proposal.commit_hash,
@@ -211,6 +214,7 @@ def test_native_close_consumes_position_not_entry_risk_decision(tmp_path):
     repo.insert_risk_decision(decision)
     entry = Order(
         proposal_id=proposal.id,
+        client_order_id=proposal.id,
         risk_decision_id=decision.id,
         symbol=proposal.symbol,
         market_type=proposal.market_type,
@@ -389,7 +393,7 @@ def test_fill_wins_real_db_race_against_cancel(tmp_path, monkeypatch):
         order_type="market",
         quantity=1,
         price=100,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         source="adopted",
     )
     repo.insert_order(order)
@@ -418,7 +422,7 @@ def test_private_materialization_wins_real_db_race_against_ack(tmp_path, monkeyp
         order_type="market",
         quantity=1,
         price=100,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         source="adopted",
     )
     repo.insert_order(order)
