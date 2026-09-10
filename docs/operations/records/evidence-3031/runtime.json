@@ -1,0 +1,287 @@
+{
+  "repository_sha": "a41d16460b5e7d6dbec14fd23bbf2143b8ac197e",
+  "control_as_of": "2026-09-10T05:06:20.798247+00:00",
+  "sha": {
+    "deployed_head": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "deployed_head_short": "1543c7c1e705",
+    "disk_head": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "disk_head_short": "1543c7c1e705",
+    "cached_master_head": "a41d16460b5e7d6dbec14fd23bbf2143b8ac197e",
+    "cached_master_head_short": "a41d16460b5e",
+    "config_recorded": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "config_recorded_short": "1543c7c1e705",
+    "auto_recorded": "aad6e17d2f9b4c8132b8f1f91f9298395c73540d",
+    "auto_recorded_short": "aad6e17d2f9b",
+    "runtime_recorded": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "runtime_recorded_short": "1543c7c1e705",
+    "runtime_recorded_source": "config",
+    "deployed_matches_recorded": true,
+    "deployed_matches_config": true,
+    "deployed_matches_master": false,
+    "disk_matches_deployed": true
+  },
+  "runtime_session": {
+    "available": true,
+    "unavailable_reason": null,
+    "source": "durable_db",
+    "verification": "gateway_process_tree",
+    "verified_live_gateway": true,
+    "session_id": "d96c5d259218",
+    "runtime_id": "runtime-local-current",
+    "boot_sha": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "behavior_fingerprint": "66e1e0bed9fff5e4",
+    "schema_version": "aletheia-sqlite-v79",
+    "execution_mode": "bitget_demo",
+    "started_at": "2026-09-10T04:01:28.681451+00:00",
+    "durable": true
+  },
+  "start_database_read": {
+    "as_of": "2026-09-10T05:08:04.226285+00:00",
+    "sessions": [
+      {
+        "session_id": "d96c5d259218",
+        "runtime_id": "runtime-local-current",
+        "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T04:01:28.681451+00:00",
+        "ended_at": null
+      },
+      {
+        "session_id": "d0a700350619",
+        "runtime_id": "runtime-local-current",
+        "boot_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T03:49:31.255399+00:00",
+        "ended_at": "2026-09-10T04:01:05.390304+00:00"
+      },
+      {
+        "session_id": "54ad4d1f2a39",
+        "runtime_id": "runtime-local-current",
+        "boot_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T03:43:02.765493+00:00",
+        "ended_at": "2026-09-10T03:49:28.746473+00:00"
+      }
+    ],
+    "plans": [
+      {
+        "id": "ee9ae4665093",
+        "planning_generation_id": "b0a26e335f2f",
+        "candidate_id": "d0bf4311fcb5",
+        "symbol": "DOGE/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "monitoring_evidence_json": "{\"channels\":{\"quote\":{\"last_exchange_at\":1789013822269,\"last_received_at\":1789013822511,\"last_sequence\":1789013822271000,\"reason\":null,\"state\":\"ready\"},\"trade\":{\"last_exchange_at\":1789013821383,\"last_received_at\":1789013821648,\"last_sequence\":1789013821385006,\"reason\":null,\"state\":\"ready\"}},\"instrument\":{\"exchange\":\"bitget\",\"market_type\":\"spot\",\"symbol\":\"DOGE/USDT\"},\"passive_entry\":{\"eligible\":true,\"ever_eligible\":true,\"observed_at\":\"2026-09-10T04:17:02.511000+00:00\"},\"required_channels\":[\"quote\",\"trade\"],\"state\":\"ready\",\"state_changed_at\":\"2026-09-10T04:17:02.512081+00:00\",\"stream_generation_id\":\"fda9d0bf1f60471cb75c3249ce33548b\",\"subscription_generation_id\":\"5ef5694cb72f475db1de4bbf11a4d669\",\"updated_at\":\"2026-09-10T04:17:02.511000+00:00\",\"version\":\"entry-plan-monitoring/v1\"}",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+        "runtime_session_id": "d96c5d259218",
+        "created_at": "2026-09-10T04:04:04.225386+00:00"
+      }
+    ],
+    "generations": [
+      {
+        "id": "b0a26e335f2f",
+        "candidate_id": "d0bf4311fcb5",
+        "symbol": "DOGE/USDT",
+        "is_current": 1,
+        "status": "planned",
+        "result_kind": "entry_plan",
+        "entry_plan_id": "ee9ae4665093",
+        "cycle_reason": "canonical_compatibility_cutover",
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "entry_plan",
+        "outcome_reason": "entry_plan_created",
+        "created_at": "2026-09-10T04:03:37.482883+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "id": "179966302246",
+        "candidate_id": "e653bc7a4593",
+        "symbol": "NEAR/USDT",
+        "is_current": 1,
+        "status": "unavailable",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "cycle_reason": "canonical_compatibility_cutover",
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "ENTRY_PLAN_COMPILE_INVALID:EXECUTION_CONTEXT_UNAVAILABLE",
+        "created_at": "2026-09-10T05:03:49.403106+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "id": "4495761ed195",
+        "candidate_id": "56e30f5c269e",
+        "symbol": "BGB/USDT",
+        "is_current": 1,
+        "status": "unavailable",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "cycle_reason": "canonical_compatibility_cutover",
+        "model_invoked": 1,
+        "compiler_invoked": 0,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "PLANNER_SCHEMA_INVALID: constraint_violation",
+        "created_at": "2026-09-10T05:03:49.403106+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      }
+    ],
+    "proposals": [
+      {
+        "id": "2afd512012bf",
+        "entry_plan_id": "ee9ae4665093",
+        "symbol": "DOGE/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-10T04:17:02.521217+00:00"
+      }
+    ],
+    "risks": [
+      {
+        "id": "74ef7bfc8837",
+        "proposal_id": "2afd512012bf",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:0.2532<1.5000\", \"spot_short_not_allowed\"]",
+        "created_at": "2026-09-10T04:17:02.637373+00:00"
+      }
+    ],
+    "order_counts": [
+      {
+        "execution_mode": "paper_internal",
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "execution_mode": "paper_internal",
+        "status": "filled",
+        "n": 838
+      }
+    ],
+    "current_orders": [],
+    "positions": [],
+    "counts": {
+      "universe_members": 82350,
+      "candidate_planning_generations": 1805,
+      "entry_plans": 138,
+      "trade_proposals": 774,
+      "risk_decisions": 777,
+      "orders": 847,
+      "fills": 838,
+      "positions": 419
+    }
+  },
+  "end_read": {
+    "as_of": "2026-09-10T05:15:46.042612+00:00",
+    "disk_sha": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "session_window_start": "2026-09-10T04:01:28.681451+00:00",
+    "config": {
+      "require_llm_at_startup": false,
+      "selected_execution_mode": "bitget_demo",
+      "legacy_exchange_name": "paper_internal",
+      "environment": "demo",
+      "bitget_profile": "classic_v2",
+      "enabled_markets": {
+        "spot": true,
+        "usdt_futures": true
+      },
+      "live": "live_disabled",
+      "permission": "Full"
+    },
+    "account": {
+      "fetched_at": "2026-09-10T05:11:39.650349+00:00",
+      "sync_status": "ok",
+      "sync_complete": true,
+      "connected_brokers": [
+        "bitget_demo"
+      ],
+      "identities": [
+        {
+          "broker_id": "bitget_demo",
+          "identity": {
+            "account_id": "bitget_demo",
+            "execution_mode": "bitget_demo",
+            "venue": "bitget",
+            "environment": "demo",
+            "profile": "classic_v2",
+            "account_fingerprint": "sha256:6dc3d2fc5b4ab7bd90248de369abfd00e3571cb87a1d439173ff1c44041b2577",
+            "credential_generation": 29,
+            "sub_accounts": [],
+            "adapter_implementation": "CCXTUTAAdapter",
+            "adapter_version": "1",
+            "ccxt_version": "4.5.56"
+          },
+          "account_completeness": "complete",
+          "position_completeness": "complete",
+          "reason_code": null
+        }
+      ],
+      "position_count": 0
+    },
+    "snapshot_counts": [
+      {
+        "id": "002b28c4c3d4",
+        "source_kind": "universe",
+        "candidates": 3,
+        "execution_eligible": 3
+      }
+    ],
+    "session_counts": {
+      "candidate_planning_generations": 3,
+      "entry_plans": 1,
+      "trade_proposals": 1,
+      "risk_decisions": 1,
+      "orders": 0,
+      "fills": 0,
+      "positions": 0
+    },
+    "session_candidate_count": 12,
+    "active_plans": [],
+    "all_order_counts": [
+      {
+        "execution_mode": "paper_internal",
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "execution_mode": "paper_internal",
+        "status": "filled",
+        "n": 838
+      }
+    ],
+    "all_open_positions": [],
+    "health": {
+      "status": "healthy",
+      "issues": [],
+      "version": "0.8.6",
+      "paused": false,
+      "pause_owners": [],
+      "pause_blockers": [],
+      "resume_blocked_reason": null,
+      "scheduler_resume_authority": {
+        "allowed": true,
+        "blocked_by": [],
+        "dependency_recovery_is_resume": false
+      }
+    },
+    "version": {
+      "version": "0.8.6",
+      "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+      "pid": 232221,
+      "uptime_sec": 4458.8
+    }
+  },
+  "qualification_artifact": {
+    "path": "qualifications/uta-bitget_demo.json",
+    "exists": false,
+    "reason": "qualification_artifact_unavailable"
+  }
+}
