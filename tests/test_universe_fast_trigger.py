@@ -1015,10 +1015,6 @@ async def test_watch_loop_reloads_entry_plans_while_stream_is_busy(monkeypatch):
     monkeypatch.setattr(watch, "_load_entry_plan_watchers", load_watchers)
     monkeypatch.setattr(watch.repo, "record_entry_plan_monitoring", lambda *args: None)
     monkeypatch.setattr(watch.repo, "get_entry_plan", lambda *args: None)
-    monkeypatch.setattr(watch, "_is_momentum_geometry_trigger_plan", lambda plan: False)
-    async def observe(plan, engine, event):
-        return engine.observe(event)
-    monkeypatch.setattr(watch, "_observe_entry_plan_engine", observe)
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
 
@@ -2168,174 +2164,30 @@ async def test_reconfigure_unavailable_status_has_watched_plan_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_entry_plan_watcher_dispatches_hidden_momentum_v2_engine(monkeypatch):
+@pytest.mark.parametrize("outcome", ["invalidated", "active_claim"])
+async def test_entry_plan_watcher_retires_historical_plan_without_starting_engine(monkeypatch, outcome):
     from types import SimpleNamespace
-
     from aletheia.agent_runtime import fast_trigger_watch as watch
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     payload = "{}"
-    row = {
-        "id": "v2-shadow-plan",
-        "status": "waiting",
-        "plan_json": payload,
-        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
-        "order_id": None,
-    }
-    plan = SimpleNamespace(
-        plan_id="v2-shadow-plan",
-        planning_generation_id="generation-v2",
-        risk_policy_id="policy-v2",
-        risk_policy_revision=1,
-        risk_policy_hash="policy-hash-v2",
-        execution_account_mode="bitget_demo",
-        execution_mode="TRIGGERED",
-        order_tactic="OPPOSING_BBO_IOC",
-        max_wait_sec=0,
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        venue="bitget",
-        symbol="BTC/USDT",
-        market_type="perp",
-        direction="long",
-        trigger_spec_id="momentum-retrace-reclaim",
-        _historical_entry_metadata={"trigger_spec_version": "v2"},
-        trigger_params={
-            "breakout_level": 100.0,
-            "pullback_low": 99.5,
-            "pullback_high": 100.5,
-            "entry_low": 100.0,
-            "entry_high": 100.5,
-            "invalidation_price": 98.0,
-            "sweep_low": 99.5,
-            "sweep_high": 100.0,
-            "atr_abs": 2.0,
-            "geometry_version": "momentum-entry-geometry/v2",
-            "geometry_fingerprint": "a" * 64,
-        },
-    )
+    row = {"id": "historical-plan", "status": "waiting", "plan_json": payload,
+           "plan_hash": hashlib.sha256(payload.encode()).hexdigest(), "order_id": None}
+    plan = SimpleNamespace(plan_id=row["id"], planning_generation_id="generation",
+                           _historical_entry_metadata={"version": "entry-plan/v1"})
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
-    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
-    monkeypatch.setattr(
-        "aletheia.risk.policy.resolve_risk_policy",
-        lambda _cfg, _mode: SimpleNamespace(
-            policy=SimpleNamespace(policy_id="policy-v2", revision=1),
-            policy_hash="policy-hash-v2",
-        ),
-    )
+    monkeypatch.setattr(watch, "decode_entry_plan", lambda _payload: plan)
+    retired = []
 
-    async def no_prewarm(*_args, **_kwargs):
-        return None
+    async def retire(row, **kwargs):
+        retired.append((row["id"], kwargs["reason"]))
+        return outcome
 
-    monkeypatch.setattr(watch, "_prewarm_market_structure", no_prewarm)
-    cfg = SimpleNamespace(
-        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
-        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
-        universe=SimpleNamespace(max_spread_bps=50, min_depth_10bps_usd=100),
-    )
-
-    plans, engines = await watch._load_entry_plan_watchers(cfg)
-
-    assert plans[plan.plan_id] is plan
-    assert isinstance(engines[plan.plan_id], MomentumTriggerEngine)
-
-
-@pytest.mark.asyncio
-async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_path, monkeypatch):
-    _prepare(tmp_path, monkeypatch)
-    from types import SimpleNamespace
-
-    from aletheia.agent_runtime import fast_trigger_watch as watch
-    from aletheia.data.symbols import InstrumentId
-    from aletheia.storage import repositories as repo
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
-    from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerPolicy
-
-    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = MomentumTriggerEngine(
-        instrument=instrument,
-        direction="long",
-        breakout_level=100.0,
-        pullback_band=(99.5, 100.5),
-        sweep_band=(99.5, 100.0),
-        entry_zone=(100.0, 100.5),
-        invalidation_price=98.0,
-        atr_abs=2.0,
-        geometry_version="momentum-entry-geometry/v2",
-        geometry_fingerprint="b" * 64,
-        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-    )
-    engine.confirm_subscription()
-    plan = SimpleNamespace(
-        plan_id="v2-audit-plan",
-        trigger_spec_id="momentum-retrace-reclaim",
-        _historical_entry_metadata={"trigger_spec_version": "v2"},
-        trigger_params={
-            "geometry_version": "momentum-entry-geometry/v2",
-            "geometry_fingerprint": "b" * 64,
-        },
-    )
-
-    def event(kind, at, sequence, **values):
-        return FastMarketEvent(
-            event_type=kind,
-            instrument=instrument,
-            exchange_timestamp_ms=at,
-            received_timestamp_ms=at,
-            sequence=sequence,
-            **values,
-        )
-
-    events = (
-        event("quote", 1_000, 1, bid=99.9, ask=99.95),
-        event("depth", 1_050, 1, bids=((100.1, 10.0),), asks=((100.2, 10.0),)),
-        event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"),
-        event("trade", 1_250, 2, price=100.0, size=4.0, side="sell"),
-        event("quote", 1_200, 2, bid=99.8, ask=99.9),
-        event("quote", 1_500, 3, bid=100.05, ask=100.15),
-        event("quote", 1_900, 4, bid=100.1, ask=100.2),
-    )
-    ready = None
-    for observed in events:
-        ready = await watch._observe_entry_plan_engine(plan, engine, observed) or ready
-
-    assert ready is not None
-    assert engine.state_path == ["armed", "pullback", "sweep", "reclaim", "triggered"]
-    state_audits = repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")
-    trigger_audits = repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")
-    assert len(state_audits) == 4
-    assert {json.loads(row["after_state"])["state"] for row in state_audits} == {
-        "pullback",
-        "sweep",
-        "reclaim",
-        "triggered",
-    }
-    assert len(trigger_audits) == 1
-    trigger_state = json.loads(trigger_audits[0]["after_state"])
-    assert trigger_state["geometry_fingerprint"] == "b" * 64
-    assert trigger_state["entry_trigger"]["state_path"] == engine.state_path
-    assert repo.get_db().execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
-
-    assert await watch._observe_entry_plan_engine(plan, engine, events[-1]) is None
-    assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")) == 4
-    assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")) == 1
-
-    anchor_engine = MomentumTriggerEngine(
-        instrument=instrument, direction="long", breakout_level=100.0,
-        pullback_band=(99.5, 100.5), sweep_band=(99.5, 100.0),
-        entry_zone=(100.0, 100.5), invalidation_price=98.0, atr_abs=2.0,
-        geometry_version="anchor-retrace-reclaim-geometry/v1",
-        geometry_fingerprint="c" * 64,
-        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-        trigger_spec_id="anchor-retrace-reclaim",
-    )
-    anchor_engine.confirm_subscription()
-    anchor_ready = None
-    for observed in events:
-        anchor_ready = anchor_engine.observe(observed) or anchor_ready
-    assert anchor_ready.entry_trigger["trigger_spec_id"] == "anchor-retrace-reclaim"
-    assert "trigger_spec_version" not in anchor_ready.entry_trigger
+    monkeypatch.setattr(watch, "_terminalize_entry_plan", retire)
+    plans, engines = await watch._load_entry_plan_watchers(SimpleNamespace())
+    assert engines == {}
+    assert plans == ({plan.plan_id: plan} if outcome == "active_claim" else {})
+    assert retired == [(plan.plan_id, "entry_plan_runtime_authority_revoked")]
 
 
 @pytest.mark.asyncio

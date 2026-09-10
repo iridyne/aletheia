@@ -10,10 +10,7 @@ from datetime import datetime, timezone
 
 from aletheia.data.symbols import InstrumentId
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import (
-    AuditEvent,
-)
-from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
+from aletheia.trading.entry_compat import decode_entry_plan, historical_plan_version
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.trading.momentum_trigger import (
     MomentumTriggerEngine,
@@ -82,148 +79,6 @@ async def _prewarm_market_structure(
             instrument,
             exc_info=True,
         )
-def _entry_plan_trigger_id(plan) -> str:
-    historical = historical_trigger_id(plan)
-    if historical is not None:
-        return historical
-    return str(getattr(plan, "trigger_spec_id", None) or _MOMENTUM_TRIGGER)
-
-
-def _is_momentum_geometry_trigger_plan(plan) -> bool:
-    return _entry_plan_trigger_id(plan) == _MOMENTUM_GEOMETRY_TRIGGER
-async def _shadow_plan_terminal_state(plan_id: str) -> str | None:
-    """Return a durable v2 terminal fact; None means the audit store was unavailable."""
-
-    try:
-        if await asyncio.to_thread(
-            repo.has_audit_event,
-            event_type="momentum_v2_trigger_observed",
-            entity_id=plan_id,
-        ):
-            return "triggered"
-        if await asyncio.to_thread(
-            repo.has_audit_event,
-            event_type="momentum_v2_state_transition",
-            entity_id=plan_id,
-        ):
-            events = await asyncio.to_thread(
-                repo.list_audit_events,
-                limit=100,
-                event_type="momentum_v2_state_transition",
-            )
-            if any(
-                row.get("entity_id") == plan_id
-                and '"state":"invalidated"' in str(row.get("after_state") or "")
-                for row in events
-            ):
-                return "invalidated"
-        return ""
-    except Exception:
-        logger.warning("Momentum v2 Shadow audit state unavailable for %s", plan_id, exc_info=True)
-        return None
-
-
-def _json_state(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _persist_shadow_audit(event: AuditEvent) -> None:
-    repo.insert_audit_event_once(event)
-    try:
-        from aletheia.files.jsonl import write_audit
-
-        if not write_audit(event.model_dump(), mirror_db=False, dedup_id=event.id):
-            logger.warning("Shadow audit JSONL write unavailable: %s", event.id)
-    except Exception:
-        logger.warning("Shadow audit JSONL write failed: %s", event.id, exc_info=True)
-
-
-async def _observe_entry_plan_engine(plan, engine, event):
-    """Observe one plan and retain v2 state/trigger facts without execution."""
-
-    before_path: tuple[str, ...] = tuple(getattr(engine, "state_path", ()))
-    ready = engine.observe(event)
-    if not _is_momentum_geometry_trigger_plan(plan):
-        return ready
-
-    params = plan.trigger_params
-    geometry = {
-        "geometry_version": params.get("geometry_version"),
-        "geometry_fingerprint": params.get("geometry_fingerprint"),
-    }
-    state_path: tuple[str, ...] = tuple(engine.state_path)
-    for index in range(len(before_path), len(state_path)):
-        previous = state_path[index - 1] if index > 0 else "armed"
-        current = state_path[index]
-        event_id = f"momentum-v2-state:{plan.plan_id}:{index}:{event.sequence}:{current}"
-        audit = AuditEvent(
-            id=event_id,
-            timestamp=datetime.fromtimestamp(
-                event.received_timestamp_ms / 1000,
-                tz=timezone.utc,
-            ).isoformat(),
-            actor="system",
-            source="fast_trigger_shadow",
-            event_type="momentum_v2_state_transition",
-            entity_type="entry_plan",
-            entity_id=plan.plan_id,
-            before_state=_json_state(
-                {"state": previous, "state_path": list(state_path[:index])}
-            ),
-            after_state=_json_state(
-                {
-                    **geometry,
-                    "state": current,
-                    "state_path": list(state_path[: index + 1]),
-                    "event_type": event.event_type,
-                    "event_sequence": event.sequence,
-                    "event_received_at_ms": event.received_timestamp_ms,
-                    "event_exchange_at_ms": event.exchange_timestamp_ms,
-                }
-            ),
-            message=f"Shadow Momentum TriggerSpec v2 state transition {previous}->{current}",
-        )
-        await asyncio.to_thread(_persist_shadow_audit, audit)
-
-    if ready is None:
-        return None
-    trigger = dict(ready.entry_trigger)
-    event_id = (
-        f"momentum-v2-trigger:{plan.plan_id}:{ready.quote_sequence}:"
-        f"{ready.trade_sequence}:{ready.depth_sequence}:"
-        f"{trigger.get('geometry_fingerprint', '')}"
-    )
-    audit = AuditEvent(
-        id=event_id,
-        timestamp=ready.observed_at,
-        actor="system",
-        source="fast_trigger_shadow",
-        event_type="momentum_v2_trigger_observed",
-        entity_type="entry_plan",
-        entity_id=plan.plan_id,
-        before_state=_json_state({"state": "reclaim"}),
-        after_state=_json_state(
-            {
-                **geometry,
-                "state": "triggered",
-                "entry_price": ready.entry_price,
-                "bid": ready.bid,
-                "ask": ready.ask,
-                "spread_bps": ready.spread_bps,
-                "depth_10bps_usd": ready.depth_10bps_usd,
-                "taker_buy_ratio": ready.taker_buy_ratio,
-                "quote_sequence": ready.quote_sequence,
-                "trade_sequence": ready.trade_sequence,
-                "depth_sequence": ready.depth_sequence,
-                "entry_trigger": trigger,
-            }
-        ),
-        message="Shadow Momentum TriggerSpec v2 produced a trigger; no execution authority granted.",
-    )
-    await asyncio.to_thread(_persist_shadow_audit, audit)
-    return ready
-
-
 def current_fast_trigger_task() -> asyncio.Task | None:
     return _watch_task
 
@@ -480,6 +335,14 @@ async def _load_entry_plan_watchers(
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
             continue
+        if historical_plan_version(plan) is not None:
+            outcome = await _terminalize_entry_plan(
+                row, status="invalidated", reason="entry_plan_runtime_authority_revoked",
+                cancel_entry_plan_order=cancel_entry_plan_order, now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
+            continue
         if getattr(plan, "entry_hypothesis_json", None) is not None:
             try:
                 from aletheia.execution.entry_plan_execution import (
@@ -576,26 +439,6 @@ async def _load_entry_plan_watchers(
                     )
                     continue
         plans[plan.plan_id] = plan
-        if _is_momentum_geometry_trigger_plan(plan):
-            shadow_state = await _shadow_plan_terminal_state(plan.plan_id)
-            if shadow_state is None:
-                logger.warning("Skipping Momentum v2 plan %s until Shadow audit is readable", plan.plan_id)
-                continue
-            if shadow_state == "triggered":
-                continue
-            if shadow_state == "invalidated":
-                outcome = await _terminalize_entry_plan(
-                    row,
-                    status="invalidated",
-                    reason="entry_plan_price_invalidated",
-                    cancel_entry_plan_order=cancel_entry_plan_order,
-                    now=now,
-                )
-                if _entry_plan_outcome_is_unresolved(outcome):
-                    plans[plan.plan_id] = plan
-                else:
-                    plans.pop(plan.plan_id, None)
-                continue
         if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
             continue
         if row["status"] in {"triggered", "risk_reserved"}:
@@ -632,7 +475,7 @@ async def _load_entry_plan_watchers(
             max_spread_bps=float(cfg.universe.max_spread_bps),
             min_depth_10bps_usd=float(cfg.universe.min_depth_10bps_usd),
         )
-        trigger_id = _entry_plan_trigger_id(plan)
+        trigger_id = str(getattr(plan, "trigger_spec_id", None) or _MOMENTUM_TRIGGER)
         try:
             if trigger_id in {_MOMENTUM_GEOMETRY_TRIGGER, _ANCHOR_RETRACE_TRIGGER}:
                 engine: TriggerEngine | MomentumTriggerEngine = MomentumTriggerEngine(
@@ -961,9 +804,7 @@ async def _watch_loop(cfg) -> None:
                         if instrument != event.instrument:
                             continue
                         row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
-                        if row is None:
-                            continue
-                        if _is_momentum_geometry_trigger_plan(plan):
+                        if row is None or historical_plan_version(plan) is not None:
                             continue
                         invalidated = (plan.direction == "long" and float(event.bid) <= plan.invalidation_price) or (
                             plan.direction == "short" and float(event.ask) >= plan.invalidation_price
@@ -1024,25 +865,7 @@ async def _watch_loop(cfg) -> None:
                     plan = plans.get(plan_id)
                     if plan is None:
                         continue
-                    ready = await _observe_entry_plan_engine(plan, engine, event)
-                    if _is_momentum_geometry_trigger_plan(plan) and engine.state == "invalidated":
-                        from aletheia.execution.gateway import cancel_entry_plan_order
-
-                        row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
-                        if row is not None and row["status"] == "waiting":
-                            await _terminalize_entry_plan(
-                                row,
-                                status="invalidated",
-                                reason="entry_plan_price_invalidated",
-                                cancel_entry_plan_order=cancel_entry_plan_order,
-                                now=datetime.now(timezone.utc),
-                            )
-                        continue
-                    if _is_momentum_geometry_trigger_plan(plan) and ready is not None:
-                        logger.info(
-                            "fast trigger treatment plan=%s result=trigger_observed",
-                            plan_id,
-                        )
+                    ready = engine.observe(event)
                     if ready is not None:
                         from aletheia.trading.entry_activation import build_entry_trigger_activation
 

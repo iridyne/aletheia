@@ -196,3 +196,7 @@ facts only at a same-venue deterministic trigger, and preserve Risk/Gateway as
 the execution authority. When repository and runtime behavior converge, move
 the normative state and failure semantics into the decision, execution,
 filter-evidence, and data contracts and mark this Proposal implemented.
+
+## Canonical Entry retirement
+
+The Momentum v2 Shadow watcher producer and audit-driven runtime resume path are retired. Historical Plan formats remain readable through `entry_compat`, but the watcher routes them to existing Gateway cancellation/reconciliation and never arms their trigger engines. Existing Shadow audit rows and stored Plan JSON/hashes are historical evidence and are not rewritten. Current canonical trigger evidence is bound through immutable Entry trigger activations.

@@ -61,7 +61,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
     from aletheia.execution import entry_plan_execution
     from aletheia.execution.gateway import execute_existing_proposal, _execute_proposal
     from aletheia.agent_runtime.fast_trigger_watch import (
-        _load_entry_plan_watchers, _observe_entry_plan_engine, _watch_loop,
+        _load_entry_plan_watchers, _watch_loop,
         _entry_plan_expiry_reason, _monitoring_ready, _confirm_ready_engines,
         _submit_activated_entry_plan, _watched_instruments,
     )
@@ -112,7 +112,6 @@ def entry_contract_fingerprints() -> tuple[str, str]:
                 "gateway_execution": _execute_proposal,
                 "watcher_subscriptions": _watched_instruments,
                 "watcher_loading": _load_entry_plan_watchers,
-                "watcher_observation": _observe_entry_plan_engine,
                 "watcher_loop": _watch_loop,
                 "watcher_expiry": _entry_plan_expiry_reason,
                 "monitoring_readiness": _monitoring_ready,
