@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import uuid4
@@ -521,7 +522,9 @@ def execute_entry_plan(
 
     try:
         repo.insert_trade_proposal(proposal)
-    except Exception:
+    except sqlite3.IntegrityError as exc:
+        if str(exc) != "UNIQUE constraint failed: trade_proposals.entry_plan_id":
+            raise
         existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
         if existing is None:
             raise

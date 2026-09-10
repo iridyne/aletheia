@@ -351,6 +351,55 @@ def _with_geometry_hash(payload: dict) -> dict:
     return result
 
 
+@pytest.mark.parametrize("failure", ["entry_plan_unique", "storage", "check", "proposal_identity"])
+def test_proposal_race_rebinds_receipt_only_for_the_entry_plan_unique_conflict(monkeypatch, failure):
+    import sqlite3
+
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    plan = _persist_waiting_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    insert = repo.insert_trade_proposal
+    submitted = []
+    winner_id = "concurrent-entry-proposal"
+
+    def racing_insert(proposal):
+        # Another caller publishes after the first read but before this insert.
+        insert(proposal.model_copy(update={"id": winner_id}))
+        if failure == "entry_plan_unique":
+            insert(proposal)  # Real SQLite constraint, not a fabricated race exception.
+        elif failure == "storage":
+            raise sqlite3.OperationalError("disk I/O error")
+        elif failure == "check":
+            error = sqlite3.IntegrityError("CHECK constraint failed: proposal_invariant")
+            error.sqlite_errorcode = sqlite3.SQLITE_CONSTRAINT_CHECK
+            raise error
+        else:
+            raise ValueError("proposal commit hash does not match immutable content")
+
+    def submit(proposal_id, _mode, *, execution_receipt):
+        assert execution_receipt.hash_is_valid()
+        assert execution_receipt.proposal_id == proposal_id == winner_id
+        submitted.append(proposal_id)
+        return {"status": "submitted"}
+
+    monkeypatch.setattr(repo, "insert_trade_proposal", racing_insert)
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal", submit)
+    now = datetime.now(timezone.utc)
+    kwargs = dict(bid=99.9, ask=100.1, observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(), stream_generation_id="stream-1",
+        subscription_generation_id="subscription-1", quote_sequence=1, now=now)
+    if failure == "entry_plan_unique":
+        assert execute_entry_plan(plan.plan_id, **kwargs)["status"] == "submitted"
+        assert submitted == [winner_id]
+    else:
+        expected = {"storage": sqlite3.OperationalError, "check": sqlite3.IntegrityError,
+                    "proposal_identity": ValueError}[failure]
+        with pytest.raises(expected):
+            execute_entry_plan(plan.plan_id, **kwargs)
+        assert submitted == []
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == winner_id
+
+
 def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch):
     plan = _plan(account_mode="bitget_demo").model_copy(
         update={
