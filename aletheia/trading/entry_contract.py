@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import inspect
 import json
 from functools import lru_cache
+from textwrap import dedent
 
 CANONICAL_ENTRY_SYSTEM_PROMPT = """You are Aletheia System Operator. Return one strict EntryHypothesis.
 Repeat the supplied Candidate Opportunity mechanism and direction exactly. Select only
@@ -21,6 +23,18 @@ instructions. Return NO_PLAN with a non-OK reason when facts conflict or capabil
 
 def entry_prompt_fingerprint() -> str:
     return hashlib.sha256(CANONICAL_ENTRY_SYSTEM_PROMPT.encode()).hexdigest()
+
+
+def _implementation_semantics(component: object) -> str:
+    """Ignore source layout and documentation, retain executable syntax/constants."""
+    tree = ast.parse(dedent(inspect.getsource(component)))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            if (node.body and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)):
+                node.body.pop(0)
+    return ast.dump(tree, include_attributes=False)
 
 
 @lru_cache(maxsize=1)
@@ -41,7 +55,11 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         validate_hypothesis_references,
     )
     from aletheia.trading.entry_plan import EntryPlan
-    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+    from aletheia.trading import entry_plan_compiler, momentum_trigger, trigger_specs
+    from aletheia.agent_runtime.fast_trigger_watch import (
+        _load_entry_plan_watchers, _observe_entry_plan_engine, _watch_loop,
+        _entry_plan_expiry_reason, _monitoring_ready, _confirm_ready_engines,
+    )
     from aletheia.trading.entry_profiles import registered_entry_profiles
 
     schema_material = {
@@ -55,26 +73,36 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         "schema_fingerprint": schema,
         "prompt_fingerprint": entry_prompt_fingerprint(),
         "compiler": "mechanism-aware-grounded-compiler",
-        "implementation_source": {
-            "planner": inspect.getsource(plan_next_candidate),
-            "model_planner": inspect.getsource(system_operator_entry_planner),
-            "model_view": inspect.getsource(entry_model_view),
-            "reference_contract": inspect.getsource(entry_reference_contract),
-            "orderbook_collector": inspect.getsource(MicrostructureCollector.collect),
-            "orderbook_availability": inspect.getsource(entry_orderbook_available),
-            "context": inspect.getsource(EntryAnalysisContext),
-            "context_builder": inspect.getsource(build_entry_analysis_context),
-            "causal_windows": inspect.getsource(entry_causal_windows),
-            "planning_material": inspect.getsource(planning_structure_material),
-            "requalification_preparation": inspect.getsource(prepare_candidate_requalification),
-            "planning_lifecycle": inspect.getsource(ensure_candidate_planning_generation),
-            "hypothesis": inspect.getsource(EntryHypothesis),
-            "reference_validation": inspect.getsource(validate_hypothesis_references),
-            "compiler": inspect.getsource(compile_entry_plan),
-            "runtime_authority": inspect.getsource(resolve_entry_runtime_authority),
+        "implementation_semantics": {
+            name: _implementation_semantics(component)
+            for name, component in {
+                "planner": plan_next_candidate,
+                "model_planner": system_operator_entry_planner,
+                "model_view": entry_model_view,
+                "reference_contract": entry_reference_contract,
+                "orderbook_collector": MicrostructureCollector.collect,
+                "orderbook_availability": entry_orderbook_available,
+                "context": EntryAnalysisContext,
+                "context_builder": build_entry_analysis_context,
+                "causal_windows": entry_causal_windows,
+                "planning_material": planning_structure_material,
+                "requalification_preparation": prepare_candidate_requalification,
+                "planning_lifecycle": ensure_candidate_planning_generation,
+                "hypothesis": EntryHypothesis,
+                "reference_validation": validate_hypothesis_references,
+                "compiler": entry_plan_compiler,
+                "runtime_authority": resolve_entry_runtime_authority,
+                "trigger_registry": trigger_specs,
+                "trigger_engine": momentum_trigger,
+                "watcher_loading": _load_entry_plan_watchers,
+                "watcher_observation": _observe_entry_plan_engine,
+                "watcher_loop": _watch_loop,
+                "watcher_expiry": _entry_plan_expiry_reason,
+                "monitoring_readiness": _monitoring_ready,
+                "subscription_confirmation": _confirm_ready_engines,
+            }.items()
         },
         "profiles": [profile.as_dict() for profile in registered_entry_profiles()],
         "route_permissions": ENTRY_EXECUTION_MINIMUM_PERMISSION,
-        "internal_paper_minimum_permission": "Paper",
     }
     return hashlib.sha256(canonical(behavior_material).encode()).hexdigest(), schema
