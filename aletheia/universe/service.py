@@ -28,7 +28,6 @@ from aletheia.storage.models import (
 )
 from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
 from aletheia.universe.candidate_opportunity import (
-    legacy_candidate_opportunity_context,
     target_candidate_opportunity_context,
 )
 
@@ -1059,8 +1058,6 @@ class UniverseService:
             legacy_allocated = []
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
-            allocated = legacy_allocated
-            candidate_selection_authority_bundle = None
             if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
                 from aletheia.universe.candidate_selection_authority import (
                     candidate_selection_authority_block_reason,
@@ -1113,31 +1110,24 @@ class UniverseService:
                 raise RuntimeError("candidate_selection_legacy_runtime_removed")
 
             path_metrics["selected_count"] = len(allocated)
-            path_metrics["shadow_capture_status"] = "terminal" if candidate_selection_authority_bundle is not None else "pending"
+            path_metrics["shadow_capture_status"] = "terminal"
             for item in allocated:
-                record = item.get("_candidate_opportunity_record")
-                context = (target_candidate_opportunity_context(
+                record = item["_candidate_opportunity_record"]
+                context = target_candidate_opportunity_context(
                     candidate_id="diagnostic", decision=record["decision"],
                     policy_epoch=str(item["candidate_selection_policy_epoch"]),
                     source_record_hash=record["source_record_hash"], detected_at=entry_ts,
-                ) if isinstance(record, dict) else legacy_candidate_opportunity_context(
-                    candidate_id="diagnostic", candidate=item, detected_at=entry_ts,
-                ))
-                capability = context.opportunity["capability_status"] if context is not None else "unavailable"
+                )
+                capability = context.opportunity["capability_status"]
                 if capability == "supported":
                     path_metrics["planning_supported_count"] += 1
                 elif capability == "observe_only":
                     path_metrics["observe_only_count"] += 1
-            if candidate_selection_authority_bundle is not None:
-                path_metrics["selection_reason_counts"] = _candidate_selection_reason_counts(candidate_selection_authority_bundle)
+            path_metrics["selection_reason_counts"] = _candidate_selection_reason_counts(candidate_selection_authority_bundle)
             snapshot_ttl_sec = int(cfg.universe.snapshot_ttl_hours * 3600)
             expires_at = (now + timedelta(seconds=snapshot_ttl_sec)).isoformat()
             regime_tag_for_fp = current_regime.state if current_regime else None
-            snapshot_policy_id = (
-                str(cfg.universe.candidate_selection_policy_epoch or "")
-                if candidate_selection_authority_bundle is not None
-                else "legacy_total_score_v1"
-            )
+            snapshot_policy_id = str(cfg.universe.candidate_selection_policy_epoch)
 
             # Phase 3 retention: change-suppression on universe_snapshots.
             # If the allocation fingerprint matches the currently-active snapshot
@@ -1173,22 +1163,20 @@ class UniverseService:
                 previous_members = repo.list_universe_members(prev_snapshot_id, limit=500)
                 requalifications = _prepare_planning_requalifications(previous_members)
                 with _atomic_universe_publication():
-                    if candidate_selection_authority_bundle is not None:
-                        _assert_candidate_selection_publication_authority(
-                            snapshot_policy_id,
-                            qualification["selection_policy"],
-                        )
-                        repo.insert_universe_twin_shadow_bundle(
-                            candidate_selection_authority_bundle.batch,
-                            candidate_selection_authority_bundle.evidence,
-                            outcomes=candidate_selection_authority_bundle.outcomes,
-                            min_interval_sec=0,
-                        )
-                    if candidate_selection_authority_bundle is not None:
-                        refreshed_members = repo.refresh_active_snapshot_ttls(
-                            prev_snapshot_id,
-                            now,
-                        )
+                    _assert_candidate_selection_publication_authority(
+                        snapshot_policy_id,
+                        qualification["selection_policy"],
+                    )
+                    repo.insert_universe_twin_shadow_bundle(
+                        candidate_selection_authority_bundle.batch,
+                        candidate_selection_authority_bundle.evidence,
+                        outcomes=candidate_selection_authority_bundle.outcomes,
+                        min_interval_sec=0,
+                    )
+                    refreshed_members = repo.refresh_active_snapshot_ttls(
+                        prev_snapshot_id,
+                        now,
+                    )
                     selected_generation_ids, new_generation_ids, planning_generations_created = (
                         _ensure_planning_generations(
                             previous_members,
@@ -1276,22 +1264,15 @@ class UniverseService:
                 scanner_direction = item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item)
                 member_id = uuid4().hex[:12]
                 target_record = item.get("_candidate_opportunity_record")
-                if item.get("candidate_selection_policy") == "candidate_selection_utility_v1":
-                    if not isinstance(target_record, dict):
-                        raise ValueError("candidate_selection_opportunity_record_missing")
-                    opportunity_context = target_candidate_opportunity_context(
-                        candidate_id=member_id,
-                        decision=target_record["decision"],
-                        policy_epoch=str(item["candidate_selection_policy_epoch"]),
-                        source_record_hash=str(target_record["source_record_hash"]),
-                        detected_at=entry_ts,
-                    )
-                else:
-                    opportunity_context = legacy_candidate_opportunity_context(
-                        candidate_id=member_id,
-                        candidate={**item, "scanner_direction": scanner_direction},
-                        detected_at=entry_ts,
-                    )
+                if not isinstance(target_record, dict):
+                    raise ValueError("candidate_selection_opportunity_record_missing")
+                opportunity_context = target_candidate_opportunity_context(
+                    candidate_id=member_id,
+                    decision=target_record["decision"],
+                    policy_epoch=str(item["candidate_selection_policy_epoch"]),
+                    source_record_hash=str(target_record["source_record_hash"]),
+                    detected_at=entry_ts,
+                )
                 member = UniverseMember(
                     id=member_id,
                     snapshot_id=snap.id,
@@ -1322,9 +1303,7 @@ class UniverseService:
                     execution_eligible=item.get("execution_eligible", True),
                     entry_price_usd=entry_price,
                     learning_candidate_key=item.get("learning_candidate_key"),
-                    candidate_selection_policy=item.get(
-                        "candidate_selection_policy", "legacy_total_score_v1",
-                    ),
+                    candidate_selection_policy=item["candidate_selection_policy"],
                     candidate_selection_policy_epoch=item.get(
                         "candidate_selection_policy_epoch",
                     ),
@@ -1367,9 +1346,7 @@ class UniverseService:
                         "spread_bps": item.get("spread_bps"),
                         "funding_rate": item.get("funding_rate"),
                         "total_score": member.total_score,
-                        "candidate_selection_policy": item.get(
-                            "candidate_selection_policy", "legacy_total_score_v1",
-                        ),
+                        "candidate_selection_policy": item["candidate_selection_policy"],
                         "candidate_selection_policy_epoch": item.get(
                             "candidate_selection_policy_epoch",
                         ),
@@ -1400,17 +1377,16 @@ class UniverseService:
             # and its Opportunity handoff are durable. Superseding the previous
             # healthy snapshot is the final write in this publication unit.
             with _atomic_universe_publication():
-                if candidate_selection_authority_bundle is not None:
-                    _assert_candidate_selection_publication_authority(
-                        snapshot_policy_id,
-                        qualification["selection_policy"],
-                    )
-                    repo.insert_universe_twin_shadow_bundle(
-                        candidate_selection_authority_bundle.batch,
-                        candidate_selection_authority_bundle.evidence,
-                        outcomes=candidate_selection_authority_bundle.outcomes,
-                        min_interval_sec=0,
-                    )
+                _assert_candidate_selection_publication_authority(
+                    snapshot_policy_id,
+                    qualification["selection_policy"],
+                )
+                repo.insert_universe_twin_shadow_bundle(
+                    candidate_selection_authority_bundle.batch,
+                    candidate_selection_authority_bundle.evidence,
+                    outcomes=candidate_selection_authority_bundle.outcomes,
+                    min_interval_sec=0,
+                )
                 repo.insert_universe_snapshot(snap)
                 repo.insert_universe_members_batch(member_models)
 
