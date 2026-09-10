@@ -1,0 +1,579 @@
+{
+  "base_sha": "a4a4074f793be5e3acc78b6e4f71ce6f8248d10b",
+  "measured": [
+    {
+      "candidate": {
+        "admission_basis": "measured",
+        "asset_id": "asset-0",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-0:okx:spot:COIN0/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": 0.5,
+        "feature_snapshot_id": "feature-0",
+        "market_type": "spot",
+        "opportunity_mechanism": "continuation",
+        "scanner_direction": "long",
+        "scanner_family": "momentum",
+        "startup_reason": null,
+        "symbol": "COIN0/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-1",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "8036c56ec522341f41ef69865b0386b3b0a45697bce12e83636ba8e4b25212a0"
+        },
+        "context": {},
+        "context_hash": "bc09396bcc3fc6da32f5fce663aa19d72425f7856193ef0038fb5d2dd124d633",
+        "opportunity": {
+          "admission_basis": "measured",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "long",
+          "economic_utility_pct": 0.5,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "continuation/v1",
+          "pessimistic_strength": 15.438205128205128,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "continuation",
+          "secondary_mechanisms": [
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "direction_unavailable"
+              ],
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "reason_codes": [
+                "direction_unavailable"
+              ],
+              "source_component_id": "mean_reversion"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "momentum",
+          "startup_reason": null
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-1",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "570c93274a350a2aaaa95714a701be7c4693528532ab0172d7023e4355d25ae6",
+        "c210fd26873d060f6e4c17a109d0461e11b19a3c1eeb0a0060df60dbf1f90ff9"
+      ],
+      "rank": 1
+    },
+    {
+      "candidate": {
+        "admission_basis": "measured",
+        "asset_id": "asset-1",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-1:okx:spot:COIN1/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": 0.5,
+        "feature_snapshot_id": "feature-1",
+        "market_type": "spot",
+        "opportunity_mechanism": "continuation",
+        "scanner_direction": "long",
+        "scanner_family": "momentum",
+        "startup_reason": null,
+        "symbol": "COIN1/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-2",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "f433b77341907905099385c8f20919ceebe1ef0611cc9f2951eb944db7f45598"
+        },
+        "context": {},
+        "context_hash": "47ae5ad2b5980d95d3e377323e6bc4b46a08f548b38c1da94ed849121fe77ca8",
+        "opportunity": {
+          "admission_basis": "measured",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "long",
+          "economic_utility_pct": 0.5,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "continuation/v1",
+          "pessimistic_strength": 11.146923076923075,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "continuation",
+          "secondary_mechanisms": [
+            {
+              "applicability": "applicable",
+              "direction": "short",
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "pessimistic_strength": 5.15625,
+              "point_strength": 5.15625,
+              "reason_codes": [
+                "projected_from:mean_reversion"
+              ],
+              "source_component_id": "mean_reversion"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "momentum",
+          "startup_reason": null
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-2",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "23d3b18305f35fc2dd7abff9d680ae91d303727e3473ab38ba5acf47d209e1ed",
+        "17077ea7e074e1d9505cf245b7f0a49452cb6fa2881ce2888b326fb1e67d8c56"
+      ],
+      "rank": 2
+    },
+    {
+      "candidate": {
+        "admission_basis": "measured",
+        "asset_id": "asset-2",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-2:okx:spot:COIN2/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": 0.5,
+        "feature_snapshot_id": "feature-2",
+        "market_type": "spot",
+        "opportunity_mechanism": "continuation",
+        "scanner_direction": "long",
+        "scanner_family": "momentum",
+        "startup_reason": null,
+        "symbol": "COIN2/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-3",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "8e3935a4eae78a7638d5172a2e5aaec33fbc30b54175884a110b694d2cbfdc40"
+        },
+        "context": {},
+        "context_hash": "43a14d1addb9df5391954253faadf0e31a0462a46ae19c20107bb27187e81bf2",
+        "opportunity": {
+          "admission_basis": "measured",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "long",
+          "economic_utility_pct": 0.5,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "continuation/v1",
+          "pessimistic_strength": 7.75,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "continuation",
+          "secondary_mechanisms": [
+            {
+              "applicability": "applicable",
+              "direction": "short",
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "pessimistic_strength": 10.0,
+              "point_strength": 10.0,
+              "reason_codes": [
+                "projected_from:mean_reversion"
+              ],
+              "source_component_id": "mean_reversion"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "momentum",
+          "startup_reason": null
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-3",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "2c12b6dfdad6afac022d00e70cb78efd17b7858a96222214e46d3d45a2758062",
+        "a1cb01cb0dbc3355e75e7a012543ca4555a369db12b8e96288504bca95e4c82f"
+      ],
+      "rank": 3
+    }
+  ],
+  "startup": [
+    {
+      "candidate": {
+        "admission_basis": "startup",
+        "asset_id": "asset-0",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-0:okx:spot:COIN0/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": null,
+        "feature_snapshot_id": "feature-0",
+        "market_type": "spot",
+        "opportunity_mechanism": "continuation",
+        "scanner_direction": "long",
+        "scanner_family": "momentum",
+        "startup_reason": "no_history",
+        "symbol": "COIN0/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-1",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "4361339efa515411bd882a0b18d920eb126563cdd67f5743e81b4d23304a5150"
+        },
+        "context": {},
+        "context_hash": "c48a03d2e7caa63001fa8b838c7ce7b85c8643a5f7ca9a80bbc75f0bb97f40d2",
+        "opportunity": {
+          "admission_basis": "startup",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "long",
+          "economic_utility_pct": null,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "continuation/v1",
+          "pessimistic_strength": 15.438205128205128,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "continuation",
+          "secondary_mechanisms": [
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "direction_unavailable"
+              ],
+              "mechanism_id": "reversal",
+              "mechanism_version": "reversal/v1",
+              "reason_codes": [
+                "direction_unavailable"
+              ],
+              "source_component_id": "mean_reversion"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "momentum",
+          "startup_reason": "no_history"
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-1",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "570c93274a350a2aaaa95714a701be7c4693528532ab0172d7023e4355d25ae6",
+        "c210fd26873d060f6e4c17a109d0461e11b19a3c1eeb0a0060df60dbf1f90ff9"
+      ],
+      "rank": 1
+    },
+    {
+      "candidate": {
+        "admission_basis": "startup",
+        "asset_id": "asset-10",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-10:okx:spot:COIN10/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": null,
+        "feature_snapshot_id": "feature-10",
+        "market_type": "spot",
+        "opportunity_mechanism": "reversal",
+        "scanner_direction": "short",
+        "scanner_family": "mean_reversion",
+        "startup_reason": "no_history",
+        "symbol": "COIN10/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-2",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "6349d1a063f9df789d588f484cf865ef516271f76fbf4f35223430d57514fa36"
+        },
+        "context": {},
+        "context_hash": "0b8659a19248c0c0e848b9cd3754c40ad8e6b70f847929c5c3243197fd9dc8dc",
+        "opportunity": {
+          "admission_basis": "startup",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "short",
+          "economic_utility_pct": null,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "reversal/v1",
+          "pessimistic_strength": 15.0,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "reversal",
+          "secondary_mechanisms": [
+            {
+              "applicability": "applicable",
+              "direction": "long",
+              "mechanism_id": "continuation",
+              "mechanism_version": "continuation/v1",
+              "pessimistic_strength": 0.0,
+              "point_strength": 12.75,
+              "reason_codes": [
+                "projected_from:momentum"
+              ],
+              "source_component_id": "momentum",
+              "within_run_percentile": 0.34210526315789475
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "mean_reversion",
+          "startup_reason": "no_history"
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-2",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "9f12282f8d27dc7008ad428cf999ebe45f56a60a66525c32a30cf3b82988bd12",
+        "4c427727853bd95dde583b93a04ae2829e97864cd6dbb701e8b4dfac9cddd570"
+      ],
+      "rank": 2
+    },
+    {
+      "candidate": {
+        "admission_basis": "startup",
+        "asset_id": "asset-11",
+        "candidate_selection_key": "candidate-selection-utility:v1:candidate-convergence-authority:feature-11:okx:spot:COIN11/USDT",
+        "candidate_selection_policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+        "candidate_selection_utility_pct": null,
+        "feature_snapshot_id": "feature-11",
+        "market_type": "spot",
+        "opportunity_mechanism": "reversal",
+        "scanner_direction": "short",
+        "scanner_family": "mean_reversion",
+        "startup_reason": "no_history",
+        "symbol": "COIN11/USDT",
+        "venue": "okx"
+      },
+      "context": {
+        "candidate_id": "golden-3",
+        "candidate_selection": {
+          "decision_version": "candidate-selection-utility/v2",
+          "policy": "candidate_selection_utility_v1",
+          "policy_epoch": "1546e9c6f891319d0640e753d319a84d88bf4da5e07e3a9a27e2a03d42a005ed",
+          "source_record_hash": "5b14644bd159676bfeb20173c1f2b1d700f28eadd52cc90ef74a3d036574398f"
+        },
+        "context": {},
+        "context_hash": "8b2bf561495281ee8fa1e14e88dcf62db3d962196562e3079aae6f2a28141c49",
+        "opportunity": {
+          "admission_basis": "startup",
+          "capability_gaps": [],
+          "capability_status": "supported",
+          "direction": "short",
+          "economic_utility_pct": null,
+          "horizon": "4h",
+          "mechanism_source": "target_authority",
+          "mechanism_version": "reversal/v1",
+          "pessimistic_strength": 15.0,
+          "primary_evidence_refs": [],
+          "primary_mechanism": "reversal",
+          "secondary_mechanisms": [
+            {
+              "applicability": "applicable",
+              "direction": "long",
+              "mechanism_id": "continuation",
+              "mechanism_version": "continuation/v1",
+              "pessimistic_strength": 0.0,
+              "point_strength": 12.75,
+              "reason_codes": [
+                "projected_from:momentum"
+              ],
+              "source_component_id": "momentum",
+              "within_run_percentile": 0.34210526315789475
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "non_derivatives_market"
+              ],
+              "mechanism_id": "positioning_forced_flow",
+              "mechanism_version": "positioning_forced_flow/v1",
+              "reason_codes": [
+                "non_derivatives_market"
+              ],
+              "source_component_id": "derivatives"
+            },
+            {
+              "applicability": "unavailable",
+              "capability_gaps": [
+                "external_event_provenance"
+              ],
+              "mechanism_id": "information_catalyst",
+              "mechanism_version": "information_catalyst/v1",
+              "reason_codes": [
+                "external_event_provenance_unavailable"
+              ]
+            }
+          ],
+          "source_component_id": "mean_reversion",
+          "startup_reason": "no_history"
+        },
+        "source": {
+          "detected_at": "2026-09-02T00:00:00+00:00",
+          "feature_snapshot_id": null,
+          "feature_snapshot_unavailable_reason": "feature_snapshot_id_unavailable",
+          "id": "golden-3",
+          "kind": "universe",
+          "source_cutoff_at": "2026-09-02T00:00:00+00:00",
+          "trade_school": "short_term"
+        },
+        "version": "candidate-opportunity-context/v1"
+      },
+      "planning_identity": [
+        "0102235f270e1d4e07360709b051663983b1576e313362f5578c2c130c1faf7d",
+        "f60b0a9bfb8005288e3f8d1a3f8ed8b8f4a44f3a4d8edd36b7eaa7b5c21bad31"
+      ],
+      "rank": 3
+    }
+  ]
+}

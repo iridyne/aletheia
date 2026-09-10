@@ -55,7 +55,7 @@ def _estimate(outcomes):
     )
 
 
-def _authority_bundle():
+def _authority_bundle(*, with_history=True):
     from aletheia.config.schema import UniverseConfig
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -100,6 +100,8 @@ def _authority_bundle():
         }
         for index in range(60)
     ]
+    if not with_history:
+        outcomes = []
     cfg = UniverseConfig(max_candidates=3)
     selection_policy = {
         **candidate_selection_policy_identity(cfg),
@@ -146,6 +148,49 @@ def _authority_bundle():
             "invalid_reasons": [],
         },
     ), legacy
+
+
+def _candidate_planning_baseline(*, with_history):
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe.candidate_opportunity import target_candidate_opportunity_context
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+
+    bundle, population = _authority_bundle(with_history=with_history)
+    result = []
+    for rank, candidate in enumerate(target_candidates_from_bundle(bundle, population), 1):
+        record = candidate["_candidate_opportunity_record"]
+        context = target_candidate_opportunity_context(
+            candidate_id=f"golden-{rank}",
+            decision=record["decision"],
+            policy_epoch=candidate["candidate_selection_policy_epoch"],
+            source_record_hash=record["source_record_hash"],
+            detected_at="2026-09-02T00:00:00+00:00",
+        )
+        result.append({
+            "rank": rank,
+            "candidate": {key: candidate[key] for key in (
+                "asset_id", "feature_snapshot_id", "venue", "market_type", "symbol",
+                "scanner_family", "scanner_direction", "admission_basis", "startup_reason",
+                "candidate_selection_key", "candidate_selection_utility_pct",
+                "candidate_selection_policy_epoch", "opportunity_mechanism",
+            )},
+            "context": context.model_dump(mode="json"),
+            "planning_identity": list(candidate_planning_identity({
+                **candidate, "candidate_opportunity_context_json": context.model_dump_json(),
+            })),
+        })
+    return result
+
+
+@pytest.mark.parametrize("with_history", [True, False], ids=["measured", "startup"])
+def test_candidate_planning_frozen_baseline(with_history):
+    import json
+    from pathlib import Path
+
+    golden = json.loads((Path(__file__).parent / "fixtures/candidate_planning_a4a4074f7.json").read_text())
+    expected = golden["measured" if with_history else "startup"]
+    assert len(expected) == 3
+    assert _candidate_planning_baseline(with_history=with_history) == expected
 
 
 def test_runtime_commit_is_attested_provenance_not_causal_identity():
