@@ -1010,21 +1010,21 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
 
     _require_ai_entry_authority(plan)
     if plan.execution_mode == "TRIGGERED":
-        from aletheia.execution.entry_plan_execution import (
-            build_entry_plan_order_intent, _require_entry_trigger_evidence,
-        )
+        from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
 
-        with pytest.raises(ValueError, match="ai_entry_trigger_evidence_required"):
+        with pytest.raises(ValueError, match="entry_trigger_activation_required"):
             build_entry_plan_order_intent(
                 plan, bid=100, ask=100.05,
                 observed_at=plan.approved_at, source_observed_at=plan.approved_at,
             )
-        evidence = {"trigger_spec_id": plan.trigger_spec_id,
-                    "geometry_fingerprint": plan.trigger_params["geometry_fingerprint"]}
-        _require_entry_trigger_evidence(plan, evidence)
-        for key in evidence:
-            with pytest.raises(ValueError, match="ai_entry_trigger_identity_mismatch"):
-                _require_entry_trigger_evidence(plan, {**evidence, key: "wrong"})
+        with pytest.raises(ValueError, match="entry_trigger_activation_required"):
+            build_entry_plan_order_intent(
+                plan, bid=100, ask=100.05,
+                observed_at=plan.approved_at, source_observed_at=plan.approved_at,
+                trigger_activation_id="caller-authored",
+                trigger_activation_hash=plan.trigger_params["geometry_fingerprint"],
+            )
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
     original_record = repo.get_entry_plan(plan.plan_id)
     for running in (
         ("changed-behavior", generation["schema_fingerprint"]),

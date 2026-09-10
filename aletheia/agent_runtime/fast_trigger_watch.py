@@ -596,11 +596,27 @@ async def _load_entry_plan_watchers(
                 else:
                     plans.pop(plan.plan_id, None)
                 continue
-        if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
+        if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
             continue
+        if row["status"] in {"triggered", "risk_reserved"}:
+            if not await asyncio.to_thread(repo.entry_plan_activation_can_refresh, plan.plan_id):
+                continue
+            activation_row = await asyncio.to_thread(repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
+            if activation_row is not None:
+                from aletheia.trading.entry_activation import EntryTriggerActivationV1
+
+                activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
+                monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+                if (datetime.fromisoformat(activation.expires_at) > now
+                    and monitoring.get("stream_generation_id") == activation.snapshot.stream_generation_id
+                    and monitoring.get("subscription_generation_id") == activation.snapshot.subscription_generation_id):
+                    continue
+            # The old proof stays immutable; a fresh engine must earn a new one.
+            if existing is not None:
+                existing = {key: value for key, value in existing.items() if key != plan.plan_id}
         if existing is not None and plan.plan_id in existing:
             watching = existing[plan.plan_id]
-            if not health_reason_requires_resync(watching.health_reason):
+            if watching.state != "triggered" and not health_reason_requires_resync(watching.health_reason):
                 engines[plan.plan_id] = watching
                 continue
             # ponytail: rebuilt on every reload while the fault persists; add a
@@ -609,7 +625,7 @@ async def _load_entry_plan_watchers(
             logger.warning(
                 "Entry Plan %s trigger engine resynchronizing after %s",
                 plan.plan_id,
-                watching.health_reason,
+                watching.health_reason or "activation_not_bound",
             )
         params = plan.trigger_params
         instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
@@ -729,7 +745,7 @@ def _entry_plan_expiry_reason(row: dict, engine=None) -> str:
             return "monitoring_stream_unavailable"
         return f"monitoring_channel_unavailable:{channel}"
     passive = json.loads(row.get("monitoring_evidence_json") or "{}").get("passive_entry", {})
-    if (state == "ready" and passive.get("eligible") is False
+    if (row.get("execution_mode") == "RESTING_MAKER" and state == "ready" and passive.get("eligible") is False
         and passive.get("ever_eligible") is False and engine is None):
         return "passive_entry_never_became_eligible"
     if engine is not None:
@@ -786,6 +802,30 @@ async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
             key = "unresolved" if _entry_plan_outcome_is_unresolved(outcome) else "terminalized"
             cleanup[key] += 1
         after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
+
+
+async def _submit_activated_entry_plan(plan, activation, event) -> None:
+    """Reuse the earned proof while both it and the exact market facts are fresh."""
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    snapshot = activation.snapshot
+    try:
+        await asyncio.to_thread(execute_entry_plan, plan.plan_id,
+            bid=float(event.bid), ask=float(event.ask),
+            observed_at=datetime.fromtimestamp(event.received_timestamp_ms / 1000, timezone.utc).isoformat(),
+            source_observed_at=datetime.fromtimestamp(event.exchange_timestamp_ms / 1000, timezone.utc).isoformat(),
+            stream_generation_id=str(event.stream_generation_id or ""),
+            subscription_generation_id=str(event.subscription_generation_id or ""), quote_sequence=event.sequence,
+            required_channels=_plan_required_channels(plan),
+            depth_bids=snapshot.depth_bids, depth_asks=snapshot.depth_asks,
+            depth_exchange_timestamp_ms=snapshot.depth_exchange_timestamp_ms,
+            depth_received_timestamp_ms=snapshot.depth_received_timestamp_ms, depth_sequence=snapshot.depth_sequence,
+            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash)
+    except ValueError as exc:
+        if str(exc) not in {"post_only_would_cross_bbo", "entry_trigger_activation_expired",
+                            "entry_trigger_activation_generation_mismatch", "entry_trigger_activation_required",
+                            "entry_trigger_activation_monitoring_mismatch"}:
+            raise
 
 
 async def _watch_loop(cfg) -> None:
@@ -973,27 +1013,13 @@ async def _watch_loop(cfg) -> None:
                                 if str(exc) != "post_only_would_cross_bbo":
                                     raise
                         elif row["status"] in {"triggered", "risk_reserved"}:
-                            from aletheia.execution.entry_plan_execution import execute_entry_plan
+                            from aletheia.trading.entry_activation import EntryTriggerActivationV1
 
-                            await asyncio.to_thread(
-                                execute_entry_plan,
-                                plan_id,
-                                bid=float(event.bid),
-                                ask=float(event.ask),
-                                observed_at=datetime.fromtimestamp(
-                                    event.received_timestamp_ms / 1000,
-                                    tz=timezone.utc,
-                                ).isoformat(),
-                                source_observed_at=datetime.fromtimestamp(
-                                    event.exchange_timestamp_ms / 1000,
-                                    tz=timezone.utc,
-                                ).isoformat(),
-                                stream_generation_id=str(event.stream_generation_id or ""),
-                                subscription_generation_id=str(
-                                    event.subscription_generation_id or ""
-                                ),
-                                quote_sequence=event.sequence,
-                            )
+                            activation_row = await asyncio.to_thread(
+                                repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
+                            if activation_row is not None:
+                                activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
+                                await _submit_activated_entry_plan(plan, activation, event)
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
                         continue
@@ -1020,34 +1046,22 @@ async def _watch_loop(cfg) -> None:
                             plan_id,
                         )
                     if ready is not None:
-                        from aletheia.execution.entry_plan_execution import execute_entry_plan
+                        from aletheia.trading.entry_activation import build_entry_trigger_activation
 
-                        await asyncio.to_thread(
-                            execute_entry_plan,
-                            plan_id,
-                            bid=ready.bid,
-                            ask=ready.ask,
-                            observed_at=datetime.fromtimestamp(
-                                ready.quote_received_timestamp_ms / 1000,
-                                tz=timezone.utc,
-                            ).isoformat(),
-                            source_observed_at=datetime.fromtimestamp(
-                                ready.quote_exchange_timestamp_ms / 1000,
-                                tz=timezone.utc,
-                            ).isoformat(),
-                            stream_generation_id=str(ready.stream_generation_id or ""),
-                            subscription_generation_id=str(
-                                ready.subscription_generation_id or ""
-                            ),
-                            quote_sequence=ready.quote_sequence,
-                            required_channels=_plan_required_channels(plan),
-                            depth_bids=ready.depth_bids,
-                            depth_asks=ready.depth_asks,
-                            depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
-                            depth_received_timestamp_ms=ready.depth_received_timestamp_ms,
-                            depth_sequence=ready.depth_sequence,
-                            trigger_evidence=ready.entry_trigger,
-                        )
+                        row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
+                        if row is None:
+                            continue
+                        now = datetime.now(timezone.utc)
+                        try:
+                            activation = build_entry_trigger_activation(plan, ready, now=now)
+                            bound = await asyncio.to_thread(repo.bind_entry_trigger_activation, activation,
+                                expected_activation_id=row.get("trigger_activation_id"))
+                        except ValueError as exc:
+                            if str(exc) not in {"entry_trigger_activation_expired", "entry_trigger_activation_market_stale"}:
+                                raise
+                            continue
+                        if bound:
+                            await _submit_activated_entry_plan(plan, activation, event)
                 backoff = 1.0
         except asyncio.CancelledError:
             raise

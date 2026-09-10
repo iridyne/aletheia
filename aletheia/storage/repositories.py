@@ -7607,15 +7607,25 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
                 "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
                 "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
                 "ep.terminal_reason AS entry_plan_terminal_reason, "
-                "ep.monitoring_state AS entry_plan_monitoring_state, ep.monitoring_evidence_json "
+                "ep.monitoring_state AS entry_plan_monitoring_state, ep.monitoring_evidence_json, "
+                "ep.trigger_activation_id, ta.created_at AS activation_created_at, "
+                "ta.expires_at AS activation_expires_at, ta.activation_json "
                 "FROM candidate_planning_generations pg "
                 "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+                "LEFT JOIN entry_trigger_activations ta ON ta.id=ep.trigger_activation_id "
                 f"WHERE pg.planning_key IN ({placeholders}) ORDER BY pg.cycle_number,pg.created_at,pg.id",
                 batch,
             )]
             lineage = get_entry_plan_execution_lineage([row["entry_plan_id"] for row in rows if row.get("entry_plan_id")])
             for row in rows:
-                row["passive_entry"] = json.loads(row.get("monitoring_evidence_json") or "{}").get("passive_entry")
+                monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+                row["passive_entry"] = monitoring.get("passive_entry")
+                if row.get("entry_plan_status") in {"triggered", "risk_reserved"}:
+                    row["activation_recoverable"] = entry_plan_activation_can_refresh(row["entry_plan_id"])
+                    snapshot = json.loads(row.get("activation_json") or "{}").get("snapshot", {})
+                    row["activation_stream_current"] = (monitoring.get("state") == "ready"
+                        and snapshot.get("stream_generation_id") == monitoring.get("stream_generation_id")
+                        and snapshot.get("subscription_generation_id") == monitoring.get("subscription_generation_id"))
                 row["execution"] = lineage.get(row.get("entry_plan_id"))
                 result[row["planning_key"]].append(row)
     return result
@@ -9266,6 +9276,68 @@ def has_current_entry_plan_for_instrument(venue: str, symbol: str, market_type: 
         .fetchone()
     )
     return row is not None
+
+
+def get_entry_trigger_activation(activation_id: str) -> dict | None:
+    row = get_db().execute("SELECT * FROM entry_trigger_activations WHERE id=?", (activation_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def entry_plan_activation_can_refresh(plan_id: str) -> bool:
+    """A new trigger can refresh an unsubmitted intent, never an exchange handoff."""
+    proposal = get_trade_proposal_by_entry_plan(plan_id)
+    return proposal is None or (proposal["status"] in {"pending", "approved"}
+        and get_proposal_execution_claim(proposal["id"]) is None
+        and not has_order_for_proposal(proposal["id"]))
+
+
+def bind_entry_trigger_activation(activation, *, expected_activation_id: str | None, now: datetime | None = None) -> bool:
+    """Watcher-owned CAS: retain immutable proof before making the Plan executable."""
+    from aletheia.execution.entry_plan_execution import require_entry_plan_runtime_authority
+    from aletheia.trading.entry_activation import EntryTriggerActivationV1
+    from aletheia.trading.entry_compat import decode_entry_plan
+
+    activation = EntryTriggerActivationV1.model_validate(activation)
+    with transaction(immediate=True):
+        now = now or datetime.now(timezone.utc)
+        row = get_entry_plan(activation.plan_id)
+        if row is None or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
+            return False
+        if not entry_plan_activation_can_refresh(activation.plan_id):
+            return False
+        plan = decode_entry_plan(row["plan_json"])
+        require_entry_plan_runtime_authority(plan)
+        activation.require_valid(plan, now=now)
+        if row["plan_hash"] != activation.plan_hash:
+            raise ValueError("entry_plan_hash_mismatch")
+        if row.get("trigger_activation_id") != expected_activation_id:
+            persisted = get_entry_trigger_activation(activation.activation_id)
+            return (row.get("trigger_activation_id") == activation.activation_id
+                    and persisted is not None and persisted["activation_hash"] == activation.activation_hash)
+        monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+        snapshot = activation.snapshot
+        if (row.get("monitoring_state") != "ready"
+            or monitoring.get("stream_generation_id") != snapshot.stream_generation_id
+            or monitoring.get("subscription_generation_id") != snapshot.subscription_generation_id):
+            raise ValueError("entry_trigger_activation_monitoring_mismatch")
+        if expected_activation_id:
+            previous = EntryTriggerActivationV1.model_validate_json(
+                get_entry_trigger_activation(expected_activation_id)["activation_json"])
+            if (datetime.fromisoformat(previous.expires_at) > now
+                and previous.snapshot.stream_generation_id == snapshot.stream_generation_id
+                and previous.snapshot.subscription_generation_id == snapshot.subscription_generation_id):
+                return False
+        execute_write("INSERT INTO entry_trigger_activations "
+            "(id,plan_id,activation_hash,activation_json,created_at,expires_at) VALUES (?,?,?,?,?,?)",
+            (activation.activation_id, activation.plan_id, activation.activation_hash,
+             activation.model_dump_json(), activation.created_at, activation.expires_at))
+        updated = execute_write("UPDATE entry_plans SET trigger_activation_id=?, "
+            "status=CASE WHEN status='waiting' THEN 'triggered' ELSE status END,updated_at=? "
+            "WHERE id=? AND trigger_activation_id IS ? AND status IN ('waiting','triggered','risk_reserved')",
+            (activation.activation_id, now.isoformat(), activation.plan_id, expected_activation_id))
+        if updated.rowcount != 1:
+            raise ValueError("entry_trigger_activation_claim_lost")
+        return True
 
 
 def transition_entry_plan(

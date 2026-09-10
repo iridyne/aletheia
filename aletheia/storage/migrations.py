@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v78"
+SCHEMA_VERSION = "aletheia-sqlite-v79"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8177,6 +8177,25 @@ def _apply_entry_hypothesis_checkpoint_v78(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+_ENTRY_TRIGGER_ACTIVATION_SQL = (
+    "CREATE TABLE entry_trigger_activations (id TEXT PRIMARY KEY, "
+    "plan_id TEXT NOT NULL REFERENCES entry_plans(id), activation_hash TEXT NOT NULL UNIQUE, "
+    "activation_json TEXT NOT NULL CHECK(json_valid(activation_json)), "
+    "created_at TEXT NOT NULL, expires_at TEXT NOT NULL)",
+    "CREATE INDEX idx_entry_trigger_activation_plan ON entry_trigger_activations(plan_id, created_at)",
+    "CREATE TRIGGER trg_entry_trigger_activation_immutable BEFORE UPDATE ON entry_trigger_activations "
+    "BEGIN SELECT RAISE(ABORT,'Entry trigger activation is immutable'); END",
+    "CREATE TRIGGER trg_entry_trigger_activation_no_delete BEFORE DELETE ON entry_trigger_activations "
+    "BEGIN SELECT RAISE(ABORT,'Entry trigger activation is immutable'); END",
+    "ALTER TABLE entry_plans ADD COLUMN trigger_activation_id TEXT REFERENCES entry_trigger_activations(id)",
+)
+
+
+def _apply_entry_trigger_activation_v79(db: sqlite3.Connection) -> None:
+    for statement in _ENTRY_TRIGGER_ACTIVATION_SQL:
+        db.execute(statement)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8639,6 +8658,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_ENTRY_HYPOTHESIS_CHECKPOINT_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v78",
         apply=_apply_entry_hypothesis_checkpoint_v78,
+    ),
+    MigrationStep(
+        migration_id="20260910_0078_entry_trigger_activation_v79",
+        checksum=hashlib.sha256("\n".join(_ENTRY_TRIGGER_ACTIVATION_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v79",
+        apply=_apply_entry_trigger_activation_v79,
     ),
 )
 

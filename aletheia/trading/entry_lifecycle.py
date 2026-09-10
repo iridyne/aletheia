@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timezone
 
 from aletheia.trading.entry_compat import classify_legacy_planning_outcome
 
@@ -20,6 +21,16 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
     plan_status = cycle.get("entry_plan_status")
     if plan_status == "expired":
         return "PLAN_EXPIRED", cycle.get("entry_plan_terminal_reason"), "await_requalification"
+    if plan_status in {"triggered", "risk_reserved"} and cycle.get("activation_recoverable"):
+        expires = cycle.get("activation_expires_at")
+        if not expires:
+            return "WAITING_TRIGGER", "entry_trigger_activation_required", "await_fresh_trigger"
+        if datetime.fromisoformat(expires) <= datetime.now(timezone.utc):
+            return "WAITING_TRIGGER", "entry_trigger_activation_expired", "await_fresh_trigger"
+        if not cycle.get("activation_stream_current"):
+            return "WAITING_TRIGGER", "entry_trigger_activation_monitoring_mismatch", "await_fresh_trigger"
+        if (cycle.get("passive_entry") or {}).get("eligible") is False:
+            return "WAITING_MARKET", "post_only_would_cross_bbo", "await_passive_market"
     if plan_status == "waiting":
         if (cycle.get("execution_mode") == "RESTING_MAKER"
             and cycle.get("entry_plan_monitoring_state") == "ready"
@@ -133,6 +144,8 @@ def _cycle_projection(cycle: dict) -> dict[str, Any]:
         events.append({"event": "passive_entry_eligible" if passive["eligible"] else "waiting_for_passive_market",
                        "at": passive.get("observed_at"),
                        "reason": None if passive["eligible"] else "post_only_would_cross_bbo"})
+    if cycle.get("trigger_activation_id"):
+        events.append({"event": "trigger_activation_created", "at": cycle.get("activation_created_at"), "reason": None})
     return {
         "generation_id": cycle.get("id"),
         "cycle_number": int(cycle.get("cycle_number") or 1),

@@ -50,6 +50,7 @@ class TriggerSnapshot(BaseModel):
 
 class TriggerReady(TriggerSnapshot):
     entry_price: float
+    activation_events: tuple[FastMarketEvent, ...] = ()
 
 
 class TriggerEngine:

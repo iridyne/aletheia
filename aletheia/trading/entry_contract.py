@@ -56,9 +56,14 @@ def entry_contract_fingerprints() -> tuple[str, str]:
     )
     from aletheia.trading.entry_plan import EntryPlan, post_only_price_is_passive
     from aletheia.trading import entry_plan_compiler, momentum_trigger, trigger_specs
+    from aletheia.trading import entry_activation
+    from aletheia.storage.repositories import bind_entry_trigger_activation, entry_plan_activation_can_refresh
+    from aletheia.execution import entry_plan_execution
+    from aletheia.execution.gateway import execute_existing_proposal, _execute_proposal
     from aletheia.agent_runtime.fast_trigger_watch import (
         _load_entry_plan_watchers, _observe_entry_plan_engine, _watch_loop,
         _entry_plan_expiry_reason, _monitoring_ready, _confirm_ready_engines,
+        _submit_activated_entry_plan,
     )
     from aletheia.trading.entry_profiles import registered_entry_profiles
 
@@ -66,6 +71,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         "context": EntryAnalysisContext.model_json_schema(),
         "hypothesis": EntryHypothesis.model_json_schema(),
         "plan": EntryPlan.model_json_schema(),
+        "activation": entry_activation.EntryTriggerActivationV1.model_json_schema(),
     }
     canonical = lambda value: json.dumps(value, sort_keys=True, separators=(",", ":"))
     schema = hashlib.sha256(canonical(schema_material).encode()).hexdigest()
@@ -97,6 +103,13 @@ def entry_contract_fingerprints() -> tuple[str, str]:
                 "passive_price_eligibility": post_only_price_is_passive,
                 "trigger_registry": trigger_specs,
                 "trigger_engine": momentum_trigger,
+                "trigger_activation": entry_activation,
+                "activation_binding": bind_entry_trigger_activation,
+                "activation_recovery": entry_plan_activation_can_refresh,
+                "activation_submission": _submit_activated_entry_plan,
+                "entry_execution": entry_plan_execution,
+                "gateway_claim": execute_existing_proposal,
+                "gateway_execution": _execute_proposal,
                 "watcher_loading": _load_entry_plan_watchers,
                 "watcher_observation": _observe_entry_plan_engine,
                 "watcher_loop": _watch_loop,

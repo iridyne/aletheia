@@ -2445,3 +2445,9 @@ async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch)
     assert fresh.health_reason is None
     assert fresh.state == "armed"
     assert fresh.subscription_confirmed is False
+    # If proof persistence expired/failed after observe(), the durable Plan is
+    # still waiting. A terminal in-memory engine cannot strand that Plan.
+    fresh.state = "triggered"
+    _, rearmed = await watch._load_entry_plan_watchers(cfg, rebuilt)
+    assert rearmed[plan.plan_id] is not fresh
+    assert rearmed[plan.plan_id].state == "armed"

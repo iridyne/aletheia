@@ -311,6 +311,36 @@ The compiler continues to own Candidate price/geometry, volatility floor,
 entry zone, stop/target, expiry, notional, leverage, Risk policy identity,
 TriggerSpec parameters, producer identity, and final `EntryPlan` validation.
 
+## Trigger activation authority
+
+Only the canonical watcher may bind an `EntryTriggerActivationV1` before a
+Triggered Plan enters execution. The immutable receipt records Plan id/hash,
+instrument/direction, machine-derived TriggerSpec identity, compiled geometry and
+validated parameter hashes, ordered pullback/sweep/reclaim/confirmation events,
+and the exact quote/trade/depth source/receive times, sequences and stream identities.
+The active TriggerSpec identity is derived from its current implementation;
+receipt schema labels do not select another production implementation.
+
+SQLite appends activation facts and CAS-binds the existing Plan to its current
+activation. Plan JSON/hashes and old activations are never rewritten. Execution
+accepts only a stored activation id/hash, and rechecks Plan ownership, current
+monitoring generation, event order and freshness. Caller-authored trigger dictionaries
+provide no execution authority. Gateway repeats the shared check before claiming
+a new attempt and immediately before entering the broker; Risk still owns approval.
+
+Activation expires at the earliest required market fact's freshness boundary,
+bounded by Plan expiry. Expiry or a stream-generation change requires a fresh
+state-machine observation; it cannot be repaired by attaching a new quote to the old
+proof. A still-unsubmitted pending/approved Proposal may use newly earned activation
+on the same Plan; its original JSON/hash remains unchanged and the execution attempt
+receipt binds the new activation. Claims, Orders and unresolved exchange handoffs
+prevent activation replacement. Their recovery remains Gateway/reconciliation-owned
+and never requires a new trigger merely to observe an existing execution.
+
+Workbench projects `WAITING_TRIGGER` while an unsubmitted Plan needs fresh
+activation and `WAITING_MARKET` for an authorized passive Plan whose current quote
+would cross. The cycle timeline retains the current activation creation time.
+
 ## Maker lifetime
 
 Post-Only crossing is a current-market wait, not deterministic invalid geometry.

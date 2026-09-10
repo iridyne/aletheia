@@ -326,7 +326,7 @@ def execute_existing_proposal(
                 "message": "Only native Proposals may enter execution; no order was created.",
             }
         receipt = None
-        if proposal.entry_plan_id:
+        if proposal.entry_plan_id and proposal.status != "executing":
             from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
 
             try:
@@ -349,7 +349,7 @@ def execute_existing_proposal(
                     "proposal_id": proposal.id,
                     "message": "Execution receipt identity or hash did not match the Proposal.",
                 }
-        elif execution_receipt is not None:
+        elif execution_receipt is not None and not proposal.entry_plan_id:
             return {
                 "status": "rejected",
                 "reason_code": "unexpected_entry_execution_receipt",
@@ -395,6 +395,14 @@ def execute_existing_proposal(
                 reason_code,
             )
         else:
+            if receipt is not None:
+                from aletheia.execution.entry_plan_execution import require_execution_receipt_activation
+
+                try:
+                    require_execution_receipt_activation(proposal, receipt, now=now)
+                except ValueError as exc:
+                    return {"status": "rejected", "reason_code": str(exc), "proposal_id": proposal.id,
+                            "message": "Entry trigger activation did not authorize a new execution attempt."}
             owner_token = uuid4().hex
             if claim is None:
                 acquired = insert_proposal_execution_claim(
@@ -1547,6 +1555,15 @@ def _execute_proposal(
 
     accepted_exchange_result: dict | None = None
     accepted_exchange_channel: str | None = None
+    if execution_proposal.entry_plan_id:
+        from aletheia.execution.entry_plan_execution import require_execution_receipt_activation
+
+        try:
+            require_execution_receipt_activation(execution_proposal, execution_receipt, now=datetime.now(timezone.utc))
+        except ValueError as exc:
+            update_trade_proposal(proposal.id, status="pending")
+            return {"status": "attempt_rejected", "reason_code": str(exc), "proposal_id": proposal.id,
+                    "message": "Trigger activation is no longer valid; no order was submitted."}
     try:
         if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard

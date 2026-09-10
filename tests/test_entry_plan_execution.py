@@ -17,6 +17,7 @@ from aletheia.storage.models import (
     UniverseSnapshot,
 )
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+from aletheia.trading.entry_activation import require_entry_trigger_activation as _actual_activation_gate
 
 @pytest.mark.parametrize("kind,school,source_id,holding", [
     ("serenity", "serenity", "research-opportunity", 2160),
@@ -200,6 +201,11 @@ def _isolate_execution_contract(monkeypatch):
         "aletheia.execution.entry_plan_execution._require_ai_entry_authority",
         lambda _plan: None,
     )
+    # These unit tests own order geometry, Risk envelopes and reconciliation.
+    # Durable trigger authority is exercised against the real engine/store in
+    # test_entry_activation; the bypass regression below restores this gate.
+    monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation",
+                        lambda *args, **kwargs: None)
 
 
 def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
@@ -400,6 +406,35 @@ def test_proposal_race_rebinds_receipt_only_for_the_entry_plan_unique_conflict(m
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == winner_id
 
 
+@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
+def test_triggered_plan_cannot_submit_from_caller_authored_geometry(monkeypatch, tactic):
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation", _actual_activation_gate)
+
+    params = {**_plan().trigger_params, "geometry_fingerprint": "f" * 64,
+              "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+              "sweep_low": 98.5, "sweep_high": 99.0, "atr_abs": 2.0}
+    plan = _persist_waiting_plan(tactic=tactic, plan_updates={
+        "trigger_spec_id": "anchor-retrace-reclaim", "trigger_params": params,
+    })
+    reached_gateway = []
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal",
+        lambda *args, **kwargs: reached_gateway.append(args) or {"status": "submitted"})
+    now = datetime.now(timezone.utc)
+    try:
+        execute_entry_plan(plan.plan_id, bid=100, ask=100.05,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now,
+            trigger_activation_id="caller-authored-activation",
+            trigger_activation_hash="f" * 64,
+            **_execution_receipt_kwargs(now, depth=True))
+    except ValueError as exc:
+        assert str(exc) == "entry_trigger_activation_required"
+    assert reached_gateway == [], "caller-authored geometry reached Gateway without activation"
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+
+
 def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch):
     plan = _plan(account_mode="bitget_demo").model_copy(
         update={
@@ -425,17 +460,12 @@ def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch)
         },
     )
     observed_at = datetime.now(timezone.utc).isoformat()
-    trigger_evidence = {
-        "trigger_spec_id": "momentum-retrace-reclaim-geometry",
-        "geometry_fingerprint": "f" * 64,
-    }
     proposal = build_entry_plan_order_intent(
         plan,
         bid=100,
         ask=100.05,
         observed_at=observed_at,
         source_observed_at=observed_at,
-        trigger_evidence=trigger_evidence,
     )
     attribution = json.loads(proposal.attribution_snapshot)
     assert attribution["treatment_exposure_id"] == "exposure-treatment"
@@ -448,7 +478,6 @@ def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch)
             ask=100.05,
             observed_at=observed_at,
             source_observed_at=observed_at,
-            trigger_evidence=trigger_evidence,
         )
 
 
