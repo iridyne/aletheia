@@ -153,10 +153,10 @@ def test_exact_venue_capability_is_one_shared_executable_invariant():
     )
 
     cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.market_data.ccxt_exchange = "binance"
-    assert fast_market_data_unavailability_reason(cfg, "binance") is None
-    assert fast_market_data_unavailability_reason(cfg, "bitget") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+    assert fast_market_data_unavailability_reason(cfg, "binance") == "FAST_MARKET_DATA_VENUE_MISMATCH"
+    assert fast_market_data_unavailability_reason(cfg, "bitget") is None
     cfg.market_data.ccxt_exchange = "bitget"
     assert fast_market_data_unavailability_reason(cfg, "bitget") is None
 
@@ -315,18 +315,23 @@ def test_legacy_terminal_failure_requalifies_on_confirmed_structure(_inmemory_db
         "entry_plan_contract",
         "Operator observability",
         "L2a",
-        "The Workbench projects persisted per-Plan monitoring evidence and exact-venue funding readiness.",
+        "The Workbench preserves persisted per-Plan monitoring evidence and reports immutable Plan integrity.",
         status="implemented",
     )
 )
-def test_workbench_projects_monitoring_and_exact_funding_readiness():
+def test_workbench_projects_monitoring_and_plan_integrity():
     from aletheia.server.routes.universe import _entry_plan_projection
-    from aletheia.storage.models import EntryPlanRecord
+    from aletheia.trading.entry_plan import entry_plan_payload
+    from tests.test_entry_plan_execution import _plan
 
-    source = inspect.getsource(_entry_plan_projection)
-    assert "local_funding_schedule_readiness" in source
-    assert "venue=plan.venue" in source
-    assert "monitoring_state" in EntryPlanRecord.model_fields
-    assert "monitoring_evidence_json" in EntryPlanRecord.model_fields
-
+    payload, digest = entry_plan_payload(_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT"))
+    row = {"plan_json": payload, "plan_hash": digest, "monitoring_state": "unavailable",
+           "monitoring_evidence_json": '{"reason":"market_fact_stale"}'}
+    projected = _entry_plan_projection(row)
+    assert projected["contract_valid"] is True
+    assert projected["monitoring_state"] == "unavailable"
+    assert projected["monitoring_evidence_json"] == row["monitoring_evidence_json"]
+    assert projected["plan_json"] == payload and projected["plan_hash"] == digest
+    assert "contract_valid" not in row
+    assert _entry_plan_projection({**row, "plan_hash": "0" * 64})["contract_valid"] is False
 
