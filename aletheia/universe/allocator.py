@@ -190,22 +190,10 @@ def decorate_universe_candidates(
     candidates: list[dict],
     cfg: UniverseConfig,
 ) -> list[dict]:
-    """Apply the shared execution and risk projection to selected candidates."""
+    """Project TTL and risk flags without changing frozen execution eligibility."""
 
     for item in candidates:
         item["ttl_sec"] = cfg.entry_ttl_sec
-        symbol = item.get("symbol", "")
-        has_live_price = has_fresh_market_snapshot(
-            symbol,
-            item.get("market_type", "spot"),
-            exchange=item.get("venue"),
-        )
-        if not has_live_price:
-            logger.warning(
-                "no_live_price_for_symbol: %s — execution_eligible set to False",
-                symbol,
-            )
-        item["execution_eligible"] = has_live_price
         risk_flags = []
         if item.get("late_entry_penalty", 0) > 15:
             risk_flags.append("late_entry")
@@ -320,6 +308,11 @@ def allocate_universe(
     final = final[:max_total]
 
     if decorate_selected:
+        # Historical allocation replay retains its original late eligibility rule.
+        for item in final:
+            item["execution_eligible"] = has_fresh_market_snapshot(
+                item.get("symbol", ""), item.get("market_type", "spot"), exchange=item.get("venue"),
+            )
         decorate_universe_candidates(final, cfg)
 
     if log_result:

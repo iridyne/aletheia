@@ -200,7 +200,23 @@ API/UI/CLI projections expose Utility and typed admission evidence, not syntheti
 legacy scores. Historical score values remain readable under their old policy;
 the required physical `total_score` column is not an economic authority.
 
-## Isolation
+## Pre-capacity actionability amendment — 2026-09-10
+
+Current actionability freezes the supported fast-market route and the existing
+exact venue/physical-market snapshot freshness result before capacity selection.
+Post-selection decoration projects TTL/risk flags without rechecking eligibility.
+Unsupported or capability-gap mechanisms cannot become measured or Startup
+primaries. The explicit `regime.short_enabled` control applies before direction
+comparison and is part of the policy identity. Detected regime is frozen once
+into current feature context, Candidate evidence and outcomes; it does not add
+an economic score or automatic directional bias.
+
+This B amendment rotates the current policy epoch through its actionability
+contract material and short-control configuration. It does not rewrite A's
+historical golden policy, Context/Planning identity or any persisted evidence.
+Historical allocator replay retains its original late-decoration behavior.
+
+## Observation isolation
 
 Issue #2556 owns a separate frozen Observation Lab generation. This path never
 reads, relabels, backfills, or mutates its benchmark records, identities, cost

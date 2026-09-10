@@ -161,6 +161,7 @@ def _build_candidate_selection_bundle(
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
     )
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
     action_routes = {
         (
@@ -172,7 +173,12 @@ def _build_candidate_selection_bundle(
             cfg,
             str(item.get("venue") or ""),
             str(item.get("market_type") or "spot"),
-        )
+        ) or (None if has_fresh_market_snapshot(
+            str(item.get("symbol") or ""),
+            str(item.get("market_type") or "spot"),
+            exchange=str(item.get("venue") or ""),
+            now=datetime.fromisoformat(captured_at.replace("Z", "+00:00")),
+        ) else "market_snapshot_unavailable")
         for item in population
     }
     selection_policy = candidate_selection_policy_identity(cfg)
@@ -649,9 +655,6 @@ class UniverseService:
                     detected_at=current_regime.detected_at,
                 )
                 repo.insert_market_regime(record)
-                # If short globally disabled, zero out short_bias so gate blocks all shorts
-                if not cfg.regime.short_enabled:
-                    current_regime.short_bias = 0.0
                 logger.info(
                     "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
                     current_regime.state,
@@ -729,6 +732,12 @@ class UniverseService:
                 diagnostics_out=data_diagnostics,
                 **feature_kwargs,
             )
+            # Freeze the detected T0 context once for Candidate, Outcome and Planning.
+            features_list = [
+                {**feature, "regime_tag": current_regime.state
+                 if current_regime and (feature.get("analysis_context") or {}).get("kind") == "crypto" else None}
+                for feature in features_list
+            ]
 
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()

@@ -188,7 +188,7 @@ def _candidate_planning_baseline(*, with_history):
 
 
 @pytest.mark.parametrize("with_history", [True, False], ids=["measured", "startup"])
-def test_candidate_planning_frozen_baseline(with_history):
+def test_candidate_ranking_matches_frozen_a_baseline(with_history):
     import json
     from pathlib import Path
 
@@ -196,12 +196,13 @@ def test_candidate_planning_frozen_baseline(with_history):
     expected = golden["measured" if with_history else "startup"]
     assert len(expected) == 3
     actual = _candidate_planning_baseline(with_history=with_history)
-    # Owner-approved A boundary: remove only new-record provenance identities.
-    for rows in (actual, expected):
-        for row in rows:
-            row["context"].pop("context_hash")
-            row["context"]["candidate_selection"].pop("source_record_hash")
-    assert actual == expected
+    # B deliberately rotates policy and repairs Context/Planning material. Keep
+    # the original A fixture immutable and compare the unchanged ranking/economics.
+    for actual_row, expected_row in zip(actual, expected, strict=True):
+        assert actual_row["rank"] == expected_row["rank"]
+        for candidate in (actual_row["candidate"], expected_row["candidate"]):
+            candidate.pop("candidate_selection_policy_epoch")
+        assert actual_row["candidate"] == expected_row["candidate"]
 
 
 def test_runtime_commit_is_attested_provenance_not_causal_identity():
