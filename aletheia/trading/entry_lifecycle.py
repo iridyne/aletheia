@@ -85,6 +85,8 @@ def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict]) -> di
         changed_at = (current.get("passive_entry") or {}).get("observed_at") or changed_at
     if current and reason == "entry_trigger_activation_expired":
         changed_at = current["activation_expires_at"]
+    elif current and reason == "entry_trigger_activation_monitoring_mismatch":
+        changed_at = current.get("monitoring_changed_at")
     return {
         "lifecycle_state": state,
         "execution_state": (current.get("execution") or {}).get("execution_state", "NOT_STARTED") if current else "NOT_STARTED",
@@ -147,8 +149,8 @@ def _cycle_projection(cycle: dict) -> dict[str, Any]:
         events.append({"event": "passive_entry_eligible" if passive["eligible"] else "waiting_for_passive_market",
                        "at": passive.get("observed_at"),
                        "reason": None if passive["eligible"] else "post_only_would_cross_bbo"})
-    if cycle.get("trigger_activation_id"):
-        events.append({"event": "trigger_activation_created", "at": cycle.get("activation_created_at"), "reason": None})
+    for activation in cycle.get("activation_history", []):
+        events.append({"event": "trigger_activation_created", "at": activation["created_at"], "reason": None})
     return {
         "generation_id": cycle.get("id"),
         "cycle_number": int(cycle.get("cycle_number") or 1),

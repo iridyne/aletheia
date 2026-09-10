@@ -245,6 +245,28 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Momentum')
   })
 
+  it('shows both original and renewed activation facts in the Candidate cycle history', () => {
+    const html = renderWorkbench({
+      ...workbench,
+      current_candidates: [{
+        ...workbench.current_candidates![0],
+        cycles: [{
+          generation_id: 'generation-1', cycle_number: 1, previous_generation_id: null,
+          cycle_reason: null, requalification_candidate_id: null, last_stage: 'plan_created',
+          model_invoked: true, compiler_invoked: true, outcome_class: 'entry_plan', outcome_reason: null,
+          entry_plan_id: 'plan-1', entry_plan_status: 'triggered', execution_state: 'NOT_STARTED', execution: null,
+          events: [
+            { event: 'trigger_activation_created', at: '2026-08-28T00:00:00Z', reason: null },
+            { event: 'trigger_activation_created', at: '2026-08-29T00:00:00Z', reason: null },
+          ],
+        }],
+      }],
+    }, '/universe?tab=current&candidate_id=candidate-1')
+    expect(html).toContain('Planning cycles')
+    expect(html).toContain('Cycle 1')
+    expect(html.match(/Trigger Activation Created/g)).toHaveLength(2)
+  })
+
   it('distinguishes fallback instruments from Candidate attention', () => {
     const html = renderWorkbench({
       ...workbench,

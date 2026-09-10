@@ -7603,7 +7603,7 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
             batch = keys[offset:offset + 200]
             placeholders = ",".join("?" for _ in batch)
             rows = [dict(row) for row in get_db().execute(
-                "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
+                "SELECT pg.*, ep.id AS linked_entry_plan_id, ep.status AS entry_plan_status, "
                 "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
                 "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
                 "ep.terminal_reason AS entry_plan_terminal_reason, "
@@ -7616,10 +7616,22 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
                 f"WHERE pg.planning_key IN ({placeholders}) ORDER BY pg.cycle_number,pg.created_at,pg.id",
                 batch,
             )]
+            for row in rows:
+                row["entry_plan_id"] = row.pop("linked_entry_plan_id")
+            activation_history: dict[str, list[dict]] = {}
+            for activation in get_db().execute(
+                "SELECT ta.plan_id, ta.created_at FROM entry_trigger_activations ta "
+                "JOIN entry_plans ep ON ep.id=ta.plan_id "
+                "JOIN candidate_planning_generations pg ON pg.id=ep.planning_generation_id "
+                f"WHERE pg.planning_key IN ({placeholders}) ORDER BY ta.created_at,ta.id", batch,
+            ):
+                activation_history.setdefault(activation["plan_id"], []).append(dict(activation))
             lineage = get_entry_plan_execution_lineage([row["entry_plan_id"] for row in rows if row.get("entry_plan_id")])
             for row in rows:
                 monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
                 row["passive_entry"] = monitoring.get("passive_entry")
+                row["monitoring_changed_at"] = monitoring.get("state_changed_at")
+                row["activation_history"] = activation_history.get(row.get("entry_plan_id"), [])
                 if row.get("entry_plan_status") in {"triggered", "risk_reserved"}:
                     row["activation_recoverable"] = entry_plan_activation_can_refresh(row["entry_plan_id"])
                     snapshot = json.loads(row.get("activation_json") or "{}").get("snapshot", {})
@@ -9410,6 +9422,7 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
         evidence = {**evidence, "passive_entry": previous_passive}
     if isinstance(existing, dict) and signature(existing) == signature(evidence):
         return False
+    evidence = {**evidence, "state_changed_at": datetime.now(timezone.utc).isoformat()}
     payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
     execute_write(
         "UPDATE entry_plans SET monitoring_state=?, monitoring_evidence_json=?, "

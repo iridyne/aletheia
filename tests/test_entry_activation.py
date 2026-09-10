@@ -123,6 +123,11 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     assert row["plan_json"] == payload and row["plan_hash"] == digest
     lifecycle = repo.get_candidate_entry_lifecycle(candidate.id)
     assert lifecycle["lifecycle_state"] == "TRIGGERED"
+    assert lifecycle["current_plan_id"] == plan.plan_id
+    monitoring_bytes = row["monitoring_evidence_json"]
+    assert not repo.record_entry_plan_monitoring(plan.plan_id, {"state": "ready",
+        "stream_generation_id": "stream-1", "subscription_generation_id": "subscription-1"})
+    assert repo.get_entry_plan(plan.plan_id)["monitoring_evidence_json"] == monitoring_bytes
     assert any(event["event"] == "trigger_activation_created" for event in lifecycle["cycles"][0]["events"])
     from aletheia.execution.entry_plan_execution import execute_entry_plan
     from aletheia.execution.gateway import execute_existing_proposal as actual_gateway
@@ -221,6 +226,9 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     assert repo.bind_entry_trigger_activation(renewed, expected_activation_id=activation.activation_id, now=later)
     assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
     assert repo.get_trade_proposal(proposal.id) == original_proposal
+    timeline = repo.get_candidate_entry_lifecycle(candidate.id)["cycles"][0]["events"]
+    assert [event["at"] for event in timeline if event["event"] == "trigger_activation_created"] == [
+        activation.created_at, renewed.created_at]
     from aletheia.trading.entry_activation import require_entry_trigger_activation
 
     with pytest.raises(ValueError, match="activation_required"):

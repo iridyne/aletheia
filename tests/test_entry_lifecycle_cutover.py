@@ -781,3 +781,15 @@ def test_expired_activation_reports_actual_expiry_as_state_transition_time():
     lifecycle = project_candidate_entry_lifecycle({}, [cycle])
     assert lifecycle["lifecycle_reason"] == "entry_trigger_activation_expired"
     assert lifecycle["state_changed_at"] == cycle["activation_expires_at"]
+
+
+def test_monitoring_generation_change_uses_its_own_time_without_inventing_history():
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "entry_plan_status": "triggered", "activation_recoverable": True,
+             "activation_expires_at": "2099-01-01T00:00:02+00:00", "activation_stream_current": False,
+             "entry_plan_updated_at": "2026-01-01T00:00:00+00:00"}
+    assert project_candidate_entry_lifecycle({}, [cycle])["state_changed_at"] is None
+    cycle["monitoring_changed_at"] = "2026-01-01T00:00:01+00:00"
+    assert project_candidate_entry_lifecycle({}, [cycle])["state_changed_at"] == cycle["monitoring_changed_at"]

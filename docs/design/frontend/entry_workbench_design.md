@@ -21,7 +21,7 @@ are instrument availability only and never become Candidate attention implicitly
 | Endpoint | Contract |
 | --- | --- |
 | `GET /api/universe/workbench` | All current Snapshot Candidates, bounded active Entry Plans and Candidate attention, exact summary counts, Universe/fallback state, and per-section availability. `current_candidates` is `null` on read failure and `[]` only after a successful read with no current Candidates. |
-| `GET /api/universe/entry-plans/{plan_id}` | Any active or terminal plan by exact identity; validates the stored V1 payload and hash. |
+| `GET /api/universe/entry-plans/{plan_id}` | Any active or terminal plan by exact identity; validates the stored canonical or read-only historical payload and hash. |
 | `GET /api/universe/candidates/{candidate_id}` | Exact Candidate evidence; `/members/{id}` remains compatibility. |
 | `GET /api/universe/planning-history?limit=&before=` | Stable `(updated_at,id)` pagination over planning generation plus Entry Plan ledgers. |
 | `GET /api/trades?entry_plan_id=` | Exact server-side execution lookup. |
@@ -30,6 +30,14 @@ Activity and summary projections read the same ledgers. A failed section is
 `unavailable`, never an empty list or zero. Realtime updates reuse the shared
 WebSocket fingerprints for `candidate_planning_generations` and `entry_plans`;
 30-second REST polling remains the fallback.
+
+Cycle history projects every persisted trigger activation from the existing
+activation table, including superseded authorizations. Monitoring evidence records
+the persistence time of each material readiness/generation transition, without a
+per-tick ledger. An expired authorization uses its exact expiry for the effective
+state timestamp; a generation mismatch uses the recorded monitoring transition.
+Older evidence without that timestamp remains unknown. The linked Plan owns the
+projection's Plan identity even if a generation's old convenience pointer is empty.
 
 ## Page structure
 
