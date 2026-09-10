@@ -74,7 +74,6 @@ def _setup_db(tmp_path, monkeypatch):
 def _stub_uta_execution(monkeypatch):
     """Isolate account qualification and venue rules; no credential access."""
     from aletheia.execution import coordinator, gateway, order_constraints
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr(order_constraints, "prepare_exchange_quantity", lambda mode, symbol, market, qty, price: qty)
     monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda mode, symbol, market, qty, price: (qty, None))
     monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)

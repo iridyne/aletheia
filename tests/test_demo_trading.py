@@ -71,7 +71,6 @@ def _demo_config(monkeypatch, permission="Paper"):
         "connected_brokers": ["bitget_demo"], "execution_modes": list(manager.DEFAULT_UNIFIED_EXECUTION_MODES),
         "fetched_at": datetime.now(timezone.utc).isoformat(), "positions": [],
     })
-    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", lambda *args, **kwargs: None)
     # The same broker-path tests must not reach CCXT for executable rules.  Supply
     # a realistic Bitget BTC futures rule set while retaining the real quantity
     # normalization and Gateway re-check behavior.

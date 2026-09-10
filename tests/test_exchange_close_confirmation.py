@@ -32,7 +32,6 @@ def setup_env(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
 def _insert_position(execution_mode: str) -> Position:
     pos = Position(

@@ -129,9 +129,6 @@ def _wire_venue(monkeypatch, *, evidence=None, reason_code=None, venue_order_id=
     adapter = _ExchangeAdapter(submit, _MODE)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
     monkeypatch.setattr(
-        coordinator, "require_uta_mutation_qualification", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
         "aletheia.execution.order_constraints.prepare_exchange_quantity",
         lambda mode, symbol, market, qty, price: qty,
     )

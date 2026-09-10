@@ -55,9 +55,6 @@ def _prepare_venue(monkeypatch, *, fill_price: float, evidence=None, reason_code
     adapter = _Adapter(submit, _MODE)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
     monkeypatch.setattr(
-        coordinator, "require_uta_mutation_qualification", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
         "aletheia.execution.order_constraints.prepare_exchange_quantity",
         lambda mode, symbol, market, qty, price: qty,
     )

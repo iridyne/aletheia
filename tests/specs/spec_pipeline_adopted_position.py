@@ -822,7 +822,6 @@ def test_protective_order_dispatch_gating(tmp_path, monkeypatch):
     adapter = _Adapter(submit, "okx_demo")
     adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
     def _insert_okx_short():
         p = Position(symbol="BNB/USDT", market_type="usdt_futures", direction="short",

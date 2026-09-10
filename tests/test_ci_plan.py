@@ -222,7 +222,6 @@ def test_operational_scripts_are_full_ci() -> None:
         "scripts/runtime/start-release.ps1",
         "scripts/dev/dev-init.sh",
         "scripts/watch_backend.py",
-        "scripts/qualify_uta.py",
     ):
         report = _plan([path])
         assert report["mode"] == "full"

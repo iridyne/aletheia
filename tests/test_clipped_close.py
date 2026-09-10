@@ -59,10 +59,6 @@ def _setup_db(tmp_path, monkeypatch):
     sq._db_conn = conn
     jsonl._last_audit_hash = None
     run_migrations()
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        lambda *_args, **_kwargs: None,
-    )
     return conn
 
 

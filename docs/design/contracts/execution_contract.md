@@ -618,9 +618,11 @@ state。每轮仍有明确 scan/I/O 上限，不能以扩大 `LIMIT` 代替公�
 
 Issue #2299 及已批准的唯一主线切换保留 Gateway、Risk 与本地存储权威。六种外部
 execution_mode 仅使用 CCXTUTAAdapter；Bitget Classic v2 与 UTA v3 保留明确 profile 隔离。
-账户读取不要求 mutation qualification；所有 mutation 仍要求现有 exact-code/account/profile/
-generation 与 execution evidence 资格，live 另受既有 Live Trust 授权约束。没有 legacy/shadow
-选择器或旧 broker fallback。静态实现不代表凭据资格或 Fedora 部署已完成。
+按 owner 接受的 #3035，Demo/Testnet mutation 不要求 SHA-bound 本地资格证书。
+账户配置不证明运行或经济资格；执行权限由现有 authoritative Risk、Gateway、exact UTA
+账户绑定与 durable command/reconciliation 规则共同决定。Live 仍独立受既有 Live Trust
+授权约束。没有 legacy/shadow 选择器或旧 broker fallback。外部资格 verdict 必须来自正常
+执行主线的真实证据；静态实现、账户读取或健康状态不证明闭环或部署完成。
 
 提交前 Order 持久化 exact 非秘密账户身份。旧订单身份缺失或不匹配时，保留记录与未决事实，
 阻断该账户新入场及无法证明归属的私有操作；不得用当前配置补造历史身份。
@@ -629,4 +631,4 @@ Gateway 是唯一业务写授权；Coordinator 是正常产品路径中 UTA muta
 UTA 不写 Aletheia DB。外部调用位于 SQLite writer transaction 之外，返回后以短
 expected-state/CAS 应用证据。partial、unsupported、unavailable、timeout 或异常不能变成
 空、零、取消、仓位消失或完整经济事实；可能已发送的 mutation 保持 ambiguous，禁止自动重试。
-完整资格要求见 [`unified_trading_account.md`](../proposals/unified_trading_account.md)。
+UTA 边界见 [`unified_trading_account.md`](../proposals/unified_trading_account.md)。
