@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v77"
+SCHEMA_VERSION = "aletheia-sqlite-v78"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8161,6 +8161,22 @@ def _apply_position_lifecycle_v77(db: sqlite3.Connection) -> None:
     db.execute("PRAGMA optimize")
 
 
+_ENTRY_HYPOTHESIS_CHECKPOINT_SQL = (
+    "ALTER TABLE candidate_planning_generations ADD COLUMN validated_hypothesis_json TEXT "
+    "CHECK(validated_hypothesis_json IS NULL OR json_valid(validated_hypothesis_json))",
+    "CREATE TRIGGER trg_candidate_hypothesis_immutable "
+    "BEFORE UPDATE OF validated_hypothesis_json ON candidate_planning_generations "
+    "WHEN OLD.validated_hypothesis_json IS NOT NULL "
+    "AND NEW.validated_hypothesis_json IS NOT OLD.validated_hypothesis_json "
+    "BEGIN SELECT RAISE(ABORT,'Validated Entry hypothesis is immutable'); END",
+)
+
+
+def _apply_entry_hypothesis_checkpoint_v78(db: sqlite3.Connection) -> None:
+    for statement in _ENTRY_HYPOTHESIS_CHECKPOINT_SQL:
+        db.execute(statement)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8617,6 +8633,12 @@ _MIGRATIONS = (
         checksum=_POSITION_LIFECYCLE_CHECKSUM,
         schema_version="aletheia-sqlite-v77",
         apply=_apply_position_lifecycle_v77,
+    ),
+    MigrationStep(
+        migration_id="20260910_0077_entry_hypothesis_checkpoint_v78",
+        checksum=hashlib.sha256("\n".join(_ENTRY_HYPOTHESIS_CHECKPOINT_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v78",
+        apply=_apply_entry_hypothesis_checkpoint_v78,
     ),
 )
 

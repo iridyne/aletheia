@@ -8219,6 +8219,7 @@ def claim_next_candidate_planning(
     lease_seconds: int = 300,
     max_attempts: int = 3,
     now: datetime | None = None,
+    resume_only: bool = False,
 ) -> dict | None:
     """CAS one current generation; duplicate wakes return no second owner."""
 
@@ -8234,6 +8235,7 @@ def claim_next_candidate_planning(
                 "JOIN universe_members um ON um.id=pg.last_candidate_id "
                 "WHERE pg.is_current=1 AND pg.attention_status='active' "
                 "AND pg.entry_behavior_fingerprint IS NOT NULL "
+                "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
                 "AND um.execution_eligible=1 "
                 "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
                 "AND pg.attempt_count<? AND (pg.status='pending' "
@@ -8242,7 +8244,7 @@ def claim_next_candidate_planning(
                 "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
                 "ORDER BY CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC, "
                 "pg.created_at ASC, pg.id ASC LIMIT 1",
-                (timestamp, timestamp, max_attempts, timestamp, timestamp),
+                (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
             )
             .fetchone()
         )
@@ -8502,6 +8504,7 @@ def count_pending_candidate_planning(
     max_attempts: int = 3,
     *,
     now: datetime | None = None,
+    resume_only: bool = False,
 ) -> int:
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
@@ -8513,12 +8516,13 @@ def count_pending_candidate_planning(
             "JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
             "AND pg.entry_behavior_fingerprint IS NOT NULL "
+            "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
             "AND um.execution_eligible=1 "
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
             "AND pg.attempt_count<? AND (pg.status='pending' "
             "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
             "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
-            (timestamp, timestamp, max_attempts, timestamp, timestamp),
+            (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
         )
         .fetchone()
     )
@@ -8803,6 +8807,36 @@ def bind_candidate_planner_input(
     return updated.rowcount == 1
 
 
+def bind_candidate_planning_hypothesis(
+    generation_id: str, owner_token: str, payload: str,
+    *, now: datetime | None = None,
+) -> bool:
+    """Checkpoint one validated model result under the existing claim and frozen input."""
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint, validate_hypothesis_references
+
+    generation = get_candidate_planning_generation(generation_id)
+    if generation is None or not generation.get("planner_input_json"):
+        return False
+    context = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
+    if fingerprint(context.model_dump(mode="json")) != generation["planner_input_hash"]:
+        raise ValueError("planner_input_hash_mismatch")
+    hypothesis = EntryHypothesis.model_validate_json(payload)
+    validate_hypothesis_references(hypothesis, context)
+    payload = canonical_json(hypothesis.model_dump(mode="json"))
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET validated_hypothesis_json=?, "
+        "last_stage='hypothesis_validated', updated_at=? "
+        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=? "
+        "AND attention_status='active' AND planner_input_hash=? "
+        "AND claim_expires_at>? AND soft_expires_at>? AND hard_expires_at>? "
+        "AND (validated_hypothesis_json IS NULL OR validated_hypothesis_json=?)",
+        (payload, timestamp, generation_id, owner_token, generation["planner_input_hash"],
+         timestamp, timestamp, timestamp, payload),
+    )
+    return updated.rowcount == 1
+
+
 def complete_candidate_planning_with_plan(
     generation_id: str,
     owner_token: str,
@@ -8849,6 +8883,9 @@ def complete_candidate_planning_with_plan(
             return "stale", None
         if row["status"] != "planning":
             return "claim_lost", None
+        if (row["validated_hypothesis_json"] is not None
+            and plan.entry_hypothesis_json != row["validated_hypothesis_json"]):
+            raise ValueError("entry_plan_hypothesis_checkpoint_mismatch")
         if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
             from aletheia.trading.entry_contract import entry_contract_fingerprints

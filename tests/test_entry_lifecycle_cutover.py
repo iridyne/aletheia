@@ -334,10 +334,6 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
         "aletheia.agent_shell.entry_planner.fast_market_data_unavailability_reason",
         lambda *_args: None,
     )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.validate_hypothesis_references",
-        lambda *_args: None,
-    )
     compiler_calls = 0
 
     def compiler(*_args):
@@ -356,7 +352,7 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
             "entry_profile_id": "grounded-anchor-resting-maker",
             "execution_urgency": "PASSIVE", "risk_tier": "LOW",
             "horizon": "INTRADAY",
-            "supporting_fact_refs": [f"candidate:{candidate.id}"],
+            "supporting_fact_refs": [invalidation.anchor_id],
         }
 
     result = asyncio.run(plan_next_candidate(
@@ -453,7 +449,7 @@ def test_current_broker_backpressure_consumes_no_attempt(_inmemory_db, monkeypat
 
 
 def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, monkeypatch):
-    from aletheia.agent_shell.entry_planner import plan_next_candidate
+    from aletheia.agent_shell.entry_planner import PlanIntentError, plan_next_candidate
     from aletheia.storage import repositories as repo
 
     candidate = _typed_candidate()
@@ -464,18 +460,20 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
         lambda *_args: None,
     )
     cfg = _cfg("Full", "bitget_demo")
+    calls = []
 
     async def planner(_context):
+        calls.append(_context)
         cfg.agent.permission_mode = "Observe"
         return {
             "decision": "ENTRY_PLAN", "reason_code": "OK",
             "mechanism": "reversal", "direction": "long",
-            "primary_anchor_ref": "ignored-until-authority-recovers",
-            "invalidation_anchor_ref": "also-ignored",
+            "primary_anchor_ref": _context["anchors"][0]["anchor_id"],
+            "invalidation_anchor_ref": _context["anchors"][1]["anchor_id"],
             "entry_profile_id": "grounded-anchor-resting-maker",
             "execution_urgency": "PASSIVE", "risk_tier": "LOW",
             "horizon": "INTRADAY",
-            "supporting_fact_refs": ["ignored"],
+            "supporting_fact_refs": [_context["anchors"][1]["anchor_id"]],
         }
 
     result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
@@ -487,6 +485,53 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
     assert stored["compiler_invoked"] == 0
     assert stored["outcome_class"] == "planning_blocked"
     assert stored["attempt_count"] == 1
+    assert stored["validated_hypothesis_json"] is not None
+    cfg.agent.permission_mode = "Full"
+    repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
+                       (generation["id"],))
+    def compiler(_generation, _context, hypothesis, _cfg):
+        assert hypothesis == type(hypothesis).model_validate_json(stored["validated_hypothesis_json"])
+        raise PlanIntentError("EXPECTED_COMPILER_STOP")
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", compiler)
+    resumed = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    assert resumed["status"] == "failed" and resumed["model_invoked"] is False
+    assert resumed["compiler_invoked"] is True
+    assert len(calls) == 1
+    assert repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"] == stored["validated_hypothesis_json"]
+
+
+def test_hypothesis_checkpoint_requires_live_claim_and_is_write_once(_inmemory_db):
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    now = datetime.now(timezone.utc)
+    candidate = _typed_candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=now)
+    _bind_test_context(repo, generation)
+    repo.claim_next_candidate_planning("first-owner", now=now)
+    hypothesis = EntryHypothesis(decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS",
+                                mechanism="reversal", direction="long", risk_tier="NONE", horizon="NONE")
+    expired = now + timedelta(seconds=301)
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "first-owner",
+                                                     hypothesis.model_dump_json(), now=expired)
+    claimed = repo.claim_next_candidate_planning("second-owner", now=expired)
+    assert claimed["id"] == generation["id"]
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "first-owner",
+                                                     hypothesis.model_dump_json(), now=expired)
+    assert repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                 hypothesis.model_dump_json(), now=expired)
+    checkpoint = repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"]
+    assert repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                 checkpoint, now=expired)
+    other = hypothesis.model_copy(update={"reason_code": "INSUFFICIENT_EVIDENCE"})
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                     other.model_dump_json(), now=expired)
+    with pytest.raises(sqlite3.IntegrityError, match="hypothesis is immutable"):
+        repo.execute_write("UPDATE candidate_planning_generations SET validated_hypothesis_json=NULL WHERE id=?",
+                           (generation["id"],))
+    assert repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"] == checkpoint
 
 
 def _legacy_structure_candidate(source_at, *, price=100, rank=1):

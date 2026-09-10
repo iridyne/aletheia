@@ -39,8 +39,8 @@ def _implementation_semantics(component: object) -> str:
 
 @lru_cache(maxsize=1)
 def entry_contract_fingerprints() -> tuple[str, str]:
-    from aletheia.agent_shell.entry_planner import plan_next_candidate, system_operator_entry_planner
-    from aletheia.storage.repositories import prepare_candidate_requalification, ensure_candidate_planning_generation
+    from aletheia.agent_shell.entry_planner import plan_next_candidate, system_operator_entry_planner, run_entry_planner_batch
+    from aletheia.storage.repositories import prepare_candidate_requalification, ensure_candidate_planning_generation, bind_candidate_planning_hypothesis
     from aletheia.trading.entry_analysis import entry_causal_windows, planning_structure_material
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.trading.entry_analysis import entry_orderbook_available
@@ -77,6 +77,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
             name: _implementation_semantics(component)
             for name, component in {
                 "planner": plan_next_candidate,
+                "planner_batch": run_entry_planner_batch,
                 "model_planner": system_operator_entry_planner,
                 "model_view": entry_model_view,
                 "reference_contract": entry_reference_contract,
@@ -88,6 +89,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
                 "planning_material": planning_structure_material,
                 "requalification_preparation": prepare_candidate_requalification,
                 "planning_lifecycle": ensure_candidate_planning_generation,
+                "hypothesis_checkpoint": bind_candidate_planning_hypothesis,
                 "hypothesis": EntryHypothesis,
                 "reference_validation": validate_hypothesis_references,
                 "compiler": entry_plan_compiler,

@@ -449,6 +449,23 @@ def test_agent_run_lifecycle_migration_preserves_refs_and_closes_admission():
     connection.close()
 
 
+def test_hypothesis_checkpoint_migration_keeps_existing_facts_and_guards_new_checkpoint():
+    import aletheia.storage.migrations as migrations
+
+    with sqlite3.connect(":memory:") as connection:
+        connection.execute("CREATE TABLE candidate_planning_generations "
+                           "(id TEXT PRIMARY KEY, planner_input_json TEXT, planner_input_hash TEXT, result_json TEXT)")
+        facts = ("old", '{"frozen":"input"}', "historical-hash", '{"reason":"provider_unavailable"}')
+        connection.execute("INSERT INTO candidate_planning_generations VALUES (?,?,?,?)", facts)
+        migrations._apply_entry_hypothesis_checkpoint_v78(connection)
+        assert connection.execute("SELECT * FROM candidate_planning_generations").fetchone() == (*facts, None)
+        connection.execute("UPDATE candidate_planning_generations SET validated_hypothesis_json='{}'")
+        with pytest.raises(sqlite3.IntegrityError, match="hypothesis is immutable"):
+            connection.execute("UPDATE candidate_planning_generations SET validated_hypothesis_json=NULL")
+        assert connection.execute("SELECT id,planner_input_json,planner_input_hash,result_json "
+                                  "FROM candidate_planning_generations").fetchone() == facts
+
+
 def test_order_lifecycle_migration_preserves_fill_fk_and_rejects_unknown_state():
     import aletheia.storage.migrations as migrations
 

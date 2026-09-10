@@ -790,7 +790,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 @pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
-@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED"])
+@pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH"])
 def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
 
@@ -918,24 +918,72 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
         def fail_compile(*args, **kwargs):
-            if compiler_error == "RUNNING_CONTRACT_CHANGED":
+            if compiler_error in {"RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH"}:
                 plan = compile_entry_plan(*args, **kwargs)
+                if compiler_error == "HYPOTHESIS_CHECKPOINT_MISMATCH":
+                    changed = hypothesis.model_copy(update={
+                        "supporting_fact_refs": (invalidation.anchor_id, primary.anchor_id),
+                    })
+                    payload = canonical_json(changed.model_dump(mode="json"))
+                    return plan.model_copy(update={"entry_hypothesis_json": payload,
+                        "entry_hypothesis_hash": hashlib.sha256(payload.encode()).hexdigest()})
                 monkeypatch.setattr("aletheia.trading.entry_contract.entry_contract_fingerprints",
                     lambda: ("new-running-behavior", "new-running-schema"))
                 return plan
-            raise PlanIntentError(compiler_error)
+            raise PlanIntentError("COMPILER_RISK_BUDGET_UNAVAILABLE" if compiler_error == "COMPILER_RETRY_EXHAUSTED" else compiler_error)
         monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", fail_compile)
     result = asyncio.run(
         plan_next_candidate(planner, cfg=cfg, owner_token="canonical-owner")
     )
     if compiler_error:
         stored = repo.get_candidate_planning_generation(generation["id"])
-        operational = compiler_error == "COMPILER_RISK_BUDGET_UNAVAILABLE"
+        operational = compiler_error in {"COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED"}
         assert result["status"] == ("unavailable" if operational else "failed")
         assert stored["outcome_class"] == ("planning_unavailable" if operational else "planning_failed")
         assert stored["planner_input_json"] == input_payload
         assert stored["model_invoked"] == stored["compiler_invoked"] == 1
         assert stored["attention_status"] == ("active" if operational else "terminal")
+        if compiler_error == "COMPILER_RETRY_EXHAUSTED":
+            for attempt in (2, 3):
+                repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
+                                   (generation["id"],))
+                retry = asyncio.run(plan_next_candidate(planner, cfg=cfg, owner_token=f"retry-{attempt}"))
+                assert retry["status"] == "unavailable" and retry["model_invoked"] is False
+                after = repo.get_candidate_planning_generation(generation["id"])
+                assert after["attempt_count"] == attempt
+                assert after["validated_hypothesis_json"] == stored["validated_hypothesis_json"]
+            assert after["attention_status"] == "terminal"
+            assert len(requests) == 2
+            assert asyncio.run(plan_next_candidate(planner, cfg=cfg))["status"] == "idle"
+            return
+        if operational:
+            # Resume through a new claim after the dependency recovers. The two
+            # physical model responses above are exhausted: only compilation may repeat.
+            monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", compile_entry_plan)
+            repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
+                               (generation["id"],))
+            async def no_model_capacity(*_args, **_kwargs):
+                return 0
+            monkeypatch.setattr("aletheia.model_provider.broker.inference_broker.available_capacity", no_model_capacity)
+            fresh = _typed_candidate(mechanism="reversal", family="mean_reversion",
+                                     symbol="ETH/USDT", asset_id="asset-eth", rank=1)
+            fresh_generation, _ = repo.ensure_candidate_planning_generation(fresh.id)
+            repo.execute_write("UPDATE universe_members SET rank=2 WHERE id=?", (candidate.id,))
+            batch = asyncio.run(run_entry_planner_batch(cfg=cfg))
+            assert batch["status"] == "batch", "Compiler recovery must not require an inference slot"
+            recovered = batch["results"][0]
+            assert recovered["status"] == "planned"
+            assert recovered["model_invoked"] is False and recovered["compiler_invoked"] is True
+            after = repo.get_candidate_planning_generation(generation["id"])
+            assert after["cycle_number"] == stored["cycle_number"]
+            assert after["planner_input_json"] == stored["planner_input_json"]
+            assert after["planner_input_hash"] == stored["planner_input_hash"]
+            assert after["model_invoked_at"] == stored["model_invoked_at"]
+            assert after["validated_hypothesis_json"] == stored["validated_hypothesis_json"]
+            assert len(requests) == 2
+            assert repo.get_candidate_planning_generation(fresh_generation["id"])["attempt_count"] == 0
+            compiled = EntryPlan.model_validate_json(repo.get_entry_plan(recovered["entry_plan_id"])["plan_json"])
+            assert json.loads(compiled.entry_hypothesis_json) == hypothesis.model_dump(mode="json")
         return
     assert result["status"] == "planned", repo.get_candidate_planning_generation(generation["id"])["result_json"]
     stored = repo.get_candidate_planning_generation(generation["id"])
@@ -1090,7 +1138,8 @@ def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
     calls = 0
     provider_names = []
 
-    async def fake_run_once(cfg=None, *, provider_name=None):
+    async def fake_run_once(cfg=None, *, provider_name=None, resume_only=False):
+        assert resume_only is False
         nonlocal active, peak, calls
         calls += 1
         active += 1
@@ -1157,7 +1206,8 @@ def test_entry_planner_batch_cancels_and_awaits_siblings_on_fatal_failure(monkey
     all_started = asyncio.Event()
     cancelled = 0
 
-    async def worker(cfg=None, *, provider_name=None):
+    async def worker(cfg=None, *, provider_name=None, resume_only=False):
+        assert resume_only is False
         nonlocal started, cancelled
         index = started
         started += 1
