@@ -71,7 +71,6 @@ const workbench: EntryWorkbenchResponse = {
     monitoring_state: 'degraded',
     monitoring_evidence_json: JSON.stringify({ channels: { quote: { state: 'ready', reason: null }, trade: { state: 'degraded', reason: 'channel_event_stale' } } }),
     monitoring_evidence_hash: 'c'.repeat(64),
-    funding_readiness: { ready: false, reason: 'exact_schedule_missing', venue: 'bitget', symbol: 'AVAX/USDT', market_type: 'perp' },
     lineage: {
       order: { id: 'order-1', exchange_order_id: 'exchange-1', status: 'submitted', quantity: 1, position_id: 'position-1' },
       fills: { count: 1, quantity: 0.5, latest_at: '2026-08-28T00:30:00Z' },
@@ -144,7 +143,7 @@ describe('Entry Workbench', () => {
     expect(html).toContain('Planning History')
     expect(html).toContain('Fast monitoring:')
     expect(html).toContain('trade: Channel Event Stale')
-    expect(html).toContain('funding Exact Schedule Missing')
+    expect(html).not.toContain('Funding readiness')
     expect(html).not.toContain('Manual Review')
   })
 

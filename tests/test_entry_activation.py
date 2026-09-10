@@ -165,6 +165,16 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
 
     proposal = TradeProposal.model_validate(repo.get_trade_proposal_by_entry_plan(plan.plan_id))
     receipt = build_entry_execution_receipt(plan, proposal, **{key: value for key, value in kwargs.items() if key != "now"})
+    if tactic == "OPPOSING_BBO_IOC":
+        from aletheia.execution.entry_plan_execution import require_execution_receipt_activation
+
+        require_execution_receipt_activation(proposal, receipt, now=now)
+        for delta in (-0.01, 0.01):
+            changed_quote = {**kwargs, "bid": ready.bid + delta, "ask": ready.ask + delta}
+            changed_receipt = build_entry_execution_receipt(plan, proposal,
+                **{key: value for key, value in changed_quote.items() if key != "now"})
+            with pytest.raises(ValueError, match="entry_execution_receipt_intent_price_mismatch"):
+                require_execution_receipt_activation(proposal, changed_receipt, now=now)
     # Even a self-consistent execution-receipt hash cannot replace the durable
     # activation. Verify the real Gateway refuses before acquiring ownership.
     forged = receipt.model_copy(update={"trigger_activation_id": "forged"})
@@ -172,36 +182,6 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     result = actual_gateway(proposal.id, proposal.execution_mode, execution_receipt=forged)
     assert result["reason_code"] == "entry_trigger_activation_required"
     assert repo.get_proposal_execution_claim(proposal.id) is None
-    from types import SimpleNamespace
-    from aletheia.execution import gateway
-
-    broker_calls = []
-    prepared = [False]
-
-    class PreparationClock(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return now + timedelta(seconds=3) if prepared[0] else now
-
-    def finish_preparation(*_args):
-        prepared[0] = True
-        return None
-
-    with monkeypatch.context() as gate:
-        gate.setattr(gateway, "datetime", PreparationClock)
-        gate.setattr(gateway, "evaluate_proposal", lambda *args, **kwargs:
-            SimpleNamespace(approved=True, allowed_execution_mode="bitget_demo", decision_id="fixture-risk"))
-        gate.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (proposal.quantity, None))
-        gate.setattr(gateway, "_check_symbol_availability", finish_preparation)
-        gate.setattr("aletheia.execution.coordinator.execute_order",
-            lambda **kwargs: broker_calls.append(kwargs) or {"status": "failed"})
-        result = actual_gateway(proposal.id, proposal.execution_mode, execution_receipt=receipt)
-    assert result["status"] == "attempt_rejected"
-    assert result["reason_code"] == "entry_trigger_activation_expired"
-    assert broker_calls == []
-    assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
-    assert repo.get_proposal_execution_claim(proposal.id) is None
-    assert not repo.bind_entry_trigger_activation(competitor, expected_activation_id=activation.activation_id, now=now)
     # A later fresh trigger may recover the same unsubmitted immutable intent.
     # Advance the fixture clock, keeping exchange/receive/state references exact.
     later = now + timedelta(seconds=3)
@@ -339,3 +319,66 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
     if scenario != "cold_start":
         assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
+
+
+@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
+@pytest.mark.parametrize("expiry_stage", ["preflight", "authoritative", "broker"])
+def test_expired_activation_after_claim_is_audited_terminal_error(monkeypatch, tactic, expiry_stage):
+    from aletheia.storage import repositories as repo
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent, build_entry_execution_receipt
+    from aletheia.execution.gateway import execute_existing_proposal as actual_gateway
+
+    plan, ready, now, _ = _persist_observed_plan(monkeypatch, tactic)
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    repo.record_entry_plan_monitoring(plan.plan_id, {"state": "ready", "stream_generation_id": "stream-1",
+        "subscription_generation_id": "subscription-1"})
+    assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+    facts = dict(bid=ready.bid, ask=ready.ask, observed_at=now.isoformat(), source_observed_at=now.isoformat(),
+        trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash)
+    proposal = build_entry_plan_order_intent(plan, **facts, now=now)
+    repo.insert_trade_proposal(proposal)
+    receipt = build_entry_execution_receipt(plan, proposal, **facts,
+        stream_generation_id=ready.stream_generation_id, subscription_generation_id=ready.subscription_generation_id,
+        quote_sequence=ready.quote_sequence, required_channels=("quote", "trade", "depth", "candle"),
+        depth_bids=ready.depth_bids, depth_asks=ready.depth_asks,
+        depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
+        depth_received_timestamp_ms=ready.depth_received_timestamp_ms, depth_sequence=ready.depth_sequence)
+    from types import SimpleNamespace
+    from aletheia.execution import gateway
+
+    audit = []
+    monkeypatch.setattr(gateway, "write_audit", audit.append)
+    broker_calls = []
+    prepared = [False]
+
+    class PreparationClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now + timedelta(seconds=3) if prepared[0] else now
+
+    def risk_decision(*args, **kwargs):
+        rejected = kwargs.get("decision_role") == expiry_stage
+        return SimpleNamespace(approved=not rejected, allowed_execution_mode="bitget_demo",
+            decision_id="fixture-risk", violations=["entry_execution_receipt_expired"] if rejected else [],
+            message="Execution receipt expired")
+
+    def finish_preparation(*_args):
+        prepared[0] = True
+        return None
+
+    with monkeypatch.context() as gate:
+        gate.setattr(gateway, "datetime", PreparationClock)
+        gate.setattr(gateway, "evaluate_proposal", risk_decision)
+        gate.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (proposal.quantity, None))
+        gate.setattr(gateway, "_check_symbol_availability", finish_preparation)
+        gate.setattr("aletheia.execution.coordinator.execute_order",
+            lambda **kwargs: broker_calls.append(kwargs) or {"status": "failed"})
+        result = actual_gateway(proposal.id, proposal.execution_mode, execution_receipt=receipt)
+    assert result["status"] == "error"
+    assert result["reason_code"] == ("entry_trigger_activation_expired" if expiry_stage == "broker"
+        else "entry_execution_receipt_rejected")
+    assert broker_calls == []
+    assert repo.get_trade_proposal(proposal.id)["status"] == "error"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"
+    assert any(event["event_type"] == "execution_error" and event["after"]["status"] == "error" for event in audit)
+    assert repo.get_proposal_execution_claim(proposal.id) is None
