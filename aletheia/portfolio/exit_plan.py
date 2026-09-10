@@ -124,11 +124,29 @@ def load_exit_plan(position: dict) -> ExitPlan:
     )
 
 
-def save_exit_plan(position_id: str, plan: ExitPlan) -> None:
-    """Persist an ExitPlan to its position's flat columns."""
-    from aletheia.storage.repositories import update_open_position_exit_plan
+def save_exit_plan(
+    position_id: str,
+    plan: ExitPlan,
+    *,
+    exit_plan_updates: dict | None = None,
+    observation_updates: dict | None = None,
+) -> ExitPlan:
+    """Atomically persist exit intent and related fields for an open exchange Position."""
+    from aletheia.storage import repositories as repo
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
 
-    update_open_position_exit_plan(position_id, **plan.to_columns())
+    position = repo.get_position(position_id)
+    if position is None or position.get("status") != "open":
+        raise ValueError("ExitPlan update requires an open Position")
+    if position.get("execution_mode") not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported position execution mode")
+    with repo.transaction(immediate=True):
+        repo.update_open_position_exit_plan(
+            position_id, **{**plan.to_columns(), **(exit_plan_updates or {})}
+        )
+        if observation_updates:
+            repo.update_open_position_observation(position_id, **observation_updates)
+    return plan
 
 
 def _resolve_stop(position: dict, cfg) -> tuple[float | None, bool]:

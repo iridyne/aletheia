@@ -6,8 +6,7 @@ Consumes:
   - Market-wide average funding rate (from universe features)
 
 Produces:
-  MarketRegime dataclass → written to DB by caller, consumed by signal_emitter,
-  paper_trader_ranker, and risk_engine.
+  MarketRegime dataclass for callers to persist and use as market context.
 
 Detection runs every universe_refresh cycle (~10 min). State changes are
 debounced: a new state must hold for `min_hold_periods` consecutive detections

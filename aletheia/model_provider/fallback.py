@@ -75,7 +75,7 @@ _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
 # could otherwise raise "dict changed size during iteration" (CC-1).
 _MODEL_HEALTH_LOCK = threading.Lock()
 _SAFETY_LOGICAL_AGENTS = frozenset({
-    "pi_trading_decision", "risk_critic", "paper_trader", "agent_shell/trading_decision",
+    "pi_trading_decision", "risk_critic", "agent_shell/trading_decision",
 })
 
 

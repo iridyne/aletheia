@@ -1,5 +1,11 @@
 # Capability Fact Cards
 
+> **Archived capability review.** Counts, statuses and “current” statements below
+> refer to the reviewed scope at that time, including the retired local simulator.
+> They do not qualify the current external exchange mainline. Use
+> [current capability boundaries](../CAPABILITY_GROUND_TRUTH.md) and the
+> [archived review scope](../../design/history/local_simulated_capability_review.md).
+
 This file is the compact, reviewed card set for all inventory IDs. The exact
 product promise and discovery sources are inherited from
 [`CAPABILITY_INVENTORY.md`](CAPABILITY_INVENTORY.md); each row below records the

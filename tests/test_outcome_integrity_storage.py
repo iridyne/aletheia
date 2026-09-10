@@ -19,7 +19,7 @@ def test_position_outcome_defaults_fail_closed_and_round_trip():
         direction="long",
         quantity=0.01,
         entry_price=50_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert position.close_category == "unknown"
@@ -50,7 +50,7 @@ def test_position_outcome_defaults_fail_closed_and_round_trip():
         exit_fill_verified=True,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",
-        reconciliation_identity='{"broker_id":"paper_internal"}',
+        reconciliation_identity='{"broker_id":"bitget_demo"}',
         reconciliation_evidence='{"fill_id":"fill-1"}',
         outcome_semantics_version="oi-v1",
     )

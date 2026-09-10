@@ -4,7 +4,8 @@
 > what a metric can prove; it does not record current values, progress, or an
 > observation-window checkpoint.
 >
-> Last aligned with code: 2026-08-08.
+> Superseded simulator and legacy Learning metric definitions are
+> [archived](../../design/history/local_simulated_product_gates.md).
 
 ## 1. Primary outcome
 
@@ -17,64 +18,32 @@ contribution claim requires a prospective, identity-matched treatment/control
 cohort whose actual intervention, outcomes, costs, harm state, and policy epoch
 are all known.
 
-The current measured path is `universe_family_calibration`. Its software evidence
-unit is one complete assignment cluster. Selected members contribute fixed-horizon
-net return; dropped members contribute zero under intent-to-treat allocation
-utility. The current metric version is
-`universe_family_calibration_cluster_allocation_utility_v10`.
+Path-specific statistical units, metric versions, sample/time thresholds and
+influence gates belong to the [Learning contract](../../design/contracts/learning_contract.md),
+its registry and the exact Observation Lab generation contract. A product metric
+page does not define a second set of admission thresholds.
 
 ## 2. Learning qualification metrics
 
+Observation Lab is the canonical online Experiment authority. The read-only
+`lco-v1` projection reports persisted windows, results, exposures, inference plans
+and lifecycle events. It does not recompute a verdict or grant promotion authority.
+
 | Metric | Meaning | Current source |
 |---|---|---|
-| Treatment/control assignment units | Complete, unique prospective clusters per arm | Learning cohort builder and `lco-v1` projection |
-| First Paper trial integrity | `ufc-shadow-trial-integrity/v1`: 10 complete units per arm in one current eligible UTC market day; no contribution claim | Shadow verdict and protected owner admission |
-| Minimum samples | 50 complete assignment units in each arm | `LearningExperiment.min_samples_per_arm` |
-| Continuous market days | At least 7 consecutive UTC dates with a complete eligible exposure unit from either arm; 50-per-arm sufficiency is independent and scoped to that run | `LearningExperiment.min_market_days` and verdict `market_day_coverage` |
-| Actual intervention | At least the per-arm minimum has consistent treatment permission and one or more members with a finite before/after behavior delta | Exposure manifest, before/after values, and cohort sample |
-| Contribution delta | Cost-aware treatment mean minus control mean | `learning/verdicts.py` |
-| Monitoring inference | Deterministic conditional randomization p-value for the randomized ITT delta; never promotion authority | `learning/verdicts.py` |
-| Confirmatory decision | One prospective, outcome-blind frozen cutoff and one consumed conditional-randomization look at authority alpha `0.025` | `learning/fixed_look.py` and `learning_inference_decisions` |
-| Harm state | `indeterminate`, `clear`, or `breached`; underpowered evidence never claims safety | contribution verdict harm metrics |
-| Measurement identity | Exact hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash | Learning ledger/authority resolver |
-| Operational health | Evaluator/lifecycle freshness, failures, watermark, and catch-up state | `learning_job_health` and `lco-v1` |
+| Assignment and intervention counts | Distinct treatment/control assignment units, applied permission and actual behavior change remain separate facts | Lab exposures and `lco-v1` samples |
+| Measurement result | Persisted verdict, reason, baseline, observed value and delta; missing fields remain unavailable | Lab result and its domain payload |
+| Inference identity | Registered plan, cutoff fingerprint, evaluation role and consumed evaluation identity | Lab inference plan and evaluation |
+| Measurement identity | Exact observation, generation, policy epoch, stage, horizon, metric and behavior/outcome contracts | Lab generation contract |
+| Lifecycle and adoption | Persisted event and owner-adoption requirement; a result is not admission | Lab lifecycle events and path-specific authority gate |
+| Freshness | Age and availability of persisted evidence, distinct from economic validity | `lco-v1` data freshness |
 
-`min_market_days` is a consecutive coverage gate, not elapsed wall-clock span. A
-UTC date with no eligible unit in either arm resets the current window; samples
-before that gap do not satisfy counts, economics, confidence, or harm gates
-afterward. Daily arm imbalance remains visible and is handled by the independent
-50-per-arm gate. Planned or partial outages have no implicit waiver when they leave
-a full UTC day uncovered. Metric v4 and UFC behavior contract v5 started the
-continuous-window cohort. Metric v5 and UFC behavior contract v6 started another
-from-zero cohort for explicit effective-intervention provenance. Metric v6 and UFC
-behavior contract v7 add the prospective fixed-look authority contract: recurring
-monitoring stays descriptive, one exposure-ordered cutoff is frozen without looking
-at outcomes, and exactly one matching confirmatory verdict may be consumed. Later
-samples cannot turn the same stage positive; current monitoring negative, invalid,
-or determinate harm remains an anytime safety withdrawal. Older identities remain
-immutable, non-authorizing history.
-Metric v9 and UFC behavior contract v10 separate the one-day/10-per-arm Shadow
-integrity admission from those unchanged economic promotion gates. This starts a
-fresh cohort; the integrity verdict remains `insufficient_data` and grants no
-automatic authority or contribution claim.
-Metric v10 and UFC behavior contract v11 retire the IID outcome bootstrap. Adjacent
-10-minute scanner decisions may share most of a 1h/4h market path, so the current
-confirmatory contract conditions on the prospectively randomized assignment count
-and tests the sharp no-assignment-effect null without assuming independent outcomes.
-The legacy confidence fields remain empty rather than relabelling an invalid interval.
-
-### Verdict meaning
-
-| Verdict | Meaning |
-|---|---|
-| `insufficient_data` | Sample/time/actual-intervention requirement is unmet, or Shadow has only integrity readiness and no actual intervention |
-| `invalid` | Identity, provenance, or economic evidence cannot support comparison |
-| `negative` | Treatment trails control or breaches a determinate harm gate |
-| `neutral` | Effect is practically small or confidence remains inconclusive |
-| `positive` | ITT cost-aware treatment improvement clears the practical/confidence threshold, actual-intervention minimum, and harm gate; it grants promotion authority only when it is the consumed confirmatory fixed look |
-
-A healthy evaluator or a large cohort count cannot substitute for one of these
-measurement states.
+Verdicts must be interpreted under their exact registered experiment contract.
+The read projection reports `not_measured` when no recognized persisted verdict
+exists and unavailable when canonical authority cannot be read. It exposes
+`authority_eligible=false` and no lifecycle mutation; a positive display alone
+cannot promote a treatment. A healthy evaluator, large sample count or historical
+simulator result does not qualify an external-account intervention.
 
 ## 3. Evidence-integrity guardrails
 
@@ -93,8 +62,8 @@ These are prerequisites, not weighted offsets for weak economics:
 ## 4. Trading and decision quality
 
 The following metrics describe eligible genuine outcomes only. They may evaluate
-paper behavior or contribute to readiness, but do not by themselves prove Learning
-causality:
+external demo/testnet behavior or contribute to readiness, but do not by themselves
+prove Learning causality:
 
 - net realized PnL and cost completeness;
 - profit factor and win rate;
@@ -110,7 +79,9 @@ must never stand in for a failed read or missing evidence.
 ## 5. Go-Live Scorecard
 
 `aletheia.analytics.go_live_scorecard.compute_scorecard()` currently evaluates ten
-criteria and a separate positive-net-PnL gate:
+criteria and a separate positive-net-PnL gate. Outcome-based criteria read the
+selected external-account cohort; unresolved account selection supplies no outcome
+evidence. Historical simulator outcomes do not qualify this cohort:
 
 | Criterion | Weight | Code target |
 |---|---:|---|
@@ -137,7 +108,7 @@ is readiness evidence, not permission to trade.
 |---|---|
 | Is measured Learning effective? | `GET /api/analytics/learning-contribution` (`lco-v1`) |
 | Are current outcomes eligible? | Outcome Integrity assessment and eligible-outcome consumers |
-| How is paper trading performing? | Trade insights/performance summary with explicit window metadata |
+| How is the selected external account performing? | Trade insights/performance summary with explicit window metadata |
 | Is live readiness satisfied? | Go-Live Scorecard plus the live-unlock contract |
 | Is this Runtime healthy now? | `uv run aletheia doctor`, runtime provenance, logs, and current data |
 

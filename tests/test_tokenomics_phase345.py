@@ -35,10 +35,11 @@ def test_budget_warn_only_never_denies():
     )
 
 
-def test_hard_block_is_explicit_for_non_safety_callers(monkeypatch):
+@pytest.mark.parametrize("logical_agent", ["research_worker", "paper_trader"])
+def test_hard_block_is_explicit_for_non_safety_callers(monkeypatch, logical_agent):
     import aletheia.agent_runtime.run_context as context
 
-    monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": "research_worker"})
+    monkeypatch.setattr(context, "current_economic_attribution", lambda: {"logical_agent": logical_agent})
     with pytest.raises(BudgetExceededError, match="llm_budget_exhausted"):
         _enforce_budget_if_configured(
             SimpleNamespace(economics=SimpleNamespace(enabled=True, enforcement_mode="hard_block")),
@@ -46,7 +47,7 @@ def test_hard_block_is_explicit_for_non_safety_callers(monkeypatch):
         )
 
 
-@pytest.mark.parametrize("logical_agent", ["pi_trading_decision", "risk_critic", "paper_trader", "agent_shell/trading_decision"])
+@pytest.mark.parametrize("logical_agent", ["pi_trading_decision", "risk_critic", "agent_shell/trading_decision"])
 def test_safety_callers_remain_warn_only_in_every_mode(monkeypatch, logical_agent):
     import aletheia.agent_runtime.run_context as context
 
@@ -62,7 +63,7 @@ def test_header_is_default_off_and_opt_in_is_context_only(monkeypatch):
 
     monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
         economics=SimpleNamespace(harness_header_default_on=False),
-        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
         live=SimpleNamespace(state="live_disabled"),
     ))
     assert prepend_environment_header("caller prompt") == "caller prompt"
@@ -80,7 +81,7 @@ def test_context_adapter_registry_preserves_disabled_prompts(monkeypatch):
 
     monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
         economics=SimpleNamespace(harness_header_default_on=False),
-        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
         live=SimpleNamespace(state="live_disabled"),
     ))
     assert prepend_environment_header("caller prompt", adapter="none") == "caller prompt"
@@ -110,7 +111,7 @@ def test_minimal_context_has_a_versioned_truthful_contract(monkeypatch):
     import aletheia.config.loader as loader
 
     monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
-        exchange=SimpleNamespace(paper_execution_mode="paper_internal"),
+        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
         live=SimpleNamespace(state="live_disabled"),
     ))
     monkeypatch.setattr(context, "current_agent_run_id", lambda: "run-123")

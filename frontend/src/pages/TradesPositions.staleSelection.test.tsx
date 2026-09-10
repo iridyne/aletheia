@@ -33,7 +33,7 @@ const openPosition: Position = {
 	current_price: 105,
 	unrealized_pnl: 5,
 	realized_pnl: null,
-	execution_mode: "paper",
+	execution_mode: "bitget_demo",
 	strategy_id: "strategy-a",
 	proposal_id: "proposal-a",
 	order_id: "order-a",
@@ -54,7 +54,7 @@ const closedPosition: Position = {
 	entry_fee: 1,
 	exit_fee: 1,
 	funding_cost: 10,
-	funding_source: "local_simulation",
+	funding_source: "broker_ledger",
 	funding_status: "complete",
 	slippage_cost: 0.5,
 	status: "closed",
@@ -72,7 +72,7 @@ const submittedOrder: Order = {
 	order_type: "market",
 	quantity: 1,
 	price: 100,
-	execution_mode: "paper",
+	execution_mode: "bitget_demo",
 	exchange_order_id: null,
 	status: "submitted",
 	created_at: createdAt,
@@ -100,7 +100,7 @@ function makeClient() {
 		orphaned: [],
 	});
 	client.setQueryData(["ui-overview-bootstrap"], {
-		account: { execution_mode: "paper" },
+		account: { execution_mode: "bitget_demo" },
 	});
 	client.setQueryData(["proposals"], []);
 	return client;
@@ -170,7 +170,7 @@ describe("TradesPositions drawer selection freshness", () => {
 		expect(updated).toContain("110");
 		expect(updated).toContain("Funding");
 		expect(updated).toContain("-10.00");
-		expect(updated).toContain("Local Simulation");
+		expect(updated).toContain("Broker Ledger");
 		expect(updated).toContain("Slippage (diagnostic)");
 		expect(updated).not.toContain("Close at market price");
 

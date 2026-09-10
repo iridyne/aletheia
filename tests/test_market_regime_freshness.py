@@ -91,20 +91,13 @@ def test_entry_quality_does_not_use_stale_cached_regime(monkeypatch):
     assert load_published_regime() == (None, None)
 
 
-@pytest.mark.parametrize(
-    ("module_name", "function_name"),
-    [
-        ("aletheia.trading.entry_snapshot", "_current_regime"),
-        ("aletheia.execution.position_enrichment", "current_regime"),
-        ("aletheia.execution.paper_broker", "_current_regime"),
-    ],
-)
-def test_stale_regime_never_falls_back_to_macro_as_current(monkeypatch, module_name, function_name):
-    module = __import__(module_name, fromlist=[function_name])
+def test_stale_regime_never_falls_back_to_macro_as_current(monkeypatch):
+    from aletheia.trading.entry_snapshot import _current_regime
+
     monkeypatch.setattr(repo, "get_latest_market_regime", lambda: {
         "state": None,
         "freshness": "stale",
     })
     monkeypatch.setattr(repo, "latest_macro_snapshot", lambda: {"risk_regime": "risk_on"})
 
-    assert getattr(module, function_name)() == "unknown"
+    assert _current_regime() == "unknown"

@@ -15,7 +15,7 @@ def _position(position_id: str = "owned-position") -> Position:
         quantity=1.0,
         entry_price=100.0,
         current_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_position(position)
     return position
@@ -74,10 +74,9 @@ _RAW_POSITION_UPDATE_ALLOWED = {
 def test_raw_position_updates_are_confined_to_the_owning_modules():
     """PR #2955 removed the generic writer but not the raw-SQL bypasses.
 
-    Three sites still wrote `positions` directly, skipping the field whitelist,
-    the expected-state CAS and the rowcount check that raises
-    PositionClaimConflict: two in paper_account.py (one live, one dead since the
-    economics write moved to the settlement owner) and one remediation batch.
+    Historical raw-SQL bypasses skipped the field whitelist, expected-state
+    CAS and PositionClaimConflict rowcount check. Current writes stay with
+    the explicit owners below.
     """
     root = Path(__file__).parents[1] / "aletheia"
     offenders = sorted(

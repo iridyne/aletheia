@@ -234,10 +234,10 @@ class TestGetWatchedSymbols:
         mock_cfg.return_value.event_triggers.enabled = False
         mock_cfg.return_value.market_data.ccxt_exchange = "binance"
         mock_list.return_value = [
-            {"symbol": "BTC/USDT", "execution_mode": "paper_internal"},
-            {"symbol": "ETH/USDT", "execution_mode": "paper_internal"},
+            {"symbol": "BTC/USDT", "execution_mode": "binance_testnet"},
+            {"symbol": "ETH/USDT", "execution_mode": "binance_testnet"},
             {
-                "symbol": "BTC/USDT", "execution_mode": "paper_internal",
+                "symbol": "BTC/USDT", "execution_mode": "binance_testnet",
             },  # duplicate
         ]
         result = get_watched_symbols()
@@ -272,7 +272,7 @@ class TestGetWatchedSymbols:
             {
                 "symbol": "BTC/USDT",
                 "market_type": "usdt_futures",
-                "execution_mode": "paper_internal",
+                "execution_mode": "okx_demo",
             }
         ]
         mock_members.return_value = [
@@ -311,11 +311,11 @@ class TestGetWatchedSymbols:
         mock_positions.return_value = [
             {
                 "symbol": "BTC/USDT", "market_type": "spot",
-                "execution_mode": "paper_internal",
+                "execution_mode": "binance_testnet",
             },
             {
                 "symbol": "BTC/USDT", "market_type": "usdt_futures",
-                "execution_mode": "paper_internal",
+                "execution_mode": "binance_testnet",
             },
         ]
         cfg = MagicMock()
@@ -328,7 +328,7 @@ class TestGetWatchedSymbols:
             "binance:BTC/USDT:perp",
         ]
 
-    def test_position_with_protection_state_keeps_frozen_venue(self, monkeypatch):
+    def test_archived_position_is_not_watched_even_with_protection_state(self, monkeypatch):
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 
@@ -358,9 +358,7 @@ class TestGetWatchedSymbols:
             },
         )
 
-        assert [str(item) for item in get_watched_instruments()] == [
-            "binance:BTC/USDT:perp"
-        ]
+        assert get_watched_instruments() == []
 
     def test_planning_spot_and_perp_bypass_universe_tick_gate(self, monkeypatch):
         import aletheia.config.loader as loader
@@ -441,7 +439,7 @@ class TestGetWatchedSymbols:
             },
             {
                 "symbol": "ETH/USDT", "market_type": "spot",
-                "execution_mode": "paper_internal",
+                "execution_mode": "bitget_demo",
             },
         ]
         cfg = MagicMock()
@@ -731,7 +729,7 @@ class TestRefreshWatchedPrices:
                     "id": "position-btc",
                     "symbol": "BTC/USDT",
                     "market_type": "spot",
-                    "execution_mode": "paper_internal",
+                    "execution_mode": "binance_testnet",
                 }]
             return []
 

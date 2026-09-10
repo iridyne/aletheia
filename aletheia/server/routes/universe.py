@@ -666,18 +666,6 @@ def _entry_plan_projection(row: dict) -> dict:
         valid = False
     item["plan"] = json.loads(item["plan_json"]) if plan else None
     item["contract_valid"] = valid
-    if (
-        plan
-        and plan.execution_account_mode == "paper_internal"
-        and plan.market_type in {"perp", "swap", "usdt_futures"}
-    ):
-        from aletheia.portfolio.local_funding import local_funding_schedule_readiness
-
-        item["funding_readiness"] = local_funding_schedule_readiness(
-            plan.symbol,
-            venue=plan.venue,
-            market_type=plan.market_type,
-        )
     return item
 
 

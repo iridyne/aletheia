@@ -121,54 +121,21 @@ async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monke
     setup_test_env(tmp_path, monkeypatch)
 
     from aletheia.agents import post_trade_reviewer
-    from aletheia.storage.models import Position, StrategyRecord
+    from aletheia.storage.models import StrategyRecord
     from aletheia.storage.repositories import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     init_tool_registry()
     strategy = StrategyRecord(name="Post Trade Review Strategy", state="draft")
     insert_strategy(strategy)
-    opportunity_id, proposal_id, order_id = _insert_entry_chain(
+    _insert_closed_position_via_producer(
         position_id="position-knowledge-review",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.01,
-        price=60000,
-        execution_mode="paper_internal",
-        strategy_id=strategy.id,
-    )
-    repo.insert_position(Position(
-        id="position-knowledge-review",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=0.01,
-        entry_price=60_000.0,
-        current_price=61_000.0,
-        realized_pnl=10.0,
-        execution_mode="paper_internal",
-        strategy_id=strategy.id,
-        proposal_id=proposal_id,
-        order_id=order_id,
-        opportunity_id=opportunity_id,
-        status="closed",
-        close_reason="take_profit",
+        symbol="BTC/USDT", market_type="spot", direction="long", quantity=0.01,
+        entry_price=60_000.0, realized_pnl=10.0, execution_mode="bitget_demo",
+        strategy_id=strategy.id, close_reason="take_profit",
         closed_at=datetime.now(timezone.utc).isoformat(),
-        entry_fee=0.0,
-        exit_fee=0.0,
-        funding_cost=0.0,
-        funding_source="not_applicable",
-        close_category="strategy",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
-    ))
+    )
 
     async def deterministic_review(*args, **kwargs):
         return (
@@ -213,7 +180,7 @@ async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempt
                 "long",
                 1.0,
                 100.0,
-                "paper_internal",
+                "bitget_demo",
                 strategy_id,
                 "closed",
                 1,

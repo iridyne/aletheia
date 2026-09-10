@@ -4,7 +4,6 @@ Reads trade_insights + factor_feedback statistics, calls LLM for pattern discove
 outputs a TradingMemo consumed by:
   - System Operator (System Operator) via trading_context Layer 2
   - market_observer via memory_block injection
-  - paper_trader_ranker via scoring adjustments (future phase)
 
 Scheduling: daily at 02:30 CST plus a rate-limited startup catch-up. The startup
 run repairs a stale memo when the gateway missed its overnight window.

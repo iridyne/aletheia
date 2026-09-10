@@ -1522,7 +1522,7 @@ def _horizon_due_allow_hold(execution_mode: str | None) -> bool:
     """Safer default is True: expiry is not a forced flatten."""
     from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 
-    mode = str(execution_mode or "paper_internal")
+    mode = str(execution_mode or "")
     try:
         resolved = resolve_risk_policy(config_loader.load_config(), mode)
     except UnknownRiskExecutionMode:
@@ -1551,7 +1551,7 @@ def _horizon_hold_roll_hours(position: dict) -> float | None:
     try:
         resolved = resolve_risk_policy(
             config_loader.load_config(),
-            str(position.get("execution_mode") or "paper_internal"),
+            str(position.get("execution_mode") or ""),
         )
         backstop = float(resolved.policy.exits.horizon_hard_backstop_mult or 3.0)
     except (UnknownRiskExecutionMode, TypeError, ValueError):
@@ -1570,6 +1570,7 @@ async def review_portfolio_state(params: dict) -> dict:
 
     from aletheia.agent_shell.context import build_app_context
     from aletheia.agents.helpers import llm_structured
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
 
     params = params or {}
     wake_batches = [
@@ -1607,7 +1608,10 @@ async def review_portfolio_state(params: dict) -> dict:
     # This is execution authority, not a display context. build_app_context()
     # intentionally truncates and projects positions for UI/LLM summaries, so it
     # omits the exact id and market_type required for safe position selection.
-    all_open_positions = list_all_open_positions()
+    all_open_positions = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
     total_unrealized_pnl = 0.0
     unrealized_pnl_available = True
     for position in all_open_positions:
@@ -1655,7 +1659,7 @@ async def review_portfolio_state(params: dict) -> dict:
     allow_horizon_hold = bool(
         horizon_due_review
         and _horizon_due_allow_hold(
-            sample_horizon.get("execution_mode") if sample_horizon else "paper_internal"
+            sample_horizon.get("execution_mode") if sample_horizon else ""
         )
     )
     portfolio_context["review_scope_positions"] = len(open_positions)
@@ -1677,16 +1681,12 @@ async def review_portfolio_state(params: dict) -> dict:
         protective_price_venue,
     )
 
-    configured_data_venue = config_loader.load_config().market_data.ccxt_exchange
     review_marks: dict[str, dict | None] = {}
     review_mark_evidence: list[dict] = []
     review_now = datetime.now(timezone.utc)
     for position in open_positions:
         position_id = str(position.get("id") or "")
-        venue = protective_price_venue(
-            position.get("execution_mode"),
-            configured_data_venue=configured_data_venue,
-        )
+        venue = protective_price_venue(position.get('execution_mode'))
         mark = (
             get_fresh_mark_for_protective_close(
                 str(position.get("symbol") or ""),
@@ -1819,7 +1819,7 @@ async def review_portfolio_state(params: dict) -> dict:
         if wake_batches
         else ""
     )
-    system = "You are a portfolio risk reviewer for an autonomous paper trading system."
+    system = "You are a portfolio risk reviewer for an automated trading system using external exchange accounts."
     if not horizon_due_review:
         horizon_hold_contract = ""
     elif allow_horizon_hold:
@@ -1943,7 +1943,10 @@ Return JSON: {_json.dumps(schema)}"""
     mkt = review.get("target_market_type")
     direction = review.get("target_direction")
     target_id = review.get("target_position_id")
-    candidates = list_all_open_positions()
+    candidates = [
+        row for row in list_all_open_positions()
+        if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ]
     if wake_position_ids:
         wake_ids = set(wake_position_ids)
         candidates = [p for p in candidates if p["id"] in wake_ids]
@@ -2117,7 +2120,6 @@ Return JSON: {_json.dumps(schema)}"""
                     close_result = close_position_routed(
                         pos["id"],
                         reason="pi_agent_portfolio_review",
-                        fallback_exit_price=None,
                         decision_reasoning=reasoning,
                         decision_actor="system_operator",
                         decision_source="portfolio_review",

@@ -2,7 +2,7 @@
 
 Regression lock for the EC-stop sibling bug class: the three real-exchange paths
 (okx/binance/bitget) historically materialized a Position WITHOUT the entry-time
-metadata that paper_broker records — btc_entry_price, regime_tag,
+decision metadata — btc_entry_price, regime_tag,
 entry_market_summary, decision_reasoning, entry_fee, slippage_cost. These fields
 now survive the broker acknowledgement handoff and are applied only when exact
 private fill evidence creates the Position.
@@ -37,19 +37,15 @@ from tests.specs.spec_pipeline_stop_propagation import (
 
 
 def _patch_enrichment_lookups(monkeypatch, *, btc=60000.0, regime="risk_on"):
-    """Pin the best-effort btc/regime lookups so the enrichment is deterministic.
-
-    build_entry_enrichment resolves these as module globals at call time, so patching
-    them on position_enrichment is what every broker sees.
-    """
-    import aletheia.execution.position_enrichment as pe
-    monkeypatch.setattr(pe, "btc_price_now", lambda: btc)
-    monkeypatch.setattr(pe, "current_regime", lambda: regime)
+    """Pin current proposal-context reads independently of stored snapshots."""
+    from aletheia.trading import entry_snapshot
+    monkeypatch.setattr(entry_snapshot, "_btc_price_now", lambda: btc)
+    monkeypatch.setattr(entry_snapshot, "_current_regime", lambda: regime)
     from aletheia.execution import gateway
 
     monkeypatch.setattr(
         gateway,
-        "capture_paper_attribution_snapshot",
+        "capture_attribution_snapshot",
         lambda symbol, **_kwargs: {
             "btc_entry_price": btc,
             "regime_tag": regime,
@@ -101,6 +97,8 @@ def test_broker_open_stamps_entry_metadata(tmp_path, monkeypatch, exec_mode):
             "market_context": {"source": "spec"},
         }),
     )
+    # Current market context has drifted since the immutable proposal snapshot.
+    _patch_enrichment_lookups(monkeypatch, btc=999999.0, regime="execution_drift")
     # requested price 59950 vs fill 60000 → slippage_cost = 50 * 0.01 = 0.5
     result = coordinator.execute_order(proposal_id=proposal_id,
     risk_decision_id=risk_decision_id,
@@ -123,6 +121,7 @@ def test_broker_open_stamps_entry_metadata(tmp_path, monkeypatch, exec_mode):
     assert pos["regime_tag"] == "risk_on", (
         f"{label}: regime_tag dropped (got {pos['regime_tag']!r}) — per-regime learning collapses"
     )
+    assert json.loads(pos["entry_market_summary"]) == {"source": "spec"}
     assert pos["entry_fee"] is not None and pos["entry_fee"] > 0, (
         f"{label}: entry_fee dropped (got {pos['entry_fee']!r})"
     )
@@ -193,8 +192,7 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
 
 # Real-exchange DEMO modes whose close MUST go through the exchange broker (not a
 # local-only close that would desync the demo exchange + fabricate the exit price).
-# okx_demo is the active experiment path. (paper_internal is the only mode allowed to
-# close purely locally; *_live_limited is human-only — covered separately in -04.)
+# The human-only live-close boundary is covered separately in -04.
 _CLOSE_ROUTED = ["bitget_demo", "binance_testnet", "okx_demo"]
 
 
@@ -239,7 +237,7 @@ def test_close_routes_through_exchange(tmp_path, monkeypatch, exec_mode):
     position_id = _materialize_exchange_result(opened)
 
     # Route the close. A local-only close would NOT create a second (close) order row.
-    close_position_routed(position_id, reason="spec_close", fallback_exit_price=100.0)
+    close_position_routed(position_id, reason="spec_close")
     from aletheia.execution.reconciliation import reconcile
 
     reconcile()
@@ -305,13 +303,13 @@ def test_router_refuses_autonomous_live_close(tmp_path, monkeypatch):
 
     # Default (autonomous) path MUST refuse — no exchange close order placed.
     with pytest.raises(RuntimeError, match="live"):
-        close_position_routed(position_id, reason="auto_should_refuse", fallback_exit_price=100.0)
+        close_position_routed(position_id, reason="auto_should_refuse")
     assert repo._select_one("positions", position_id)["status"] == "open", (
         "live position must remain open after a refused autonomous close"
     )
 
     # Explicit human override routes to the real exchange close.
-    close_position_routed(position_id, reason="human_close", fallback_exit_price=100.0, allow_live=True)
+    close_position_routed(position_id, reason="human_close", allow_live=True)
     from aletheia.execution.reconciliation import reconcile
 
     reconcile()

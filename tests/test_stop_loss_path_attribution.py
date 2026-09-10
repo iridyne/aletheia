@@ -29,11 +29,11 @@ def _position(**overrides) -> dict:
         "exit_fee": 1.0,
         "funding_cost": 0.0,
         "funding_source": "not_applicable",
-        "execution_mode": "paper_internal",
+        "execution_mode": "bitget_demo",
         "entry_fill_verified": True,
-        "entry_price_source": "local_fill",
+        "entry_price_source": "broker_fill",
         "exit_fill_verified": True,
-        "exit_price_source": "local_fill",
+        "exit_price_source": "broker_fill",
         "close_reason": "stop_loss",
         "opened_at": _OPENED_AT,
         "closed_at": _CLOSED_AT,
@@ -107,7 +107,7 @@ def test_expected_path_starts_after_submillisecond_entry_boundary():
     assert last == _FIRST_BUCKET_MS + 300_000
 
 
-def test_recent_stop_loss_positions_preserve_exact_subsecond_instants():
+def test_archived_stop_loss_positions_preserve_exact_subsecond_instants():
     from aletheia.storage import repositories as repo
 
     rows = [

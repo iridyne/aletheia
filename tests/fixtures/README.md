@@ -1,27 +1,19 @@
 # Runtime replay fixtures
 
-`runtime_replay_v1.sqlite` is a fixed, sanitized replay pack for the active
-crypto `paper_internal` mainline. Its category mix is admitted only after the
-builder confirms those categories exist in a real runtime database. The builder
-then replaces every source ID, symbol sequence, timestamp, price, quantity,
-return, rationale, review, path, and free-text value with deterministic fixture
-data. No runtime row or current machine fact is copied.
+`runtime_replay_v1.sqlite` and `runtime_replay_v1.expected.json` are immutable
+historical fixtures for the retired local simulator. They preserve sanitized
+market, decision, execution and Learning records; they are not current runtime
+or external-account qualification evidence. Their identities, numeric values
+and expected results must not be rewritten as exchange facts.
 
-The committed pack includes market snapshots, Universe candidates,
-opportunities, System Operator decisions, proposals, risk decisions, orders,
-fills, positions, fixed-horizon outcomes, Learning exposures, and reviews.
+`test_runtime_replay_pack.py` checks historical readability, database integrity,
+causal links and the frozen baseline. Its current outcome assessment admits zero
+genuine outcomes from this pack. The simulator-specific generator is retired;
+its provenance is recorded in [design history](../../docs/design/history/local_simulated_replay.md).
 
-Regenerate only when intentionally creating a new fixture version:
-
-```bash
-uv run python tests/fixtures/build_runtime_replay_v1.py \
-  --source /path/to/runtime/data/app.db \
-  --output tests/fixtures/runtime_replay_v1.sqlite
-```
-
-Ordinary mainline changes must replay the existing file. Any baseline change
-requires an explicit task explanation, a versioned fixture or deliberate
-baseline update, and matching assertions in `test_runtime_replay_pack.py`.
+Current exchange execution checks use the existing UTA response fakes and
+external entry/close pipeline tests. A new runtime qualification pack would need
+its own version and provenance; this retirement does not manufacture one.
 
 # Universe step-score golden baseline
 

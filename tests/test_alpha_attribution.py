@@ -177,7 +177,7 @@ def _insert_trade_chain(db, idx: int, pnl_pct: float, scanner: str = "momentum",
         quantity=1.0,
         entry_price=100.0,
         realized_pnl=pnl_pct,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         opened_at=opened,
         closed_at=closed,
         close_reason="signal_exit",
@@ -899,10 +899,12 @@ def test_weak_negative_keeps_diagnostics_without_prescriptive_rendering():
     ranker = report["verdicts"]["ranker"]
 
     assert ranker["verdict"] == "negative"
-    assert "aletheia/agents/paper_trader_ranker.py" in ranker["suspected_modules"]
+    assert ranker["scope"] == "historical_ranker"
+    assert ranker["suspected_modules"] == []
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
     assert report["main_bottleneck"]["suspected_modules"] == []
     rendered = render_alpha_audit(report)
+    assert "Ranker (historical): negative" in rendered
     assert "Suspect modules:" not in rendered
     assert "Inspect scoring weights" not in rendered
     assert "No actionable gradient is currently established" in rendered

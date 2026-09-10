@@ -1,8 +1,7 @@
 """Tests for the Bitget demo trading path (real demo/simulated-trading API).
 
-Architectural principle (user-confirmed 2026-06-09): paper trading PREFERS the
-exchange's own demo API (real API, exchange-side record); local simulation
-(paper_internal) is the fallback when no demo endpoint exists.
+Demo orders use the explicitly selected exchange account. There is no local
+simulator fallback; missing or retired execution modes cannot execute.
 
 The Bitget HTTP call is always mocked here — CI never touches the real API (the
 autouse guard in conftest.py also blocks unmocked calls). These verify:
@@ -10,7 +9,6 @@ autouse guard in conftest.py also blocks unmocked calls). These verify:
   tags execution_mode="bitget_demo", and is NOT blocked by live_disabled;
 - a bitget_demo proposal is rejected when exchange.mode != demo (account_mode_mismatch
   trust-boundary check) — would otherwise place a REAL live order;
-- the paper_internal fallback never calls the exchange;
 - a failed demo order leaves a DB trace marked error and fabricates NO fill;
 - aggregate responses create no Fill/Position; private history supplies exact
   price/quantity/fee/time before local accounting changes;
@@ -209,33 +207,6 @@ def test_demo_requires_demo_exchange_mode(tmp_path, monkeypatch):
     assert any("account_mode_mismatch" in v for v in result["risk_violations"])
     # No order reached the (mocked) exchange.
     assert len(captured) == 0
-
-
-def test_paper_internal_fallback_never_calls_exchange(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-    captured = []
-    _patch_place_order(monkeypatch, captured)
-    from tests.paper_trade_fixture import approvable_paper_trade
-    trade = approvable_paper_trade(
-        monkeypatch,
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        price=60000.0,
-    )
-
-    from aletheia.execution.gateway import submit_proposal
-    result = submit_proposal(
-        symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=0.0004, price=60000.0, execution_mode="paper_internal", **trade,
-    )
-    assert result["status"] == "executed"
-    assert len(captured) == 0  # local sim, no exchange call
 
 
 def test_demo_order_db_trace_when_exchange_fails(tmp_path, monkeypatch):

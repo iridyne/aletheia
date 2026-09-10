@@ -847,7 +847,7 @@ function RiskCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       {/* Demo limits */}
       <Collapsible title="Demo / paper limits">
       <NumGrid fields={RISK_DEMO} vals={vals} set={set} errors={errors} />
-      <p className="hint">Demo account orders use the lower of this ceiling and the demo account's cached available USDT. Local paper simulation has no external balance and uses this ceiling directly.</p>
+      <p className="hint">Demo account orders use the lower of this ceiling and the demo account's cached available USDT.</p>
       </Collapsible>
 
       {/* Cross-mode guards (both demo and live) */}

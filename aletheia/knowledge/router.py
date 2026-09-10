@@ -115,8 +115,7 @@ def _build_guard_advisory(context: dict) -> str:
         if not result.hits:
             return ""
         header = (
-            "\n## Active guard warnings (ADVISORY — scoring/informational only; "
-            "hard blocks are applied in ranker, not here)\n"
+            "\n## Active guard warnings (ADVISORY — informational context)\n"
         )
         return header + format_guard_block(result, max_chars=800)
     except Exception as e:

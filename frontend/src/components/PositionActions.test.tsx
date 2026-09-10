@@ -18,7 +18,7 @@ function makePosition(overrides: Partial<Position> = {}): Position {
     current_price: 3350,
     unrealized_pnl: 187.5,
     realized_pnl: null,
-    execution_mode: 'paper_internal',
+    execution_mode: 'bitget_demo',
     strategy_id: 'strat-1',
     status: 'open',
     stop_price: 3100,

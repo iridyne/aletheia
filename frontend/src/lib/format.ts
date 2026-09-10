@@ -288,7 +288,7 @@ const HUMANIZE_OVERRIDES: Record<string, string> = {
   // live / permission / exchange modes
   live_disabled: 'Disabled',
   live_enabled: 'Enabled',
-  paper_internal: 'Paper (internal)',
+  paper_internal: 'Archived simulator',
   bitget_demo: 'Bitget Demo',
   bitget_live_limited: 'Bitget Live (limited)',
   okx_demo: 'OKX Demo',
@@ -330,7 +330,7 @@ export function humanizeBool(value: unknown): string {
 // exchanges coexist), so we map mode → exchange here. demo/live stays visible in the
 // account snapshot + position detail drawer.
 const EXCHANGE_OF_MODE: Record<string, string> = {
-  paper_internal: 'Paper',
+  paper_internal: 'Archived simulator',
   bitget_demo: 'Bitget',
   bitget_live_limited: 'Bitget',
   okx_demo: 'OKX',

@@ -85,7 +85,7 @@ def test_db_roundtrip():
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
         "execution_mode,status) VALUES "
-        "('e1','BTC/USDT','usdt_futures','long',1.0,100.0,'paper_internal','open')"
+        "('e1','BTC/USDT','usdt_futures','long',1.0,100.0,'bitget_demo','open')"
     )
     plan = ExitPlan(
         stop_price=95.0,

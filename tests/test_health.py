@@ -65,7 +65,7 @@ def test_candidate_progress_exact_epoch_and_entry_outcome_debt(tmp_path, monkeyp
         order_id="health-order", status="filled")
     repo._insert("entry_plans", plan.model_dump())
     repo.insert_order(Order(id="health-order", entry_plan_id=plan.id, symbol="BTC/USDT", market_type="perp",
-        direction="long", order_type="limit", quantity=1, execution_mode="paper_internal", status="filled",
+        direction="long", order_type="limit", quantity=1, execution_mode="bitget_demo", status="filled",
         source="adopted"))  # Historical read fixture, not evidence of native execution authority.
     repo.insert_fill(Fill(id="health-fill", order_id="health-order", fill_price=100, fill_quantity=1))
     for key in ("selection-0", "selection-1", "entry-fill:unrelated"):
@@ -871,15 +871,6 @@ def test_exchange_no_probe_is_unknown_not_healthy(tmp_path, monkeypatch):
     assert not any("exchange_unreachable" in i for i in h["issues"])
 
 
-def test_paper_internal_does_not_require_exchange_probe(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    from aletheia.agent_runtime import health
-    monkeypatch.setattr(
-        health,
-        "_exchange_reachable",
-        lambda cfg=None: (_ for _ in ()).throw(AssertionError("unexpected probe")),
-    )
-    assert health.compute_health()["status"] == "healthy"
 
 
 def test_exchange_confirmed_unreachable_is_degraded(tmp_path, monkeypatch):

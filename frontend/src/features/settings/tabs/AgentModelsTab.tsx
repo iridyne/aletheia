@@ -669,10 +669,9 @@ function EconomicsSnapshotCard({ economics, qc }: { economics?: SettingsData['ec
           disabled={!economicsEnabled || economicsMut.isPending}
         />
       </Row>
-      {status && (status.tracing_enabled === false || status.audit_enabled === false) && (
+      {status?.tracing_enabled === false && (
         <p className="hint" style={{ marginBottom: '0.75rem' }}>
-          {status.tracing_enabled === false && 'Cost tracing disabled (ALETHEIA_COST_TRACING=0). '}
-          {status.audit_enabled === false && 'Viability audit disabled (ALETHEIA_VIABILITY_AUDIT=0).'}
+          Cost tracing disabled (ALETHEIA_COST_TRACING=0).
         </p>
       )}
       <p className="hint">

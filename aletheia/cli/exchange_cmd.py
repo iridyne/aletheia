@@ -27,7 +27,7 @@ def use(
     cfg = load_config()
     old_name = cfg.exchange.name
     old_mode = cfg.exchange.paper_execution_mode
-    desired_mode = "paper_internal" if eid == "paper_internal" else EXCHANGE_UNIFICATION_MAP[eid][1]
+    desired_mode = EXCHANGE_UNIFICATION_MAP[eid][1]
     if cfg.live.state == "live_limited" and (
         eid != str(old_name or "").lower() or desired_mode != old_mode
     ):
@@ -37,15 +37,12 @@ def use(
         )
         raise typer.Exit(1)
 
-    if eid == "paper_internal":
-        cfg.exchange.paper_execution_mode = "paper_internal"
-    else:
-        ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
-        cfg.exchange.name = eid
-        cfg.market_data.ccxt_exchange = ccxt_ex
-        cfg.market_data.ccxt_fallback = ccxt_ex
-        cfg.exchange.paper_execution_mode = paper_mode
-        cfg.risk.allowed_exchange = eid
+    ccxt_ex, paper_mode = EXCHANGE_UNIFICATION_MAP[eid]
+    cfg.exchange.name = eid
+    cfg.market_data.ccxt_exchange = ccxt_ex
+    cfg.market_data.ccxt_fallback = ccxt_ex
+    cfg.exchange.paper_execution_mode = paper_mode
+    cfg.risk.allowed_exchange = eid
 
     save_config(cfg)
 

@@ -142,18 +142,11 @@ they are not registered and their historical health rows do not imply active job
 An unavailable Lab never starts a legacy evaluator or lifecycle writer. Legacy
 evidence migration remains an explicit offline, proof-gated operation.
 
-### 3.2 Paper funding settlement
+### 3.2 Archived local settlement
 
-`paper_funding_settler` runs every 30 minutes on `io`, starts three minutes after boot, is essential
-during layered pause, has `max_instances=1`, and is bounded by a 60-second async timeout. It retries
-closed `paper_internal + usdt_futures` rows whose net economics remain unavailable, optionally
-persists bounded public funding history, then uses `historical_ledger` completeness and the atomic
-paper-economics materializer. A coroutine must reacquire its thread-local SQLite connection after
-each `await`; no writer transaction spans provider I/O. Only explicit structural lineage failures
-may become terminal after the bounded retry window; elapsed time or missing source history alone is
-not structural proof. Durable scheduler success/failure is recorded by the normal guarded-job health
-path. Eligible results enqueue durable outcome hooks, and `outcome_hook_replay` remains their
-independent one-minute delivery path.
+The local funding settlement job is retired. Its former cadence and atomic
+handoff are recorded in [archived account controls](../history/local_paper_account_controls.md).
+Historical job-health rows do not register or restart that job.
 
 ### 3.3 Broker funding settlement
 

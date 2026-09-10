@@ -105,11 +105,9 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
   const exchange = shell?.exchange
   const exchangeDiverged = !!exchange?.exchange_diverged || exchange?.status === 'diverged'
   const exchangeAligned = exchange?.status === 'aligned'
-  const exchangeLabel = exchange?.status === 'local_paper'
-    ? 'Local Paper'
-    : exchangeDiverged
-      ? `${exchange?.execution_exchange || 'unknown'} / ${exchange?.data_exchange || 'unknown'}`
-      : exchange?.execution_exchange || exchange?.data_exchange || 'Unavailable'
+  const exchangeLabel = exchangeDiverged
+    ? `${exchange?.execution_exchange || 'unknown'} / ${exchange?.data_exchange || 'unknown'}`
+    : exchange?.execution_exchange || (exchange?.status === 'not_configured' ? 'Not configured' : 'Unavailable')
   const collectorHealthQuery = useQuery<CollectorHealthReport>({
     queryKey: ['collector-health'],
     queryFn: api.getCollectorHealth,
@@ -173,7 +171,7 @@ function SystemCard({ shell, coverage, coverageError }: { shell?: ShellBootstrap
         <StatusText tone={pipelineTone}>{pipelineLabel}</StatusText>
       </div>
       <table className="status-board"><tbody>
-        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchange?.status === 'local_paper' ? 'muted' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => toggle('exchange')} expanded={expanded === 'exchange'} title={exchangeDiverged ? 'Execution and market-data exchanges are split.' : exchangeLabel} />
+        <StatusRow label="Exchange" light={exchangeDiverged ? 'yellow' : exchangeAligned ? 'green' : 'muted'} value={exchangeLabel} onClick={() => toggle('exchange')} expanded={expanded === 'exchange'} title={exchangeDiverged ? 'Execution and market-data exchanges are split.' : exchangeLabel} />
         <StatusRow label="Collectors" light={collectorLight} value={collectorValue} onClick={() => toggle('collectors')} expanded={expanded === 'collectors'} />
         <StatusRow label="Data coverage" light={coverageLight} value={coverageValue} onClick={() => toggle('coverage')} expanded={expanded === 'coverage'} />
         <StatusRow label="Execution" light={shell?.kill_switch?.active ? 'red' : shell?.live?.enabled ? 'yellow' : 'muted'} value={shell?.kill_switch?.active ? 'Kill Switch' : shell?.live?.enabled ? `Live (${humanize(shell?.live?.state || 'active')})` : `Paper (${humanize(shell?.permission?.mode || 'Full')})`} onClick={() => toggle('mode')} expanded={expanded === 'mode'} title={`Live: ${humanize(shell?.live?.state || 'not available')} · ${humanize(shell?.permission?.mode || 'not available')}${shell?.kill_switch?.active ? ' · KILL' : ''}`} />

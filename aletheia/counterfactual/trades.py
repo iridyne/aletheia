@@ -1,12 +1,8 @@
-"""Edge Lab: shadow trade persistence.
+"""Shadow trade persistence and price-based counterfactual research.
 
-After the paper_trader ranker selects a winner, we persist the Top-N candidates
-as shadow trades so we can later answer: "what would have happened if we'd traded
-the #2 or #3 ranked opportunity instead?"
-
-Each tick produces one `batch_id` group. `was_selected=True` marks the actual
-trade; the rest are counterfactuals. Entry price and regime tag are stamped at
-creation time using live market data and the latest macro snapshot.
+Candidate batches retain alternatives and their recorded selection. A selected
+shadow row is not proof of an exchange fill. These research helpers do not
+submit orders, fund accounts, or settle exchange positions.
 """
 
 from __future__ import annotations

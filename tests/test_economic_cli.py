@@ -99,8 +99,8 @@ def test_costs_command_renders_current_summary_field_names():
     assert "llm: events=1 known=$0.25000000 unknown=0" in result.output
 
 
-def test_viability_command_rejects_unsupported_execution_mode():
+def test_viability_generation_command_is_removed():
     result = runner.invoke(app, ["audit", "viability", "--execution-mode", "okx_demo"])
 
     assert result.exit_code != 0
-    assert "paper_internal" in result.output
+    assert "No such command" in result.output

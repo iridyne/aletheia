@@ -1,7 +1,7 @@
 """Focused regression for #1939 — every profitability surface must scope to
 one explicitly-identified `execution_mode`.
 
-Seeds a profitable ``paper_internal`` close and a losing ``okx_demo`` close in
+Seeds a profitable ``bitget_demo`` close and a losing ``okx_demo`` close in
 the same ledger, then asserts each producer, REST endpoint, and Learning
 artifact reader returns cohort-isolated numbers (and never a mode-mixed
 aggregate under a selected-mode identity).
@@ -42,7 +42,7 @@ def _setup_env(tmp_path: Path, monkeypatch) -> None:
 
 
 def _seed_two_mode_ledger() -> None:
-    """One profitable paper_internal close, one losing okx_demo close."""
+    """One profitable bitget_demo close, one losing okx_demo close."""
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     # Close both within the rolling window (yesterday) but well after the
@@ -50,20 +50,20 @@ def _seed_two_mode_ledger() -> None:
     anchor = datetime.now(timezone.utc) - timedelta(hours=6)
 
     _insert_closed_position_via_producer(
-        position_id="pos-paper",
+        position_id="pos-bitget",
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
         quantity=1.0,
         entry_price=100.0,
         realized_pnl=100.0,          # profitable
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         opened_at=(anchor - timedelta(hours=2)).isoformat(),
         closed_at=(anchor - timedelta(hours=1)).isoformat(),
         close_reason="signal_exit",
-        proposal_id="prop-paper",
-        order_id="order-paper",
-        opportunity_id="opp-paper",
+        proposal_id="prop-bitget",
+        order_id="order-bitget",
+        opportunity_id="opp-bitget",
         scanner_family="momentum",
         confidence="high",
     )
@@ -119,8 +119,8 @@ def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monke
         compute_rolling_trade_stats,
     )
 
-    paper_rolling = compute_rolling_trade_stats(
-        days=30, execution_mode="paper_internal",
+    bitget_rolling = compute_rolling_trade_stats(
+        days=30, execution_mode="bitget_demo",
     )
     okx_rolling = compute_rolling_trade_stats(
         days=30, execution_mode="okx_demo",
@@ -128,10 +128,10 @@ def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monke
     mixed_rolling = compute_rolling_trade_stats(days=30)
 
     # Each cohort sees only its own close, never the other's.
-    assert paper_rolling["total_trades"] == 1
-    assert paper_rolling["total_pnl"] == 100.0
-    assert paper_rolling["execution_mode"] == "paper_internal"
-    assert paper_rolling["execution_mode_status"] == "resolved"
+    assert bitget_rolling["total_trades"] == 1
+    assert bitget_rolling["total_pnl"] == 100.0
+    assert bitget_rolling["execution_mode"] == "bitget_demo"
+    assert bitget_rolling["execution_mode_status"] == "resolved"
 
     assert okx_rolling["total_trades"] == 1
     assert okx_rolling["total_pnl"] == -10.0
@@ -142,18 +142,18 @@ def test_rolling_stats_and_trade_stats_isolate_by_execution_mode(tmp_path, monke
     assert mixed_rolling["execution_mode_status"] == "unavailable"
 
     # build_trade_stats — same isolation rule end-to-end.
-    paper_stats = build_trade_stats(execution_mode="paper_internal")
+    bitget_stats = build_trade_stats(execution_mode="bitget_demo")
     okx_stats = build_trade_stats(execution_mode="okx_demo")
-    assert paper_stats["totals"]["trade_count"] == 1
+    assert bitget_stats["totals"]["trade_count"] == 1
     assert okx_stats["totals"]["trade_count"] == 1
-    assert paper_stats["execution_mode"] == "paper_internal"
+    assert bitget_stats["execution_mode"] == "bitget_demo"
     assert okx_stats["execution_mode"] == "okx_demo"
-    assert paper_stats["totals"]["total_pnl"] != okx_stats["totals"]["total_pnl"]
+    assert bitget_stats["totals"]["total_pnl"] != okx_stats["totals"]["total_pnl"]
 
-    kpis = build_strategy_kpis(execution_mode="paper_internal")
+    kpis = build_strategy_kpis(execution_mode="bitget_demo")
     # Every KPI row is stamped with the same cohort identity.
     for v in kpis.values():
-        assert v["execution_mode"] == "paper_internal"
+        assert v["execution_mode"] == "bitget_demo"
 
 
 def test_family_scorecard_isolates_by_execution_mode(tmp_path, monkeypatch):
@@ -162,16 +162,16 @@ def test_family_scorecard_isolates_by_execution_mode(tmp_path, monkeypatch):
 
     from aletheia.analytics.family_scorecard import compute_family_scorecard
 
-    paper = compute_family_scorecard(execution_mode="paper_internal")
+    bitget = compute_family_scorecard(execution_mode="bitget_demo")
     okx = compute_family_scorecard(execution_mode="okx_demo")
     # Both share the same scanner_family; the numbers must differ because the
     # cohorts differ.
-    paper_family = next(r for r in paper if r["family"] == "momentum")
+    bitget_family = next(r for r in bitget if r["family"] == "momentum")
     okx_family = next(r for r in okx if r["family"] == "momentum")
-    assert paper_family["trade_count"] == 1
+    assert bitget_family["trade_count"] == 1
     assert okx_family["trade_count"] == 1
-    assert paper_family["expectancy_pct"] != okx_family["expectancy_pct"]
-    assert paper_family["execution_mode"] == "paper_internal"
+    assert bitget_family["expectancy_pct"] != okx_family["expectancy_pct"]
+    assert bitget_family["execution_mode"] == "bitget_demo"
     assert okx_family["execution_mode"] == "okx_demo"
 
 
@@ -181,14 +181,14 @@ def test_order_stats_isolates_by_execution_mode(tmp_path, monkeypatch):
 
     from aletheia.analytics.trade_stats import compute_order_stats
 
-    paper = compute_order_stats(days=30, execution_mode="paper_internal")
+    bitget = compute_order_stats(days=30, execution_mode="bitget_demo")
     okx = compute_order_stats(days=30, execution_mode="okx_demo")
     mixed = compute_order_stats(days=30)
 
-    assert paper["total"] == 2
+    assert bitget["total"] == 2
     assert okx["total"] == 2
     assert mixed["total"] == 4
-    assert paper["execution_mode"] == "paper_internal"
+    assert bitget["execution_mode"] == "bitget_demo"
     assert okx["execution_mode"] == "okx_demo"
     assert mixed["execution_mode_status"] == "unavailable"
 
@@ -225,11 +225,11 @@ def test_order_stats_conserves_every_lifecycle_status(tmp_path, monkeypatch):
             "(id, symbol, market_type, direction, order_type, quantity, price, "
             "execution_mode, status, created_at, error_reason) "
             "VALUES (?, 'BTC/USDT', 'usdt_futures', 'long', 'limit', 1, 100, "
-            "'paper_internal', ?, datetime('now'), ?)",
+            "'bitget_demo', ?, datetime('now'), ?)",
             (f"stats-order-{idx}", status, "reason" if status == "error" else None),
         )
 
-    result = compute_order_stats(days=30, execution_mode="paper_internal")
+    result = compute_order_stats(days=30, execution_mode="bitget_demo")
 
     assert result["observed_order_count"] == len(statuses)
     assert result["total"] == len(statuses)
@@ -256,16 +256,16 @@ def test_order_stats_distinguishes_empty_from_unresolved(tmp_path, monkeypatch):
     from aletheia.analytics.trade_stats import compute_order_stats
     from aletheia.storage.sqlite import get_db
 
-    empty = compute_order_stats(days=30, execution_mode="paper_internal")
+    empty = compute_order_stats(days=30, execution_mode="bitget_demo")
     db = get_db()
     db.execute(
         "INSERT INTO orders "
         "(id, symbol, market_type, direction, order_type, quantity, price, "
         "execution_mode, status, created_at) VALUES "
         "('unresolved-order', 'BTC/USDT', 'usdt_futures', 'long', 'limit', 1, 100, "
-        "'paper_internal', 'submission_unknown', datetime('now'))"
+        "'bitget_demo', 'submission_unknown', datetime('now'))"
     )
-    unresolved = compute_order_stats(days=30, execution_mode="paper_internal")
+    unresolved = compute_order_stats(days=30, execution_mode="bitget_demo")
 
     assert empty["observed_order_count"] == 0
     assert empty["delivery_status"] == "empty"
@@ -316,22 +316,22 @@ def test_rest_trade_stats_scoped_by_query(api_only_runtime, monkeypatch):
     _seed_two_mode_ledger()
     import aletheia.analytics.execution_mode as em
     # Ensure the resolver returns something so caller-side override still wins.
-    monkeypatch.setattr(em, "resolve_selected_execution_mode", lambda: "paper_internal")
+    monkeypatch.setattr(em, "resolve_selected_execution_mode", lambda: "bitget_demo")
 
     from fastapi.testclient import TestClient
     from aletheia.server.app import app
 
     with TestClient(app) as client:
-        paper = client.get(
-            "/api/analytics/trade-stats?execution_mode=paper_internal",
+        bitget = client.get(
+            "/api/analytics/trade-stats?execution_mode=bitget_demo",
         ).json()
         okx = client.get(
             "/api/analytics/trade-stats?execution_mode=okx_demo",
         ).json()
 
-    assert paper["execution_mode"] == "paper_internal"
+    assert bitget["execution_mode"] == "bitget_demo"
     assert okx["execution_mode"] == "okx_demo"
-    assert paper["totals"]["total_pnl"] != okx["totals"]["total_pnl"]
+    assert bitget["totals"]["total_pnl"] != okx["totals"]["total_pnl"]
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +348,7 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
     from aletheia.storage.models import KnowledgeItem
     from aletheia.analytics.learning_window import outcome_window_metadata
 
-    # Persist ONE calibration report for okx_demo and none for paper_internal.
+    # Persist ONE calibration report for okx_demo and none for bitget_demo.
     okx_report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "window_days": 90,
@@ -374,8 +374,8 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
         get_latest_calibration_report,
     )
 
-    # A reader asking for paper_internal must not return the okx report.
-    assert get_latest_calibration_report(execution_mode="paper_internal") is None
+    # A reader asking for bitget_demo must not return the okx report.
+    assert get_latest_calibration_report(execution_mode="bitget_demo") is None
     got = get_latest_calibration_report(execution_mode="okx_demo")
     assert got is not None
     assert got["execution_mode"] == "okx_demo"
@@ -412,7 +412,7 @@ def test_calibration_and_reasoning_readers_reject_other_mode_artifacts(
         content=json.dumps(okx_fb),
     ))
     from aletheia.analytics.reasoning_feedback import get_latest_reasoning_feedback
-    assert get_latest_reasoning_feedback(execution_mode="paper_internal") is None
+    assert get_latest_reasoning_feedback(execution_mode="bitget_demo") is None
     got_fb = get_latest_reasoning_feedback(execution_mode="okx_demo")
     assert got_fb is not None
     assert got_fb["execution_mode"] == "okx_demo"

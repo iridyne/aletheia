@@ -1643,20 +1643,12 @@ def agent_runs(
 def equity(
     days: int = typer.Option(7, "--days", "-d", help="Lookback window in days"),
     limit: int = typer.Option(50, "--limit", "-n"),
-    execution_mode: Optional[str] = typer.Option(None, "--execution-mode", help="Account series: paper_internal | exchange_account"),
+    execution_mode: Optional[str] = typer.Option("exchange_account", "--execution-mode", help="Account series identifier; historical series are read-only"),
     json_output: bool = typer.Option(False, "--json"),
 ):
     """Show one explicit account-equity time series."""
-    from aletheia.config.loader import load_config
     from aletheia.storage.repositories import list_account_equity_snapshots
 
-    if execution_mode is None:
-        cfg = load_config()
-        execution_mode = (
-            "paper_internal"
-            if cfg.exchange.paper_execution_mode == "paper_internal"
-            else "exchange_account"
-        )
     rows = list_account_equity_snapshots(execution_mode=execution_mode, days=days, limit=limit)
     display = [{
         "snapshot_at": r.get("snapshot_at"),
@@ -2327,65 +2319,3 @@ def opportunity_lifecycle(
         _output(story, True)
     else:
         typer.echo(render_opportunity_lifecycle_story(story))
-
-
-@inspect_app.command("profit-loop-qualification")
-def profit_loop_qualification(
-    registration_file: Path = typer.Option(
-        ...,
-        "--registration",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        help="JSON file with pre-registered cohort identity.  Must include cutoff_at.",
-    ),
-    cutoff_at: Optional[str] = typer.Option(
-        None,
-        "--cutoff",
-        "--cutoff-at",
-        help=(
-            "Optional validation check: if provided, must exactly match "
-            "registration['cutoff_at'].  Cutoff must be preregistered in the "
-            "registration file; supplying it only here is rejected."
-        ),
-    ),
-    output: Optional[Path] = typer.Option(
-        None, "--output", help="Write the hashed verdict artifact to this path."
-    ),
-    json_output: bool = typer.Option(False, "--json", help="Print raw JSON to stdout."),
-):
-    """Evaluate a frozen policy cohort and emit the whole-policy profitability verdict.
-
-    Read-only. Never modifies DB, config, or trading authority.
-    Issue #988: prove or reject the minimum net-profitable frozen policy cohort.
-
-    The registration file must be written before the first eligible prospective
-    close and must not be changed after outcome inspection begins.  All required
-    fields including cutoff_at must appear in the registration file itself.
-    """
-    from aletheia.analytics.profit_loop_qualification import compile_qualification_verdict
-
-    payload = json.loads(registration_file.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise typer.BadParameter("registration must be a JSON object")
-
-    if cutoff_at is not None:
-        registered_cutoff = payload.get("cutoff_at")
-        if registered_cutoff != cutoff_at:
-            raise typer.BadParameter(
-                f"--cutoff {cutoff_at!r} does not match registration cutoff_at "
-                f"{registered_cutoff!r}; cutoff must be preregistered in the "
-                "registration file, not supplied at evaluation time",
-                param_hint="--cutoff",
-            )
-
-    verdict = compile_qualification_verdict(registration=payload)
-
-    if output is not None:
-        output.write_text(
-            json.dumps(verdict, indent=2, ensure_ascii=False, default=str),
-            encoding="utf-8",
-        )
-        typer.echo(f"verdict={verdict['verdict']} hash={verdict['content_hash'][:16]}... → {output}")
-    else:
-        _output(verdict, json_output)

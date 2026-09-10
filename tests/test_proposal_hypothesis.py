@@ -60,6 +60,7 @@ def test_native_entry_freezes_versioned_hypothesis_before_hash_and_persistence()
 
     opportunity = _opportunity()
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         id="proposal-hypothesis",
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",
@@ -105,6 +106,7 @@ def test_historical_or_non_entry_proposal_is_not_backfilled():
     from aletheia.storage import repositories as repo
 
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         id="proposal-adopted",
         source="adopted",
         symbol="BTC/USDT",
@@ -163,6 +165,7 @@ def test_frozen_hypothesis_defaults_to_machine_evaluable_stop_condition():
 
     opportunity = _opportunity()
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         id="proposal-stop-condition",
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",
@@ -194,6 +197,7 @@ def test_caller_supplied_hypothesis_must_match_all_proposal_identity_and_geometr
 
     opportunity = _opportunity()
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         id="proposal-supplied-hypothesis",
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",
@@ -221,6 +225,7 @@ def test_caller_supplied_hypothesis_rejects_incorrect_quote_amount():
 
     opportunity = _opportunity()
     proposal = TradeProposal(
+        execution_mode="bitget_demo",
         id="proposal-invalid-quote-risk",
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",

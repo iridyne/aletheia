@@ -187,39 +187,8 @@ def test_degraded_cache_never_infers_orphans(tmp_path, monkeypatch):
     assert len(r.managed) == 1  # local position reported, not lost
 
 
-def test_paper_internal_never_reconciles_against_exchange_cache(tmp_path, monkeypatch):
-    """A local-only position has no exchange counterpart by design, not by drift."""
-    setup_env(tmp_path, monkeypatch)
-    import yaml
-    import aletheia.config.loader as loader
-
-    loader.CONFIG_PATH.write_text(
-        yaml.safe_dump({"exchange": {"mode": "demo", "paper_execution_mode": "paper_internal"}}),
-        encoding="utf-8",
-    )
-    loader._cached_config = None
-    repo.insert_position(Position(
-        symbol="VIRTUAL/USDT", market_type="usdt_futures", direction="short",
-        quantity=100.0, entry_price=0.6, execution_mode="paper_internal",
-    ))
-
-    from aletheia.portfolio import position_reconciler as pr
-    monkeypatch.setattr(
-        pr.exchange_sync,
-        "get_unified_cached_state",
-        lambda: {"positions": [], "accounts": [], "age_seconds": 1.0},
-    )
-    monkeypatch.setattr(pr.exchange_sync, "status_for", lambda *a, **kw: "ok")
-
-    result = pr.classify_positions("demo")
-    assert len(result.managed) == 1
-    assert result.managed[0].local["execution_mode"] == "paper_internal"
-    assert result.external == []
-    assert result.orphaned == []
-
-
 def test_reconcile_scopes_locals_to_active_execution_account(tmp_path, monkeypatch):
-    """External demo reconciliation excludes local-only and other-account rows."""
+    """External demo reconciliation excludes archived and other-account rows."""
     setup_env(tmp_path, monkeypatch)
     import yaml
     import aletheia.config.loader as loader
@@ -229,10 +198,10 @@ def test_reconcile_scopes_locals_to_active_execution_account(tmp_path, monkeypat
         encoding="utf-8",
     )
     loader._cached_config = None
-    repo.insert_position(Position(
+    repo._insert("positions", Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.01, entry_price=60_000.0, execution_mode="paper_internal",
-    ))
+    ).model_dump())
     external_local = Position(
         symbol="BTC/USDT", market_type="usdt_futures", direction="long",
         quantity=0.02, entry_price=60_000.0, execution_mode="bitget_demo",

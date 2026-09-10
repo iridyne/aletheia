@@ -1,9 +1,8 @@
 """Shared test fixtures + safety guards.
 
-`paper_internal` is the default `paper_execution_mode`; `bitget_demo` places REAL
-orders on Bitget's demo API. Secrets are read from the OS keyring first, which the per-test `tmp_path`
-DATA_DIR monkeypatch does NOT sandbox — so without a guard an unmocked test that runs
-paper_trader to a trade could fire a real demo order over the network during pytest.
+External Demo and testnet adapters submit orders to exchange APIs. A per-test
+`tmp_path` DATA_DIR alone does not isolate credentials or network access, so
+execution tests must provide exchange-response fakes at the existing boundaries.
 
 This autouse guard makes "tests never touch the real exchange" structural: it replaces
 `BitgetClient.place_order` with a loud error by default. Tests that exercise the
@@ -309,8 +308,7 @@ def _block_real_exchange_orders(request, monkeypatch):
     async def _blocked(self, order):  # noqa: ARG001
         raise RuntimeError(
             "BitgetClient.place_order reached the real exchange in a test. "
-            "Mock it with monkeypatch.setattr(BitgetClient, 'place_order', fake) "
-            "or route the proposal through paper_internal."
+            "Mock it with monkeypatch.setattr(BitgetClient, 'place_order', fake)."
         )
 
     monkeypatch.setattr(bg.BitgetClient, "place_order", _blocked)
@@ -506,16 +504,8 @@ def _no_network_market_data(request, monkeypatch):
         return Ticker(symbol=str(symbol), last_price=50000.0,
                       volume_24h=1_000_000.0, change_pct_24h=1.5)
 
-    async def _empty_funding(*_args, **_kwargs):
-        return None
-
     monkeypatch.setattr(CCXTProvider, "get_ohlcv", _empty_ohlcv)
     monkeypatch.setattr(CCXTProvider, "get_ticker", _empty_ticker)
-    # Local paper futures closes use the raw CCXT funding endpoint through this
-    # bounded helper, outside CCXTProvider.get_ticker/get_ohlcv. Keep that path
-    # offline too; focused tests can override this patch in their own body.
-    from aletheia.portfolio import local_funding
-    monkeypatch.setattr(local_funding, "_fetch_funding_from", _empty_funding)
     # close() is NOT patched: the fake data methods above create no real CCXT
     # session, so the real idempotent close() is safe. Patching it to a no-op
     # (#238) prevented cleanup of any owned session opened by unguarded paths.

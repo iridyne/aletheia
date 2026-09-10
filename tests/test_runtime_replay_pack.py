@@ -1,4 +1,4 @@
-"""Deterministic regression replay over the sanitized runtime SQLite pack."""
+"""Historical read regression over the archived local-simulator SQLite pack."""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ def _metrics(conn: sqlite3.Connection) -> dict:
     }
 
 
-def test_runtime_replay_v1_matches_explicit_baseline():
+def test_archived_runtime_replay_v1_matches_explicit_baseline():
     expected = json.loads(EXPECTED.read_text(encoding="utf-8"))
     source = sqlite3.connect(f"file:{PACK}?mode=ro", uri=True)
     source.row_factory = sqlite3.Row
@@ -84,7 +84,7 @@ def test_runtime_replay_v1_matches_explicit_baseline():
         source.close()
 
 
-def test_runtime_replay_v1_preserves_every_causal_and_learning_link():
+def test_archived_runtime_replay_v1_preserves_causal_and_learning_links():
     conn = sqlite3.connect(f"file:{PACK}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -117,6 +117,7 @@ def test_runtime_replay_v1_preserves_every_causal_and_learning_link():
         manifest = dict(conn.execute(
             "SELECT key,value FROM runtime_replay_manifest"
         ).fetchall())
+        assert manifest["active_scope"] == "crypto-paper-mainline-v1"
         assert manifest["source_values_copied"] == "false"
         assert manifest["sanitization"] == "category-preserving-total-replacement-v1"
     finally:

@@ -55,6 +55,8 @@ def _risk_config(monkeypatch, *, demo_slots=6, live_slots=3):
     from aletheia.portfolio.account_loss import AccountLossSnapshot
 
     cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    monkeypatch.setattr(eng, "_account_equity", lambda *_args: 1_000.0)
     cfg.risk.max_open_positions_demo = demo_slots
     cfg.risk.max_open_positions_live = live_slots
     cfg.risk.max_demo_position_margin_usdt = 1_000_000.0
@@ -113,7 +115,7 @@ def _seed_entry_order(
         id=f"order-uee-{suffix}",
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
-        client_order_id=proposal.id if execution_mode != "paper_internal" else None,
+        client_order_id=proposal.id,
         symbol=symbol,
         market_type="spot",
         direction="long",
@@ -157,7 +159,7 @@ def _seed_entry_order(
 def _seed_pre_order_reservation(
     *,
     suffix: str,
-    execution_mode: str = "paper_internal",
+    execution_mode: str = "bitget_demo",
     symbol: str = "BTC/USDT",
     quantity: float = 10.0,
     price: float = 100.0,
@@ -255,7 +257,7 @@ def test_unresolved_entry_without_position_occupies_demo_slot(
     result = _evaluate_new_proposal(
         suffix=status,
         symbol="SOL/USDT",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert "max_demo_positions_reached:1" in result.violations
@@ -404,7 +406,7 @@ def test_unresolved_entry_is_consumed_by_existing_live_exposure_gate(
         status="implemented",
     )
 )
-def test_unresolved_paper_entry_is_consumed_by_demo_exposure_gate(
+def test_unresolved_demo_entry_is_consumed_by_demo_exposure_gate(
     tmp_path, monkeypatch
 ):
     _setup_db(tmp_path, monkeypatch)
@@ -413,14 +415,14 @@ def test_unresolved_paper_entry_is_consumed_by_demo_exposure_gate(
     cfg.risk.demo.capital.base_usdt = 1_000.0
     cfg.risk.demo.capital.max_total_exposure_pct = 10.0  # 100 USDT
     _seed_entry_order(
-        suffix="paper-cap",
-        execution_mode="paper_internal",
+        suffix="bitget-cap",
+        execution_mode="bitget_demo",
         symbol="BTC/USDT",
         quantity=10.0,
         price=10.0,
         status="submission_unknown",
     )
-    # A separate exchange-demo account must not consume the local Paper ledger.
+    # A separate Demo account must not consume the selected Bitget account budget.
     _seed_entry_order(
         suffix="okx-demo-other-account",
         execution_mode="okx_demo",
@@ -431,9 +433,9 @@ def test_unresolved_paper_entry_is_consumed_by_demo_exposure_gate(
     )
 
     result = _evaluate_new_proposal(
-        suffix="paper-cap",
+        suffix="bitget-cap",
         symbol="SOL/USDT",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.1,
         price=10.0,
     )
@@ -466,28 +468,28 @@ def test_demo_exposure_gate_counts_open_positions_and_pre_order_reservations(
     from aletheia.storage.models import Position
 
     repo.insert_position(Position(
-        id="position-uee-paper-cap",
+        id="position-uee-bitget-cap",
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=4.0,
         entry_price=10.0,
         current_price=10.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="open",
     ))
     _seed_pre_order_reservation(
-        suffix="paper-cap",
-        execution_mode="paper_internal",
+        suffix="bitget-cap",
+        execution_mode="bitget_demo",
         symbol="ETH/USDT",
         quantity=6.0,
         price=10.0,
     )
 
     result = _evaluate_new_proposal(
-        suffix="paper-open-and-reserved-cap",
+        suffix="bitget-open-and-reserved-cap",
         symbol="SOL/USDT",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.1,
         price=10.0,
     )
@@ -498,7 +500,7 @@ def test_demo_exposure_gate_counts_open_positions_and_pre_order_reservations(
 @pytest.mark.parametrize(
     ("execution_mode", "field", "value"),
     (
-        ("paper_internal", "quantity", "not-a-number"),
+        ("bitget_demo", "quantity", "not-a-number"),
         ("okx_demo", "quantity", 0.0),
         ("bitget_live_limited", "current_price", "NaN"),
         ("bitget_live_limited", "current_price", "Infinity"),
@@ -581,7 +583,7 @@ def test_total_account_exposure_ignores_invalid_foreign_demo_pool(
     result = _evaluate_new_proposal(
         suffix="invalid-foreign-demo",
         symbol="SOL/USDT",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert not any(
@@ -624,7 +626,7 @@ def test_pending_native_exchange_entry_reserves_risk_capacity(
         result = _evaluate_new_proposal(
             suffix="pending-slot",
             symbol="SOL/USDT",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         assert "max_demo_positions_reached:1" in result.violations
     elif reservation_kind == "symbol":
@@ -730,7 +732,7 @@ def test_malformed_unresolved_entry_fails_closed(
     result = _evaluate_new_proposal(
         suffix=f"invalid-{column}",
         symbol="SOL/USDT",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert expected_violation in result.violations
@@ -775,12 +777,12 @@ def test_tampered_unresolved_entry_authority_fails_closed(
         execution_mode=original_mode,
         quantity=10.0,
         price=100.0,
-        leverage=5,
+        leverage=1,
     )
 
     if tamper == "proposal_leverage_without_hash":
         db.execute(
-            "UPDATE trade_proposals SET leverage=1 WHERE id=?",
+            "UPDATE trade_proposals SET leverage=2 WHERE id=?",
             (proposal.id,),
         )
     elif tamper == "order_quantity":
@@ -818,7 +820,7 @@ def test_tampered_unresolved_entry_authority_fails_closed(
         execution_mode=(
             "bitget_live_limited"
             if tamper == "execution_mode_pool_escape"
-            else "paper_internal"
+            else "bitget_demo"
         ),
     )
 
@@ -859,7 +861,7 @@ def test_tampered_pre_order_reservation_authority_fails_closed(
         execution_mode=(
             "bitget_live_limited"
             if tamper == "execution_mode"
-            else "paper_internal"
+            else "bitget_demo"
         ),
     )
 
@@ -897,7 +899,7 @@ def test_tampered_pre_order_reservation_authority_fails_closed(
         execution_mode=(
             "okx_live_limited"
             if tamper == "execution_mode"
-            else "paper_internal"
+            else "bitget_demo"
         ),
     )
 
@@ -1023,38 +1025,6 @@ def test_partial_averaging_leg_uses_all_position_entry_fills(
     assert reservations[0].has_open_position is True
     assert reservations[0].persisted_fill_quantity == pytest.approx(2.0)
     assert reservations[0].reserved_quantity == pytest.approx(2.0)
-    assert reservations[0].invalid_reasons == ()
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-UEE-15",
-        "pipeline_unresolved_entry_exposure",
-        "§7 local paper price authority floor",
-        "L2c",
-        "A local paper Order may honestly store a slipped fill price, but unresolved "
-        "exposure uses at least the hashed Proposal price so changing the Order price "
-        "cannot lower its Risk reservation.",
-        status="implemented",
-    )
-)
-def test_paper_order_price_cannot_lower_unresolved_exposure(tmp_path, monkeypatch):
-    db = _setup_db(tmp_path, monkeypatch)
-    _risk_config(monkeypatch, demo_slots=10)
-    _, order, _ = _seed_entry_order(
-        suffix="paper-price-floor",
-        execution_mode="paper_internal",
-        quantity=10.0,
-        price=100.0,
-    )
-    db.execute("UPDATE orders SET price=1 WHERE id=?", (order.id,))
-
-    import aletheia.risk.engine as engine
-
-    reservations = engine._unresolved_entry_reservations()
-    assert len(reservations) == 1
-    assert reservations[0].price == pytest.approx(100.0)
-    assert reservations[0].reserved_quantity == pytest.approx(10.0)
     assert reservations[0].invalid_reasons == ()
 
 
@@ -1211,3 +1181,30 @@ def test_unresolved_close_order_does_not_add_entry_exposure(tmp_path, monkeypatc
     import aletheia.risk.engine as eng
 
     assert eng._current_live_exposure() == pytest.approx(50.0)
+
+
+def test_archived_reservations_remain_read_only_without_current_capacity(tmp_path, monkeypatch):
+    db = _setup_db(tmp_path, monkeypatch)
+    db.executemany(
+        "INSERT INTO trade_proposals "
+        "(id,symbol,market_type,direction,order_type,quantity,price,execution_mode,status) "
+        "VALUES (?,'BTC/USDT','spot','long','market',1,100,'paper_internal','executing')",
+        [("archived-order-proposal",), ("archived-reservation-proposal",)],
+    )
+    db.execute(
+        "INSERT INTO orders "
+        "(id,proposal_id,symbol,market_type,direction,order_type,quantity,price,execution_mode,status) "
+        "VALUES ('archived-order','archived-order-proposal','BTC/USDT','spot','long',"
+        "'market',1,100,'paper_internal','submission_unknown')"
+    )
+    db.execute(
+        "INSERT INTO entry_risk_reservations "
+        "(proposal_id,proposal_commit_hash,symbol,market_type,execution_mode,quantity,price,leverage) "
+        "VALUES ('archived-reservation-proposal','historical-hash','BTC/USDT','spot',"
+        "'paper_internal',1,100,1)"
+    )
+    from aletheia.risk import engine
+    before = db.total_changes
+    assert engine._unresolved_entry_reservations() == []
+    assert engine._pre_order_entry_reservations() == []
+    assert db.total_changes == before

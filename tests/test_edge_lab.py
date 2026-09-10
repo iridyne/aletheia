@@ -1,12 +1,9 @@
-"""Tests for Edge Lab features: slippage, shadow trades, BTC benchmark, regime tag, family scorecard."""
+"""Tests for Edge Lab features: shadow trades, BTC benchmark and family scorecard."""
 
 import json
 from unittest.mock import patch
 
 import pytest
-
-from tests.position_fixture import force_update_position
-
 
 @pytest.fixture(autouse=True)
 def _isolate_db(tmp_path, monkeypatch):
@@ -32,109 +29,6 @@ def _isolate_db(tmp_path, monkeypatch):
     yield conn
     conn.close()
     sq._db_conn = None
-
-
-class TestSlippage:
-    """P0.5: paper_broker applies configurable slippage."""
-
-    def test_apply_slippage_long(self):
-        from aletheia.execution.paper_broker import _apply_slippage
-        price = 100.0
-        result = _apply_slippage(price, "long", 5.0)
-        assert result == pytest.approx(100.05, abs=0.001)
-
-    def test_apply_slippage_short(self):
-        from aletheia.execution.paper_broker import _apply_slippage
-        price = 100.0
-        result = _apply_slippage(price, "short", 5.0)
-        assert result == pytest.approx(99.95, abs=0.001)
-
-    def test_apply_slippage_zero(self):
-        from aletheia.execution.paper_broker import _apply_slippage
-        price = 100.0
-        result = _apply_slippage(price, "long", 0.0)
-        assert result == 100.0
-
-    @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
-    @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_on")
-    def test_paper_order_uses_slippage(self, _regime, _btc):
-        from aletheia.config.loader import load_config, save_config
-        from aletheia.execution.paper_broker import execute_paper_order
-        from tests.execution_authority import seed_order_authority
-
-        cfg = load_config()
-        cfg.trading.slippage_bps = 10.0
-        cfg.trading.execution_fee_pct = 0.1
-        cfg.trading.default_take_profit_pct = 4.0
-        save_config(cfg)
-
-        seed_order_authority(
-            proposal_id="prop1",
-            risk_decision_id="risk1",
-            symbol="ETH/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=1.0,
-            price=2000.0,
-            execution_mode="paper_internal",
-        )
-
-        result = execute_paper_order(
-            proposal_id="prop1",
-            risk_decision_id="risk1",
-            symbol="ETH/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=1.0,
-            price=2000.0,
-        )
-        # 10 bps slippage on long = 2000 * 1.001 = 2002.0
-        assert result["fill_price"] == pytest.approx(2002.0, abs=0.01)
-
-    @patch("aletheia.execution.paper_broker._btc_price_now", return_value=60000.0)
-    @patch("aletheia.execution.paper_broker._current_regime", return_value="risk_off")
-    def test_paper_order_records_regime_and_btc(self, _regime, _btc):
-        from aletheia.config.loader import load_config, save_config
-        from aletheia.execution.paper_broker import execute_paper_order
-        from aletheia.storage.repositories import list_positions
-        from tests.execution_authority import seed_order_authority
-
-        cfg = load_config()
-        cfg.trading.slippage_bps = 0.0
-        cfg.trading.execution_fee_pct = 0.1
-        cfg.trading.default_take_profit_pct = 4.0
-        save_config(cfg)
-
-        seed_order_authority(
-            proposal_id="prop2",
-            risk_decision_id="risk2",
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=0.01,
-            price=60000.0,
-            execution_mode="paper_internal",
-        )
-
-        execute_paper_order(
-            proposal_id="prop2",
-            risk_decision_id="risk2",
-            symbol="BTC/USDT",
-            market_type="spot",
-            direction="long",
-            order_type="market",
-            quantity=0.01,
-            price=60000.0,
-        )
-
-        positions = list_positions(status="open")
-        assert len(positions) == 1
-        p = positions[0]
-        assert p["btc_entry_price"] == 60000.0
-        assert p["regime_tag"] == "risk_off"
 
 
 class TestShadowTrades:
@@ -185,130 +79,38 @@ class TestBTCBenchmark:
 
     @patch("aletheia.portfolio.pnl._btc_price_at_close", return_value=61000.0)
     def test_btc_exit_price_on_close(self, _mock_btc):
-        from aletheia.portfolio.pnl import close_position
-        from aletheia.storage.models import Position
-        from aletheia.storage.repositories import _select_one, insert_position
+        from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-        pos = Position(
-            symbol="ETH/USDT",
-            market_type="spot",
-            direction="long",
-            quantity=1.0,
-            entry_price=2000.0,
-            current_price=2000.0,
-            execution_mode="paper_internal",
-            btc_entry_price=60000.0,
+        row = _insert_closed_position_via_producer(
+            position_id="benchmark-close", symbol="ETH/USDT", market_type="spot",
+            direction="long", quantity=1.0, entry_price=2000.0, realized_pnl=100.0,
+            execution_mode="bitget_demo", closed_at="2026-07-12T08:00:00+00:00",
+            close_reason="take_profit", btc_entry_price=60000.0,
         )
-        insert_position(pos)
 
-        with patch("aletheia.files.jsonl.write_audit"):
-            close_position(pos.id, exit_price=2100.0, reason="take_profit")
-
-        row = _select_one("positions", pos.id)
         assert row["btc_exit_price"] == 61000.0
         assert row["status"] == "closed"
 
 
 class TestFamilyScorecard:
-    """P2.5: family scorecard aggregation."""
+    """Family scorecard aggregation from verified exchange outcomes."""
 
     def test_empty_scorecard(self):
         from aletheia.analytics.family_scorecard import compute_family_scorecard
         result = compute_family_scorecard()
         assert result == []
 
-    def test_scorecard_with_data(self):
+    @patch("aletheia.portfolio.pnl._btc_price_at_close", return_value=65000.0)
+    def test_scorecard_with_data(self, _mock_btc):
         from aletheia.analytics.family_scorecard import compute_family_scorecard
-        from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
-        from aletheia.storage import repositories as repo
-        from aletheia.storage.models import (
-            Fill,
-            Opportunity,
-            Order,
-            Position,
-            RiskDecision,
-            TradeProposal,
-        )
+        from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-        opened_at = "2026-07-12T07:30:00+00:00"
-        closed_at = "2026-07-12T08:00:00+00:00"
-        opportunity = Opportunity(
-            id="opp1", symbol="BTC/USDT", market="spot",
-            direction_bias="long", scanner_family="momentum", status="closed",
-            created_at=opened_at,
-        )
-        repo.insert_opportunity(opportunity)
-        proposal = TradeProposal(
-            id="tp1", opportunity_id=opportunity.id, symbol="BTC/USDT",
-            market_type="spot", direction="long", order_type="market",
-            quantity=0.01, price=60000.0, execution_mode="paper_internal",
-            status="executed", created_at=opened_at,
-        )
-        repo.insert_trade_proposal(proposal)
-        decision = RiskDecision(
-            id="risk1", proposal_id=proposal.id, approved=True,
-            allowed_execution_mode="paper_internal",
-            proposal_execution_mode="paper_internal",
-            decision_role="authoritative", evaluated_quantity=proposal.quantity,
-            proposal_commit_hash=proposal.commit_hash, created_at=opened_at,
-        )
-        repo.insert_risk_decision(decision)
-        order = Order(
-            id="order1", proposal_id=proposal.id, risk_decision_id=decision.id,
-            symbol=proposal.symbol, market_type=proposal.market_type,
-            direction=proposal.direction, order_type=proposal.order_type,
-            quantity=0.01, price=60000.0, execution_mode="paper_internal",
-            position_id="pos1", status="filled", created_at=opened_at,
-            filled_at=opened_at,
-        )
-        repo.insert_order(order)
-        repo.insert_fill(Fill(
-            id="fill1", order_id=order.id, fill_price=60000.0,
-            fill_quantity=0.01, fee=0.0, filled_at=opened_at,
-        ))
-        repo.insert_position(Position(
-            id="pos1", symbol="BTC/USDT", market_type="spot",
-            direction="long", quantity=0.01, entry_price=60000.0,
-            current_price=60000.0,
-            execution_mode="paper_internal", proposal_id=proposal.id,
-            order_id=order.id, opportunity_id=opportunity.id,
-            status="open",
-            entry_price_source="local_fill", entry_fill_verified=True,
-            entry_fee=0.0, funding_cost=0.0,
-            funding_source="not_applicable", btc_entry_price=60000.0,
-            opened_at=opened_at,
-        ))
-        close_order = Order(
-            id="close-order1", proposal_id=proposal.id,
-            symbol=proposal.symbol, market_type=proposal.market_type,
-            direction=proposal.direction, order_type="market",
-            quantity=0.01, price=65000.0,
-            execution_mode="paper_internal", client_order_id="close-pos1",
-            position_id="pos1", close_reason="take_profit", status="filled",
-            created_at=closed_at, filled_at=closed_at,
-        )
-        repo.insert_order(close_order)
-        repo.insert_fill(Fill(
-            id="close-fill1", order_id=close_order.id,
-            fill_price=65000.0, fill_quantity=0.01, fee=0.0,
-            filled_at=closed_at,
-        ))
-        force_update_position(
-            "pos1",
-            current_price=65000.0,
-            unrealized_pnl=0.0,
-            realized_pnl=50.0,
-            status="closed",
-            close_reason="take_profit",
-            close_category="strategy",
-            exit_price_source="local_fill",
-            exit_fill_verified=True,
-            exit_fee=0.0,
-            outcome_eligible=True,
-            outcome_exclusion_reason="eligible",
-            outcome_semantics_version=OUTCOME_SEMANTICS_VERSION,
-            btc_exit_price=65000.0,
-            closed_at=closed_at,
+        _insert_closed_position_via_producer(
+            position_id="scorecard-close", symbol="BTC/USDT", market_type="spot",
+            direction="long", quantity=0.01, entry_price=60000.0, realized_pnl=50.0,
+            execution_mode="bitget_demo", opened_at="2026-07-12T07:30:00+00:00",
+            closed_at="2026-07-12T08:00:00+00:00", close_reason="take_profit",
+            scanner_family="momentum", btc_entry_price=60000.0,
         )
 
         result = compute_family_scorecard()

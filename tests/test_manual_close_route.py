@@ -21,7 +21,6 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage import repositories as repo
 
 
-# ponytail: copy of _setup_env from test_paper_account.py; extract to conftest if a third copy appears
 def _setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.files.jsonl as jsonl
@@ -38,7 +37,7 @@ def _setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def _insert_open(execution_mode: str = "paper_internal") -> str:
+def _insert_open(execution_mode: str = "bitget_demo") -> str:
     pos = Position(
         symbol="BTC/USDT",
         market_type="spot",
@@ -148,7 +147,6 @@ def test_proactive_exit_human_market_sets_close_reason(tmp_path, monkeypatch):
     pid = _insert_open()
     calls = []
     monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     result = pm.proactive_exit(pid, actor="human")
     assert result["close_reason"] == "human_manual_close"
@@ -165,7 +163,6 @@ def test_proactive_exit_system_operator_keeps_original_reason(tmp_path, monkeypa
     pid = _insert_open()
     calls = []
     monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     result = pm.proactive_exit(pid, actor="system_operator")
     assert result["close_reason"] == "operator_close"
@@ -221,7 +218,6 @@ async def test_manual_close_route_market_dispatches_human_close(tmp_path, monkey
     pid = _insert_open()
     calls = []
     monkeypatch.setattr(pm, "close_position_routed", lambda *a, **kw: calls.append(kw) or {"closed": True})
-    monkeypatch.setattr(pm, "_latest_price", lambda s: 105.0)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post(f"/api/positions/{pid}/close", json={"order_type": "market"})

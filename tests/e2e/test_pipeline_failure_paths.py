@@ -1,28 +1,12 @@
-"""Failure path e2e: system behavior when signals fail, risk rejects, or kill switch fires.
+"""External proposal rejection remains durable; kill switch suppresses control writes.
 
-The Golden Path (test_active_mainline_golden_path.py) proves the happy path chain works.
-These tests prove the system fails *correctly* when it should fail — each test verifies
-both the returned result AND the resulting DB state, because silent failures (code that
-runs without error but writes wrong state) are the hardest class of bugs to catch.
-
-Four断点场景:
-  1. 信号低于置信阈值 → ranker 返回空，paper trader 静默收尾，DB 无副作用
-  2. 风险白名单拒绝   → proposal 以 rejected 状态写入 DB，不是静默丢弃
-  3. 今日亏损超限     → 新 proposal 被拒，拒绝原因可查
-  4. Kill switch 激活  → operator loop 不写任何 config_patch，只发 notify_operator
+Checks symbol rejection, daily-loss rejection and kill-switch governance against
+isolated runtime state. Risk decisions and rejected proposals remain queryable.
 """
 
 from __future__ import annotations
 
-import pytest
-
 from aletheia.config.loader import load_config, save_config
-from aletheia.storage import repositories as repo
-from aletheia.storage.models import Opportunity
-
-
-# ─── 1. Zero eligible candidates ─────────────────────────────────────────────
-
 
 
 # ─── 2. Risk whitelist rejection ─────────────────────────────────────────────
@@ -42,8 +26,8 @@ def test_risk_rejects_symbol_not_in_whitelist_proposal_archived(e2e_db, monkeypa
     loader._invalidate_config_cache()
 
     cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.agent.permission_mode = "Full"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.risk.symbol_filter_mode = "whitelist"
     cfg.risk.symbol_list = ["BTCUSDT", "ETHUSDT"]
     save_config(cfg)
@@ -54,7 +38,7 @@ def test_risk_rejects_symbol_not_in_whitelist_proposal_archived(e2e_db, monkeypa
         direction="long",
         quantity=0.5,
         price=200.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert result["status"] == "rejected", (
@@ -93,8 +77,8 @@ def test_risk_rejects_when_daily_loss_limit_exceeded_proposal_archived(e2e_db, m
     loader._invalidate_config_cache()
 
     cfg = load_config()
-    cfg.agent.permission_mode = "Paper"
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.agent.permission_mode = "Full"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.risk.demo.capital.base_source = "custom"
     cfg.risk.demo.capital.base_usdt = 1000.0
     cfg.risk.demo.loss.max_daily_loss_pct = 2.0   # daily limit = $20
@@ -121,7 +105,7 @@ def test_risk_rejects_when_daily_loss_limit_exceeded_proposal_archived(e2e_db, m
         direction="long",
         quantity=0.001,
         price=60_000.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert result["status"] == "rejected", (

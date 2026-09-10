@@ -29,7 +29,7 @@ export default function AccountSnapshot() {
       : 'portfolio read failed'
     : null
 
-  // total_value_usdt already prefers UTA unified > exchange_equity > local notional
+  // The backend selects the available external account equity.
   const syncStatus: string = p?.exchange_sync_status ?? 'unconfigured'
   const utaStatus: string | undefined = p?.uta_state?.sync_status ?? undefined
   const displayValue = fmtNum(p?.total_value_usdt)
@@ -39,7 +39,6 @@ export default function AccountSnapshot() {
       ? utaStatus === 'ok' ? 'unified · live' : utaStatus === 'stale' ? 'unified · data stale' : utaStatus === 'error' ? 'unified · sync error' : 'unified · not configured'
       : p?.exchange_equity_usdt != null
         ? syncStatus === 'stale' ? 'exchange · data stale' : 'exchange · live'
-      : syncStatus === 'not_applicable' ? 'local paper · no exchange'
       : syncStatus === 'unconfigured' ? 'exchange not configured'
         : syncStatus === 'error' ? 'exchange sync error'
         : 'exchange sync pending')

@@ -205,61 +205,6 @@ def evaluate_perp_structure(
     ))
 
 
-@data_app.command("reconcile-local-paper-accounting")
-def reconcile_local_paper_accounting(
-    apply: bool = typer.Option(
-        False, "--apply",
-        help="Apply only exact backlinks and additive reconciliation rows. Default is dry-run.",
-    ),
-):
-    """Recover provable historical local-paper accounting without changing raw PnL.
-
-    This command never writes an exchange, Risk decision, Position economics, or
-    paper cash event.  It reports unavailable evidence instead of estimating it.
-    """
-    from aletheia.storage.migrations import assert_migrations_current
-    from aletheia.maintenance.historical_accounting import reconcile_historical_local_paper_accounting
-
-    assert_migrations_current()
-    typer.echo(json.dumps(
-        reconcile_historical_local_paper_accounting(dry_run=not apply),
-        indent=2, ensure_ascii=False, sort_keys=True,
-    ))
-
-
-@data_app.command("repair-paper-close-timestamps")
-def repair_paper_close_timestamps(
-    apply: bool = typer.Option(False, "--apply", help="Apply the exact dry-run plan."),
-    expected_fingerprint: str | None = typer.Option(None, "--expected-fingerprint"),
-):
-    """Repair the bounded legacy Paper close Order/Fill timestamp race offline."""
-    if apply and not expected_fingerprint:
-        raise typer.BadParameter("--apply requires --expected-fingerprint")
-    if not apply and expected_fingerprint:
-        raise typer.BadParameter("--expected-fingerprint is valid only with --apply")
-
-    from aletheia.maintenance.paper_close_timestamp_recovery import (
-        apply_paper_close_timestamp_recovery,
-        inspect_paper_close_timestamp_recovery,
-    )
-    from aletheia.storage.migrations import assert_migrations_current
-
-    assert_migrations_current()
-    try:
-        result = (
-            apply_paper_close_timestamp_recovery(
-                expected_fingerprint=str(expected_fingerprint),
-            )
-            if apply
-            else inspect_paper_close_timestamp_recovery()
-        )
-    except (RuntimeError, ValueError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
-    if apply and not result["audit_jsonl_complete"]:
-        raise typer.Exit(1)
-
-
 @data_app.command("requeue-unobserved-settlements")
 def requeue_unobserved_settlements(
     apply: bool = typer.Option(
@@ -285,46 +230,6 @@ def requeue_unobserved_settlements(
         requeue_unobserved_failed_outcomes(dry_run=not apply),
         indent=2, ensure_ascii=False, sort_keys=True,
     ))
-
-
-@data_app.command("reconcile-paper-funding")
-def reconcile_paper_funding(
-    position_ids: list[str] = typer.Option([], "--position-id"),
-    apply: bool = typer.Option(False, "--apply"),
-    expected_fingerprint: str | None = typer.Option(
-        None, "--expected-fingerprint",
-    ),
-):
-    """Inspect or apply fingerprint-guarded paper funding reconciliation."""
-    if apply:
-        if not expected_fingerprint:
-            raise typer.BadParameter("--apply requires --expected-fingerprint")
-        if not position_ids:
-            raise typer.BadParameter("--apply requires at least one --position-id")
-    elif expected_fingerprint:
-        raise typer.BadParameter("--expected-fingerprint is valid only with --apply")
-
-    from aletheia.maintenance.paper_funding_reconciliation import (
-        apply_paper_funding_reconciliation,
-        inspect_paper_funding_reconciliation,
-    )
-
-    try:
-        if apply:
-            from aletheia.storage.migrations import assert_migrations_current
-
-            assert_migrations_current()
-            result = apply_paper_funding_reconciliation(
-                position_ids=position_ids,
-                expected_fingerprint=expected_fingerprint,
-            )
-        else:
-            # The default inspection path is contractually read-only. Schema
-            # upgrades belong to explicit apply/startup paths, never a dry run.
-            result = inspect_paper_funding_reconciliation(position_ids=position_ids)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    typer.echo(json.dumps(result, indent=2, ensure_ascii=False, sort_keys=True))
 
 
 @data_app.command("download")

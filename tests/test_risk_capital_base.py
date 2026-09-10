@@ -7,7 +7,7 @@ def test_account_equity_is_the_default_effective_capital_base(monkeypatch):
     monkeypatch.setattr(engine, "_account_equity", lambda mode, _: 4321.0)
 
     value, reason = engine._resolve_capital_base(
-        "paper_internal", cfg.risk.demo, cfg,
+        "bitget_demo", cfg.risk.demo, cfg,
     )
 
     assert value == 4321.0
@@ -21,7 +21,7 @@ def test_custom_capital_base_is_used_only_when_explicitly_selected(monkeypatch):
     monkeypatch.setattr(engine, "_account_equity", lambda mode, _: 4321.0)
 
     value, reason = engine._resolve_capital_base(
-        "paper_internal", cfg.risk.demo, cfg,
+        "bitget_demo", cfg.risk.demo, cfg,
     )
 
     assert value == 275.0

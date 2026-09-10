@@ -26,6 +26,7 @@ authoritative it moves into `design/proposals/`, `design/decisions/`, or
 
 ## Related current documents
 
-- Contract-adjacent: `docs/references/ECONOMIC_VIABILITY_AUDIT.md` (PR #110's ledger contract).
+- Current cost accounting: [Runtime Cost Accounting](../../references/RUNTIME_COST_ACCOUNTING.md).
+- The Paper Internal viability mechanisms cited in these frozen notes are [archived](../../design/history/local_simulated_viability.md); their generation commands and runtime switch are removed.
 - Provider layer code: `aletheia/model_provider/` and `aletheia/economics/`.
 - GitHub tracking issue: see the tokenomics umbrella issue for coordination.

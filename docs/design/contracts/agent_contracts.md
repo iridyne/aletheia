@@ -49,11 +49,10 @@
 | 35 | news_fetch | interval `news.fetch_interval_minutes` | io | Poll news providers into `news_items` |
 | 35a | news_analyze | 5min | agents | Independently analyze at most 3 news rows; each item and the whole job are bounded, and failures remain retry/failed rather than fabricated analyzed facts |
 | 36 | outcome_settler | 10min | io | Settle outstanding prediction / universe forward outcomes |
-| 36a | paper_funding_settler | 30min | io | Recover complete local-paper futures funding from persisted live/history evidence and atomically converge Position, close event, cash, eligibility, audit, and durable outcome hooks; read source I/O never spans the SQLite writer transaction |
 | 36b | broker_funding_settler | 30min | io | Recover verified exchange closes with separate bounded UTA-retention classification and broker-I/O budgets; rotate a durable keyset cursor and terminalize only typed retention expiry without inventing economics |
 | 39 | serenity_startup_catchup | once, 4min after gateway boot | agents | Recover a missed 02:00 CST Serenity batch using a durable per-day key; skips fresh/active/already-attempted batches |
 | 40 | learning_startup_catchup | once, 5min after gateway boot | agents | Run only the latest missed dreaming/memo/reviewer date-window; a durable success watermark prevents restart duplicates |
-| 42a | funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in paper/broker funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
+| 42a | funding_audit_reconciler | every 5min | audit | Retry at most 100 opt-in persisted funding audit JSONL mirrors by stable event id; never replay accounting and continue during layered pause |
 
 Learning behavior producers remain gated by `agent.autonomous_learning`.
 Outcome settlement, funding, durable outcome replay and the Observation Lab runner/bridge
@@ -63,11 +62,10 @@ Historical job-health rows are evidence only, never active schedules.
 After recovery, `status` may be healthy and `last_error` clears, while `last_failed_at` and
 `last_failure_reason` preserve the most recent failure.
 
-`paper_funding_settler` is accounting maintenance, not an agent decision or exchange-account
-collector. It runs during layered pause, keeps incomplete facts `NULL`, and may use public historical
-settlements only as `local_simulation` evidence. It never labels age alone as structural failure.
-When evidence becomes complete it calls the single atomic materializer; downstream feedback is
-durably queued and independently retried by `outcome_hook_replay`.
+The former local-simulator funding settler and its public-rate settlement path
+are [archived](../history/local_simulated_risk_execution.md). They are not active
+jobs. Current verified-close feedback is durably queued and independently
+retried by `outcome_hook_replay`.
 
 `broker_funding_settler` is exchange-accounting recovery, not trading authority. It runs during
 layered pause and rotates a durable scheduling cursor so expired, transient, malformed, or

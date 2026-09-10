@@ -125,46 +125,24 @@ def test_exchange_upnl_is_scoped_to_its_broker_and_duplicate_is_rejected(db, mon
     assert marked["binance_testnet"]["unrealized_pnl"] == 10.0
 
 
-@pytest.mark.parametrize("prebuilt_index", [False, True])
-def test_paper_internal_never_consumes_exchange_upnl(
-    db, monkeypatch, prebuilt_index,
-):
-    """Local-paper PnL stays local even if a cache row claims its mode."""
-    from aletheia.portfolio import exchange_sync, pnl
+def test_archived_position_is_not_marked_or_persisted(db, monkeypatch):
+    from aletheia.portfolio import pnl
 
-    repo.insert_position(Position(
-        id="upnl-local-paper",
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
+    repo._insert("positions", Position(
+        id="archived-mark", symbol="BTC/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=100.0,
+        current_price=105.0, unrealized_pnl=5.0,
         execution_mode="paper_internal",
-    ))
-    monkeypatch.setattr("aletheia.data.price_feed.get_fresh_price_for_protective_close", lambda s, mt, *, venue: 110.0)
-    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
-        "age_seconds": 0.0,
-        "positions": [{
-            "broker_id": "paper_internal",
-            "symbol": "BTC/USDT",
-            "market_type": "usdt_futures",
-            "side": "long",
-            "unrealized_pnl": 777.0,
-        }],
-    })
-    if prebuilt_index:
-        monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {
-            ("BTC/USDT", "paper_internal", "perp", "long"): 777.0,
-        })
+    ).model_dump())
+    before = repo._select_one("positions", "archived-mark")
+    monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
+    monkeypatch.setattr(
+        "aletheia.data.price_feed.get_fresh_price_for_protective_close",
+        lambda *_args, **_kwargs: pytest.fail("archived positions must not request marks"),
+    )
 
-    [marked] = pnl.mark_positions_to_market(persist=True)
-
-    assert marked["unrealized_pnl"] == 10.0
-    assert marked["unrealized_pnl_source"] == "local_estimate"
-    stored = repo._select_one("positions", "upnl-local-paper")
-    assert stored is not None
-    assert stored["unrealized_pnl"] == 10.0
-    assert stored["unrealized_pnl_source"] == "local_estimate"
+    assert pnl.mark_positions_to_market(persist=True) == []
+    assert repo._select_one("positions", "archived-mark") == before
 
 
 @spec_claim(
@@ -580,19 +558,16 @@ class TestMarkExactInstrumentIdentity:
         }
         monkeypatch.setattr(price_feed, "_instrument_price_cache", fake_cache)
 
-        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
-            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
-        )())
 
         repo.insert_position(Position(
             id="spot-pos", symbol="BTC/USDT", market_type="spot",
             direction="long", quantity=1.0, entry_price=64_000.0,
-            execution_mode="paper_internal",
+            execution_mode="binance_testnet",
         ))
         repo.insert_position(Position(
             id="perp-pos", symbol="BTC/USDT", market_type="usdt_futures",
             direction="long", quantity=1.0, entry_price=64_000.0,
-            execution_mode="paper_internal",
+            execution_mode="binance_testnet",
         ))
 
         monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
@@ -613,9 +588,6 @@ class TestMarkExactInstrumentIdentity:
         from aletheia.data import price_feed
         from aletheia.portfolio import pnl
 
-        monkeypatch.setattr("aletheia.config.loader.load_config", lambda **_: type(
-            "C", (), {"market_data": type("M", (), {"ccxt_exchange": "binance"})()}
-        )())
         # Empty instrument cache — no exact mark available.
         monkeypatch.setattr(price_feed, "_instrument_price_cache", {})
         monkeypatch.setattr(price_feed, "_price_cache", {})
@@ -623,7 +595,7 @@ class TestMarkExactInstrumentIdentity:
         repo.insert_position(Position(
             id="no-mark-pos", symbol="BTC/USDT", market_type="spot",
             direction="long", quantity=1.0, entry_price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="binance_testnet",
             current_price=99.0,
         ))
         monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
@@ -647,7 +619,7 @@ class TestRealizedPnlIsolation:
         _insert_verified_closed_position(
             position_id="mode-filter-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(seconds=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -656,17 +628,17 @@ class TestRealizedPnlIsolation:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
-        summary = compute_portfolio(execution_mode="paper_internal")
+        summary = compute_portfolio(execution_mode="bitget_demo")
         assert summary["realized_pnl"] == 10.0
         assert summary["all_realized_pnl"] == 35.0
 
-    def test_local_account_default_keeps_realized_pnl_mode_scoped(self, db):
-        """The local account headline excludes closes from other modes."""
+    def test_unscoped_portfolio_aggregates_realized_pnl(self, db):
+        """An unscoped portfolio reports the aggregate across external modes."""
         now = datetime.now(timezone.utc)
         _insert_verified_closed_position(
             position_id="all-mode-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(seconds=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -676,7 +648,7 @@ class TestRealizedPnlIsolation:
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
         summary = compute_portfolio(execution_mode=None)
-        assert summary["realized_pnl"] == 10.0
+        assert summary["realized_pnl"] == 35.0
         assert summary["all_realized_pnl"] == 35.0
 
 
@@ -688,25 +660,37 @@ async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(clie
     _insert_verified_closed_position(
         position_id="live-mark-closed", symbol="BTC/USDT",
         entry_price=100.0, realized_pnl=5.0,
-        execution_mode="paper_internal", closed_at=(now - timedelta(minutes=2)).isoformat(),
+        execution_mode="bitget_demo", closed_at=(now - timedelta(minutes=2)).isoformat(),
     )
     repo.insert_position(Position(
         id="live-mark-open", symbol="ETH/USDT", market_type="spot",
         direction="long", quantity=1.0, entry_price=10.0, current_price=13.0,
-        unrealized_pnl=3.0, execution_mode="paper_internal", status="open",
+        unrealized_pnl=3.0, execution_mode="bitget_demo", status="open",
     ))
-    # A stale/unrelated unified-exchange cache must never overwrite the local
-    # paper mark. That was the live-curve freeze observed in the running UI.
+    from aletheia.storage.sqlite import get_db
+    get_db().executemany(
+        "INSERT INTO positions "
+        "(id,symbol,market_type,direction,quantity,entry_price,current_price,"
+        "unrealized_pnl,realized_pnl,execution_mode,status,closed_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            ("archived-open", "SOL/USDT", "spot", "long", 1, 10, 90,
+             80, 0, "paper_internal", "open", None),
+            ("archived-close", "SOL/USDT", "spot", "long", 1, 10, 35,
+             0, 25, "paper_internal", "closed", (now - timedelta(minutes=1)).isoformat()),
+        ],
+    )
+    # A cross-account aggregate cache must not replace an explicitly selected mode mark.
     import aletheia.config.loader as loader
     from aletheia.portfolio import exchange_sync
     config = loader.load_config()
-    config.exchange.paper_execution_mode = "paper_internal"
+    config.exchange.paper_execution_mode = "bitget_demo"
     monkeypatch.setattr(loader, "load_config", lambda: config)
     monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {
         "age_seconds": 1, "total_unrealized_pnl": 999.0,
     })
 
-    body = (await c.get("/api/analytics/equity-curve")).json()
+    body = (await c.get("/api/analytics/equity-curve?execution_mode=bitget_demo")).json()
     mark = body["current_mark_point"]
     assert mark["time"]
     assert mark["closed_raw_pnl"] == 5.0
@@ -715,18 +699,37 @@ async def test_equity_curve_exposes_live_mark_separately_from_closed_curves(clie
     assert body["total_realized"] == 5.0
 
 
+    # An unavailable external cache falls back only to current external rows.
+    monkeypatch.setattr(exchange_sync, "get_unified_cached_state", lambda: {})
+    aggregate = (await c.get("/api/analytics/equity-curve")).json()
+    assert aggregate["raw_total_recorded_realized"] == 30.0
+    assert aggregate["current_unrealized"] == 3.0
+    assert aggregate["current_mark_point"]["closed_raw_pnl"] == 5.0
+    assert aggregate["current_mark_point"]["cumulative_pnl"] == 8.0
+
+    archive = (await c.get("/api/analytics/equity-curve?execution_mode=paper_internal")).json()
+    assert archive["raw_total_recorded_realized"] == 25.0
+    assert archive["current_unrealized"] == 0.0
+    assert archive["current_mark_point"] is None
+    assert dict(get_db().execute(
+        "SELECT execution_mode,status,unrealized_pnl FROM positions WHERE id='archived-open'"
+    ).fetchone()) == {
+        "execution_mode": "paper_internal", "status": "open", "unrealized_pnl": 80.0,
+    }
+
+
 # ---------- P1-3: compute_and_store_snapshot consistency ----------
 
 class TestSnapshotConsistency:
     """Snapshot rows must use pre-computed values, not re-fetch."""
 
-    def test_paper_row_uses_mode_realized(self, db):
-        """Row 1 (paper) uses mode-filtered realized_pnl, not all-mode."""
+    def test_position_row_uses_mode_realized(self, db):
+        """The position-exposure row uses mode-filtered realized PnL."""
         now = datetime.now(timezone.utc)
         _insert_verified_closed_position(
             position_id="snapshot-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(seconds=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -735,7 +738,7 @@ class TestSnapshotConsistency:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
-        snap = compute_and_store_snapshot(execution_mode="paper_internal")
+        snap = compute_and_store_snapshot(execution_mode="bitget_demo")
         assert snap.realized_pnl == 10.0
 
     def test_exchange_row_uses_all_realized(self, tmp_path, monkeypatch, db):
@@ -744,7 +747,7 @@ class TestSnapshotConsistency:
         _insert_verified_closed_position(
             position_id="exchange-row-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(seconds=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -753,10 +756,7 @@ class TestSnapshotConsistency:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(seconds=1)).isoformat(),
         )
-        # compute_portfolio() only enters the exchange-account path when
-        # paper_execution_mode != "paper_internal" (uses_external_exchange=True).
-        # The new config default is "paper_internal", so we must override it
-        # to "okx_demo" to exercise the external account snapshot.
+        # Select the account represented in the external cache.
         import aletheia.config.loader as loader
         config = loader.load_config()
         config.exchange.paper_execution_mode = "okx_demo"
@@ -776,43 +776,20 @@ class TestSnapshotConsistency:
             "age_seconds": 10,
         }
         monkeypatch.setattr(es, "get_unified_cached_state", lambda **kwargs: fake_state)
-        compute_and_store_snapshot(execution_mode="paper_internal")
+        compute_and_store_snapshot(execution_mode="bitget_demo")
         snapshots = repo.list_portfolio_snapshots(limit=10)
         exc_rows = [s for s in snapshots if s["execution_mode"] == "exchange_account"]
         assert len(exc_rows) == 1
         assert exc_rows[0]["realized_pnl"] == 35.0
 
-    def test_local_paper_snapshot_uses_ledger_equity_not_position_notional(self, db, monkeypatch):
-        """A 400-USDT paper account with a 10-USDT mark has 410 equity, not 110 notional."""
-        import aletheia.config.loader as loader
-        from aletheia.portfolio.paper_account import set_cash_balance
-
-        config = loader.load_config()
-        config.exchange.paper_execution_mode = "paper_internal"
-        monkeypatch.setattr(loader, "load_config", lambda: config)
-        set_cash_balance(400.0, note="test account baseline")
-        repo.insert_position(Position(
-            id="account-equity-open", symbol="BTC/USDT", market_type="spot",
-            direction="long", quantity=1.0, entry_price=100.0, current_price=110.0,
-            unrealized_pnl=10.0, execution_mode="paper_internal", status="open",
-        ))
-        snap = compute_and_store_snapshot(execution_mode="paper_internal")
-
-        assert snap.total_value_usdt == 410.0
-        assert snap.account_equity_usdt == 410.0
-        row = repo.list_account_equity_snapshots("paper_internal")[0]
-        assert row["account_equity_usdt"] == 410.0
-
     def test_snapshot_uses_one_mark_set_for_positions_and_summary(self, db, monkeypatch):
         """The persisted Position mark and snapshot must share one price read."""
         import aletheia.config.loader as loader
         from aletheia.portfolio import pnl
-        from aletheia.portfolio.paper_account import set_cash_balance
 
         config = loader.load_config()
-        config.exchange.paper_execution_mode = "paper_internal"
+        config.exchange.paper_execution_mode = "bitget_demo"
         monkeypatch.setattr(loader, "load_config", lambda: config)
-        set_cash_balance(400.0, note="test account baseline")
         repo.insert_position(Position(
             id="snapshot-single-mark",
             symbol="BTC/USDT",
@@ -820,7 +797,7 @@ class TestSnapshotConsistency:
             direction="long",
             quantity=1.0,
             entry_price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             status="open",
         ))
         prices = iter([110.0, 120.0])
@@ -836,7 +813,7 @@ class TestSnapshotConsistency:
         )
         monkeypatch.setattr(pnl, "_build_exchange_upnl_index", lambda: {})
 
-        snap = compute_and_store_snapshot(execution_mode="paper_internal")
+        snap = compute_and_store_snapshot(execution_mode="bitget_demo")
 
         stored = repo._select_one("positions", "snapshot-single-mark")
         assert len(calls) == 1
@@ -849,7 +826,7 @@ class TestSnapshotConsistency:
             "aletheia.data.price_feed.get_fresh_price_for_protective_close",
             lambda *_args, **_kwargs: next(prices),
         )
-        compute_portfolio(execution_mode="paper_internal", persist_marks=False)
+        compute_portfolio(execution_mode="bitget_demo", persist_marks=False)
         assert repo._select_one("positions", "snapshot-single-mark")["current_price"] == 110.0
 
 
@@ -865,7 +842,7 @@ class TestEquityCurveEndpoint:
         _insert_verified_closed_position(
             position_id="curve-default-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=5.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(minutes=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -886,7 +863,7 @@ class TestEquityCurveEndpoint:
         _insert_verified_closed_position(
             position_id="curve-filter-paper", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=5.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(minutes=2)).isoformat(),
         )
         _insert_verified_closed_position(
@@ -895,7 +872,7 @@ class TestEquityCurveEndpoint:
             execution_mode="okx_demo",
             closed_at=(now - timedelta(minutes=1)).isoformat(),
         )
-        resp = await c.get("/api/analytics/equity-curve?execution_mode=paper_internal")
+        resp = await c.get("/api/analytics/equity-curve?execution_mode=bitget_demo")
         body = resp.json()
         assert len(body["points"]) == 1
         assert body["total_realized"] == 5.0
@@ -909,14 +886,14 @@ class TestEquityCurveEndpoint:
         _insert_verified_closed_position(
             position_id="curve-days-old", symbol="BTC/USDT",
             entry_price=100.0, realized_pnl=5.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=pre_clean_window.isoformat(),
             expected_outcome_eligible=False,
         )
         _insert_verified_closed_position(
             position_id="curve-days-current", symbol="ETH/USDT",
             entry_price=50.0, realized_pnl=3.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             closed_at=(now - timedelta(minutes=1)).isoformat(),
         )
         resp = await c.get("/api/analytics/equity-curve?days=7")
@@ -937,7 +914,7 @@ class TestEquityCurveEndpoint:
             _insert_verified_closed_position(
                 position_id=f"curve-limit-{i}", symbol="BTC/USDT",
                 entry_price=100.0, realized_pnl=1.0,
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 closed_at=(now - timedelta(minutes=10 - i)).isoformat(),
             )
         resp = await c.get("/api/analytics/equity-curve?limit=5")
@@ -950,14 +927,14 @@ class TestEquityCurveEndpoint:
         repo.insert_position(Position(
             symbol="BTC/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=100.0, unrealized_pnl=7.0,
-            status="open", execution_mode="paper_internal",
+            status="open", execution_mode="bitget_demo",
         ))
         repo.insert_position(Position(
             symbol="ETH/USDT", market_type="spot", direction="long",
             quantity=1.0, entry_price=50.0, unrealized_pnl=2.0,
             status="open", execution_mode="okx_demo",
         ))
-        resp = await c.get("/api/analytics/equity-curve?execution_mode=paper_internal")
+        resp = await c.get("/api/analytics/equity-curve?execution_mode=bitget_demo")
         body = resp.json()
         assert body["current_unrealized"] == 7.0
 
@@ -993,10 +970,10 @@ class TestPortfolioHistoryCoverage:
         c, _ = client
         now = datetime.now(timezone.utc)
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
-            total_value_usdt=9000, snapshot_at=(now - timedelta(days=15)).isoformat(),
+            total_value_usdt=9000, execution_mode="exchange_account", snapshot_at=(now - timedelta(days=15)).isoformat(),
         ))
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
-            total_value_usdt=10000, snapshot_at=now.isoformat(),
+            total_value_usdt=10000, execution_mode="exchange_account", snapshot_at=now.isoformat(),
         ))
         resp = await c.get("/api/market/portfolio-history?days=7")
         rows = resp.json()
@@ -1008,21 +985,21 @@ class TestPortfolioHistoryCoverage:
         import aletheia.config.loader as loader
         c, _ = client
         config = loader.load_config()
-        config.exchange.paper_execution_mode = "paper_internal"
+        config.exchange.paper_execution_mode = "bitget_demo"
         monkeypatch.setattr(loader, "load_config", lambda: config)
         now = datetime.now(timezone.utc)
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
-            total_value_usdt=9999.0, execution_mode="paper_internal",
+            total_value_usdt=9999.0, execution_mode="bitget_demo",
             snapshot_at=(now - timedelta(minutes=2)).isoformat(),
         ))
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
             total_value_usdt=400.0, account_equity_usdt=400.0,
-            execution_mode="paper_internal", snapshot_at=now.isoformat(),
+            execution_mode="exchange_account", snapshot_at=now.isoformat(),
         ))
 
         body = (await c.get("/api/market/account-equity-history?days=7")).json()
 
-        assert body["source"] == "local_paper_ledger"
+        assert body["source"] == "exchange_account_snapshot"
         assert body["state"] == "available"
         assert body["points"] == [{"time": now.isoformat(), "equity_usdt": 400.0}]
 
@@ -1173,7 +1150,7 @@ class TestTodayRawClosedRealizedPnl:
         *,
         position_id: str,
         realized_pnl: float,
-        execution_mode: str = "paper_internal",
+        execution_mode: str = "bitget_demo",
         symbol: str = "BTC/USDT",
     ) -> None:
         """Insert a spot close with fully-reproducible economics today (UTC)."""
@@ -1196,7 +1173,7 @@ class TestTodayRawClosedRealizedPnl:
         self,
         position_id: str,
         *,
-        execution_mode: str = "paper_internal",
+        execution_mode: str = "bitget_demo",
         symbol: str = "ETH/USDT",
     ) -> None:
         """Insert a futures close with NULL funding (economics incomplete)."""
@@ -1263,17 +1240,17 @@ class TestTodayRawClosedRealizedPnl:
         self._insert_complete_spot_close(
             position_id="mode-b-complete",
             realized_pnl=-5.0,
-            execution_mode="bitget_demo",
+            execution_mode="okx_demo",
         )
         self._insert_incomplete_close(
             "mode-a-incomplete",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
 
-        # paper_internal has an incomplete close → None
-        assert today_realized_pnl(execution_mode="paper_internal") is None
-        # bitget_demo has only complete closes → numeric
-        assert today_realized_pnl(execution_mode="bitget_demo") == pytest.approx(-5.0)
+        # bitget_demo has an incomplete close → None
+        assert today_realized_pnl(execution_mode="bitget_demo") is None
+        # okx_demo has only complete closes → numeric
+        assert today_realized_pnl(execution_mode="okx_demo") == pytest.approx(-5.0)
 
     def test_mixed_compute_portfolio_still_returns_partial_total_with_metadata(self, db):
         """compute_portfolio structured path exposes partial sum + completeness flag."""

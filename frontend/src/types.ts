@@ -433,11 +433,11 @@ export interface SystemStatus {
   exchange: string
   exchange_mode: string
   paper_execution_mode: string
-  execution_target: 'local_paper' | 'external_exchange'
+  execution_target: 'external_exchange' | 'not_configured' | 'unavailable'
   uses_external_exchange: boolean
   execution_exchange: string | null
   market_data_exchange: string
-  exchange_alignment: 'local_paper' | 'aligned' | 'diverged'
+  exchange_alignment: 'aligned' | 'diverged' | 'not_configured' | 'unavailable'
   exchange_diverged: boolean
   live_state: string
   permission_mode: string

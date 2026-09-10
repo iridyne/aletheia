@@ -1,12 +1,10 @@
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 from aletheia.server.routes import data
 from aletheia.storage import repositories as repo
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.models import (
     CapitalEvent,
-    PaperAccountEvent,
     PortfolioSnapshot,
 )
 from aletheia.storage.sqlite import reset_db
@@ -33,13 +31,6 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
     monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        data,
-        "load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="bitget_demo")
-        ),
-    )
     start = datetime(2026, 7, 1, microsecond=100_000, tzinfo=timezone.utc)
     snapshots = (
         (start, 1000.0),
@@ -57,7 +48,7 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
         )
     repo.insert_capital_event(
         CapitalEvent(
-            broker_id="paper_internal",
+            broker_id="bitget_demo",
             event_type="deposit",
             amount_usdt=500.0,
             detected_at=(start + timedelta(microseconds=100)).isoformat(),
@@ -65,7 +56,7 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
     )
     repo.insert_capital_event(
         CapitalEvent(
-            broker_id="paper_internal",
+            broker_id="bitget_demo",
             event_type="withdraw",
             amount_usdt=200.0,
             detected_at=(start + timedelta(minutes=90)).isoformat(),
@@ -73,7 +64,7 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
     )
     repo.insert_capital_event(
         CapitalEvent(
-            broker_id="paper_internal",
+            broker_id="bitget_demo",
             event_type="deposit",
             amount_usdt=50.0,
             detected_at=(start + timedelta(hours=2, microseconds=100)).isoformat(),
@@ -101,13 +92,6 @@ def test_capital_events_adjust_account_equity_without_changing_raw_series(
 
 def test_account_equity_history_baseline_respects_day_cutoff(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        data,
-        "load_config",
-        lambda: SimpleNamespace(
-            exchange=SimpleNamespace(paper_execution_mode="paper_internal")
-        ),
-    )
     fixed_now = datetime(2026, 8, 22, 15, 0, 0, tzinfo=timezone.utc)
 
     class FixedDatetime(datetime):
@@ -127,7 +111,7 @@ def test_account_equity_history_baseline_respects_day_cutoff(tmp_path, monkeypat
         repo.insert_portfolio_snapshot(PortfolioSnapshot(
             total_value_usdt=equity,
             account_equity_usdt=equity,
-            execution_mode="paper_internal",
+            execution_mode="exchange_account",
             snapshot_at=snapshot_at,
         ))
 
@@ -135,63 +119,3 @@ def test_account_equity_history_baseline_respects_day_cutoff(tmp_path, monkeypat
 
     assert [point["equity_usdt"] for point in result["points"]] == [200.0, 300.0]
     assert result["adjustment"]["baseline_at"] == cutoff.isoformat()
-
-
-def test_local_paper_balance_change_is_exposed_as_adjustment_marker(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    start = datetime(2026, 7, 1, microsecond=100_000, tzinfo=timezone.utc)
-    end = start + timedelta(microseconds=800)
-    for at, equity in ((start, 180.0), (end, 700.0)):
-        repo.insert_portfolio_snapshot(PortfolioSnapshot(
-            total_value_usdt=equity,
-            account_equity_usdt=equity,
-            execution_mode="paper_internal",
-            snapshot_at=at.isoformat(),
-        ))
-    repo.insert_paper_account_event(PaperAccountEvent(
-        action="manual_set_balance",
-        amount_usdt=500.0,
-        cash_balance_before_usdt=180.0,
-        cash_balance_after_usdt=680.0,
-        actor="human",
-        source="dashboard",
-        note="operator adjustment",
-        created_at=(start + timedelta(microseconds=100)).isoformat(),
-    ))
-    repo.insert_paper_account_event(PaperAccountEvent(
-        action="manual_credit",
-        amount_usdt=20.0,
-        cash_balance_before_usdt=680.0,
-        cash_balance_after_usdt=700.0,
-        actor="system",
-        source="funding_settler",
-        position_id="position-1",
-        note="position economics correction",
-        created_at=(start + timedelta(microseconds=200)).isoformat(),
-    ))
-    repo.insert_paper_account_event(PaperAccountEvent(
-        action="manual_credit",
-        amount_usdt=100.0,
-        cash_balance_before_usdt=700.0,
-        cash_balance_after_usdt=800.0,
-        actor="human",
-        source="dashboard",
-        note="after final snapshot",
-        created_at=(end + timedelta(microseconds=100)).isoformat(),
-    ))
-
-    result = data.get_account_equity_history()
-
-    assert [point["adjusted_equity_usdt"] for point in result["adjusted_points"]] == [180.0, 200.0]
-    assert result["capital_flow_markers"] == [{
-        "id": result["capital_flow_markers"][0]["id"],
-        "time": (start + timedelta(microseconds=100)).isoformat(),
-        "broker_id": "paper_internal",
-        "event_type": "deposit",
-        "amount_usdt": 500.0,
-        "signed_amount_usdt": 500.0,
-        "change_type": "manual_set_balance",
-        "balance_before_usdt": 180.0,
-        "balance_after_usdt": 680.0,
-        "note": "operator adjustment",
-    }]

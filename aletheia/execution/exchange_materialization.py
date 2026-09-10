@@ -72,7 +72,6 @@ def _close_reasoning_for_order(order: dict) -> dict | None:
         "operator_proactive_exit": {"system_operator"},
         "dashboard_manual_close": {"human"},
         "position_lifecycle": {"system"},
-        "protective_barrier_1m": {"system"},
         "verified_exit_protocol": {"system", "position_reconciler"},
     }
     expected_actors = reserved_source_actors.get(payload["source"])

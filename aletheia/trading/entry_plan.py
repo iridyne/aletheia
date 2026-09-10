@@ -74,7 +74,7 @@ def min_stop_distance_pct(*, execution_mode: str | None, cfg) -> float | None:
     That field is the existing ATR vol-target percent used for sizing, not a
     new magic number. In a published sideways regime the floor is
     ``vol_target_pct * SIDEWAYS_STOP_MULT`` (never tighter than the base
-    floor). Live and ``paper_internal`` stay unchanged. ``0`` disables.
+    floor). This floor applies only to external Demo modes. ``0`` disables.
     Unpublished regime is fail-open to the base floor.
     """
     from aletheia.risk.demo_entry_quality import (

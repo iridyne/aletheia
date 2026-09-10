@@ -746,7 +746,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(tmp_path, monke
         direction="long",
         quantity=0.1,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(root)
 
@@ -757,7 +757,7 @@ def test_two_thread_prehashed_proposal_insert_cannot_fork_parent(tmp_path, monke
             direction="long",
             quantity=0.1 + index,
             price=3000.0 + index,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             parent_hash=root.commit_hash,
         )
         for index in range(2)
@@ -1775,11 +1775,13 @@ def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
         quantity=0.5,
         expected_horizon_hours=24.0,
         stop_source="operator",
+        take_profit=110.0,
     )
     reconcile()
 
     row = dict(repo.get_db().execute("SELECT * FROM positions WHERE proposal_id=?", (proposal.id,)).fetchone())
     assert row["expected_horizon_hours"] == pytest.approx(24.0), "expected_horizon_hours missing on exchange position"
+    assert row["take_profit_price"] == proposal.take_profit == 110.0
     assert row["stop_source"] == "operator", "stop_source missing on exchange position"
     assert row["exit_plan_version"] == 1, "exit_plan_version not stamped on exchange position"
 

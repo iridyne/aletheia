@@ -1047,7 +1047,7 @@ def execution_venue_for_mode(execution_mode: str) -> str:
     for venue, (_, paper_mode) in EXCHANGE_UNIFICATION_MAP.items():
         if mode == paper_mode or mode == LIVE_EXECUTION_MODES.get(venue):
             return venue
-    return mode.split("_", 1)[0] or "unknown"
+    return "unknown"
 
 
 def fast_market_stream_available(execution_mode: str) -> bool:
@@ -1055,10 +1055,8 @@ def fast_market_stream_available(execution_mode: str) -> bool:
 
 
 def fast_market_data_venue_for_config(cfg) -> str:
-    """Resolve the venue supplying trigger data, including local-paper mode."""
+    """Resolve trigger data from the selected external execution account."""
 
-    if cfg.exchange.paper_execution_mode == "paper_internal":
-        return str(cfg.market_data.ccxt_exchange or "").strip().lower() or "unknown"
     return execution_venue_for_mode(cfg.exchange.paper_execution_mode)
 
 

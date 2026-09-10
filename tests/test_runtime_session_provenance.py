@@ -24,8 +24,6 @@ import sqlite3
 
 import pytest
 
-from tests.position_fixture import force_update_position
-
 from aletheia.config.schema import AletheiaConfig
 from aletheia.config.loader import save_config, _invalidate_config_cache
 
@@ -111,15 +109,15 @@ def test_start_session_persists_row_and_sets_current(tmp_path, monkeypatch):
     from aletheia.storage import repositories as repo
 
     cfg = AletheiaConfig()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     _invalidate_config_cache()
 
     session = rs.start_runtime_session()
     assert session["session_id"]
     assert session["runtime_id"]
-    assert session["execution_mode"] == "paper_internal"
-    assert session["active_scope_id"] == "crypto-stock-linked-paper-mainline-v2"
+    assert session["execution_mode"] == "bitget_demo"
+    assert session["active_scope_id"] == "crypto-stock-linked-exchange-mainline-v3"
     assert session["config_hash"]
     assert session["schema_version"]
 
@@ -211,7 +209,7 @@ def test_insert_stamps_position_provenance_at_open(tmp_path, monkeypatch):
     session = rs.start_runtime_session()
     repo.insert_position(Position(
         id="pos1", symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=1.0, entry_price=100.0, execution_mode="paper_internal", status="open",
+        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo", status="open",
     ))
     row = repo._select_one("positions", "pos1")
     assert row["runtime_session_id"] == session["session_id"]
@@ -285,7 +283,7 @@ def test_position_open_and_close_carry_different_sessions(tmp_path, monkeypatch)
     a = rs.start_runtime_session()
     repo.insert_position(Position(
         id="pos-restart", symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=1.0, entry_price=100.0, execution_mode="paper_internal", status="open",
+        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo", status="open",
     ))
     rs.end_runtime_session(clean=True)
 
@@ -293,7 +291,7 @@ def test_position_open_and_close_carry_different_sessions(tmp_path, monkeypatch)
     b = rs.start_runtime_session()
     assert a["session_id"] != b["session_id"]
     prov = rs.current_close_provenance()
-    force_update_position("pos-restart", status="closed", **prov)
+    repo.finalize_position_close("pos-restart", {"status": "closed", **prov})
 
     row = repo._select_one("positions", "pos-restart")
     assert row["runtime_session_id"] == a["session_id"]          # created by A
@@ -420,7 +418,7 @@ def test_close_provenance_null_when_non_durable(tmp_path, monkeypatch):
     assert a["durable"] is True
     repo.insert_position(Position(
         id="pos-close-nondurable", symbol="BTC/USDT", market_type="spot", direction="long",
-        quantity=1.0, entry_price=100.0, execution_mode="paper_internal", status="open",
+        quantity=1.0, entry_price=100.0, execution_mode="bitget_demo", status="open",
     ))
     rs.end_runtime_session(clean=True)
 
@@ -433,7 +431,7 @@ def test_close_provenance_null_when_non_durable(tmp_path, monkeypatch):
 
     prov = rs.current_close_provenance()
     assert prov["closed_runtime_session_id"] is None
-    force_update_position("pos-close-nondurable", status="closed", **prov)
+    repo.finalize_position_close("pos-close-nondurable", {"status": "closed", **prov})
 
     row = repo._select_one("positions", "pos-close-nondurable")
     assert row["runtime_session_id"] == a["session_id"]     # open provenance intact

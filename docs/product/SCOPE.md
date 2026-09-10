@@ -7,31 +7,21 @@
 > machine-readable trading mainline is [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md).
 > This file is not a roadmap or runtime-status page.
 >
-> Last aligned with current authorities: 2026-08-31.
+> The former local-exchange scope is [archived](../design/history/local_simulated_product_scope.md).
 
 ## Product boundary
 
-Aletheia is a local-first, single-owner trading research and decision system. Its
-currently supported mainline remains crypto-focused. It connects market
-observation, System Operator judgment, bounded paper execution, hard Risk
-approval, outcome accounting, and measured Learning without granting an LLM
-direct exchange, credential, Risk-limit, or live-unlock authority.
+Aletheia is a local-first, single-owner trading research and decision system.
+Its declared execution targets are explicitly configured `bitget_demo`,
+`okx_demo`, and `binance_testnet` accounts. Instruments are limited to crypto
+spot/perpetuals and the verified stock-linked perpetual profile declared in
+[Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md). This does not admit ordinary
+equities or arbitrary derivatives, certify an account, or enable Live.
 
-The current MVP mainline is deliberately narrow:
-
-```text
-crypto spot/perpetual evidence
-  -> Opportunity
-  -> System Operator decision
-  -> Proposal
-  -> RiskDecision
-  -> Execution Gateway
-  -> paper_internal order/fill/position
-  -> position evaluation / exact protective close
-  -> verified genuine outcome
-  -> review / counterfactual / measured Learning
-  -> owner-gated bounded influence on a later decision
-```
+The current entry chain connects market evidence and Candidate/Opportunity to
+System Operator planning, an immutable Proposal, Risk approval, Execution
+Gateway submission, private Fill materialization, and verified outcome evidence.
+The LLM gains no direct exchange, credential, Risk-limit, or live-unlock authority.
 
 `System Operator` is the only native entry-decision role. Historical strategy
 records are attribution data; there is no supported RuleSet/DSL/backtest strategy
@@ -41,14 +31,14 @@ factory driving production entries.
 
 | Area | Included promise | Canonical detail |
 |---|---|---|
-| Market evidence | Crypto spot/perpetual observation, features, opportunities, and exact provider/venue identity | Capability Ground Truth and data contracts |
+| Market evidence | Declared crypto and verified stock-linked perpetual profiles, with exact instrument/provider/venue identity | Capability Ground Truth and data contracts |
 | Decision | One attributable System Operator decision path with neutral/fail-closed behavior when required evidence is missing | Active Runtime Scope and agent contracts |
 | Risk | Deterministic Risk approval is mandatory before every execution attempt | Risk Engine contract |
-| Execution | Local `paper_internal` is the active proof profile; exchange demo adapters exist outside that active proof | Active Runtime Scope and execution contract |
-| Position and exit | New protected native Paper positions freeze an immutable ExitPlan and exact-instrument 1m cursor; point-mark protection remains a second layer and all closes use the routed fresh-mark path | Execution, persistence, and data-model contracts |
+| Execution | Registered external Demo/Testnet routes; account and exact-instrument qualification remain separate requirements | Active Runtime Scope and execution contract |
+| Position and exit | Exchange Fill evidence materializes Positions; the existing position owner and Gateway control external protection and closes | Execution, persistence, and data-model contracts |
 | Accounting | Orders, fills, positions, costs, funding, and genuine outcomes retain causal identity and explicit integrity status | Data/outcome contracts |
 | Learning artifacts | Reviews, lessons, cases, memos, retrieval, calibration, and learned-guard observation | Learning and knowledge contracts |
-| Measured Learning | `universe_family_calibration`, `momentum_entry_geometry`, `mechanism_entry_learning`, and `ranker_case_score` are measurement-supported; the first three are owner-gated Paper-capable, while Ranker Case is Shadow-only with zero Ranker delta | Learning contract and registry |
+| Measured Learning | Only currently registered paths and evidence gates apply; archived simulator qualification grants no current influence | Learning contract and registry |
 | Owner surfaces | Local API, CLI, Dashboard, Doctor, audit history, and honest unavailable/degraded states | Capability Ground Truth |
 
 The repository contains additional implemented or experimental capabilities. Their
@@ -62,56 +52,36 @@ authorizes implementation of `market_id=cn_equity` under Issue #2572. This is
 an implementation boundary, not a claim that any current Runtime observes,
 trades, accounts for, or qualifies mainland equities.
 
-The bounded target is CNY-denominated Shanghai and Shenzhen A-shares, long-only,
-through `disabled -> observe -> shadow -> paper`, with `disabled` as the
-default. Initial entry eligibility is limited to ordinary Shanghai and Shenzhen
-main-board shares. ST/*ST, IPO/listing-stage, STAR Market, and ChiNext shares are
-observation-only for new entry while canonical close-only handling remains
-mandatory for an existing Position whose classification changes. Unknown
-classification, B-shares, Beijing Stock Exchange, and every non-CNY or other
-instrument class fail closed.
+The bounded target is CNY-denominated Shanghai and Shenzhen A-share market
+identity, calendar/rules, tradability and point-in-time evidence. The permitted
+states are `disabled`, `observe` and non-executing `shadow`, defaulting to
+`disabled`. Observation and Shadow cannot reserve account resources, issue
+executable approvals, submit orders, produce fills or mutate account positions.
+No CN execution route or broker connectivity is authorized. Future execution
+requires a separate accepted design and qualification against an external account.
 
-CN evidence, strategy, and Paper accounting must reuse the existing Candidate →
-Plan → Proposal → Risk → Execution Gateway → Order/Fill/Position → Outcome →
-Learning authority chain. Research and execution Sidecars remain replaceable
-tools with no Risk, accounting, credential, route, or decision authority. No
-broker route or `live` state is authorized. Capability Ground Truth may report
-CN support only after the exact implementation, Runtime, accounting, and strategy
-qualification gates record their separate results.
+Research tools and Sidecars remain replaceable and gain no Risk, accounting,
+credential, route or decision authority. CN support is reported only from the
+corresponding implementation and Runtime evidence. The former internal-account
+and qualification design is [archived](../design/history/cn_equity_internal_paper.md).
 
 ## Current Learning scope
 
-Learning is allowed to:
-
-- create and retrieve attributable artifacts;
-- record prospective treatment/control exposure for a declared supported path;
-- settle exact cost-aware outcomes;
-- compute identity-matched contribution and harm evidence;
-- recommend an owner action;
-- apply bounded paper influence only after every default-closed gate and explicit
-  owner trial admission;
-- treat recurring contribution evaluations as monitoring only and allow positive
-  Paper progression only from the one consumed prospective fixed-look verdict;
-- refreeze or invalidate harmful, stale, or untrustworthy authority.
-
-Learning is not allowed to infer effectiveness from artifact counts, evaluator
-health, PnL alone, or retrospective matches. All declared paths except
-`universe_family_calibration` remain measurement-unsupported and return their
-static fallback. Learned guards are observe-only; seed/manual guards are a
-separate static safety class.
-
-The exact current software gate is 50 complete assignment units per arm inside
-the latest run of seven consecutive UTC exposure dates. Every counted day must
-contain at least one complete eligible unit from either arm, while the current
-run must independently reach 50 treatment and 50 control units. A missing day
-resets the run and pre-gap samples cannot bridge the new qualification window.
+Learning may create attributable artifacts, measure evidence and recommend owner
+actions within the [Learning contract](../design/contracts/learning_contract.md).
+Current path support, outcome units, thresholds and influence gates belong to
+that contract and its registry; this scope page does not maintain a second copy.
+Explicit owner trial admission and the declared authority gate remain required
+for behavioral influence. Research never acquires Risk, execution, credentials,
+or Live authority. Historical simulator cohorts retain their original identities
+and cannot qualify an external-account path.
 
 ## Deferred or separately authorized
 
 | Capability | Current boundary |
 |---|---|
 | Live trading | Disabled by default; requires the live contract, quantitative gates, and explicit human authorization |
-| Exchange-backed qualification | Adapters may be implemented, but the active proof remains `paper_internal` until Active Runtime Scope and executable evidence change together |
+| Exchange-backed qualification | Route registration is not acceptance; qualification names the exact account, instrument, tested commit, private Fill and verified-close evidence |
 | Additional measured Learning paths | Require a causal unit, outcome adapter, behavior contract, failure semantics, focused tests, and a fresh observation window |
 | Authoritative learned exit policy | Current exit advice and the prospective entry-lock treatment are read-only evidence; any real ExitPlan mutation requires a separately reviewed treatment and fresh window |
 | Full Learning owner workbench | Proposal exists; delivery is tracked by GitHub issue #614 |

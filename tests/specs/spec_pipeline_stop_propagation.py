@@ -77,6 +77,7 @@ def _stub_uta_execution(monkeypatch):
     monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr(order_constraints, "prepare_exchange_quantity", lambda mode, symbol, market, qty, price: qty)
     monkeypatch.setattr(gateway, "_prepare_exchange_quantity", lambda mode, symbol, market, qty, price: (qty, None))
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *_args: None)
 
 
 _BROKERS = ["okx_demo", "binance_testnet", "bitget_live_limited"]
@@ -111,7 +112,7 @@ def _patch_filled_place_order(monkeypatch, fill_price):
     return captured
 
 
-def _patch_private_fill_history(monkeypatch, *, fill_price: float, fee_rate: float = 0.0006):
+def _patch_private_fill_history(monkeypatch, *, fill_price: float, fee_rate: float = 0.0006, executed_at=None):
     """Normalized private reports scoped to each persisted Order identity."""
     from datetime import datetime, timezone
     from types import SimpleNamespace
@@ -153,7 +154,7 @@ def _patch_private_fill_history(monkeypatch, *, fill_price: float, fee_rate: flo
                 venue_fill_id=f"PRIVATE-{mode}-{order["exchange_order_id"]}",
                 side="buy" if order["direction"] == "long" else "sell", quantity=str(order["quantity"]),
                 price=str(fill_price), fee=str(fill_price * order["quantity"] * fee_rate), fee_currency="USDT",
-                executed_at=datetime.fromtimestamp(1784050000, tz=timezone.utc), received_at=now))
+                executed_at=executed_at or datetime.fromtimestamp(1784050000, tz=timezone.utc), received_at=now))
         return FillListReport(**envelope, fills=tuple(fills))
 
     monkeypatch.setattr(reconciliation, "query_uta", query)

@@ -175,8 +175,7 @@ async def test_uta_state_unconfigured_is_null_not_zero(tmp_path, monkeypatch):
 
 def test_compute_portfolio_carries_exchange_fields(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
-    # path where an external exchange cache drives compute_portfolio.
+    # Select Bitget Demo explicitly for the external-account portfolio cache.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -217,7 +216,6 @@ def test_fresh_zero_exchange_equity_reaches_portfolio_and_context(
 ):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -241,7 +239,6 @@ def test_inspect_status_preserves_zero_exchange_equity(tmp_path, monkeypatch):
 
     from aletheia.cli.inspect_cmd import inspect_app
     from aletheia.config.loader import load_config, save_config
-    from aletheia.portfolio import exchange_sync as es
 
     cfg = load_config()
     cfg.exchange.mode = "demo"
@@ -547,6 +544,16 @@ def test_uta_v1_default_cache_never_falls_back_to_legacy_bitget(tmp_path, monkey
     assert es.get_unified_cached_state() is None
 
 
+@pytest.mark.parametrize("execution_mode", ["", "paper_internal", "unknown_demo"])
+def test_active_broker_requires_configured_external_account(execution_mode):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.portfolio import exchange_sync as es
+
+    cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = execution_mode
+    assert es.active_broker_view_complete(cfg) == (False, "execution account not configured")
+
+
 def test_active_broker_rejects_generation_mismatch(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.portfolio import exchange_sync as es
@@ -572,8 +579,7 @@ def test_active_broker_rejects_generation_mismatch(monkeypatch):
 def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     """No exchange creds shouldn't break the locally-managed portfolio view."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the path where
-    # an external exchange is expected but creds are absent (→ "unconfigured").
+    # An external account is selected, but its credentials are absent.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -587,23 +593,23 @@ def test_compute_portfolio_unconfigured_keeps_local_view(tmp_path, monkeypatch):
     assert out["positions_count"] == 0
 
 
-def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monkeypatch):
-    """A stale external cache must not become local-paper account value."""
+def test_archived_portfolio_read_never_initializes_an_account(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     es = _patch_client(monkeypatch, balances=[_FakeBalance("USDT", 10000.0, 0.0)])
     es.sync_all_exchanges()
-
-    from aletheia.config.loader import load_config, save_config
-    cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
-    save_config(cfg)
-
     from aletheia.portfolio.pnl import compute_portfolio
-    out = compute_portfolio()
+    from aletheia.storage.sqlite import get_db
+
+    db = get_db()
+    before = db.total_changes
+    out = compute_portfolio(execution_mode="paper_internal")
+
     assert out["exchange_sync_status"] == "not_applicable"
     assert out["exchange_equity_usdt"] is None
-    # The external cache cannot supply local-paper equity; its own cash ledger can.
-    assert out["total_value_usdt"] == out["account_equity_usdt"] == 200.0
+    assert out["total_value_usdt"] is None
+    assert out["account_equity_usdt"] is None
+    assert db.total_changes == before
+    assert db.execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
 
 
 # --- drift detection ---
@@ -611,7 +617,7 @@ def test_compute_portfolio_ignores_exchange_cache_for_local_paper(tmp_path, monk
 def test_external_position_count_surfaces_drift(tmp_path, monkeypatch):
     """If the exchange shows positions we didn't open via aletheia, expose the delta."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
+    # This test explicitly selects the Bitget Demo
     # path so classify_positions can match positions against the exchange cache.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -652,7 +658,7 @@ async def test_positions_reconciliation_endpoint(tmp_path, monkeypatch):
     """GET /api/positions/reconciliation classifies external positions the system
     did not open."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; this test exercises the bitget-demo
+    # This test explicitly selects the Bitget Demo
     # path so classify_positions can read the exchange cache and surface externals.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
@@ -699,7 +705,7 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
     instead of forbidding entry. See docs/governance/decisions/DECISIONS.md
     (2026-06-12)."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed to paper_internal; set paper_execution_mode = "bitget_demo"
+    # Select paper_execution_mode = "bitget_demo" explicitly
     # so that adopt_position("demo") maps to bitget_demo execution_mode, matching the
     # assertion below (demo account → bitget_demo so position_manager auto-manages it).
     from aletheia.config.loader import load_config, save_config
@@ -736,7 +742,11 @@ def test_adopted_positions_carry_synthetic_chain(tmp_path, monkeypatch):
 def test_adopt_preserves_exchange_open_time(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position
+    from aletheia.config.loader import load_config, save_config
 
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
     opened_at_ms = 1784044800000
     result = adopt_position({
         "symbol": "BTCUSDT", "side": "long", "quantity": 0.1,
@@ -755,9 +765,7 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     """An adopted LIVE position must get execution_mode=bitget_live_limited, which
     position_manager skips — so live stays human-only by construction."""
     setup_env(tmp_path, monkeypatch)
-    # Schema defaults changed exchange.name to "paper_internal"; _execution_mode_for("live")
-    # resolves via _LIVE_EXECUTION_MODES[cfg.exchange.name], which requires "bitget" to
-    # return "bitget_live_limited".
+    # The explicitly selected exchange determines the live account identity.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.exchange.name = "bitget"
@@ -772,7 +780,7 @@ def test_adopt_live_position_is_human_only_by_execution_mode(tmp_path, monkeypat
     result = adopt_position(ex, "live")
     pos = repo._select_one("positions", result["position_id"])
     assert pos["execution_mode"] == "bitget_live_limited"
-    assert pos["execution_mode"] not in pm._PAPER_MODES  # position_manager will skip it
+    assert pos["execution_mode"] not in pm._DEMO_MODES  # position_manager will skip it
 
 
 def test_adopt_refuses_zero_entry_or_quantity(tmp_path, monkeypatch):

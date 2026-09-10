@@ -52,13 +52,13 @@ function queryClient(staleTime = Infinity) {
 describe('AccountSnapshot portfolio read state', () => {
   it('uses the selected portfolio position count instead of the all-mode feed', async () => {
     vi.spyOn(api, 'getPortfolio').mockResolvedValue({
-      execution_mode: 'paper_internal',
+      execution_mode: 'bitget_demo',
       execution_mode_status: 'resolved',
       positions_count: 1,
     })
 
     const node = renderSnapshot(queryClient(0), [
-      { id: 'paper', status: 'open', execution_mode: 'paper_internal' },
+      { id: 'bitget', status: 'open', execution_mode: 'bitget_demo' },
       { id: 'okx', status: 'open', execution_mode: 'okx_demo' },
     ] as Awaited<ReturnType<typeof api.getPositions>>)
     await flushQueries()

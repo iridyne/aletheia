@@ -10,14 +10,12 @@ from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
 from aletheia.analytics.learning_window import outcome_window_metadata
 
 
-def _scorecard_execution_mode() -> str:
-    """Return the execution_mode that the current config is running under."""
-    try:
-        from aletheia.config.loader import load_config
-        cfg = load_config()
-        return str(getattr(cfg.exchange, "paper_execution_mode", "") or "paper_internal") or "paper_internal"
-    except Exception:
-        return "paper_internal"
+def _scorecard_outcomes() -> list[dict]:
+    """Read the selected external cohort; unresolved selection has no evidence."""
+    from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+    mode = resolve_selected_execution_mode()
+    return eligible_strategy_outcomes(execution_mode=mode) if mode else []
 
 
 def compute_scorecard(*, live_evidence: dict | None = None) -> dict:
@@ -66,7 +64,7 @@ def _genuine_closed_pnls(order_by_closed_at: bool = False) -> list[float]:
     Reconciler orphan sweeps, maintenance closes, legacy rows and incomplete economics
     are not verified outcomes; counting them pollutes PF / win-rate / drawdown / volume.
     """
-    rows = eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())
+    rows = _scorecard_outcomes()
     if not order_by_closed_at:
         rows = list(reversed(rows))
     return [float(row["realized_pnl"]) for row in rows]
@@ -127,21 +125,26 @@ def _check_trade_volume() -> dict:
 
 
 def count_consecutive_zero_fill_days() -> int:
-    """Count consecutive calendar days with zero new position opens (D8-S04 / product §8 K2).
+    """Count consecutive UTC calendar days with zero new position opens (D8-S04 / product §8 K2).
 
     Walks backwards from today counting days with no new opens. Returns the integer
     day count. Three or more → trading loop is stalled (K2 kill condition).
     """
     try:
         from aletheia.storage.sqlite import get_db
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+        mode = resolve_selected_execution_mode()
+        if not mode:
+            return 0
         db = get_db()
         rows = db.execute(
             "SELECT DATE(opened_at) as open_date FROM positions "
-            "WHERE status IN ('open','closed') ORDER BY opened_at DESC LIMIT 500"
+            "WHERE execution_mode=? AND status IN ('open','closed') ORDER BY opened_at DESC LIMIT 500",
+            (mode,),
         ).fetchall()
         open_dates = {r[0] for r in rows if r[0]}
-        from datetime import date, timedelta
-        day = date.today()
+        day = datetime.now(timezone.utc).date()
         consecutive = 0
         for _ in range(30):  # check at most 30 days back
             if day.isoformat() in open_dates:
@@ -162,7 +165,7 @@ def check_kill_condition_consecutive_rounds(window_days: int = 14) -> dict:
     Two consecutive kill rounds → recommend terminating the experiment.
     """
     try:
-        rows = list(reversed(eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())))
+        rows = list(reversed(_scorecard_outcomes()))
         if not rows:
             return {"consecutive_kill_rounds": 0, "kill_threshold": 0.5, "window_days": window_days}
 
@@ -200,7 +203,7 @@ def compute_pnl_by_trade_school() -> dict:
     Returns {trade_school: {"profit_factor": float, "win_rate": float, "count": int}}.
     """
     try:
-        rows = eligible_strategy_outcomes(execution_mode=_scorecard_execution_mode())
+        rows = _scorecard_outcomes()
         result: dict = {}
         from collections import defaultdict
         buckets: dict = defaultdict(list)
@@ -305,9 +308,11 @@ def _check_exchange_connectivity(live_evidence: dict | None = None) -> dict:
                 f"{broker} live private account authenticated; evidence is fresh",
             )
 
-        selected_mode = str(getattr(cfg.exchange, "paper_execution_mode", "") or "")
-        if selected_mode == "paper_internal":
-            return _criterion("exchange_ok", "Exchange Connected", 100, 0.09, "internal paper account")
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+        selected_mode = resolve_selected_execution_mode()
+        if not selected_mode:
+            return _criterion("exchange_ok", "Exchange Connected", 0, 0.09, "execution account unavailable")
 
         from aletheia.portfolio.exchange_sync import get_unified_cached_state, status_for
 
@@ -336,10 +341,16 @@ def _check_risk_violations() -> dict:
         from aletheia.storage.sqlite import get_db
         import json
         db = get_db()
+        from aletheia.analytics.execution_mode import resolve_selected_execution_mode
+
+        mode = resolve_selected_execution_mode()
+        if not mode:
+            return _criterion("risk_clean", "Zero Risk Violations (24h)", 0, 0.09, "execution account unavailable")
         cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         rows = db.execute(
-            "SELECT violations FROM risk_decisions WHERE created_at >= ? ORDER BY created_at DESC LIMIT 20",
-            (cutoff,),
+            "SELECT violations FROM risk_decisions WHERE created_at >= ? "
+            "AND proposal_execution_mode=? ORDER BY created_at DESC LIMIT 20",
+            (cutoff, mode),
         ).fetchall()
         violation_count = 0
         for r in rows:

@@ -329,9 +329,9 @@ async def test_agent_catalog_returns_only_resolvable_names(client, tmp_path, mon
                 f"Catalog exposes '{name}' but it is not callable: {exc}"
             ) from exc
         assert callable(fn)
-    # strategy_designer was never registered and must not appear
+    # Unregistered and retired agents must not appear.
     names = {e["name"] for e in catalog["agents"]}
-    assert "strategy_designer" not in names, "strategy_designer must not appear in the catalog"
+    assert names.isdisjoint({"strategy_designer", "paper_trader"})
 
 
 @pytest.mark.anyio
@@ -352,8 +352,13 @@ async def test_strategy_designer_returns_403(client, tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_kill_switch_blocks_behavior_agent(client, tmp_path, monkeypatch):
-    """kill_switch_active=True → 503 for paper_trader (gate_check=True)."""
+    """kill_switch_active=True → 503 for an explicitly gated agent."""
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.config.loader import load_config, save_config
+
+    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "research_agent", {
+        **_MANUAL_AGENT_ALLOWLIST["research_agent"], "gate_check": True,
+    })
     cfg = load_config()
     cfg.runtime.kill_switch_active = True
     save_config(cfg)
@@ -362,7 +367,7 @@ async def test_kill_switch_blocks_behavior_agent(client, tmp_path, monkeypatch):
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "paper_trader"},
+        json={"agent_name": "research_agent"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"] == "kill_switch_active"
@@ -371,8 +376,13 @@ async def test_kill_switch_blocks_behavior_agent(client, tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch):
-    """runtime.paused=True → 503 for paper_trader (gate_check=True)."""
+    """runtime.paused=True → 503 for an explicitly gated agent."""
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
     from aletheia.config.loader import load_config, save_config
+
+    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "research_agent", {
+        **_MANUAL_AGENT_ALLOWLIST["research_agent"], "gate_check": True,
+    })
     cfg = load_config()
     cfg.runtime.paused = True
     save_config(cfg)
@@ -381,7 +391,7 @@ async def test_gateway_pause_blocks_behavior_agent(client, tmp_path, monkeypatch
 
     response = await client.post(
         "/api/agent-runs/start",
-        json={"agent_name": "paper_trader"},
+        json={"agent_name": "research_agent"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["error"] == "gateway_paused"
@@ -447,7 +457,7 @@ async def test_service_credential_can_start_approved_specialist(client, tmp_path
 
 @pytest.mark.anyio
 async def test_service_credential_blocked_from_paper_trader(client, tmp_path, monkeypatch):
-    """Service credential must receive 403 for paper_trader (behavior-producing)."""
+    """Service credentials cannot restart the retired paper trader."""
     svc_token = _enable_remote_control(tmp_path, monkeypatch)
     fake = _fake_manager_patch(monkeypatch)
 
@@ -457,38 +467,35 @@ async def test_service_credential_blocked_from_paper_trader(client, tmp_path, mo
         headers={"X-Aletheia-Operator-Service": svc_token},
     )
     assert response.status_code == 403
-    assert response.json()["detail"]["error"] == "agent_not_in_service_allowlist"
+    assert response.json()["detail"]["error"] == "agent_not_in_manual_allowlist"
     assert fake.enqueued == []
 
 
 @pytest.mark.anyio
 async def test_manual_allowlist_expansion_does_not_grant_service_authority(client, tmp_path, monkeypatch):
     """A hypothetical new manual-only agent outside _OPERATOR_SERVICE_AGENT_ALLOWLIST is denied to service callers."""
-    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST, _OPERATOR_SERVICE_AGENT_ALLOWLIST
+    from aletheia.server.routes.data import _MANUAL_AGENT_ALLOWLIST
 
-    # Verify the invariant at the allowlist level rather than patching the module.
-    manual_only = set(_MANUAL_AGENT_ALLOWLIST) - set(_OPERATOR_SERVICE_AGENT_ALLOWLIST)
-    assert manual_only, "Test precondition: at least one manual-only agent must exist (paper_trader)"
+    monkeypatch.setitem(_MANUAL_AGENT_ALLOWLIST, "manual_only_fixture", {
+        "side_effect_class": "review", "cost_class": "low", "gate_check": False,
+    })
 
     svc_token = _enable_remote_control(tmp_path, monkeypatch)
     fake = _fake_manager_patch(monkeypatch)
 
-    for agent_name in manual_only:
-        response = await client.post(
-            "/api/agent-runs/start",
-            json={"agent_name": agent_name},
-            headers={"X-Aletheia-Operator-Service": svc_token},
-        )
-        assert response.status_code == 403, (
-            f"Agent '{agent_name}' is in _MANUAL_AGENT_ALLOWLIST but not _OPERATOR_SERVICE_AGENT_ALLOWLIST "
-            f"and must return 403 for service callers"
-        )
+    response = await client.post(
+        "/api/agent-runs/start",
+        json={"agent_name": "manual_only_fixture"},
+        headers={"X-Aletheia-Operator-Service": svc_token},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "agent_not_in_service_allowlist"
     assert fake.enqueued == []
 
 
 @pytest.mark.anyio
-async def test_owner_token_can_still_start_paper_trader(client, tmp_path, monkeypatch):
-    """Owner-authenticated (remote_control token) callers retain the ability to start paper_trader."""
+async def test_owner_token_cannot_restart_retired_paper_trader(client, tmp_path, monkeypatch):
+    """Owner authentication does not restore a retired agent entry point."""
     _enable_remote_control(tmp_path, monkeypatch)
     fake = _fake_manager_patch(monkeypatch)
 
@@ -497,8 +504,9 @@ async def test_owner_token_can_still_start_paper_trader(client, tmp_path, monkey
         json={"agent_name": "paper_trader"},
         headers={"X-Aletheia-Token": "owner-token"},
     )
-    # gate_check may fire 503 depending on runtime state, but must not 403
-    assert response.status_code != 403, "Owner must not be blocked by service allowlist"
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"] == "agent_not_in_manual_allowlist"
+    assert fake.enqueued == []
 
 
 # ---------------------------------------------------------------------------

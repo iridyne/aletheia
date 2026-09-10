@@ -79,10 +79,7 @@ legacy authority 下，反事实模块的兼容持久化状态在下列三张表
 | `analytics.alpha_attribution._system_operator_alpha` | `filter_decisions` + `pi_decisions` + `filter_candidate_outcomes` | 同一行为指纹下 passed/rejected 候选的 canonical `24h` 成本后比较 |
 | `analytics.alpha_attribution._learning_alpha` | Learning fixed-look decision + contribution verdict + exact candidate outcomes | 只消费已绑定的 confirmatory authority verdict；generic learning 事件仍为弱诊断 |
 | `analytics.alpha_attribution._exit_paired_evidence` | `exit_breakeven_shadow_assignments` + `_outcomes` | 投影同一 Position 的冻结 Exit treatment 增量净 PnL；不并入五层 verdict，不授权行为 |
-| `analytics.risk_contribution.build_risk_policy_contribution` | authoritative `risk_decisions` + Risk `filter_decisions` + exact `filter_candidate_outcomes` | 在 Proposal 单位上比较实际 Risk policy 与 pass-all shadow，固定 `24h` 成本后结果；不改 Risk |
-| `analytics.execution_contribution.build_execution_cost_contribution` | immutable Order reference + exact Risk/Order/Fill/Position chain + eligible Outcome | 在 Position 单位上比较实际 Paper fills/fees 与同开平时点零摩擦 reference；不改 Execution |
 | `analytics.thesis_lineage` | `shadow_trades` | per-opp shadow 汇总 |
-| `economics.viability` | `shadow_trades` | 单 opp/batch 的选中 vs 对照的净收益比较 |
 | `server.routes.data GET /analytics/shadow-trades` | `shadow_trades` | 只读 API |
 | `analytics.filter_controller.evaluate_active_shadow_experiments` | `filter_shadow_experiments` / `_evaluations` | 前瞻实验周期评估 |
 
@@ -91,8 +88,7 @@ legacy authority 下，反事实模块的兼容持久化状态在下列三张表
 Alpha Audit 的集成边界是显式的：Ranker 与 System Operator 共享 canonical
 `24h` `filter_candidate_outcomes.net_return_pct`；Learning 复用自身已消费的
 fixed-look authority verdict；Exit 保留其 Position 配对、quote-currency
-estimand；Risk 保留 Proposal 配对、pass-all candidate control；Execution 保留
-Position 配对、frictionless requested-fill cost control。不同 estimand
+estimand。不同 estimand
 不做原始 delta 排名；统一跨层净经济基准后续见 #803。
 
 ## 4. Observable result
@@ -133,7 +129,6 @@ Position 配对、frictionless requested-fill cost control。不同 estimand
 - `tests/test_shadow_trade_economics_enrichment.py` — `_compute_shadow_economics` 与 cost-model 字段。
 - `tests/specs/spec_pipeline_outcome_shadow_anchor.py` — Position 关闭锚点、CAS 幂等、historical snapshot 时间钉。
 - `tests/specs/spec_pipeline_outcome_feedback.py` — hook replay + shadow batch 完整或全失败的语义。
-- `tests/specs/spec_pipeline_paper_close_materialization.py` — paper 结算路径与 shadow 结算的对齐。
 - `tests/test_filter_shadow_experiments.py` — 前瞻实验的 register / evaluate / status 转换。
 - `tests/test_filter_replay.py` — 有界回放的边界 (`_MAX_ALTERNATIVES`, `_MAX_CANDIDATES`, `read_only`).
 - `tests/specs/spec_filter_evidence.py` — 全模块的 `production_mutation_allowed=0` 与 `first exposure` 断言。
@@ -148,3 +143,7 @@ Position 配对、frictionless requested-fill cost control。不同 estimand
 - Phase 2 / L4 覆盖扩展：`filter_experiments.py` 目前只支持 `family_ttl`；扩展到其他 filter kind 的工作在 #497 Phase 2 checkbox 内。
 - Observation Lab v1（#1072）：`ranker_confidence_gate` 已解耦生产 `filter_version`；将 `family_ttl` / `observer_pre_filter` 迁到同一 adapter identity 模型属于 Phase 2，见 [observation_lab_contract.md](observation_lab_contract.md) §8。
 - Phase 3 / L5 反向联动：反事实证据 → policy epoch rotate 建议路径尚未存在，见 #497 Phase 3。
+
+Paper Internal 的旧经济可行性生成器已[归档](../history/local_simulated_viability.md)，不再作为当前反事实消费者。
+
+旧模拟账户的 Risk／Execution 贡献测量及整策略盈利资格编译器已[归档](../history/local_simulated_qualification.md)。

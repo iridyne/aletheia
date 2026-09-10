@@ -356,7 +356,7 @@ def _invalidate_pre_order_entry_plan(
             proposal_id = str(proposal["id"])
             if repo.has_order_for_proposal(proposal_id):
                 return "order_present"
-            if proposal["execution_mode"] != "paper_internal" and proposal["status"] in {
+            if proposal["status"] in {
                 "executing",
                 "submission_unknown",
                 "materialization_missing",
@@ -898,24 +898,6 @@ async def _watch_loop(cfg) -> None:
                                 _plan_monitoring_channels(plan),
                             ),
                         )
-                maker_monitoring = stream.monitoring_state(
-                    event.instrument,
-                    ("quote", "trade"),
-                )
-                if maker_monitoring["state"] == "ready":
-                    from aletheia.execution.gateway import (
-                        rebind_open_paper_orders_to_monitoring,
-                    )
-
-                    await asyncio.to_thread(
-                        rebind_open_paper_orders_to_monitoring,
-                        event.instrument,
-                        maker_monitoring,
-                    )
-                if event.event_type == "trade":
-                    from aletheia.execution.gateway import observe_paper_entry_order_event
-
-                    await asyncio.to_thread(observe_paper_entry_order_event, event)
                 _confirm_ready_engines(stream, plan_engines, plans)
                 if event.event_type == "quote" and _monitoring_ready(
                     stream,

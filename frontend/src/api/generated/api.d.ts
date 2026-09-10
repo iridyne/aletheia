@@ -288,7 +288,7 @@ export interface paths {
          * @description Trade-by-trade equity curve for the PnL chart on Overview.
          *
          *     Query params:
-         *       execution_mode — filter to a single mode (e.g. 'paper_internal', 'okx_demo')
+         *       execution_mode — filter current or archived records to one account mode
          *       days — only include positions closed within the last N days
          *       limit — max data points returned (default 5000)
          */
@@ -1324,7 +1324,7 @@ export interface paths {
         };
         /**
          * Economics Status
-         * @description Report kill-switch state for the two economics subsystems.
+         * @description Report the current runtime cost tracing state.
          */
         get: operations["economics_status_api_economics_status_get"];
         put?: never;
@@ -1367,30 +1367,6 @@ export interface paths {
          * @description Exact aggregate-only usage projection; never reads prompts or responses.
          */
         get: operations["usage_insights_api_economics_usage_insights_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/economics/viability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Viability
-         * @description Compute a viability report on demand.
-         *
-         *     Persistence is intentionally disabled on the GET path: this endpoint
-         *     exists for dashboards, not for producing audit rows. `aletheia audit
-         *     viability` remains the persisted-write path.
-         */
-        get: operations["viability_api_economics_viability_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3727,7 +3703,6 @@ export interface paths {
          * @description Owner-initiated manual close of one open position.
          *
          *     Routing and constraints (execution_contract.md §10.2):
-         *     - `paper_internal` → resolved-mark local close via paper_broker.
          *     - `*_demo` / `*_testnet` → real exchange close order via the matching broker.
          *     - `*_live_limited` → HTTP 409 with code ``live_position_requires_exchange_close``;
          *       live positions hold REAL funds and must be closed from the exchange UI.
@@ -4085,26 +4060,6 @@ export interface paths {
         get: operations["get_proposal_api_proposals__proposal_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/proposals/{proposal_id}/approve-paper": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Approve Proposal
-         * @description Approve a stored local-paper proposal through the execution gateway.
-         */
-        post: operations["approve_proposal_api_proposals__proposal_id__approve_paper_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5470,108 +5425,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/paper-account": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Paper Account */
-        get: operations["get_paper_account_api_settings_paper_account_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/paper-account/close-all": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Close All Local Paper Positions */
-        post: operations["close_all_local_paper_positions_api_settings_paper_account_close_all_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/paper-account/close-spot": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Close Local Paper Spot Positions */
-        post: operations["close_local_paper_spot_positions_api_settings_paper_account_close_spot_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/paper-account/credit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Credit Paper Account */
-        post: operations["credit_paper_account_api_settings_paper_account_credit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/paper-account/debit": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Debit Paper Account */
-        post: operations["debit_paper_account_api_settings_paper_account_debit_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/settings/paper-account/set-balance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Set Paper Account Balance */
-        post: operations["set_paper_account_balance_api_settings_paper_account_set_balance_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/permission-mode": {
         parameters: {
             query?: never;
@@ -5846,31 +5699,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/strategy_factory": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Update Strategy Factory Config
-         * @description Strategy Factory subsystem was removed with Position C (2026-07-02).
-         *
-         *     This endpoint is kept for backward compatibility but performs no mutation and
-         *     writes no audit event. The response explicitly signals that no runtime behavior
-         *     changed. The current authority chain is scanner-family opportunities → ranker /
-         *     System Operator → Proposal → Risk/Execution.
-         */
-        post: operations["update_strategy_factory_config_api_settings_strategy_factory_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/symbols": {
         parameters: {
             query?: never;
@@ -6096,7 +5924,7 @@ export interface paths {
         };
         /**
          * Stability
-         * @description Quantified stability report — orphan counts, strategy_id drift, 24h failure
+         * @description Quantified stability report — orphan counts, 24h failure
          *     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
          *     between 'process alive' (health) and 'data internally consistent' (north-star
          *     stage 0). Operator can poll this through 7-14 day stage-0 run.
@@ -8664,17 +8492,17 @@ export interface components {
             futures_symbols?: string[];
             /**
              * Mode
-             * @default paper
+             * @default demo
              */
             mode: string;
             /**
              * Name
-             * @default paper_internal
+             * @default
              */
             name: string;
             /**
              * Paper Execution Mode
-             * @default paper_internal
+             * @default
              */
             paper_execution_mode: string;
             /**
@@ -10657,26 +10485,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** PaperAccountAdjustmentRequest */
-        PaperAccountAdjustmentRequest: {
-            /** Amount Usdt */
-            amount_usdt: number;
-            /**
-             * Note
-             * @default
-             */
-            note: string;
-        };
-        /** PaperAccountSetBalanceRequest */
-        PaperAccountSetBalanceRequest: {
-            /** Cash Balance Usdt */
-            cash_balance_usdt: number;
-            /**
-             * Note
-             * @default
-             */
-            note: string;
-        };
         /**
          * ParkedCloseRecoveryRequest
          * @description Payload for an owner-authorized release of a Bitget 40725-parked close.
@@ -11582,7 +11390,7 @@ export interface components {
             allow_short_live: boolean;
             /**
              * Allowed Exchange
-             * @default paper_internal
+             * @default
              */
             allowed_exchange: string;
             /**
@@ -12632,7 +12440,6 @@ export interface components {
             risk: components["schemas"]["RiskConfig"];
             runtime: components["schemas"]["RuntimeConfig"];
             serenity: components["schemas"]["SerenityConfig"];
-            strategy_factory: components["schemas"]["SettingsStrategyFactoryResponse"];
             telegram: components["schemas"]["TelegramConfig"];
             trading: components["schemas"]["TradingConfig"];
             trading_mandate?: components["schemas"]["SettingsTradingMandateResponse"] | null;
@@ -12640,89 +12447,6 @@ export interface components {
             universe: components["schemas"]["UniverseConfig"];
             update: components["schemas"]["UpdateConfig"];
             webhook: components["schemas"]["SettingsWebhookResponse"];
-        };
-        /**
-         * SettingsStrategyFactoryResponse
-         * @description Deprecated config projection with its explicit UI deprecation marker.
-         */
-        SettingsStrategyFactoryResponse: {
-            /**
-             * Deprecated
-             * @default true
-             */
-            _deprecated: boolean;
-            /**
-             * Reason
-             * @default
-             */
-            _reason: string;
-            /**
-             * Backtest Gate Enabled
-             * @default true
-             */
-            backtest_gate_enabled: boolean;
-            /**
-             * Event Cooldown Minutes
-             * @default 30
-             */
-            event_cooldown_minutes: number;
-            /**
-             * Event Driven Enabled
-             * @default true
-             */
-            event_driven_enabled: boolean;
-            /**
-             * Event Min Score
-             * @default 60
-             */
-            event_min_score: number;
-            /**
-             * High Trade Count Threshold
-             * @default 30
-             */
-            high_trade_count_threshold: number;
-            /**
-             * Min Runtime Days Relaxed
-             * @default 3
-             */
-            min_runtime_days_relaxed: number;
-            /**
-             * Sweep Enabled
-             * @default true
-             */
-            sweep_enabled: boolean;
-            /**
-             * Sweep Max Variants
-             * @default 100
-             */
-            sweep_max_variants: number;
-            /**
-             * Sweep N Trials
-             * @default 60
-             */
-            sweep_n_trials: number;
-            /**
-             * Sweep Top K
-             * @default 10
-             */
-            sweep_top_k: number;
-            /**
-             * Walk Forward Enabled
-             * @default true
-             */
-            walk_forward_enabled: boolean;
-            /**
-             * Walk Forward Folds
-             * @default 3
-             */
-            walk_forward_folds: number;
-            /**
-             * Walk Forward Min Bars
-             * @default 150
-             */
-            walk_forward_min_bars: number;
-        } & {
-            [key: string]: unknown;
         };
         /**
          * SettingsTradingMandateResponse
@@ -12902,35 +12626,6 @@ export interface components {
             agent_name: string;
             /** Idempotency Key */
             idempotency_key?: string | null;
-        };
-        /** StrategyFactoryConfigUpdate */
-        StrategyFactoryConfigUpdate: {
-            /** Backtest Gate Enabled */
-            backtest_gate_enabled?: boolean | null;
-            /** Event Cooldown Minutes */
-            event_cooldown_minutes?: number | null;
-            /** Event Driven Enabled */
-            event_driven_enabled?: boolean | null;
-            /** Event Min Score */
-            event_min_score?: number | null;
-            /** High Trade Count Threshold */
-            high_trade_count_threshold?: number | null;
-            /** Min Runtime Days Relaxed */
-            min_runtime_days_relaxed?: number | null;
-            /** Sweep Enabled */
-            sweep_enabled?: boolean | null;
-            /** Sweep Max Variants */
-            sweep_max_variants?: number | null;
-            /** Sweep N Trials */
-            sweep_n_trials?: number | null;
-            /** Sweep Top K */
-            sweep_top_k?: number | null;
-            /** Walk Forward Enabled */
-            walk_forward_enabled?: boolean | null;
-            /** Walk Forward Folds */
-            walk_forward_folds?: number | null;
-            /** Walk Forward Min Bars */
-            walk_forward_min_bars?: number | null;
         };
         /** StrategyKpi */
         StrategyKpi: {
@@ -15851,45 +15546,6 @@ export interface operations {
             query?: {
                 days?: number;
                 group?: "summary" | "operations";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    viability_api_economics_viability_get: {
-        parameters: {
-            query?: {
-                scope?: string;
-                days?: number;
-                execution_mode?: "paper_internal";
-                data_cost_usd?: number | null;
-                infrastructure_cost_usd?: number | null;
-                other_cost_usd?: number | null;
-                as_of?: string | null;
             };
             header?: never;
             path?: never;
@@ -19871,37 +19527,6 @@ export interface operations {
             };
         };
     };
-    approve_proposal_api_proposals__proposal_id__approve_paper_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     reject_proposal_api_proposals__proposal_id__reject_post: {
         parameters: {
             query?: never;
@@ -22479,165 +22104,6 @@ export interface operations {
             };
         };
     };
-    get_paper_account_api_settings_paper_account_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    close_all_local_paper_positions_api_settings_paper_account_close_all_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    close_local_paper_spot_positions_api_settings_paper_account_close_spot_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    credit_paper_account_api_settings_paper_account_credit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaperAccountAdjustmentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    debit_paper_account_api_settings_paper_account_debit_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaperAccountAdjustmentRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_paper_account_balance_api_settings_paper_account_set_balance_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PaperAccountSetBalanceRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     set_permission_mode_api_settings_permission_mode_post: {
         parameters: {
             query?: never;
@@ -23088,39 +22554,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["SerenityConfigUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_strategy_factory_config_api_settings_strategy_factory_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["StrategyFactoryConfigUpdate"];
             };
         };
         responses: {

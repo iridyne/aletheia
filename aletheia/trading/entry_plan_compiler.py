@@ -171,7 +171,7 @@ def _compile_bounded_risk_envelope(
             and generation.get("candidate_family") == "momentum"
             and str(intent.trigger_spec_id) == "momentum-retrace-reclaim"
         )
-        if is_baseline_momentum and execution_account_mode in {"paper_internal", "bitget_demo"} and candidate_key:
+        if is_baseline_momentum and execution_account_mode == "bitget_demo" and candidate_key:
             geometry_error: str | None = None
             if candles is None:
                 geometry_error = "momentum_candles_missing"
@@ -261,7 +261,7 @@ def _compile_bounded_risk_envelope(
             resolved_policy = resolve_risk_policy(cfg, execution_account_mode)
         except UnknownRiskExecutionMode as exc:
             raise PlanIntentError("RISK_POLICY_UNKNOWN") from exc
-        if execution_account_mode not in {"paper_internal", "bitget_demo"}:
+        if execution_account_mode != "bitget_demo":
             raise PlanIntentError("RISK_POLICY_UNKNOWN")
         policy = resolved_policy.policy
 

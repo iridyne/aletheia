@@ -66,7 +66,7 @@ def test_authored_spec_runs_even_when_global_authoring_is_disabled():
 # ── _maybe_update_trailing_stop behavior ─────────────────────────────────────
 
 def _capture_writes(monkeypatch):
-    import aletheia.portfolio.protective_barrier as barrier
+    import aletheia.portfolio.exit_plan as exit_plan
 
     calls = []
 
@@ -76,7 +76,7 @@ def _capture_writes(monkeypatch):
         calls.append((pid, updates))
         return plan
 
-    monkeypatch.setattr(barrier, "persist_position_exit_plan", _capture_plan)
+    monkeypatch.setattr(exit_plan, "save_exit_plan", _capture_plan)
     return calls
 
 
@@ -120,7 +120,7 @@ def test_breakeven_opt_out(monkeypatch):
 
 
 def test_atr_revision_persists_exact_runtime_observation(monkeypatch):
-    import aletheia.portfolio.protective_barrier as barrier
+    import aletheia.portfolio.exit_plan as exit_plan
 
     captured = []
     observation = {
@@ -139,8 +139,8 @@ def test_atr_revision_persists_exact_runtime_observation(monkeypatch):
     }
     monkeypatch.setattr(pm, "_get_atr_observation", lambda *args, **kwargs: observation)
     monkeypatch.setattr(
-        barrier,
-        "persist_position_exit_plan",
+        exit_plan,
+        "save_exit_plan",
         lambda _pid, plan, **_kwargs: captured.append(plan) or plan,
     )
     monkeypatch.setattr(
@@ -148,7 +148,7 @@ def test_atr_revision_persists_exact_runtime_observation(monkeypatch):
         lambda *_args, **_kwargs: False,
     )
     pos = _pos(
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         market_type="spot",
         trailing_json=json.dumps({"mode": "atr", "distance": 1.5}),
         stop_price=95.0,

@@ -59,52 +59,18 @@ def _ready_research(*source_ids: str, symbol: str = "BTCUSDT") -> dict:
 ))
 def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
     from aletheia.agent_shell import reflection
-    from aletheia.storage.models import Position, ShadowTrade
-    from aletheia.storage.repositories import insert_position, insert_shadow_trade
+    from aletheia.storage.models import ShadowTrade
+    from aletheia.storage.repositories import insert_shadow_trade
     from aletheia.storage.sqlite import get_db
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    opportunity_id, proposal_id, order_id = _insert_entry_chain(
-        position_id="unrelated",
-        proposal_id="proposal-linked",
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
+    position = _insert_closed_position_via_producer(
+        position_id="unrelated", proposal_id="proposal-linked",
+        symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+        quantity=1.0, entry_price=100.0, realized_pnl=10.0,
+        execution_mode="bitget_demo", closed_at="2026-07-12T09:00:00+00:00",
     )
-    insert_position(Position(
-        id="unrelated",
-        symbol="BTC/USDT",
-        market_type="usdt_futures",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=110.0,
-        execution_mode="paper_internal",
-        status="closed",
-        source="native",
-        opened_at="2026-07-12T08:00:00+00:00",
-        realized_pnl=10.0,
-        closed_at="2026-07-12T09:00:00+00:00",
-        close_reason="take_profit",
-        entry_fee=0.0,
-        exit_fee=0.0,
-        funding_cost=0.0,
-        funding_source="local_simulation",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
-        close_category="strategy",
-        exit_price_source="local_fill",
-        exit_fill_verified=True,
-        outcome_eligible=True,
-        outcome_exclusion_reason="eligible",
-        outcome_semantics_version="oi-v1",
-        opportunity_id=opportunity_id,
-        proposal_id=proposal_id,
-        order_id=order_id,
-    ))
+    opportunity_id = position["opportunity_id"]
 
     assert "unavailable" in reflection._compute_outcome(
         "BTC/USDT", None, "2026-07-12T08:00:00+00:00"
@@ -113,6 +79,16 @@ def test_reflection_rejects_symbol_only_outcome_inference(monkeypatch):
         "IGNORED/USDT", "proposal-linked", "2026-07-12T08:00:00+00:00"
     )
     assert "causally linked" in exact.lower() and "+10.00" in exact
+    db = get_db()
+    db.execute(
+        "UPDATE positions SET execution_mode='paper_internal',status='open',"
+        "unrealized_pnl=999 WHERE id='unrelated'"
+    )
+    archived = dict(db.execute("SELECT * FROM positions WHERE id='unrelated'").fetchone())
+    assert reflection._compute_outcome(
+        "BTC/USDT", "proposal-linked", "2026-07-12T08:00:00+00:00"
+    ) == "Outcome unavailable: archived simulator position."
+    assert dict(db.execute("SELECT * FROM positions WHERE id='unrelated'").fetchone()) == archived
     assert "unavailable" in reflection._compute_missed_opportunity(
         None, "market_observer", "long", "2026-07-12T08:00:00+00:00"
     ).lower()

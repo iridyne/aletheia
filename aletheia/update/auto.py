@@ -192,10 +192,10 @@ def _runtime_gate(*, expected_sha: str | None = None, expected_version: str | No
     required = {
         "gateway_running": status.get("gateway_running") is True,
         "scheduler_running": status.get("scheduler_running") is True,
-        "deployment_mode": (status.get("paper_execution_mode"), status.get("execution_target")) in {
-            ("paper_internal", "local_paper"),
-            ("bitget_demo", "external_exchange"),
-        },
+        "deployment_mode": (
+            status.get("paper_execution_mode") == "bitget_demo"
+            and status.get("execution_target") == "external_exchange"
+        ),
         "live_disabled": status.get("live_state") == "live_disabled",
         "health": health.get("status") == "healthy",
     }

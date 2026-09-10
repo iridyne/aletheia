@@ -193,7 +193,7 @@ def test_candidate_provenance_requires_exposure_and_settlement_identity():
 def test_position_replay_cost_model_identity_is_explicit_and_resolvable():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
-    cost_model_id = "paper-execution-reference/v1"
+    cost_model_id = "fixture-cost/v1"
 
     assert evidence._fact_cost_model_id(
         {"cost_identity": {"entry_fee_sources": [], "exit_fee_sources": [], "funding_source": None}}
@@ -321,92 +321,13 @@ def _execution_fact(*, residual_within_tolerance: bool = True) -> dict:
     }
 
 
-def test_execution_sample_rejects_accounting_mismatch():
-    sample, reason = evidence._position_execution_sample(
-        sqlite3.connect(":memory:"),
-        _execution_fact(residual_within_tolerance=False),
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1",
-        epoch_id="epoch-1",
-    )
-
-    assert sample is None
-    assert reason == "accounting_mismatch"
-
-
-def test_position_assignment_precedes_entry_and_execution_chain_is_validated(monkeypatch):
-    observed = []
-    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: ({}, None))
-
-    def assign(_db, _fact, _cutoff, _epoch_start, _epoch_id, *, observed_at=None, **_kwargs):
-        observed.append(observed_at)
-        return "treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None
-
-    monkeypatch.setattr(evidence, "_position_assignment", assign)
-    fact = _execution_fact()
-    cutoff = datetime(2026, 8, 14, tzinfo=timezone.utc)
-    epoch_start = datetime(2026, 8, 12, tzinfo=timezone.utc)
-
-    cost_sample, cost_reason = evidence._position_cost_sample(
-        sqlite3.connect(":memory:"),
-        {**fact, "economics": {**fact["economics"], "gross_pnl": 10.0}},
-        cutoff=cutoff,
-        epoch_start=epoch_start,
-        cost_model_id="paper-execution-reference/v1",
-        epoch_id="epoch-1",
-    )
-    execution_sample, execution_reason = evidence._position_execution_sample(
-        sqlite3.connect(":memory:"),
-        fact,
-        cutoff=cutoff,
-        epoch_start=epoch_start,
-        cost_model_id="paper-execution-reference/v1",
-        epoch_id="epoch-1",
-    )
-
-    assert cost_sample is None
-    assert cost_reason == "cost_baseline_unavailable"
-    assert execution_reason is None and execution_sample is not None
-    assert observed == [datetime(2026, 8, 13, tzinfo=timezone.utc)]
-
-
-def test_execution_delta_excludes_settled_fees_and_costs_need_an_alternative(monkeypatch):
-    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: ({}, None))
-    monkeypatch.setattr(
-        evidence,
-        "_position_assignment",
-        lambda *_args, **_kwargs: ("treatment", "cluster-1", "pair-1", "policy-1", "commit-1", None),
-    )
-    fact = _execution_fact()
-    fact["economics"].update({"gross_pnl": 8.0, "net_pnl": 7.0, "entry_fee": 0.4, "exit_fee": 0.4, "funding_cost": 0.2})
-    execution, reason = evidence._position_execution_sample(
-        sqlite3.connect(":memory:"), fact,
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
-    )
-    cost, cost_reason = evidence._position_cost_sample(
-        sqlite3.connect(":memory:"), fact,
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1", epoch_id="epoch-1",
-    )
-
-    assert reason is None and execution is not None
-    assert execution["paired_net_delta_quote"] == 2.0
-    assert execution["cost_applied_once"] is False
-    assert execution["execution_evidence"]["fees_excluded"] is True
-    assert cost is None and cost_reason == "cost_baseline_unavailable"
-
-
 def _cost_evidence(**overrides) -> dict:
     base = {
         "avoidable": True,
         "baseline_kind": "turnover",
         "cost_event_id": "cost-evt-1",
         "baseline_id": "baseline-1",
-        "cost_model_id": "paper-execution-reference/v1",
+        "cost_model_id": "fixture-cost/v1",
         "avoidable_extra_cost_quote": 0.5,
     }
     base.update(overrides)
@@ -448,7 +369,7 @@ def test_cost_evidence_granular_rejection_codes(field, value, expected_reason, m
         fact,
         cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
         epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1",
+        cost_model_id="fixture-cost/v1",
         epoch_id="epoch-1",
     )
     assert sample is None
@@ -468,7 +389,7 @@ def test_cost_evidence_all_valid_baseline_kinds_are_admitted(monkeypatch):
             fact,
             cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
             epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-            cost_model_id="paper-execution-reference/v1",
+            cost_model_id="fixture-cost/v1",
             epoch_id="epoch-1",
         )
         assert reason is None, f"baseline_kind={kind!r} rejected with {reason!r}"
@@ -489,27 +410,11 @@ def test_cost_evidence_absent_is_baseline_unavailable_not_zero(monkeypatch):
         fact,
         cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
         epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1",
+        cost_model_id="fixture-cost/v1",
         epoch_id="epoch-1",
     )
     assert sample is None
     assert reason == "cost_baseline_unavailable"
-
-
-def test_execution_sample_rejects_invalid_fill_chain(monkeypatch):
-    monkeypatch.setattr(evidence, "_paired_position_cost", lambda *_: (None, "execution_fill_mismatch"))
-
-    sample, reason = evidence._position_execution_sample(
-        sqlite3.connect(":memory:"),
-        _execution_fact(),
-        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
-        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
-        cost_model_id="paper-execution-reference/v1",
-        epoch_id="epoch-1",
-    )
-
-    assert sample is None
-    assert reason == "incomplete_path"
 
 
 def test_incomplete_source_cannot_emit_numeric_coverage():
@@ -1024,3 +929,22 @@ def test_profit_gradient_evidence_cli_writes_compiler_artifact(tmp_path, monkeyp
         "cost_model_id": "cost-v1",
     }
     assert "wrote" in result.stdout
+
+
+def test_execution_layer_has_no_external_paired_reference():
+    samples, stats = evidence._add_layer_samples(
+        db=sqlite3.connect(":memory:"), candidate_facts=[], position_facts=[_execution_fact()],
+        cutoff=datetime(2026, 8, 14, tzinfo=timezone.utc),
+        epoch_start=datetime(2026, 8, 12, tzinfo=timezone.utc),
+        cost_model_id="fixture-cost/v1", epoch_id="epoch-1",
+        cost_status="available", registration_ok=True,
+    )
+    assert samples["Execution"] == []
+    assert stats["Execution"]["eligible_count"] == 0
+    assert stats["Execution"]["reason_counts"] == {"paired_evidence_unavailable": 1}
+
+
+def test_retired_whole_policy_qualification_command_is_removed():
+    result = runner.invoke(inspect_app, ["profit-loop-qualification"])
+    assert result.exit_code != 0
+    assert "No such command" in result.output

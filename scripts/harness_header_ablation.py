@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Phase 5 paired harness-header ablation against a configured model."""
+"""Run a paired external-demo harness-header ablation against a configured model."""
 
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ from aletheia.model_provider.fallback import complete_with_fallback
 from aletheia.model_provider.router import get_provider
 
 
-HEADER = """[Aletheia Harness v0.1]
+HEADER = """[Aletheia Harness v0.2]
 Time: 2026-08-01T00:00:00Z
 Run: logical_agent={caller}
-Trading mode: paper_internal live_enabled=false
+Trading mode: bitget_demo live_enabled=false
 Tool permissions: read_only no:live_order
 
 [Caller system prompt follows]

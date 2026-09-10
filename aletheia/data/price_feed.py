@@ -104,23 +104,13 @@ def _protective_market_type(market_type: str | None) -> str | None:
     return None
 
 
-def protective_price_venue(
-    execution_mode: str | None,
-    *,
-    configured_data_venue: str | None,
-) -> str | None:
-    """Resolve the only venue whose mark may govern a Position lifecycle.
+def protective_price_venue(execution_mode: str | None) -> str | None:
+    """Resolve the venue encoded by a supported external execution mode."""
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
 
-    Exchange-backed Positions follow the venue encoded in their durable
-    execution mode. Local paper has no execution venue, so it deliberately uses
-    the configured market-data venue. Unknown execution identities fail closed.
-    """
     mode = str(execution_mode or "").strip().lower()
-    if mode == "paper_internal":
-        venue = str(configured_data_venue or "").strip().lower()
-        return venue or None
-    for venue in ("okx", "bitget", "binance"):
-        if mode.startswith(f"{venue}_"):
+    for venue, (_, demo_mode) in EXCHANGE_UNIFICATION_MAP.items():
+        if mode in {demo_mode, LIVE_EXECUTION_MODES[venue]}:
             return venue
     return None
 
@@ -357,26 +347,10 @@ def get_watched_instruments(
     # Always watch open position symbols
     try:
         from aletheia.storage.repositories import (
-            get_position_protection_state,
             list_all_open_positions,
         )
         for p in list_all_open_positions():
-            position_id = str(p.get("id") or "").strip()
-            protection_state = (
-                get_position_protection_state(position_id) if position_id else None
-            )
-            if protection_state is not None:
-                append_instrument(
-                    protection_state["symbol"],
-                    protection_state["market_type"],
-                    protection_state["venue"],
-                    is_always_on=True,
-                )
-                continue
-            position_venue = protective_price_venue(
-                p.get("execution_mode"),
-                configured_data_venue=default_exchange,
-            )
+            position_venue = protective_price_venue(p.get('execution_mode'))
             if position_venue is None:
                 logger.warning(
                     "price_feed: unsupported position execution mode id=%s mode=%s",

@@ -104,7 +104,7 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     cfg = MagicMock()
     cfg.market_data.ccxt_exchange = "binance"
     cfg.market_data.ccxt_fallback = None
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "binance_testnet"
     cfg.exchange.enabled_markets = {"usdt_futures": True}
     cfg.universe.blacklist = []
 

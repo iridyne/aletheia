@@ -79,11 +79,11 @@ def _seed_position(
         quantity=0.01,
         entry_price=100.0,
         current_price=100.0,
-        execution_mode="paper_internal",
+        execution_mode={"bitget": "bitget_demo", "okx": "okx_demo"}[venue],
         opportunity_id=opportunity_id,
         entry_fee=0.01,
         funding_cost=0.0,
-        funding_source="local_paper_funding_v2",
+        funding_source="broker_ledger",
         stop_price=95.0,
         take_profit_price=110.0,
         opened_at=opened_at,
@@ -103,7 +103,7 @@ def _seed_position(
             "market",
             0.01,
             100.0,
-            "paper_internal",
+            position.execution_mode,
             position_id,
             "filled",
             "native",
@@ -292,64 +292,6 @@ def test_projector_applies_scale_in_and_partial_reduction_as_of_time():
     assert state["remaining_notional"] == pytest.approx(2.2666666667)
     assert state["entry_fee"] == pytest.approx(0.02)
     assert state["realized_pnl"] == pytest.approx(0.19)
-
-
-def test_historical_snapshot_uses_exit_plan_effective_at_bucket():
-    import hashlib
-    import json
-
-    from aletheia.portfolio.position_path_observer import (
-        _historical_position_snapshot,
-    )
-    from aletheia.storage import repositories as repo
-
-    position = _seed_position(position_id="position-path-plan-projector")
-    db = repo.get_db()
-    for version, effective_at, stop_price in (
-        (1, "2026-08-13T00:00:00+00:00", 95.0),
-        (2, "2026-08-13T00:07:00+00:00", 97.0),
-    ):
-        plan_json = json.dumps(
-            {
-                "stop_price": stop_price,
-                "take_profit_price": 110.0,
-                "exit_limit_price": None,
-                "exit_limit_source": None,
-            },
-            sort_keys=True,
-        )
-        db.execute(
-            "INSERT INTO position_exit_plan_versions "
-            "(position_id,version,effective_at,stop_price,take_profit_price,"
-            "exit_limit_price,exit_limit_source,plan_json,plan_hash,provenance,created_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                position.id,
-                version,
-                effective_at,
-                stop_price,
-                110.0,
-                None,
-                None,
-                plan_json,
-                hashlib.sha256(plan_json.encode()).hexdigest(),
-                "test",
-                effective_at,
-            ),
-        )
-    db.commit()
-
-    first = _historical_position_snapshot(
-        repo.get_position(position.id),
-        bucket_open_ms=1_786_579_200_000,
-    )
-    second = _historical_position_snapshot(
-        repo.get_position(position.id),
-        bucket_open_ms=1_786_579_800_000,
-    )
-
-    assert (first["exit_plan_version"], first["stop_price"]) == (1, 95.0)
-    assert (second["exit_plan_version"], second["stop_price"]) == (2, 97.0)
 
 
 def test_projector_terminalizes_final_close_without_reusing_current_state():
@@ -1078,7 +1020,7 @@ def test_position_path_observer_status_exposes_recovery_and_24h_counts():
             "unrealized_pnl": 0.03,
             "entry_fee": 0.01,
             "funding_cost": 0.0,
-            "funding_source": "local_paper_funding_v2",
+            "funding_source": "broker_ledger",
             "stop_price": 95.0,
             "take_profit_price": 110.0,
             "exit_plan_version": 0,
@@ -1395,7 +1337,6 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
                 funding_cost=0.5,
                 stop_price=92.0,
                 take_profit_price=118.0,
-                exit_plan_version=3,
             )
             return OHLCVResult(
                 [
@@ -1437,7 +1378,7 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
     assert row["funding_cost"] == 0.5
     assert row["stop_price"] == 92.0
     assert row["take_profit_price"] == 118.0
-    assert row["exit_plan_version"] == 3
+    assert row["exit_plan_version"] == 0
     assert row["bar_close"] == 130.0
     assert closed == 1
 
@@ -1626,14 +1567,14 @@ def test_position_path_bucket_membership_preserves_exact_subsecond_instants():
         "INSERT INTO positions "
         "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
         "status,opened_at,closed_at) "
-        "VALUES (?,'BTC/USDT','spot','long',1,100,'paper_internal','closed',?,?)",
+        "VALUES (?,'BTC/USDT','spot','long',1,100,'bitget_demo','closed',?,?)",
         rows,
     )
     repo.get_db().executemany(
         "INSERT INTO positions "
         "(id,symbol,market_type,direction,quantity,entry_price,execution_mode,"
         "status,opened_at) "
-        "VALUES (?,'BTC/USDT','spot','long',1,100,'paper_internal','open',?)",
+        "VALUES (?,'BTC/USDT','spot','long',1,100,'bitget_demo','open',?)",
         [
             ("open-before", "2026-08-13T00:05:00.000100Z"),
             ("open-equal", "2026-08-13T08:05:00.000500+08:00"),
@@ -1714,7 +1655,7 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
             "market",
             1.0,
             100.0,
-            "paper_internal",
+            "bitget_demo",
             position.id,
             "filled",
             "native",
@@ -1750,7 +1691,7 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
             "market",
             0.5,
             120.0,
-            "paper_internal",
+            "bitget_demo",
             position.id,
             "filled",
             "native",
@@ -1788,7 +1729,7 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
             "market",
             0.25,
             130.0,
-            "paper_internal",
+            "bitget_demo",
             position.id,
             "manual",
             "filled",
@@ -1822,7 +1763,7 @@ def test_historical_snapshot_projects_state_from_lifecycle_facts():
             position.id,
             position.symbol,
             "long",
-            "paper_internal",
+            "bitget_demo",
             "manual",
             130.0,
             0.25,
@@ -2052,3 +1993,50 @@ async def test_observer_processes_open_position_before_closed_history(
     assert historical_bucket not in {row["bucket_open_ms"] for row in closed_rows}
     assert live_bucket in requested
     assert historical_bucket not in requested
+
+
+@pytest.mark.asyncio
+async def test_archived_positions_and_retry_rows_are_not_observed_or_rewritten(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from aletheia.portfolio import position_path_observer as observer
+    from aletheia.storage import repositories as repo
+
+    db = repo.get_db()
+    bucket = 1_786_579_200_000
+    now = datetime.fromtimestamp((bucket + 900_000) / 1000, tz=timezone.utc)
+    db.execute(
+        "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
+        "execution_mode,status,opened_at) VALUES "
+        "('archived','BTC/USDT','spot','long',1,100,'paper_internal','open',?)",
+        ("2026-08-13T00:00:00+00:00",),
+    )
+    for offset, attempts in ((300_000, 0), (600_000, repo.POSITION_PATH_MAX_RETRY_ATTEMPTS)):
+        db.execute(
+            "INSERT INTO position_path_observation_deferred_buckets "
+            "(position_id,bucket_open_ms,first_deferred_at,last_attempt_at,attempt_count,reason) "
+            "VALUES ('archived',?,?,?,?,?)",
+            (bucket + offset, now.isoformat(), now.isoformat(), attempts, "scheduled"),
+        )
+    db.execute(
+        "INSERT INTO position_path_observations (position_id,bucket_open_ms,observed_at,"
+        "symbol,funding_source,exit_plan_version,evidence_status,evidence_reason,capture_mode) "
+        "VALUES ('archived',?,?,'BTC/USDT','unavailable',0,'unavailable','archived','open_snapshot')",
+        (bucket, now.isoformat()),
+    )
+    db.commit()
+    historical = repo.list_position_path_observations("archived")
+    queued = [tuple(row) for row in db.execute("SELECT * FROM position_path_observation_deferred_buckets")]
+    enqueued = repo.enqueue_position_path_observation_buckets_through(
+        bucket + 600_000, observed_at=now.isoformat(),
+    )
+    assert enqueued["enqueued_position_buckets"] == 0
+    before = db.total_changes
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: pytest.fail("archived provider call"))
+    result = await observer.observe_open_position_paths(now=now)
+    status = observer.build_position_path_observer_status(now=now)
+    assert result["positions"] == result["inserted"] == result["deferred"] == 0
+    assert status["deferred_bucket_count"] == 0
+    assert repo.count_position_path_observations_since(0) == {"available": 0, "unavailable": 0}
+    assert repo.list_position_path_observations("archived") == historical
+    assert [tuple(row) for row in db.execute("SELECT * FROM position_path_observation_deferred_buckets")] == queued
+    assert db.total_changes == before

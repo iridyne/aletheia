@@ -8,9 +8,10 @@
 > Current ownership and progress live in GitHub. Historical strategy-phase gates
 > were retired when the RuleSet/DSL/backtest decision path was removed.
 >
-> Last aligned with code and contracts: 2026-08-31.
+> Superseded simulator accounting and legacy Learning gate definitions are
+> [archived](../../design/history/local_simulated_product_gates.md).
 
-## Gate A - Active paper mainline eligibility
+## Gate A - External demo/testnet mainline eligibility
 
 Evidence may count toward the current MVP only when all of the following are true:
 
@@ -22,8 +23,9 @@ Evidence may count toward the current MVP only when all of the following are tru
    Outcome is operational without an unresolved integrity incident;
 4. Live remains disabled and every order path still crosses Risk approval and the
    Execution Gateway;
-5. paper accounting is cost-complete and the two-table paper-ledger invariant is
-   healthy;
+5. the exact external account and instrument retain attributable private fills,
+   fees, funding where applicable, and verified close economics; account state and
+   reconciliation are available, with unresolved settlement reported explicitly;
 6. unavailable, stale, synthetic, administrative, or unresolved facts are
    excluded or displayed honestly rather than converted to success/zero.
 
@@ -34,7 +36,7 @@ Passing a test suite does not pass this gate for a Runtime. Use
 
 The accepted CN Equity Proposal and Product/Runtime scope authorize implementation
 only. They do not pass a Runtime gate or make CN Equity supported. Promotion is
-strictly one-way through `disabled -> observe -> shadow -> paper`; a failure
+strictly one-way through `disabled -> observe -> shadow`; a failure
 returns the extension to the last proved lower state without rewriting evidence.
 No `live` state exists.
 
@@ -42,124 +44,40 @@ No `live` state exists.
 |---|---|
 | `disabled` | Default. No CN V2 producer or CN Candidate/Proposal/reservation/order/accounting write is reachable. Contracts and compatibility readers may be merged behind this fence. |
 | `observe` | Versioned CN identity, calendar/rules/tradability, point-in-time data manifest, and Universe publication are complete; missing/stale/unknown facts fail closed; observation has no Proposal, reservation, Risk approval, Gateway call, or execution side effect. |
-| `shadow` | The complete Candidate → Plan → exact Proposal → Risk → Gateway → exit → Outcome chain is contract- and spec-conformant, but execution is denied and no executable approval or accounting mutation is emitted. An exact merged commit and frozen data/policy/account/experiment identity start a fresh window. |
-| `paper` | The fresh Shadow window is clean; the owner explicitly admits the exact epoch; only the dedicated CNY Internal Paper account/Risk pool is reachable; settlement, fees, tax, reservations, corporate actions, restart, reconciliation, and canonical entry/exit are proven. |
+| `shadow` | Versioned market and planning evidence supports hypothetical decisions with exact source and policy identity; no executable approval, account reservation, adapter submission, fill or account mutation is reachable. An exact merged commit and owner-admitted evidence epoch start a fresh window. |
 
-CN qualification closes as two independent facts:
-`paper_accounting_qualified` and exactly one of
-`strategy_paper_promotion_passed` or `strategy_paper_promotion_failed` for
-the same frozen epoch. A failed strategy result preserves valid accounting proof
-but forbids strategy promotion. Backtest, Shadow, Paper, and any future broker
-evidence are separate classes and cannot be pooled. Capability Ground Truth is
-updated only from exact merged/runtime evidence and must continue to report Live
-as unavailable.
+No CN execution state or route is authorized. The former internal-account
+qualification and strategy promotion gates are
+[archived](../../design/history/cn_equity_internal_paper.md). Historical results
+remain readable but cannot admit a current route. A future external-account
+execution proposal must establish its own settlement and execution proof;
+passing observation or Shadow alone does not provide it.
 
-## Gate B - Learning shadow measurement readiness
+## Gates B-D - Learning measurement, admission and progression
 
-Only a registry path with all three capabilities may create current formal
-measurement evidence:
+The [Learning contract](../../design/contracts/learning_contract.md) and
+[Observation Lab contract](../../design/contracts/observation_lab_contract.md)
+own current measurement and influence requirements. Observation Lab is the sole
+online Experiment authority. The former local-simulator/legacy-ledger gate table
+is [archived](../../design/history/local_simulated_product_gates.md); its historical
+sample counts, stages and verdicts cannot authorize a current account or window.
 
-- `consumer_wired=true`;
-- `settings_supported=true`;
-- `measurement_supported=true`.
+Current measurement requires a supported registry path, exact prospective cohort,
+behavior/outcome identity, attributable costs and outcomes, and the path-specific
+harm and inference contract. Path registration alone does not prove runtime
+qualification. Missing or conflicting authority cannot fall back to a legacy
+ledger or manufacture an intervention.
 
-The current set contains exactly one path: `universe_family_calibration`. Every
-other declared treatment hook returns its static fallback and must not create a
-new hypothesis, experiment, exposure, policy epoch, or authority claim.
+The `lco-v1` contribution endpoint reads persisted Lab results. It exposes
+measurement, inference and lifecycle facts without granting authority or offering
+an admission mutation. Explicit owner admission and the path-specific authority
+gate remain required for behavioral influence; a displayed positive result cannot
+self-authorize progression. `shadow` and `paper_*` experiment-stage names describe
+bounded influence and do not reinstate the retired local exchange.
 
-A current shadow measurement additionally requires:
-
-| Requirement | Current software rule |
-|---|---|
-| Prospective cohort | Stable assignment at the persisted assignment-unit cluster |
-| Complete outcomes | Canonical full-arm outcome or valid selected-member mirror/fallback; conflicts fail closed |
-| First-trial integrity sample | 10 complete assignment units in treatment and 10 in control |
-| First-trial integrity time | At least one continuous UTC date with a complete eligible exposure unit from either arm |
-| Economic promotion sample/time | After owner admission, every Paper stage still requires 50 complete units per arm inside seven consecutive eligible UTC dates |
-| Exact identity | Current hypothesis, stage, epoch, horizon, outcome contract, metric version, and behavior-contract hash |
-| Harm semantics | First-trial underpower may remain `indeterminate/insufficient_samples`; any determinate breach blocks admission or authority |
-| Actual intervention | Shadow has none and yields `insufficient_data/trial_integrity_ready_no_actual_intervention` after the integrity gate; it cannot claim contribution |
-
-A UTC date with no complete eligible unit in either arm resets the current
-qualification run. Daily arm imbalance remains visible and is handled by the
-independent per-arm sample gate. Planned or partial outages have no implicit waiver
-when they leave a full day uncovered; pre-gap samples remain history and cannot
-satisfy post-gap sample or outcome gates. Admission requires the current
-one-day integrity window; promotion still requires the full qualified seven-day
-window.
-
-## Gate C - Explicit shadow-to-paper trial admission
-
-Shadow evidence never self-authorizes. The scheduled lifecycle controller may
-recommend `admit_trial`, but only the protected authenticated owner route may
-cross from `shadow` to `paper_10`.
-
-Admission requires all of the following at the moment of mutation:
-
-1. exact current shadow verdict is `insufficient_data` with reason
-   `trial_integrity_ready_no_actual_intervention` (or the stricter mature
-   `no_actual_intervention` result);
-2. verdict, experiment, hypothesis, stage, policy epoch, horizon, metric, outcome
-   contract, and behavior-contract identities all match;
-3. there is no determinate harm breach; the integrity result may be
-   `indeterminate` only for `insufficient_samples`;
-4. the experiment is active and the path remains measurement-supported;
-5. autonomous Learning, contribution evaluation, lifecycle automation, paper
-   influence, and the exact path allowlist are enabled;
-6. Runtime is not paused and no global reconciliation refreeze is active;
-7. owner supplies the expected epoch and reason through the protected route;
-8. one transactional lifecycle event closes shadow and creates a fresh
-   `paper_10` successor with a new assignment salt.
-
-Missing, stale, malformed, or changed evidence fails closed. Read-only owner
-surfaces do not expose an admission mutation.
-
-## Gate D - Bounded paper progression
-
-The supported progression is:
-
-```text
-shadow --explicit owner admission--> paper_10 -> paper_25 -> paper_50 -> paper_active
-```
-
-After owner admission, automated progression is allowed only one stage at a time
-when the current stage has an authority-eligible, identity-matched, harm-safe
-`confirmatory` verdict consumed exactly once from its prospective frozen cutoff and
-all promotion gates remain enabled. A recurring `monitoring` positive is descriptive
-and can never promote. Allocation is bounded to 10%, 25%, 50%, then the configured
-`paper_active_allocation_pct` (default 80%, maximum 90%) so a control holdout remains.
-
-The primary result remains randomized intent-to-treat: all qualified assigned
-treatment units, including baseline fallbacks, contribute their realized outcome to
-the treatment mean, confidence interval and harm calculation. Actual intervention is
-a separate promotion gate. `authority_applied` records permission consistently across
-the cluster; an actual intervention additionally requires at least one member with a
-finite before/after behavior delta. The full per-arm minimum must be actual
-interventions. Refused and all-no-op clusters remain visible and stay in ITT, so they
-dilute the policy effect, but they do not count toward the intervention minimum.
-Lifecycle rechecks these counts so a legacy or malformed positive verdict cannot grant
-a successor stage.
-
-A validly activated bounded Paper stage does not lose its existing allocation merely
-because its current `insufficient_data` verdict has an `indeterminate` harm state from
-sample/continuity underpower. It may continue collecting the predeclared window.
-Negative/invalid evidence, determinate harm, identity/config/refreeze failure, or a
-non-underpower indeterminate reason still withdraws authority immediately; promotion
-continues to require positive ITT, clear-harm, and sufficient actual-intervention evidence.
-
-| Current evidence | Required lifecycle result |
-|---|---|
-| consumed fixed-look `positive` and all gates current | Promote one stage |
-| monitoring `positive` | Hold; descriptive only |
-| `neutral` or ordinary insufficient data | Hold |
-| `negative` or determinate harm breach | Refreeze/fail to static baseline |
-| `invalid` | Invalidate/fail to static baseline |
-| stale epoch/horizon/contract identity | Cannot grant authority; safety withdrawal remains reachable |
-| missing or malformed evidence | Hold/fail closed |
-
-Any change to decision input, treatment, allocation semantics, statistical unit,
-outcome economics, harm gate, or continuity rule is B-class: close the old cohort,
-rotate identity/epoch as required, and collect a new window from zero.
+No Learning result grants Risk, Gateway, credential or Live authority. Changes to
+cohort identity, treatment or outcome semantics require the fresh evidence defined
+by those contracts; archived simulator evidence cannot become exchange qualification.
 
 ## Gate E - Live readiness
 
@@ -187,7 +105,7 @@ The following are not current admission criteria:
 - counts of legacy strategies or strategy lifecycle transitions;
 - RuleSet/DSL/backtest promotion;
 - a top-level `knowledge_items.item_type='risk_lesson'` query;
-- exchange-demo visibility as a requirement for the active `paper_internal` proof;
+- the former internal-simulator proof profile or its adapter-visibility exclusions;
 - lesson/artifact counts as evidence of positive Learning contribution;
 - the June 2026 Round 1 calendar, tags, or MVP script.
 

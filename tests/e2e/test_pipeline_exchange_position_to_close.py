@@ -1,17 +1,12 @@
 """Pipeline: exchange-mode position → protective trigger → broker close → PnL.
 
-This is the exchange-mode counterpart of `test_pipeline_position_to_close.py`,
-which runs entirely on `paper_internal` and therefore disappears with the
-paper_broker retirement (see #2993). The close segment of the minimum profitable
-loop must keep end-to-end coverage on the modes it will actually run on.
-
 Offline by construction, following the established e2e convention: the autouse
 `_mock_exchange` fixture blocks `net.make_ccxt`, and the venue is represented by
 the same UTA adapter double the coordinator tests use
 (`tests/uta/test_execution_coordinator._Adapter`). No network, no recorded
 fixtures, no credentials.
 
-Routing under test — `bitget_demo`, NOT paper:
+Routing under test — `bitget_demo`:
 
     evaluate_open_positions()
       → close_position_routed()            # single source of truth for routing
@@ -136,12 +131,8 @@ def _seed_exchange_position(
 def _patch_protective_mark(monkeypatch, price: float):
     """Inject the fresh mark at the seam the close path actually reads.
 
-    `position_manager` resolves the protective mark through
-    `get_fresh_mark_for_protective_close`, which returns a provenance DICT. The
-    paper-era e2e tests patch `get_fresh_price_for_protective_close` (a float
-    wrapper) and therefore never influence the decision — that stale seam is why
-    all four `test_pipeline_position_to_close.py` tests assert `closed == 1` and
-    get `0`.
+    `position_manager` reads a provenance-bearing mark for the exact venue,
+    symbol and market; inject that same evidence into protective-close reads.
     """
     import aletheia.data.price_feed as price_feed
     import aletheia.portfolio.position_manager as pm
@@ -268,8 +259,8 @@ def test_live_limited_position_is_never_auto_closed(e2e_db, monkeypatch):
     TWO independent defences, asserted separately, because the first one hides the
     second and an earlier version of this test only proved the hiding:
 
-    1. `evaluate_open_positions` filters on `_PAPER_MODES`
-       (`{paper_internal, bitget_demo, binance_testnet, okx_demo}`), so a
+    1. `evaluate_open_positions` filters on `_DEMO_MODES`
+       (`{bitget_demo, binance_testnet, okx_demo}`), so a
        `*_live_limited` position is never even *checked* — `checked == 0`.
        Asserting only "no command reached the venue" therefore passes trivially
        and would keep passing with the second defence removed.

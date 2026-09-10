@@ -183,7 +183,7 @@ def build_entry_execution_receipt(
 def _require_momentum_geometry_authority(plan: EntryPlan) -> None:
     if _trigger_id(plan) != _MOMENTUM_GEOMETRY_TRIGGER:
         return
-    if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
+    if plan.execution_account_mode != "bitget_demo":
         raise ValueError("entry_plan_tactic_capability_unavailable")
     if not plan.treatment_exposure_id:
         raise ValueError("entry_plan_treatment_exposure_required")
@@ -453,7 +453,7 @@ def execute_entry_plan(
         raise ValueError("entry_plan_hash_mismatch")
     plan = decode_entry_plan(payload)
     require_entry_plan_runtime_authority(plan)
-    if plan.execution_account_mode not in {"paper_internal", "bitget_demo"}:
+    if plan.execution_account_mode != "bitget_demo":
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
     existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)

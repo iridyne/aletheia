@@ -41,11 +41,6 @@ _MODULES_BY_LAYER = {
         "aletheia/universe/filters.py",
         "aletheia/universe/service.py",
     ],
-    "Ranker Alpha": [
-        "aletheia/agents/paper_trader_ranker.py",
-        "aletheia/analytics/factor_feedback.py",
-        "aletheia/knowledge/guards.py",
-    ],
     "System Operator Alpha": [
         "aletheia/agent_shell/trading_decision.py",
         "aletheia/agent_shell/trading_context.py",
@@ -126,15 +121,6 @@ def build_alpha_attribution_audit(days: int = 30, min_sample_size: int = MIN_SAM
         "universe_relative_rank_evidence": _universe_relative_rank_evidence(db, cutoff),
         "exit_paired_evidence": _exit_paired_evidence(cutoff),
         "exit_trailing_qualification": _exit_trailing_qualification(cutoff),
-        "risk_policy_evidence": _risk_policy_evidence(
-            db,
-            cutoff,
-            generated_at,
-            min_sample_size,
-        ),
-        "execution_cost_evidence": _execution_cost_evidence(
-            db, cutoff, min_sample_size
-        ),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -156,8 +142,6 @@ def _empty_report(generated_at: str, days: int, reason: str) -> dict:
         "universe_relative_rank_evidence": _empty_relative_rank_evidence(reason),
         "exit_paired_evidence": _empty_exit_paired_evidence(reason),
         "exit_trailing_qualification": _empty_exit_trailing_qualification(reason),
-        "risk_policy_evidence": _empty_risk_policy_evidence(reason),
-        "execution_cost_evidence": _empty_execution_cost_evidence(reason),
         "main_bottleneck": _main_bottleneck(verdicts),
     }
 
@@ -219,7 +203,7 @@ def _empty_exit_paired_evidence(reason: str) -> dict:
 
 
 def _empty_exit_trailing_qualification(reason: str) -> dict:
-    from aletheia.portfolio.protective_barrier import (
+    from aletheia.analytics.exit_trailing_qualification import (
         _TRAILING_QUALIFICATION_VERSION,
         _TRAILING_RECOVERY_THRESHOLD_PCT,
         _TRAILING_RECOVERY_WINDOW_BARS,
@@ -228,8 +212,8 @@ def _empty_exit_trailing_qualification(reason: str) -> dict:
     return {
         "contract_version": "exit-trailing-qualification/v2",
         "policy_version": _TRAILING_QUALIFICATION_VERSION,
-        "enrollment_enabled": None,
-        "enrollment_block_reason": "qualification_report_unavailable",
+        "enrollment_enabled": False,
+        "enrollment_block_reason": "archived",
         "measurement_status": "not_measured",
         "causal_grade": "insufficient",
         "assignment_count": 0,
@@ -559,62 +543,12 @@ def _exit_trailing_qualification(cutoff: str) -> dict:
     }
 
 
-def _empty_risk_policy_evidence(reason: str) -> dict:
-    from aletheia.analytics.risk_contribution import empty_risk_policy_contribution
-
-    return empty_risk_policy_contribution(reason)
-
-
-def _risk_policy_evidence(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dict:
-    from aletheia.analytics.risk_contribution import (
-        build_risk_policy_contribution,
-    )
-
-    try:
-        return build_risk_policy_contribution(
-            db,
-            cutoff=cutoff,
-            as_of_at=as_of_at,
-            min_sample_size=min_sample_size,
-            min_interventions=min_sample_size,
-        )
-    except sqlite3.OperationalError as exc:
-        return _empty_risk_policy_evidence(
-            f"Required Risk policy evidence table is unavailable: {exc}"
-        )
-
-
-def _empty_execution_cost_evidence(reason: str) -> dict:
-    from aletheia.analytics.execution_contribution import (
-        empty_execution_cost_contribution,
-    )
-
-    return empty_execution_cost_contribution(reason)
-
-
-def _execution_cost_evidence(db, cutoff: str, min_sample_size: int) -> dict:
-    from aletheia.analytics.execution_contribution import (
-        build_execution_cost_contribution,
-    )
-
-    try:
-        return build_execution_cost_contribution(
-            db,
-            cutoff=cutoff,
-            min_sample_size=min_sample_size,
-        )
-    except sqlite3.OperationalError as exc:
-        return _empty_execution_cost_evidence(
-            f"Required Execution cost evidence is unavailable: {exc}"
-        )
-
-
 def render_alpha_audit(report: dict) -> str:
     """Render the audit in the owner-facing CLI format."""
     lines = ["Alpha Attribution Audit", "", f"Window: {report.get('window_days')}d", ""]
     ordered = [
         ("Universe", "universe"),
-        ("Ranker", "ranker"),
+        ("Ranker (historical)", "ranker"),
         ("System Operator", "system_operator"),
         ("Learning", "learning"),
         ("Serenity", "serenity"),
@@ -726,31 +660,6 @@ def render_alpha_audit(report: dict) -> str:
         f"available={trailing.get('available_count', 0)} "
         f"changed={trailing.get('changed_count', 0)}",
         f"  {trailing.get('reason', 'Exit trailing qualification is unavailable.')}",
-    ])
-    risk = report.get("risk_policy_evidence") or {}
-    lines.extend([
-        "",
-        f"Risk policy evidence: {risk.get('measurement_status', 'not_measured')}",
-        "  "
-        f"eligible={risk.get('eligible_count', 0)} "
-        f"interventions={risk.get('actual_intervention_count', 0)} "
-        f"delta={_fmt_metric(risk.get('delta'))} "
-        f"contribution={risk.get('contribution_verdict', 'insufficient_data')}",
-        f"  {risk.get('reason', 'Risk policy evidence is unavailable.')}",
-    ])
-    execution = report.get("execution_cost_evidence") or {}
-    lines.extend([
-        "",
-        "Execution cost evidence: "
-        f"{execution.get('measurement_status', 'not_measured')}",
-        "  "
-        f"eligible={execution.get('eligible_count', 0)} "
-        f"delta={_fmt_metric(execution.get('delta'))} "
-        "quote_delta="
-        f"{_fmt_metric(execution.get('incremental_net_pnl_total'))} "
-        "contribution="
-        f"{execution.get('contribution_verdict', 'insufficient_data')}",
-        f"  {execution.get('reason', 'Execution cost evidence is unavailable.')}",
     ])
     bottleneck = report["main_bottleneck"]
     lines.extend([
@@ -1301,8 +1210,6 @@ def _serenity_alpha(db, cutoff: str, as_of_at: str, min_sample_size: int) -> dic
     )
 
 
-
-
 def _deterministic_baseline_returns(
     db,
     *,
@@ -1523,7 +1430,6 @@ def _main_bottleneck(verdicts: dict) -> dict:
 def _next_action(key: str) -> str:
     return {
         "universe": "Do not tune the decision prompt first. Inspect universe scanner selection and its tradable-symbol baseline.",
-        "ranker": "Ranker top1 underperforms lower-ranked candidates. Inspect scoring weights, penalties, and eligibility filters.",
         "system_operator": "Do not change scanner. Improve System Operator decision prompt, model, and context selection.",
         "learning": "Learning artifacts are not reducing repeated losses. Inspect memo/guard consumption before adding more memories.",
         "serenity": "Serenity opportunities underperform baseline. Inspect the lens, evidence gating, and equity opportunity criteria.",
@@ -1550,6 +1456,7 @@ def _verdict(
     )
     return {
         "name": name,
+        **({"scope": "historical_ranker"} if name == "Ranker Alpha" else {}),
         "verdict": status,
         "sample_size": int(sample_size or 0),
         "baseline": _round_or_none(baseline),
@@ -1635,8 +1542,6 @@ def _parse_json(raw: Any) -> Any:
         except (TypeError, ValueError):
             return {}
     return {}
-
-
 
 
 def _utcnow() -> datetime:

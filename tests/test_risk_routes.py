@@ -169,7 +169,8 @@ async def test_risk_status_warns_when_exchange_live_but_live_disabled(client):
 
 @pytest.mark.anyio
 async def test_risk_status_keeps_latest_decision_as_history_not_current_health(client):
-    proposal = TradeProposal(symbol="DOGEUSDT", market_type="spot", direction="long")
+    proposal = TradeProposal(symbol="DOGEUSDT", market_type="spot", direction="long",
+                             execution_mode="bitget_demo")
     repo.insert_trade_proposal(proposal)
     repo.insert_risk_decision(RiskDecision(
         proposal_id=proposal.id,
@@ -207,7 +208,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.005,
         price=60000,
     )
@@ -215,7 +216,7 @@ async def test_risk_summary_surfaces_due_boundary_change_after_repeated_adjustab
         symbol="ETHUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.1,
         price=3000,
     )
@@ -267,7 +268,7 @@ async def test_risk_summary_suppresses_due_boundary_change_when_recent_proposal_
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.005,
         price=60000,
     )
@@ -327,7 +328,7 @@ async def test_risk_summary_surfaces_observe_only_candidate_for_repeated_rejecte
         symbol="BTCUSDT",
         market_type="spot",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.01,
         price=60000,
     )
@@ -335,7 +336,7 @@ async def test_risk_summary_surfaces_observe_only_candidate_for_repeated_rejecte
         symbol="BTCUSDT",
         market_type="spot",
         direction="short",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         quantity=0.02,
         price=61000,
     )

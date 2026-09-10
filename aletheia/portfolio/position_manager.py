@@ -1,16 +1,8 @@
-"""Position manager — closes open PAPER positions by stop-loss / take-profit / max-hold.
+"""Manage demo-exchange exits through the Execution Gateway.
 
-This is the keystone that turns open positions into realized PnL, which in turn
-activates the daily-loss breaker (risk/engine.py §8) and the strategy promotion
-gates. It only updates the position projection + writes an audit event — it never
-places an exchange order, so it lives in portfolio/ (not the change-controlled
-execution/).
-
-Governance:
-- LIVE positions (bitget_live_limited) are NEVER auto-closed (future + human-only).
-- The kill switch does NOT block closing — closing reduces risk.
-- No latest price → skip the position (never fabricate an exit).
-- Layered pause keeps this scheduler job running so existing risk remains protected.
+The local loop evaluates stops, targets and holding horizons. Exchange fills own
+closure and realized economics; live positions are outside this scheduled loop.
+Layered pause and the kill switch do not disable risk-reducing exits.
 """
 
 import hashlib
@@ -33,14 +25,13 @@ from aletheia.execution.close_convergence import (
     pending_close_age_hours,
 )
 from aletheia.storage.repositories import (
-    PositionProtectionConflict,
     list_all_open_positions,
 )
 from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exit_plan
-from aletheia.portfolio.pnl import build_exit_reasoning, close_position, _latest_price
+from aletheia.portfolio.pnl import build_exit_reasoning, close_position
 logger = logging.getLogger("aletheia.position_manager")
 
-_PAPER_MODES = {"paper_internal", "bitget_demo", "binance_testnet", "okx_demo"}
+_DEMO_MODES = {"bitget_demo", "binance_testnet", "okx_demo"}
 _OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 
@@ -85,200 +76,20 @@ def _escalate_stale_pending_close(position: dict, age_hours: float) -> None:
     ))
 
 
-class LocalPaperClosePreflightError(RuntimeError):
-    """No local close was attempted because at least one mark was unavailable."""
-
-    def __init__(self, failures: list[dict]):
-        self.failures = failures
-        position_ids = ",".join(str(item.get("position_id")) for item in failures)
-        super().__init__(f"bulk_close_mark_preflight_failed:{position_ids}")
-
-
-def _fresh_local_paper_mark(
-    position: dict,
-    *,
-    configured_data_venue: str | None = None,
-    not_before: datetime | None = None,
-) -> dict:
-    """Resolve the only mark allowed to authorize a local-paper close Fill."""
-    if position.get("execution_mode") != "paper_internal":
-        raise ValueError(
-            f"position {position.get('id')} is not paper_internal "
-            f"(mode={position.get('execution_mode')!r})"
-        )
-    if configured_data_venue is None:
-        configured_data_venue = load_config().market_data.ccxt_exchange
-    venue = protective_price_venue(
-        "paper_internal",
-        configured_data_venue=configured_data_venue,
-    )
-    if venue is None:
-        raise RuntimeError(
-            f"protective_mark_venue_unavailable:{position.get('id')}"
-        )
-    mark = get_fresh_mark_for_protective_close(
-        position["symbol"],
-        position.get("market_type") or "spot",
-        venue=venue,
-        not_before=not_before,
-    )
-    if mark is None:
-        raise RuntimeError(
-            f"protective_mark_unavailable:{position.get('id')}"
-        )
-    return mark
-
-
-def _close_local_paper_with_authorized_mark(
-    position_id: str,
-    mark: dict,
-    *,
-    reason: str,
-    actor: str,
-    source: str,
-) -> dict:
-    """Materialize a local close from a mark authorized inside this module."""
-    from aletheia.execution.paper_broker import close_paper_position
-
-    return close_paper_position(
-        position_id,
-        mark_price=float(mark["price"]),
-        mark_provenance=mark,
-        reason=reason,
-        actor=actor,
-        source=source,
-    )
-
-
-def _bulk_close_failure(
-    position: dict,
-    code: str,
-    exc: Exception | None = None,
-) -> dict:
-    failure = {
-        "position_id": position.get("id"),
-        "symbol": position.get("symbol"),
-        "market_type": position.get("market_type"),
-        "code": code,
-    }
-    if exc is not None:
-        failure["error_type"] = type(exc).__name__
-        failure["message"] = str(exc)[:200]
-    return failure
-
-
-def close_local_positions_batch(
-    market_type: str | None,
-    *,
-    reason: str = "manual_bulk_close",
-    decision_actor: str = "human",
-    decision_source: str = "dashboard",
-) -> dict:
-    """Preflight and close the complete local-paper working set.
-
-    Every exact-instrument mark is resolved before the first close. A missing or
-    failed mark therefore rejects the whole batch without any close facts. Once
-    preflight succeeds, non-price execution failures may be partial, so both the
-    successful and failed identities are returned explicitly.
-    """
-    candidates = [
-        row for row in list_all_open_positions()
-        if row.get("execution_mode") == "paper_internal"
-        and (market_type is None or row.get("market_type") == market_type)
-    ]
-    configured_venue = load_config().market_data.ccxt_exchange
-    authorized_marks: dict[str, dict] = {}
-    preflight_failures: list[dict] = []
-    for position in candidates:
-        try:
-            authorized_marks[position["id"]] = _fresh_local_paper_mark(
-                position,
-                configured_data_venue=configured_venue,
-            )
-        except Exception as exc:
-            code = (
-                "protective_mark_unavailable"
-                if str(exc).startswith("protective_mark_unavailable:")
-                else "protective_mark_lookup_failed"
-            )
-            preflight_failures.append(
-                _bulk_close_failure(position, code, exc)
-            )
-    if preflight_failures:
-        raise LocalPaperClosePreflightError(preflight_failures)
-
-    closed_position_ids: list[str] = []
-    failed: list[dict] = []
-    for position in candidates:
-        try:
-            result = _close_local_paper_with_authorized_mark(
-                position["id"],
-                authorized_marks[position["id"]],
-                reason=reason,
-                actor=decision_actor,
-                source=decision_source,
-            )
-            if result.get("closed") is True:
-                closed_position_ids.append(position["id"])
-            else:
-                failed.append(_bulk_close_failure(
-                    position,
-                    "close_not_confirmed",
-                ))
-        except Exception as exc:
-            failed.append(_bulk_close_failure(position, "close_failed", exc))
-
-    return {
-        "requested_count": len(candidates),
-        "closed_position_ids": closed_position_ids,
-        "failed": failed,
-    }
-
-
 def close_position_routed(
     position_id: str,
     reason: str,
-    fallback_exit_price: float | None = None,
     *,
-    paper_mark_venue: str | None = None,
-    paper_mark_not_before: datetime | None = None,
     allow_live: bool = False,
     decision_reasoning: str | None = None,
     decision_actor: str = "system",
     decision_source: str = "position_lifecycle",
 ) -> dict:
-    """Close a position through the correct path for its execution_mode.
-
-    SINGLE SOURCE OF TRUTH for close routing. Real-exchange modes (demo AND
-    live-limited) MUST close via their broker so the exchange position is actually
-    reduced and the exit price is the exchange's real fill. A local-only close would
-    (a) leave a dangling real position — the §1.3 desync, and on *_live_limited that
-    position holds REAL funds — and (b) fabricate the exit from a local mark, breaking
-    the "never fabricate an exit" honesty invariant. Only paper_internal closes purely
-    locally.
-
-    Used by BOTH the auto-exit loop (evaluate_open_positions) and any manual/agent
-    close (e.g. PI portfolio review) so neither can silently desync a real position.
-
-    ``fallback_exit_price`` is retained for call compatibility only. It never
-    authorizes a ``paper_internal`` Fill: the local branch always resolves its own
-    fresh exact venue/symbol/market mark immediately before materialization.
-
-    LIVE GUARD (governance, see module docstring §LIVE): a `*_live_limited` position is
-    human-only — NEVER auto-closed. Because this router is the chokepoint, the guard
-    lives HERE: autonomous callers (auto-exit loop, PI portfolio review) leave
-    `allow_live=False`, so a live position raises instead of silently placing a REAL
-    exchange order (CLAUDE.md: "Never place live orders ... autonomously"). Only an
-    explicit human-initiated close passes `allow_live=True`.
-    """
+    """Route closes through the exchange Gateway; live closes require explicit authority."""
     from aletheia.storage.repositories import _select_one
 
     row = _select_one("positions", position_id)
     mode = (row or {}).get("execution_mode")
-    if (
-        paper_mark_venue is not None or paper_mark_not_before is not None
-    ) and mode != "paper_internal":
-        raise ValueError("paper mark constraints are only valid for paper_internal closes")
     if mode and mode.endswith("_live_limited") and not allow_live:
         raise RuntimeError(
             f"refusing to autonomously close live position {position_id} "
@@ -320,24 +131,6 @@ def close_position_routed(
             position_id,
             reason=reason,
             close_reasoning=close_reasoning,
-        )
-    elif mode == "paper_internal":
-        # paper_internal — pure local simulation; needs an observed mark. The
-        # paper broker applies adverse close-side slippage and atomically writes
-        # the close Order/Fill with Position and cash settlement.
-        if row is None:
-            raise ValueError(f"position not found: {position_id}")
-        mark = _fresh_local_paper_mark(
-            row,
-            configured_data_venue=paper_mark_venue,
-            not_before=paper_mark_not_before,
-        )
-        result = _close_local_paper_with_authorized_mark(
-            position_id,
-            mark,
-            reason=reason,
-            actor=decision_actor,
-            source=decision_source,
         )
     else:
         raise ValueError(
@@ -475,16 +268,12 @@ def _get_atr_observation(
     cfg,
     *,
     observed_at: str | None,
-    protection_venue: str | None = None,
 ) -> dict | None:
     """Return one exact, completed 1h ATR observation available at decision time."""
     observed = parse_utc_strict(observed_at) if observed_at is not None else datetime.now(timezone.utc)
     if observed is None:
         return None
-    venue = str(protection_venue).lower() if protection_venue else protective_price_venue(
-        position.get("execution_mode"),
-        configured_data_venue=cfg.market_data.ccxt_exchange,
-    )
+    venue = protective_price_venue(position.get('execution_mode'))
     market = str(position.get("market_type") or "").lower()
     market = "perp" if market in {"perp", "swap", "futures", "usdt_futures"} else market
     symbol = str(position.get("symbol") or "")
@@ -552,6 +341,8 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
     trading = cfg.trading
     spec = load_exit_plan(position).trailing
     if spec is not None:
+        if spec.get("floor_mode", "entry") != "entry" or spec.get("observation", "sampled_mark") != "sampled_mark":
+            return None
         mode = str(spec.get("mode") or "").lower()
         if mode in ("off", "none", "disabled") or spec.get("enabled") is False:
             return None
@@ -565,65 +356,8 @@ def _resolve_trailing(position: dict, cfg) -> dict | None:
             "fallback_pct": float(spec.get("fallback_pct", trading.trail_pct)),
             "activation_profit_pct": spec.get("activation_profit_pct"),
             "floor_at_breakeven": bool(spec.get("floor_at_breakeven", True)),
-            "floor_mode": str(spec.get("floor_mode") or "entry"),
-            "observation": str(spec.get("observation") or "sampled_mark"),
-            "exit_fee_rate": spec.get("exit_fee_rate"),
-            "slippage_bps": spec.get("slippage_bps"),
         }
     return None
-
-
-def _net_balance_stop(
-    position: dict,
-    trailing: dict,
-    *,
-    observed_at: str | None,
-) -> float | None:
-    """Return the stop mark that covers modeled Paper costs, or fail closed."""
-    try:
-        entry = float(position["entry_price"])
-        quantity = float(position["quantity"])
-        entry_fee = float(position["entry_fee"])
-        fee_rate = float(trailing["exit_fee_rate"])
-        slip = float(trailing["slippage_bps"]) / 10_000.0
-    except (KeyError, TypeError, ValueError):
-        return None
-    if not all(math.isfinite(value) for value in (entry, quantity, entry_fee, fee_rate, slip)):
-        return None
-    if entry <= 0 or quantity <= 0 or entry_fee < 0 or not 0 <= fee_rate < 1 or not 0 <= slip < 1:
-        return None
-
-    if position.get("market_type") == "spot":
-        funding_cost = 0.0
-    else:
-        try:
-            from aletheia.portfolio.local_funding import compute_local_funding
-
-            funding = compute_local_funding(
-                position,
-                closed_at=observed_at or datetime.now(timezone.utc).isoformat(),
-            )
-        except Exception:
-            return None
-        if not funding.complete or funding.funding_cost is None:
-            return None
-        funding_cost = float(funding.funding_cost)
-        if not math.isfinite(funding_cost):
-            return None
-
-    direction = position.get("direction")
-    if direction in ("long", "buy"):
-        denominator = quantity * (1.0 - slip) * (1.0 - fee_rate)
-        balance = (quantity * entry + entry_fee + funding_cost) / denominator
-        return math.ceil(balance * 100_000_000) / 100_000_000
-    if direction not in ("short", "sell"):
-        return None
-    denominator = quantity * (1.0 + slip) * (1.0 + fee_rate)
-    numerator = quantity * entry - entry_fee - funding_cost
-    if numerator <= 0:
-        return None
-    balance = numerator / denominator
-    return math.floor(balance * 100_000_000) / 100_000_000
 
 
 def _maybe_update_trailing_stop(
@@ -631,9 +365,7 @@ def _maybe_update_trailing_stop(
     price: float,
     cfg,
     *,
-    completed_bar: bool = False,
     effective_at: str | None = None,
-    protection_venue: str | None = None,
     sync_exchange: bool = True,
 ) -> bool:
     """Update stop_price for trailing stop and breakeven logic. Writes DB on change.
@@ -651,8 +383,6 @@ def _maybe_update_trailing_stop(
         return False
     tc = _resolve_trailing(position, cfg)
     if tc is None:
-        return False
-    if (tc["observation"] == "completed_1m") != completed_bar:
         return False
     direction = position["direction"]
     is_long = direction in ("long", "buy")
@@ -684,14 +414,6 @@ def _maybe_update_trailing_stop(
     # 1. Breakeven move (opt-out via floor_at_breakeven).
     if tc["floor_at_breakeven"] and current_stop is not None and entry > 0:
         floor = entry
-        if tc["floor_mode"] == "net_balance":
-            floor = _net_balance_stop(position, tc, observed_at=effective_at)
-            if floor is None:
-                logger.warning(
-                    "net balance unavailable; trailing not activated pos=%s",
-                    position.get("id"),
-                )
-                return False
         floor_trigger = (
             tc["activation_profit_pct"]
             if tc["activation_profit_pct"] is not None
@@ -711,7 +433,6 @@ def _maybe_update_trailing_stop(
             position,
             cfg,
             observed_at=effective_at,
-            protection_venue=protection_venue,
         )
         if atr_observation is not None:
             trail_distance = price * (atr_observation["atr_pct"] / 100.0) * tc["atr_mult"]
@@ -766,8 +487,8 @@ def _maybe_update_trailing_stop(
                     return False  # abort local DB update on exchange failure
             
             # Exchange succeeded (or sync_exchange=False) → persist to local DB
-            from aletheia.portfolio.protective_barrier import (
-                persist_position_exit_plan,
+            from aletheia.portfolio.exit_plan import (
+                save_exit_plan,
             )
 
             persisted_plan = load_exit_plan(position)
@@ -776,14 +497,12 @@ def _maybe_update_trailing_stop(
                 **(persisted_plan.trailing or {}),
                 "last_runtime_observation": runtime_observation,
             }
-            persist_position_exit_plan(
+            save_exit_plan(
                 position["id"],
                 persisted_plan,
-                provenance="deterministic_trailing_v2",
                 exit_plan_updates={
                     key: value for key, value in updates.items() if key != "stop_price"
                 },
-                effective_at=effective_at,
             )
             position["stop_price"] = float(new_stop)
         else:
@@ -1227,7 +946,7 @@ def acknowledge_horizon_review(position_ids: list[str]) -> list[str]:
     return acknowledged
 
 def evaluate_open_positions() -> dict:
-    """Evaluate all open paper positions and manage triggered lifecycle rules.
+    """Evaluate external demo/testnet positions and manage triggered lifecycle rules.
 
     Price-based safety rules may close positions. Market-aware evaluation only
     requests an Operator review and reports a failed request explicitly.
@@ -1282,13 +1001,10 @@ def evaluate_open_positions() -> dict:
             )
 
             for position in all_open:
-                if position.get("execution_mode") not in _PAPER_MODES:
+                if position.get("execution_mode") not in _DEMO_MODES:
                     continue
                 try:
-                    venue = protective_price_venue(
-                        position.get("execution_mode"),
-                        configured_data_venue=cfg.market_data.ccxt_exchange,
-                    )
+                    venue = protective_price_venue(position.get('execution_mode'))
                     request = MarketSignalRequest.from_parts(
                         venue or "",
                         position["symbol"],
@@ -1308,7 +1024,7 @@ def evaluate_open_positions() -> dict:
             logger.warning("market_signal_index build failed: %s", e)
 
     for p in all_open:
-        if p.get("execution_mode") not in _PAPER_MODES:
+        if p.get("execution_mode") not in _DEMO_MODES:
             continue
         checked += 1
         pending_close = has_unresolved_close_claim(p)
@@ -1334,10 +1050,7 @@ def evaluate_open_positions() -> dict:
                     p.get("pending_close_status"),
                 )
         try:
-            price_venue = protective_price_venue(
-                p.get("execution_mode"),
-                configured_data_venue=cfg.market_data.ccxt_exchange,
-            )
+            price_venue = protective_price_venue(p.get('execution_mode'))
             price = get_fresh_price_for_protective_close(
                 p["symbol"],
                 p.get("market_type") or "spot",
@@ -1487,12 +1200,9 @@ def evaluate_open_positions() -> dict:
                     p.get("pending_close_status"),
                 )
                 continue
-            reason, exit_price = decision
+            reason, _trigger_price = decision
             try:
-                # Route through the shared helper so the exchange leg is never skipped
-                # (live positions are already filtered out above; demo modes still need
-                # their real exchange close, paper closes locally).
-                close_result = close_position_routed(p["id"], reason, fallback_exit_price=exit_price)
+                close_result = close_position_routed(p["id"], reason)
                 if close_result.get("closed") is True:
                     closed += 1
             except Exception as e:
@@ -1527,17 +1237,16 @@ def adjust_stop(position_id: str, new_stop_price: float) -> dict:
     if pos is None or pos.get("status") != "open":
         return {"error": f"position {position_id} not found or not open"}
 
-    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+    from aletheia.portfolio.exit_plan import save_exit_plan
 
     plan = load_exit_plan(pos)
     plan.stop_price = round(float(new_stop_price), 8)
     try:
-        persist_position_exit_plan(
+        save_exit_plan(
             position_id,
             plan,
-            provenance="legacy_adjust_stop_v1",
         )
-    except PositionProtectionConflict:
+    except ValueError:
         return {"error": "exit_plan_conflict", "position_id": position_id}
     logger.info("adjust_stop: %s new_stop=%.6f", position_id, new_stop_price)
 
@@ -1682,10 +1391,7 @@ def _risk_approved_entry_plan(position: dict) -> tuple[float, float] | None:
 
 def _fresh_adjustment_mark(position: dict, cfg) -> float | None:
     """Read one exact fresh mark shared by stop and target validation."""
-    venue = protective_price_venue(
-        position.get("execution_mode"),
-        configured_data_venue=cfg.market_data.ccxt_exchange,
-    )
+    venue = protective_price_venue(position.get('execution_mode'))
     if venue is None:
         return None
     try:
@@ -1900,19 +1606,17 @@ def apply_operator_adjustment(
         provenance="operator",
         version=(plan.version or 0) + 1,
     )
-    from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+    from aletheia.portfolio.exit_plan import save_exit_plan
 
     try:
-        new_plan = persist_position_exit_plan(
+        new_plan = save_exit_plan(
             position_id,
             new_plan,
-            provenance="system_operator_adjustment_v1",
-            expected_version=plan.version,
             observation_updates=(
                 {"horizon_wake_sent_at": None} if horizon_changed else None
             ),
         )
-    except (ValueError, PositionProtectionConflict):
+    except ValueError:
         return {
             "error": "exit_plan_persistence_blocked",
             "position_id": position_id,
@@ -1972,8 +1676,8 @@ def proactive_exit(
     OCO with the stop (whichever level price hits first wins).
 
     A true resting reduce-only limit order + exchange-native OCO is a follow-on
-    refinement; the locally-watched limit works uniformly across paper/demo/live and
-    needs no untested broker order path.
+    refinement; the locally-watched limit is supported for external Demo accounts;
+    live limit exits are rejected.
 
     ``actor`` distinguishes the two legitimate authors of a proactive exit and is the
     ONLY thing that decides attribution: ``system_operator`` is the AI's own
@@ -1998,7 +1702,7 @@ def proactive_exit(
 
     if (order_type or "market") == "limit":
         # Issue #416: the locally-watched limit executor (evaluate_open_positions)
-        # only processes _PAPER_MODES positions.  A live-limited position that
+        # only processes _DEMO_MODES positions.  A live-limited position that
         # accepts a limit exit is persisted as pending_limit_exit=True but nothing
         # can ever execute it.  Reject limit exits on live-limited positions so the
         # operator knows they must use market or close from the exchange UI.
@@ -2024,15 +1728,13 @@ def proactive_exit(
         level = round(level, 8)
         # exit_limit_source is persisted with the level so the executor can pick the
         # honest close_reason later, when the original caller is long gone.
-        from aletheia.portfolio.protective_barrier import persist_position_exit_plan
+        from aletheia.portfolio.exit_plan import save_exit_plan
 
         try:
-            persist_position_exit_plan(
+            save_exit_plan(
                 position_id,
                 load_exit_plan(pos),
-                provenance=f"{actor}_limit_exit_v1",
-                exit_limit_price=level,
-                exit_limit_source=actor,
+                exit_plan_updates={"exit_limit_price": level, "exit_limit_source": actor},
             )
         except (ValueError, RuntimeError):
             return {
@@ -2051,11 +1753,9 @@ def proactive_exit(
         }
 
     # market: close now.
-    price = _latest_price(pos["symbol"])
     result = close_position_routed(
         position_id,
         reason="human_manual_close" if is_human else "operator_close",
-        fallback_exit_price=float(price) if price else None,
         decision_reasoning=reason,
         decision_actor=actor,
         decision_source="dashboard_manual_close" if is_human else "operator_proactive_exit",

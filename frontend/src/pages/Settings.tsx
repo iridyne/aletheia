@@ -12,7 +12,7 @@ import { HealthNotificationsTab } from '../features/settings/tabs/HealthNotifica
 import { AdvancedTab, ADVANCED_SECTION } from '../features/settings/tabs/AdvancedTab'
 import {
   CAPITAL_EVENTS_SECTION, EXCHANGE_CONNECTION_SECTION, ExecutionTab,
-  PAPER_ACCOUNT_SECTION, PAPER_PARAMETERS_SECTION, TRADING_MODE_SECTION,
+  PAPER_PARAMETERS_SECTION, TRADING_MODE_SECTION,
 } from '../features/settings/tabs/ExecutionTab'
 import {
   AgentModelsTab, INFERENCE_ADMISSION_SECTION, LEARNING_SECTION, LLM_COST_SECTION,
@@ -55,9 +55,8 @@ const TAB_ALIASES: Record<string, Tab> = {
 function getSectionSummary(id: string, settings: any, status: any): string | null {
   switch (id) {
     case 'exchange-connection': {
-      const name = String(settings?.exchange?.name || 'bitget')
-      const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
-      return paperMode === 'paper_internal' ? 'Paper (internal)' : name.toUpperCase()
+      const name = String(settings?.exchange?.name || '')
+      return name ? name.toUpperCase() : 'Not configured'
     }
     case 'trading-mode':
       return status?.exchange_mode ? `Mode: ${status.exchange_mode}` : null
@@ -65,8 +64,6 @@ function getSectionSummary(id: string, settings: any, status: any): string | nul
       return 'Configured'
     case 'capital-events':
       return 'Audit log active'
-    case 'local-paper-account':
-      return 'Internal simulator'
     case 'permission-mode':
       return settings?.agent?.permission_mode ? `Mode: ${settings.agent.permission_mode}` : 'Configured'
     case 'learning':
@@ -202,7 +199,6 @@ const SETTINGS_INDEX: { title: string; tab: Tab; slug: string; description: stri
   { title: TRADING_MODE_SECTION.title,        tab: TRADING_MODE_SECTION.tab, slug: TRADING_MODE_SECTION.id, description: TRADING_MODE_SECTION.description, alt: [...TRADING_MODE_SECTION.searchTerms] },
   { title: PAPER_PARAMETERS_SECTION.title,    tab: PAPER_PARAMETERS_SECTION.tab, slug: PAPER_PARAMETERS_SECTION.id, description: PAPER_PARAMETERS_SECTION.description, alt: [...PAPER_PARAMETERS_SECTION.searchTerms] },
   { title: CAPITAL_EVENTS_SECTION.title,      tab: CAPITAL_EVENTS_SECTION.tab, slug: CAPITAL_EVENTS_SECTION.id, description: CAPITAL_EVENTS_SECTION.description, alt: [...CAPITAL_EVENTS_SECTION.searchTerms] },
-  { title: PAPER_ACCOUNT_SECTION.title,       tab: PAPER_ACCOUNT_SECTION.tab, slug: PAPER_ACCOUNT_SECTION.id, description: PAPER_ACCOUNT_SECTION.description, alt: [...PAPER_ACCOUNT_SECTION.searchTerms] },
   // Risk & Universe
   { title: UNIVERSE_SECTION.title,         tab: UNIVERSE_SECTION.tab, slug: UNIVERSE_SECTION.id, description: UNIVERSE_SECTION.description, alt: [...UNIVERSE_SECTION.searchTerms] },
   { title: EVENT_TRIGGERS_SECTION.title,   tab: EVENT_TRIGGERS_SECTION.tab, slug: EVENT_TRIGGERS_SECTION.id, description: EVENT_TRIGGERS_SECTION.description, alt: [...EVENT_TRIGGERS_SECTION.searchTerms] },

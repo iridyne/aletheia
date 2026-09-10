@@ -23,7 +23,7 @@ def _seed(repo, models, n_open: int, n_closed: int) -> None:
                 direction="long",
                 quantity=1.0,
                 entry_price=100.0,
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 status="open",
             )
         )
@@ -36,7 +36,7 @@ def _seed(repo, models, n_open: int, n_closed: int) -> None:
                 direction="long",
                 quantity=1.0,
                 entry_price=100.0,
-                execution_mode="paper_internal",
+                execution_mode="bitget_demo",
                 status="closed",
             )
         )

@@ -22,13 +22,10 @@ async def run_portfolio_agent(permission_mode: str = "Observe", run_id: str | No
     from aletheia.portfolio.pnl import compute_and_store_snapshot
 
     cfg = load_config()
-    live_modes = {
-        "bitget": "bitget_live_limited",
-        "okx": "okx_live_limited",
-        "binance": "binance_live_limited",
-    }
+    from aletheia.config.exchanges import live_execution_mode_for_exchange
+
     execution_mode = (
-        live_modes.get(cfg.exchange.name, "bitget_live_limited")
+        live_execution_mode_for_exchange(cfg.exchange.name) or ""
         if cfg.exchange.mode == "live"
         else cfg.exchange.paper_execution_mode
     )

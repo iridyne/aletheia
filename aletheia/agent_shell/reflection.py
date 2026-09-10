@@ -85,6 +85,8 @@ def _compute_outcome(symbol: str | None, proposal_id: str | None, decided_at: st
         if row is None:
             return "Outcome unavailable: proposal has no causally linked position."
         position = dict(row)
+        if position.get("execution_mode") == "paper_internal":
+            return "Outcome unavailable: archived simulator position."
         if position.get("status") == "open":
             upnl = position.get("unrealized_pnl")
             return (

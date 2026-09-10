@@ -34,7 +34,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         direction="long",
         quantity=1.0,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executed",
     )
     repo.insert_trade_proposal(primary)
@@ -48,7 +48,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
             direction="long",
             quantity=1.0,
             price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             status="executed",
         )
         repo.insert_trade_proposal(secondary)
@@ -80,6 +80,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
 
     primary_order = Order(
         id=f"order-primary-{position_id}",
+        client_order_id=primary.id,
         proposal_id=primary.id,
         risk_decision_id=primary_decision.id,
         position_id=position_id,
@@ -89,11 +90,12 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         order_type="market",
         quantity=1.0,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="filled",
     )
     secondary_order = Order(
         id=f"order-secondary-{position_id}",
+        client_order_id=secondary.id,
         proposal_id=secondary.id,
         risk_decision_id=secondary_decision.id,
         position_id=position_id,
@@ -103,7 +105,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         order_type="market",
         quantity=1.0,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="filled",
     )
     repo.insert_order(primary_order)
@@ -122,7 +124,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         funding_cost=0.0,
         funding_source="not_applicable",
         realized_pnl=20.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         opportunity_id=opportunity.id,
         proposal_id=primary.id,
         order_id=primary_order.id,
@@ -130,9 +132,9 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         close_reason="take_profit",
         closed_at=datetime.now(timezone.utc).isoformat(),
         close_category="strategy",
-        entry_price_source="local_fill",
+        entry_price_source="broker_fill",
         entry_fill_verified=True,
-        exit_price_source="local_fill",
+        exit_price_source="broker_fill",
         exit_fill_verified=True,
         outcome_eligible=True,
         outcome_exclusion_reason="eligible",

@@ -99,7 +99,7 @@ def test_trade_fill_not_blocked_by_alert_via_telegram_false(tmp_path, monkeypatc
 
     notifications.notify_trade_fill(
         symbol="BTC/USDT", direction="long", quantity=0.01,
-        fill_price=60000.0, position_id="pos-test-1", execution_mode="paper_internal",
+        fill_price=60000.0, position_id="pos-test-1", execution_mode="bitget_demo",
     )
 
     assert len(sent) == 1, "trade fill must still be sent when alert_via_telegram=False"
@@ -456,7 +456,7 @@ def test_trade_and_summary_channels_are_independent(
             quantity=0.01,
             fill_price=60000.0,
             position_id="pos-1226",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
     else:
         import aletheia.portfolio.pnl as pnl
@@ -529,14 +529,14 @@ def test_trade_fill_escapes_dynamic_text_once_at_final_telegram_boundary(
         quantity=0.01,
         fill_price=60000.0,
         position_id="pos-1745-fill",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
 
     assert len(delivered) == 1
     chat_id, text, parse_mode = delivered[0]
     assert chat_id == 999
     assert parse_mode == "HTML"
-    assert text.startswith("⚠️ <b>Aletheia:</b> Trade Fill [Paper Internal]")
+    assert text.startswith("⚠️ <b>Aletheia:</b> Trade Fill [Bitget Demo]")
     assert "BTC&amp;USDT&lt;x&gt;" in text
     assert "&amp;amp;" not in text
     assert "<code>" not in text

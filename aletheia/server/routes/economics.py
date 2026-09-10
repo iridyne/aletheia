@@ -39,11 +39,6 @@ from aletheia.economics.tracing import (
     list_token_summary,
     tracing_enabled,
 )
-from aletheia.economics.viability import (
-    audit_enabled,
-    build_operator_viability,
-    build_system_viability,
-)
 from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.fallback import get_model_health_snapshot
 
@@ -63,10 +58,9 @@ def usage_insights(
 
 @router.get("/status")
 def economics_status() -> dict:
-    """Report kill-switch state for the two economics subsystems."""
+    """Report the current runtime cost tracing state."""
     return {
         "tracing_enabled": tracing_enabled(),
-        "audit_enabled": audit_enabled(),
     }
 
 
@@ -160,46 +154,6 @@ def costs_by_tool(
         window_start=start.isoformat(),
         window_end=end.isoformat(),
         run_id=run_id,
-    )
-
-
-@router.get("/viability")
-def viability(
-    scope: str = Query("system", pattern="^(system|operator)$"),
-    days: int = Query(7, ge=1, le=365),
-    execution_mode: Literal["paper_internal"] = "paper_internal",
-    data_cost_usd: Optional[float] = Query(None, ge=0),
-    infrastructure_cost_usd: Optional[float] = Query(None, ge=0),
-    other_cost_usd: Optional[float] = Query(None, ge=0),
-    as_of: Optional[str] = None,
-) -> dict:
-    """Compute a viability report on demand.
-
-    Persistence is intentionally disabled on the GET path: this endpoint
-    exists for dashboards, not for producing audit rows. `aletheia audit
-    viability` remains the persisted-write path.
-    """
-    if not audit_enabled():
-        raise HTTPException(
-            status_code=503,
-            detail="viability audit disabled by ALETHEIA_VIABILITY_AUDIT",
-        )
-    if scope == "system":
-        return build_system_viability(
-            days=days,
-            execution_mode=execution_mode,
-            data_cost_usd=data_cost_usd,
-            infrastructure_cost_usd=infrastructure_cost_usd,
-            other_cost_usd=other_cost_usd,
-            window_end=as_of,
-            persist=False,
-        )
-    return build_operator_viability(
-        days=days,
-        execution_mode=execution_mode,
-        data_cost_usd=data_cost_usd,
-        window_end=as_of,
-        persist=False,
     )
 
 

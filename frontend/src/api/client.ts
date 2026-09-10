@@ -628,7 +628,6 @@ export interface EconomicsDailyPoint extends EconomicsProviderBucket {
 // their query results instead of reaching for `any`.
 export interface EconomicsStatusResponse {
 	tracing_enabled: boolean;
-	audit_enabled: boolean;
 }
 
 export interface EconomicsCostsByTypeBucket {
@@ -1145,47 +1144,6 @@ export const api = {
 			by_role: Record<string, Record<string, number>>;
 			token_integrity_observation_counts: Record<string, number>;
 		}>(`/economics/tokens${suffix}`);
-	},
-	getEconomicsViability: (params: {
-		scope: "system" | "operator";
-		days?: number;
-		execution_mode?: string;
-		data_cost_usd?: number;
-		infrastructure_cost_usd?: number;
-		other_cost_usd?: number;
-		as_of?: string;
-	}) => {
-		const qs = new URLSearchParams();
-		qs.set("scope", params.scope);
-		if (params.days !== undefined) qs.set("days", String(params.days));
-		if (params.execution_mode) qs.set("execution_mode", params.execution_mode);
-		if (params.data_cost_usd !== undefined)
-			qs.set("data_cost_usd", String(params.data_cost_usd));
-		if (params.infrastructure_cost_usd !== undefined)
-			qs.set("infrastructure_cost_usd", String(params.infrastructure_cost_usd));
-		if (params.other_cost_usd !== undefined)
-			qs.set("other_cost_usd", String(params.other_cost_usd));
-		if (params.as_of) qs.set("as_of", params.as_of);
-		return fetchJson<{
-			scope: string;
-			window_start: string;
-			window_end: string;
-			verdict:
-				| "positive"
-				| "neutral"
-				| "negative"
-				| "insufficient_data"
-				| "invalid";
-			viability_amount_usd: number | null;
-			net_trading_result_usd: number | null;
-			deployment_cost_usd: number | null;
-			intelligence_cost_usd: number | null;
-			tool_cost_usd: number | null;
-			data_cost_usd: number | null;
-			cost_completeness: string;
-			sample_count: number;
-			reason: string;
-		}>(`/economics/viability?${qs.toString()}`);
 	},
 	getEconomicsViabilityReports: (params?: {
 		scope?: "system" | "operator";
@@ -2070,7 +2028,6 @@ export const api = {
 	},
 	getProposals: () => fetchJson<any[]>("/proposals"),
 	getProposal: (id: string) => fetchJson<any>(`/proposals/${id}`),
-	approveProposal: (id: string) => post(`/proposals/${id}/approve-paper`),
 	rejectProposal: (id: string) => post(`/proposals/${id}/reject`),
 	getProposalRiskDecision: (id: string) =>
 		fetchJson<{
@@ -2354,21 +2311,6 @@ export const api = {
 		amount_usdt: number;
 		note?: string;
 	}) => post<any>("/capital/events", body),
-
-	// Local paper account (available only in Paper internal / No exchange mode)
-	getPaperAccount: () => fetchJson<any>("/settings/paper-account"),
-	creditPaperAccount: (amount_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/credit", { amount_usdt, note }),
-	debitPaperAccount: (amount_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/debit", { amount_usdt, note }),
-	setPaperAccountBalance: (cash_balance_usdt: number, note?: string) =>
-		post<any>("/settings/paper-account/set-balance", {
-			cash_balance_usdt,
-			note,
-		}),
-	closeAllPaperPositions: () => post<any>("/settings/paper-account/close-all"),
-	closePaperSpotPositions: () =>
-		post<any>("/settings/paper-account/close-spot"),
 
 	// Manual single-position close (human actor, paper/demo only; live returns 409).
 	// order_type: 'market' (immediate) | 'limit' (rest exit_limit_price locally)
@@ -2855,7 +2797,7 @@ export type TradeInsights = components["schemas"]["TradeInsightsResponse"];
 
 
 export interface AccountEquityHistory {
-	source: "local_paper_ledger" | "exchange_account_snapshot";
+	source: "exchange_account_snapshot";
 	state: "available" | "unavailable";
 	points: { time: string; equity_usdt: number }[];
 	adjusted_points: {

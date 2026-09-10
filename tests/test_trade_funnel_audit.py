@@ -396,7 +396,7 @@ def test_trade_funnel_keeps_unknown_choke_when_rejections_do_not_cover_cohort():
     report = build_trade_funnel_audit(hours=24)
 
     assert report["causal_selection_rejection_coverage"] == 1
-    assert report["main_choke_point"]["stage"] == "ranker_or_paper_trader"
+    assert report["main_choke_point"]["stage"] == "historical_signal_gap"
 
 
 def test_historical_ranker_counts_do_not_invent_current_eligibility():
@@ -555,7 +555,7 @@ def test_trade_funnel_points_tiny_positions_to_sizing_trace():
     assert report["counts"]["positions_opened"] == 3
     assert report["position_stats"]["median_notional_usdt"] == 1.5
     assert report["main_choke_point"]["stage"] == "sizing_tiny_positions"
-    assert "Sizing Trace Audit" in report["main_choke_point"]["next_action"]
+    assert "inspect entry-status" in report["main_choke_point"]["next_action"]
 
 
 def test_trade_funnel_cli_outputs_human_and_json_reports():
@@ -572,5 +572,7 @@ def test_trade_funnel_cli_outputs_human_and_json_reports():
     assert "Trade Funnel Audit" in human.output
     assert machine.exit_code == 0
     payload = json.loads(machine.output)
+    assert "historical signal pipeline" in human.output
+    assert payload["scope"] == "historical_signal_pipeline"
     assert payload["window"]["days"] == 7
     assert "main_choke_point" in payload

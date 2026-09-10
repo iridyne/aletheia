@@ -264,7 +264,7 @@ def test_alpha_attribution_contract_shape_on_empty_db():
               "signal (Win-line A). See ENTRY_EXIT_ASYMMETRY_ANALYSIS_2026-07-01.md.",
               status="implemented"),
 )
-def test_scorecard_excludes_synthetic_closes():
+def test_scorecard_excludes_synthetic_closes(monkeypatch):
     """Behavioral proof on the autouse in-memory DB.
 
     Insert 3 genuine closes (WR 66.7%, PF 4.0) + 10 synthetic reconciled_gone
@@ -275,43 +275,38 @@ def test_scorecard_excludes_synthetic_closes():
     from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
     from aletheia.analytics import go_live_scorecard as sc
-    from tests.test_outcome_closure import _insert_entry_chain
+    from aletheia.analytics import execution_mode
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+
+    monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "bitget_demo")
 
     def _closed(symbol, direction, pnl, reason):
-        synthetic = reason == "reconciled_gone"
         position_id = f"scorecard-{symbol.replace('/', '-')}-{reason}"
-        causal_ids = (None, None, None)
-        if not synthetic:
-            causal_ids = _insert_entry_chain(
+        if reason != "reconciled_gone":
+            _insert_closed_position_via_producer(
                 position_id=position_id,
                 symbol=symbol,
                 market_type="usdt_futures",
                 direction=direction,
                 quantity=1.0,
-                price=100.0,
-                execution_mode="paper_internal",
+                entry_price=100.0,
+                realized_pnl=pnl,
+                execution_mode="bitget_demo",
+                close_reason=reason,
+                closed_at="2026-07-12T08:00:00+00:00",
             )
-        opportunity_id, proposal_id, order_id = causal_ids
+            return
         repo.insert_position(Position(
             id=position_id,
             symbol=symbol, market_type="usdt_futures", direction=direction,
-            quantity=1.0, entry_price=100.0, execution_mode="paper_internal",
+            quantity=1.0, entry_price=100.0, execution_mode="bitget_demo",
             status="closed", realized_pnl=pnl, close_reason=reason,
             closed_at="2026-07-12T08:00:00+00:00",
-            current_price=(100.0 + pnl if direction == "long" else 100.0 - pnl),
-            entry_fee=0.0, exit_fee=0.0,
-            funding_cost=0.0, funding_source="local_simulation",
-            entry_price_source="unavailable" if synthetic else "broker_fill",
-            entry_fill_verified=not synthetic,
-            close_category="administrative" if synthetic else "strategy",
-            exit_price_source="unavailable" if synthetic else "broker_fill",
-            exit_fill_verified=not synthetic,
-            outcome_eligible=not synthetic,
-            outcome_exclusion_reason="administrative_close" if synthetic else "eligible",
+            current_price=100.0 - pnl,
+            close_category="administrative",
+            outcome_eligible=False,
+            outcome_exclusion_reason="administrative_close",
             outcome_semantics_version="oi-v1",
-            opportunity_id=opportunity_id,
-            proposal_id=proposal_id,
-            order_id=order_id,
         ))
 
     # Genuine cohort: 2 wins (+10 each), 1 loss (-5) → WR 66.7%, PF 20/5 = 4.0

@@ -1,7 +1,7 @@
 """Exchange-demo entry quality brake.
 
-Live check #14 and local ``paper_internal`` stay unchanged. This module only
-names violations; the Risk Engine remains the authoritative gate.
+Live check #14 stays unchanged. This module only names violations; the Risk
+Engine remains the authoritative gate.
 
 Default policy (demo, exchange-backed venues only):
 

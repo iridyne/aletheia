@@ -5,7 +5,7 @@ asks the LLM to identify notable probability trends, and creates
 asset_class="prediction" Opportunities for informational tracking.
 
 Design choices:
-- asset_class = "prediction" — paper_trader IGNORES these (observation-only).
+- asset_class = "prediction" — informational observations without order authority.
 - direction_bias maps to probability momentum:
     "long" = YES probability rising (bet is gaining)
     "short" = YES probability falling (bet is losing ground)

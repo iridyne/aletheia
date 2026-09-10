@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
-CURRENT_PAPER_FILL_MODEL_VERSION = "paper-order-fill/v1"
 
 ClosureCategory = Literal["strategy", "administrative", "maintenance", "unknown"]
 
@@ -32,7 +31,8 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
     "maintenance_close",
     "not_marked_eligible",
     "unverified_entry_fill",
-    "unverified_paper_fill_model",
+    "unverified_paper_fill_model",  # Preserved historical exclusion reason.
+    "archived_execution_mode",
     "unverified_exit_fill",
     "unverified_exit_price_source",
     "unknown_close_category",
@@ -145,10 +145,10 @@ def validated_funding_economics(
 ) -> tuple[float | None, str]:
     """Return funding only when its provenance matches the account boundary.
 
-    A numeric value alone is not evidence. Local paper futures can only use the
-    local simulation ledger; exchange-backed demo/live futures can only use the
-    broker ledger. Unknown execution modes fail closed rather than inheriting a
-    plausible-looking source label.
+    A numeric value alone is not evidence. This reader preserves the recorded
+    local funding provenance of archived simulator rows. External demo/live
+    futures require broker-ledger evidence. Unknown execution modes do not
+    inherit a plausible-looking source label.
     """
     market = _normalize(market_type)
     mode = _normalize(execution_mode)
@@ -438,19 +438,15 @@ def assess_position_closure(
 def assess_reportable_outcome(
     row: dict[str, Any], *, db: Any = None
 ) -> OutcomeAssessment:
-    """Add the versioned clean-window gate to economic close eligibility."""
+    """Exclude archived execution and apply the current clean-window gate."""
     assessment = assess_position_closure(row, db=db)
     if not assessment.eligible:
         return assessment
-    if (
-        _normalize(row.get("execution_mode")) == "paper_internal"
-        and _paper_fill_model_version(row, db=db)
-        != CURRENT_PAPER_FILL_MODEL_VERSION
-    ):
+    if _normalize(row.get("execution_mode")) == "paper_internal":
         return replace(
             assessment,
             eligible=False,
-            reason="unverified_paper_fill_model",
+            reason="archived_execution_mode",
         )
     from aletheia.analytics.learning_window import assess_outcome_window
 
@@ -458,27 +454,6 @@ def assess_reportable_outcome(
     if window_reason != "eligible":
         return replace(assessment, eligible=False, reason=window_reason)
     return assessment
-
-
-def _paper_fill_model_version(row: dict[str, Any], *, db: Any = None) -> str:
-    if "_paper_fill_model_version" in row:
-        return _normalize(row.get("_paper_fill_model_version"))
-    order_id = str(row.get("order_id") or "").strip()
-    if not order_id:
-        return ""
-    try:
-        if db is None:
-            from aletheia.storage.sqlite import get_db
-
-            db = get_db()
-        fill = db.execute(
-            "SELECT paper_fill_model_version FROM fills WHERE order_id=? "
-            "ORDER BY filled_at, id LIMIT 1",
-            (order_id,),
-        ).fetchone()
-    except Exception:
-        return ""
-    return _normalize(fill["paper_fill_model_version"] if fill else None)
 
 
 def raw_account_events(

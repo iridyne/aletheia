@@ -551,7 +551,7 @@ class TestExitRulesConsumeSignal:
             "id": "p1", "symbol": "SOL/USDT", "direction": "long",
             "entry_price": 100.0, "stop_price": None,
             "opened_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
         }
         signal = MarketSignalContext(
             symbol="SOL/USDT", direction_bias="short",
@@ -586,7 +586,7 @@ class TestExitRulesConsumeSignal:
             "id": "p2", "symbol": "BTC/USDT", "direction": "long",
             "entry_price": 60000.0, "stop_price": None,
             "opened_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
         }
         signal = MarketSignalContext(
             symbol="BTC/USDT", direction_bias="long",

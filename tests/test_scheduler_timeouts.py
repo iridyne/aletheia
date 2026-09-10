@@ -1089,24 +1089,15 @@ def _patch_scheduler_result(
         monkeypatch.setattr(
             position_manager, "evaluate_open_positions", lambda: result
         )
-    elif job_id in {"paper_funding_settler", "broker_funding_settler"}:
+    elif job_id == "broker_funding_settler":
         async def produce():
             return result
 
-        if job_id == "paper_funding_settler":
-            from aletheia.portfolio import paper_account
+        from aletheia.portfolio import broker_funding_settlement
 
-            monkeypatch.setattr(
-                paper_account, "settle_unsettled_paper_closes", produce
-            )
-        else:
-            from aletheia.portfolio import broker_funding_settlement
-
-            monkeypatch.setattr(
-                broker_funding_settlement,
-                "settle_unsettled_exchange_closes",
-                produce,
-            )
+        monkeypatch.setattr(
+            broker_funding_settlement, "settle_unsettled_exchange_closes", produce
+        )
         monkeypatch.setattr(
             scheduler,
             "_run_async_with_timeout",
@@ -1149,9 +1140,6 @@ def _patch_scheduler_result(
          "position_manager_reported_errors"),
         ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": ["adopt failed"]},
          "position_reconcile_reported_errors"),
-        ("paper_funding_settler", {"settled": 1, "revived": 0, "still_pending": 1,
-                                    "errors": ["position-1: provider down"]},
-         "paper_funding_settler_reported_errors"),
         ("broker_funding_settler", {"checked": 2, "settled": 1, "still_pending": 1,
                                      "errors": ["position-2: TimeoutError"]},
          "broker_funding_settler_reported_errors"),
@@ -1206,8 +1194,6 @@ def test_scheduler_result_failures_survive_outer_wrapper(
         ("reconciliation", {"checked": 0, "errors": []}),
         ("position_manager", {"checked": 0, "closed": 0, "errors": []}),
         ("position_reconcile", {"adopted": [], "closed_orphans": [], "errors": []}),
-        ("paper_funding_settler", {"settled": 0, "revived": 0, "still_pending": 1,
-                                    "errors": []}),
         ("broker_funding_settler", {"checked": 0, "settled": 0, "still_pending": 1,
                                      "errors": []}),
     ],
@@ -1340,3 +1326,17 @@ def test_bounded_slow_cancel_does_not_stall_caller(monkeypatch):
 
     assert result is None
     assert elapsed < 0.5, f"_bounded stalled {elapsed:.2f}s; slow-cancel must not block caller"
+
+
+def test_derivative_collection_does_not_expand_from_archived_positions(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    from aletheia.storage import repositories as repo
+
+    monkeypatch.setattr(repo, "list_all_open_positions", lambda: [{
+        "execution_mode": "paper_internal", "market_type": "usdt_futures",
+        "status": "open", "symbol": "ETH/USDT",
+    }])
+    assert scheduler._get_derivative_symbols([
+        SimpleNamespace(symbol="BTC/USDT"), SimpleNamespace(symbol="BTC/USDT"),
+    ]) == ["BTC/USDT"]

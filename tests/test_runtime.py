@@ -414,11 +414,13 @@ async def test_portfolio_agent_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     result = await run_agent("portfolio_agent", trigger_type="manual")
     assert any("portfolio_snapshot:" in o for o in result["outputs"])
-    assert len(repo.list_portfolio_snapshots()) == 1
+    snapshots = repo.list_portfolio_snapshots()
+    assert len(snapshots) == 1
+    assert snapshots[0]["execution_mode"] == "bitget_demo"
     reset_db()
 
 

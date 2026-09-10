@@ -39,104 +39,31 @@ def _setup_db(tmp_path, monkeypatch):
     SpecClaim(
         "PL-OF-01",
         "pipeline_outcome_feedback",
-        "§1 local paper outcome handoff",
+        "§1 external outcome handoff",
         "L2c",
-        "A real native paper entry closed through the production router becomes one "
-        "versioned eligible local-fill Outcome whose Proposal, Risk, Order, Position, "
+        "An external entry chain closed through production PnL becomes one "
+        "versioned eligible broker-fill Outcome whose Proposal, Risk, Order, Position, "
         "Opportunity, and scanner identity reach Attribution and factor Feedback.",
         status="implemented",
     )
 )
-def test_native_paper_close_reaches_attribution_and_feedback(tmp_path, monkeypatch):
+def test_external_close_reaches_attribution_and_feedback(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.analytics.factor_feedback import build_factor_feedback
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
-    from aletheia.config.loader import load_config
-    from aletheia.execution.paper_broker import execute_paper_order
-    from aletheia.learning.outcomes import assess_realized_position
-    from aletheia.portfolio.position_manager import close_position_routed
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import (
-        MarketSnapshot,
-        Opportunity,
-        RiskDecision,
-        TradeProposal,
-    )
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
-    opportunity = Opportunity(
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="paper outcome round trip",
-        source_agent="market_observer",
-        scanner_family="trend",
+    position = _insert_closed_position_via_producer(
+        position_id="outcome-feedback", symbol="BTC/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=100.0, realized_pnl=10.0,
+        execution_mode="bitget_demo", closed_at=datetime.now(timezone.utc).isoformat(),
+        close_reason="take_profit", scanner_family="trend",
     )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        opportunity_id=opportunity.id,
-        symbol=opportunity.symbol,
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-        status="approved",
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        proposal_id=proposal.id,
-        approved=True,
-        allowed_execution_mode=proposal.execution_mode,
-        proposal_execution_mode=proposal.execution_mode,
-        decision_role="authoritative",
-        evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=proposal.commit_hash,
-    )
-    repo.insert_risk_decision(decision)
-    opened = execute_paper_order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=proposal.execution_mode,
-        opportunity_id=opportunity.id,
-    )
-    configured_venue = load_config().market_data.ccxt_exchange
-    repo.insert_market_snapshot(MarketSnapshot(
-        symbol=proposal.symbol,
-        market_type="spot",
-        exchange=configured_venue,
-        price=110.0,
-        snapshot_at=datetime.now(timezone.utc).isoformat(),
-    ))
-
-    closed = close_position_routed(
-        opened["position_id"],
-        "take_profit",
-    )
-
-    position = repo._select_one("positions", opened["position_id"])
-    assert closed["fill_price"] == 109.945
-    assert repo._select_one("fills", closed["fill_id"])["fill_price"] == 109.945
-    assert position["current_price"] == 109.945
-    assert assess_realized_position(position).eligible is True
-    assert position["close_category"] == "strategy"
-    assert position["exit_price_source"] == "local_fill"
-    assert position["exit_fill_verified"] == 1
-    assert position["outcome_eligible"] == 1
-    assert position["outcome_exclusion_reason"] == "eligible"
-    attribution = build_trade_attribution_rows(limit=10)
-    assert len(attribution) == 1
-    row = attribution[0]
-    assert row["position_id"] == opened["position_id"]
-    assert row["proposal_id"] == proposal.id
-    assert row["order_id"] == opened["order_id"]
-    assert row["opportunity_id"] == opportunity.id
+    assert position["exit_price_source"] == "broker_fill"
+    [row] = build_trade_attribution_rows(limit=10)
+    for field in ("proposal_id", "order_id", "opportunity_id"):
+        assert row[field] == position[field]
+    assert row["position_id"] == position["id"]
     assert row["scanner_family"] == "trend"
     assert build_factor_feedback(limit=10, min_trades=1)
 
@@ -194,93 +121,36 @@ def test_unverified_exchange_close_is_explicitly_excluded_from_feedback(
 
 @spec_claim(
     SpecClaim(
-        "PL-OF-03",
-        "pipeline_outcome_feedback",
-        "§3 atomic local settlement",
-        "L2b",
-        "A local paper Position close and its paper-account cash settlement commit as one "
-        "unit; if settlement fails, the Position remains open and no eligible Outcome "
-        "escapes for Attribution or Feedback.",
-        status="implemented",
-    )
-)
-def test_paper_close_rolls_back_when_cash_settlement_fails(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.portfolio import paper_account
-    from aletheia.portfolio.pnl import close_position
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-
-    position = Position(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=100.0,
-        entry_fee=0.06,
-        execution_mode="paper_internal",
-    )
-    repo.insert_position(position)
-    paper_account.get_paper_account()
-    monkeypatch.setattr(
-        paper_account,
-        "settle_position_closed",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            RuntimeError("forced paper settlement failure")
-        ),
-    )
-
-    import pytest
-
-    with pytest.raises(RuntimeError, match="forced paper settlement failure"):
-        close_position(position.id, exit_price=110.0, reason="take_profit")
-
-    stored = repo._select_one("positions", position.id)
-    assert stored["status"] == "open"
-    assert stored["outcome_eligible"] == 0
-    assert not repo.has_paper_account_position_event("position_closed", position.id)
-
-
-@spec_claim(
-    SpecClaim(
         "PL-OF-04",
         "pipeline_outcome_feedback",
         "§4 attribution gate",
         "L2b",
-        "A locally verified close without the Proposal, entry Order, and Opportunity "
+        "A verified external close without the Proposal, entry Order, and Opportunity "
         "identity required by downstream Attribution remains explicitly ineligible.",
         status="implemented",
     )
 )
-def test_local_close_without_causal_identity_is_not_feedback_eligible(
-    tmp_path, monkeypatch
+def test_verified_close_without_causal_identity_is_not_feedback_eligible(
+    tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
-    from aletheia.portfolio.pnl import close_position
+    from aletheia.portfolio.outcome_closure import close_position_verified
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _verified_result
 
     position = Position(
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        entry_price=100.0,
-        current_price=100.0,
-        entry_fee=0.06,
-        execution_mode="paper_internal",
-        entry_price_source="local_fill",
-        entry_fill_verified=True,
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=2.0, entry_price=100.0, entry_fee=0.2,
+        execution_mode="bitget_demo", entry_price_source="broker_fill",
+        entry_fill_verified=True, funding_cost=0.0, funding_source="not_applicable",
     )
     repo.insert_position(position)
-
-    result = close_position(position.id, exit_price=110.0, reason="take_profit")
+    result = close_position_verified(position.id, _verified_result(position))
 
     stored = repo._select_one("positions", position.id)
     assert result["outcome_eligible"] is False
-    assert stored["outcome_eligible"] == 0
     assert stored["outcome_exclusion_reason"] == "missing_attribution"
     assert eligible_strategy_outcomes() == []
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
@@ -298,63 +168,22 @@ def test_local_close_without_causal_identity_is_not_feedback_eligible(
     )
 )
 def test_futures_close_without_funding_evidence_is_explicitly_ineligible(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch,
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.analytics.factor_feedback import build_factor_feedback
-    from aletheia.execution.paper_broker import execute_paper_order
     from aletheia.learning.outcomes import assess_realized_position
-    from aletheia.portfolio.pnl import close_position
+    from aletheia.portfolio.outcome_closure import close_position_verified
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, RiskDecision, TradeProposal
+    from tests.test_outcome_closure import _position, _verified_result
 
-    opportunity = Opportunity(
-        symbol="BTC/USDT",
-        market="perp",
-        direction_bias="long",
-        thesis="funding evidence gate",
-        source_agent="market_observer",
-        scanner_family="trend",
-    )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        opportunity_id=opportunity.id,
-        symbol=opportunity.symbol,
-        market_type="usdt_futures",
-        direction="long",
-        order_type="market",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-        status="approved",
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        proposal_id=proposal.id,
-        approved=True,
-        allowed_execution_mode=proposal.execution_mode,
-        proposal_execution_mode=proposal.execution_mode,
-        decision_role="authoritative",
-        evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=proposal.commit_hash,
-    )
-    repo.insert_risk_decision(decision)
-    opened = execute_paper_order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=proposal.execution_mode,
-        opportunity_id=opportunity.id,
-    )
+    position = _position().model_copy(update={
+        "funding_cost": None, "funding_source": "unavailable",
+    })
+    repo.insert_position(position)
+    close_position_verified(position.id, _verified_result(position))
 
-    close_position(opened["position_id"], exit_price=110.0, reason="take_profit")
-
-    stored = repo._select_one("positions", opened["position_id"])
+    stored = repo._select_one("positions", position.id)
     assessment = assess_realized_position(stored)
     assert assessment.eligible is False
     assert assessment.reason == "incomplete_funding_economics"
@@ -379,6 +208,7 @@ def test_outcome_consumer_rejects_inconsistent_net_economics():
 
     assessment = assess_position_closure({
         "id": "position-economic-mismatch",
+        "execution_mode": "bitget_demo",
         "status": "closed",
         "symbol": "BTC/USDT",
         "market_type": "spot",
@@ -397,9 +227,9 @@ def test_outcome_consumer_rejects_inconsistent_net_economics():
         "opportunity_id": "opportunity-1",
         "_attribution_complete": 1,
         "close_category": "strategy",
-        "entry_price_source": "local_fill",
+        "entry_price_source": "broker_fill",
         "entry_fill_verified": True,
-        "exit_price_source": "local_fill",
+        "exit_price_source": "broker_fill",
         "exit_fill_verified": True,
         "outcome_eligible": True,
         "outcome_exclusion_reason": "eligible",
@@ -426,6 +256,7 @@ def test_verified_exit_cannot_mask_an_unverified_entry_fill():
 
     assessment = assess_position_closure({
         "id": "position-unverified-entry",
+        "execution_mode": "bitget_demo",
         "status": "closed",
         "symbol": "BTC/USDT",
         "market_type": "spot",
@@ -470,115 +301,24 @@ def test_verified_exit_cannot_mask_an_unverified_entry_fill():
 )
 def test_mismatched_entry_order_identity_blocks_outcome_hooks(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    from aletheia.execution.paper_broker import execute_paper_order
-    from aletheia.portfolio.pnl import close_position
+    from aletheia.portfolio.outcome_closure import close_position_verified
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Opportunity, Order, RiskDecision, TradeProposal
+    from tests.test_outcome_closure import _insert_entry_chain, _position, _verified_result
 
-    opportunity = Opportunity(
-        id="opportunity-outcome-primary",
-        symbol="BTC/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="primary outcome chain",
-        source_agent="market_observer",
-        scanner_family="trend",
+    position = _position()
+    repo.insert_position(position)
+    _, _, unrelated_order_id = _insert_entry_chain(
+        position_id="unrelated-position", symbol="ETH/USDT", market_type="spot",
+        direction="long", quantity=1.0, price=50.0, execution_mode="bitget_demo",
+        entry_fee=0.0,
     )
-    repo.insert_opportunity(opportunity)
-    proposal = TradeProposal(
-        id="proposal-outcome-primary",
-        opportunity_id=opportunity.id,
-        symbol=opportunity.symbol,
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
-        status="approved",
-    )
-    repo.insert_trade_proposal(proposal)
-    decision = RiskDecision(
-        id="risk-outcome-primary",
-        proposal_id=proposal.id,
-        approved=True,
-        allowed_execution_mode=proposal.execution_mode,
-        proposal_execution_mode=proposal.execution_mode,
-        decision_role="authoritative",
-        evaluated_quantity=proposal.quantity,
-        proposal_commit_hash=proposal.commit_hash,
-    )
-    repo.insert_risk_decision(decision)
-    opened = execute_paper_order(
-        proposal_id=proposal.id,
-        risk_decision_id=decision.id,
-        symbol=proposal.symbol,
-        market_type=proposal.market_type,
-        direction=proposal.direction,
-        order_type=proposal.order_type,
-        quantity=proposal.quantity,
-        price=proposal.price,
-        execution_mode=proposal.execution_mode,
-        opportunity_id=opportunity.id,
-    )
+    force_update_position(position.id, order_id=unrelated_order_id)
+    result = close_position_verified(position.id, _verified_result(position))
 
-    unrelated_opportunity = Opportunity(
-        id="opportunity-outcome-unrelated",
-        symbol="ETH/USDT",
-        market="spot",
-        direction_bias="long",
-        thesis="unrelated chain",
-        source_agent="market_observer",
-        scanner_family="trend",
-    )
-    repo.insert_opportunity(unrelated_opportunity)
-    unrelated_proposal = TradeProposal(
-        id="proposal-outcome-unrelated",
-        opportunity_id=unrelated_opportunity.id,
-        symbol=unrelated_opportunity.symbol,
-        market_type="spot",
-        direction="long",
-        order_type="market",
-        quantity=1.0,
-        price=50.0,
-        execution_mode="paper_internal",
-        status="approved",
-    )
-    repo.insert_trade_proposal(unrelated_proposal)
-    unrelated_decision = RiskDecision(
-        id="risk-outcome-unrelated",
-        proposal_id=unrelated_proposal.id,
-        approved=True,
-        allowed_execution_mode=unrelated_proposal.execution_mode,
-        proposal_execution_mode=unrelated_proposal.execution_mode,
-        decision_role="authoritative",
-        evaluated_quantity=unrelated_proposal.quantity,
-        proposal_commit_hash=unrelated_proposal.commit_hash,
-    )
-    repo.insert_risk_decision(unrelated_decision)
-    unrelated_order = Order(
-        id="order-outcome-unrelated",
-        proposal_id=unrelated_proposal.id,
-        risk_decision_id=unrelated_decision.id,
-        symbol=unrelated_proposal.symbol,
-        market_type=unrelated_proposal.market_type,
-        direction=unrelated_proposal.direction,
-        order_type=unrelated_proposal.order_type,
-        quantity=unrelated_proposal.quantity,
-        price=unrelated_proposal.price,
-        execution_mode=unrelated_proposal.execution_mode,
-        status="filled",
-    )
-    repo.insert_order(unrelated_order)
-    force_update_position(opened["position_id"], order_id=unrelated_order.id)
-
-    result = close_position(
-        opened["position_id"], exit_price=110.0, reason="take_profit"
-    )
-
-    stored = repo._select_one("positions", opened["position_id"])
+    stored = repo._select_one("positions", position.id)
     assert result["outcome_eligible"] is False
     assert stored["outcome_exclusion_reason"] == "missing_attribution"
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 
 
 @spec_claim(
@@ -792,44 +532,6 @@ def test_hook_failure_after_close_commit_is_durable_and_replayable(
 
 @spec_claim(
     SpecClaim(
-        "PL-OF-12",
-        "pipeline_outcome_feedback",
-        "§12 atomic close and hook intent",
-        "L2c",
-        "If local cash settlement rolls back an otherwise eligible close, its durable "
-        "Outcome hook intent rolls back in the same transaction.",
-        status="implemented",
-    )
-)
-def test_hook_job_rolls_back_with_failed_eligible_paper_close(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    import pytest
-
-    from aletheia.portfolio import paper_account
-    from aletheia.portfolio.pnl import close_position
-    from aletheia.storage import repositories as repo
-    from tests.test_outcome_closure import _position
-
-    position = _position(execution_mode="paper_internal")
-    repo.insert_position(position)
-    paper_account.record_position_opened(position.id)
-    monkeypatch.setattr(
-        paper_account,
-        "settle_position_closed",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("forced settlement rollback")
-        ),
-    )
-
-    with pytest.raises(RuntimeError, match="forced settlement rollback"):
-        close_position(position.id, exit_price=110.0, reason="take_profit")
-
-    assert repo._select_one("positions", position.id)["status"] == "open"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
-
-
-@spec_claim(
-    SpecClaim(
         "PL-OF-13",
         "pipeline_outcome_feedback",
         "§13 replay eligibility revalidation",
@@ -938,86 +640,6 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
 
     delivered = []
     # Restore attribution reads so the replay can re-evaluate and mark eligible.
-    monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
-    monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
-    monkeypatch.setattr(
-        shadow_trades,
-        "resolve_shadow_trades_for_position",
-        lambda row: delivered.append(row["id"]),
-    )
-    replayed = outcome_hooks.process_outcome_hook_jobs(
-        position_id=position.id,
-        now="2100-01-01T00:00:00+00:00",
-    )
-
-    recovered = repo._select_one("positions", position.id)
-    [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
-    assert replayed["completed"] == 1
-    assert completed_job["status"] == "completed"
-    assert recovered["outcome_eligible"] == 1
-    assert recovered["outcome_exclusion_reason"] == "eligible"
-    assert delivered == [position.id]
-    assert any(
-        event["event_type"] == "outcome_eligibility_rechecked"
-        and event["entity_id"] == position.id
-        and event["actor"] == "outcome_hook_replay"
-        for event in repo.list_audit_events(limit=100)
-    )
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-OF-13C",
-        "pipeline_outcome_feedback",
-        "§13 local-paper close-time attribution recovery",
-        "L2c",
-        "A local-paper close that temporarily cannot read attribution keeps its cash and "
-        "Position close atomic while the existing outbox later restores Outcome feedback.",
-        status="implemented",
-    )
-)
-def test_local_paper_close_recovers_transient_attribution_read_failure(
-    tmp_path, monkeypatch,
-):
-    _setup_db(tmp_path, monkeypatch)
-    import aletheia.analytics.outcome_integrity as _oi_module
-    import aletheia.portfolio.outcome_hooks as _oh_module
-    from aletheia.analytics.outcome_integrity import AttributionReadError
-    from aletheia.counterfactual import trades as shadow_trades
-    from aletheia.portfolio import outcome_hooks, paper_account, pnl
-    from aletheia.storage import repositories as repo
-    from tests.test_outcome_closure import _position
-
-    position = _position(execution_mode="paper_internal")
-    repo.insert_position(position)
-    paper_account.record_position_opened(position.id)
-
-    real_attribution = _oi_module.attribution_chain_complete
-
-    def _raise_attribution_error(row, *, db=None):
-        raise AttributionReadError("temporary local attribution read failure")
-
-    monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
-    monkeypatch.setattr(_oh_module, "attribution_chain_complete", _raise_attribution_error)
-
-    result = pnl.close_position(
-        position.id,
-        exit_price=110.0,
-        reason="take_profit",
-    )
-
-    closed = repo._select_one("positions", position.id)
-    [failed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
-    assert result["outcome_eligible"] is False
-    assert closed["status"] == "closed"
-    assert closed["outcome_exclusion_reason"] == "attribution_read_failed"
-    assert failed_job["status"] == "failed"
-    assert any(
-        event["action"] == "position_closed"
-        for event in repo.list_paper_account_events(limit=20)
-    )
-
-    delivered = []
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
     monkeypatch.setattr(
@@ -1527,53 +1149,3 @@ def test_exchange_close_rejects_local_simulation_funding_provenance(
     assert eligible_strategy_outcomes() == []
     assert build_trade_attribution_rows(limit=10) == []
     assert build_factor_feedback(limit=10, min_trades=1) == []
-
-
-@spec_claim(
-    SpecClaim(
-        "PL-OF-20",
-        "pipeline_outcome_feedback",
-        "§19 local funding provenance",
-        "L2c",
-        "A local-paper futures close cannot accept broker-ledger funding; no net cash "
-        "settlement, Outcome, Attribution, Feedback, or outbox job is produced.",
-        status="implemented",
-    )
-)
-def test_local_paper_close_rejects_broker_funding_provenance(
-    tmp_path, monkeypatch,
-):
-    _setup_db(tmp_path, monkeypatch)
-    from aletheia.analytics.factor_feedback import build_factor_feedback
-    from aletheia.analytics.outcome_integrity import eligible_strategy_outcomes
-    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
-    from aletheia.portfolio import paper_account, pnl
-    from aletheia.storage import repositories as repo
-    from tests.test_outcome_closure import _position
-
-    position = _position(execution_mode="paper_internal").model_copy(
-        update={"funding_source": "broker_ledger"}
-    )
-    repo.insert_position(position)
-    paper_account.record_position_opened(position.id)
-
-    result = pnl.close_position(
-        position.id,
-        exit_price=110.0,
-        reason="take_profit",
-    )
-
-    stored = repo._select_one("positions", position.id)
-    assert result["realized_pnl"] is None
-    assert result["outcome_eligible"] is False
-    assert stored["funding_cost"] is None
-    assert stored["funding_source"] == "unavailable"
-    assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
-    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
-    assert eligible_strategy_outcomes() == []
-    assert build_trade_attribution_rows(limit=10) == []
-    assert build_factor_feedback(limit=10, min_trades=1) == []
-    assert not any(
-        event["action"] == "position_closed"
-        for event in repo.list_paper_account_events(limit=20)
-    )

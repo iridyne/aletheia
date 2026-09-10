@@ -7,8 +7,6 @@ import type { AssetItem, PortfolioAccount, UTAAccount } from '../types'
 import { fmtNum, fmtSigned, fmtCompactSigned, fmtSymbol } from '../lib/format'
 import { useCellFlash } from '../lib/useCellFlash'
 
-// Legacy local-paper contract is surfaced by AccountSnapshot: execution_target === 'local_paper'.
-
 const AccountEquityChart = lazy(() => import('../charts/AccountEquityChart'))
 const PnLChart = lazy(() => import('../charts/PnLChart'))
 // Bootstrap refresh replaces the old portfolio query cadence:
@@ -220,7 +218,7 @@ function HoverTile({ label, value, tone = 'neutral', context, onClick, tooltip, 
   )
 }
 
-/** PnL / Account zone — hero account value (UTA unified > exchange > local notional) + context tiles + equity curve. */
+/** PnL / Account zone — external account value + context tiles + equity curve. */
 export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }) {
   const navigate = useNavigate()
   const [hovered, setHovered] = useState(false)
@@ -229,7 +227,6 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
 
   const portfolio = bootstrap?.account as PortfolioAccount | undefined
   const exchangeMode = String(portfolio?.exchange_mode || 'demo')
-  const isLocalPaper = String(portfolio?.execution_mode || '') === 'paper_internal'
 
   const toneOf = (n: number | null) => (n == null ? 'muted' : n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral')
 
@@ -245,9 +242,7 @@ export default function PnLZone({ bootstrap }: { bootstrap?: OverviewBootstrap }
   const totalRaw = utaEquity ?? exchangeEquity ?? p?.total_value_usdt
   const totalValue = fmtNum(totalRaw)
   const syncCaveat =
-    isLocalPaper
-      ? 'local paper · no exchange'
-      : utaEquity != null
+    utaEquity != null
       ? utaAccounts.length > 1 ? `${utaAccounts.length} accounts · unified` : 'unified'
       : exchangeEquity != null
         ? syncStatus === 'stale' ? 'data stale' : 'live'

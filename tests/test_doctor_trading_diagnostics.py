@@ -54,9 +54,8 @@ def test_doctor_json_deep_includes_compact_trading_diagnostics():
     assert "main_bottleneck" in trading["alpha"]
     assert "universe_twin_evidence" in trading["alpha"]
     assert "exit_paired_evidence" in trading["alpha"]
-    assert "risk_policy_evidence" in trading["alpha"]
-    assert "execution_cost_evidence" in trading["alpha"]
     assert "main_choke_point" in trading["funnel"]
+    assert trading["funnel"]["scope"] == "historical_signal_pipeline"
     assert "main_sizing_bottleneck" in trading["sizing"]
     assert "missing_counts" in trading["thesis"]
     assert "raw_missing" in trading["thesis"]
@@ -102,6 +101,7 @@ def test_trading_diagnostics_do_not_create_doctor_blockers(monkeypatch):
 
     assert report.blockers == []
     assert bundle["trading"]["funnel"]["main_choke_point"]["stage"] == "risk_engine"
+    assert bundle["trading"]["funnel"]["scope"] == "historical_signal_pipeline"
     assert "thesis" in bundle["trading"]
 
 

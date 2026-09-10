@@ -57,7 +57,6 @@ _LLM_EVIDENCE_MIN_SAMPLE = 3
 _LLM_DEGRADED_SUCCESS_RATE = 0.5
 
 
-
 @contextmanager
 def _read_only_diagnostics():
     """Fence passive Doctor reports against config and SQLite writes."""
@@ -181,8 +180,6 @@ def _safe_alpha_diagnostic() -> dict:
             "main_bottleneck": report.get("main_bottleneck"),
             "universe_twin_evidence": report.get("universe_twin_evidence"),
             "exit_paired_evidence": report.get("exit_paired_evidence"),
-            "risk_policy_evidence": report.get("risk_policy_evidence"),
-            "execution_cost_evidence": report.get("execution_cost_evidence"),
             "verdicts": {
                 key: value.get("verdict")
                 for key, value in verdicts.items()
@@ -763,7 +760,7 @@ def _probe_config_gates(report: Report) -> None:
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
-        and paper_mode in {"paper_internal", "bitget_demo", "okx_demo", "binance_testnet"}
+        and paper_mode in {"bitget_demo", "okx_demo", "binance_testnet"}
         and demo_cap is not None
         and float(demo_cap) <= 0
     ):
@@ -839,8 +836,7 @@ def _probe_credentials(report: Report) -> None:
         # Missing demo creds only BLOCKS if the system is configured to place demo orders.
         sev: Severity = "blocker" if (mode == "demo" and pem == "bitget_demo") else "info"
         report.add("creds.bitget_demo", sev,
-                   "no bitget demo credentials — bitget_demo orders cannot reach the exchange "
-                   "(paper_internal local fill still works)",
+                   "no bitget demo credentials — bitget_demo orders cannot reach the exchange",
                    "Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` + api_secret, passphrase)")
 
     provider = getattr(cfg.models, "default_provider", "")
@@ -1739,8 +1735,6 @@ def _probe_trading_loop(report: Report) -> None:
         report.add("loop.newest_opportunity", "ok", f"newest opportunity {_fmt_age(opp_age)}")
 
 
-
-
 def _probe_skip_halt(report: Report) -> None:
     """Expose candidate-skip evidence gaps without changing trading behavior.
 
@@ -2172,63 +2166,6 @@ def _probe_outcome_history_integrity(report: Report) -> None:
             report.add("loop.outcome_history", "ok", detail)
     except Exception as e:
         report.add("loop.outcome_history", "info", f"probe error: {e}")
-
-
-def _probe_paper_funding_accounting(report: Report) -> None:
-    """Read-only convergence check for local futures funding economics."""
-    try:
-        from aletheia.maintenance.paper_funding_reconciliation import (
-            paper_funding_diagnostic_summary,
-        )
-
-        result = paper_funding_diagnostic_summary(limit=100)
-        summary = result["summary"]
-        identity = int(summary["funding_identity_mismatch"])
-        numeric = int(summary["duplicate_settlement_numeric_mismatch"])
-        ledgers = int(summary["close_event_projection_mismatch"]) + int(
-            summary["paper_cash_ledger_mismatch"]
-        )
-        recoverable = int(summary["recoverable_null_pnl"]) + int(
-            summary["terminal_now_recoverable"]
-        )
-        missing_hooks = int(summary["missing_outcome_hooks"])
-        outcome_projection = int(summary["outcome_projection_mismatch"])
-        incomplete = int(summary["still_incomplete"])
-        truncated = bool(result.get("truncated"))
-        detail = (
-            f"version={result['accounting_version']}; scanned={result['scanned']}; "
-            f"truncated={str(truncated).lower()}; "
-            f"identity_mismatch={identity}; "
-            f"numeric_mismatch={numeric}; ledger_mismatch={ledgers}; "
-            f"recoverable={recoverable}; incomplete={incomplete}; "
-            f"outcome_mismatch={outcome_projection}; missing_hooks={missing_hooks}"
-        )
-        if numeric or ledgers:
-            report.add(
-                "accounting.paper_funding", "blocker", detail,
-                "run `aletheia data reconcile-paper-funding` and review the dry run",
-            )
-        elif (
-            identity
-            or recoverable
-            or incomplete
-            or outcome_projection
-            or missing_hooks
-            or truncated
-        ):
-            report.add(
-                "accounting.paper_funding", "warn", detail,
-                (
-                    "run the complete dry run before trusting the sampled result"
-                    if truncated
-                    else "review the dry run; apply requires explicit position IDs "
-                    "and fingerprint"
-                ),
-            )
-        else:
-            report.add("accounting.paper_funding", "ok", detail)
-    except Exception as e:
-        report.add("accounting.paper_funding", "info", f"probe error: {e}")
 
 
 def _probe_sizing_policy(report: Report) -> None:
@@ -3135,7 +3072,6 @@ def _probe_network(report: Report) -> None:
                f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
 
 
-
 def _probe_runtime_session_provenance(report: Report) -> None:
     """Runtime Session provenance integrity — four distinct states surfaced explicitly.
 
@@ -3881,7 +3817,7 @@ def _probe_serenity_pipeline(report: Report) -> None:
 
 
 def _probe_volume_ranking(report: Report) -> None:
-    """Volume ranking snapshot freshness — drives universe ordering for paper_trader."""
+    """Volume ranking snapshot freshness for universe ordering."""
     try:
         from aletheia.storage.sqlite import get_db
         db = get_db()
@@ -4118,7 +4054,6 @@ def _build_report(*, probe_requested: bool = False) -> Report:
         _probe_knowledge_flood,
         _probe_learning_retrieval,
         _probe_outcome_history_integrity,
-        _probe_paper_funding_accounting,
         _probe_reconciled_ratio,
         _probe_reconcile_thrash,
         _probe_sizing_policy,

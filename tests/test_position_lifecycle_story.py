@@ -1,3 +1,9 @@
+"""Read-only lifecycle explanations of archived simulator records.
+
+The frozen local-fill/funding facts remain historical evidence; these tests
+verify reconstruction and do not grant current execution or Learning authority.
+"""
+
 from __future__ import annotations
 
 import json
@@ -262,7 +268,7 @@ def _fact() -> dict:
     }
 
 
-def test_story_is_deterministic_read_only_and_reports_multiple_mechanisms(monkeypatch):
+def test_archived_story_is_deterministic_read_only_and_reports_multiple_mechanisms(monkeypatch):
     db = _db()
     monkeypatch.setattr(lifecycle, "build_position_replay", lambda *args, **kwargs: _fact())
     before = db.total_changes

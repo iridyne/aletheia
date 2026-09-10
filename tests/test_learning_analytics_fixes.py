@@ -25,7 +25,7 @@ def _complete_cohort(rows):
         cohort_state="available",
         ordered_source_digest="cohort-digest",
         identity={
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "runtime_session_id": None,
             "closed_after": None,
             "closed_before": None,
@@ -46,6 +46,8 @@ class TestMemoRotationFixes:
         ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
         old_memo = {
             "id": "memo_old_123",
+            "execution_mode": "bitget_demo",
+            "execution_mode_status": "resolved",
             "generated_at": ten_days_ago,
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
             "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
@@ -71,14 +73,14 @@ class TestMemoRotationFixes:
 class TestMemoEffectivenessTradeFiltering:
     """#1978: Memo effectiveness credits wrong trades."""
 
-    def test_excludes_non_paper_internal_trades(self):
-        """Trade with execution_mode != 'paper_internal' is excluded from memo cohort.
+    def test_memo_uses_its_recorded_external_account(self):
+        """Trade with execution_mode != 'bitget_demo' is excluded from memo cohort.
 
         #1939: filtering now happens at the eligible_strategy_outcomes call
         boundary (the SQL layer) using the memo's own recorded execution_mode.
         The mock therefore must respect the caller-supplied ``execution_mode``
         kwarg the way the real reader does; this test proves the reader
-        forwards ``paper_internal`` and only sees the two paper closes.
+        forwards ``bitget_demo`` and only sees the two matching external closes.
         """
         from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
@@ -90,7 +92,7 @@ class TestMemoEffectivenessTradeFiltering:
             "generated_at": now_iso,
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
             "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "execution_mode_status": "resolved",
             "regime_playbook": [{"regime": "bull", "direction": "long", "edge": "strong"}],
             "cohort_complete": True,
@@ -100,21 +102,21 @@ class TestMemoEffectivenessTradeFiltering:
         trades = [
             {
                 "opened_at": now_iso,
-                "execution_mode": "paper_internal",
+                "execution_mode": "bitget_demo",
                 "regime_tag": "bull",
                 "direction": "long",
                 "realized_pnl": 100,
             },
             {
                 "opened_at": now_iso,
-                "execution_mode": "live_simulation",  # should be excluded
+                "execution_mode": "okx_demo",  # should be excluded
                 "regime_tag": "bull",
                 "direction": "long",
                 "realized_pnl": 200,
             },
             {
                 "opened_at": now_iso,
-                "execution_mode": "paper_internal",
+                "execution_mode": "bitget_demo",
                 "regime_tag": "bull",
                 "direction": "long",
                 "realized_pnl": -50,
@@ -137,9 +139,9 @@ class TestMemoEffectivenessTradeFiltering:
             result = evaluate_prior_memo()
 
             assert result is not None
-            # Only 2 paper_internal trades should be counted (live_simulation excluded)
+            # Only 2 bitget_demo trades should be counted (okx_demo excluded)
             assert result["n_trades"] == 2, f"Expected 2 trades, got {result['n_trades']}"
-            mock_cohort.assert_called_once_with(execution_mode="paper_internal")
+            mock_cohort.assert_called_once_with(execution_mode="bitget_demo")
 
     def test_memo_trade_window_uses_absolute_instants_not_iso_text(self):
         """Offset-bearing opened_at values are compared as UTC instants."""
@@ -152,7 +154,7 @@ class TestMemoEffectivenessTradeFiltering:
             "generated_at": "2026-08-25T00:30:00+00:00",
             "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
             "clean_window_anchor_id": CLEAN_WINDOW_ANCHOR_ID,
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "execution_mode_status": "resolved",
             "cohort_complete": True,
             "ordered_source_digest": "memo-cohort-digest",
@@ -284,7 +286,7 @@ class TestReasoningFeedbackRegimeTag:
             cohort_state="available",
             ordered_source_digest="cohort-digest",
             identity={
-                "execution_mode": "paper_internal",
+                "execution_mode": "bitget_demo",
                 "runtime_session_id": None,
                 "closed_after": "2026-06-01T00:00:00Z",
                 "closed_before": None,
@@ -297,7 +299,7 @@ class TestReasoningFeedbackRegimeTag:
              patch("aletheia.analytics.learning_window.clean_window_cutoff",
                    return_value="2026-06-01T00:00:00Z"):
             # #1939: build_reasoning_feedback requires an execution_mode.
-            result = build_reasoning_feedback(execution_mode="paper_internal")
+            result = build_reasoning_feedback(execution_mode="bitget_demo")
 
         assert result is not None
         # The fix: rejected (3) and executed (7) proposals share the same regime="bull",
@@ -343,7 +345,7 @@ class TestAttributionReadError:
             "id": "pos_123",
             "status": "closed",
             "closed_at": datetime.now(timezone.utc).isoformat(),
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "proposal_id": "prop_123",
             "order_id": "order_123",
             "opportunity_id": "opp_123",

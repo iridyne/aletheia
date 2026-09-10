@@ -18,13 +18,6 @@ OBSERVE_TOOLS = [
     "create_post_trade_review",
 ]
 
-# Paper tools — submit simulated orders
-PAPER_TOOLS = [
-    "create_paper_proposal",
-    "run_paper_order",
-    "update_paper_strategy_config",
-]
-
 # Restricted tools — never callable by agent
 RESTRICTED_TOOLS = [
     "unlock_live",
@@ -39,7 +32,5 @@ def init_tool_registry() -> None:
     """Register all tools with their permission classes."""
     for t in OBSERVE_TOOLS:
         register_tool(t, "observe")
-    for t in PAPER_TOOLS:
-        register_tool(t, "paper")
     for t in RESTRICTED_TOOLS:
         register_tool(t, "restricted")

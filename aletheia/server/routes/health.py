@@ -278,7 +278,7 @@ def version():
 
 @router.get("/stability")
 def stability():
-    """Quantified stability report — orphan counts, strategy_id drift, 24h failure
+    """Quantified stability report — orphan counts, 24h failure
     ratio, uptime, 0-100 score. Read-only; safe for dashboards. Closes the gap
     between 'process alive' (health) and 'data internally consistent' (north-star
     stage 0). Operator can poll this through 7-14 day stage-0 run."""
@@ -298,9 +298,9 @@ def status():
     )
 
     paper_execution_mode = cfg.exchange.paper_execution_mode
-    uses_external_exchange = paper_execution_mode != "paper_internal"
     from aletheia.config.exchange_alignment import exchange_alignment
     alignment = exchange_alignment(cfg)
+    uses_external_exchange = alignment.execution_exchange is not None
     try:
         h = _cached_compute_health()
     except Exception as e:
@@ -408,7 +408,7 @@ def status():
         "exchange": cfg.exchange.name,
         "exchange_mode": cfg.exchange.mode,
         "paper_execution_mode": paper_execution_mode,
-        "execution_target": "external_exchange" if uses_external_exchange else "local_paper",
+        "execution_target": "external_exchange" if uses_external_exchange else alignment.status,
         "uses_external_exchange": uses_external_exchange,
         "execution_exchange": alignment.execution_exchange,
         "market_data_exchange": alignment.data_exchange,

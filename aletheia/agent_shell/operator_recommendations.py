@@ -183,7 +183,6 @@ def _default_schedule_for(agent_name: str) -> str | None:
     schedules = {
         "market_data": "every 5 minutes",
         "market_observer": "every 15 minutes",
-        "paper_trader": "every 15 minutes",
         "position_manager": "every 5 minutes",
         "exchange_sync": "every 5 minutes",
         "portfolio_snapshot": "every 10 minutes",
@@ -750,12 +749,14 @@ def build_risk_summary(
         reverse=True,
     )
 
+    from aletheia.uta.manager import DEFAULT_UNIFIED_EXECUTION_MODES
+
     symbol_list_canonical = {to_canonical(symbol) for symbol in cfg.risk.symbol_list}
     symbol_rejections: dict[str, dict] = {}
     for decision in recent_rejected_decisions:
         symbol = to_canonical(str(decision.get("symbol") or ""))
         execution_mode = str(decision.get("execution_mode") or "").strip().lower()
-        if not symbol or not execution_mode.startswith("paper"):
+        if not symbol or execution_mode not in DEFAULT_UNIFIED_EXECUTION_MODES:
             continue
         # In whitelist mode, only consider symbols currently in the list.
         # In blacklist mode, only consider symbols NOT in the blocked list.
@@ -799,7 +800,7 @@ def build_risk_summary(
             "decision_ids": candidate["decision_ids"][:limit],
             "execution_modes": candidate["execution_modes"][:limit],
             "summary": (
-                f"{candidate['symbol']} triggered {candidate['rejection_count']} recent paper-side risk rejections "
+                f"{candidate['symbol']} triggered {candidate['rejection_count']} recent external Demo risk rejections "
                 "and should be left observe-only until setup quality improves."
             ),
             "latest_created_at": candidate["latest_created_at"],

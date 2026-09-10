@@ -64,6 +64,8 @@ def instrument():
 
 def test_contract_models_are_immutable_decimal_safe_and_identity_explicit(identity, instrument):
     assert UTA_CONTRACT_VERSION == 1
+    with pytest.raises(ValidationError, match="environment"):
+        UTAAccountIdentity.model_validate({**identity.model_dump(), "environment": "local_paper"})
     assert instrument.contract_size == Decimal("0.001")
     with pytest.raises(ValidationError):
         instrument.contract_size = Decimal("1")

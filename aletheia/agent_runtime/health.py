@@ -507,12 +507,7 @@ def compute_health() -> dict:
             if age is not None and age > _OBSERVER_MAX_STALENESS_MIN:
                 issues.append(f"observer_stale:{age:.0f}min")
 
-    # Local paper fills never call an exchange, so connectivity is not applicable.
-    # External paper/demo/live modes still require a confirmed cached probe.
-    if (
-        not cfg.runtime.paused
-        and cfg.exchange.paper_execution_mode != "paper_internal"
-    ):
+    if not cfg.runtime.paused:
         reachable = _exchange_reachable(cfg)
         if reachable is None:
             initializing.append("exchange_connectivity_unknown")

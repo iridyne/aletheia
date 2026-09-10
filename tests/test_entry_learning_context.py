@@ -372,7 +372,7 @@ def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff(
     _insert_plan(generation, plan_id=plan_id, status="filled", mode="RESTING_MAKER")
     order = Order(
         id="order-late", symbol="BTC/USDT", market_type="perp", direction="long",
-        order_type="limit", quantity=1, price=100, execution_mode="paper_internal",
+        order_type="limit", quantity=1, price=100, execution_mode="bitget_demo",
         entry_plan_id=plan_id, status="filled", created_at="2026-09-01T00:02:00+00:00",
         filled_at="2026-09-01T00:03:00+00:00",
     )
@@ -384,7 +384,7 @@ def test_entry_learning_excludes_position_outcome_settled_after_planning_cutoff(
     repo._insert("fills", fill.model_dump())
     position = Position(
         id="position-late", symbol="BTC/USDT", market_type="perp", direction="long",
-        quantity=1, entry_price=100, realized_pnl=10, execution_mode="paper_internal",
+        quantity=1, entry_price=100, realized_pnl=10, execution_mode="bitget_demo",
         order_id=order.id, status="closed", outcome_eligible=True,
         opened_at="2026-09-01T00:03:00+00:00", closed_at="2026-09-04T00:00:00+00:00",
     )
@@ -407,7 +407,7 @@ def test_entry_fill_registers_exact_fixed_4h_outcome_seed():
     _insert_plan(generation, plan_id="plan-seed", status="ordered", mode="RESTING_MAKER")
     order = Order(
         id="order-seed", symbol="BTC/USDT", market_type="perp", direction="long",
-        order_type="limit", quantity=2, price=105, execution_mode="paper_internal",
+        order_type="limit", quantity=2, price=105, execution_mode="bitget_demo",
         entry_plan_id="plan-seed", status="filled", created_at="2026-09-01T00:02:00+00:00",
         filled_at="2026-09-01T00:03:00+00:00",
     )
@@ -435,7 +435,7 @@ def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill():
     _insert_plan(generation, plan_id="plan-open", status="filled", mode="RESTING_MAKER")
     order = Order(
         id="order-open", symbol="BTC/USDT", market_type="perp", direction="long",
-        order_type="limit", quantity=1, price=105, execution_mode="paper_internal",
+        order_type="limit", quantity=1, price=105, execution_mode="bitget_demo",
         entry_plan_id="plan-open", status="filled", created_at="2026-09-01T00:02:00+00:00",
         filled_at="2026-09-01T00:03:00+00:00",
     )
@@ -446,7 +446,7 @@ def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill():
     ).model_dump())
     repo._insert("positions", Position(
         id="position-open", symbol="BTC/USDT", market_type="perp", direction="long",
-        quantity=1, entry_price=105, realized_pnl=0, execution_mode="paper_internal",
+        quantity=1, entry_price=105, realized_pnl=0, execution_mode="bitget_demo",
         order_id=order.id, status="open", outcome_eligible=True,
         opened_at="2026-09-01T00:03:00+00:00",
     ).model_dump())
@@ -471,6 +471,7 @@ def test_entry_learning_triggered_proposal_failure_is_not_counted_as_no_trigger(
     _insert_plan(generation, plan_id="plan-triggered", status="failed", mode="TRIGGERED")
     repo._insert("trade_proposals", TradeProposal(
         id="proposal-triggered", symbol="BTC/USDT", market_type="perp", direction="long",
+        execution_mode="bitget_demo",
         entry_plan_id="plan-triggered", status="rejected",
         created_at="2026-09-01T00:01:30+00:00",
     ).model_dump())

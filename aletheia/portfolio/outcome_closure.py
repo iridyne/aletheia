@@ -315,7 +315,7 @@ def close_position_verified(
 
     # Claim the SQLite writer slot before the authoritative reread.  This is the
     # compare-and-set boundary: only the worker that still sees status=open may
-    # persist economics, audit the close, settle paper cash, or publish hooks.
+    # persist economics, audit the close, or publish hooks.
     with repo.transaction(immediate=True):
         current = repo._select_one("positions", position_id)
         if current is None:
@@ -370,11 +370,7 @@ def close_position_verified(
             max(fill.filled_at_ms for fill in evidence.fills) / 1000,
             tz=timezone.utc,
         ).isoformat()
-        price_source = (
-            "local_fill"
-            if current.get("execution_mode") == "paper_internal"
-            else "broker_fill"
-        )
+        price_source = "broker_fill"
         identity = {
             "broker_id": evidence.broker_id,
             "account_environment": evidence.account_environment,
@@ -452,12 +448,6 @@ def close_position_verified(
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
             enqueue_outcome_hook_jobs(closed_row)
-        if (
-            current.get("execution_mode") == "paper_internal"
-            and realized is not None
-        ):
-            from aletheia.portfolio.paper_account import settle_position_closed
-            settle_position_closed(position_id, realized)
         repo.insert_audit_event(AuditEvent(
             actor=actor,
             source=source,
@@ -558,6 +548,10 @@ def close_position_from_verified_exit(
 
 
 def _validate_verified_evidence(row: dict, evidence: VerifiedExitResult) -> None:
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
+
+    if row.get("execution_mode") not in UTA_EXECUTION_MODES:
+        raise ValueError("unsupported position execution mode")
     if evidence.state != "verified_fill" or not evidence.position_absent:
         raise ValueError("verified closure requires verified_fill absent evidence")
     expected = {

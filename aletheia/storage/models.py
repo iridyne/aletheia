@@ -255,13 +255,11 @@ class Opportunity(_Provenanced):
     source_agent: str | None = None
     created_at: str = Field(default_factory=_utcnow)
     status: str = "open"
-    # Rotation cursor for the bounded paper-trader workset. NULL means this
-    # Opportunity has never been evaluated; each normal run reserves capacity
-    # for both NULL rows and the oldest non-NULL retry rows.
+    # Historical rotation cursor from the retired ranker workset.
     last_ranked_at: str | None = None
     linked_strategy_id: str | None = None
     # Asset class: "crypto" | "equity" | "prediction". Default "crypto" keeps
-    # older rows valid. paper_trader only acts on "crypto" opportunities.
+    # older rows valid.
     asset_class: str = "crypto"
     # Sub-category within asset_class. For equity: "equity_daily" (yfinance daily
     # bars as primary signal). equity_observer always produces "equity_daily" with
@@ -501,9 +499,9 @@ class TradeProposal(_Provenanced):
     # + must-answer wake and the default-provenance reback work. NULL on legacy rows.
     expected_horizon_hours: float | None = None
     stop_source: str | None = None
-    execution_mode: str = "paper_internal"
+    execution_mode: str
     agent_rationale: str | None = None
-    # JSON snapshot captured at proposal/decision time for replay-stable paper
+    # JSON snapshot captured at proposal/decision time for replay-stable
     # position attribution (BTC benchmark, regime, market context).
     attribution_snapshot: str | None = None
     status: str = "pending"
@@ -556,12 +554,8 @@ class RiskDecision(_Provenanced):
     risk_score: float = 0.0
     violations: str = "[]"
     allowed_execution_mode: str | None = None
-    # The proposal's ORIGINAL execution_mode, preserved verbatim. Distinct from
-    # allowed_execution_mode, which is downgraded to "paper_internal" on rejection
-    # — that downgrade destroyed the only record of whether a REJECTED proposal
-    # was a live order, making strategy_lifecycle's "live rejection = critical"
-    # branch permanently dead (CR-RE-01). Keep both: allowed_* = what may execute,
-    # proposal_execution_mode = what was requested.
+    # Preserve the requested mode independently of any execution allowance.
+    # A rejection has no allowed mode; the request remains historical evidence.
     proposal_execution_mode: str | None = None
     # ``preflight`` is a fresh, advisory check before venue quantity
     # normalization. ``authoritative`` is the one decision an Order may consume.
@@ -801,152 +795,6 @@ class Position(_Provenanced):
     last_market_signal_evidence: str | None = None
 
 
-class PositionExitPlanVersion(BaseModel):
-    """One append-only resolved ExitPlan for a Position."""
-
-    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
-
-    position_id: str
-    version: int = Field(ge=1)
-    effective_at: str
-    stop_price: float | None = Field(default=None, gt=0)
-    take_profit_price: float | None = Field(default=None, gt=0)
-    exit_limit_price: float | None = Field(default=None, gt=0)
-    exit_limit_source: Literal["human", "system_operator"] | None = None
-    plan_json: str
-    plan_hash: str
-    provenance: str
-    created_at: str = Field(default_factory=_utcnow)
-
-
-class PositionProtectionState(BaseModel):
-    """Insert-only activation state for one exact physical Position instrument.
-
-    First-trigger evidence is stored separately as an immutable fact.  This
-    state retains only its write-once trigger projection and close linkage;
-    every mutation goes through a compare-and-set repository API.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    position_id: str
-    venue: str
-    symbol: str
-    market_type: Literal["spot", "perp"]
-    timeframe: Literal["1m"] = "1m"
-    activated_at: str
-    next_bar_open_ms: int = Field(ge=0)
-    last_evaluated_bar_open_ms: int | None = Field(default=None, ge=0)
-    last_inspected_bar_open_ms: int | None = Field(default=None, ge=0)
-    status: Literal[
-        "active",
-        "gap",
-        "triggered",
-        "materialized",
-        "superseded",
-        "integrity_blocked",
-    ] = "active"
-    gap_reason: str | None = None
-    gap_detected_at: str | None = None
-    gap_count: int = Field(default=0, ge=0)
-    recent_error: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-    updated_at: str = Field(default_factory=_utcnow)
-
-
-class PositionProtectionTrigger(BaseModel):
-    """Complete first-trigger evidence for one frozen 1-minute instrument."""
-
-    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
-
-    position_id: str
-    trigger_id: str
-    detected_at: str
-    venue: str
-    symbol: str
-    market_type: Literal["spot", "perp"]
-    timeframe: Literal["1m"] = "1m"
-    bar_open_ms: int = Field(ge=0)
-    bar_close_ms: int = Field(gt=0)
-    bar_open: float = Field(gt=0)
-    bar_high: float = Field(gt=0)
-    bar_low: float = Field(gt=0)
-    bar_close: float = Field(gt=0)
-    bar_volume: float = Field(ge=0)
-    provider: str
-    bar_hash: str
-    plan_version: int = Field(ge=1)
-    plan_effective_at: str
-    plan_hash: str
-    stop_price: float | None = Field(default=None, gt=0)
-    upside_price: float | None = Field(default=None, gt=0)
-    stop_hit: bool
-    target_hit: bool
-    reason: str
-    collision_policy: Literal["stop_first_v1"] = "stop_first_v1"
-
-
-class ExitBreakevenShadowAssignment(BaseModel):
-    """Prospective, immutable assignment for the read-only exit experiment."""
-
-    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
-
-    position_id: str
-    experiment_version: Literal["exit-breakeven-shadow/v1"] = "exit-breakeven-shadow/v1"
-    treatment_id: Literal["entry-lock-after-1.5pct/v1"] = "entry-lock-after-1.5pct/v1"
-    assigned_at: str
-    venue: str
-    symbol: str
-    market_type: Literal["spot", "perp"]
-    timeframe: Literal["1m"] = "1m"
-    direction: Literal["long", "short"]
-    entry_price: float = Field(gt=0)
-    quantity: float = Field(gt=0)
-    entry_fee: float = Field(ge=0)
-    exit_fee_rate: float = Field(ge=0)
-    slippage_bps: float = Field(ge=0)
-    trigger_return_pct: float = Field(gt=0)
-    trigger_price: float = Field(gt=0)
-    shadow_stop_price: float = Field(gt=0)
-    exit_plan_version: int = Field(ge=1)
-    exit_plan_effective_at: str
-    exit_plan_hash: str
-    rule_json: str
-    rule_hash: str
-    behavior_authority: Literal[False] = False
-    runtime_session_id: str | None = None
-    code_commit: str | None = None
-    behavior_fingerprint: str | None = None
-    created_at: str = Field(default_factory=_utcnow)
-
-
-class ExitBreakevenShadowOutcome(BaseModel):
-    """Immutable paired economic result for one assigned Position."""
-
-    model_config = ConfigDict(allow_inf_nan=False, extra="forbid", frozen=True)
-
-    position_id: str
-    status: Literal["unchanged", "counterfactual_close", "unavailable"]
-    reason: str
-    treatment_changed: bool
-    actual_closed_at: str
-    trigger_bar_open_ms: int | None = Field(default=None, ge=0)
-    shadow_exit_bar_open_ms: int | None = Field(default=None, ge=0)
-    shadow_exit_at: str | None = None
-    shadow_reference_price: float | None = Field(default=None, gt=0)
-    shadow_fill_price: float | None = Field(default=None, gt=0)
-    shadow_entry_fee: float | None = Field(default=None, ge=0)
-    shadow_exit_fee: float | None = Field(default=None, ge=0)
-    shadow_funding_cost: float | None = None
-    actual_net_pnl: float | None = None
-    shadow_net_pnl: float | None = None
-    incremental_net_pnl: float | None = None
-    cost_model_version: str | None = None
-    evidence_json: str
-    evidence_hash: str
-    settled_at: str = Field(default_factory=_utcnow)
-
-
 class PositionDisappearanceCandidate(BaseModel):
     """Durable, account-scoped suspicion that an open position disappeared.
 
@@ -1030,8 +878,7 @@ class StrategyRecord(BaseModel):
     state: str = "draft"
     # JSON blob with entry_rule/exit_rule/timeframe/direction_bias.
     # NOTE: entry_rule/exit_rule are ADVISORY (LLM-generated intent text),
-    # NOT parsed or executed by paper_trader. Trade direction derives from
-    # opportunity.direction_bias, not from these rules.
+    # They do not authorize orders or define executable trading rules.
     parameters: str = "{}"
     under_review: bool = False
     review_notes: str | None = None
@@ -1119,7 +966,7 @@ class PortfolioSnapshot(BaseModel):
     unrealized_pnl: float = 0.0
     realized_pnl: float | None = 0.0
     positions_count: int = 0
-    execution_mode: str = "paper_internal"
+    execution_mode: str
     exchange_equity_usdt: float | None = None
     # A deliberately explicit account-balance reading.  `total_value_usdt` on
     # legacy local rows was position notional, so it cannot safely power an
@@ -2246,21 +2093,6 @@ class CapitalEvent(BaseModel):
     equity_at_event: float | None = None
     detected_at: str = Field(default_factory=_utcnow)
     note: str = ""
-
-
-class PaperAccountEvent(BaseModel):
-    """Immutable cash-account event for the local paper simulator only."""
-
-    id: str = Field(default_factory=new_id)
-    action: str
-    amount_usdt: float
-    cash_balance_before_usdt: float
-    cash_balance_after_usdt: float
-    actor: str = "system"
-    source: str = "paper_account"
-    position_id: str | None = None
-    note: str = ""
-    created_at: str = Field(default_factory=_utcnow)
 
 
 class OnchainSnapshot(BaseModel):

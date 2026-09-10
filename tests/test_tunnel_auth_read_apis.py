@@ -137,7 +137,7 @@ async def test_private_reads_accessible_with_correct_token(client, tmp_path):
         direction="long",
         quantity=0.001,
         price=60_000,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
 

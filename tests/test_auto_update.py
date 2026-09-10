@@ -586,7 +586,7 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
 
 
 @pytest.mark.parametrize(("mode", "target", "live_state", "allowed"), [
-    ("paper_internal", "local_paper", "live_disabled", True),
+    ("paper_internal", "local_paper", "live_disabled", False),
     ("bitget_demo", "external_exchange", "live_disabled", True),
     ("bitget_demo", "local_paper", "live_disabled", False),
     ("paper_internal", "external_exchange", "live_disabled", False),

@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
-from tests.position_fixture import force_update_position
-
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 
 from typer.testing import CliRunner
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _external_account():
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    save_config(cfg)
+
 
 def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypatch):
     from fastapi.testclient import TestClient
@@ -27,7 +37,7 @@ def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypat
             if populated:
                 _insert_mixed_cohort()
             for route in routes:
-                response = client.get(route.path, params={"execution_mode": "paper_internal"})
+                response = client.get(route.path, params={"execution_mode": "bitget_demo"})
                 assert response.status_code == 200, response.text
                 schema = route.response_model or route.responses[200]["model"]
                 adapter = TypeAdapter(schema)
@@ -47,51 +57,30 @@ def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypat
 
 def _insert_mixed_cohort() -> None:
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import Position
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
+    from tests.test_outcome_consumers import _insert_closed
 
-    common = {
-        "symbol": "BTC/USDT", "market_type": "spot", "direction": "long",
-        "quantity": 1.0, "entry_price": 100.0, "execution_mode": "paper_internal",
-        "status": "closed", "closed_at": datetime.now(timezone.utc).isoformat(),
-    }
-    opportunity_id, proposal_id, order_id = _insert_entry_chain(
-        position_id="verified",
-        symbol="BTC/USDT",
-        market_type="spot",
-        direction="long",
-        quantity=1.0,
-        price=100.0,
-        execution_mode="paper_internal",
+    _insert_closed_position_via_producer(
+        position_id="verified", symbol="BTC/USDT", market_type="spot",
+        direction="long", quantity=1.0, entry_price=100.0, realized_pnl=5.0,
+        execution_mode="bitget_demo", closed_at=datetime.now(timezone.utc).isoformat(),
     )
-    repo.insert_position(Position(
-        **common, id="verified", realized_pnl=5.0, close_reason="verified_exit",
-        current_price=105.0, entry_fee=0.0, exit_fee=0.0,
-        funding_cost=0.0, funding_source="not_applicable",
-        entry_price_source="local_fill", entry_fill_verified=True,
-        close_category="strategy", exit_price_source="local_fill",
-        exit_fill_verified=True, outcome_eligible=True,
-        outcome_exclusion_reason="eligible", outcome_semantics_version="oi-v1",
-        opportunity_id=opportunity_id, proposal_id=proposal_id, order_id=order_id,
-    ))
-    repo.insert_position(Position(
-        **common, id="administrative", realized_pnl=0.0,
-        close_reason="reconciled_gone", close_category="administrative",
-        exit_price_source="unavailable", exit_fill_verified=False,
-        outcome_eligible=False, outcome_exclusion_reason="administrative_close",
-        outcome_semantics_version="oi-v1",
-    ))
-    force_update_position("administrative", realized_pnl=None)
-    repo.insert_position(Position(
-        **common, id="legacy", realized_pnl=-999.0, close_reason="manual",
-    ))
+    _insert_closed("administrative", None, eligible=False)
+    # Preserve a legacy unverified record without using a current close producer.
+    repo._insert("positions", {
+        "id": "legacy", "symbol": "BTC/USDT", "market_type": "spot",
+        "direction": "long", "quantity": 1.0, "entry_price": 100.0,
+        "execution_mode": "bitget_demo", "status": "closed",
+        "closed_at": datetime.now(timezone.utc).isoformat(),
+        "realized_pnl": -999.0, "close_reason": "manual",
+    })
 
 
 def test_cohort_summary_counts_raw_verified_and_exclusion_reasons():
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
 
     _insert_mixed_cohort()
-    summary = build_outcome_cohort_summary(execution_mode="paper_internal")
+    summary = build_outcome_cohort_summary(execution_mode="bitget_demo")
     assert summary == {
         "raw_event_count": 3,
         "eligible_outcome_count": 1,
@@ -145,7 +134,7 @@ def test_cost_summary_keeps_signed_funding_and_marks_incomplete_raw_costs(monkey
         lambda **_: {"outcome_status": "available"},
     )
 
-    payload = get_cost_summary(execution_mode="paper_internal")
+    payload = get_cost_summary(execution_mode="bitget_demo")
 
     assert payload["total_funding_cost"] == 7.0
     assert payload["total_costs"] == 4.75
@@ -175,12 +164,12 @@ def test_trade_stats_and_equity_curve_expose_matching_dual_cohorts(monkeypatch):
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: type(
         "Config", (), {
             "app": type("App", (), {"equity_curve_mode": "full_cumulative"})(),
-            "exchange": type("Exchange", (), {"paper_execution_mode": "paper_internal"})(),
+            "exchange": type("Exchange", (), {"paper_execution_mode": "bitget_demo"})(),
         }
     )())
 
     stats = get_trade_stats()
-    curve = get_equity_curve(execution_mode="paper_internal")
+    curve = get_equity_curve(execution_mode="bitget_demo")
     payloads = (
         stats,
         curve,
@@ -253,7 +242,7 @@ def test_cost_summary_preserves_unknown_fee_legs(monkeypatch):
         outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}
     )
 
-    costs = get_cost_summary(execution_mode="paper_internal")
+    costs = get_cost_summary(execution_mode="bitget_demo")
 
     assert costs["total_entry_fees"] == 1.25
     assert costs["total_exit_fees"] == 0.75
@@ -299,7 +288,7 @@ def test_cost_summary_keeps_explicit_zero_fees_numeric(monkeypatch):
         outcome_integrity, "build_outcome_cohort_summary", lambda **_: {}
     )
 
-    costs = get_cost_summary(execution_mode="paper_internal")
+    costs = get_cost_summary(execution_mode="bitget_demo")
 
     assert costs["total_fees"] == 0.0
     assert costs["total_costs"] == 0.0

@@ -1616,10 +1616,10 @@ def test_restart_audit_actor_source_maps_automated_triggers():
 async def test_settings_update_controls_persist_new_config_fields(client):
     resp = await client.post(
         "/api/settings/exchange-markets",
-        json={"spot": True, "usdt_futures": True, "paper_execution_mode": "paper_internal"},
+        json={"spot": True, "usdt_futures": True, "paper_execution_mode": "bitget_demo", "confirm_exchange_divergence": True},
     )
     assert resp.status_code == 200
-    assert resp.json()["paper_execution_mode"] == "paper_internal"
+    assert resp.json()["paper_execution_mode"] == "bitget_demo"
 
     resp = await client.post(
         "/api/settings/trading",
@@ -1660,7 +1660,7 @@ async def test_settings_update_controls_persist_new_config_fields(client):
     assert resp.json()["universe"]["fallback_symbols"] == ["BTC/USDT", "ETH/USDT"]
 
     settings = (await client.get("/api/settings")).json()
-    assert settings["exchange"]["paper_execution_mode"] == "paper_internal"
+    assert settings["exchange"]["paper_execution_mode"] == "bitget_demo"
     assert settings["trading"]["auto_adopt_enabled"] is False
     assert settings["health"]["self_heal_enabled"] is False
     assert settings["universe"]["fallback_symbols"] == ["BTC/USDT", "ETH/USDT"]
@@ -1889,14 +1889,14 @@ async def test_execution_target_change_also_requires_divergence_confirmation(cli
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
-    cfg.exchange.paper_execution_mode = "paper_internal"
+    cfg.exchange.paper_execution_mode = ""
     cfg.market_data.ccxt_exchange = "binance"
     save_config(cfg)
     body = {"spot": True, "usdt_futures": True, "paper_execution_mode": "okx_demo"}
 
     rejected = await client.post("/api/settings/exchange-markets", json=body)
     assert rejected.status_code == 409
-    assert load_config().exchange.paper_execution_mode == "paper_internal"
+    assert load_config().exchange.paper_execution_mode == ""
 
     body["confirm_exchange_divergence"] = True
     confirmed = await client.post("/api/settings/exchange-markets", json=body)

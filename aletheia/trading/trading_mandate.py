@@ -817,45 +817,6 @@ def assess_trading_mandate_fit(
     }
 
 
-def build_trading_mandate_provenance(
-    *,
-    configured: MandateResolution | TradingMandate | Mapping[str, Any] | None,
-    opportunity: object | None,
-    decision: object | None,
-    proposal: object | None,
-) -> dict[str, Any]:
-    """Build the exact evidence pair frozen into a new native Paper Proposal."""
-    if isinstance(configured, MandateResolution):
-        resolution = configured
-    elif isinstance(configured, TradingMandate):
-        resolution = MandateResolution("active", mandate=configured)
-    elif configured is None:
-        resolution = MandateResolution("not_configured", reason_codes=("not_configured",))
-    else:
-        resolution = resolve_trading_mandate(configured)
-    if resolution.status == "active" and resolution.mandate is not None:
-        fit = assess_trading_mandate_fit(
-            mandate=resolution.mandate,
-            opportunity=opportunity,
-            decision=decision,
-            proposal=proposal,
-        )
-    else:
-        fit = assess_trading_mandate_fit(
-            mandate=None,
-            opportunity=opportunity,
-            decision=decision,
-            proposal=proposal,
-            mandate_status=resolution.status,
-        )
-        fit["reasons"] = list(resolution.reason_codes) or [resolution.status]
-        fit["validation_errors"] = list(resolution.validation_errors)
-    return {
-        "trading_mandate_identity": resolution.identity,
-        "trading_mandate_fit": fit,
-    }
-
-
 _MANDATE_IDENTITY_FIELDS = frozenset(
     {
         "contract_version",
@@ -925,26 +886,3 @@ def validate_frozen_trading_mandate_provenance(snapshot: Mapping[str, Any]) -> N
         dict(fit_identity) if isinstance(fit_identity, Mapping) else fit_identity
     ):
         raise ValueError("trading mandate identity conflicts with frozen fit")
-
-
-def freeze_trading_mandate_provenance(
-    snapshot: dict[str, Any],
-    evidence: Mapping[str, Any],
-) -> None:
-    """Freeze once; equal content is idempotent and conflicting content fails closed."""
-    candidate = {
-        "trading_mandate_identity": evidence.get("trading_mandate_identity"),
-        "trading_mandate_fit": evidence.get("trading_mandate_fit"),
-    }
-    current_present = any(key in snapshot for key in candidate)
-    if current_present:
-        validate_frozen_trading_mandate_provenance(snapshot)
-        current = {
-            "trading_mandate_identity": snapshot.get("trading_mandate_identity"),
-            "trading_mandate_fit": snapshot.get("trading_mandate_fit"),
-        }
-        if _canonical_json(current) != _canonical_json(candidate):
-            raise ValueError("trading mandate provenance is immutable")
-        return
-    validate_frozen_trading_mandate_provenance(candidate)
-    snapshot.update(candidate)

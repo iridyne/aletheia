@@ -1,9 +1,7 @@
-"""Tests for automatic position management / closing (Component 1 — the keystone).
+"""External Demo exit triggers and exchange-confirmed closure.
 
-Closing a paper position activates realized PnL, the daily-loss breaker, and the
-strategy promotion gates. Governance: paper-only (live positions never auto-closed),
-kill switch must NOT block closing (closing reduces risk), every close writes an
-audit event, no honest exit price → skip (never fabricate an exit).
+Live positions stay outside the loop. A kill switch cannot block risk-reducing
+exits; private Fill evidence owns closed state, economics and audit facts.
 """
 
 import sqlite3
@@ -33,7 +31,7 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
-def _snap(symbol, price, market_type="spot", exchange="binance"):
+def _snap(symbol, price, market_type="spot", exchange="bitget"):
     repo.insert_market_snapshot(
         MarketSnapshot(
             symbol=symbol,
@@ -66,15 +64,15 @@ def _position_with_entry_chain(
         quantity=quantity,
         entry_price=entry_price,
         current_price=entry_price,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         stop_price=stop_price,
         take_profit_price=take_profit_price,
         entry_fee=entry_fee,
-        entry_price_source="local_fill",
+        entry_price_source="broker_fill",
         entry_fill_verified=True,
         funding_cost=0.0,
         funding_source=(
-            "not_applicable" if market_type == "spot" else "local_simulation"
+            "not_applicable" if market_type == "spot" else "broker_ledger"
         ),
     )
     if opened_at is not None:
@@ -86,7 +84,7 @@ def _position_with_entry_chain(
         direction=direction,
         quantity=quantity,
         price=entry_price,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         entry_fee=entry_fee,
         opened_at=position.opened_at,
     )
@@ -95,6 +93,27 @@ def _position_with_entry_chain(
     position.order_id = order_id
     repo.insert_position(position)
     return position
+
+
+def _prepare_exchange_close(monkeypatch, position, fill_price):
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _stub_uta_execution, _patch_filled_place_order, _patch_private_fill_history,
+    )
+    from tests.uta.test_execution_coordinator import _identity, _insert_bound_position
+
+    if position.order_id is None:
+        _insert_bound_position(position)
+    else:
+        repo.update_order_metadata(
+            position.order_id,
+            uta_account_identity_json=_identity(position.execution_mode).model_dump_json(),
+        )
+    _stub_uta_execution(monkeypatch)
+    captured = _patch_filled_place_order(monkeypatch, fill_price)
+    _patch_private_fill_history(
+        monkeypatch, fill_price=fill_price, executed_at=datetime.now(timezone.utc),
+    )
+    return captured
 
 
 def test_migration_adds_position_columns(tmp_path, monkeypatch):
@@ -113,22 +132,27 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     )
     _snap("BTC/USDT", 97.0)  # below stop
 
+    captured = _prepare_exchange_close(monkeypatch, p, 96.8)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
-    assert result["closed"] == 1
+    assert len(captured) == 1
+    assert result["closed"] == 0
+    assert repo.get_position(p.id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
+    assert repo.get_position(p.id)["status"] == "closed"
 
     row = repo._select_one("positions", p.id)
     assert row["status"] == "closed"
     assert row["close_reason"] == "stop_loss"
-    # Stop 98 is the trigger, not a fabricated fill. The observed mark is 97;
-    # closing a long sells with the configured default 5 bps adverse slippage.
-    fill_price = 97.0 * (1 - 5 / 10_000.0)
+    # The private fill reports 96.8; the mark and stop do not set the fill price.
+    fill_price = 96.8
     assert row["current_price"] == pytest.approx(fill_price)
     assert row["current_price"] != 98.0
     expected = (fill_price - 100.0) - (100.0 + fill_price) * 0.0006
     assert row["realized_pnl"] == pytest.approx(expected)
     assert row["close_category"] == "strategy"
-    assert row["exit_price_source"] == "local_fill"
+    assert row["exit_price_source"] == "broker_fill"
     assert row["exit_fill_verified"] == 1
     assert row["outcome_eligible"] == 1
     assert row["outcome_exclusion_reason"] == "eligible"
@@ -136,7 +160,7 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     assert len(repo.list_positions(status="open")) == 0
 
     from aletheia.server.routes.analytics import get_equity_curve
-    curve = get_equity_curve(execution_mode="paper_internal")
+    curve = get_equity_curve(execution_mode="bitget_demo")
     assert curve["eligible_outcome_count"] == 1
     assert len(curve["genuine_points"]) == 1
     assert curve["genuine_points"][0]["pnl"] == pytest.approx(expected, abs=1e-4)
@@ -155,20 +179,8 @@ def test_stop_loss_closes_long(tmp_path, monkeypatch):
     assert len(close_fills) == 1
 
 
-def test_take_profit_closes_short(tmp_path, monkeypatch):
+def test_take_profit_confirms_short_close_before_funding_is_available(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
-    # A futures close can expose net PnL only when the public funding schedule
-    # covers the complete entry-to-exit window.  The next settlement is in the
-    # future, so this is a verified zero-event funding window.
-    observed = datetime.now(timezone.utc) - timedelta(minutes=1)
-    repo.insert_funding_rate_snapshot({
-        "symbol": "ETH/USDT",
-        "exchange": "okx",
-        "funding_rate": 0.0001,
-        "funding_rate_annualized": 0.1095,
-        "next_funding_time": (observed + timedelta(hours=4)).isoformat(),
-        "observed_at": observed.isoformat(),
-    })
     p = _position_with_entry_chain(
         symbol="ETH/USDT", market_type="usdt_futures", direction="short",
         quantity=2.0, entry_price=200.0, entry_fee=0.24,
@@ -176,19 +188,26 @@ def test_take_profit_closes_short(tmp_path, monkeypatch):
     )
     _snap("ETH/USDT", 179.0, "usdt_futures")  # below TP for a short
 
+    captured = _prepare_exchange_close(monkeypatch, p, 179.2)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
-    assert result["closed"] == 1
+    assert len(captured) == 1
+    assert result["closed"] == 0
+    assert repo.get_position(p.id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
+    assert repo.get_position(p.id)["status"] == "closed"
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "take_profit"
-    # TP 180 is the trigger. The observed mark is 179; closing a short buys
-    # with the configured default 5 bps adverse slippage.
-    fill_price = 179.0 * (1 + 5 / 10_000.0)
+    fill_price = 179.2  # supplied private exchange fill, independent of the mark
     assert row["current_price"] == pytest.approx(fill_price)
     assert row["current_price"] != 180.0
-    expected = (200.0 - fill_price) * 2.0 - (200.0 + fill_price) * 2.0 * 0.0006
-    assert row["realized_pnl"] == pytest.approx(expected)
-    assert row["outcome_eligible"] == 1
+    assert row["exit_fee"] == pytest.approx(fill_price * 2.0 * 0.0006)
+    # A just-filled futures close has no mature funding ledger yet.
+    assert row["realized_pnl"] is None
+    assert row["funding_cost"] is None
+    assert row["outcome_eligible"] == 0
+    assert row["outcome_exclusion_reason"] == "incomplete_funding_economics"
 
 
 def test_max_hold_closes(tmp_path, monkeypatch):
@@ -201,9 +220,15 @@ def test_max_hold_closes(tmp_path, monkeypatch):
     )
     _snap("SOL/USDT", 150.0)  # no stop/TP trigger, but past max hold
 
+    captured = _prepare_exchange_close(monkeypatch, p, 150.0)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
-    assert result["closed"] == 1
+    assert len(captured) == 1
+    assert result["closed"] == 0
+    assert repo.get_position(p.id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
+    assert repo.get_position(p.id)["status"] == "closed"
     row = repo._select_one("positions", p.id)
     assert row["close_reason"] == "max_hold"
     assert row["outcome_eligible"] == 1
@@ -213,7 +238,7 @@ def test_no_trigger_leaves_open(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=95.0, take_profit_price=110.0)
+                 execution_mode="bitget_demo", stop_price=95.0, take_profit_price=110.0)
     repo.insert_position(p)
     _snap("BTCUSDT", 100.0)
 
@@ -232,8 +257,12 @@ def test_close_writes_audit(tmp_path, monkeypatch):
     )
     _snap("BTC/USDT", 97.0)
 
+    captured = _prepare_exchange_close(monkeypatch, p, 96.8)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     evaluate_open_positions()
+    assert len(captured) == 1
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
 
     from aletheia.files.jsonl import read_jsonl
     events = read_jsonl("audit.jsonl")
@@ -270,20 +299,25 @@ def test_kill_switch_does_not_block_close(tmp_path, monkeypatch):
 
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
-    repo.insert_position(p)
+                 execution_mode="bitget_demo", stop_price=98.0, take_profit_price=110.0)
     _snap("BTCUSDT", 97.0)
 
+    captured = _prepare_exchange_close(monkeypatch, p, 96.8)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
-    assert result["closed"] == 1  # closing reduces risk; kill switch must not block it
+    assert len(captured) == 1
+    assert result["closed"] == 0
+    assert repo.get_position(p.id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
+    assert repo.get_position(p.id)["status"] == "closed"  # closing reduces risk; kill switch must not block it
 
 
 def test_no_price_skips(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal", stop_price=98.0, take_profit_price=110.0)
+                 execution_mode="bitget_demo", stop_price=98.0, take_profit_price=110.0)
     repo.insert_position(p)
     # no snapshot inserted
 
@@ -298,13 +332,18 @@ def test_config_default_stop_used_when_no_explicit_stop(tmp_path, monkeypatch):
     # No explicit stop_price -> manager uses cfg.trading.default_stop_loss_pct (2%).
     p = Position(symbol="BTCUSDT", market_type="spot", direction="long",
                  quantity=1.0, entry_price=100.0, current_price=100.0,
-                 execution_mode="paper_internal")
-    repo.insert_position(p)
+                 execution_mode="bitget_demo")
     _snap("BTCUSDT", 97.0)  # below 2% default stop (98)
 
+    captured = _prepare_exchange_close(monkeypatch, p, 96.8)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
-    assert result["closed"] == 1
+    assert len(captured) == 1
+    assert result["closed"] == 0
+    assert repo.get_position(p.id)["status"] == "open"
+    from aletheia.execution.reconciliation import reconcile
+    reconcile()
+    assert repo.get_position(p.id)["status"] == "closed"
     assert repo._select_one("positions", p.id)["close_reason"] == "stop_loss"
 
 
@@ -313,7 +352,7 @@ def test_config_default_stop_used_when_no_explicit_stop(tmp_path, monkeypatch):
 def test_live_limit_exit_rejected(tmp_path, monkeypatch):
     """Issue #416: operator_exit_position with order_type='limit' on a live_limited
     position was accepted and persisted as pending_limit_exit=True, but evaluate_open_
-    positions() only processes _PAPER_MODES — the limit exit could never execute.
+    positions() only processes _DEMO_MODES — the limit exit could never execute.
 
     After the fix, the call must return an error response and leave the position
     unchanged (exit_limit_price must NOT be set)."""

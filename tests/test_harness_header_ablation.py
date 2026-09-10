@@ -13,6 +13,8 @@ def test_synthetic_facts_are_deterministic_and_non_secret():
 
 
 def test_header_is_context_only_and_blocks_no_tools():
+    assert "[Aletheia Harness v0.2]" in HEADER
+    assert "Trading mode: bitget_demo live_enabled=false" in HEADER
     assert "[Caller system prompt follows]" in HEADER
     assert "no:live_order" in HEADER
     assert "ignore" not in HEADER.lower()

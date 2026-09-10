@@ -50,6 +50,7 @@ def _risk_config(monkeypatch, *, demo_slots: int = 1):
     from aletheia.portfolio.account_loss import AccountLossSnapshot
 
     cfg = AletheiaConfig()
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     cfg.risk.max_open_positions_demo = demo_slots
     cfg.risk.max_open_positions_live = demo_slots
     cfg.risk.max_demo_position_margin_usdt = 1_000_000.0
@@ -77,6 +78,8 @@ def _risk_config(monkeypatch, *, demo_slots: int = 1):
         lambda *_args, **_kwargs: [],
     )
     monkeypatch.setattr(engine, "_portfolio_drawdown_scale", lambda _mode: 1.0)
+    monkeypatch.setattr(engine, "_account_equity", lambda *_args: 1_000.0)
+    monkeypatch.setattr(engine, "_market_data_age_seconds", lambda *_args, **_kwargs: 0.0)
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",
         lambda symbol, market_type, *, venue: 100.0,
@@ -103,6 +106,15 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Opportunity, TradeProposal
 
+    from tests.specs.spec_pipeline_stop_propagation import (
+        _stub_uta_execution, _patch_filled_place_order,
+        _patch_private_fill_history, _materialize_exchange_result,
+    )
+
+    _stub_uta_execution(monkeypatch)
+    submitted = _patch_filled_place_order(monkeypatch, fill_price=100.0)
+    _patch_private_fill_history(monkeypatch, fill_price=100.0)
+
     proposals = [
         TradeProposal(
             id=f"reservation-race-{index}",
@@ -114,10 +126,10 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
             order_type="market",
             quantity=0.01,
             price=100.0,
-            stop_price=99.0,
-            take_profit=102.0,
+            stop_price=98.0,
+            take_profit=104.0,
             risk_reward=2.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         for index in range(2)
     ]
@@ -139,7 +151,7 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
     def execute(proposal_id: str) -> None:
         try:
             simultaneous_start.wait(timeout=5)
-            result = gateway.execute_existing_proposal(proposal_id)
+            result = gateway.execute_existing_proposal(proposal_id, execution_mode="bitget_demo")
             with result_lock:
                 results.append(result)
         except BaseException as exc:  # pragma: no cover - assertion reports it
@@ -154,12 +166,16 @@ def test_distinct_proposals_cannot_oversubscribe_one_risk_slot(tmp_path, monkeyp
 
     assert not errors
     assert all(not worker.is_alive() for worker in workers)
-    assert sorted(result["status"] for result in results) == ["executed", "rejected"]
+    assert sorted(result["status"] for result in results) == ["materialization_missing", "rejected"], results
     assert conn.execute(
         "SELECT COUNT(*) FROM risk_decisions "
         "WHERE decision_role='authoritative' AND approved=1"
     ).fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+    assert len(submitted) == 1
+    assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
+    accepted = next(result for result in results if result["status"] == "materialization_missing")
+    _materialize_exchange_result(accepted)
     assert conn.execute("SELECT COUNT(*) FROM positions WHERE status='open'").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM entry_risk_reservations").fetchone()[0] == 0
 
@@ -196,10 +212,10 @@ def test_authoritative_reservation_blocks_capacity_before_order(tmp_path, monkey
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executing",
     )
     repo.insert_trade_proposal(approved)
@@ -221,10 +237,10 @@ def test_authoritative_reservation_blocks_capacity_before_order(tmp_path, monkey
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(candidate)
     blocked = engine.evaluate_proposal(candidate, decision_role="preflight")
@@ -339,14 +355,14 @@ def test_account_leverage_counts_pre_order_and_unresolved_entries(
     SpecClaim(
         "PL-MSI-15",
         "pipeline_middle_state_integrity",
-        "§1 paper dispatch current Risk",
+        "§1 external Demo dispatch current Risk",
         "L2c",
-        "A paper Proposal approved before a crash must pass a fresh preflight before "
-        "dispatch, so a newly-active kill switch cannot be bypassed by replay.",
+        "A previously approved external Demo Proposal must pass a fresh preflight before "
+        "dispatch, so its stored approval cannot bypass a newly-active kill switch.",
         status="implemented",
     )
 )
-def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch):
+def test_approved_demo_proposal_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch):
     conn = _setup_db(tmp_path, monkeypatch)
     cfg = _risk_config(monkeypatch, demo_slots=2)
 
@@ -356,23 +372,23 @@ def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch
     from aletheia.storage.models import Opportunity, TradeProposal
 
     opportunity = Opportunity(
-        id="paper-stale-authority-opportunity",
+        id="demo-stale-authority-opportunity",
         symbol="BTC/USDT", market="spot", direction_bias="long", status="queued",
     )
     repo.insert_opportunity(opportunity)
     proposal = TradeProposal(
-        id="paper-stale-authority",
+        id="demo-stale-authority",
         opportunity_id=opportunity.id,
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
-        status="executing",
+        execution_mode="bitget_demo",
+        status="approved",
     )
     repo.insert_trade_proposal(proposal)
     approved = engine.evaluate_proposal(proposal, decision_role="authoritative")
@@ -380,7 +396,7 @@ def test_paper_replay_rechecks_kill_switch_before_dispatch(tmp_path, monkeypatch
     assert repo.get_entry_risk_reservation(proposal.id) is not None
 
     cfg.runtime.kill_switch_active = True
-    replay = gateway.execute_existing_proposal(proposal.id)
+    replay = gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode)
 
     assert replay["status"] == "rejected"
     assert "kill_switch_active" in replay["risk_violations"]
@@ -420,10 +436,10 @@ def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monke
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(proposal)
     monkeypatch.setattr(
@@ -432,8 +448,13 @@ def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monke
         lambda *_args, **_kwargs: "deterministic_symbol_unavailable",
     )
 
-    result = gateway.execute_existing_proposal(proposal.id)
-    assert result["status"] == "rejected"
+    result = gateway.execute_existing_proposal(proposal.id, execution_mode=proposal.execution_mode)
+    assert result["status"] == "rejected", result
+    assert "deterministic_symbol_unavailable" in result["message"]
+    assert conn.execute(
+        "SELECT COUNT(*) FROM risk_decisions "
+        "WHERE decision_role='authoritative' AND approved=1"
+    ).fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
     assert repo.get_entry_risk_reservation(proposal.id) is None
 
@@ -474,10 +495,10 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(terminal)
     monkeypatch.setattr(
@@ -493,7 +514,7 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         ),
     )
 
-    rejected = gateway.execute_existing_proposal(terminal.id)
+    rejected = gateway.execute_existing_proposal(terminal.id, execution_mode=terminal.execution_mode)
     assert rejected["status"] == "rejected"
     assert repo.get_trade_proposal(terminal.id)["status"] == "rejected"
     assert repo.get_entry_risk_reservation(terminal.id) is not None
@@ -514,10 +535,10 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         direction="long",
         quantity=0.01,
         price=100.0,
-        stop_price=99.0,
-        take_profit=102.0,
+        stop_price=98.0,
+        take_profit=104.0,
         risk_reward=2.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     repo.insert_trade_proposal(candidate)
     preflight = engine.evaluate_proposal(candidate, decision_role="preflight")
@@ -534,15 +555,13 @@ def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
         "§2 complete open-position working set",
         "L2b",
         "Safety and lifecycle loops see every open Position beyond the legacy 50-row "
-        "display default, and paper aggregation can find an older Position only for "
-        "the same immutable Proposal lineage.",
+        "display default, including an older external Position whose stop is adjusted.",
         status="implemented",
     )
 )
-def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monkeypatch):
+def test_open_position_working_set_is_unbounded(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.execution import paper_broker
     from aletheia.portfolio import position_manager
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position, TradeProposal
@@ -554,7 +573,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         direction="long",
         quantity=1.0,
         price=10.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executed",
     )
     repo.insert_trade_proposal(proposal)
@@ -566,7 +585,7 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
         direction="long",
         quantity=1.0,
         entry_price=10.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         strategy_id="target-strategy",
         proposal_id=proposal.id,
     )
@@ -579,23 +598,17 @@ def test_open_position_working_set_and_paper_merge_are_unbounded(tmp_path, monke
             direction="long",
             quantity=1.0,
             entry_price=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             strategy_id=f"strategy-{index}",
         ))
 
     all_open = repo.list_all_open_positions()
     assert len(all_open) == 501
     assert target.id in {row["id"] for row in all_open}
-    matched = paper_broker._find_open_position(
-        target.symbol,
-        target.market_type,
-        target.direction,
-        target.execution_mode,
-        target.strategy_id,
-        target.proposal_id,
+    monkeypatch.setattr(
+        "aletheia.execution.stops.replace_exchange_protective_stop",
+        lambda *_args: True,
     )
-    assert matched is not None
-    assert matched["id"] == target.id
 
     adjusted = position_manager.adjust_stop(target.id, 9.0)
     assert adjusted["updated"] is True
@@ -629,7 +642,7 @@ def test_market_collection_keeps_every_open_position_instrument(tmp_path, monkey
             direction="long",
             quantity=1.0,
             entry_price=10.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         ))
 
     cfg = AletheiaConfig()
@@ -669,7 +682,7 @@ def test_market_collection_keeps_same_symbol_spot_and_futures(tmp_path, monkeypa
             direction="long",
             quantity=1.0,
             entry_price=100.0,
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         ))
 
     cfg = AletheiaConfig()
@@ -724,7 +737,7 @@ def test_trailing_does_not_invent_native_null_stop(tmp_path, monkeypatch):
         direction="long",
         quantity=1.0,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         stop_price=None,
         take_profit=None,
         status="executed",
@@ -1109,7 +1122,7 @@ def test_reservation_migration_backfills_only_provable_authority(
         quantity=2.0,
         price=100.0,
         leverage=4,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executing",
     )
     repo.insert_trade_proposal(proposal)
@@ -1185,7 +1198,7 @@ def test_reservation_migration_preserves_normalized_evaluated_quantity(
         quantity=10.0,
         price=100.0,
         leverage=4,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         status="executing",
     )
     repo.insert_trade_proposal(proposal)
@@ -1246,7 +1259,6 @@ def test_safety_loops_do_not_use_the_truncated_open_position_reader():
         "aletheia/data/price_feed.py",
         "aletheia/trading/market_data.py",
         "aletheia/agent_runtime/scheduler.py",
-        "aletheia/execution/paper_broker.py",
     )
     for relative in paths:
         source = (root / relative).read_text(encoding="utf-8")

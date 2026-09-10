@@ -367,8 +367,6 @@ _MANUAL_AGENT_ALLOWLIST: dict[str, dict] = {
     "lesson_reviewer": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "dreaming_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
     "portfolio_agent": {"side_effect_class": "review", "cost_class": "medium", "gate_check": False},
-    # Behavior-producing — creates paper proposals/orders; respects kill-switch and pause
-    "paper_trader": {"side_effect_class": "behavior", "cost_class": "medium", "gate_check": True},
 }
 
 # Caller-specific capability guard for the Operator service identity (Issue #1100).
@@ -961,126 +959,6 @@ def get_proposal(proposal_id: str):
     return row
 
 
-@router.post("/proposals/{proposal_id}/approve-paper")
-def approve_proposal(proposal_id: str, request: Request):
-    """Approve a stored local-paper proposal through the execution gateway."""
-    if is_preview_mode():
-        raise HTTPException(
-            403,
-            detail={
-                "reason_code": "preview_execution_blocked",
-                "message": "Proposal approval is unavailable in the isolated preview API.",
-            },
-        )
-    _ensure_db()
-    from aletheia.files.jsonl import write_audit
-
-    # The Proposal status and the pending -> approved transition must share the
-    # same writer claim. Otherwise a stale unlocked read can overwrite a
-    # concurrent terminal rejection and hand it to Gateway for execution.
-    source = "owner" if getattr(request.state, "tunnel_authenticated", False) else "dashboard"
-    approval_event = None
-    with repo.transaction(immediate=True):
-        p = repo.get_trade_proposal(proposal_id)
-        if p is None:
-            raise HTTPException(404, "Proposal not found")
-
-        execution_mode = str(p.get("execution_mode") or "")
-        if execution_mode != "paper_internal":
-            raise HTTPException(
-                409,
-                "Only a proposal stored for local paper execution can be approved here; "
-                "the stored execution mode was not changed.",
-            )
-
-        status = str(p.get("status") or "").lower()
-        if status == "executed":
-            return {"proposal_id": proposal_id, "execution": {"status": "already_executed", "proposal_id": proposal_id}}
-        if status in {"error", "rejected"}:
-            return {"proposal_id": proposal_id, "execution": {"status": status, "proposal_id": proposal_id}}
-        if status not in {"pending", "approved", "executing"}:
-            raise HTTPException(
-                409,
-                "This proposal is no longer awaiting paper approval; no order was sent.",
-            )
-
-        if status == "pending":
-            approval_event = AuditEvent(
-                actor="human",
-                source=source,
-                event_type="proposal_approved",
-                entity_type="trade_proposal",
-                entity_id=proposal_id,
-                before_state=json.dumps({"status": status}, sort_keys=True),
-                after_state=json.dumps({"status": "approved"}, sort_keys=True),
-                message="Proposal approved for paper execution",
-            )
-            repo.update_trade_proposal(proposal_id, status="approved")
-            repo.insert_audit_event(approval_event)
-
-    if approval_event is not None:
-        try:
-            mirrored = write_audit(
-                approval_event.model_dump(),
-                mirror_db=False,
-                dedup_id=approval_event.id,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Proposal %s approval JSONL mirror unavailable; execution continues (%s)",
-                proposal_id,
-                type(exc).__name__,
-            )
-        else:
-            if not mirrored:
-                logger.warning(
-                    "Proposal %s approval JSONL mirror unavailable; execution continues",
-                    proposal_id,
-                )
-    from aletheia.execution.gateway import execute_existing_proposal
-
-    try:
-        result = execute_existing_proposal(proposal_id, execution_mode="paper_internal")
-    except Exception as exc:
-        # Configuration/exchange exceptions can contain credentials or signed
-        # request details. Keep only the class in process logs and use a stable,
-        # secret-free reason in the API response and durable audit trail.
-        logger.warning(
-            "Paper approval execution failed for proposal %s (%s)",
-            proposal_id,
-            type(exc).__name__,
-        )
-        repo.update_trade_proposal(proposal_id, status="error")
-        try:
-            write_audit(
-                {
-                    "actor": "system",
-                    "source": source,
-                    "event_type": "execution_error",
-                    "entity_type": "trade_proposal",
-                    "entity_id": proposal_id,
-                    "before": {"status": "approved"},
-                    "after": {"status": "error"},
-                    "message": "paper_execution_failed: Paper execution could not be completed.",
-                }
-            )
-        except Exception as audit_exc:
-            logger.warning(
-                "Proposal %s execution error kept after audit failure (%s)",
-                proposal_id,
-                type(audit_exc).__name__,
-            )
-        return {
-            "proposal_id": proposal_id,
-            "execution": {
-                "status": "error",
-                "reason_code": "paper_execution_failed",
-                "message": "Paper execution could not be completed.",
-            },
-        }
-    return {"proposal_id": proposal_id, "execution": result}
-
-
 @router.post("/proposals/{proposal_id}/reject")
 def reject_proposal(proposal_id: str, request: Request):
     _ensure_db()
@@ -1450,7 +1328,6 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
     """Owner-initiated manual close of one open position.
 
     Routing and constraints (execution_contract.md §10.2):
-    - `paper_internal` → resolved-mark local close via paper_broker.
     - `*_demo` / `*_testnet` → real exchange close order via the matching broker.
     - `*_live_limited` → HTTP 409 with code ``live_position_requires_exchange_close``;
       live positions hold REAL funds and must be closed from the exchange UI.
@@ -1892,8 +1769,7 @@ def get_account_equity_history(
     recorded position notional rather than cash-account equity.
     """
     _ensure_db()
-    local_paper = load_config().exchange.paper_execution_mode == "paper_internal"
-    execution_mode = "paper_internal" if local_paper else "exchange_account"
+    execution_mode = "exchange_account"
     cache_key = (days, limit, max_points, execution_mode)
     now = time.monotonic()
     with _equity_history_cache_lock:
@@ -1911,31 +1787,9 @@ def get_account_equity_history(
     capital_flow_markers: list[dict] = []
     adjusted_points: list[dict] = []
     if points:
-        if local_paper:
-            account_events = repo.list_paper_cash_events_between(
-                points[0]["time"], points[-1]["time"]
-            )
-            capital_events = [
-                {
-                    "id": event["id"],
-                    "detected_at": event["created_at"],
-                    "broker_id": "paper_internal",
-                    "event_type": (
-                        "deposit" if float(event["amount_usdt"]) > 0 else "withdraw"
-                    ),
-                    "amount_usdt": abs(float(event["amount_usdt"])),
-                    "signed_amount_usdt": float(event["amount_usdt"]),
-                    "change_type": event["action"],
-                    "balance_before_usdt": float(event["cash_balance_before_usdt"]),
-                    "balance_after_usdt": float(event["cash_balance_after_usdt"]),
-                    "note": event["note"],
-                }
-                for event in account_events
-            ]
-        else:
-            capital_events = repo.list_capital_events_between(
-                points[0]["time"], points[-1]["time"]
-            )
+        capital_events = repo.list_capital_events_between(
+            points[0]["time"], points[-1]["time"]
+        )
         event_index = 0
         cumulative_net_flow = 0.0
         for point in points:
@@ -1989,7 +1843,7 @@ def get_account_equity_history(
         adjusted_points = [adjusted_points[index] for index in selected]
 
     result = {
-        "source": "local_paper_ledger" if local_paper else "exchange_account_snapshot",
+        "source": "exchange_account_snapshot",
         "state": "available" if points else "unavailable",
         "points": points,
         "adjusted_points": adjusted_points,
@@ -2000,7 +1854,7 @@ def get_account_equity_history(
             "scope": "aggregate_tracked_account_equity",
             "baseline_at": points[0]["time"] if points else None,
             "note": (
-                "Raw equity minus audited cash or administrative balance changes "
+                "Raw equity minus detected external capital flows "
                 "after the first visible snapshot. Verified trading PnL is unchanged."
             ),
         },

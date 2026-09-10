@@ -4,7 +4,7 @@ The three real-exchange brokers (okx/binance/bitget) are structural clones of on
 another. A protective stop must (a) be persisted on the Position row at open and
 (b) tighten — never loosen — when averaging into an existing position. Keeping that
 logic here gives all brokers ONE source of truth so the historical "stop dropped on
-the floor at open" bug cannot re-appear via copy-paste. Mirrors paper_broker.
+the floor at open" bug cannot re-appear via copy-paste.
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@ These tests exercise the seven Phase 1 GET endpoints defined in
 `docs/design/proposals/tokenomics_harness_phase_plan_2026-07-30.md`
 §4 Phase 1. They only assert route shape, kill-switch honesty, and
 empty/seeded behaviour — the underlying economics logic is already
-covered by `test_economic_cost_tracing`, `test_economic_viability`,
+covered by `test_economic_cost_tracing`, `test_economic_cost_windows`,
 and `test_economic_cli`.
 """
 
@@ -169,7 +169,6 @@ async def test_status_returns_kill_switch_state(client):
     assert resp.status_code == 200
     data = resp.json()
     assert isinstance(data["tracing_enabled"], bool)
-    assert isinstance(data["audit_enabled"], bool)
 
 
 @pytest.mark.anyio
@@ -757,48 +756,6 @@ async def test_tokens_filters_by_run_id(client):
 # ── /api/economics/viability ─────────────────────────────────────────────────
 
 
-@pytest.mark.anyio
-async def test_viability_disabled_returns_503(client, monkeypatch):
-    monkeypatch.setenv("ALETHEIA_VIABILITY_AUDIT", "0")
-    resp = await client.get("/api/economics/viability?scope=system&days=1")
-    assert resp.status_code == 503
-    assert "ALETHEIA_VIABILITY_AUDIT" in resp.json()["detail"]
-
-
-@pytest.mark.anyio
-async def test_viability_get_does_not_persist(client, monkeypatch):
-    from aletheia.storage.sqlite import get_db
-
-    monkeypatch.setattr(
-        "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
-        lambda **kwargs: [],
-    )
-    resp = await client.get(
-        "/api/economics/viability?scope=system&days=1&data_cost_usd=0&infrastructure_cost_usd=0&other_cost_usd=0"
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["scope"] == "system"
-    assert data["verdict"] in {"insufficient_data", "invalid"}
-
-    persisted = get_db().execute("SELECT COUNT(*) FROM viability_reports").fetchone()[0]
-    assert persisted == 0
-
-
-@pytest.mark.anyio
-async def test_viability_rejects_invalid_scope(client):
-    resp = await client.get("/api/economics/viability?scope=invalid&days=1")
-    assert resp.status_code == 422
-
-
-@pytest.mark.anyio
-async def test_viability_rejects_unsupported_execution_mode(client):
-    resp = await client.get(
-        "/api/economics/viability?scope=system&days=1&execution_mode=okx_demo"
-    )
-    assert resp.status_code == 422
-
-
 # ── /api/economics/viability/reports ─────────────────────────────────────────
 
 
@@ -1157,3 +1114,9 @@ async def test_pricing_returns_seeded_snapshots(client):
     assert data["models"][0]["model"] == "model-a"
     assert data["tools"] == []
     assert data["models"][0]["web_search_usd_per_request"] is None
+
+
+@pytest.mark.anyio
+async def test_viability_generation_route_is_removed(client):
+    response = await client.get("/api/economics/viability")
+    assert response.status_code == 404

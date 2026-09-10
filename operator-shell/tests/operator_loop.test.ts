@@ -4897,12 +4897,12 @@ test('operator loop marks a repeatedly rejected symbol observe-only through type
       {
         id: 'risk-btc-1',
         symbol: 'BTC/USDT',
-        execution_mode: 'paper_internal',
+        execution_mode: 'bitget_demo',
       },
       {
         id: 'risk-btc-2',
         symbol: 'BTC/USDT',
-        execution_mode: 'paper_internal',
+        execution_mode: 'bitget_demo',
       },
     ],
     recent_risk_boundary_proposals: [],
@@ -4912,9 +4912,9 @@ test('operator loop marks a repeatedly rejected symbol observe-only through type
         symbol: 'BTC/USDT',
         rejection_count: 2,
         summary:
-          'BTC/USDT triggered repeated paper-side risk rejections and should be left observe-only until setup quality improves.',
+          'BTC/USDT triggered repeated demo-account risk rejections and should be left observe-only until setup quality improves.',
         decision_ids: ['risk-btc-1', 'risk-btc-2'],
-        execution_modes: ['paper_internal'],
+        execution_modes: ['bitget_demo'],
       },
     ],
   })
@@ -5790,7 +5790,7 @@ test('operator loop delegates risk critique tasks to risk_critic and closes the 
     recent_daily_reviews: [{ id: 'daily-review-today', created_at: `${new Date().toISOString().slice(0, 10)}T01:00:00Z` }],
   })
   backend.getRiskSummary = async () => ({
-    recent_rejected_decisions: [{ id: 'risk-1', symbol: 'BTC/USDT', execution_mode: 'paper_internal' }],
+    recent_rejected_decisions: [{ id: 'risk-1', symbol: 'BTC/USDT', execution_mode: 'bitget_demo' }],
     recent_risk_boundary_proposals: [],
     needs_operator_risk_boundary_proposals: [],
   })

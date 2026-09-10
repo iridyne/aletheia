@@ -1,7 +1,7 @@
 """Tests for exit attribution (M0, exit-intent plan).
 
-summarize_closures is a pure function over closed-position rows, so these tests
-use synthetic rows and assert the reason/category counts directly — no DB.
+Reason/category checks use recorded rows. The database roundtrip also preserves
+archived simulator closes alongside external-account history.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -110,7 +110,7 @@ def _insert_closed(db, *, pid, reason, mode="paper_internal", closed_at, strateg
     db.execute(f"INSERT INTO positions ({keys}) VALUES ({placeholders})", tuple(cols.values()))
 
 
-def test_db_roundtrip_filters_and_report():
+def test_db_roundtrip_preserves_archived_closes_and_external_mode_filter():
     from aletheia.storage.sqlite import get_db
     from aletheia.storage.repositories import list_closed_positions
     from aletheia.analytics.exit_attribution import attribution_report

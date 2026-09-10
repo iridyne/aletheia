@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
 
 
 # Derived from the exchange registry so a new venue cannot be half-registered.
@@ -40,7 +40,7 @@ def execution_exchange_for_mode(
 ) -> str | None:
     """Resolve the venue that orders actually target, not a retained preference."""
     mode = str(paper_execution_mode or "").strip().lower()
-    if mode == "paper_internal":
+    if mode not in _EXECUTION_MODE_EXCHANGES and mode not in LIVE_EXECUTION_MODES.values():
         return None
     return _EXECUTION_MODE_EXCHANGES.get(mode) or str(configured_exchange or "").strip().lower() or None
 
@@ -53,7 +53,7 @@ def exchange_alignment_for_values(
     )
     data = str(data_exchange or "").strip().lower()
     if execution is None:
-        status = "local_paper"
+        status = "not_configured" if not paper_execution_mode else "unavailable"
         diverged = False
     else:
         diverged = execution != data

@@ -36,7 +36,6 @@ vi.mock('../features/settings/tabs/ExecutionTab', () => ({
   ExecutionTab: () => null,
   CAPITAL_EVENTS_SECTION:      { id: 'capital-events',      title: 'Capital Events',     tab: 'execution', description: '', searchTerms: [] },
   EXCHANGE_CONNECTION_SECTION: { id: 'exchange-connection', title: 'Exchange Connection', tab: 'execution', description: '', searchTerms: [] },
-  PAPER_ACCOUNT_SECTION:       { id: 'paper-account',       title: 'Paper Account',      tab: 'execution', description: '', searchTerms: [] },
   PAPER_PARAMETERS_SECTION:    { id: 'paper-parameters',    title: 'Paper Parameters',   tab: 'execution', description: '', searchTerms: [] },
   TRADING_MODE_SECTION:        { id: 'trading-mode',        title: 'Trading Mode',       tab: 'execution', description: '', searchTerms: [] },
 }))

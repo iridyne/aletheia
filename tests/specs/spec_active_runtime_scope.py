@@ -9,14 +9,6 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCOPE_PATH = ROOT / "docs" / "product" / "ACTIVE_RUNTIME_SCOPE.md"
-
-
-def _scope() -> dict:
-    from aletheia.knowledge.frontmatter import parse_frontmatter
-
-    metadata, _ = parse_frontmatter(SCOPE_PATH)
-    return metadata
 
 
 def _tree(relative_path: str) -> ast.AST:
@@ -31,21 +23,6 @@ def _imports(relative_path: str) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module)
     return modules
-
-
-def _call_names(relative_path: str) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(_tree(relative_path)):
-        if not isinstance(node, ast.Call):
-            continue
-        name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-        if name:
-            names.add(name)
-    return names
-
-
-
-
 
 
 @spec_claim(SpecClaim(
@@ -98,26 +75,6 @@ def test_operator_and_frontend_have_no_direct_exchange_order_path():
         if any(token in text for token in forbidden_frontend_tokens):
             frontend_violations.append(str(path.relative_to(ROOT)))
     assert frontend_violations == []
-
-
-@spec_claim(SpecClaim(
-    "AR-S05", "active_runtime_scope", "risk and execution chokepoints", "L2a",
-    "The paper wrapper enters submit_proposal and the gateway evaluates Risk before any broker.",
-))
-def test_native_proposals_enter_gateway_and_risk_before_execution():
-    paper_tools = (ROOT / "aletheia" / "execution" / "paper_tools.py").read_text(
-        encoding="utf-8"
-    )
-    assert "return submit_proposal(" in paper_tools
-
-    gateway_path = "aletheia/execution/gateway.py"
-    calls = _call_names(gateway_path)
-    assert "evaluate_proposal" in calls
-    assert {
-        "execute_paper_order", "execute_demo_order", "execute_testnet_order",
-    } & calls
-
-
 
 
 @spec_claim(SpecClaim(

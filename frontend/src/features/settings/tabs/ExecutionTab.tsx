@@ -12,7 +12,7 @@ import { humanize } from '../../../lib/format'
 import { safeErrorText } from '../../../lib/mutationErrors'
 import { executionExchangeFromPaperMode } from '../execution/exchangeMode'
 import { useSettingsDraftLifecycle } from '../draftLifecycle'
-import { CapitalEventsCard, PaperAccountCard, TradingParamsCard } from '../execution/PaperTradingSettings'
+import { CapitalEventsCard, TradingParamsCard } from '../execution/PaperTradingSettings'
 import { SettingsFeatureSection, type SettingsFeatureDescriptor } from '../SettingsFeatureSection'
 import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../types'
 
@@ -40,17 +40,11 @@ export const CAPITAL_EVENTS_SECTION = {
   searchTerms: ['deposit', 'withdrawal', 'pnl baseline'],
 } satisfies SettingsFeatureDescriptor
 
-export const PAPER_ACCOUNT_SECTION = {
-  id: 'local-paper-account', title: 'Local Paper Account', tab: 'execution',
-  description: 'No exchange only. Manage local simulated cash and positions; every change is recorded for audit and shown to the trading agent.',
-  searchTerms: ['no exchange', 'paper cash', 'available balance', 'close positions'],
-} satisfies SettingsFeatureDescriptor
-
 export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: SettingsStatusProps & SettingsDirtyProps & { sectionId?: string }) {
   const isVisible = (id: string) => !sectionId || sectionId === id
   const currentPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const currentExecutionExchange = executionExchangeFromPaperMode(
-    currentPaperMode, String(settings?.exchange?.name || ''),
+    currentPaperMode,
   )
   const currentDataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const currentDiverged = currentExecutionExchange !== null
@@ -94,11 +88,7 @@ export function ExecutionTab({ status, settings, qc, onDirty, sectionId }: Setti
         </SettingsFeatureSection>
       )}
 
-      {String(settings?.exchange?.paper_execution_mode) === 'paper_internal' && isVisible(PAPER_ACCOUNT_SECTION.id) && (
-        <SettingsFeatureSection descriptor={PAPER_ACCOUNT_SECTION}>
-          <PaperAccountCard qc={qc} onDirty={onDirty} />
-        </SettingsFeatureSection>
-      )}
+
 
     </div>
   )
@@ -108,14 +98,12 @@ const PRIMARY_EXCHANGES = [
   { id: 'okx',           label: 'OKX',             desc: 'Data + paper execution via OKX Demo' },
   { id: 'bitget',        label: 'Bitget',           desc: 'Data + paper execution via Bitget Demo' },
   { id: 'binance',       label: 'Binance',          desc: 'Data + paper execution via Binance Testnet' },
-  { id: 'paper_internal',label: 'Paper (internal)', desc: 'No exchange — local fill simulation only' },
 ] as const
 
 function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
   const confirm = useConfirm()
-  const exchangeName = String(settings?.exchange?.name || 'bitget')
-  const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
-  const effective = paperMode === 'paper_internal' ? 'paper_internal' : exchangeName
+  const exchangeName = String(settings?.exchange?.name || '')
+  const effective = exchangeName
 
   const [err, setErr] = useState<string | null>(null)
   const mut = useMutation({
@@ -128,7 +116,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
     <div>
       <Row
         label="Primary exchange"
-        hint="Atomically updates market data source, paper execution mode, and risk allowlist. Paper (internal) skips exchange connectivity entirely."
+        hint="Atomically updates market data source, paper execution mode, and risk allowlist."
       >
         <select
           value={effective}
@@ -147,6 +135,7 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
           disabled={mut.isPending}
           className="w-auto"
         >
+          <option value="" disabled>Select an exchange</option>
           {PRIMARY_EXCHANGES.map(ex => (
             <option key={ex.id} value={ex.id}>{ex.label}</option>
           ))}
@@ -159,10 +148,10 @@ function PrimaryExchangeCard({ settings, qc }: SettingsProps) {
 
 export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   const confirm = useConfirm()
-  const paperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
+  const paperMode = String(settings?.exchange?.paper_execution_mode || '')
   const modeLabel: Record<string, string> = {
     okx_demo: 'OKX Demo', bitget_demo: 'Bitget Demo',
-    binance_testnet: 'Binance Testnet', paper_internal: 'Paper (internal)',
+    binance_testnet: 'Binance Testnet',
   }
   const [err, setErr] = useState<string | null>(null)
   const mut = useMutation({
@@ -175,7 +164,7 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
   })
   const selectedMode = mut.isPending && mut.variables ? mut.variables : String(status.exchange_mode)
   return (
-    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? paperMode} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? paperMode}.`}>
+    <Row label="Exchange mode" hint={`demo uses ${modeLabel[paperMode] ?? (paperMode || 'not configured')} for paper trading. live is an experimental readiness intent only; new proposals still use ${modeLabel[paperMode] ?? (paperMode || 'not configured')}.`}>
       <select value={selectedMode} onChange={async e => {
         const next = e.target.value
         if (next === 'live' && !(await confirm({
@@ -197,7 +186,7 @@ export function ExchangeModeRow({ status, qc, settings }: SettingsStatusProps) {
 
 function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
   const markets = settings?.exchange?.enabled_markets || { spot: true, usdt_futures: true }
-  const serverPaperMode = String(settings?.exchange?.paper_execution_mode || 'bitget_demo')
+  const serverPaperMode = String(settings?.exchange?.paper_execution_mode || '')
   const [spot, setSpot] = useState(!!markets.spot)
   const [futures, setFutures] = useState(!!markets.usdt_futures)
   const [paperMode, setPaperMode] = useState(serverPaperMode)
@@ -206,7 +195,7 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
 
   const dataExchange = String(settings?.market_data?.ccxt_exchange || '')
   const executionExchange = executionExchangeFromPaperMode(
-    paperMode, String(settings?.exchange?.name || ''),
+    paperMode,
   )
   const createsDivergence = paperMode !== serverPaperMode
     && executionExchange !== null
@@ -245,17 +234,17 @@ function ExchangeMarketsRow({ settings, qc, onDirty }: SettingsDirtyProps) {
         <Toggle checked={spot} persistence="staged" label="Spot" onChange={v => { setSpot(v); setMsg(null) }} />
         <Toggle checked={futures} persistence="staged" label="USDT Futures" onChange={v => { setFutures(v); setMsg(null) }} />
       </Row>
-      <Row label="Paper execution mode" hint="Where autonomous paper orders execute. okx_demo = OKX simulated trading (broad coverage); binance_testnet = Binance Futures Testnet (556 pairs); bitget_demo = Bitget demo API (42 pairs); paper_internal = local simulator (no exchange).">
+      <Row label="Paper execution mode" hint="Exchange environment used for orders: OKX Demo, Binance Testnet, or Bitget Demo.">
         <select value={paperMode} onChange={e => {
           const nextMode = e.target.value
           setPaperMode(nextMode)
           setConfirmExchangeDivergence(false)
           setMsg(null)
         }} className="w-auto">
+          <option value="" disabled>Select an exchange environment</option>
           <option value="okx_demo">OKX Demo</option>
           <option value="binance_testnet">Binance Testnet</option>
           <option value="bitget_demo">Bitget Demo</option>
-          <option value="paper_internal">Paper (internal)</option>
         </select>
         {createsDivergence && (
           <Toggle

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from typing_extensions import TypedDict
 
 from aletheia.config.loader import load_config, save_config, mutate_config, config_file_hash
@@ -498,167 +498,6 @@ def set_trading_mandate(req: TradingMandateRequest):
 
 
 # ---------------------------------------------------------------------------
-# Local paper account (No exchange only)
-# ---------------------------------------------------------------------------
-
-class PaperAccountAdjustmentRequest(SettingsRequest):
-    amount_usdt: FiniteFloat
-    note: str = ""
-
-
-class PaperAccountSetBalanceRequest(SettingsRequest):
-    cash_balance_usdt: FiniteFloat
-    note: str = ""
-
-
-def _require_local_paper_mode() -> None:
-    if load_config().exchange.paper_execution_mode != "paper_internal":
-        raise HTTPException(409, "Local paper account controls require Paper (internal) / No exchange mode")
-
-
-def _audit_paper_account_change(action: str, before: dict, after: dict, note: str) -> None:
-    from aletheia.files.jsonl import write_audit
-    cfg = load_config()
-    tunnel_active = getattr(getattr(cfg, "tunnel", None), "enabled", False)
-    source = "tunnel_dashboard" if tunnel_active else "dashboard"
-    write_audit({
-        "actor": "human", "source": source, "event_type": f"paper_account_{action}",
-        "entity_type": "paper_account", "before": before, "after": after,
-        "message": f"Local paper account {action}: {note or 'manual operator action'}",
-    })
-
-
-def _invalidate_paper_account_views() -> None:
-    from aletheia.server.routes.data import invalidate_account_equity_history_cache
-
-    invalidate_account_equity_history_cache()
-
-
-@router.get("/paper-account")
-async def get_paper_account():
-    def _read():
-        _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import get_paper_account as _get
-        return _get()
-    return await asyncio.to_thread(_read)
-
-
-@router.post("/paper-account/credit")
-async def credit_paper_account(req: PaperAccountAdjustmentRequest):
-    if req.amount_usdt <= 0:
-        raise HTTPException(400, "amount_usdt must be positive")
-
-    def _credit():
-        _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
-        before = _get(event_limit=0)
-        try:
-            after = adjust_cash(req.amount_usdt, note=req.note)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        _invalidate_paper_account_views()
-        _audit_paper_account_change("credit", before, after, req.note)
-        return after
-    return await asyncio.to_thread(_credit)
-
-
-@router.post("/paper-account/debit")
-async def debit_paper_account(req: PaperAccountAdjustmentRequest):
-    if req.amount_usdt <= 0:
-        raise HTTPException(400, "amount_usdt must be positive")
-
-    def _debit():
-        _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import adjust_cash, get_paper_account as _get
-        before = _get(event_limit=0)
-        try:
-            after = adjust_cash(-req.amount_usdt, note=req.note)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        _invalidate_paper_account_views()
-        _audit_paper_account_change("debit", before, after, req.note)
-        return after
-    return await asyncio.to_thread(_debit)
-
-
-@router.post("/paper-account/set-balance")
-async def set_paper_account_balance(req: PaperAccountSetBalanceRequest):
-    if req.cash_balance_usdt < 0:
-        raise HTTPException(400, "cash_balance_usdt must be non-negative")
-
-    def _set_balance():
-        _require_local_paper_mode()
-        from aletheia.portfolio.paper_account import set_cash_balance, get_paper_account as _get
-        before = _get(event_limit=0)
-        after = set_cash_balance(req.cash_balance_usdt, note=req.note)
-        _invalidate_paper_account_views()
-        _audit_paper_account_change("set_balance", before, after, req.note)
-        return after
-    return await asyncio.to_thread(_set_balance)
-
-
-def _close_local_positions(market_type: str | None) -> dict:
-    _require_local_paper_mode()
-    from aletheia.portfolio.position_manager import (
-        LocalPaperClosePreflightError,
-        close_local_positions_batch,
-    )
-
-    cfg = load_config()
-    tunnel_active = getattr(getattr(cfg, "tunnel", None), "enabled", False)
-    decision_source = "tunnel_dashboard" if tunnel_active else "dashboard"
-    try:
-        result = close_local_positions_batch(
-            market_type,
-            reason="manual_bulk_close",
-            decision_actor="human",
-            decision_source=decision_source,
-        )
-    except LocalPaperClosePreflightError as exc:
-        raise HTTPException(
-            409,
-            detail={
-                "code": "bulk_close_mark_preflight_failed",
-                "closed_position_ids": [],
-                "failed": exc.failures,
-            },
-        ) from exc
-
-    from aletheia.portfolio.paper_account import get_paper_account as _get
-    after = _get()
-    action = "close_spot_positions" if market_type == "spot" else "close_all_positions"
-    if result["failed"]:
-        action += "_partial"
-    _audit_paper_account_change(
-        action,
-        {"open_positions_count": result["requested_count"]},
-        {
-            "closed_position_ids": result["closed_position_ids"],
-            "failed": result["failed"],
-            **after,
-        },
-        "Manual local paper position close",
-    )
-    response = {**result, "account": after}
-    if result["failed"]:
-        raise HTTPException(
-            500,
-            detail={"code": "bulk_close_partial_failure", **response},
-        )
-    return response
-
-
-@router.post("/paper-account/close-all")
-async def close_all_local_paper_positions():
-    return await asyncio.to_thread(_close_local_positions, None)
-
-
-@router.post("/paper-account/close-spot")
-async def close_local_paper_spot_positions():
-    return await asyncio.to_thread(_close_local_positions, "spot")
-
-
-# ---------------------------------------------------------------------------
 # Agent config
 # ---------------------------------------------------------------------------
 
@@ -804,17 +643,13 @@ class PrimaryExchangeRequest(SettingsRequest):
 def set_primary_exchange(req: PrimaryExchangeRequest):
     """Atomically set primary exchange across data, execution, and risk axes."""
     eid = req.exchange_id.strip().lower()
-    valid = set(_EXCHANGE_UNIFICATION_MAP.keys()) | {"paper_internal"}
+    valid = set(_EXCHANGE_UNIFICATION_MAP)
     if eid not in valid:
         raise HTTPException(400, f"exchange_id must be one of: {sorted(valid)}")
 
     # Pre-validate outside the mutation lock
     cfg_check = load_config()
-    desired_paper_mode = (
-        "paper_internal"
-        if eid == "paper_internal"
-        else _EXCHANGE_UNIFICATION_MAP[eid][1]
-    )
+    desired_paper_mode = _EXCHANGE_UNIFICATION_MAP[eid][1]
     _reject_live_identity_change(
         cfg_check,
         changed=(
@@ -834,15 +669,12 @@ def set_primary_exchange(req: PrimaryExchangeRequest):
             "risk.allowed_exchange": cfg.risk.allowed_exchange,
         }
 
-        if eid == "paper_internal":
-            cfg.exchange.paper_execution_mode = "paper_internal"
-        else:
-            ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
-            cfg.exchange.name = eid
-            cfg.market_data.ccxt_exchange = ccxt_ex
-            cfg.market_data.ccxt_fallback = ccxt_ex
-            cfg.exchange.paper_execution_mode = paper_mode
-            cfg.risk.allowed_exchange = eid
+        ccxt_ex, paper_mode = _EXCHANGE_UNIFICATION_MAP[eid]
+        cfg.exchange.name = eid
+        cfg.market_data.ccxt_exchange = ccxt_ex
+        cfg.market_data.ccxt_fallback = ccxt_ex
+        cfg.exchange.paper_execution_mode = paper_mode
+        cfg.risk.allowed_exchange = eid
 
         after = {
             "exchange.name": cfg.exchange.name,

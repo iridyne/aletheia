@@ -111,7 +111,7 @@ def test_risk_filter_uses_exact_universe_asset_venue(monkeypatch):
         symbol="BTC/USDT",
         market_type="perp",
         direction="long",
-        execution_mode="paper_internal",
+        execution_mode="okx_demo",
         price=100.0,
     )
 

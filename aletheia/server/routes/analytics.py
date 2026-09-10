@@ -637,7 +637,7 @@ def get_equity_curve(
     """Trade-by-trade equity curve for the PnL chart on Overview.
 
     Query params:
-      execution_mode — filter to a single mode (e.g. 'paper_internal', 'okx_demo')
+      execution_mode — filter current or archived records to one account mode
       days — only include positions closed within the last N days
       limit — max data points returned (default 5000)
     """
@@ -646,16 +646,15 @@ def get_equity_curve(
         build_outcome_cohort_summary,
         raw_account_events,
     )
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
     from aletheia.storage.sqlite import get_db
     from aletheia.config.loader import load_config
     db = get_db()
 
     mode = "full_cumulative"
-    uses_external_exchange = False
     try:
         config = load_config()
         mode = config.app.equity_curve_mode
-        uses_external_exchange = config.exchange.paper_execution_mode != "paper_internal"
     except Exception:
         pass
 
@@ -711,9 +710,14 @@ def get_equity_curve(
         closed_after=cutoff,
     )
 
-    # Unrealized PnL for open positions (same mode filter if specified)
-    upnl_conditions = ["status='open'"]
-    upnl_params: list = []
+    # Historical curves retain archived records; the current mark uses external
+    # account economics only. Archived open rows are no longer monitored.
+    _, current_closed_total = _points([
+        row for row in rows if row.get("execution_mode") in UTA_EXECUTION_MODES
+    ])
+    placeholders = ",".join("?" for _ in UTA_EXECUTION_MODES)
+    upnl_conditions = ["status='open'", f"execution_mode IN ({placeholders})"]
+    upnl_params: list = list(UTA_EXECUTION_MODES)
     if execution_mode:
         upnl_conditions.append("execution_mode = ?")
         upnl_params.append(execution_mode)
@@ -728,7 +732,7 @@ def get_equity_curve(
     # Prefer authoritative cross-broker exchange uPnL (real mark-price + funding)
     # when not filtering by a single mode — keeps the chart's end point consistent
     # with the Overview UNREALIZED card, which also reads UTA uPnL.
-    if not execution_mode and uses_external_exchange:
+    if not execution_mode:
         try:
             from aletheia.portfolio import exchange_sync
             unified = exchange_sync.get_unified_cached_state()
@@ -744,9 +748,9 @@ def get_equity_curve(
     # realization or a verified strategy outcome, while still making Overview
     # visibly move between closes.
     current_mark_point = None
-    if raw_total is not None or open_count:
+    if current_closed_total is not None or open_count:
         from datetime import datetime, timezone
-        closed_raw_pnl = raw_total or 0.0
+        closed_raw_pnl = current_closed_total or 0.0
         current_mark_point = {
             "time": datetime.now(timezone.utc).isoformat(),
             "closed_raw_pnl": round(closed_raw_pnl, 4),

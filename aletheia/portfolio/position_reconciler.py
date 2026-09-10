@@ -44,22 +44,21 @@ logger = logging.getLogger("aletheia.position_reconciler")
 # The exchange aggregates fills, so local-vs-exchange size can drift a little.
 _QTY_REL_TOL = 0.02  # 2%
 
-_LIVE_EXECUTION_MODES = {
-    "bitget": "bitget_live_limited",
-    "okx": "okx_live_limited",
-    "binance": "binance_live_limited",
-}
-
 
 def _execution_mode_for(account_mode: str) -> str | None:
     """Resolve execution_mode from account mode, respecting paper_execution_mode config."""
+    from aletheia.config.exchanges import (
+        EXCHANGE_UNIFICATION_MAP, live_execution_mode_for_exchange,
+    )
     from aletheia.config.loader import load_config
 
     cfg = load_config()
     if account_mode == "live":
-        return _LIVE_EXECUTION_MODES.get((cfg.exchange.name or "").lower())
+        return live_execution_mode_for_exchange(cfg.exchange.name)
     if account_mode == "demo":
-        return cfg.exchange.paper_execution_mode
+        mode = cfg.exchange.paper_execution_mode
+        if mode in {demo_mode for _, demo_mode in EXCHANGE_UNIFICATION_MAP.values()}:
+            return mode
     return None
 
 
@@ -230,27 +229,14 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
     cfg = load_config()
     account_mode = mode or cfg.exchange.mode
     target_execution_mode = _execution_mode_for(account_mode)
+    if target_execution_mode is None:
+        return ReconcileResult()
     local_open = list_all_open_positions()
     in_scope = [
         position for position in local_open
         if position.get("execution_mode") == target_execution_mode
     ]
     result = ReconcileResult()
-
-    # Local simulation has no exchange-side position view by design. Treat every
-    # local row as managed and never let a stale/unrelated broker cache close it.
-    if target_execution_mode == "paper_internal":
-        for position in in_scope:
-            result.managed.append(
-                ReconcileItem(
-                    symbol=to_canonical(position["symbol"]),
-                    direction=_norm_direction(position["direction"]),
-                    classification="managed",
-                    local=position,
-                )
-            )
-        result.sync_status = "local_only"
-        return result
 
     cached = None
     # View-completeness gate (P0, 2026-07-02): only trust the unified view for
@@ -547,7 +533,8 @@ def classify_positions(mode: Optional[str] = None) -> ReconcileResult:
 def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
     """Detect systemic administrative-close → reopen churn, read-only.
 
-    Native and adopted reopens are both evidence.  Matching is scoped to execution
+    Only registered external accounts contribute current incident evidence.
+    Native and adopted reopens are both evidence. Matching is scoped to execution
     mode, broker/account environment, market type, canonical symbol and direction;
     explicit unequal account fingerprints never match.  The source label explains
     how the position reappeared but is not part of the incident definition.
@@ -556,6 +543,7 @@ def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
     from datetime import datetime, timezone, timedelta
     import json
     from aletheia.analytics.outcome_integrity import classify_closure
+    from aletheia.uta.manager import UTA_EXECUTION_MODES
 
     out = {
         "detector_available": False,
@@ -570,15 +558,18 @@ def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
         cutoff_dt = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
         cutoff = cutoff_dt.isoformat()
         db = get_db()
+        mode_placeholders = ",".join("?" for _ in UTA_EXECUTION_MODES)
         closed = db.execute(
-            "SELECT * FROM positions WHERE status='closed' AND closed_at >= ?",
-            (cutoff,),
+            f"SELECT * FROM positions WHERE execution_mode IN ({mode_placeholders}) "
+            "AND status='closed' AND closed_at >= ?",
+            (*UTA_EXECUTION_MODES, cutoff),
         ).fetchall()
         reopened = db.execute(
             # Opening is an event, not the row's current lifecycle state. A reopened
             # row may already have closed again by the time the detector runs.
-            "SELECT * FROM positions WHERE opened_at >= ?",
-            (cutoff,),
+            f"SELECT * FROM positions WHERE execution_mode IN ({mode_placeholders}) "
+            "AND opened_at >= ?",
+            (*UTA_EXECUTION_MODES, cutoff),
         ).fetchall()
     except Exception:
         return out
@@ -600,9 +591,7 @@ def detect_reconcile_thrash(window_minutes: int = 30) -> dict:
         except (TypeError, ValueError):
             identity = {}
         mode = str(row["execution_mode"] or "unknown")
-        environment = str(identity.get("account_environment") or (
-            "demo" if "demo" in mode or mode == "paper_internal" else "live"
-        ))
+        environment = str(identity.get("account_environment") or _account_environment(mode))
         return {
             "execution_mode": mode,
             "broker_id": str(identity.get("broker_id") or mode),

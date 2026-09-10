@@ -53,24 +53,51 @@ def _insert_open_position(
     stop_price: float | None = None,
     take_profit_price: float | None = None,
     opened_at: str | None = None,
-    execution_mode: str = "paper_internal",
+    execution_mode: str = "bitget_demo",
     market_type: str = "spot",
 ) -> str:
-    pos_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
-    opened = opened_at or now
-    conn.execute(
-        "INSERT INTO positions (id, symbol, market_type, direction, quantity, entry_price, "
-        "current_price, unrealized_pnl, realized_pnl, execution_mode, status, stop_price, "
-        "take_profit_price, opened_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            pos_id, symbol, market_type, direction, quantity, entry_price,
-            entry_price, 0.0, 0.0, execution_mode, "open",
-            stop_price, take_profit_price, opened,
-        ),
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from tests.test_outcome_closure import _insert_entry_chain
+
+    position = Position(
+        symbol=symbol, market_type=market_type, direction=direction,
+        quantity=quantity, entry_price=entry_price, current_price=entry_price,
+        execution_mode=execution_mode, stop_price=stop_price,
+        take_profit_price=take_profit_price,
+        opened_at=opened_at or (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        entry_fee=0.0, entry_price_source="broker_fill", entry_fill_verified=True,
+        funding_cost=0.0,
+        funding_source="not_applicable" if market_type == "spot" else "broker_ledger",
     )
-    conn.commit()
-    return pos_id
+    position.opportunity_id, position.proposal_id, position.order_id = _insert_entry_chain(
+        position_id=position.id, symbol=symbol, market_type=market_type,
+        direction=direction, quantity=quantity, price=entry_price,
+        execution_mode=execution_mode, opened_at=position.opened_at,
+    )
+    repo.insert_position(position)
+    return position.id
+
+
+def _prepare_close(monkeypatch, position_id, fill_price):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from tests.test_position_manager import _prepare_exchange_close
+
+    return _prepare_exchange_close(
+        monkeypatch, Position.model_validate(repo.get_position(position_id)), fill_price,
+    )
+
+
+def _confirm_close(conn, position_id, submitted):
+    from aletheia.execution.reconciliation import reconcile
+
+    assert len(submitted) == 1
+    assert conn.execute("SELECT status FROM positions WHERE id=?", (position_id,)).fetchone()[0] == "open"
+    reconcile()
+    row = conn.execute("SELECT status,exit_price_source FROM positions WHERE id=?", (position_id,)).fetchone()
+    assert row["status"] == "closed"
+    assert row["exit_price_source"] == "broker_fill"
 
 
 def _insert_snapshot(
@@ -79,7 +106,7 @@ def _insert_snapshot(
     price: float,
     *,
     market_type: str = "spot",
-    exchange: str = "binance",
+    exchange: str = "bitget",
     snapshot_at: str | None = None,
 ):
     snap_id = str(uuid.uuid4())
@@ -138,9 +165,13 @@ def test_stale_or_wrong_market_mark_never_creates_a_protective_close(
     )
     _insert_snapshot(conn, "BTC/USDT", 100.0, market_type="spot")
     _insert_snapshot(conn, "BTC/USDT", 80.0, market_type="perp")
+    submitted = _prepare_close(monkeypatch, futures_id, 79.5)
 
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
+
+    assert result["closed"] == 0
+    _confirm_close(conn, futures_id, submitted)
 
     positions = {
         row["id"]: dict(row)
@@ -152,7 +183,6 @@ def test_stale_or_wrong_market_mark_never_creates_a_protective_close(
     assert positions[stale_id]["status"] == "open"
     assert positions[spot_id]["status"] == "open"
     assert positions[futures_id]["status"] == "closed"
-    assert result["closed"] == 1
     assert any(
         item["position_id"] == stale_id
         and item["code"] == "protective_mark_unavailable"
@@ -287,7 +317,7 @@ def test_market_aware_evaluation_exception_is_returned_per_position(
     SpecClaim(
         "PL-PM-13", "pipeline_position_manager", "§2 exact execution venue mark", "L2b",
         "Protective close evaluation resolves a Position's venue from execution_mode. "
-        "OKX/Binance demo marks never cross-trigger, while paper_internal uses the "
+        "OKX, Binance and Bitget marks never cross-trigger, regardless of the "
         "configured market-data venue.",
         status="implemented",
     ),
@@ -299,7 +329,7 @@ def test_market_aware_evaluation_exception_is_returned_per_position(
         (80.0, 100.0, "okx"),
     ),
 )
-def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
+def test_execution_venue_marks_never_cross_trigger_external_positions(
     tmp_path, monkeypatch, okx_price, binance_price, expected_demo_id
 ):
     conn = _setup_db(tmp_path, monkeypatch)
@@ -319,13 +349,13 @@ def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
         market_type="usdt_futures",
         execution_mode="binance_testnet",
     )
-    local_id = _insert_open_position(
+    bitget_id = _insert_open_position(
         conn,
         symbol="ETH/USDT",
         entry_price=100.0,
         stop_price=90.0,
         market_type="spot",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     _insert_snapshot(
         conn, "BTC/USDT", okx_price, market_type="perp", exchange="okx",
@@ -333,9 +363,9 @@ def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
     _insert_snapshot(
         conn, "BTC/USDT", binance_price, market_type="perp", exchange="binance",
     )
-    # Local paper is configured to OKX below. Binance breaches the stop, while
-    # OKX stays safe; the Binance row must never close this local Position.
-    _insert_snapshot(conn, "ETH/USDT", 100.0, exchange="okx")
+    # The Bitget position ignores the configured OKX venue and a breached Binance mark.
+    _insert_snapshot(conn, "ETH/USDT", 100.0, exchange="bitget")
+    _insert_snapshot(conn, "ETH/USDT", 80.0, exchange="okx")
     _insert_snapshot(conn, "ETH/USDT", 80.0, exchange="binance")
 
     from aletheia.config.schema import AletheiaConfig
@@ -355,7 +385,7 @@ def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
 
     expected_id = okx_id if expected_demo_id == "okx" else binance_id
     assert close_calls == [expected_id]
-    assert local_id not in close_calls
+    assert bitget_id not in close_calls
     assert result["closed"] == 1
 
 
@@ -368,7 +398,8 @@ def test_execution_venue_marks_never_cross_trigger_demo_or_local_positions(
     SpecClaim(
         "PL-PM-01", "pipeline_position_manager", "§1 mark_to_market", "L2b",
         "After inserting an open position and a market snapshot at a new price, "
-        "evaluate_open_positions updates current_price and unrealized_pnl without closing",
+        "mark_positions_to_market updates current_price and unrealized_pnl; "
+        "evaluation leaves the position open while neither stop nor target is reached",
     ),
 )
 def test_position_manager_mark_to_market(tmp_path, monkeypatch):
@@ -383,6 +414,8 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
     )
     _insert_snapshot(conn, "BTC/USDT", price=62000.0)
 
+    from aletheia.portfolio.pnl import mark_positions_to_market
+    mark_positions_to_market(persist=True)
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
 
@@ -392,18 +425,16 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
     )
     assert result["checked"] >= 1, "No positions were checked"
 
-    # current_price and unrealized_pnl should be updated
-    # evaluate_open_positions calls pnl.mark_positions_to_market(persist=True)
-    # via the scheduler path — but position_manager itself doesn't call mark_positions_to_market.
-    # The position stays open; we verify it was NOT closed (the invariant).
     pos_row = conn.execute(
-        "SELECT status, stop_price FROM positions WHERE id = ?", (pos_id,)
+        "SELECT status, current_price, unrealized_pnl FROM positions WHERE id = ?", (pos_id,)
     ).fetchone()
     assert pos_row is not None
     assert pos_row["status"] == "open", (
         f"Position should remain open when price is between stop and TP. "
         f"status={pos_row['status']!r}"
     )
+    assert pos_row["current_price"] == 62000.0
+    assert pos_row["unrealized_pnl"] == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -415,8 +446,7 @@ def test_position_manager_mark_to_market(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PM-02", "pipeline_position_manager", "§2 stop_loss_exit", "L2b",
         "When current_price <= stop_price for a long position, "
-        "evaluate_open_positions closes it with close_reason='stop_loss' "
-        "and writes realized_pnl",
+        "evaluation submits a close; private Fill reconciliation sets stop_loss and realized_pnl",
     ),
 )
 def test_position_manager_stop_loss_triggered(tmp_path, monkeypatch):
@@ -437,12 +467,13 @@ def test_position_manager_stop_loss_triggered(tmp_path, monkeypatch):
     # Market price drops below stop
     _insert_snapshot(conn, "ETH/USDT", price=2850.0)
 
+    submitted = _prepare_close(monkeypatch, pos_id, 2849.0)
+
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
 
-    assert result["closed"] >= 1, (
-        f"Expected stop_loss to close position, result={result}"
-    )
+    assert result["closed"] == 0
+    _confirm_close(conn, pos_id, submitted)
 
     pos_row = conn.execute(
         "SELECT status, close_reason, realized_pnl FROM positions WHERE id = ?", (pos_id,)
@@ -472,8 +503,7 @@ def test_position_manager_stop_loss_triggered(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PM-03", "pipeline_position_manager", "§2 take_profit_exit", "L2b",
         "When current_price >= take_profit_price for a long position, "
-        "evaluate_open_positions closes it with close_reason='take_profit' "
-        "and positive realized_pnl",
+        "evaluation submits a close; private Fill reconciliation sets take_profit and realized_pnl",
     ),
 )
 def test_position_manager_take_profit_triggered(tmp_path, monkeypatch):
@@ -494,12 +524,13 @@ def test_position_manager_take_profit_triggered(tmp_path, monkeypatch):
     # Market price rises above TP
     _insert_snapshot(conn, "SOL/USDT", price=175.0)
 
+    submitted = _prepare_close(monkeypatch, pos_id, 174.5)
+
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
 
-    assert result["closed"] >= 1, (
-        f"Expected take_profit to close position, result={result}"
-    )
+    assert result["closed"] == 0
+    _confirm_close(conn, pos_id, submitted)
 
     pos_row = conn.execute(
         "SELECT status, close_reason, realized_pnl FROM positions WHERE id = ?", (pos_id,)
@@ -545,7 +576,7 @@ def test_native_proposal_without_protection_does_not_inherit_mutable_config(
         order_type="market",
         quantity=1.0,
         price=100.0,
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
         stop_price=None,
         take_profit=None,
         status="executed",
@@ -584,8 +615,8 @@ def test_native_proposal_without_protection_does_not_inherit_mutable_config(
 @spec_claim(
     SpecClaim(
         "PL-PM-04", "pipeline_position_manager", "§3 max_hold_exit", "L2b",
-        "A position whose opened_at exceeds max_position_hold_hours is closed "
-        "by evaluate_open_positions with close_reason='max_hold'",
+        "A position exceeding max_position_hold_hours submits an external close; "
+        "private Fill reconciliation records close_reason='max_hold'",
     ),
 )
 def test_position_manager_max_hold_triggered(tmp_path, monkeypatch):
@@ -617,12 +648,13 @@ def test_position_manager_max_hold_triggered(tmp_path, monkeypatch):
     # Market price between stop and TP (mechanical exits won't fire)
     _insert_snapshot(conn, "ADA/USDT", price=0.52)
 
+    submitted = _prepare_close(monkeypatch, pos_id, 0.519)
+
     from aletheia.portfolio.position_manager import evaluate_open_positions
     result = evaluate_open_positions()
 
-    assert result["closed"] >= 1, (
-        f"Expected max_hold to close position (3h > 2h limit), result={result}"
-    )
+    assert result["closed"] == 0
+    _confirm_close(conn, pos_id, submitted)
 
     pos_row = conn.execute(
         "SELECT status, close_reason FROM positions WHERE id = ?", (pos_id,)
@@ -637,7 +669,7 @@ def test_position_manager_max_hold_triggered(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PL-PM-05  L2b  xfail  atr_trailing_stop  (captures PM-1)
+# PL-PM-05  L2b  atr_observation
 # ---------------------------------------------------------------------------
 
 
@@ -712,7 +744,7 @@ def test_atr_observation_has_exact_causal_instrument_identity(tmp_path, monkeypa
 
     result = _get_atr_observation(
         {
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "symbol": "BTC/USDT",
             "market_type": "spot",
         },
@@ -741,20 +773,19 @@ def test_atr_observation_storage_error_uses_frozen_fallback(monkeypatch):
 
     result = _get_atr_observation(
         {
-            "execution_mode": "paper_internal",
+            "execution_mode": "bitget_demo",
             "symbol": "BTC/USDT",
             "market_type": "spot",
         },
         SimpleNamespace(market_data=SimpleNamespace(ccxt_exchange="okx")),
         observed_at="2026-08-11T03:30:00+00:00",
-        protection_venue="bitget",
     )
 
     assert result is None
 
 
 # ---------------------------------------------------------------------------
-# PL-PM-06  L2b  xfail  audit_events_table  (captures PM-2)
+# PL-PM-06  L2b  audit_events_table
 # ---------------------------------------------------------------------------
 
 
@@ -823,7 +854,8 @@ def test_close_position_writes_audit_event_row(tmp_path, monkeypatch):
     SpecClaim(
         "PL-PM-07", "pipeline_position_manager", "§6 paused_vs_protective_close", "L2c",
         "runtime.paused must NOT block protective exits: the scheduler's "
-        "_run_position_manager still closes a stop-loss-breaching position when paused. "
+        "_run_position_manager still submits a protective close when paused, and "
+        "private Fill reconciliation confirms the close. "
         "Pause stops opening new risk, it never blocks managing/closing existing risk "
         "(aligned with kill_switch, which also never blocks closes — execution_contract §10).",
         status="implemented",
@@ -863,7 +895,9 @@ def test_paused_does_not_block_stop_loss(tmp_path, monkeypatch):
 
     # Drive the scheduler's protective-loop entry point (not evaluate_open_positions
     # directly) — the paused gate lived here (scheduler.py:_run_position_manager).
+    submitted = _prepare_close(monkeypatch, pos_id, 2849.0)
     sched._run_position_manager()
+    _confirm_close(conn, pos_id, submitted)
 
     pos_row = conn.execute(
         "SELECT status, close_reason FROM positions WHERE id = ?", (pos_id,)
@@ -881,25 +915,17 @@ def test_paused_does_not_block_stop_loss(tmp_path, monkeypatch):
 def test_scheduler_logs_safe_position_manager_error_facts(monkeypatch):
     import aletheia.agent_runtime.scheduler as sched
     import aletheia.portfolio.position_manager as position_manager
-    import aletheia.portfolio.protective_barrier as protective_barrier
 
-    monkeypatch.setattr(
-        protective_barrier,
-        "run_due_position_protection_cycle",
-        lambda: {
-            "errors": [{
-                "position_id": "pos-1",
-                "code": "protective_barrier_failed",
-                "error_type": "RuntimeError",
-                "message": "do-not-log-provider-detail",
-            }],
-        },
-    )
     monkeypatch.setattr(
         position_manager,
         "evaluate_open_positions",
         lambda: {
             "errors": [{
+                "position_id": "pos-1",
+                "code": "protective_mark_unavailable",
+                "error_type": "RuntimeError",
+                "message": "do-not-log-provider-detail",
+            }, {
                 "instrument": "binance:BTC/USDT:perp",
                 "code": "protective_ohlcv_refresh_failed",
                 "message": "do-not-log-provider-detail",
@@ -917,7 +943,7 @@ def test_scheduler_logs_safe_position_manager_error_facts(monkeypatch):
         2,
         [
             {
-                "code": "protective_barrier_failed",
+                "code": "protective_mark_unavailable",
                 "position_id": "pos-1",
                 "error_type": "RuntimeError",
             },
@@ -932,13 +958,7 @@ def test_scheduler_logs_safe_position_manager_error_facts(monkeypatch):
 def test_scheduler_does_not_fail_on_pending_close_waiting_observation(monkeypatch):
     import aletheia.agent_runtime.scheduler as sched
     import aletheia.portfolio.position_manager as position_manager
-    import aletheia.portfolio.protective_barrier as protective_barrier
 
-    monkeypatch.setattr(
-        protective_barrier,
-        "run_due_position_protection_cycle",
-        lambda: {"errors": []},
-    )
     monkeypatch.setattr(
         position_manager,
         "evaluate_open_positions",

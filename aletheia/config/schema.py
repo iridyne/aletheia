@@ -287,8 +287,8 @@ class RuntimeConfig(BaseModel):
 
 
 class ExchangeConfig(BaseModel):
-    name: str = "paper_internal"
-    mode: str = "paper"
+    name: str = ""
+    mode: str = "demo"
     enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
     # When both spot and usdt_futures are enabled, which market_type to emit per
     # canonical symbol in the legacy observed_instruments_from_config path.
@@ -306,8 +306,8 @@ class ExchangeConfig(BaseModel):
     #   "binance_testnet" → Binance Futures Testnet via CCXT (556 pairs, highest coverage).
     #   "bitget_demo"     → Bitget demo/simulated-trading API (paptrading header,
     #                       USDT-futures only, 42 pairs). Requires mode == "demo".
-    #   "paper_internal"  → local simulated fills (no exchange call).
-    paper_execution_mode: str = "paper_internal"
+    # Empty until the owner selects an external exchange environment.
+    paper_execution_mode: str = ""
     # Futures position mode: "hedge" (long/short separate) or "one_way".
     position_mode: str = "hedge"
     # Bitget broker capability profile.
@@ -1142,7 +1142,7 @@ class RiskConfig(BaseModel):
     # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
     symbol_filter_mode: Literal["whitelist", "blacklist"] = "blacklist"
     symbol_list: list[str] = Field(default_factory=list)
-    allowed_exchange: str = "paper_internal"
+    allowed_exchange: str = ""
     allow_short_demo: bool = True
     allow_short_live: bool = True
     require_risk_check_for_all_orders: bool = True
@@ -1291,7 +1291,7 @@ class HealthConfig(BaseModel):
     # Startup Behavior Gate: when True, the gateway boots the API/Dashboard and
     # essential data jobs but keeps AI decisions + new trading PAUSED until a set
     # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
-    # sync / paper_internal, no unexplained pending orders/closes, no active
+    # sync, no unexplained pending orders/closes, no active
     # reconciliation incident, learning influence within bounds, no user
     # pause/kill switch). On failure it records a durable blocker, keeps data
     # collection running under a layered pause, surfaces the reason in
@@ -2043,7 +2043,7 @@ class EconomicsConfig(BaseModel):
       `warn_only` means budget crossings are signals, never blocks.
       `fallback_to_defaults` and `hard_block` are opt-in for
       non-safety callers only; safety-relevant callers
-      (pi_trading_decision, risk_critic, paper_trader,
+      (pi_trading_decision, risk_critic,
       agent_shell/trading_decision) stay warn-only regardless.
     - `harness_header_default_on`: Phase 5 feature flag. Off until an
       ablation study (see docs/design/proposals/

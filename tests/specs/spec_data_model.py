@@ -241,24 +241,6 @@ def test_capital_events_table():
     assert "capital_events" in source
 
 
-@spec_claim(
-    SpecClaim(
-        "DM-S23", "data_model", "§3 local paper account", "L2a",
-        "Local paper cash is an append-only ledger, separate from cross-broker capital "
-        "events, and every appended amount and resulting balance are finite.",
-    ),
-)
-def test_local_paper_account_ledger_contract():
-    from pathlib import Path
-
-    root = Path(__file__).parent.parent.parent
-    migration = (root / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
-    account = (root / "aletheia" / "portfolio" / "paper_account.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS paper_account_events" in migration
-    assert "INITIAL_PAPER_CASH_USDT = 200.0" in account
-    assert "manual_set_balance" in account
-    assert "math.isfinite(amount_usdt)" in account
-    assert "math.isfinite(after)" in account
 
 
 @spec_claim(
@@ -544,7 +526,7 @@ def test_insert_trade_proposal_id_format(tmp_path, monkeypatch):
     for _ in range(5):
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
         )
         repo.insert_trade_proposal(p)
         assert p.id, "id must be non-empty"
@@ -716,7 +698,7 @@ def test_trade_proposal_has_hash_chain_fields():
     # Both must be optional (additive — legacy proposals have NULL).
     p = TradeProposal(
         symbol="BTC/USDT", market_type="spot", direction="long",
-        execution_mode="paper_internal",
+        execution_mode="bitget_demo",
     )
     assert p.commit_hash is None
     assert p.parent_hash is None
@@ -776,7 +758,7 @@ def test_insert_trade_proposal_links_hash_chain(tmp_path, monkeypatch):
     for i in range(3):
         p = TradeProposal(
             symbol="BTC/USDT", market_type="spot", direction="long",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             agent_rationale=f"test proposal {i}",
         )
         repo.insert_trade_proposal(p)
@@ -834,7 +816,7 @@ def test_proposal_hash_chain_integrity(tmp_path, monkeypatch):
         p = TradeProposal(
             symbol="ETH/USDT", market_type="spot",
             direction="long" if i % 2 == 0 else "short",
-            execution_mode="paper_internal",
+            execution_mode="bitget_demo",
             agent_rationale=f"chain test {i}",
             quantity=0.1 * (i + 1),
         )

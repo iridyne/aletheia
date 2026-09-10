@@ -32,7 +32,7 @@ def _make_position(*, trade_school: str, opened_hours_ago: float, direction: str
         "take_profit_price": None,
         "trade_school": trade_school,
         "opened_at": opened.isoformat(),
-        "execution_mode": "paper_internal",
+        "execution_mode": "bitget_demo",
     }
 
 

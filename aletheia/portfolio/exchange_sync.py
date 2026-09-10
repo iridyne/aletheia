@@ -217,7 +217,7 @@ def _unified_sync_status(state: dict, max_age_sec: int = 600) -> str:
 
 
 def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
-    """Is the ACTIVE paper broker actually present in the unified (multi-broker) view?
+    """Is the active external demo broker actually present in the unified (multi-broker) view?
 
     The UTA sync records brokers that returned an account in `accounts[].broker_id`
     and brokers whose query FAILED in `errors`. When the active broker (e.g.
@@ -233,15 +233,17 @@ def active_broker_view_complete(cfg=None) -> tuple[bool, str]:
         $167 instead of the real okx ~$89k), fabricating a false drawdown or
         mis-scaling any %-of-equity size.
 
-    Returns (complete, reason). `paper_internal` (no exchange) is always complete.
+    Returns (complete, reason). A missing or unsupported account is incomplete.
     A missing unified cache is treated as INCOMPLETE (conservative) — callers
     should refuse destructive/size-scaling action rather than guess.
     """
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+
     active = (cfg.exchange.paper_execution_mode or "").strip()
-    if not active or active == "paper_internal":
-        return True, "paper_internal (no exchange view needed)"
+    if active not in {mode for _, mode in EXCHANGE_UNIFICATION_MAP.values()}:
+        return False, "execution account not configured"
     unified = get_unified_cached_state()
     if unified is None:
         return False, "no unified view cached"

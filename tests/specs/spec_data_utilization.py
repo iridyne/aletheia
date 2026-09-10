@@ -343,7 +343,6 @@ def test_market_data_visibility_surfaces_are_wired():
     ),
 )
 def test_exchange_source_divergence_is_guarded_and_visible():
-    alignment = (_ROOT / "aletheia" / "config" / "exchange_alignment.py").read_text(encoding="utf-8")
     settings_route = (_ROOT / "aletheia" / "server" / "routes" / "settings.py").read_text(encoding="utf-8")
     health_route = (_ROOT / "aletheia" / "server" / "routes" / "health.py").read_text(encoding="utf-8")
     overview = (_ROOT / "frontend" / "src" / "pages" / "Overview.tsx").read_text(encoding="utf-8")
@@ -354,17 +353,14 @@ def test_exchange_source_divergence_is_guarded_and_visible():
         for name in ("ExecutionTab.tsx", "SignalsTab.tsx")
     )
 
-    # Behaviour, not source text: the alignment model must cover every registered
-    # paper mode and must keep paper_internal venue-less. Asserting the literal
-    # "okx_demo" appeared in the file broke the moment the map started deriving
-    # itself from EXCHANGE_UNIFICATION_MAP, which is the stronger arrangement.
+    # Every registered external demo/testnet mode has a venue; the archived
+    # internal simulator remains unresolved.
     from aletheia.config.exchange_alignment import (
         _EXECUTION_MODE_EXCHANGES,
         execution_exchange_for_mode,
     )
     from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
 
-    assert "paper_internal" in alignment
     assert set(_EXECUTION_MODE_EXCHANGES) == {
         paper_mode for _ccxt, paper_mode in EXCHANGE_UNIFICATION_MAP.values()
     }

@@ -45,14 +45,27 @@ async def test_health(client):
     assert "version" in data
 
 
+@pytest.mark.parametrize("mode,target,venue", [
+    ("", "not_configured", None),
+    ("paper_internal", "unavailable", None),
+    ("bitget_demo", "external_exchange", "bitget"),
+])
 @pytest.mark.anyio
-async def test_status(client):
+async def test_status(client, mode, target, venue):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.exchange.paper_execution_mode = mode
+    save_config(cfg)
     resp = await client.get("/api/status")
     assert resp.status_code == 200
     data = resp.json()
     assert data["live_state"] == "live_disabled"
     assert data["permission_mode"] == "Paper"
-    assert data["exchange_mode"] == "paper"
+    assert data["exchange_mode"] == "demo"
+    assert data["execution_target"] == target
+    assert data["execution_exchange"] == venue
+    assert data["uses_external_exchange"] is (venue is not None)
 
 
 @pytest.mark.anyio

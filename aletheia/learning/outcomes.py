@@ -14,7 +14,7 @@ from aletheia.utils.dt import parse_utc
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
 from aletheia.analytics.outcome_integrity import (
     OutcomeAssessment,
-    assess_position_closure,
+    assess_reportable_outcome,
 )
 from aletheia.analytics.outcome_semantics import validated_outcome_economics
 
@@ -73,7 +73,7 @@ def assess_realized_position(row: dict[str, Any]) -> OutcomeAssessment:
     closed_at = row.get("closed_at")
     if not _at_or_after_floor(closed_at):
         return OutcomeAssessment(False, "dirty_or_missing_close_time", source="realized_position")
-    return assess_position_closure(row)
+    return assess_reportable_outcome(row)
 
 
 def assess_candidate_outcome(

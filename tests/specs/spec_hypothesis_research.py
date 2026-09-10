@@ -283,25 +283,30 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
     from aletheia.learning.ledger import list_records
     from aletheia.learning.registry import get_learning_path
     from aletheia.storage import repositories as repo
-    from aletheia.storage.models import PiDecision, Position, ShadowTrade
+    from aletheia.storage.models import PiDecision, ShadowTrade
     from tests.shadow_outcome_fixture import insert_canonical_outcome_for_shadow
-    from tests.test_outcome_closure import _insert_entry_chain
+    from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     case_ids = []
     opportunity_ids = []
     for index in range(4):
         position_id = f"causal-loss-position-{index}"
-        opportunity_id, proposal_id, order_id = _insert_entry_chain(
+        position = _insert_closed_position_via_producer(
             position_id=position_id,
             symbol="BTC/USDT",
             market_type="usdt_futures",
             direction="long",
             quantity=10.0,
-            price=100.0,
-            execution_mode="paper_internal",
+            entry_price=100.0,
+            realized_pnl=-20.0,
+            close_reason="stop_loss",
+            closed_at="2026-08-16T04:01:00+00:00",
+            execution_mode="bitget_demo",
             scanner_family="momentum",
             opened_at="2026-08-16T00:01:00+00:00",
         )
+        opportunity_id = position["opportunity_id"]
+        proposal_id = position["proposal_id"]
         opportunity_ids.append(opportunity_id)
         repo.update_opportunity(
             opportunity_id,
@@ -329,39 +334,6 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             opportunity_id=opportunity_id,
             signal_source="market_observer",
             created_at="2026-08-16T00:00:00+00:00",
-        ))
-        repo.insert_position(Position(
-            id=position_id,
-            symbol="BTC/USDT",
-            market_type="usdt_futures",
-            direction="long",
-            quantity=10.0,
-            entry_price=100.0,
-            current_price=98.0,
-            realized_pnl=-20.0,
-            execution_mode="paper_internal",
-            status="closed",
-            source="native",
-            opened_at="2026-08-16T00:01:00+00:00",
-            closed_at="2026-08-16T04:01:00+00:00",
-            close_reason="stop_loss",
-            close_category="strategy",
-            entry_price_source="local_fill",
-            entry_fill_verified=True,
-            exit_price_source="local_fill",
-            exit_fill_verified=True,
-            outcome_eligible=True,
-            outcome_exclusion_reason="eligible",
-            outcome_semantics_version="oi-v1",
-            opportunity_id=opportunity_id,
-            proposal_id=proposal_id,
-            order_id=order_id,
-            regime_tag="risk_off",
-            entry_market_summary="Recorded risk_off regime with high volatility.",
-            entry_fee=0.0,
-            exit_fee=0.0,
-            funding_cost=0.0,
-            funding_source="local_simulation",
         ))
         case = create_trade_case_study(
             f"Deterministic oversold loss {index}",

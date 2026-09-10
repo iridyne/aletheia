@@ -172,7 +172,7 @@ async def test_status_reports_actual_scheduler_and_health(client, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_status_reports_local_paper_without_exchange_connection(client):
+async def test_status_reports_retired_account_as_unavailable(client):
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
@@ -183,10 +183,10 @@ async def test_status_reports_local_paper_without_exchange_connection(client):
     resp = await client.get("/api/status")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["execution_target"] == "local_paper"
+    assert data["execution_target"] == "unavailable"
     assert data["uses_external_exchange"] is False
     assert data["paper_execution_mode"] == "paper_internal"
-    assert data["exchange_alignment"] == "local_paper"
+    assert data["exchange_alignment"] == "unavailable"
     assert data["execution_exchange"] is None
 
 

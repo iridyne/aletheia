@@ -1,6 +1,6 @@
 """Append-only five-minute path observations for eligible Positions.
 
-This module is observational. It never changes Position, ExitPlan, Risk, execution,
+This module is observational. It never changes Position, Risk, execution,
 or Learning state. Missing identity or market data is persisted as unavailable
 rather than guessed, so later analysis can distinguish absence from zero.
 """
@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, cast
 
+from aletheia.data.price_feed import protective_price_venue
 from aletheia.data.providers import Candle, MarketDataProvider
 from aletheia.data.symbols import InstrumentId, to_canonical
 from aletheia.storage import repositories as repo
@@ -166,46 +167,14 @@ def _position_survives_target_bucket(
 
 
 def _resolve_instrument(position: dict[str, Any]) -> tuple[InstrumentId | None, str]:
-    protection = repo.get_position_protection_state(str(position["id"]))
-    if protection is not None:
-        try:
-            instrument = InstrumentId.from_parts(protection["venue"], protection["symbol"], protection["market_type"])
-        except (KeyError, TypeError, ValueError):
-            return None, "protection_instrument_identity_invalid"
-        if instrument.symbol != to_canonical(
-            str(position.get("symbol") or "")
-        ) or instrument.market_type != _physical_market_type(position.get("market_type")):
-            return None, "protection_instrument_identity_mismatch"
-        return instrument, "position_protection_state"
-
-    opportunity_id = str(position.get("opportunity_id") or "").strip()
-    opportunity = repo.get_opportunity(opportunity_id) if opportunity_id else None
-    member_id = str((opportunity or {}).get("universe_member_id") or "").strip()
-    member = repo.get_universe_member(member_id) if member_id else None
-    asset_id = str((member or {}).get("asset_id") or "").strip()
-    asset = repo.get_universe_asset(asset_id) if asset_id else None
-    if not member or not asset:
+    venue = protective_price_venue(position.get("execution_mode"))
+    market = _physical_market_type(position.get("market_type"))
+    if venue is None or market is None:
         return None, "instrument_identity_unavailable"
-
-    physical_market = _physical_market_type(position.get("market_type"))
-    member_market = _physical_market_type(member.get("market_type"))
-    asset_market = _physical_market_type(asset.get("market_type"))
-    symbol = to_canonical(str(position.get("symbol") or ""))
-    if (
-        not physical_market
-        or (member_market is not None and physical_market != member_market)
-        or physical_market != asset_market
-        or symbol != to_canonical(str(member.get("symbol") or ""))
-        or symbol != to_canonical(str(asset.get("symbol") or ""))
-    ):
-        return None, "universe_instrument_identity_mismatch"
     try:
-        return (
-            InstrumentId.from_parts(asset["venue"], symbol, physical_market),
-            "universe_registry",
-        )
-    except (KeyError, TypeError, ValueError):
-        return None, "universe_instrument_identity_invalid"
+        return InstrumentId.from_parts(venue, str(position.get("symbol") or ""), market), "execution_mode"
+    except (TypeError, ValueError):
+        return None, "instrument_identity_invalid"
 
 
 def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed_at: str) -> dict[str, object]:
@@ -235,7 +204,7 @@ def _base_observation(position: dict[str, Any], *, bucket_open_ms: int, observed
         "funding_source": str(position.get("funding_source") or "unavailable"),
         "stop_price": _finite(position.get("stop_price")),
         "take_profit_price": _finite(position.get("take_profit_price")),
-        "exit_plan_version": max(0, int(position.get("exit_plan_version") or 0)),
+        "exit_plan_version": 0,
         "evidence_status": "unavailable",
         "evidence_reason": "not_observed",
         "producer_commit": provenance.get("producer_commit"),
@@ -530,18 +499,6 @@ def _historical_position_snapshot(
     snapshot["stop_price"] = None
     snapshot["take_profit_price"] = None
     snapshot["exit_plan_version"] = 0
-    try:
-        plan, _bisected = repo.get_position_exit_plan_for_bar(
-            str(position["id"]),
-            bar_open_ms=bucket_open_ms,
-            bar_close_ms=bucket_open_ms + _BUCKET_MS,
-        )
-    except Exception:
-        plan = None
-    if plan is not None:
-        snapshot["stop_price"] = _finite(plan.get("stop_price"))
-        snapshot["take_profit_price"] = _finite(plan.get("take_profit_price"))
-        snapshot["exit_plan_version"] = max(0, int(plan.get("version") or 0))
     return snapshot
 
 
@@ -1146,14 +1103,7 @@ def build_position_path_observer_status(
     last_24h["skipped"] = skipped
     evidence_counts = {"available": 0, "unavailable": 0}
     try:
-        rows = repo.get_db().execute(
-            "SELECT evidence_status, COUNT(*) AS count "
-            "FROM position_path_observations GROUP BY evidence_status"
-        ).fetchall()
-        for row in rows:
-            status = str(row["evidence_status"])
-            if status in evidence_counts:
-                evidence_counts[status] = int(row["count"])
+        evidence_counts = repo.count_position_path_observations_since(0)
     except Exception:
         evidence_counts = {"available": None, "unavailable": None}
     oldest_deferred_rows = repo.list_oldest_deferred_position_path_bucket(limit=1)

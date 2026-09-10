@@ -87,7 +87,7 @@ def observed_instruments_from_config(cfg) -> list[InstrumentId]:
     # analysis (market_observer LLM read) is instrument-agnostic — the same ETH
     # read 76% long whether the instrument is spot or perp (price ≈ identical).
     # Emitting two would call the LLM twice for the same signal and downstream
-    # consumers (paper_trader, PI) could open duplicate positions. OD-S01 locks.
+    # consumers would receive duplicate opportunities. OD-S01 locks.
     exchange = cfg.market_data.ccxt_exchange or "binance"
     preferred = getattr(cfg.exchange, "preferred_market_type", "auto")
     result = []

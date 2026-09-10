@@ -160,7 +160,7 @@ def test_build_rows_missing_opportunity_is_excluded():
     """A closed row without its entry lineage cannot be attributed safely."""
     fake_position = {
         "id": "pos-2", "symbol": "ETH/USDT", "market_type": "usdt_futures",
-        "direction": "short", "execution_mode": "paper_internal",
+        "direction": "short", "execution_mode": "bitget_demo",
         "strategy_id": None, "proposal_id": None, "order_id": None,
         "entry_price": "3000", "current_price": "2900",
         "quantity": "0.01", "realized_pnl": "1.0",
@@ -224,7 +224,7 @@ def test_attribution_uses_exact_proposal_decision_and_preserves_complete_context
     proposal_reason = "complete Proposal rationale " + ("p" * 700)
     fake_position = {
         "id": "pos-exact", "symbol": "BTC/USDT", "market_type": "spot",
-        "direction": "long", "execution_mode": "paper_internal",
+        "direction": "long", "execution_mode": "bitget_demo",
         "strategy_id": None, "opportunity_id": "opp-exact",
         "proposal_id": "prop-exact", "order_id": "ord-exact",
         "entry_price": "100", "current_price": "102", "quantity": "1",
@@ -270,7 +270,7 @@ def test_attribution_uses_exact_proposal_decision_and_preserves_complete_context
 def test_attribution_labels_legacy_decision_context_not_recorded():
     fake_position = {
         "id": "pos-legacy", "symbol": "ETH/USDT", "market_type": "spot",
-        "direction": "short", "execution_mode": "paper_internal",
+        "direction": "short", "execution_mode": "bitget_demo",
         "strategy_id": None, "opportunity_id": "opp-legacy",
         "proposal_id": "prop-legacy", "order_id": "ord-legacy",
         "entry_price": "100", "current_price": "99", "quantity": "1",

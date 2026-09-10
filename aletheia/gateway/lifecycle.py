@@ -785,10 +785,12 @@ def do_status() -> None:
             typer.echo(f"Remote dashboard: {url}")
     else:
         typer.echo(f"Dashboard: unavailable ({'front door not ready' if running else 'gateway stopped'})")
+    from aletheia.config.exchange_alignment import exchange_alignment
+    alignment = exchange_alignment(cfg)
+    execution_exchange = alignment.execution_exchange
     exchange_label = (
-        "Local paper (no external exchange)"
-        if cfg.exchange.paper_execution_mode == "paper_internal"
-        else f"{cfg.exchange.name} ({cfg.exchange.mode})"
+        f"{execution_exchange} ({cfg.exchange.mode})" if execution_exchange
+        else "Not configured" if alignment.status == "not_configured" else "Unavailable"
     )
     typer.echo(f"Exchange: {exchange_label}")
     typer.echo(f"Live state: {cfg.live.state}")

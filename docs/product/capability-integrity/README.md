@@ -3,7 +3,8 @@
 This directory contains the evidence-first review of every product capability
 Aletheia exposes or promises.
 
-`CAPABILITY_GROUND_TRUTH.md` is the current Product Truth. The remaining files
+[Current capability boundaries](../CAPABILITY_GROUND_TRUTH.md) describe the external
+exchange mainline. The local simulator is archived. The remaining files
 in this directory are frozen evidence from the completed review; they are not a
 live issue queue, execution tracker, or SHA-gated support detector.
 
@@ -31,7 +32,7 @@ to classify a complete, executable product contract as `Supported`.
 | [CAPABILITY_INVENTORY.md](CAPABILITY_INVENTORY.md) | Deduplicated product capability list. It intentionally contains no implementation verdicts. |
 | [AUDIT_METHOD.md](AUDIT_METHOD.md) | Evidence levels, status vocabulary, card schema, review rules, and completion gate. |
 | [FACT_CARDS.md](FACT_CARDS.md) | Compact end-to-end fact card for every inventory capability. |
-| [../CAPABILITY_GROUND_TRUTH.md](../CAPABILITY_GROUND_TRUTH.md) | Canonical owner-facing status table. |
+| [../CAPABILITY_GROUND_TRUTH.md](../CAPABILITY_GROUND_TRUTH.md) | Current owner-facing capability boundaries; no refreshed support counts claimed. |
 | [ISSUE_CANDIDATES.md](ISSUE_CANDIDATES.md) | Frozen mismatch candidates from the review; current problems live in GitHub Issues. |
 | [EVIDENCE_LEDGER.md](EVIDENCE_LEDGER.md) | Frozen source coverage and executed evidence from the review. |
 | [EXPERIMENTAL_REVIEW.md](EXPERIMENTAL_REVIEW.md) | Read-only full-chain review of every capability previously classified Experimental. |
