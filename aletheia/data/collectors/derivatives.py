@@ -629,7 +629,7 @@ async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, 
                                 source_time_status=status, acquired_at=acquired.isoformat(),
                                 instrument=dict(canonical_symbol=sym, source_instrument_id=sym.replace('/', ''),
                                     market_type='perp', base_asset=sym.split('/')[0],
-                                    quote_asset=sym.split('/')[-1], settle_asset='USDT', linear=True))
+                                    quote_asset=sym.split('/')[-1], settle_asset='USDT', linear=sym.endswith('/USDT')))
                 except Exception as exc:
                     logger.debug("Ratio fetch failed for %s: %s", sym, exc)
 

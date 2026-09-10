@@ -202,7 +202,7 @@ def instrument_from_market(symbol: str, market: dict) -> dict:
         quote_asset=market.get("quote"),
         settle_asset=market.get("settle"),
         linear=market.get("linear"),
-        contract_size=market.get("contractSize"),
+        contract_size=finite(market.get("contractSize")),
     )
 
 
@@ -254,7 +254,7 @@ def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None):
         provider="ccxt",
         venue=venue,
         instrument=instrument_from_market(symbol, market),
-        interval_seconds=hours * 3600 if hours is not None and hours > 0 and family == "funding" else None,
+        interval_seconds=finite(hours * 3600) if hours is not None and hours > 0 and family == "funding" else None,
         oi_unit=unit if family == "open_interest" else None,
         ratios=ratios,
     )
