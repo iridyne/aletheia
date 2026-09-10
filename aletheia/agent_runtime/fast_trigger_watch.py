@@ -21,12 +21,9 @@ from aletheia.universe.fast_stream import (
     fast_market_stream_for_config,
 )
 from aletheia.universe.fast_trigger import (
-    TriggerEngine,
     TriggerPolicy,
     validate_fast_trigger_stream,
 )
-_MOMENTUM_TRIGGER = "momentum-retrace-reclaim"
-_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 _ANCHOR_RETRACE_TRIGGER = "anchor-retrace-reclaim"
 
 logger = logging.getLogger("aletheia.fast_trigger_watch")
@@ -44,7 +41,7 @@ _WATCHER_RELOAD_INTERVAL_SEC = 2.0
 
 
 async def _prewarm_market_structure(
-    engine: TriggerEngine | MomentumTriggerEngine,
+    engine: MomentumTriggerEngine,
     instrument: InstrumentId,
 ) -> None:
     """Warm from bounded exact-instrument local history; never fetch remotely."""
@@ -294,12 +291,12 @@ def _entry_plan_outcome_is_unresolved(outcome: str) -> bool:
 
 async def _load_entry_plan_watchers(
     cfg,
-    existing: dict[str, TriggerEngine | MomentumTriggerEngine] | None = None,
-) -> tuple[dict[str, EntryPlan], dict[str, TriggerEngine | MomentumTriggerEngine]]:
+    existing: dict[str, MomentumTriggerEngine] | None = None,
+) -> tuple[dict[str, EntryPlan], dict[str, MomentumTriggerEngine]]:
     from aletheia.execution.gateway import cancel_entry_plan_order
 
     plans: dict[str, EntryPlan] = {}
-    engines: dict[str, TriggerEngine | MomentumTriggerEngine] = {}
+    engines: dict[str, MomentumTriggerEngine] = {}
     now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, None):
         payload = str(row["plan_json"])
@@ -475,34 +472,24 @@ async def _load_entry_plan_watchers(
             max_spread_bps=float(cfg.universe.max_spread_bps),
             min_depth_10bps_usd=float(cfg.universe.min_depth_10bps_usd),
         )
-        trigger_id = str(getattr(plan, "trigger_spec_id", None) or _MOMENTUM_TRIGGER)
+        trigger_id = getattr(plan, "trigger_spec_id", None)
         try:
-            if trigger_id in {_MOMENTUM_GEOMETRY_TRIGGER, _ANCHOR_RETRACE_TRIGGER}:
-                engine: TriggerEngine | MomentumTriggerEngine = MomentumTriggerEngine(
-                    instrument=instrument,
-                    direction=plan.direction,
-                    breakout_level=float(params["breakout_level"]),
-                    pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
-                    sweep_band=(float(params["sweep_low"]), float(params["sweep_high"])),
-                    entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
-                    invalidation_price=float(params["invalidation_price"]),
-                    atr_abs=float(params["atr_abs"]),
-                    geometry_version=str(params["geometry_version"]),
-                    geometry_fingerprint=str(params["geometry_fingerprint"]),
-                    policy=policy,
-                    trigger_spec_id=trigger_id,
-                )
-            elif trigger_id == _MOMENTUM_TRIGGER:
-                engine = TriggerEngine(
-                    instrument=instrument,
-                    direction=plan.direction,
-                    breakout_level=float(params["breakout_level"]),
-                    pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
-                    entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
-                    policy=policy,
-                )
-            else:
+            if trigger_id != _ANCHOR_RETRACE_TRIGGER:
                 raise ValueError("entry_plan_trigger_spec_unsupported")
+            engine: MomentumTriggerEngine = MomentumTriggerEngine(
+                instrument=instrument,
+                direction=plan.direction,
+                breakout_level=float(params["breakout_level"]),
+                pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
+                sweep_band=(float(params["sweep_low"]), float(params["sweep_high"])),
+                entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
+                invalidation_price=float(params["invalidation_price"]),
+                atr_abs=float(params["atr_abs"]),
+                geometry_version=str(params["geometry_version"]),
+                geometry_fingerprint=str(params["geometry_fingerprint"]),
+                policy=policy,
+                trigger_spec_id=trigger_id,
+            )
             await _prewarm_market_structure(engine, instrument)
         except (KeyError, TypeError, ValueError, OverflowError):
             logger.error(
@@ -527,7 +514,7 @@ async def _load_entry_plan_watchers(
 
 
 def _watched_instruments(
-    plan_engines: dict[str, TriggerEngine | MomentumTriggerEngine],
+    plan_engines: dict[str, MomentumTriggerEngine],
     plans: dict[str, EntryPlan],
 ) -> set[InstrumentId]:
     instruments = {engine.instrument for engine in plan_engines.values()}

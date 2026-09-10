@@ -58,13 +58,17 @@ def _bars(direction: str) -> list[dict]:
 def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=1_000),
@@ -85,8 +89,9 @@ def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     engine.observe(event("depth", 1_050, 1, bids=((99.99, 20.0),), asks=((100.01, 20.0),)))
     engine.observe(event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"))
     engine.observe(event("trade", 1_150, 2, price=100.0, size=4.0, side="sell"))
-    assert engine.observe(event("quote", 1_200, 2, bid=100.04, ask=100.06)) is None
-    ready = engine.observe(event("quote", 1_550, 3, bid=100.05, ask=100.07))
+    assert engine.observe(event("quote", 1_175, 2, bid=99.89, ask=99.91)) is None
+    assert engine.observe(event("quote", 1_200, 3, bid=100.04, ask=100.06)) is None
+    ready = engine.observe(event("quote", 1_550, 4, bid=100.05, ask=100.07))
 
     assert ready is not None
     assert ready.entry_price == pytest.approx(100.07)
@@ -98,13 +103,17 @@ def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
 def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="short",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=102, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(99.75, 100.0),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=1_000),
@@ -133,8 +142,9 @@ def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
     )
     engine.observe(event("trade", 1_100, 1, price=100.0, size=4.0, side="buy"))
     engine.observe(event("trade", 1_150, 2, price=100.0, size=10.0, side="sell"))
-    assert engine.observe(event("quote", 1_200, 2, bid=99.96, ask=99.98)) is None
-    ready = engine.observe(event("quote", 1_550, 3, bid=99.95, ask=99.97))
+    assert engine.observe(event("quote", 1_175, 2, bid=100.09, ask=100.11)) is None
+    assert engine.observe(event("quote", 1_200, 3, bid=99.96, ask=99.98)) is None
+    ready = engine.observe(event("quote", 1_550, 4, bid=99.95, ask=99.97))
 
     assert ready is not None
     assert ready.entry_price == pytest.approx(99.95)
@@ -144,13 +154,17 @@ def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
 def test_trigger_rejects_market_evidence_from_mixed_stream_generations():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -172,22 +186,27 @@ def test_trigger_rejects_market_evidence_from_mixed_stream_generations():
     engine.observe(event("quote", 1_000, 1, "stream-a", bid=99.98, ask=100.00))
     engine.observe(event("depth", 1_050, 1, "stream-b", bids=((99.99, 2.0),), asks=((100.01, 2.0),)))
     engine.observe(event("trade", 1_100, 1, "stream-a", price=100.0, size=10.0, side="buy"))
-    engine.observe(event("quote", 1_200, 2, "stream-a", bid=100.04, ask=100.06))
+    engine.observe(event("quote", 1_175, 2, "stream-a", bid=99.89, ask=99.91))
+    engine.observe(event("quote", 1_200, 3, "stream-a", bid=100.04, ask=100.06))
 
-    assert engine.observe(event("quote", 1_550, 3, "stream-a", bid=100.05, ask=100.07)) is None
+    assert engine.observe(event("quote", 1_550, 4, "stream-a", bid=100.05, ask=100.07)) is None
     assert engine.health_reason == "market_evidence_generation_mismatch"
 
 
 def test_reclaim_side_alone_does_not_count_as_pullback():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -263,13 +282,17 @@ def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
 def test_sequence_regression_disarms_trigger():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -1219,13 +1242,17 @@ def test_binance_spot_and_perp_messages_are_normalized():
 def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import parse_binance_message
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.5, 100.5),
         entry_zone=(100.0, 100.5),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -2063,7 +2090,8 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch):
+@pytest.mark.parametrize("spec_id", ["anchor-retrace-reclaim", "momentum-retrace-reclaim", "momentum-retrace-reclaim-geometry", None])
+async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch, spec_id):
     """A TRIGGERED+POST_ONLY_LIMIT plan still in 'waiting' state must NOT be
     subject to maker timeout — the order hasn't been placed yet."""
     from types import SimpleNamespace
@@ -2092,7 +2120,11 @@ async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch)
         symbol="ETH/USDT",
         market_type="perp",
         direction="long",
+        trigger_spec_id=spec_id,
         trigger_params={
+            "sweep_low": 2900, "sweep_high": 2950, "invalidation_price": 2800,
+            "atr_abs": 50, "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "a" * 64,
             "breakout_level": "3000.0",
             "pullback_low": "2900.0",
             "pullback_high": "2950.0",
@@ -2129,7 +2161,7 @@ async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch)
 
     assert cancellations == []
     assert "triggered-waiting" in plans
-    assert "triggered-waiting" in engines
+    assert ("triggered-waiting" in engines) is (spec_id == "anchor-retrace-reclaim")
 
 
 def test_triggered_maker_stays_subscribed_after_trigger():
