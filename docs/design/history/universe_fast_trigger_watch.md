@@ -204,3 +204,5 @@ The Momentum v2 Shadow watcher producer and audit-driven runtime resume path are
 The canonical Compiler also removes the old baseline-Momentum/treatment selection branches from its private risk-envelope helper. Its only production caller supplies the fixed resting-maker intermediate envelope; grounded anchor geometry and the final tactic are applied and validated by `compile_entry_plan`. Historical experiment exposures remain evidence; the Compiler does not create new exposures through those retired branches.
 
 The original three-step `TriggerEngine` and its implicit missing-spec fallback are deleted. Production watcher construction accepts only `anchor-retrace-reclaim` and uses `MomentumTriggerEngine` with explicit pullback, sweep, reclaim and confirmation evidence. Shared trigger snapshot/policy types remain in `universe.fast_trigger`; they do not select an implementation.
+
+The former `PlanIntent` / `_PlanIntentWire` model protocol is retired. Canonical compilation consumes the validated `EntryHypothesis` directly; old experiment descriptions referring to PlanIntent describe frozen historical evidence, not an executable compatibility path.

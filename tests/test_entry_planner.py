@@ -9,8 +9,6 @@ import pytest
 from aletheia.agent_shell.entry_planner import (
     ENTRY_PLANNER_MAX_CONCURRENCY,
     ENTRY_PLANNER_MIN_CONCURRENCY,
-    PlanIntent,
-    _PlanIntentWire,
     PlannerBackpressure,
     plan_next_candidate,
     run_entry_planner_batch,
@@ -20,7 +18,7 @@ from aletheia.storage.models import UniverseAsset, UniverseMember, UniverseSnaps
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.model_provider.base import portable_json_schema_payload
 
-_PlanIntentWireSchema = _PlanIntentWire
+from aletheia.trading.entry_analysis import EntryHypothesis
 
 
 @pytest.fixture(autouse=True)
@@ -176,21 +174,9 @@ def test_candidate_capability_blocks_before_market_or_model_calls(monkeypatch, m
     assert not stored["model_invoked"]
 
 
-def _no_plan_intent(
-    reason_code: str = "INSUFFICIENT_EVIDENCE",
-) -> PlanIntent:
-    return PlanIntent(
-        decision="NO_PLAN",
-        reason_code=reason_code,
-        thesis="",
-        scenario="",
-        evidence_refs=[],
-        execution_mode=None,
-        order_tactic=None,
-        trigger_spec_id=None,
-        risk_tier="NONE",
-        horizon="NONE",
-    )
+def _no_plan_hypothesis(reason_code: str = "INSUFFICIENT_EVIDENCE") -> EntryHypothesis:
+    return EntryHypothesis(decision="NO_PLAN", reason_code=reason_code,
+                           mechanism="continuation", direction="long", risk_tier="NONE", horizon="NONE")
 
 
 def _plan(generation: dict, *, profiles=None) -> EntryPlan:
@@ -712,7 +698,7 @@ def test_attention_is_rechecked_before_model_invocation(monkeypatch):
     async def planner(_context):
         nonlocal calls
         calls += 1
-        return _no_plan_intent("STALE_FACTS")
+        return _no_plan_hypothesis("STALE_FACTS")
 
     monkeypatch.setattr(repo, "candidate_attention_is_active", lambda _generation_id: False)
     result = asyncio.run(plan_next_candidate(planner))
@@ -1113,13 +1099,13 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
     assert len(calls) == 1
 
 
-def test_plan_intent_portable_schema_requires_every_strict_property():
-    schema = portable_json_schema_payload(_PlanIntentWireSchema)
+def test_entry_hypothesis_portable_schema_requires_every_strict_property():
+    schema = portable_json_schema_payload(EntryHypothesis)
     properties = schema["properties"]
     assert set(schema["required"]) == set(properties)
-    assert set(properties) == set(PlanIntent.model_fields)
+    assert set(properties) == set(EntryHypothesis.model_fields)
     assert schema["additionalProperties"] is False
-    assert properties["order_tactic"]["type"] == ["string", "null"]
+    assert properties["execution_urgency"]["type"] == ["string", "null"]
     encoded = json.dumps(schema, sort_keys=True)
     assert "$ref" not in encoded
     assert "$defs" not in encoded
@@ -1129,48 +1115,8 @@ def test_plan_intent_portable_schema_requires_every_strict_property():
 
 
 
-@pytest.mark.parametrize(
-    ("execution_mode", "order_tactic", "triggered"),
-    [
-        ("RESTING_MAKER", "POST_ONLY_LIMIT", False),
-        ("TRIGGERED", "POST_ONLY_LIMIT", True),
-        ("TRIGGERED", "OPPOSING_BBO_IOC", True),
-    ],
-)
-def test_plan_intent_accepts_only_canonical_tactic_matrix(
-    execution_mode,
-    order_tactic,
-    triggered,
-):
-    intent = PlanIntent(
-        decision="ENTRY_PLAN",
-        reason_code="OK",
-        thesis="x",
-        scenario="y",
-        evidence_refs=[],
-        execution_mode=execution_mode,
-        order_tactic=order_tactic,
-        trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
-        risk_tier="LOW",
-        horizon="INTRADAY",
-    )
-    assert intent.order_tactic == order_tactic
 
 
-def test_plan_intent_rejects_resting_taker():
-    with pytest.raises(ValueError, match="RESTING_MAKER_TACTIC_INVALID"):
-        PlanIntent(
-            decision="ENTRY_PLAN",
-            reason_code="OK",
-            thesis="x",
-            scenario="y",
-            evidence_refs=[],
-            execution_mode="RESTING_MAKER",
-            order_tactic="OPPOSING_BBO_IOC",
-            trigger_spec_id=None,
-            risk_tier="LOW",
-            horizon="INTRADAY",
-        )
 
 
 
@@ -1389,7 +1335,7 @@ def test_no_plan_terminals_candidate_attention():
     assert repo.complete_candidate_planning_no_plan(
         generation["id"],
         "owner",
-        _no_plan_intent().model_dump(mode="json"),
+        _no_plan_hypothesis().model_dump(mode="json"),
     )
     stored = repo.get_candidate_planning_generation(generation["id"])
     assert stored["attention_status"] == "terminal"

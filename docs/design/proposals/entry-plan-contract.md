@@ -26,9 +26,9 @@ Gateway authority:
 
 - execution eligibility requires a Fast Monitoring path for the Candidate's
   exact physical venue, symbol, and market type;
-- `PlanIntent` selects one of Resting Maker, Triggered Maker, or Triggered
-  Taker, while deterministic code retains every numeric execution and Risk
-  value;
+- the original PlanIntent tactic selection is superseded by the canonical
+  `EntryHypothesis` profile/urgency contract under #2851; deterministic code
+  retains every numeric execution and Risk value;
 - every new Post-Only Order has a fixed 60-second cancel-only lifetime measured
   from its durable Order creation time;
 - TriggerSpec compatibility is registry-owned and deterministic incompatibility

@@ -245,31 +245,29 @@ pre-order states are invalidated with a reason; `ordered` and
 `partially_filled` states request cancellation through Gateway reconciliation.
 Fast Monitoring status exposes the bounded IDs it actually watches.
 
-## PlanIntent authority and failure semantics
+## Entry hypothesis authority and failure semantics
 
-`PlanIntent` owns only qualitative judgment:
-
-- `decision`, economic `reason_code`, thesis, scenario, evidence references,
-  risk tier, and horizon;
-- `execution_mode`; and
-- `order_tactic` plus a registered compatible TriggerSpec identity when the
-  mode is triggered.
+`EntryHypothesis` is the sole current model-output contract. It owns the
+qualitative decision and economic reason, mechanism/direction, supplied anchor
+references, entry profile, urgency, risk tier, horizon and evidence references.
+The Compiler consumes this validated hypothesis directly, including when
+resuming from its immutable checkpoint; no intermediate PlanIntent protocol is
+constructed.
 
 It never owns prices, quantity, notional, leverage, stop, target, expiry,
-slippage, timeout, TriggerSpec parameters, or Risk policy identity.
+slippage, timeout, TriggerSpec parameters, or Risk policy identity. The profile
+and urgency determine the Compiler's final execution fields:
 
-The allowed intent matrix is:
+| Profile | Urgency | Execution mode | Tactic |
+|---|---|---|---|
+| `grounded-anchor-resting-maker` | `PASSIVE` | `RESTING_MAKER` | `POST_ONLY_LIMIT` |
+| `grounded-anchor-retrace-reclaim` | `PASSIVE` | `TRIGGERED` | `POST_ONLY_LIMIT` |
+| `grounded-anchor-retrace-reclaim` | `BOUNDED_URGENT` | `TRIGGERED` | `OPPOSING_BBO_IOC` |
 
-| Decision/mode | Tactic | Trigger |
-|---|---|---|
-| `NO_PLAN` | null | null |
-| `RESTING_MAKER` | `POST_ONLY_LIMIT` | null |
-| `TRIGGERED` | `POST_ONLY_LIMIT` | compatible registered spec |
-| `TRIGGERED` | `OPPOSING_BBO_IOC` | compatible registered spec |
-
-After the model selects `NO_PLAN`, execution-only fields are non-authoritative
-and are canonicalized to the null/`NONE` row above before semantic validation.
-The model-owned decision, reason, thesis, scenario, and evidence remain unchanged.
+After the model selects `NO_PLAN`, anchor/profile/urgency fields are
+non-authoritative and canonicalized to null, with risk tier and horizon `NONE`.
+The decision, reason, mechanism, direction and evidence references remain
+unchanged. No execution Plan is produced.
 
 Profile/TriggerSpec registries own compatibility, required data and validation.
 Missing capability/Profile blocks before inference; invalid model references,

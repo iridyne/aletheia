@@ -7,10 +7,10 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
 from aletheia.storage import repositories as repo
 from aletheia.trading.entry_analysis import (
@@ -37,69 +37,6 @@ class PlanIntentError(ValueError):
         self.code = str(code)
         message = self.code if not detail else f"{self.code}:{detail}"
         super().__init__(message)
-
-
-class _PlanIntentWire(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    decision: Literal["ENTRY_PLAN", "NO_PLAN"]
-    reason_code: Literal[
-        "INSUFFICIENT_EVIDENCE",
-        "CONFLICTING_SIGNALS",
-        "STALE_FACTS",
-        "NO_VALID_TRIGGER",
-        "OK",
-    ]
-    thesis: str = Field(max_length=400)
-    scenario: str = Field(max_length=200)
-    evidence_refs: list[str] = Field(max_length=8)
-    execution_mode: Literal["RESTING_MAKER", "TRIGGERED"] | None
-    order_tactic: Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"] | None
-    trigger_spec_id: str | None
-    risk_tier: Literal["LOW", "MEDIUM", "NONE"]
-    horizon: Literal["INTRADAY", "SWING", "NONE"]
-
-
-class PlanIntent(_PlanIntentWire):
-    @model_validator(mode="after")
-    def _validate_semantics(self) -> "PlanIntent":
-        trigger_fields_empty = self.trigger_spec_id is None
-        if self.decision == "NO_PLAN":
-            if self.reason_code == "OK":
-                raise PlanIntentError("NO_PLAN_REASON_REQUIRED")
-            if (
-                self.execution_mode is not None
-                or self.order_tactic is not None
-                or self.risk_tier != "NONE"
-                or self.horizon != "NONE"
-                or not trigger_fields_empty
-            ):
-                raise PlanIntentError("NO_PLAN_EXECUTION_FIELDS_FORBIDDEN")
-            return self
-
-        if self.reason_code != "OK":
-            raise PlanIntentError("ENTRY_PLAN_REASON_MUST_BE_OK")
-        if self.execution_mode is None:
-            raise PlanIntentError("ENTRY_PLAN_EXECUTION_MODE_REQUIRED")
-        if self.order_tactic is None:
-            raise PlanIntentError("ENTRY_PLAN_ORDER_TACTIC_REQUIRED")
-        if self.risk_tier == "NONE":
-            raise PlanIntentError("ENTRY_PLAN_RISK_TIER_REQUIRED")
-        if self.horizon == "NONE":
-            raise PlanIntentError("ENTRY_PLAN_HORIZON_REQUIRED")
-        if not self.thesis.strip():
-            raise PlanIntentError("ENTRY_PLAN_THESIS_REQUIRED")
-        if not self.scenario.strip():
-            raise PlanIntentError("ENTRY_PLAN_SCENARIO_REQUIRED")
-        if self.execution_mode == "RESTING_MAKER":
-            if self.order_tactic != "POST_ONLY_LIMIT":
-                raise PlanIntentError("RESTING_MAKER_TACTIC_INVALID")
-            if not trigger_fields_empty:
-                raise PlanIntentError("RESTING_MAKER_TRIGGER_FIELDS_FORBIDDEN")
-            return self
-        if self.order_tactic not in {"POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"}:
-            raise PlanIntentError("TRIGGERED_TACTIC_INVALID")
-        return self
 
 
 PlannerFn = Callable[

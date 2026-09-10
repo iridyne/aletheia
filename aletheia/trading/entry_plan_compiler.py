@@ -12,7 +12,7 @@ from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
 
 if TYPE_CHECKING:
-    from aletheia.agent_shell.entry_planner import PlanIntent
+    from aletheia.trading.entry_analysis import EntryHypothesis
 
 
 _RISK_REWARD_TARGET = {"LOW": 1.5, "MEDIUM": 2.5}
@@ -60,7 +60,7 @@ def _compile_bounded_risk_envelope(
     generation: dict,
     candidate: dict,
     feature: dict,
-    intent: "PlanIntent",
+    hypothesis: "EntryHypothesis",
     cfg,
     *,
     now: datetime | None = None,
@@ -70,7 +70,7 @@ def _compile_bounded_risk_envelope(
     from aletheia.agent_shell.entry_planner import PlanIntentError
 
     try:
-        if intent.decision != "ENTRY_PLAN":
+        if hypothesis.decision != "ENTRY_PLAN":
             raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
         raw_market_type = generation.get("market_type")
         if raw_market_type not in {"spot", "perp"}:
@@ -80,9 +80,9 @@ def _compile_bounded_risk_envelope(
         if raw_direction not in {"long", "short"}:
             raise PlanIntentError("COMPILER_DIRECTION_INVALID")
         direction = cast(Literal["long", "short"], raw_direction)
-        if intent.risk_tier not in _RISK_REWARD_TARGET:
+        if hypothesis.risk_tier not in _RISK_REWARD_TARGET:
             raise PlanIntentError("COMPILER_RISK_TIER_INVALID")
-        if intent.horizon not in _HORIZON_HOURS:
+        if hypothesis.horizon not in _HORIZON_HOURS:
             raise PlanIntentError("COMPILER_HORIZON_INVALID")
 
         try:
@@ -91,17 +91,17 @@ def _compile_bounded_risk_envelope(
             raise PlanIntentError("STALE_CANDIDATE_PRICE") from exc
 
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
+        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[hypothesis.horizon])
         atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
         stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
         if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
             raise PlanIntentError("NO_STOP_REFERENCE")
         if direction == "long":
             stop_price = candidate_price * (1.0 - stop_distance_pct / 100.0)
-            target_price = candidate_price + _RISK_REWARD_TARGET[intent.risk_tier] * (candidate_price - stop_price)
+            target_price = candidate_price + _RISK_REWARD_TARGET[hypothesis.risk_tier] * (candidate_price - stop_price)
         else:
             stop_price = candidate_price * (1.0 + stop_distance_pct / 100.0)
-            target_price = candidate_price - _RISK_REWARD_TARGET[intent.risk_tier] * (stop_price - candidate_price)
+            target_price = candidate_price - _RISK_REWARD_TARGET[hypothesis.risk_tier] * (stop_price - candidate_price)
         band_pct = 0.5 * vol_target_pct
         entry_zone = (
             candidate_price * (1.0 - band_pct / 100.0),
@@ -122,11 +122,11 @@ def _compile_bounded_risk_envelope(
         except Exception as exc:
             raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
         max_leverage = (
-            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
+            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[hypothesis.risk_tier])
         )
         max_risk_pct = min(
             float(policy.loss.max_single_trade_risk_pct),
-            _RISK_TIER_MAX_RISK_PCT[intent.risk_tier],
+            _RISK_TIER_MAX_RISK_PCT[hypothesis.risk_tier],
         )
         try:
             from aletheia.risk.engine import (
@@ -171,9 +171,9 @@ def _compile_bounded_risk_envelope(
                 symbol=generation["symbol"],
                 market_type=market_type,
                 direction=direction,
-                thesis=intent.thesis,
-                evidence_refs=tuple(intent.evidence_refs),
-                scenario=intent.scenario,
+                thesis=f"{hypothesis.mechanism} grounded entry",
+                evidence_refs=tuple(hypothesis.supporting_fact_refs),
+                scenario=str(hypothesis.entry_profile_id),
                 execution_mode="RESTING_MAKER",
                 trigger_spec_id=None,
                 trigger_params={},
@@ -184,7 +184,7 @@ def _compile_bounded_risk_envelope(
                 invalidation_price=stop_price,
                 stop_price=stop_price,
                 target_price=target_price,
-                expected_horizon_hours=_HORIZON_HOURS[intent.horizon],
+                expected_horizon_hours=_HORIZON_HOURS[hypothesis.horizon],
                 approved_at=current.isoformat(),
                 expires_at=expires.isoformat(),
                 order_tactic="POST_ONLY_LIMIT",
@@ -220,7 +220,7 @@ def _compile_bounded_risk_envelope(
 
 def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
-    from aletheia.agent_shell.entry_planner import PlanIntent, PlanIntentError
+    from aletheia.agent_shell.entry_planner import PlanIntentError
     from aletheia.trading.entry_analysis import (
         canonical_json,
         fingerprint,
@@ -339,17 +339,8 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             {key: value for key, value in trigger_params.items() if key != "geometry_fingerprint"}
         )
         geometry_material["trigger_params"] = trigger_params
-    thesis = f"{hypothesis.mechanism} grounded entry"
-    scenario = str(hypothesis.entry_profile_id)
-    synthetic = PlanIntent(
-        decision="ENTRY_PLAN", reason_code="OK", thesis=thesis,
-        scenario=scenario, evidence_refs=list(hypothesis.supporting_fact_refs),
-        execution_mode="RESTING_MAKER", order_tactic="POST_ONLY_LIMIT",
-        trigger_spec_id=None,
-        risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
-    )
     base = _compile_bounded_risk_envelope(
-        frozen_generation, frozen_candidate, frozen_feature, synthetic, cfg
+        frozen_generation, frozen_candidate, frozen_feature, hypothesis, cfg
     )
     old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
     old_fraction = abs(old_entry - base.stop_price) / old_entry
