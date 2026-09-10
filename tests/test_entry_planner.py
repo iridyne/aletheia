@@ -25,11 +25,13 @@ _PlanIntentWireSchema = _PlanIntentWire
 
 @pytest.fixture(autouse=True)
 def _bitget_market_data_authority(_inmemory_db):
-    """Keep this module's Bitget candidates aligned with its market-data authority."""
+    """Exercise Planner stages under the supported Bitget Demo / Full route."""
     from aletheia.config.loader import load_config, save_config
 
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.agent.permission_mode = "Full"
     save_config(cfg)
 
 
