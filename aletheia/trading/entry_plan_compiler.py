@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
+from aletheia.trading.trigger_specs import ANCHOR_GEOMETRY_VERSION
 
 if TYPE_CHECKING:
     from aletheia.trading.entry_analysis import EntryHypothesis
@@ -20,6 +21,21 @@ _RISK_TIER_LEVERAGE_CAP = {"LOW": 2, "MEDIUM": 3}
 _RISK_TIER_MAX_RISK_PCT = {"LOW": 0.5, "MEDIUM": 1.0}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
+
+_GEOMETRY = {"band_vol_fraction": 0.5, "fallback_tolerance_atr": 0.05, "zone_atr": 0.25}
+_TACTIC = {"maker_wait_sec": 60, "max_requotes": 0, "urgent_slippage_bps": 20.0}
+
+
+def compiler_contract_material() -> dict:
+    return {
+        "risk_reward_target": _RISK_REWARD_TARGET,
+        "leverage_cap": _RISK_TIER_LEVERAGE_CAP,
+        "max_risk_pct": _RISK_TIER_MAX_RISK_PCT,
+        "horizon_hours": _HORIZON_HOURS,
+        "lifetime_minutes": _HORIZON_LIFETIME_MINUTES,
+        "sideways_stop_mult": SIDEWAYS_STOP_MULT,
+        "geometry": _GEOMETRY, "tactic": _TACTIC,
+    }
 
 
 def _number(value: Any, code: str, *, positive: bool = False) -> float:
@@ -102,7 +118,7 @@ def _compile_bounded_risk_envelope(
         else:
             stop_price = candidate_price * (1.0 + stop_distance_pct / 100.0)
             target_price = candidate_price - _RISK_REWARD_TARGET[hypothesis.risk_tier] * (stop_price - candidate_price)
-        band_pct = 0.5 * vol_target_pct
+        band_pct = _GEOMETRY["band_vol_fraction"] * vol_target_pct
         entry_zone = (
             candidate_price * (1.0 - band_pct / 100.0),
             candidate_price * (1.0 + band_pct / 100.0),
@@ -193,9 +209,9 @@ def _compile_bounded_risk_envelope(
                 limit_price=candidate_price,
                 price_rule="EXACT_LIMIT",
                 bbo_reference=None,
-                max_wait_sec=60,
+                max_wait_sec=_TACTIC["maker_wait_sec"],
                 cancel_replace_policy="CANCEL_ONLY",
-                max_requotes=0,
+                max_requotes=_TACTIC["max_requotes"],
                 partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
                 taker_fallback_allowed=False,
                 max_slippage_bps=None,
@@ -265,11 +281,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     atr = float(structure.get("atr14") or 0.0)
     if not math.isfinite(atr) or atr <= 0:
         raise PlanIntentError("ATR_UNAVAILABLE")
-    tolerance = float(structure.get("break_tolerance") or 0.05 * atr)
+    tolerance = float(structure.get("break_tolerance") or _GEOMETRY["fallback_tolerance_atr"] * atr)
     stop = invalidation.price - tolerance if direction == "long" else invalidation.price + tolerance
     rr = _RISK_REWARD_TARGET[hypothesis.risk_tier]
     retrace = hypothesis.entry_profile_id == "grounded-anchor-retrace-reclaim"
-    quarter = 0.25 * atr
+    quarter = _GEOMETRY["zone_atr"] * atr
     if retrace:
         zone = (
             (primary.price, primary.price + quarter)
@@ -332,7 +348,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             "sweep_low": primary.price - quarter if direction == "long" else primary.price,
             "sweep_high": primary.price if direction == "long" else primary.price + quarter,
             "atr_abs": atr,
-            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_version": ANCHOR_GEOMETRY_VERSION,
             "geometry_fingerprint": "0" * 64,
         }
         trigger_params["geometry_fingerprint"] = fingerprint(
@@ -374,8 +390,8 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "maker_required": maker, "time_in_force": "POST_ONLY" if maker else "IOC",
         "price_rule": "EXACT_LIMIT" if maker else "OPPOSING_BBO",
         "bbo_reference": None if maker else ("ask" if direction == "long" else "bid"),
-        "max_wait_sec": 60 if maker else 0,
-        "max_slippage_bps": None if maker else 20.0,
+        "max_wait_sec": _TACTIC["maker_wait_sec"] if maker else 0,
+        "max_slippage_bps": None if maker else _TACTIC["urgent_slippage_bps"],
         "trigger_spec_id": require_current_entry_profile(
             hypothesis.mechanism, hypothesis.entry_profile_id,
         ).trigger_spec_id,

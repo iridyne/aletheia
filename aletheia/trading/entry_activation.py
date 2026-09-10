@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.data.symbols import InstrumentId
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
-from aletheia.trading.trigger_specs import require_registered_trigger_spec
+from aletheia.trading.trigger_specs import TRIGGER_RULES, require_registered_trigger_spec, trigger_contract_material
 from aletheia.universe.fast_trigger import TriggerReady
 
 
@@ -28,11 +28,7 @@ def _instant(value: str) -> datetime:
 
 
 def _spec_identity(spec) -> str:
-    from aletheia.trading.entry_contract import _implementation_semantics
-
-    return _hash({"id": spec.spec_id, "channels": spec.data_requirements,
-                  "freshness_ms": spec.freshness_ms,
-                  "validation": _implementation_semantics(spec.validate_params)})
+    return _hash(trigger_contract_material(spec))
 
 
 class EntryTriggerActivationV1(BaseModel):
@@ -107,7 +103,7 @@ class EntryTriggerActivationV1(BaseModel):
             or not (params["sweep_low"] <= mids[1] < params["breakout_level"] if long
                     else params["breakout_level"] < mids[1] <= params["sweep_high"])
             or not all(mid > params["breakout_level"] if long else mid < params["breakout_level"] for mid in mids[2:])
-            or confirmation.received_timestamp_ms - reclaim.received_timestamp_ms < 300):
+            or confirmation.received_timestamp_ms - reclaim.received_timestamp_ms < TRIGGER_RULES["reclaim_confirmation_ms"]):
             raise ValueError("entry_trigger_activation_state_order_invalid")
         path = trigger.get("state_path") or []
         allowed = {"armed": {"pullback"}, "pullback": {"sweep"}, "sweep": {"reclaim"},

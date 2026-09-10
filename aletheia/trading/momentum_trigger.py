@@ -12,12 +12,13 @@ import math
 from typing import Literal, cast
 
 from aletheia.data.symbols import InstrumentId
+from aletheia.trading.trigger_specs import ANCHOR_GEOMETRY_VERSION, TRIGGER_RULES
 from aletheia.universe.fast_stream import FastMarketEvent, events_share_generation
 from aletheia.universe.fast_trigger import TriggerPolicy, TriggerReady
 
 TRIGGER_SPEC_ID = "momentum-retrace-reclaim-geometry"
 GEOMETRY_VERSION = "momentum-entry-geometry/v2"
-_LEGACY_GEOMETRY_VERSION = "anchor-retrace-reclaim-geometry/v1"
+_LEGACY_GEOMETRY_VERSION = ANCHOR_GEOMETRY_VERSION
 State = Literal["armed", "pullback", "sweep", "reclaim", "triggered", "invalidated"]
 
 
@@ -247,14 +248,14 @@ class MomentumTriggerEngine:
             elif self._first_reclaim_quote_ms is None:
                 self._first_reclaim_quote_ms = event.received_timestamp_ms
                 self._first_reclaim_quote_sequence = event.sequence
-            elif event.received_timestamp_ms - self._first_reclaim_quote_ms >= 300:
+            elif event.received_timestamp_ms - self._first_reclaim_quote_ms >= TRIGGER_RULES["reclaim_confirmation_ms"]:
                 ready = self.evaluate(event.received_timestamp_ms)
                 if ready is not None:
                     return ready
         return None
 
     def _prune_trades(self, now_ms: int) -> None:
-        cutoff = now_ms - 10_000
+        cutoff = now_ms - TRIGGER_RULES["trade_window_ms"]
         while self._trades and self._trades[0].received_timestamp_ms < cutoff:
             self._trades.popleft()
 
@@ -277,9 +278,9 @@ class MomentumTriggerEngine:
             self.health_reason = "market_evidence_generation_mismatch"
             return None
         if (
-            now_ms - quote.received_timestamp_ms > 1_000
-            or now_ms - depth.received_timestamp_ms > 1_000
-            or now_ms - self._trades[-1].received_timestamp_ms > 2_000
+            now_ms - quote.received_timestamp_ms > TRIGGER_RULES["quote_depth_max_age_ms"]
+            or now_ms - depth.received_timestamp_ms > TRIGGER_RULES["quote_depth_max_age_ms"]
+            or now_ms - self._trades[-1].received_timestamp_ms > TRIGGER_RULES["trade_max_age_ms"]
         ):
             self.final_requirement_reason = "market_fact_stale"
             return None
@@ -293,7 +294,7 @@ class MomentumTriggerEngine:
         depth_value = sum(
             price * size
             for price, size in depth.bids + depth.asks
-            if abs(price / mid - 1.0) <= 0.001
+            if abs(price / mid - 1.0) <= TRIGGER_RULES["depth_mid_fraction"]
         )
         if depth_value < self.policy.min_depth_10bps_usd:
             self.final_requirement_reason = "depth"
@@ -304,8 +305,8 @@ class MomentumTriggerEngine:
             self.final_requirement_reason = "order_flow"
             return None
         ratio = buy / total
-        if (self.direction == "long" and ratio < 0.60) or (
-            self.direction == "short" and ratio > 0.40
+        if (self.direction == "long" and ratio < TRIGGER_RULES["long_min_buy_ratio"]) or (
+            self.direction == "short" and ratio > TRIGGER_RULES["short_max_buy_ratio"]
         ):
             self.final_requirement_reason = "order_flow"
             return None
