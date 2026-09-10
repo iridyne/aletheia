@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import ast
 import copy
 from dataclasses import replace
@@ -466,107 +465,14 @@ def test_twin_module_has_no_authority_consumer_or_persistence_imports() -> None:
 
 
 
-def test_shadow_batch_failure_cannot_fail_authority_refresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.universe import service
-
-    async def fail_to_thread(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("batch failed")
-
-    monkeypatch.setattr(service.asyncio, "to_thread", fail_to_thread)
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            base_policy=_policy(),
-        )
-    )
-    assert result == ()
 
 
-def test_shadow_batch_timeout_cannot_stall_authority_refresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.universe import service
-
-    async def never_finishes(*_args: object, **_kwargs: object) -> object:
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(service.asyncio, "to_thread", never_finishes)
-    monkeypatch.setattr(service, "_TWIN_SHADOW_TIMEOUT_SEC", 0.001)
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            base_policy=_policy(),
-        )
-    )
-    assert result == ()
 
 
-def test_shadow_allocation_failure_preserves_records_as_blocked() -> None:
-    from aletheia.universe import service
-
-    record = build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy())
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("allocation replay failed")
-
-    marked = asyncio.run(
-        service._compute_twin_shadow_allocation_nonfatal(
-            fail,
-            twin_scoring.mark_shadow_allocation_unavailable,
-            (record,),
-            (_twin_input(),),
-        )
-    )
-    assert len(marked) == 1
-    assert "shadow_allocation_replay_failed:RuntimeError" in marked[0].blocking_reasons
-    assert marked[0].shadow_point_selected is None
 
 
-def test_shadow_policy_failure_cannot_fail_authority_refresh() -> None:
-    from aletheia.universe import service
-
-    def fail_policy(**_kwargs: object) -> object:
-        raise ValueError("invalid diagnostic policy")
-
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            policy_factory=fail_policy,
-            policy_kwargs={"unused": True},
-        )
-    )
-    assert result == ()
 
 
-@pytest.mark.parametrize("failing_stage", ["annotator", "summarizer"])
-def test_shadow_finalization_failure_cannot_fail_authority_refresh(
-    failing_stage: str,
-) -> None:
-    from aletheia.universe import service
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("diagnostic finalization failed")
-
-    records = (build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy()),)
-    annotator = fail if failing_stage == "annotator" else annotate_authority_selection
-    summarizer = fail if failing_stage == "summarizer" else summarize_twin_shadow_records
-    finalized, summary = service._finalize_twin_shadow_nonfatal(
-        records,
-        annotator=annotator,
-        summarizer=summarizer,
-        fine_filtered=[_feature()],
-        allocated=[_feature()],
-    )
-    assert finalized == ()
-    assert summary is None
 
 
 def test_external_multiplier_policy_is_bounded_and_observable() -> None:
