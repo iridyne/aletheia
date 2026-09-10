@@ -2604,6 +2604,7 @@ export const api = {
 			coingecko_top_n: number;
 			derivatives_history_hours: number;
 			enable_hyperliquid: boolean;
+			derivatives_comparison_venues: Array<'binance' | 'okx' | 'bitget'>;
 			enable_defillama: boolean;
 		}>,
 	) =>

@@ -16,7 +16,7 @@ exchange tag: "hyperliquid"
 
 from __future__ import annotations
 
-from aletheia.data.derivatives_facts import hyperliquid_metadata
+from aletheia.data.derivatives_facts import hyperliquid_instrument, hyperliquid_metadata, price_snapshot
 
 import logging
 import math
@@ -54,6 +54,7 @@ class HyperliquidCollector:
         ensure_opportunity_information_policy_epoch()
         funding: list[FundingRateSnapshot] = []
         oi: list[OpenInterestSnapshot] = []
+        prices: list[dict] = []
         errors: list[str] = []
 
         # Step 1: fetch market context (OI + current funding)
@@ -98,6 +99,14 @@ class HyperliquidCollector:
                 if symbol_filter and canonical.upper() not in symbol_filter:
                     continue
 
+                physical = hyperliquid_instrument(canonical)
+                price = price_snapshot(canonical, 'hyperliquid',
+                    {'markPrice': ctx.get('markPx'), 'indexPrice': ctx.get('oraclePx')},
+                    instrument=physical, acquired_at=datetime.fromisoformat(now),
+                    provider='hyperliquid_public', reference_kind='oracle')
+                if price:
+                    prices.append(price)
+
                 fr_snap = _parse_funding(canonical, ctx, now)
                 if fr_snap:
                     fr_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now)
@@ -121,7 +130,7 @@ class HyperliquidCollector:
             "Hyperliquid collected: %d funding, %d OI, %d errors",
             len(funding), len(oi), len(errors),
         )
-        return {"funding": funding, "open_interest": oi, "errors": errors}
+        return {"funding": funding, "open_interest": oi, "prices": prices, "errors": errors}
 
 
 def _parse_funding(

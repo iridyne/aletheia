@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import math
+import hashlib
 from typing import Literal, NotRequired, TypedDict
 
 from aletheia.data.freshness import assess_freshness
@@ -29,6 +30,7 @@ class DerivativesFact(TypedDict):
     side: NotRequired[str | None]
     coverage: NotRequired[str]
     population: NotRequired[str]
+    reference_kind: NotRequired[str | None]
 
 
 def finite(value) -> float | None:
@@ -44,11 +46,12 @@ def finite(value) -> float | None:
 def _instrument_valid(instrument: dict) -> bool:
     return (
         isinstance(instrument, dict)
-        and bool(instrument.get("canonical_symbol"))
+        and isinstance(instrument.get("canonical_symbol"), str) and bool(instrument['canonical_symbol'])
         and bool(instrument.get("source_instrument_id"))
         and instrument.get("market_type") == "perp"
         and instrument.get("linear") is True
         and bool(instrument.get("base_asset"))
+        and instrument['canonical_symbol'].split('/')[0] == instrument['base_asset']
         and instrument.get("quote_asset") in {"USDT", "USDC", "USD"}
         and instrument.get("settle_asset") in {"USDT", "USDC", "USD"}
     )
@@ -237,7 +240,7 @@ def snapshot_metadata(
     )
 
 
-def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None):
+def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None, acquired_at=None):
     """Persist only semantics proved by the current CCXT response, never its fallback arithmetic."""
     interval = raw.get("interval")
     hours = finite(interval[:-1]) if isinstance(interval, str) and interval.endswith("h") else None
@@ -250,14 +253,82 @@ def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None):
         value = finite(raw.get("openInterestValue"))
         if value is not None and any(finite(info.get(key)) == value for key in fields):
             unit = "USD"
-    return snapshot_metadata(
+    instrument = instrument_from_market(symbol, market)
+    if raw.get('symbol') is not None and raw['symbol'] != market.get('symbol'):
+        instrument['source_instrument_id'] = None
+    metadata = snapshot_metadata(
         provider="ccxt",
         venue=venue,
-        instrument=instrument_from_market(symbol, market),
+        instrument=instrument,
         interval_seconds=finite(hours * 3600) if hours is not None and hours > 0 and family == "funding" else None,
         oi_unit=unit if family == "open_interest" else None,
         ratios=ratios,
     )
+    # CCXT leaves unified OKX funding timestamp empty although the response has ts.
+    if venue == 'okx' and family == 'funding' and isinstance(info, dict) and info.get('ts') is not None:
+        from aletheia.data.collectors.derivatives import provider_source_time
+        acquired = datetime.fromisoformat(acquired_at) if acquired_at else datetime.now(timezone.utc)
+        source, status = provider_source_time({'timestamp': info['ts']}, acquired)
+        data = json.loads(metadata)
+        data.update(source_observed_at=source, source_time_status=status)
+        metadata = json.dumps(data, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    return metadata
+
+
+def comparison_row(row: dict) -> dict:
+    """Mark the existing physical row as observation-only and make repeat persistence idempotent."""
+    metadata = json.loads(row['derivatives_metadata_json'])
+    metadata['observation_only'] = True
+    row['derivatives_metadata_json'] = json.dumps(metadata, sort_keys=True, separators=(',', ':'), allow_nan=False)
+    identity = dict(row)
+    identity.pop('id', None)
+    if row.get('source_observed_at'):
+        identity.pop('acquired_at', None)
+    row['id'] = hashlib.sha256(json.dumps(identity, sort_keys=True, allow_nan=False).encode()).hexdigest()[:24]
+    return row
+
+
+def price_snapshot(symbol, venue, raw, *, instrument, acquired_at, provider='ccxt', reference_kind='index'):
+    """Mark and reference from one response share a clock; no cross-response premium guess."""
+    from aletheia.data.collectors.derivatives import provider_source_time
+    if not _instrument_valid(instrument):
+        return None
+    if provider == 'ccxt' and raw.get('symbol') is not None:
+        if raw['symbol'] != f"{instrument['canonical_symbol']}:{instrument['settle_asset']}":
+            return None
+    source, status = provider_source_time(raw, acquired_at)
+    mark, reference = finite(raw.get('markPrice')), finite(raw.get('indexPrice'))
+    mark = mark if mark is not None and mark > 0 else None
+    reference = reference if reference is not None and reference > 0 else None
+    if mark is None and reference is None:
+        return None
+    row = dict(symbol=symbol, exchange=venue, provider=provider,
+        instrument_json=json.dumps(instrument, sort_keys=True, allow_nan=False),
+        mark_price=mark, reference_price=reference, reference_kind=reference_kind if reference is not None else None,
+        source_observed_at=source, acquired_at=acquired_at.isoformat(), source_time_status=status,
+        observed_at=source or acquired_at.isoformat())
+    identity = {k:v for k,v in row.items() if k != 'acquired_at' or source is None}
+    row['id'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+    return row
+
+
+def project_price_snapshot(row, *, now=None):
+    instrument = json.loads(row['instrument_json'])
+    common = dict(instrument=instrument, provider=row['provider'], venue=row['exchange'],
+        source_observed_at=row['source_observed_at'], acquired_at=row['acquired_at'],
+        source_time_status=row['source_time_status'], source_ref=row['id'],
+        unit=instrument['quote_asset'], now=now)
+    mark = _fact('mark_price', row['mark_price'], **common)
+    reference = _fact('reference_price', row['reference_price'],
+        reason='reference_kind_unproven' if row['reference_price'] is not None and not row['reference_kind'] else None,
+        **common)
+    reference['reference_kind'] = row['reference_kind']
+    return [mark, reference]
+
+
+def hyperliquid_instrument(symbol):
+    return dict(canonical_symbol=symbol, source_instrument_id=symbol.split('/')[0],
+        market_type='perp', base_asset=symbol.split('/')[0], quote_asset='USDC', settle_asset='USDC', linear=True)
 
 
 def hyperliquid_metadata(symbol, acquired_at, *, value_kind="observed", interval_seconds=3600, oi=False):
@@ -265,15 +336,7 @@ def hyperliquid_metadata(symbol, acquired_at, *, value_kind="observed", interval
     return snapshot_metadata(
         provider="hyperliquid_public",
         venue="hyperliquid",
-        instrument=dict(
-            canonical_symbol=symbol,
-            source_instrument_id=symbol.split("/")[0],
-            market_type="perp",
-            base_asset=symbol.split("/")[0],
-            quote_asset="USDC",
-            settle_asset="USDC",
-            linear=True,
-        ),
+        instrument=hyperliquid_instrument(symbol),
         value_kind="derived" if oi else value_kind,
         interval_seconds=interval_seconds if not oi else None,
         oi_unit="USD" if oi else None,
@@ -297,8 +360,8 @@ def project_snapshot(row: dict, family: Literal["funding", "open_interest"], *, 
         provider=provider,
         venue=metadata.get("venue"),
         acquired_at=row.get("acquired_at") or metadata.get("acquired_at"),
-        source_observed_at=row.get("source_observed_at"),
-        source_time_status=row.get("source_time_status"),
+        source_observed_at=metadata.get('source_observed_at') or row.get("source_observed_at"),
+        source_time_status=metadata.get('source_time_status') or row.get("source_time_status"),
         source_ref=row.get("id"),
         now=now,
         source_scope=metadata.get("source_scope", "market_aggregate" if aggregate else "venue_native"),
@@ -373,4 +436,8 @@ def read_derivatives_facts(symbol: str, *, venue: str, now=None) -> list[dict]:
                         reason="legacy_provenance_unknown",
                     )
                 )
+    prices = repo._select_all('perp_price_snapshots', where='symbol = ? AND exchange = ?',
+        params=(symbol, venue), order='observed_at DESC, rowid DESC', limit=1)
+    if prices:
+        result.extend(project_price_snapshot(prices[0], now=now))
     return result

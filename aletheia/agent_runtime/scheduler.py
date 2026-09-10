@@ -2986,6 +2986,7 @@ def _run_cleanup():
             "liquidation_events": repo.prune_liquidation_events(7),
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
+            "perp_price_snapshots": repo.prune_perp_price_snapshots(r.open_interest_snapshots_days),
             "macro_snapshots": repo.prune_macro_snapshots(90),
             "coingecko_top_snapshots": repo.prune_coingecko_top_snapshots(r.coingecko_top_snapshots_days),
             # #149/#150: these had a prune fn but no cleanup-job wiring (onchain) or no
@@ -4010,6 +4011,7 @@ _PERSISTENCE_GATED_COLLECTOR_HEALTH = frozenset(
     {
         "microstructure",
         "derivatives",
+        "derivatives_comparison",
         "volume_scanner",
         "hyperliquid",
         "defillama",
@@ -4027,6 +4029,7 @@ def _record_collector_health(
     *,
     duration_ms: int | None = None,
     error_code: str | None = None,
+    derivatives_coverage: dict | None = None,
 ) -> None:
     """Best-effort diagnostics must never make a healthy collection fail."""
     tick = _DC_HEALTH_TICK.get()
@@ -4041,6 +4044,7 @@ def _record_collector_health(
             tick=tick,
             duration_ms=duration_ms,
             error_code=error_code,
+            derivatives_coverage=derivatives_coverage,
         )
     except Exception as exc:
         logger.debug("data_collectors: health state write failed for %s: %s", label, exc)
@@ -4385,6 +4389,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     """
     import time as _time
     from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+    from aletheia.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.hyperliquid import HyperliquidCollector
@@ -4481,6 +4486,12 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
         make_coro=lambda: OptionsStructureCollector().collect(),
         cap=20.0, deadline=deadline,
     )
+    _schedule_collector(
+        tasks, 'derivatives_comparison',
+        enabled=bool(cfg.market_data.derivatives_comparison_venues), configured=True,
+        make_coro=lambda: DerivativesCollector().collect_comparison(cfg),
+        cap=12.0, deadline=deadline,
+    )
     wave_two = dict(zip(
         (label for label, _ in tasks),
         await asyncio.gather(*(coro for _, coro in tasks)),
@@ -4509,6 +4520,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     hyperliquid_oi = [
         row.model_dump() for row in hyperliquid_result.get("open_interest", [])
     ]
+    comparison_result = wave_two.get('derivatives_comparison') or {}
     onchain_rows = [
         row.model_dump() for row in defillama_result.get("snapshots", [])
     ]
@@ -4551,6 +4563,17 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
                     open_interest=hyperliquid_oi,
                 ),
             )
+        if hyperliquid_result.get('prices'):
+            _persist_domain('hyperliquid', lambda: [
+                repo.insert_perp_price_snapshot(row) for row in hyperliquid_result['prices']
+            ])
+        if comparison_result:
+            def persist_comparison():
+                repo.insert_collector_snapshot_batch(funding=comparison_result.get('funding', []),
+                    open_interest=comparison_result.get('open_interest', []))
+                for row in comparison_result.get('prices', []):
+                    repo.insert_perp_price_snapshot(row)
+            _persist_domain('derivatives_comparison', persist_comparison)
         if onchain_rows:
             _persist_domain(
                 "defillama",
@@ -4594,6 +4617,8 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             domain,
             "failed" if persist_error else classify_collector_result(result),
             error_code=persist_error,
+            derivatives_coverage={**result['coverage'], 'persisted': not bool(persist_error)}
+            if domain == 'derivatives_comparison' and result.get('coverage') else None,
         )
 
     # Sparse derivatives history is useful but must never spend the two-minute

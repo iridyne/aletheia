@@ -142,6 +142,23 @@ classified before enabling fan-out. Preserve primary and native writer ownership
 and source-failure isolation. Fixed family functions and one read projection are
 sufficient; no registry/plugin/second state machine is required.
 
+Comparison Funding/OI rows carry `observation_only` provenance. Existing scalar,
+context, fill-evidence, history and coverage readers exclude those new rows;
+the canonical reader includes them. Current primary/native Funding/OI are not
+recollected by comparison coverage. Independently acquired Mark/reference pairs
+use `perp_price_snapshots`, retaining one response's clock and explicit reference
+kind; the native Hyperliquid collector remains their Hyperliquid writer.
+
+`market_data.derivatives_comparison_venues` is the single comparison-source
+setting (Binance/OKX/Bitget; empty disables extra coverage), editable in existing
+Settings. `observed_instruments` cannot represent this switch without also
+changing its existing market-context consumers. The workset unions active
+registry instruments with configured and open-position requirements; it does
+not consume Candidate ranking. Latest attempt coverage reuses one bounded
+`collector_health_state` row. Per-symbol endpoints rotate four instruments per
+source attempt within a ten-second source budget; batch endpoints cover the
+listed workset. Mark/reference retention reuses the configured OI retention.
+
 ## Verification contract
 
 Frozen current outputs cover primary Funding/OI and both Binance populations,

@@ -189,6 +189,9 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [cgTop, setCgTop] = useState(md.enable_coingecko_top ?? true)
   const [cgTopN, setCgTopN] = useState(md.coingecko_top_n ?? 100)
   const [hyperliquid, setHyperliquid] = useState(md.enable_hyperliquid ?? true)
+  const [comparisonVenues, setComparisonVenues] = useState<Array<'binance' | 'okx' | 'bitget'>>(
+    md.derivatives_comparison_venues ?? ['binance', 'okx', 'bitget'],
+  )
   const [defillama, setDefillama] = useState(md.enable_defillama ?? true)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -198,6 +201,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       enable_coingecko_top: cgTop,
       coingecko_top_n: cgTopN,
       enable_hyperliquid: hyperliquid,
+      derivatives_comparison_venues: comparisonVenues,
       enable_defillama: defillama,
     }),
     onSuccess: () => { setMsg({ ok: true, text: '✓ saved' }); qc.invalidateQueries({ queryKey: ['settings'] }) },
@@ -208,6 +212,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     || cgTop !== (md.enable_coingecko_top ?? true)
     || cgTopN !== (md.coingecko_top_n ?? 100)
     || hyperliquid !== (md.enable_hyperliquid ?? true)
+    || JSON.stringify([...comparisonVenues].sort()) !== JSON.stringify([...(md.derivatives_comparison_venues ?? ['binance', 'okx', 'bitget'])].sort())
     || defillama !== (md.enable_defillama ?? true)
 
   useSettingsDraftLifecycle({
@@ -220,6 +225,7 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setCgTop(md.enable_coingecko_top ?? true)
       setCgTopN(md.coingecko_top_n ?? 100)
       setHyperliquid(md.enable_hyperliquid ?? true)
+      setComparisonVenues(md.derivatives_comparison_venues ?? ['binance', 'okx', 'bitget'])
       setDefillama(md.enable_defillama ?? true)
     },
   })
@@ -240,6 +246,17 @@ function MacroSignalsCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       </Row>
       <Row label="Hyperliquid cross-venue" hint="Pull perp open-interest + funding from Hyperliquid's public API (no key) every ~10 min. Tagged as a cross-venue feed (kept separate from the primary exchange's per-symbol read), surfaced as cross-venue derivatives context.">
         <Toggle checked={hyperliquid} persistence="staged" onChange={v => { setHyperliquid(v); setMsg(null) }} />
+      </Row>
+      <Row label="Derivatives comparison sources" hint="Public, read-only Funding/OI and price coverage. These sources do not change trading venues or strategy inputs. Clear all to stop additional comparison requests; existing primary and Hyperliquid feeds remain enabled independently.">
+        {(['binance', 'okx', 'bitget'] as const).map(venue => (
+          <label key={venue} style={{ marginRight: '1rem' }}>
+            <input type="checkbox" checked={comparisonVenues.includes(venue)}
+              onChange={e => {
+                setComparisonVenues(e.target.checked ? [...comparisonVenues, venue] : comparisonVenues.filter(v => v !== venue))
+                setMsg(null)
+              }} /> {venue}
+          </label>
+        ))}
       </Row>
       <Row label="DefiLlama on-chain" hint="Pull total stablecoin market cap, DeFi TVL, and DEX volume from DefiLlama's public API (no key) every ~10 min. Folded into the macro block of the LLM context as on-chain regime signal.">
         <Toggle checked={defillama} persistence="staged" onChange={v => { setDefillama(v); setMsg(null) }} />

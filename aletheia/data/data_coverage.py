@@ -11,6 +11,7 @@ import time
 
 from aletheia.data.freshness import MAX_FUTURE_SKEW, assess_freshness
 from aletheia.storage.sqlite import get_db
+from aletheia.storage.repositories import LEGACY_DERIVATIVES_WHERE
 
 
 logger = logging.getLogger("aletheia.data.data_coverage")
@@ -41,7 +42,7 @@ _SECONDARY_DERIVATIVE_SOURCES = (
 )
 _SECONDARY_PLACEHOLDERS = ",".join("?" for _ in _SECONDARY_DERIVATIVE_SOURCES)
 _PRIMARY_DERIVATIVE_WHERE = (
-    f"exchange IS NULL OR exchange NOT IN ({_SECONDARY_PLACEHOLDERS})"
+    f"(exchange IS NULL OR exchange NOT IN ({_SECONDARY_PLACEHOLDERS})) AND {LEGACY_DERIVATIVES_WHERE}"
 )
 _PRIMARY_FRESHNESS_DOMAINS = {
     "primary_funding": "funding",

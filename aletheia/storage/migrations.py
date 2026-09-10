@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v80"
+SCHEMA_VERSION = "aletheia-sqlite-v81"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8208,6 +8208,24 @@ def _apply_derivatives_provenance_v80(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+_DERIVATIVES_COVERAGE_SQL = (
+    "ALTER TABLE collector_health_state ADD COLUMN derivatives_coverage_json TEXT "
+    "CHECK(derivatives_coverage_json IS NULL OR json_valid(derivatives_coverage_json))",
+    "CREATE TABLE perp_price_snapshots (id TEXT PRIMARY KEY, symbol TEXT NOT NULL, exchange TEXT NOT NULL, "
+    "provider TEXT NOT NULL, instrument_json TEXT NOT NULL CHECK(json_valid(instrument_json)), "
+    "mark_price REAL CHECK(mark_price IS NULL OR mark_price > 0), "
+    "reference_price REAL CHECK(reference_price IS NULL OR reference_price > 0), reference_kind TEXT, "
+    "source_observed_at TEXT, acquired_at TEXT NOT NULL, source_time_status TEXT NOT NULL, "
+    "observed_at TEXT NOT NULL)",
+    "CREATE INDEX idx_perp_price_source_time ON perp_price_snapshots(symbol, exchange, observed_at DESC)",
+)
+
+
+def _apply_derivatives_coverage_v81(db: sqlite3.Connection) -> None:
+    for statement in _DERIVATIVES_COVERAGE_SQL:
+        db.execute(statement)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8682,6 +8700,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_DERIVATIVES_PROVENANCE_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v80",
         apply=_apply_derivatives_provenance_v80,
+    ),
+    MigrationStep(
+        migration_id="20260910_0080_derivatives_coverage_v81",
+        checksum=hashlib.sha256("\n".join(_DERIVATIVES_COVERAGE_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v81",
+        apply=_apply_derivatives_coverage_v81,
     ),
 )
 

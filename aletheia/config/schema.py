@@ -343,6 +343,9 @@ class ExchangeConfig(BaseModel):
     )
 
 
+DerivativesComparisonVenue = Literal['binance', 'okx', 'bitget']
+
+
 class MarketDataConfig(BaseModel):
     # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
     provider: str = "ccxt"
@@ -357,6 +360,10 @@ class MarketDataConfig(BaseModel):
     # When non-empty, this is the authoritative source for what to observe.
     # When empty, observed_symbols + ccxt_exchange + "spot" are used (legacy path).
     observed_instruments: list[str] = Field(default_factory=list)
+    # Separate observation coverage: observed_instruments also feeds trading context.
+    derivatives_comparison_venues: list[DerivativesComparisonVenue] = Field(
+        default_factory=lambda: ['binance', 'okx', 'bitget'], max_length=3,
+    )
     ohlcv_cache_ttl_min: int = 10
     # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
     enable_yfinance_macro: bool = False

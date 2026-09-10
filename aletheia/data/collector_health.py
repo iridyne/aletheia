@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
+import json
 from typing import Any
 
 from aletheia.data.freshness import MAX_FUTURE_SKEW
@@ -15,6 +16,7 @@ COLLECTOR_CADENCE_SEC: dict[str, int] = {
     "microstructure": 120,
     "derivatives": 120,
     "derivatives_history": 600,
+    "derivatives_comparison": 600,
     "volume_scanner": 600,
     "coingecko_top": 600,
     "macro": 600,
@@ -58,7 +60,7 @@ def classify_collector_result(result: Any) -> str:
     if errors == ["no_key"]:
         return "not_configured"
 
-    ignored = {"errors", "observed_at", "movers_summary", "metric_outcomes"}
+    ignored = {"errors", "observed_at", "movers_summary", "metric_outcomes", "coverage"}
     has_payload = any(
         bool(value) for key, value in result.items() if key not in ignored
     )
@@ -75,6 +77,7 @@ def record_collector_status(
     duration_ms: int | None = None,
     error_code: str | None = None,
     occurred_at: str | None = None,
+    derivatives_coverage: dict | None = None,
 ) -> dict:
     """Update one domain row and alert only after repeated operational problems."""
     if domain not in COLLECTOR_CADENCE_SEC:
@@ -113,6 +116,8 @@ def record_collector_status(
         "budget_skips": int(previous.get("budget_skips") or 0) + int(status == "skipped_budget"),
         "failures": int(previous.get("failures") or 0) + int(status == "failed"),
         "last_error_code": _safe_error_code(error_code) if status in _PROBLEM_STATUSES else None,
+        "derivatives_coverage_json": json.dumps(derivatives_coverage, sort_keys=True, allow_nan=False)
+        if derivatives_coverage is not None else previous.get('derivatives_coverage_json'),
     }
     repo.upsert_collector_health_state(state)
 

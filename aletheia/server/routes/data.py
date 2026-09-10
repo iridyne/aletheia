@@ -1549,9 +1549,11 @@ def get_market_microstructure(
         logger.debug("orderbook query skipped: %s", e)
 
     if market_type in {"perp", "futures"}:
+        from aletheia.storage.repositories import LEGACY_DERIVATIVES_WHERE
         fr_sql = (
             "SELECT funding_rate, funding_rate_annualized "
             "FROM funding_rate_snapshots WHERE symbol = ? "
+            f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
         fr_params: list = [symbol]
         if exchange:
@@ -1569,6 +1571,7 @@ def get_market_microstructure(
         oi_sql = (
             "SELECT open_interest_usd, oi_change_1h_pct "
             "FROM open_interest_snapshots WHERE symbol = ? "
+            f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
         oi_params: list = [symbol]
         if exchange:

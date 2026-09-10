@@ -475,6 +475,7 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
+            derivatives_comparison_venues=[],
             enable_coingecko_top=True,
             coingecko_top_n=10,
             enable_coinalyze=True,
@@ -608,6 +609,7 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
+            derivatives_comparison_venues=[],
             enable_coingecko_top=True,
             coingecko_top_n=10,
             enable_coinalyze=False,
@@ -1282,6 +1284,7 @@ def test_derivatives_history_uses_bounded(monkeypatch):
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
+            derivatives_comparison_venues=[],
             enable_coingecko_top=False,
             enable_hyperliquid=False,
             enable_defillama=False,

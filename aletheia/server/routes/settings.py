@@ -29,6 +29,7 @@ from aletheia.config.schema import (
     LearningConfig,
     LiveConfig,
     MarketDataConfig,
+    DerivativesComparisonVenue,
     ModeRiskPolicy,
     NetworkConfig,
     NewsConfig,
@@ -2358,6 +2359,7 @@ class MarketDataConfigUpdate(SettingsRequest):
     derivatives_history_hours: Optional[int] = None
     # Free zero-key data sources (datasrc overhaul).
     enable_hyperliquid: Optional[bool] = None
+    derivatives_comparison_venues: Optional[list[DerivativesComparisonVenue]] = Field(default=None, max_length=3)
     enable_defillama: Optional[bool] = None
     # #35 fix: fields present in MarketDataConfig but previously missing from
     # the update surface — a settings-page save silently dropped edits to

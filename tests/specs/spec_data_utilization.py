@@ -47,6 +47,16 @@ _INFERENCE_CONTRACT = (
 _CONTRACT = "data_utilization_contract"
 
 
+@spec_claim(SpecClaim(
+    'DU-S29', _CONTRACT, '§3 Canonical Derivatives Facts', 'L2c',
+    'Canonical comparison observations remain readable while legacy scalar consumers exclude them.',
+    status='implemented',
+))
+def test_derivatives_comparison_is_observation_only(monkeypatch):
+    from tests.test_derivatives_comparison import test_newer_comparison_rows_cannot_change_legacy_scalar_consumers
+    test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch)
+
+
 @spec_claim(
     SpecClaim(
         "DU-S28",

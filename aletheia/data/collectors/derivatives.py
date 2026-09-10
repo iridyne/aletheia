@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Any
 
@@ -155,7 +156,7 @@ class DerivativesCollector:
                 if fr:
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
-                        snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, fr, family='funding')
+                        snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, fr, family='funding', acquired_at=snap.acquired_at)
                         funding.append(snap)
                         if snap.source_time_status != "provided":
                             errors.append(
@@ -191,6 +192,145 @@ class DerivativesCollector:
             "open_interest": oi,
             "errors": errors,
         }
+
+    async def collect_comparison(self, cfg) -> dict[str, Any]:
+        """Public observation coverage; primary/native Funding/OI retain their current writers."""
+        from aletheia.data.ccxt_provider import CCXTProvider
+        from aletheia.data.derivatives_facts import comparison_row, instrument_from_market, normalize_open_interest, price_snapshot, project_price_snapshot, project_snapshot
+        workset = comparison_workset(cfg)
+        acquired = datetime.now(timezone.utc)
+        result = dict(funding=[], open_interest=[], prices=[], errors=[],
+            coverage={'acquired_at': acquired.isoformat(), 'venues': {}})
+        primary = cfg.market_data.ccxt_exchange
+
+        async def collect_venue(venue, symbols):
+            states = {s: {'listed': None, 'funding': 'deferred', 'open_interest': 'deferred', 'price': 'deferred'} for s in symbols}
+            result['coverage']['venues'][venue] = states
+            provider = CCXTProvider(venue, venue)
+
+            async def fetch(method, *args, **kwargs):
+                try:
+                    return await asyncio.wait_for(method(*args, **kwargs), 3.0)
+                except Exception as exc:
+                    result['errors'].append(f'{venue}:{method.__name__}:{type(exc).__name__}')
+                    return None
+
+            try:
+                async with asyncio.timeout(10.0):
+                    exchange = provider._ensure_primary('perp')
+                    await exchange.load_markets()
+                    markets = {}
+                    for symbol in symbols:
+                        market = exchange.markets.get(f"{symbol}:{symbol.split('/')[-1]}")
+                        if market is None:
+                            states[symbol] = dict(listed=False, funding='not_listed', open_interest='not_listed', price='not_listed')
+                        elif not (market.get('swap') and market.get('linear') and market.get('active') is not False
+                                  and market.get('settle') in {'USDT', 'USDC'}):
+                            states[symbol] = dict(listed=True, funding='unsupported', open_interest='unsupported', price='unsupported')
+                        else:
+                            states[symbol]['listed'] = True
+                            markets[symbol] = market
+                    # Four per-symbol requests rotate over the complete unranked workset.
+                    names = list(markets)
+                    offset = (int(acquired.timestamp() // 600) * 4) % max(1, len(names))
+                    selected = (names[offset:] + names[:offset])[:4]
+                    unified = [m['symbol'] for m in markets.values()]
+                    funding_map = {}
+                    if venue == primary:
+                        for symbol in names:
+                            states[symbol].update(funding='owned_primary', open_interest='owned_primary')
+                    elif names:
+                        if exchange.has.get('fetchFundingRates'):
+                            if venue == 'bitget':
+                                for settle in sorted({m['settle'] for m in markets.values()}):
+                                    group = [m['symbol'] for m in markets.values() if m['settle'] == settle]
+                                    funding_map.update(await fetch(exchange.fetch_funding_rates, group,
+                                        params={'method':'publicMixGetV2MixMarketCurrentFundRate'}) or {})
+                            else:
+                                funding_map = await fetch(exchange.fetch_funding_rates, unified) or {}
+                            funding_names = names
+                        else:
+                            funding_names = selected
+                            for symbol in selected:
+                                raw = await fetch(exchange.fetch_funding_rate, markets[symbol]['symbol'])
+                                if raw:
+                                    funding_map[markets[symbol]['symbol']] = raw
+                        for symbol in funding_names:
+                            raw = funding_map.get(markets[symbol]['symbol'])
+                            snap = _parse_funding(symbol, venue, {**raw, 'markPrice': None}) if raw else None
+                            if snap:
+                                snap.derivatives_metadata_json = ccxt_metadata(symbol, venue, markets[symbol], raw, family='funding', acquired_at=snap.acquired_at)
+                                result['funding'].append(comparison_row(snap.model_dump()))
+                                states[symbol]['funding'] = project_snapshot(snap.model_dump(), 'funding')[0]['availability']
+                            else:
+                                states[symbol]['funding'] = 'invalid' if raw else 'provider_error'
+                        if exchange.has.get('fetchOpenInterests'):
+                            oi_map = await fetch(exchange.fetch_open_interests, unified) or {}
+                            oi_names = names
+                        elif venue == 'binance' and exchange.has.get('fetchOpenInterestHistory'):
+                            # The history endpoint proves USD notional; current amount-only OI does not.
+                            oi_map, oi_names = {}, selected
+                            for symbol in selected:
+                                raw = await fetch(exchange.fetch_open_interest_history, markets[symbol]['symbol'], '5m', limit=1)
+                                if raw:
+                                    oi_map[markets[symbol]['symbol']] = raw[-1]
+                        else:
+                            oi_map, oi_names = {}, []
+                            for symbol in names:
+                                states[symbol]['open_interest'] = 'oi_unit_unproven'
+                        for symbol in oi_names:
+                            raw = oi_map.get(markets[symbol]['symbol'])
+                            metadata = ccxt_metadata(symbol, venue, markets[symbol], raw or {}, family='open_interest')
+                            proved = json.loads(metadata)['oi_unit'] == 'USD'
+                            fact = normalize_open_interest(raw, instrument=instrument_from_market(symbol, markets[symbol]),
+                                provider='ccxt', venue=venue, acquired_at=datetime.now(timezone.utc),
+                                value_unit='USD') if raw and proved else None
+                            if fact and fact['availability'] == 'available':
+                                snap = OpenInterestSnapshot(symbol=symbol, exchange=venue, open_interest_usd=fact['value'],
+                                    source_observed_at=fact['source_observed_at'], acquired_at=fact['acquired_at'],
+                                    source_time_status='provided' if fact['source_observed_at'] else 'missing',
+                                    observed_at=fact['source_observed_at'] or fact['acquired_at'],
+                                    derivatives_metadata_json=metadata)
+                                result['open_interest'].append(comparison_row(snap.model_dump()))
+                                states[symbol]['open_interest'] = project_snapshot(snap.model_dump(), 'open_interest')[0]['availability']
+                            else:
+                                states[symbol]['open_interest'] = fact['availability'] if fact else ('oi_unit_unproven' if raw else 'provider_error')
+                    # Binance funding already carries both price parents from one response.
+                    if venue == 'binance' and funding_map:
+                        price_map, price_names = funding_map, names
+                    elif names and exchange.has.get('fetchMarkPrices'):
+                        price_map = await fetch(exchange.fetch_mark_prices, unified) or {}
+                        price_names = names
+                    else:
+                        price_map, price_names = {}, selected
+                        for symbol in selected:
+                            if exchange.has.get('fetchMarkPrice'):
+                                raw = await fetch(exchange.fetch_mark_price, markets[symbol]['symbol'])
+                                if raw:
+                                    price_map[markets[symbol]['symbol']] = raw
+                            else:
+                                states[symbol]['price'] = 'unsupported'
+                    for symbol in price_names:
+                        raw = price_map.get(markets[symbol]['symbol'])
+                        row = price_snapshot(symbol, venue, raw, instrument=instrument_from_market(symbol, markets[symbol]),
+                            acquired_at=datetime.now(timezone.utc)) if raw else None
+                        if row:
+                            result['prices'].append(row)
+                            projected = project_price_snapshot(row)
+                            states[symbol]['price'] = next((f['availability'] for f in projected if f['availability'] != 'unavailable'), 'unavailable')
+                        elif states[symbol]['price'] != 'unsupported':
+                            states[symbol]['price'] = 'invalid' if raw else 'provider_error'
+            except Exception as exc:
+                result['errors'].append(f'{venue}:{type(exc).__name__}')
+                for state in states.values():
+                    state['error'] = type(exc).__name__
+                    if state['listed'] is None:
+                        state.update(funding='provider_error', open_interest='provider_error', price='provider_error')
+            finally:
+                await provider.close()
+
+        await asyncio.gather(*(collect_venue(venue, symbols) for venue, symbols in workset.items()))
+        return result
 
     async def collect_history(self, symbols: list[str]) -> dict[str, Any]:
         """Best-effort sparse history backfill outside the live Funding/OI path."""
@@ -249,6 +389,20 @@ class DerivativesCollector:
             "already_current": already_current,
             "errors": errors,
         }
+
+
+def comparison_workset(cfg) -> dict[str, list[str]]:
+    """Registry and configured/open-position instruments, never Candidate ranking."""
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.instruments import observed_instruments_from_config
+    configured = observed_instruments_from_config(cfg)
+    required = {item.symbol for item in configured if item.market_type == 'perp'}
+    required.update(row['symbol'] for row in repo.list_all_open_positions() if row.get('market_type') in {'perp', 'usdt_futures'})
+    venues = list(dict.fromkeys(cfg.market_data.derivatives_comparison_venues))
+    for venue in venues:
+        required.update(row['symbol'] for row in repo.list_universe_assets(venue=venue, active_only=True, limit=None)
+            if row.get('market_type') == 'perp')
+    return {venue: sorted(required) for venue in venues}
 
 
 def _perp_target_set(venue: str, extra_symbols: list[str] | None) -> list[str]:
@@ -472,12 +626,12 @@ def _insert_historical_funding_snapshot(
     sym: str, exchange_name: str, ts_ms: int, rate: float,
 ) -> int:
     """Store one observed historical rate; do not invent a subsequent settlement."""
-    from aletheia.storage.repositories import _select_all, insert_funding_rate_snapshot
+    from aletheia.storage.repositories import _select_all, insert_funding_rate_snapshot, LEGACY_DERIVATIVES_WHERE
 
     observed_at = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat()
     prior = _select_all(
         "funding_rate_snapshots",
-        where="symbol=? AND exchange=? AND observed_at=? AND next_funding_time=?",
+        where=f"symbol=? AND exchange=? AND observed_at=? AND next_funding_time=? AND {LEGACY_DERIVATIVES_WHERE}",
         params=(sym, exchange_name, observed_at, observed_at),
         limit=1,
     )
@@ -500,11 +654,11 @@ async def _maybe_backfill_funding_history(
 
     A window with at least three stored observations skips this refresh.
     """
-    from aletheia.storage.repositories import _select_all
+    from aletheia.storage.repositories import _select_all, LEGACY_DERIVATIVES_WHERE
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
     existing = _select_all(
         "funding_rate_snapshots",
-        where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
+        where=f"symbol=? AND exchange=? AND observed_at>? AND {LEGACY_DERIVATIVES_WHERE}", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
         return 0, True
@@ -543,11 +697,11 @@ async def _maybe_backfill_oi_history(
 ) -> tuple[int, bool]:
     """Same shape as funding backfill. Bitget raises NotSupported — caller must
     not re-raise (per spec MS-C06)."""
-    from aletheia.storage.repositories import _select_all, insert_open_interest_snapshot
+    from aletheia.storage.repositories import _select_all, insert_open_interest_snapshot, LEGACY_DERIVATIVES_WHERE
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=since_hours)).isoformat()
     existing = _select_all(
         "open_interest_snapshots",
-        where="symbol=? AND exchange=? AND observed_at>?", params=(sym, exchange_name, cutoff), limit=3,
+        where=f"symbol=? AND exchange=? AND observed_at>? AND {LEGACY_DERIVATIVES_WHERE}", params=(sym, exchange_name, cutoff), limit=3,
     )
     if len(existing) >= 3:
         return 0, True
@@ -586,7 +740,7 @@ async def _maybe_backfill_oi_history(
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
             "open_interest_snapshots",
-            where="symbol=? AND exchange=? AND observed_at=?", params=(sym, exchange_name, observed), limit=1,
+            where=f"symbol=? AND exchange=? AND observed_at=? AND {LEGACY_DERIVATIVES_WHERE}", params=(sym, exchange_name, observed), limit=1,
         )
         if prior:
             continue
