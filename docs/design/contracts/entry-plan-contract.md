@@ -179,8 +179,18 @@ market acquisition and inference.
 ## Contract identity and planning cycles
 
 `entry_behavior_fingerprint` and `schema_fingerprint` are derived from the
-canonical schemas, prompt, compiler/profile registry, execution-route
-capabilities, first-input acquisition/availability, and causal requalification implementation. A mismatch
+canonical schemas, prompt, profile registry, execution-route permissions, and
+explicit compiler/trigger contract material. Compiler material contains the
+consumed risk-envelope tables, horizons, geometry fractions and tactic bounds;
+TriggerSpec material contains channels, freshness, parameter keys, geometry
+identity and consumed confirmation/order-flow rules. Source AST, callable names,
+Git SHA, file hashes and implementation layout are not runtime permission.
+First-input availability, same-generation evidence, reference validation,
+requalification, passive-price checks, Risk and Gateway remain enforced by their
+existing runtime owners, independently of identity. Contract-conforming refactors
+preserve compatibility; semantic changes update the consumed material and its
+focused behavioral checks. The one-time removal of the old AST material causes
+one compatibility cutover, not a historical rewrite. A mismatch
 creates one compatibility-cutover cycle while retaining
 the old row and JSON unchanged. `cycle_number`, predecessor, reason, model/compiler
 invocation facts, last stage, and typed outcome are durable audit facts.
@@ -319,7 +329,7 @@ Triggered Plan enters execution. The immutable receipt records Plan id/hash,
 instrument/direction, machine-derived TriggerSpec identity, compiled geometry and
 validated parameter hashes, ordered pullback/sweep/reclaim/confirmation events,
 and the exact quote/trade/depth source/receive times, sequences and stream identities.
-The active TriggerSpec identity is derived from its current implementation;
+The active TriggerSpec identity uses the same explicit trigger contract material;
 receipt schema labels do not select another production implementation.
 
 SQLite appends activation facts and CAS-binds the existing Plan to its current

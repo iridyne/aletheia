@@ -15,13 +15,26 @@ class TriggerSpecContract:
     validate_params: Callable[[dict], dict]
 
 
+ANCHOR_GEOMETRY_VERSION = "anchor-retrace-reclaim-geometry/v1"
+TRIGGER_RULES = {
+    "reclaim_confirmation_ms": 300,
+    "trade_window_ms": 10_000,
+    "quote_depth_max_age_ms": 1_000,
+    "trade_max_age_ms": 2_000,
+    "depth_mid_fraction": 0.001,
+    "long_min_buy_ratio": 0.60,
+    "short_max_buy_ratio": 0.40,
+}
+
+ANCHOR_PARAM_KEYS = {
+    "breakout_level", "pullback_low", "pullback_high", "entry_low", "entry_high",
+    "invalidation_price", "sweep_low", "sweep_high", "atr_abs", "geometry_version",
+    "geometry_fingerprint",
+}
+
+
 def _anchor_retrace_params(raw: dict) -> dict:
-    allowed = {
-        "breakout_level", "pullback_low", "pullback_high", "entry_low", "entry_high",
-        "invalidation_price", "sweep_low", "sweep_high", "atr_abs", "geometry_version",
-        "geometry_fingerprint",
-    }
-    if set(raw) != allowed:
+    if set(raw) != ANCHOR_PARAM_KEYS:
         raise ValueError("momentum_trigger_params_incomplete")
     try:
         params = {
@@ -39,7 +52,7 @@ def _anchor_retrace_params(raw: dict) -> dict:
         raise ValueError("momentum_entry_zone_invalid")
     if params["sweep_low"] > params["sweep_high"]:
         raise ValueError("momentum_sweep_band_invalid")
-    if raw["geometry_version"] != "anchor-retrace-reclaim-geometry/v1":
+    if raw["geometry_version"] != ANCHOR_GEOMETRY_VERSION:
         raise ValueError("anchor_geometry_version_invalid")
     fingerprint = raw["geometry_fingerprint"]
     if (
@@ -49,6 +62,17 @@ def _anchor_retrace_params(raw: dict) -> dict:
     ):
         raise ValueError("momentum_geometry_fingerprint_invalid")
     return {**params, "geometry_version": raw["geometry_version"], "geometry_fingerprint": fingerprint}
+
+
+def trigger_contract_material(spec: TriggerSpecContract) -> dict:
+    """Consumed parameters and rules; callable layout is not a permission."""
+    return {
+        "id": spec.spec_id, "channels": spec.data_requirements,
+        "freshness_ms": spec.freshness_ms,
+        "parameter_keys": sorted(ANCHOR_PARAM_KEYS),
+        "geometry_version": ANCHOR_GEOMETRY_VERSION,
+        "rules": TRIGGER_RULES,
+    }
 
 
 _REGISTRY = {

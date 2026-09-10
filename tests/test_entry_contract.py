@@ -1,47 +1,107 @@
-"""Contract identity must track executable Entry semantics, not editorial edits."""
+"""Executable refactors preserve identity; consumed semantic material rotates it."""
 
-import inspect
+from dataclasses import replace
 
 import pytest
 
+from aletheia.trading import entry_contract
 
-@pytest.mark.parametrize(
-    ("component", "before", "after", "changes_behavior"),
-    [
-        ("plan_next_candidate", '"""Claim, reason once, and CAS the result against the current generation."""',
-         '"""Editorial clarification only."""\n    # No executable change.\n', False),
-        ("plan_next_candidate", '"status": "idle"', '"status"  :  "idle"', False),
-        ("aletheia.trading.entry_plan_compiler", "max_requotes=0", "max_requotes=1", True),
-        ("aletheia.trading.momentum_trigger", "ratio < 0.60", "ratio < 0.65", True),
-        ("aletheia.trading.trigger_specs", "freshness_ms=2_000", "freshness_ms=1_000", True),
-        ("events_share_generation", ") == 1", ") <= 2", True),
-        ("_load_entry_plan_watchers", "MomentumTriggerEngine(", "ChangedTriggerEngine(", True),
-    ],
-)
-def test_entry_identity_tracks_behavior_without_editorial_cycle_churn(
-    monkeypatch, component, before, after, changes_behavior
-):
-    from aletheia.trading.entry_contract import entry_contract_fingerprints
 
-    source = inspect.getsource
-    changed = []
+@pytest.fixture(autouse=True)
+def clear_identity_cache():
+    entry_contract.entry_contract_fingerprints.cache_clear()
+    yield
+    entry_contract.entry_contract_fingerprints.cache_clear()
 
-    def edited_source(obj):
-        original = source(obj)
-        if obj.__name__ == component:
-            assert before in original, f"regression probe no longer matches {component}"
-            changed.append(component)
-            return original.replace(before, after)
-        return original
 
-    entry_contract_fingerprints.cache_clear()
-    try:
-        baseline_behavior, baseline_schema = entry_contract_fingerprints()
-        monkeypatch.setattr(inspect, "getsource", edited_source)
-        entry_contract_fingerprints.cache_clear()
-        behavior, schema = entry_contract_fingerprints()
-        assert schema == baseline_schema
-        assert (behavior != baseline_behavior) is changes_behavior
-        assert changed, f"Entry identity omits {component}"
-    finally:
-        entry_contract_fingerprints.cache_clear()
+@pytest.mark.parametrize("component", ["passive", "generation"])
+def test_equivalent_callable_refactors_preserve_plan_permission(monkeypatch, component):
+    from aletheia.trading import entry_plan
+    from aletheia.universe import fast_stream
+
+    baseline = entry_contract.entry_contract_fingerprints()
+    if component == "passive":
+        original = entry_plan.post_only_price_is_passive
+
+        def extracted_passive_check(*args, **kwargs):
+            result = original(*args, **kwargs)
+            return result
+
+        for direction, price in (("long", 99.0), ("long", 102.0), ("short", 102.0), ("short", 99.0)):
+            assert extracted_passive_check(direction, price, 100.0, 101.0) == original(direction, price, 100.0, 101.0)
+        monkeypatch.setattr(entry_plan, "post_only_price_is_passive", extracted_passive_check)
+    else:
+        original = fast_stream.events_share_generation
+
+        def delegated_generation_check(*events):
+            return original(*events)
+
+        assert delegated_generation_check() == original()
+        monkeypatch.setattr(fast_stream, "events_share_generation", delegated_generation_check)
+    entry_contract.entry_contract_fingerprints.cache_clear()
+    assert entry_contract.entry_contract_fingerprints() == baseline
+
+
+@pytest.mark.parametrize("material", ["compiler", "trigger", "prompt", "schema", "route", "profile"])
+def test_semantic_material_changes_invalidate_old_identity(monkeypatch, material):
+    from aletheia.execution import venue_capabilities
+    from aletheia.trading import entry_plan_compiler, entry_profiles, trigger_specs
+    from aletheia.trading.entry_plan import EntryPlan
+
+    baseline_behavior, baseline_schema = entry_contract.entry_contract_fingerprints()
+    if material == "compiler":
+        monkeypatch.setitem(entry_plan_compiler._RISK_REWARD_TARGET, "LOW", 1.75)
+    elif material == "trigger":
+        monkeypatch.setitem(trigger_specs.TRIGGER_RULES, "long_min_buy_ratio", 0.65)
+    elif material == "prompt":
+        monkeypatch.setattr(entry_contract, "CANONICAL_ENTRY_SYSTEM_PROMPT", "Return NO_PLAN only.")
+    elif material == "schema":
+        schema = EntryPlan.model_json_schema()
+        schema["required"] = [*schema["required"], "new_required_fact"]
+        monkeypatch.setattr(EntryPlan, "model_json_schema", lambda: schema)
+    elif material == "route":
+        monkeypatch.setattr(venue_capabilities, "ENTRY_EXECUTION_MINIMUM_PERMISSION", {})
+    else:
+        profiles = entry_profiles.registered_entry_profiles()
+        monkeypatch.setattr(entry_profiles, "_REGISTRY", (*profiles[:-1], replace(profiles[-1], trigger_freshness_ms=1000)))
+    entry_contract.entry_contract_fingerprints.cache_clear()
+    behavior, schema = entry_contract.entry_contract_fingerprints()
+    assert behavior != baseline_behavior
+    assert (schema != baseline_schema) == (material == "schema")
+
+
+def test_activation_identity_uses_same_trigger_material_without_source_gate(monkeypatch):
+    from aletheia.trading.entry_activation import _spec_identity
+    from aletheia.trading import trigger_specs
+
+    spec = trigger_specs.registered_trigger_specs()[0]
+    baseline = _spec_identity(spec)
+
+    def delegated_validation(params):
+        return spec.validate_params(params)
+
+    assert _spec_identity(replace(spec, validate_params=delegated_validation)) == baseline
+    monkeypatch.setitem(trigger_specs.TRIGGER_RULES, "reclaim_confirmation_ms", 500)
+    assert _spec_identity(spec) != baseline
+
+
+def test_retained_activation_survives_validator_refactor_but_rejects_semantic_change(monkeypatch):
+    from aletheia.trading.entry_activation import build_entry_trigger_activation
+    from aletheia.trading import trigger_specs
+    from tests.test_entry_activation import _observed_activation
+
+    plan, ready, now = _observed_activation()
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    before = (plan.model_dump_json(), activation.model_dump_json())
+    spec = trigger_specs.registered_trigger_specs()[0]
+
+    def extracted_validation(params):
+        validated = spec.validate_params(params)
+        return validated
+
+    monkeypatch.setitem(trigger_specs._REGISTRY, spec.spec_id, replace(spec, validate_params=extracted_validation))
+    activation.require_valid(plan, now=now)
+    monkeypatch.setitem(trigger_specs.TRIGGER_RULES, "reclaim_confirmation_ms", 500)
+    with pytest.raises(ValueError, match="identity_mismatch"):
+        activation.require_valid(plan, now=now)
+    assert (plan.model_dump_json(), activation.model_dump_json()) == before
