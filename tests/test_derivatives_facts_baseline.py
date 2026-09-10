@@ -55,7 +55,12 @@ def legacy_outputs(monkeypatch):
 
 def test_existing_consumers_match_frozen_baseline(monkeypatch):
     expected = json.loads((Path(__file__).parent/'fixtures/derivatives_consumers_784b7d55.json').read_text())
-    assert legacy_outputs(monkeypatch) == expected
+    actual = legacy_outputs(monkeypatch)
+    # The frozen scalar/consumer contract is unchanged; nullable provenance is additive.
+    for value in actual.values():
+        if isinstance(value, dict):
+            value.pop('derivatives_metadata_json', None)
+    assert actual == expected
 
 
 def test_existing_persistence_keeps_exact_sources_and_populations(monkeypatch):

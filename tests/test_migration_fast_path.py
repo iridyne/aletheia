@@ -901,6 +901,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE universe_members (id TEXT PRIMARY KEY);
         CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY);
+        CREATE TABLE funding_rate_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE serenity_research_runs (
             id TEXT PRIMARY KEY,
             parent_run_id TEXT,
@@ -1869,10 +1870,10 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
 
     monkeypatch.setattr(migrations, "_is_pytest", lambda: False)
     current_steps = migrations._MIGRATIONS
-    assert current_steps[-3].schema_version == "aletheia-sqlite-v77"
+    v77_end = next(i + 1 for i, step in enumerate(current_steps) if step.schema_version == "aletheia-sqlite-v77")
     try:
         with monkeypatch.context() as old:
-            old.setattr(migrations, "_MIGRATIONS", current_steps[:-2])
+            old.setattr(migrations, "_MIGRATIONS", current_steps[:v77_end])
             old.setattr(migrations, "SCHEMA_VERSION", "aletheia-sqlite-v77")
             db = _setup_db(tmp_path, monkeypatch)
         payload = _plan().model_dump(mode="json")

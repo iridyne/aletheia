@@ -241,7 +241,8 @@ def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
     result = asyncio.run(
         mod._fetch_binance_ratio_batch(["BTC/USDT"], mod._BINANCE_TOP_POSITION_RATIO_URL)
     )
-    assert result == {"BTC/USDT": 1.42}
+    assert {symbol: row['value'] for symbol, row in result.items()} == {"BTC/USDT": 1.42}
+    assert result['BTC/USDT']['source_observed_at'] is None
 
 
 @pytest.mark.parametrize("failure", ["timeout", "http_error"])
@@ -944,7 +945,7 @@ def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch)
     monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
     symbols = [f"T{i}/USDT" for i in range(23)]
     result = asyncio.run(mod._fetch_binance_ratio_batch(symbols + symbols[:2], mod._BINANCE_LSR_URL))
-    assert result == dict.fromkeys(symbols, 1.42)
+    assert {symbol: row['value'] for symbol, row in result.items()} == dict.fromkeys(symbols, 1.42)
     assert len(calls) == 23
     assert 1 < peak <= 4
 

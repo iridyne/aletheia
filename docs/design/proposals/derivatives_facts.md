@@ -1,6 +1,6 @@
 ---
 id: derivatives-facts
-status: draft
+status: accepted
 github_issue: 2890
 related_contracts:
   - ../contracts/market_data_coverage_contract.md
@@ -155,12 +155,13 @@ request bounds and old-consumer continuity, not natural trading.
 
 ## Rollout and rollback
 
-Accept the proposed D2 boundary before production implementation. Canonicalize
+The owner accepted this D2 boundary before production implementation. Canonicalize
 existing rows before fan-out; add cross-venue readiness only after equivalence.
 Disable only additional coverage on instability, preserve primary/native facts
 and all stored history. Never restore a second writer as a compatibility path.
 
 ## Resolution
 
-Draft for owner acceptance. No production Contract claims this target is already
-implemented. P0 audit and executable evidence are maintained in #2890.
+Accepted by owner as the implementation boundary for #2890. Existing consumers
+remain golden-equivalent; changes to legacy economic semantics or Candidate
+behavior require a separate owner decision. Acceptance does not claim implementation.

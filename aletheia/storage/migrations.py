@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v79"
+SCHEMA_VERSION = "aletheia-sqlite-v80"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8196,6 +8196,18 @@ def _apply_entry_trigger_activation_v79(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+_DERIVATIVES_PROVENANCE_SQL = tuple(
+    f"ALTER TABLE {table} ADD COLUMN derivatives_metadata_json TEXT "
+    "CHECK(derivatives_metadata_json IS NULL OR json_valid(derivatives_metadata_json))"
+    for table in ("funding_rate_snapshots", "open_interest_snapshots")
+)
+
+
+def _apply_derivatives_provenance_v80(db: sqlite3.Connection) -> None:
+    for statement in _DERIVATIVES_PROVENANCE_SQL:
+        db.execute(statement)
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8664,6 +8676,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_ENTRY_TRIGGER_ACTIVATION_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v79",
         apply=_apply_entry_trigger_activation_v79,
+    ),
+    MigrationStep(
+        migration_id="20260910_0079_derivatives_provenance_v80",
+        checksum=hashlib.sha256("\n".join(_DERIVATIVES_PROVENANCE_SQL).encode()).hexdigest(),
+        schema_version="aletheia-sqlite-v80",
+        apply=_apply_derivatives_provenance_v80,
     ),
 )
 

@@ -16,6 +16,8 @@ exchange tag: "hyperliquid"
 
 from __future__ import annotations
 
+from aletheia.data.derivatives_facts import hyperliquid_metadata
+
 import logging
 import math
 from datetime import datetime, timezone
@@ -98,10 +100,12 @@ class HyperliquidCollector:
 
                 fr_snap = _parse_funding(canonical, ctx, now)
                 if fr_snap:
+                    fr_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now)
                     funding.append(fr_snap)
 
                 oi_snap = _parse_oi(canonical, ctx, now)
                 if oi_snap:
+                    oi_snap.derivatives_metadata_json = hyperliquid_metadata(canonical, now, oi=True)
                     oi.append(oi_snap)
 
         # Step 2: predicted fundings (best-effort; does not block Step 1 writes)
@@ -295,6 +299,9 @@ async def _fetch_predicted_fundings(
                 next_funding_time=next_str,
                 mark_price=None,
                 observed_at=observed_at,
+                derivatives_metadata_json=hyperliquid_metadata(
+                    canonical, observed_at, value_kind='forecast',
+                    interval_seconds=interval_hours * 3600 if 'fundingIntervalHours' in venue_data else None),
             ))
             break   # only HlPerp per asset
 

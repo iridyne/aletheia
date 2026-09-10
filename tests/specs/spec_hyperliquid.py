@@ -311,6 +311,18 @@ def test_hyperliquid_db_write(tmp_path, monkeypatch):
         )
         assert oi_row["exchange"] == "hyperliquid"
         assert float(oi_row["open_interest_usd"]) > 0
+        from aletheia.data.derivatives_facts import read_derivatives_facts
+        facts = read_derivatives_facts(canonical, venue='hyperliquid')
+        current = next(f for f in facts if f['fact_type'] == 'funding_rate' and f['value_kind'] == 'observed')
+        forecast = next(f for f in read_derivatives_facts(f'{pred_raw[0][0]}/USDT', venue='hyperliquid')
+                        if f['value_kind'] == 'forecast')
+        assert current['availability'] == 'available'
+        assert current['instrument']['settle_asset'] == 'USDC'
+        assert current['source_observed_at'] is None
+        assert current['acquired_at']
+        assert current['interval_seconds'] == 3600
+        assert forecast['venue'] == 'hyperliquid'
+        assert next(f for f in facts if f['fact_type'] == 'open_interest')['value'] == oi_row['open_interest_usd']
 
     sq.close_db()
 

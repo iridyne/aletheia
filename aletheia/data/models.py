@@ -57,6 +57,7 @@ class FundingRateSnapshot(BaseModel):
     source_observed_at: str | None = None
     acquired_at: str | None = None
     source_time_status: str | None = None
+    derivatives_metadata_json: str | None = None
     observed_at: str
 
 
@@ -73,6 +74,7 @@ class OpenInterestSnapshot(BaseModel):
     source_observed_at: str | None = None
     acquired_at: str | None = None
     source_time_status: str | None = None
+    derivatives_metadata_json: str | None = None
     observed_at: str
 
 
