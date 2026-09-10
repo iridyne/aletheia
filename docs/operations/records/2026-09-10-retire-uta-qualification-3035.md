@@ -35,9 +35,50 @@ or local Gateway was launched.
 
 ## Runtime gate
 
-Merge/deployment verification is pending at this implementation checkpoint.
+The initial implementation checkpoint preceded merge; deployment results follow below.
 Before normal update, re-read unresolved external commands and account state;
 afterward record running/disk commit, schema/session, health, exact account and
 selected historical row hashes. Do not create a certificate or synthetic trade.
 Return to the first real natural-path breakpoint in #3031. #3035 completion alone
 cannot close #2899's runtime evidence gate or prove profitability.
+
+## Fedora deployment checkpoint
+
+PR #3036 merged as `51387fb70d2815e8209d356215796b11ff96144e` and normal
+`uv run --no-sync aletheia update --verbose` deployed it in 23.480 seconds.
+At 06:52:21 UTC, disk and running commit agree, PID 447111, session
+`e0bc27dbc722`, schema v79, Bitget Demo/classic_v2, credential generation 29.
+Account fingerprint matches the 06:37 baseline. Live remains disabled, scheduler
+running, paused=false. Selected historical facts remain identical: 847 Orders,
+838 Fills, 419 Positions; exact fields/hashes and before/after snapshots are in
+[Fedora evidence](evidence-3035/fedora-deployment.json).
+
+Health is **degraded (`candidate_refresh_failed`)**, not healthy. Startup private
+account cache is unavailable; its empty positions list does not prove zero external
+exposure. Pre-deploy local audit found no external Orders, no open local Positions
+and all 22 Bitget Demo Proposals rejected, so no pending Proposal was replayed.
+Initial startup readback returned 503 and a separate cache helper encountered a
+writer-permit timeout; subsequent audit reads use direct SQLite mode=ro.
+
+The scanner failure predates deployment: `e1d93da3d1e2` at 06:47:53 UTC failed
+on Bitget public coins; `8dd4192a8125` at 06:52:04 failed on public mix contracts.
+A subsequent public coins HTTP probe returned 200; it does not establish private
+account health. No evidence connects these failures to removed certificate code,
+which is not on account-read or scanner paths. Preserve the observation rather
+than claiming overall healthy convergence.
+
+All 138 persisted Plans are terminal at this snapshot. Latest canonical natural
+chain remains Candidate `d0bf4311fcb5`, Generation `b0a26e335f2f`, Plan
+`ee9ae4665093`, Proposal `2afd512012bf`, Risk `74ef7bfc8837`: refused for
+`stop_distance_below_vol_target:0.2532<1.5000` and `spot_short_not_allowed`.
+No new external Order/Fill/Position or round-trip is proved. The certificate is
+absent and its deployed module/issuer are deleted, but no eligible natural command
+has yet exercised the removal externally. #3031 returns to
+`waiting_for_runtime_evidence`, with scanner/private-account recovery explicitly
+outstanding. #2899 Gate B stays open.
+
+The control-status check at 06:54:43 UTC independently verified the durable session
+against the live Gateway process tree (`verified_live_gateway=true`); deployed,
+disk, running and recorded SHA agree. A 06:55:08 readback still reports the same
+scanner/private-account limitation. This bounds #3035's completed code retirement
+and rollout verification; it does not certify general runtime health or Gate B.
