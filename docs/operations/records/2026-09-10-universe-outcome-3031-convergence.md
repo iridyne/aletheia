@@ -3,7 +3,8 @@
 Owner accepted the A checkpoint's source-identity D1 on 2026-09-10. The accepted
 [decision checkpoint](https://github.com/iridyne/aletheia/issues/3031#issuecomment-5613684212)
 retains #3031 as the phase/status authority. Base: `e991e7f48ce8cb552bb65e16e0edbea6065a5e53`.
-This record concerns one implementation batch, not G0–G5 acceptance or deployment.
+This record concerns one implementation batch and its subsequent Fedora deployment;
+it does not claim G0–G5 acceptance.
 
 ## Change and evidence
 
@@ -80,8 +81,61 @@ separate prompt/inference identity mismatch remains; accepting a genuine
 Position into the shared Learning reader does not prove the entire bounded
 Entry context is available or effective.
 
-No deployment, restart, exchange mutation, qualification artifact creation,
-Observation window reset or live Fedora verification of this new implementation
-was performed. The last Fedora evidence remains the A packet's 1543c7c1 / v79 /
-Bitget Demo session. This batch can establish code/local regression convergence;
-G5 and natural runtime evidence remain pending and #3031 remains open.
+At the implementation checkpoint, deployment had not yet been performed and
+Fedora remained at the A packet's 1543c7c1 / v79 / Bitget Demo session. The
+subsequent deployment is recorded below. G5 and natural runtime evidence remain
+pending; #3031 remains open.
+
+
+## Fedora deployment checkpoint — 2026-09-10
+
+After the owner asked to continue #3031 at the deployment gate, the existing
+command was run on Fedora:
+
+```sh
+cd /home/admin/aletheia
+uv run --no-sync aletheia update --verbose
+```
+
+The transaction completed in **21.127 s**, updating `1543c7c1` to
+`5ba82d189cca78d899ff5d3e5d7c1d07483d2459`, with dependency reinstall unnecessary.
+Smoke, Gateway restart and Observer structural continuity passed. The updater
+correctly reported `main_health=initializing`; it did not claim healthy at that
+point. An independent postflight at **05:57:09 UTC** then proved healthy, no
+issues/pause owners/blockers, and the scheduler running.
+
+[Before/after and source-query evidence](evidence-3031/fedora-deployment.json)
+records:
+
+- disk, API boot/current and process-tree-verified session boot all equal the
+  exact merged target; backend PID 372195, session `0a12ec905278`, started
+  05:55:25.473742 UTC, schema `aletheia-sqlite-v79`;
+- Bitget Demo / classic_v2, exact account fingerprint and credential generation
+  unchanged, account/position cache complete, zero open local/external positions,
+  Live disabled, Full permission and `require_llm_at_startup=false` unchanged;
+- Worker Observation ownership remains exclusive, Main cycle not registered,
+  data-root identity unchanged; the existing updater verified Observer continuity;
+- SHA-256 over the explicitly listed historical fields matches before/after for
+  847 Orders, 838 Fills and 419 Positions, including Position economic and
+  eligibility fields. This proves those fields, not an unmeasured whole-DB hash;
+- new-session Position Reconciler `1d82190cfbf3` and Market Observer
+  `d06cebde7608` completed. All 754 existing Outcome hook jobs are completed,
+  with no pending/failed job observed. With no external Position, this is idle
+  settlement/recovery health, not successful nonzero external settlement;
+- target-loaded, read-only shared Outcome cohort query on the real DB succeeds:
+  419 raw closed records, 0 eligible. Session-start to 05:57:28 UTC contains
+  0 new Generations/Plans/Proposals/Orders/Fills/Positions. It does not provide a
+  natural post-fix close/Outcome sample.
+
+Startup normally rotates deployment-bound evidence anchors via
+`learning/evidence_epoch.py::ensure_evidence_epochs`: prior profit-loop epoch
+`802bca4a142b` is retained with its original start and closes at 05:55:27 UTC;
+new epoch `d24de8833825` names the target SHA. There was no manual experiment
+reset, historical sample replay or payload/economics rewrite. Do not describe
+normal source-provenance segmentation as an unchanged epoch ID.
+
+**Deployment and post-start health are verified; Gate B is not qualified.**
+The mutation qualification artifact remains absent, and no qualification order
+was sent. G5 mirrors #2899 pending; natural runtime evidence remains pending.
+This update does not authorize another defect batch, Live or controlled venue
+qualification trades.
