@@ -54,15 +54,16 @@ Rules:
   that Position's immutable instrument/proposal identity and quantity, and must
   not claim an entry `risk_decision_id` as close authority.
 - Every `fills.order_id` must reference the order that produced the fill.
-- A `positions` row is a portfolio-state projection from orders/fills, but the
-  schema NOW carries direct causal back-links (2026-07-07 update, #30):
-  `positions.proposal_id`, `positions.order_id`, and `positions.opportunity_id`
-  are all set at open time by every broker (paper + bitget + okx + binance),
-  and by `adopt_position()` for reconciler-adopted rows (with a synthetic-but-
-  honest proposal/order chain marked `source='adopted'`). Do not treat the
-  fields as advisory — the risk engine's sector-concentration check (#16) and
-  Serenity's post-mortem attribution both rely on them being non-null on live
-  positions. Historical rows may still have NULL links (pre-schema-migration).
+- A native `positions` row is a projection of actual orders/fills with direct
+  `proposal_id` and `order_id` backlinks. Universe Entry has the canonical
+  Candidate → Planning Generation → EntryPlan → Proposal → Order/Position
+  ancestry; its `opportunity_id` is NULL and must not be filled with a synthetic
+  Opportunity. Serenity retains its source-specific Opportunity identity.
+  Shared realized-Outcome eligibility verifies these relational links; non-null
+  strings alone are not evidence. The accepted source rules and history boundary
+  are defined in `docs/design/contracts/learning_contract.md §11.1` (#3031).
+  Adopted observations retain their existing honest `source='adopted'` chain;
+  historical missing links remain missing, never backfilled to claim native entry.
 - The `trade_proposals` table additionally carries a `commit_hash` / `parent_hash`
   hash chain (TaG P0-1, 2026-06-29). This is a **tamper-evidence layer on top of
   the ID-foreign-key causal chain** — not a replacement. `commit_hash` is the

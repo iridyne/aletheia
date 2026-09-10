@@ -1,7 +1,7 @@
 """Trade attribution — join closed positions back to their full causal chain.
 
-Produces enriched rows linking position → order → proposal → opportunity →
-strategy → universe_member → risk_decision for post-trade analysis.
+Produces enriched rows linking positions to their Proposal/Order and source-specific
+EntryPlan/Candidate or Opportunity ancestry for post-trade analysis.
 
 Read-only. No DB mutations. No LLM calls.
 """
@@ -218,7 +218,6 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         proposal is None
         or order is None
         or order.get("proposal_id") != proposal.get("id")
-        or not direct_opportunity_id
         or proposal.get("opportunity_id") != direct_opportunity_id
     ):
         return None
@@ -238,9 +237,14 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         order.get("risk_decision_id"),
         lambda decision_id: repo._select_one("risk_decisions", decision_id),
     )
-    universe_member = _lookup_universe_member(opportunity, db=db)
+    entry_plan = _read_one(db, "entry_plans", proposal.get("entry_plan_id"), repo.get_entry_plan)
+    universe_member = (
+        _read_one(db, "universe_members", entry_plan["candidate_id"], repo.get_candidate)
+        if entry_plan and direct_opportunity_id is None
+        else _lookup_universe_member(opportunity, db=db)
+    )
 
-    if opportunity is None and serenity_opp is None:
+    if opportunity is None and serenity_opp is None and universe_member is None:
         return None
     decision_context = proposal_decision_context(
         proposal.get("id"), proposal=proposal, db=db
@@ -259,10 +263,14 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
     # Parse risk_flags from universe_member
     risk_flags = _parse_json_list(universe_member.get("risk_flags")) if universe_member else []
 
-    # Resolve source fields from whichever opportunity source matched
+    # Project recorded source fields; Universe has no synthetic Opportunity.
     _opp_id = (opportunity.get("id") if opportunity else None) or (serenity_opp.get("id") if serenity_opp else None)
     _source_agent = (opportunity.get("source_agent") if opportunity else None) or ("serenity_research" if serenity_opp else None)
-    _scanner_family = (opportunity.get("scanner_family") if opportunity else None) or ("serenity" if serenity_opp else None)
+    _scanner_family = (
+        (opportunity.get("scanner_family") if opportunity else None)
+        or ("serenity" if serenity_opp else None)
+        or (universe_member.get("scanner_family") if universe_member else None)
+    )
     _confidence = opportunity.get("confidence") if opportunity else None
     _confidence_score = (opportunity.get("confidence_score") if opportunity else None) or (serenity_opp.get("confidence_score") if serenity_opp else None)
     _opp_status = (opportunity.get("status") if opportunity else None) or (serenity_opp.get("status") if serenity_opp else None)
@@ -272,6 +280,8 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         "proposal_id": proposal.get("id") if proposal else None,
         "order_id": pos.get("order_id"),
         "opportunity_id": _opp_id,
+        "entry_plan_id": entry_plan["id"] if entry_plan else None,
+        "planning_generation_id": entry_plan["planning_generation_id"] if entry_plan else None,
         "strategy_id": pos.get("strategy_id"),
         "symbol": pos.get("symbol"),
         "market_type": pos.get("market_type"),
@@ -282,7 +292,10 @@ def _build_row(pos: dict, *, db: Any = None) -> dict | None:
         "confidence": _confidence,
         "confidence_score": _confidence_score,
         "opportunity_status": _opp_status,
-        "universe_member_id": opportunity.get("universe_member_id") if opportunity else None,
+        "universe_member_id": (
+            opportunity.get("universe_member_id") if opportunity
+            else universe_member.get("id") if universe_member else None
+        ),
         "universe_rank": universe_member.get("rank") if universe_member else None,
         "universe_total_score": universe_member.get("total_score") if universe_member else None,
         "opportunity_score": universe_member.get("opportunity_score") if universe_member else None,

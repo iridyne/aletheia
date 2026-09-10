@@ -424,3 +424,12 @@ This convergence adds source/retirement migrations, but no execution exchange,
 second planning ledger, provider type, frontend page, reprice/taker fallback, second Risk
 Engine, second scheduler, or autonomous live authority. It does not tune
 scanner economics, ranking, Risk limits, or trigger economics.
+
+### Realized Outcome handoff (#3031)
+
+Universe Entry preserves Candidate → Generation → EntryPlan → Proposal →
+Order/Position as its realized-Outcome causal identity; `opportunity_id` remains
+NULL. Serenity keeps its source-specific Opportunity identity. Both use the
+shared source-specific ancestry rule in [Learning §11.1](learning_contract.md#111-source-specific-realized-outcome-ancestry)
+and retain account, Fill, cost and clean-window gates. Historical records and
+measurement windows are not rewritten or reopened by this handoff.
