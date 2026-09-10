@@ -1,4 +1,4 @@
-"""Persisted non-authoritative Candidate Selection Utility comparison."""
+"""Current Candidate Selection Utility decisions and immutable population evidence."""
 
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from aletheia.universe.opportunity_evidence import (
     annotate_within_run_percentiles,
     build_opportunity_evidence,
 )
-from aletheia.universe.scanners import UNIVERSE_SCORER_BEHAVIOR_VERSION
 from aletheia.universe.twin_persistence import TwinShadowBundle
 from aletheia.universe.features import CANDIDATE_FEATURE_ACQUISITION_VERSION
 
@@ -154,8 +153,6 @@ def build_candidate_selection_shadow_bundle(
     scanner_run_id: str,
     captured_at: str,
     universe_config: UniverseConfig,
-    legacy_scored: Sequence[Mapping[str, object]],
-    legacy_allocated: Sequence[Mapping[str, object]],
     action_route_reasons: Mapping[tuple[str, str, str, str], str | None],
     historical_outcomes: Sequence[Mapping[str, object]],
     estimator_training_cutoff: str | None = None,
@@ -177,8 +174,6 @@ def build_candidate_selection_shadow_bundle(
         source_cutoff_at=captured_at,
         cost_assumptions=cost_assumptions,
     )
-    scored = {_identity(item): item for item in legacy_scored}
-    selected = {_identity(item) for item in legacy_allocated}
     gates = []
     bundles = []
     for feature in population:
@@ -201,8 +196,6 @@ def build_candidate_selection_shadow_bundle(
     decisions = []
     outcomes_by_key = {}
     for feature, gate, evidence in zip(population, gates, bundles, strict=True):
-        identity = _identity(feature)
-        legacy = scored.get(identity, {})
         estimates = []
         for mechanism in evidence.mechanisms:
             if (
@@ -222,12 +215,6 @@ def build_candidate_selection_shadow_bundle(
             hard_gate=gate,
             opportunity_evidence=evidence,
             economic_estimates=estimates,
-            legacy_control={
-                "primary_family": legacy.get("scanner_family"),
-                "primary_direction": legacy.get("scanner_direction") or legacy.get("direction"),
-                "total_score": legacy.get("total_score"),
-                "authority_selected": identity in selected,
-            },
         )
         decisions.append(decision)
     ranked_target = select_admitted_candidates(decisions, max_candidates=len(decisions))
@@ -258,17 +245,13 @@ def build_candidate_selection_shadow_bundle(
         )[:universe_config.max_candidates]
     }
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
-        legacy_direction = decision.legacy_control.get("primary_direction")
-        legacy_selected = decision.legacy_control.get("authority_selected") is True
-        if gate.status != "eligible" and not (legacy_selected and legacy_direction in {"long", "short"}):
+        if gate.status != "eligible":
             continue
         directions = {
             item.direction for item in evidence.mechanisms
             if gate.status == "eligible"
             and item.applicability == "applicable" and item.direction in {"long", "short"}
         }
-        if legacy_selected and legacy_direction in {"long", "short"}:
-            directions.add(str(legacy_direction))
         for direction in directions:
             price = feature.get("last_price") or feature.get("price")
             venue = str(feature.get("venue") or "")
@@ -369,9 +352,7 @@ def build_candidate_selection_shadow_bundle(
             outcome_contract_version=CANDIDATE_SELECTION_OUTCOME_VERSION,
             metric_version=CANDIDATE_SELECTION_METRIC_VERSION,
             outcome_candidate_key=outcome_keys.get(decision.primary_direction or ""),
-            authority_total_score=float(decision.legacy_control.get("total_score") or 0.0),
-            fine_filter_passed=bool(scored.get(_identity(feature))),
-            authority_selected=bool(decision.legacy_control.get("authority_selected")),
+            authority_total_score=0.0,  # Historical NOT NULL storage field, not current evidence.
             assigned_policy_selected=(decision.candidate_key in target_selected_keys) if authority_applied else None,
             shadow_authority_applied=authority_applied,
             promotion_eligible=qualified,
@@ -393,7 +374,7 @@ def build_candidate_selection_shadow_bundle(
     batch = UniverseTwinShadowBatch(
         scanner_run_id=scanner_run_id,
         record_version=CANDIDATE_SELECTION_RECORD_VERSION,
-        authority_behavior_version=UNIVERSE_SCORER_BEHAVIOR_VERSION,
+        authority_behavior_version=CANDIDATE_SELECTION_UTILITY_VERSION,
         shadow_behavior_version=CANDIDATE_SELECTION_UTILITY_VERSION,
         allocation_replay_contract="candidate-selection-utility-allocation/v1",
         experiment_id=experiment_id,
@@ -630,11 +611,11 @@ def candidate_selection_frozen_family_spread_control(
 
 def target_candidates_from_bundle(
     bundle: TwinShadowBundle,
-    scored_population: Sequence[Mapping[str, object]],
+    feature_population: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
-    """Project admitted target rows onto existing Candidate carrier fields."""
+    """Build current Candidates from exact features and the selected decision."""
 
-    by_identity = {_identity(item): item for item in scored_population}
+    by_identity = {_identity(item): item for item in feature_population}
     selected: list[dict[str, object]] = []
     for row in bundle.evidence:
         try:
@@ -667,9 +648,11 @@ def target_candidates_from_bundle(
                 raise ValueError("candidate_selection_startup_invalid")
         except (KeyError, StopIteration, TypeError, ValueError) as exc:
             raise ValueError("candidate_selection_target_projection_invalid") from exc
-        raw_reasons = source.get("reasons")
-        source_reasons = list(raw_reasons) if isinstance(raw_reasons, (list, tuple)) else []
-        projected = dict(source)
+        projected = {key: source[key] for key in (
+            "asset_id", "symbol", "venue", "market_type", "feature_snapshot_id",
+            "last_price", "quote_volume_24h", "spread_bps", "funding_rate",
+            "instrument_background", "analysis_context",
+        ) if key in source}
         projected.update({
             "scanner_family": family,
             "scanner_direction": decision["primary_direction"],
@@ -689,7 +672,7 @@ def target_candidates_from_bundle(
                 "decision": decision,
                 "source_record_hash": row.record_hash,
             },
-            "reasons": source_reasons + [
+            "reasons": [
                 f"candidate_selection_utility:{utility:.6f}" if utility is not None else f"candidate_selection_startup:{decision['startup_reason']}",
                 f"primary_mechanism:{decision['primary_mechanism']}",
             ],

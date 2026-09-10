@@ -34,9 +34,6 @@ from aletheia.universe.candidate_opportunity import (
 logger = logging.getLogger("aletheia.universe")
 
 _TWIN_SHADOW_TIMEOUT_SEC = 10.0
-_terminal_candidate_selection_policy_fingerprint: str | None = None
-_terminal_candidate_selection_policy_lock = threading.Lock()
-_candidate_shadow_tasks: set[asyncio.Task] = set()
 
 # Phase 3 retention (2026-07-17): universe_snapshots + universe_members
 # change-suppression. Universe refresh runs every ~10 min but the allocation
@@ -47,9 +44,6 @@ _candidate_shadow_tasks: set[asyncio.Task] = set()
 # floor; force a fresh write past that floor so downstream freshness gates
 # never see a stale snapshot.
 _SNAPSHOT_HEARTBEAT_SEC = 55 * 60  # 6 × 10-min refresh cadence, minus jitter.
-# alpha_control_observations sampling: reduce from every refresh (~10 min)
-# to once per hour to keep the causal-audit table size bounded.
-_ALPHA_CONTROL_SAMPLE_SEC = 55 * 60
 _publication_metrics_lock = threading.Lock()
 _publication_metrics = {
     "transactions": 0,
@@ -155,8 +149,6 @@ def _ensure_planning_generations(
 def _build_candidate_selection_bundle(
     *,
     population: list[dict],
-    legacy_scored: list[dict],
-    legacy_allocated: list[dict],
     scanner_run_id: str,
     captured_at: str,
     cfg,
@@ -194,8 +186,6 @@ def _build_candidate_selection_bundle(
         scanner_run_id=scanner_run_id,
         captured_at=captured_at,
         universe_config=cfg.universe,
-        legacy_scored=legacy_scored,
-        legacy_allocated=legacy_allocated,
         action_route_reasons=action_routes,
         historical_outcomes=load_candidate_selection_outcomes(
             selection_policy=selection_policy,
@@ -216,135 +206,6 @@ def _candidate_selection_reason_counts(bundle) -> dict[str, int]:
             if reason:
                 counts[reason] = counts.get(reason, 0) + 1
     return counts
-
-
-async def _persist_candidate_selection_shadow_nonfatal(
-    *,
-    population: list[dict],
-    legacy_scored: list[dict],
-    legacy_allocated: list[dict],
-    scanner_run_id: str,
-    captured_at: str,
-    cfg,
-    family_spread_tolerances: dict[str, float] | None = None,
-    family_spread_evidence: dict[str, object] | None = None,
-    legacy_control_restricted: bool = False,
-) -> dict[str, object]:
-    """Persist #2729 full-denominator evidence without joining authority failure."""
-
-    if legacy_control_restricted:
-        logger.info(
-            "Candidate Selection Shadow skipped while Learning controls the legacy arm"
-        )
-        result = {"status": "restricted", "record_count": 0, "reason": "legacy_control_restricted"}
-        _update_candidate_shadow_status(scanner_run_id, result)
-        return result
-    from aletheia.universe.candidate_selection_shadow import (
-        CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
-    )
-
-    try:
-        due = repo.universe_twin_shadow_capture_due(
-            captured_at, min_interval_sec=CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
-        )
-    except Exception:
-        result = {"status": "unavailable", "record_count": 0, "reason": "capture_cadence_unavailable"}
-        _update_candidate_shadow_status(scanner_run_id, result)
-        return result
-    if not due:
-        result = {"status": "not_due", "record_count": 0, "reason": None}
-        _update_candidate_shadow_status(scanner_run_id, result)
-        return result
-
-    deadline = time.monotonic() + _TWIN_SHADOW_TIMEOUT_SEC
-
-    def build_and_persist() -> dict[str, object]:
-        global _terminal_candidate_selection_policy_fingerprint
-
-        from aletheia.universe.candidate_eligibility import canonical_fingerprint
-        from aletheia.universe.candidate_selection_authority import (
-            candidate_selection_policy_identity,
-        )
-        from aletheia.universe.candidate_selection_evaluation import (
-            evaluate_candidate_selection_policy,
-        )
-
-        current_policy = candidate_selection_policy_identity(
-            cfg,
-            family_spread_tolerances=family_spread_tolerances,
-            family_spread_evidence=family_spread_evidence,
-        )
-        policy_fingerprint = canonical_fingerprint(current_policy)
-        with _terminal_candidate_selection_policy_lock:
-            if policy_fingerprint == _terminal_candidate_selection_policy_fingerprint:
-                return {"status": "terminal", "record_count": 0, "reason": None}
-            qualification = evaluate_candidate_selection_policy(as_of_at=captured_at)
-            if (
-                qualification["verdict"] in {"positive", "negative", "neutral", "invalid"}
-                and qualification.get("selection_policy") == current_policy
-            ):
-                _terminal_candidate_selection_policy_fingerprint = policy_fingerprint
-                return {"status": "terminal", "record_count": 0, "reason": None}
-        training_diagnostics: dict[str, object] = {}
-        bundle = _build_candidate_selection_bundle(
-            population=population,
-            scanner_run_id=scanner_run_id,
-            captured_at=captured_at,
-            legacy_scored=legacy_scored,
-            legacy_allocated=legacy_allocated,
-            cfg=cfg,
-            family_spread_tolerances=family_spread_tolerances,
-            family_spread_evidence=family_spread_evidence,
-            training_diagnostics_out=training_diagnostics,
-        )
-        reason_counts = _candidate_selection_reason_counts(bundle)
-        with repo.transaction(immediate=True):
-            if time.monotonic() >= deadline:
-                return {"status": "unavailable", "record_count": 0, "reason": "capture_deadline_elapsed"}
-            count = repo.insert_universe_twin_shadow_bundle(
-                bundle.batch, bundle.evidence, outcomes=bundle.outcomes,
-                min_interval_sec=CANDIDATE_SELECTION_EVIDENCE_INTERVAL_SEC,
-            )
-            repo.execute_write(
-                "UPDATE universe_scanner_runs SET metrics=json_set(COALESCE(metrics,'{}'), "
-                "'$.candidate_path.selection_reason_counts',json(?),'$.candidate_path.policy_epoch',?, "
-                "'$.candidate_path.data.feature_acquisition_excluded',?) WHERE id=?",
-                (json.dumps(reason_counts), bundle.batch.policy_epoch_id, training_diagnostics.get("feature_acquisition_excluded", 0), scanner_run_id),
-            )
-        return {"status": "captured" if count else "not_due", "record_count": count, "reason": None}
-
-    def completed_worker():
-        try:
-            result = build_and_persist()
-        except Exception:
-            logger.warning("Candidate Selection Shadow unavailable", exc_info=True)
-            result = {"status": "unavailable", "record_count": 0, "reason": "capture_failed"}
-        _update_candidate_shadow_status(scanner_run_id, result)
-        return result
-
-    task = asyncio.create_task(asyncio.to_thread(completed_worker))
-    _candidate_shadow_tasks.add(task)
-    task.add_done_callback(_candidate_shadow_tasks.discard)
-    try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=_TWIN_SHADOW_TIMEOUT_SEC)
-    except TimeoutError:
-        result = {"status": "pending", "record_count": 0, "reason": "capture_completion_unknown"}
-        update = asyncio.create_task(asyncio.to_thread(_update_candidate_shadow_status, scanner_run_id, result))
-        _candidate_shadow_tasks.add(update)
-        update.add_done_callback(_candidate_shadow_tasks.discard)
-        return result
-
-
-def _update_candidate_shadow_status(scanner_run_id: str, result: dict) -> None:
-    try:
-        repo.execute_write(
-            "UPDATE universe_scanner_runs SET metrics=json_set(COALESCE(metrics,'{}'), "
-            "'$.candidate_path.shadow_capture_status', ?, '$.candidate_path.shadow_capture_reason', ?) WHERE id=? "
-            "AND (? != 'pending' OR json_extract(metrics, '$.candidate_path.shadow_capture_status')='pending')",
-            (result["status"], result["reason"], scanner_run_id, result["status"]),
-        )
-    except Exception:
-        logger.warning("Shadow scanner completion unavailable", exc_info=True)
 
 
 @contextmanager
@@ -574,28 +435,6 @@ def _previous_snapshot_fingerprint(
     return fp, prev.get("id"), age
 
 
-def _should_sample_alpha_control(now: datetime) -> bool:
-    """Return True if enough time has passed since the last universe-layer sample."""
-    try:
-        db = repo.get_db()
-        row = db.execute(
-            "SELECT created_at FROM alpha_control_observations "
-            "WHERE layer = 'universe' ORDER BY created_at DESC LIMIT 1"
-        ).fetchone()
-    except Exception:
-        return True  # fail-open — a missed sample is worse than a duplicate
-    if not row:
-        return True
-    created_at = row["created_at"] if hasattr(row, "keys") else row[0]
-    if not created_at:
-        return True
-    try:
-        parsed = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
-    except ValueError:
-        return True
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return (now - parsed).total_seconds() >= _ALPHA_CONTROL_SAMPLE_SEC
 
 
 def _build_experiment_candidate_outcomes(
@@ -736,10 +575,16 @@ def _capture_universe_discovery_nonfatal(
     """Observe one completed run without affecting Universe publication."""
     try:
         from aletheia.universe.discovery_benchmark import capture_completed_run
+        from aletheia.universe.filters import apply_coarse_tradability_filters, apply_fine_tradability_filters
+        from aletheia.universe.scanners import run_all_scanners
 
+        # Frozen #2556 research population; never an input to current selection.
+        coarse = apply_coarse_tradability_filters(population, cfg.universe, scanner_run_id=scanner_run_id)
+        scored = [{**feature, **run_all_scanners(feature)} for feature in coarse]
+        research_population = apply_fine_tradability_filters(scored, cfg.universe, scanner_run_id=scanner_run_id)
         result = capture_completed_run(
             scanner_run_id=scanner_run_id,
-            population=population,
+            population=research_population,
             allocated=allocated,
             entry_ts=entry_ts,
             regime_tag=regime_tag,
@@ -893,13 +738,9 @@ class UniverseService:
         """
         from aletheia.universe.allocator import decorate_universe_candidates
         from aletheia.universe.features import collect_features
-        from aletheia.universe.filters import (
-            apply_coarse_tradability_filters,
-            apply_fine_tradability_filters,
-        )
         from aletheia.universe.outcome_recorder import build_pending, settle_due
         from aletheia.universe.registry import sync_registry
-        from aletheia.universe.scanners import _infer_direction, run_all_scanners
+        from aletheia.universe.scanners import _infer_direction
 
         from aletheia.universe.candidate_selection_authority import (
             recover_candidate_selection_authority_transition,
@@ -1024,38 +865,6 @@ class UniverseService:
                 **feature_kwargs,
             )
 
-            # Pass 1: coarse filter (stablecoin/blacklist/freshness/volume + extreme spread ≥3×).
-            # Borderline spread cases (2×–3× max_spread_bps) pass through for family-aware
-            # fine filtering after scanner assigns families.
-            coarse_filtered = apply_coarse_tradability_filters(
-                features_list,
-                cfg.universe,
-                scanner_run_id=run.id,
-            )
-
-            family_tolerances = {}
-            family_spread_evidence = {}
-
-            # Scan all coarsely-filtered candidates to get family + direction assignments.
-            pre_scored = []
-            for feat in coarse_filtered:
-                scanner_result = run_all_scanners(feat)
-                pre_scored.append({**feat, **scanner_result})
-
-            # Pass 2: fine spread filter with per-family tolerance. Records rejections
-            # via record_filter_decision with scanner_family → filter_candidate_outcomes
-            # rows get family populated, closing the calibration feedback loop.
-            scored = apply_fine_tradability_filters(
-                pre_scored,
-                cfg.universe,
-                family_tolerances=family_tolerances or None,
-                scanner_run_id=run.id,
-            )
-            repo.update_universe_scanner_run(run.id, assets_passed=len(scored))
-
-            # Utility owns cross-market selection; retain every physical instrument.
-            unique_scored = scored
-            legacy_allocated = []
             now = datetime.now(timezone.utc)
             entry_ts = now.isoformat()
             if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
@@ -1080,13 +889,9 @@ class UniverseService:
                     asyncio.to_thread(
                         _build_candidate_selection_bundle,
                         population=features_list,
-                        legacy_scored=unique_scored,
-                        legacy_allocated=legacy_allocated,
-                        scanner_run_id=run.id,
+                                        scanner_run_id=run.id,
                         captured_at=entry_ts,
                         cfg=cfg,
-                        family_spread_tolerances=family_tolerances,
-                        family_spread_evidence=family_spread_evidence,
                         authority_applied=True,
                         qualification_evidence=qualification,
                         training_diagnostics_out=data_diagnostics,
@@ -1100,7 +905,7 @@ class UniverseService:
                     raise RuntimeError("candidate_selection_runtime_policy_epoch_mismatch")
                 allocated = target_candidates_from_bundle(
                     candidate_selection_authority_bundle,
-                    pre_scored,
+                    features_list,
                 )
                 decorate_universe_candidates(allocated, cfg.universe)
                 eligible_attention_identities = target_admitted_identity_keys(
@@ -1109,6 +914,17 @@ class UniverseService:
             else:
                 raise RuntimeError("candidate_selection_legacy_runtime_removed")
 
+            gate_counts = {}
+            admitted_count = 0
+            for evidence in candidate_selection_authority_bundle.evidence:
+                decision = json.loads(evidence.compact_output_json)["candidate_selection"]
+                gate = decision["hard_gate"]
+                status = gate["status"] if gate["status"] != "eligible" else f"eligible_{gate['actionability']}"
+                gate_counts[status] = gate_counts.get(status, 0) + 1
+                admitted_count += decision["admission_status"] == "admitted"
+            path_metrics["hard_gate"] = gate_counts
+            path_metrics["admitted_count"] = admitted_count
+            path_metrics["population_count"] = len(features_list)
             path_metrics["selected_count"] = len(allocated)
             path_metrics["shadow_capture_status"] = "terminal"
             for item in allocated:
@@ -1155,11 +971,6 @@ class UniverseService:
                     prev_age_sec,
                     prev_snapshot_id,
                 )
-                experiment_outcomes = _build_experiment_candidate_outcomes(
-                    pre_scored,
-                    entry_ts=entry_ts,
-                    allocated=allocated,
-                )
                 previous_members = repo.list_universe_members(prev_snapshot_id, limit=500)
                 requalifications = _prepare_planning_requalifications(previous_members)
                 with _atomic_universe_publication():
@@ -1186,6 +997,9 @@ class UniverseService:
                             requalifications=requalifications,
                         )
                     )
+                    path_metrics["planning_count"] = len(selected_generation_ids)
+                    path_metrics["planning_created_count"] = planning_generations_created
+                    path_metrics["planning_renewed_count"] = len(selected_generation_ids) - planning_generations_created
                     repo.reconcile_candidate_attention(
                         selected_generation_ids,
                         producer_scope="universe",
@@ -1200,7 +1014,6 @@ class UniverseService:
                         new_generation_ids=new_generation_ids,
                         now=now,
                     )
-                    repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
                     repo.update_universe_scanner_run(
                         run.id,
                         status="completed",
@@ -1212,14 +1025,9 @@ class UniverseService:
                     "Universe refresh: renewed %d Candidate leases on snapshot %s",
                     refreshed_members, prev_snapshot_id,
                 )
-                if experiment_outcomes:
-                    logger.info(
-                        "Registered %d experiment candidate outcome row(s) across full arms",
-                        len(experiment_outcomes),
-                    )
                 _capture_universe_discovery_nonfatal(
                     scanner_run_id=run.id,
-                    population=unique_scored,
+                    population=features_list,
                     allocated=allocated,
                     entry_ts=entry_ts,
                     regime_tag=regime_tag_for_fp,
@@ -1240,7 +1048,8 @@ class UniverseService:
                 summary=json.dumps(
                     {
                         "scanned": len(assets),
-                        "filtered": len(scored),
+                        "hard_gate": path_metrics["hard_gate"],
+                        "admitted": path_metrics["admitted_count"],
                         "selected": len(allocated),
                         "member_fingerprint": new_fp,
                         "information_policy_epoch": POLICY_EPOCH_LABEL,
@@ -1366,12 +1175,6 @@ class UniverseService:
                     }
                 )
             pending_outcomes = build_pending(inserted_members, entry_ts=entry_ts)
-            experiment_outcomes = _build_experiment_candidate_outcomes(
-                pre_scored,
-                entry_ts=entry_ts,
-                allocated=allocated,
-            )
-            sample_alpha_control = _should_sample_alpha_control(now)
             requalifications = _prepare_planning_requalifications(member_models)
             # Do not expose the new active snapshot before every selected member
             # and its Opportunity handoff are durable. Superseding the previous
@@ -1400,6 +1203,9 @@ class UniverseService:
                     )
                 )
 
+                path_metrics["planning_count"] = len(selected_generation_ids)
+                path_metrics["planning_created_count"] = planning_generations_created
+                path_metrics["planning_renewed_count"] = len(selected_generation_ids) - planning_generations_created
                 repo.reconcile_candidate_attention(
                     selected_generation_ids,
                     producer_scope="universe",
@@ -1417,7 +1223,6 @@ class UniverseService:
 
                 # Register forward outcome tracking for all members with valid prices
                 repo.insert_forward_outcomes_batch(pending_outcomes)
-                repo.insert_filter_candidate_outcomes_batch(experiment_outcomes)
 
                 repo.expire_universe_snapshots(market_type, except_id=snap.id)
                 # Cascade: end only unclaimed open analytical generations whose
@@ -1447,43 +1252,24 @@ class UniverseService:
                 )
             _capture_universe_discovery_nonfatal(
                 scanner_run_id=run.id,
-                population=unique_scored,
+                population=features_list,
                 allocated=allocated,
                 entry_ts=entry_ts,
                 regime_tag=global_regime_tag,
                 cfg=cfg,
             )
 
-            if experiment_outcomes:
-                logger.info(
-                    "Registered %d experiment candidate outcome row(s) across full arms",
-                    len(experiment_outcomes),
-                )
 
             # Alpha-control observations are analytics telemetry, not part of
             # snapshot/Opportunity authority. Persist them after the atomic
             # publication so their JSON/control construction cannot extend the
             # SQLite writer critical section.
-            if sample_alpha_control:
-                try:
-                    from aletheia.analytics.causal_controls import record_universe_control_cohort
-
-                    record_universe_control_cohort(
-                        snapshot_id=snap.id,
-                        selected_members=inserted_members,
-                        scored_candidates=scored,
-                        entry_ts=entry_ts,
-                    )
-                except Exception as e:
-                    logger.debug("Universe causal control cohort logging skipped: %s", e)
-            else:
-                logger.debug("Universe causal control cohort sampling skipped (hourly cadence)")
 
             _notify_operator_feature_refresh("universe_refresh_new_snapshot")
             logger.info(
-                "Universe refresh complete: %d scanned → %d filtered → %d selected (snapshot=%s)",
+                "Universe refresh complete: %d scanned, %d features evaluated, %d selected (snapshot=%s)",
                 len(assets),
-                len(scored),
+                len(features_list),
                 len(allocated),
                 snap.id,
             )

@@ -10,7 +10,6 @@ from aletheia.utils.dt import parse_utc
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from uuid import uuid4
 
 
@@ -29,81 +28,6 @@ _HORIZON_DELTA = {
 }
 
 
-def record_universe_control_cohort(
-    *,
-    snapshot_id: str,
-    selected_members: list[dict],
-    scored_candidates: list[dict],
-    entry_ts: str,
-    max_controls: int = 10,
-) -> int:
-    """Persist selected universe members and same-pool controls for causal audit."""
-    selected_symbols = {m.get("symbol") for m in selected_members}
-    controls = [
-        c for c in scored_candidates
-        if c.get("symbol") and c.get("symbol") not in selected_symbols and c.get("last_price")
-    ]
-    controls = _deterministic_pick(controls, seed=f"universe:{snapshot_id}:{entry_ts}", limit=max_controls)
-
-    rows: list[dict] = []
-    cohort_id = f"universe:{snapshot_id}"
-    for member in selected_members:
-        if not member.get("symbol") or not member.get("entry_price_usd"):
-            continue
-        rows.extend(_rows_for_item(
-            layer="universe",
-            cohort_id=cohort_id,
-            treatment_id=member.get("id") or snapshot_id,
-            role="selected",
-            symbol=member["symbol"],
-            venue=member.get("venue"),
-            market_type=member.get("market_type") or "spot",
-            direction=member.get("direction"),
-            entry_price=member.get("entry_price_usd"),
-            entry_ts=entry_ts,
-            score=member.get("total_score"),
-            scanner_family=member.get("scanner_family"),
-            regime_tag=member.get("regime_tag"),
-            entry_spread_bps=member.get("spread_bps"),
-            funding_rate_at_entry=member.get("funding_rate"),
-            module_path="aletheia/universe/allocator.py",
-            metadata={
-                "snapshot_id": snapshot_id,
-                "scanner_family": member.get("scanner_family"),
-                "regime_tag": member.get("regime_tag"),
-            },
-        ))
-    for item in controls:
-        rows.extend(_rows_for_item(
-            layer="universe",
-            cohort_id=cohort_id,
-            treatment_id=snapshot_id,
-            role="control",
-            symbol=item["symbol"],
-            venue=item.get("venue") or (
-                selected_members[0].get("venue") if selected_members else None
-            ),
-            market_type=item.get("market_type") or "spot",
-            direction=item.get("scanner_direction") or item.get("direction"),
-            entry_price=item.get("last_price"),
-            entry_ts=entry_ts,
-            score=item.get("total_score"),
-            scanner_family=item.get("scanner_family"),
-            regime_tag=item.get("regime_tag"),
-            entry_spread_bps=item.get("spread_bps"),
-            funding_rate_at_entry=item.get("funding_rate"),
-            module_path="aletheia/universe/allocator.py",
-            metadata={
-                "snapshot_id": snapshot_id,
-                "scanner_family": item.get("scanner_family"),
-                "regime_tag": item.get("regime_tag"),
-                "control_source": "same_refresh_scored_pool",
-            },
-        ))
-    inserted = _insert_rows(rows)
-    if inserted:
-        _record_universe_allocation_decisions(rows)
-    return inserted
 
 
 def record_serenity_control_cohort(opportunity: dict, max_controls: int = 10) -> int:
@@ -258,84 +182,6 @@ def _insert_rows(rows: list[dict]) -> int:
         return 0
 
 
-def _record_universe_allocation_decisions(rows: list[dict]) -> int:
-    """Route scanner_weights_quota allocations through the compressed batch stream.
-
-    A universe refresh emits ~20 (selected + control) items that share the same
-    scanner_weights / family_quota parameter block. Writing each item as its own
-    filter_decisions row multiplied that shared snapshot by candidate count. The
-    batched writer zlib-encodes the per-fact list once with a single parameter
-    snapshot, cutting the on-disk footprint of this filter roughly 10-20x while
-    preserving every per-candidate field needed for cohort assignment.
-    """
-    try:
-        from aletheia.analytics.filter_evidence import record_filter_decision_batch
-        from aletheia.config.loader import load_config
-
-        universe_cfg = load_config().universe
-        parameters = {
-            "scanner_weights": universe_cfg.scanner_weights,
-            "family_quota": universe_cfg.family_quota,
-            "family_quota_by_regime": universe_cfg.family_quota_by_regime,
-            "scanner_regime_scoring": universe_cfg.scanner_regime_scoring,
-        }
-        # Group by (cohort_id, evaluated_at) so each universe refresh yields one
-        # batch row. The batch's dedup_key already keys on (run_id, filter_name,
-        # stage, filter_version), so redelivery is idempotent.
-        batches: dict[tuple[str, str], list[dict]] = {}
-        for row in rows:
-            if row.get("layer") != "universe" or row.get("horizon") != "1h":
-                continue
-            cohort_id = str(row.get("cohort_id") or "")
-            if not cohort_id:
-                continue
-            metadata = json.loads(row.get("metadata") or "{}")
-            role = row.get("role")
-            market_type = row.get("market_type") or "spot"
-            evaluated_at = str(row.get("entry_ts") or _utcnow())
-            candidate_key = (
-                f"allocation:{cohort_id}:{role}:"
-                f"{row.get('symbol')}:{market_type}"
-            )
-            fact = {
-                "candidate_key": candidate_key,
-                "symbol": row["symbol"],
-                "venue": row.get("venue"),
-                "market_type": market_type,
-                "direction": row.get("direction"),
-                "scanner_family": row.get("scanner_family"),
-                "regime_tag": metadata.get("regime_tag"),
-                "universe_snapshot_id": metadata.get("snapshot_id"),
-                "decision": "passed" if role == "selected" else "rejected",
-                "reason_code": (
-                    "selected_by_allocator" if role == "selected"
-                    else "same_pool_control_not_selected"
-                ),
-                "role": role,
-                "score": row.get("score"),
-                "outcome_candidate_key": row.get("outcome_candidate_key"),
-                "entry_price_usd": row.get("entry_price"),
-                "evaluated_at": evaluated_at,
-            }
-            batches.setdefault((cohort_id, evaluated_at), []).append(fact)
-
-        written = 0
-        for (cohort_id, evaluated_at), facts in batches.items():
-            if not facts:
-                continue
-            record_filter_decision_batch(
-                run_id=cohort_id,
-                candidate_kind="universe_allocation",
-                filter_name="scanner_weights_quota",
-                stage="universe_allocation",
-                candidate_facts=facts,
-                parameters=parameters,
-                evaluated_at=evaluated_at,
-            )
-            written += len(facts)
-        return written
-    except Exception:
-        return 0
 
 
 def _deterministic_pick(items: list[dict], *, seed: str, limit: int) -> list[dict]:

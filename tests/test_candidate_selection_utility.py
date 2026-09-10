@@ -74,6 +74,40 @@ def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkey
                and row["mechanism_id"] == "continuation" for row in outcomes)
 
 
+def test_current_publication_survives_retired_scanner_failure(tmp_path, monkeypatch):
+    import json
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe import scanners
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    calls = []
+
+    def unavailable_research_scanner(*args, **kwargs):
+        calls.append(True)
+        raise RuntimeError("research_scanner_unavailable")
+
+    monkeypatch.setattr(scanners, "run_all_scanners", unavailable_research_scanner)
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    assert calls  # The failing research seam was actually exercised.
+    db = repo.get_db()
+    run = db.execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1").fetchone()
+    assert run["status"] == "completed" and json.loads(run["errors"]) == []
+    metrics = json.loads(run["metrics"])["candidate_path"]
+    assert metrics["population_count"] == 20
+    assert metrics["selected_count"] == len(repo.list_universe_members(run["snapshot_id"]))
+    generation = repo.get_candidate_planning_for_candidate(candidate.id)
+    assert generation is not None
+    assert (generation["planning_key"], generation["planning_identity"]) == candidate_planning_identity(candidate.model_dump())
+    assert db.execute("SELECT COUNT(*) FROM alpha_control_observations").fetchone()[0] == 0
+
+
 
 def test_runtime_epoch_does_not_require_economic_admission():
     from aletheia.config.schema import AletheiaConfig
@@ -563,7 +597,7 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
     )
     decision = build_candidate_selection_utility(
         hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(long,),
-        legacy_control={"primary_family": "momentum", "total_score": 80.0, "authority_selected": True},
+
     )
     assert decision.admission_status == "admitted"
     assert select_admitted_candidates((decision,), max_candidates=30) == (decision,)
@@ -571,7 +605,7 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
     short = replace(long, direction="short", economic_utility_pct=long.economic_utility_pct - 0.01)
     conflict = build_candidate_selection_utility(
         hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(long, short),
-        legacy_control={"primary_family": "momentum", "total_score": 80.0, "authority_selected": True},
+
     )
     assert conflict.admission_status == "direction_conflict"
 
@@ -587,17 +621,13 @@ def test_candidate_selection_shadow_persists_same_t0_full_denominator(historical
     )
 
     population = [_feature(index, return_24h=5.0 + index) for index in range(20)]
-    legacy_scored = [
-        {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0 + index}
-        for index, item in enumerate(population)
-    ]
     bundle = build_candidate_selection_shadow_bundle(
         population,
         scanner_run_id="candidate-selection-run",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=UniverseConfig(max_candidates=3),
-        legacy_scored=legacy_scored,
-        legacy_allocated=legacy_scored[-3:],
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -649,15 +679,11 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     )
 
     population = [_feature(index, return_24h=5.0 + index) for index in range(20)]
-    legacy = [
-        {**feature, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
-        for feature in population
-    ]
     bundle = build_candidate_selection_shadow_bundle(
         population, scanner_run_id="candidate-selection-late-settlement",
         captured_at="2026-09-02T00:00:00+00:00",
-        universe_config=UniverseConfig(max_candidates=3), legacy_scored=legacy,
-        legacy_allocated=legacy,
+        universe_config=UniverseConfig(max_candidates=3),
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -672,8 +698,8 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
         scanner_run_id="candidate-selection-after-cutoff",
         captured_at="2026-09-02T13:00:00+00:00",
         universe_config=UniverseConfig(max_candidates=3),
-        legacy_scored=legacy,
-        legacy_allocated=legacy,
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -713,7 +739,7 @@ def test_frozen_training_view_keeps_late_settlement_as_pending_denominator():
     )
 
 
-def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
+def test_unavailable_target_has_no_outcome_from_legacy_selection():
     import json
 
     from aletheia.universe.candidate_selection_shadow import (
@@ -721,26 +747,20 @@ def test_shadow_keeps_legacy_selected_outcome_when_target_gate_is_unavailable():
     )
 
     feature = _feature(depth_10bps_usd=None)
-    legacy = {
-        **feature,
-        "scanner_family": "momentum",
-        "scanner_direction": "long",
-        "total_score": 80.0,
-    }
     bundle = build_candidate_selection_shadow_bundle(
         [feature],
         scanner_run_id="candidate-selection-legacy-unavailable",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=UniverseConfig(max_candidates=1),
-        legacy_scored=[legacy],
-        legacy_allocated=[legacy],
+
+
         action_route_reasons={("feature-0", "okx", "spot", "COIN0/USDT"): None},
         historical_outcomes=(),
     )
     payload = json.loads(bundle.evidence[0].compact_output_json)
     assert payload["candidate_selection"]["hard_gate"]["status"] == "unavailable"
-    assert set(payload["outcome_candidate_keys"]) == {"long"}
-    assert len(bundle.outcomes) == 1
+    assert payload["outcome_candidate_keys"] == {}
+    assert bundle.outcomes == ()
 
 
 def test_target_selection_deduplicates_symbol_by_economic_rank(monkeypatch):
@@ -756,10 +776,6 @@ def test_target_selection_deduplicates_symbol_by_economic_rank(monkeypatch):
     )
     other = _feature(index=2, symbol="OTHER/USDT", feature_snapshot_id="other")
     population = [spot, perp, other]
-    legacy = [
-        {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
-        for item in population
-    ]
     utilities = {"spot": 1.0, "perp": 3.0, "other": 2.0}
 
     def admitted(decisions, **_kwargs):
@@ -779,8 +795,8 @@ def test_target_selection_deduplicates_symbol_by_economic_rank(monkeypatch):
         scanner_run_id="candidate-selection-market-dedup",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=UniverseConfig(max_candidates=1),
-        legacy_scored=legacy,
-        legacy_allocated=legacy,
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -822,10 +838,6 @@ def test_shadow_compacts_supported_multi_mechanism_record():
         )
         for index in range(20)
     ]
-    legacy = [
-        {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 50.0}
-        for item in population
-    ]
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
     )
@@ -835,8 +847,8 @@ def test_shadow_compacts_supported_multi_mechanism_record():
         scanner_run_id="candidate-selection-multi-mechanism",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=UniverseConfig(max_candidates=3),
-        legacy_scored=legacy,
-        legacy_allocated=legacy[:3],
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -861,7 +873,6 @@ def test_candidate_selection_authority_projects_without_qualification():
     )
     from aletheia.universe.candidate_selection_shadow import (
         build_candidate_selection_shadow_bundle,
-        candidate_selection_frozen_family_spread_control,
         candidate_selection_training_cutoff,
         target_candidates_from_bundle,
     )
@@ -891,8 +902,8 @@ def test_candidate_selection_authority_projects_without_qualification():
         "scanner_run_id": "candidate-selection-authority-run",
         "captured_at": "2026-09-02T00:00:00+00:00",
         "universe_config": universe_config,
-        "legacy_scored": legacy_scored,
-        "legacy_allocated": legacy_scored[-3:],
+
+
         "action_route_reasons": {
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -939,8 +950,8 @@ def test_candidate_selection_authority_projects_without_qualification():
         **{
             **kwargs,
             "population": unavailable_population,
-            "legacy_scored": unavailable_legacy,
-            "legacy_allocated": unavailable_legacy[-3:],
+
+
             "estimator_training_cutoff": kwargs["captured_at"],
         },
         authority_applied=True,
@@ -1036,27 +1047,6 @@ def test_candidate_selection_epoch_identity_includes_cost_and_route():
 
 
 
-@pytest.mark.anyio
-async def test_candidate_selection_shadow_skips_learning_controlled_legacy_arm(
-    monkeypatch,
-):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe import service
-
-    monkeypatch.setattr(
-        service,
-        "_build_candidate_selection_bundle",
-        lambda **_kwargs: pytest.fail("mixed-control Candidate evidence must not be built"),
-    )
-    assert await service._persist_candidate_selection_shadow_nonfatal(
-        population=[],
-        legacy_scored=[],
-        legacy_allocated=[],
-        scanner_run_id="learning-controlled",
-        captured_at="2026-09-02T00:00:00+00:00",
-        cfg=AletheiaConfig(),
-        legacy_control_restricted=True,
-    ) == {"status": "restricted", "record_count": 0, "reason": "legacy_control_restricted"}
 
 
 def test_candidate_selection_fixed_look_can_be_positive_for_owner_admission(monkeypatch):
@@ -1473,7 +1463,7 @@ def test_startup_projection_measured_first_and_capacity():
     def project(history, capacity):
         bundle = build_candidate_selection_shadow_bundle(
             population, scanner_run_id="startup", captured_at="2026-09-02T00:00:00+00:00",
-            universe_config=UniverseConfig(max_candidates=capacity), legacy_scored=[], legacy_allocated=[],
+            universe_config=UniverseConfig(max_candidates=capacity),
             action_route_reasons={}, historical_outcomes=history, authority_applied=True,
             selection_policy={"cost_assumptions": {"execution_fee_pct": .06, "slippage_bps": 5.0}},
         )
@@ -1512,7 +1502,7 @@ def test_startup_direction_conflict_and_zero_signal_do_not_hide_economic_rejecti
     def decide(short, short_estimate):
         return build_candidate_selection_utility(hard_gate=gate,
             opportunity_evidence=replace(evidence, mechanisms=(long, short)),
-            economic_estimates=(long_estimate, short_estimate), legacy_control={})
+            economic_estimates=(long_estimate, short_estimate), )
     assert decide(short, short_estimate).admission_basis == "startup"
     assert decide(replace(short, pessimistic_strength=1.0), short_estimate).admission_status == "direction_conflict"
     assert decide(short, replace(short_estimate, unavailable_reason="tail_harm")).admission_status == "unavailable"
