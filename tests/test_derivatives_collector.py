@@ -20,6 +20,11 @@ from datetime import datetime, timezone, timedelta
 import pytest
 
 
+
+def _market(symbol):
+    return dict(id=symbol.replace('/', ''), symbol=symbol+':USDT', swap=True,
+        base=symbol.split('/')[0], quote='USDT', settle='USDT', linear=True, contractSize=1)
+
 def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     tmp_path,
     monkeypatch,
@@ -30,7 +35,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     from aletheia.storage import migrations, repositories as repo
     from aletheia.storage import sqlite as sq
 
-    acquired_at = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    acquired_at = datetime.now(timezone.utc).replace(microsecond=0)
 
     class FixedDateTime(datetime):
         @classmethod
@@ -51,7 +56,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     oi = mod._parse_oi(
         "BTC/USDT",
         "okx",
-        {"openInterestValue": 1_000_000.0, "timestamp": stale_ms},
+        {"openInterestValue": 1_000_000.0, "info":{"oiUsd":1000000}, "timestamp": stale_ms}, market=_market("BTC/USDT"),
     )
 
     assert funding is not None
@@ -73,7 +78,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     recent_oi = mod._parse_oi(
         "ETH/USDT",
         "okx",
-        {"openInterestValue": 2_000_000.0, "timestamp": recent_ms},
+        {"openInterestValue": 2_000_000.0, "info":{"oiUsd":2000000}, "timestamp": recent_ms}, market=_market("ETH/USDT"),
     )
     assert recent is not None
     assert recent_oi is not None
@@ -133,10 +138,10 @@ def test_parse_oi_threads_lsr_value():
 
     raw = {
         "openInterestValue": 1_234_567.0,
-        "info": {"sumOpenInterest": "12.34"},
+        "info": {"sumOpenInterestValue": "1234567"},
     }
     snap = _parse_oi(
-        "BTC/USDT", "binance", raw, lsr=2.09, top_position_ratio=1.42
+        "BTC/USDT", "binance", raw, lsr=2.09, top_position_ratio=1.42, market=_market("BTC/USDT")
     )
     assert isinstance(snap, OpenInterestSnapshot)
     assert snap.long_short_ratio == 2.09
@@ -155,9 +160,9 @@ def test_parse_oi_lsr_none_when_absent():
 
     raw = {
         "openInterestValue": 999.0,
-        "info": {},
+        "info": {"sumOpenInterestValue":999},
     }
-    snap = _parse_oi("ETH/USDT", "binance", raw, lsr=None)
+    snap = _parse_oi("ETH/USDT", "binance", raw, lsr=None, market=_market("ETH/USDT"))
     assert isinstance(snap, OpenInterestSnapshot)
     assert snap.long_short_ratio is None
     assert snap.open_interest_usd == 999.0
@@ -172,7 +177,7 @@ def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
     snap = _parse_oi(
         "BTC/USDT",
         "binance",
-        {"openInterestValue": 1_000.0, "openInterestAmount": 10.0},
+        {"openInterestValue": 1_000.0, "info":{"sumOpenInterestValue":1000}, "openInterestAmount": 10.0}, market=_market("BTC/USDT"),
         lsr=invalid_ratio,
         top_position_ratio=invalid_ratio,
     )
@@ -253,7 +258,7 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
     from aletheia.data import ccxt_provider as provider_mod
 
     class _Exchange:
-        markets = {"BTC/USDT:USDT": {}}
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
 
         async def load_markets(self):
             return self.markets
@@ -264,7 +269,7 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
 
         async def fetch_open_interest(self, symbol):
             assert symbol == "BTC/USDT:USDT"
-            return {"openInterestValue": 123.0}
+            return {"openInterestValue": 123.0, "info":{"oiUsd":123}}
 
     class _Provider:
         _primary_name = "okx"
@@ -402,45 +407,6 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     sq.close_db()
 
 
-# ---------------------------------------------------------------------------
-# extract_oi_usd — USD-notional unit rule (single source of truth)
-# ---------------------------------------------------------------------------
-
-
-def test_extract_oi_usd_prefers_open_interest_value():
-    """OKX exposes both openInterestAmount (contracts) and openInterestValue
-    (USD). The USD notional must win; the amount is retained as coin."""
-    from aletheia.data.collectors.derivatives import extract_oi_usd
-
-    result = extract_oi_usd(
-        {"openInterestAmount": 3_088_517.62, "openInterestValue": 2_016_542_570.38}
-    )
-    assert result == (2_016_542_570.38, 3_088_517.62)
-
-
-def test_extract_oi_usd_falls_back_to_amount_times_mark():
-    """When openInterestValue is absent (Binance live OI), convert the coin
-    amount to USD with the mark price rather than storing the coin count."""
-    from aletheia.data.collectors.derivatives import extract_oi_usd
-
-    oi_usd, oi_coin = extract_oi_usd(
-        {"openInterestAmount": 107_149.829, "openInterestValue": None},
-        mark_price=65_509.2,
-    )
-    assert oi_coin == 107_149.829
-    assert abs(oi_usd - 107_149.829 * 65_509.2) < 1e-3
-
-
-def test_extract_oi_usd_none_when_not_derivable():
-    """No USD notional and no mark price → None, so callers store None instead
-    of a wrong-unit value (was ~660× off on OKX BTC)."""
-    from aletheia.data.collectors.derivatives import extract_oi_usd
-
-    assert extract_oi_usd(
-        {"openInterestAmount": 107_149.829, "openInterestValue": None}, mark_price=None
-    ) is None
-
-
 @pytest.mark.parametrize(
     "raw",
     [
@@ -471,41 +437,8 @@ def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate)
     assert snap.mark_price is None
 
 
-@pytest.mark.parametrize(
-    ("raw", "mark_price", "expected"),
-    [
-        ({"openInterestValue": 0.0}, None, (0.0, None)),
-        ({"openInterestAmount": 0.0}, 65_000.0, (0.0, 0.0)),
-    ],
-)
-def test_extract_oi_usd_preserves_finite_zero_values(raw, mark_price, expected):
-    from aletheia.data.collectors.derivatives import extract_oi_usd
-
-    assert extract_oi_usd(raw, mark_price=mark_price) == expected
 
 
-@pytest.mark.parametrize(
-    ("raw", "mark_price"),
-    [
-        ({"openInterestValue": "NaN"}, None),
-        ({"openInterestValue": "Infinity"}, None),
-        ({"openInterestValue": "-Infinity"}, None),
-        ({"openInterestValue": -1}, None),
-        ({"openInterestValue": 100, "openInterestAmount": "NaN"}, None),
-        ({"openInterestValue": 100, "openInterestAmount": "Infinity"}, None),
-        ({"openInterestValue": 100, "openInterestAmount": "-Infinity"}, None),
-        ({"openInterestValue": 100, "openInterestAmount": -1}, None),
-        ({"openInterestAmount": 10}, "NaN"),
-        ({"openInterestAmount": 10}, "Infinity"),
-        ({"openInterestAmount": 10}, "-Infinity"),
-        ({"openInterestAmount": 10}, 0),
-        ({"openInterestAmount": 10}, -1),
-    ],
-)
-def test_extract_oi_usd_rejects_nonfinite_or_impossible_values(raw, mark_price):
-    from aletheia.data.collectors.derivatives import extract_oi_usd
-
-    assert extract_oi_usd(raw, mark_price=mark_price) is None
 
 
 def test_parse_oi_returns_none_without_usd():
@@ -521,7 +454,11 @@ def test_parse_oi_returns_none_without_usd():
 
 
 def _seed_oi(repo, *, symbol, exchange, usd, age_min, now):
+    from aletheia.data.derivatives_facts import ccxt_metadata
+    stamp = (now-timedelta(minutes=age_min)).isoformat()
     repo.insert_open_interest_snapshot({
+        "derivatives_metadata_json": ccxt_metadata(symbol,exchange,_market(symbol),{'openInterestValue':usd,'info':{'oiUsd':usd,'sumOpenInterestValue':usd}},family='open_interest'),
+        "acquired_at":stamp, "source_time_status":"missing",
         "symbol": symbol,
         "exchange": exchange,
         "open_interest_usd": usd,
@@ -571,32 +508,13 @@ def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
     # A fresh foreign-venue row with wildly different units — must not be used.
     _seed_oi(repo, symbol="BTC/USDT", exchange="binance", usd=5.0, age_min=2, now=now)
 
-    snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1100.0})
+    snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1100.0,"info":{"oiUsd":1100}},market=_market("BTC/USDT"))
     assert snap is not None
     assert snap.open_interest_usd == 1100.0
-    assert snap.oi_change_1h_pct == 10.0  # (1100-1000)/1000, not vs the binance 5.0
+    assert snap.oi_change_1h_pct == pytest.approx(10.0)  # (1100-1000)/1000, not vs the binance 5.0
     sq.close_db()
 
 
-def test_parse_oi_delta_sanity_cap_drops_artifact(tmp_path, monkeypatch):
-    """A >300% computed delta (unit transition / relisted market) → None."""
-    from aletheia.config import loader as cfg_loader
-    monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
-    from aletheia.storage import sqlite as sq
-    from aletheia.storage import repositories as repo
-    from aletheia.storage import migrations as mig
-    from aletheia.data.collectors.derivatives import _parse_oi
-    sq.close_db()
-    mig.run_migrations()
-
-    now = datetime.now(timezone.utc)
-    _seed_oi(repo, symbol="BTC/USDT", exchange="okx", usd=1.0, age_min=60, now=now)
-
-    snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1000.0})
-    assert snap is not None
-    assert snap.open_interest_usd == 1000.0
-    assert snap.oi_change_1h_pct is None  # 99900% delta capped out
-    sq.close_db()
 # ---------------------------------------------------------------------------
 # collect() — batch (OKX) vs per-symbol (Bitget) fetch strategy + full coverage
 # ---------------------------------------------------------------------------
@@ -636,7 +554,7 @@ def test_collect_batch_path_covers_all_targets_in_usd(tmp_path, monkeypatch):
     class _BatchExchange:
         id = "okx"
         has = {"fetchOpenInterests": True, "fetchFundingRates": True}
-        markets = {"BTC/USDT:USDT": {}, "ETH/USDT:USDT": {}}
+        markets = {s+":USDT":_market(s) for s in ("BTC/USDT","ETH/USDT")}
 
         async def load_markets(self):
             return self.markets
@@ -649,8 +567,8 @@ def test_collect_batch_path_covers_all_targets_in_usd(tmp_path, monkeypatch):
 
         async def fetch_open_interests(self, params=None):
             return {
-                "BTC/USDT:USDT": {"openInterestValue": 2.0e9, "openInterestAmount": 30000.0},
-                "ETH/USDT:USDT": {"openInterestValue": 1.5e9, "openInterestAmount": 500000.0},
+                "BTC/USDT:USDT": {"openInterestValue": 2.0e9, "info":{"oiUsd":2e9,"sumOpenInterestValue":2e9}, "openInterestAmount": 30000.0},
+                "ETH/USDT:USDT": {"openInterestValue": 1.5e9, "info":{"oiUsd":1.5e9}, "openInterestAmount": 500000.0},
             }
 
     mod = _patch_collect_env(monkeypatch, tmp_path, _BatchExchange())
@@ -665,14 +583,14 @@ def test_collect_batch_path_covers_all_targets_in_usd(tmp_path, monkeypatch):
     sq.close_db()
 
 
-def test_collect_per_symbol_path_converts_amount_to_usd(tmp_path, monkeypatch):
-    """Non-batch venue (Bitget): per-symbol loop, amount×mark → USD."""
+def test_collect_per_symbol_path_rejects_unproved_amount_even_with_mark(tmp_path, monkeypatch):
+    """Non-batch venue (Bitget): amount and mark do not prove the quantity unit."""
     calls = {"n": 0}
 
     class _PerSymbolExchange:
         id = "bitget"
         has = {}  # no batch support → per-symbol path
-        markets = {"BTC/USDT:USDT": {}}
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
 
         async def load_markets(self):
             return self.markets
@@ -688,8 +606,8 @@ def test_collect_per_symbol_path_converts_amount_to_usd(tmp_path, monkeypatch):
     result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT"]))
 
     assert calls["n"] == 1  # per-symbol fetch was used
-    assert len(result["open_interest"]) == 1
-    assert result["open_interest"][0].open_interest_usd == 100.0 * 65000.0
+    assert result["open_interest"] == []
+    assert "open_interest_invalid BTC/USDT" in result["errors"]
     from aletheia.storage import sqlite as sq
     sq.close_db()
 
@@ -698,7 +616,7 @@ def test_live_collect_rejects_invalid_rows_before_persistence(tmp_path, monkeypa
     class _InvalidExchange:
         id = "bitget"
         has = {}
-        markets = {"BTC/USDT:USDT": {}}
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
 
         async def load_markets(self):
             return self.markets
@@ -755,6 +673,7 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
     class _InvalidHistoryExchange:
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
         async def fetch_funding_rate_history(self, _symbol, limit=24):
             return [
                 {"timestamp": now_ms - 16 * 3_600_000, "fundingRate": 0.0001},
@@ -843,6 +762,7 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
     fetch_called = {"n": 0}
 
     class _FakeBinance:
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
         async def fetch_funding_rate_history(self, perp_sym, limit=24):
             fetch_called["n"] += 1
             ts_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
@@ -904,8 +824,9 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
     shared_ts_ms = int(shared_ts.timestamp() * 1000)
 
     class _FakeBinance:
+        markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
         async def fetch_open_interest_history(self, perp_sym, timeframe, limit=24):
-            return [{"timestamp": shared_ts_ms, "openInterestValue": 2.0e9, "openInterestAmount": 30000.0}]
+            return [{"timestamp": shared_ts_ms, "openInterestValue": 2.0e9, "info":{"oiUsd":2e9,"sumOpenInterestValue":2e9}, "openInterestAmount": 30000.0}]
 
     from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
     result = asyncio.run(_maybe_backfill_oi_history(
@@ -956,7 +877,7 @@ def test_history_already_current_is_success_but_empty_is_not(tmp_path, monkeypat
 
     class Exchange:
         id = "okx"
-        markets = {"BTC/USDT:USDT": {}, "ETH/USDT:USDT": {}}
+        markets = {s+":USDT":_market(s) for s in ("BTC/USDT","ETH/USDT")}
 
         async def load_markets(self):
             pass
@@ -988,7 +909,7 @@ def test_history_already_current_is_success_but_empty_is_not(tmp_path, monkeypat
     assert classify_collector_result(unsupported) == "partial"
 
     async def history(*args, **kwargs):
-        return [{"timestamp": int(now.timestamp() * 1000), "openInterestValue": 100}]
+        return [{"timestamp": int(now.timestamp() * 1000), "openInterestValue": 100,"info":{"oiUsd":100}}]
 
     def fail_write(data):
         raise OSError("disk full")

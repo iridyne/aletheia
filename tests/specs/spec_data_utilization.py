@@ -48,6 +48,16 @@ _CONTRACT = "data_utilization_contract"
 
 
 @spec_claim(SpecClaim(
+    'DU-S30', _CONTRACT, 'Current Derivatives Economic Semantics', 'L2c',
+    'Current consumers reject unproved historical derivatives economics while raw history remains readable.',
+    status='implemented',
+))
+def test_current_derivatives_have_one_economic_owner():
+    from tests.test_derivatives_semantics import test_unproved_history_remains_readable_without_current_economic_authority
+    test_unproved_history_remains_readable_without_current_economic_authority()
+
+
+@spec_claim(SpecClaim(
     'DU-S29', _CONTRACT, '§3 Canonical Derivatives Facts', 'L2c',
     'Canonical comparison observations remain readable while legacy scalar consumers exclude them.',
     status='implemented',

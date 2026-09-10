@@ -31,9 +31,6 @@ logger = logging.getLogger("aletheia.data.collectors.hyperliquid")
 _HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
 # Hyperliquid uses 1-hour funding intervals → ×24×365 for annualized rate.
-_INTERVALS_PER_DAY = 24
-_DAYS_PER_YEAR = 365
-_OI_DELTA_SANITY_PCT = 300.0
 
 
 class HyperliquidCollector:
@@ -137,22 +134,10 @@ def _parse_funding(
     symbol: str, ctx: dict, observed_at: str
 ) -> FundingRateSnapshot | None:
     """Parse funding rate from a metaAndAssetCtxs context row."""
-    rate_str = ctx.get("funding")
-    if rate_str is None:
-        return None
-    try:
-        rate = float(rate_str)
-    except (ValueError, TypeError):
-        return None
-    mark_str = ctx.get("markPx")
-    try:
-        mark = float(mark_str)
-    except (ValueError, TypeError):
-        return None
-    annualized = round(rate * _INTERVALS_PER_DAY * _DAYS_PER_YEAR, 6)
-    if not all(math.isfinite(value) for value in (rate, mark, annualized)):
-        return None
-    if mark <= 0:
+    from aletheia.data.derivatives_facts import annualize_funding, finite
+    rate, mark = finite(ctx.get('funding')), finite(ctx.get('markPx'))
+    annualized = annualize_funding(rate, 3600)
+    if annualized is None or mark is None or mark <= 0:
         return None
 
     return FundingRateSnapshot(
@@ -163,6 +148,7 @@ def _parse_funding(
         next_funding_time=None,   # not provided in this endpoint
         mark_price=mark,
         observed_at=observed_at,
+        derivatives_metadata_json=hyperliquid_metadata(symbol, observed_at),
     )
 
 
@@ -174,41 +160,17 @@ def _parse_oi(
     Hyperliquid reports OI in base-asset units (e.g. BTC).
     USD OI = openInterest × markPx.
     """
-    oi_str = ctx.get("openInterest")
-    mark_str = ctx.get("markPx")
-    if oi_str is None or mark_str is None:
+    from aletheia.data.derivatives_facts import finite, open_interest_usd, project_snapshot, _open_interest_change
+    oi_coin = finite(ctx.get('openInterest'))
+    oi_usd, reason = open_interest_usd({'openInterestAmount':ctx.get('openInterest')},
+        instrument=hyperliquid_instrument(symbol), amount_unit='base', mark_price=ctx.get('markPx'))
+    if reason or oi_usd is None:
         return None
-    try:
-        oi_coin = float(oi_str)
-        mark = float(mark_str)
-    except (ValueError, TypeError):
-        return None
-    if not math.isfinite(oi_coin) or not math.isfinite(mark):
-        return None
-    if oi_coin <= 0 or mark <= 0:
-        return None
-
-    oi_usd = oi_coin * mark
-    if not math.isfinite(oi_usd) or oi_usd <= 0:
-        return None
-
-    # Compute 1h change only from a same-source 45-75 minute baseline.
-    oi_change_1h_pct = None
-    try:
-        from aletheia.storage.repositories import open_interest_near
-        prev = open_interest_near(
-            symbol,
-            "hyperliquid",
-            reference_at=observed_at,
-        )
-        if prev and prev.get("open_interest_usd") is not None:
-            prev_usd = float(prev["open_interest_usd"])
-            if math.isfinite(prev_usd) and prev_usd > 0:
-                delta = round((oi_usd - prev_usd) / prev_usd * 100, 2)
-                if math.isfinite(delta) and abs(delta) <= _OI_DELTA_SANITY_PCT:
-                    oi_change_1h_pct = delta
-    except Exception:
-        pass
+    metadata = hyperliquid_metadata(symbol, observed_at, oi=True)
+    row = dict(symbol=symbol, exchange='hyperliquid', open_interest_usd=oi_usd,
+        observed_at=observed_at, derivatives_metadata_json=metadata)
+    delta = _open_interest_change(row, project_snapshot(row, 'open_interest')[0], include_comparison=False)['value']
+    oi_change_1h_pct = delta*100 if delta is not None else None
 
     return OpenInterestSnapshot(
         symbol=symbol,
@@ -217,6 +179,7 @@ def _parse_oi(
         open_interest_coin=oi_coin,
         oi_change_1h_pct=oi_change_1h_pct,
         long_short_ratio=None,
+        derivatives_metadata_json=metadata,
         observed_at=observed_at,
     )
 
@@ -273,19 +236,16 @@ async def _fetch_predicted_fundings(
             except (ValueError, TypeError):
                 continue
             try:
-                interval_hours = float(venue_data.get("fundingIntervalHours", 1))
+                interval_hours = float(venue_data["fundingIntervalHours"]) if venue_data.get("fundingIntervalHours") is not None else None
             except (ValueError, TypeError):
                 continue
             if (
                 not math.isfinite(rate)
-                or not math.isfinite(interval_hours)
-                or interval_hours <= 0
+                or (interval_hours is not None and (not math.isfinite(interval_hours) or interval_hours <= 0))
             ):
                 continue
-            intervals_per_year = (24 / interval_hours) * 365
-            annualized = round(rate * intervals_per_year, 6)
-            if not math.isfinite(annualized):
-                continue
+            from aletheia.data.derivatives_facts import annualize_funding
+            annualized = annualize_funding(rate, interval_hours * 3600 if interval_hours is not None else None)
 
             next_ts = venue_data.get("nextFundingTime")
             next_str = None
@@ -310,7 +270,7 @@ async def _fetch_predicted_fundings(
                 observed_at=observed_at,
                 derivatives_metadata_json=hyperliquid_metadata(
                     canonical, observed_at, value_kind='forecast',
-                    interval_seconds=interval_hours * 3600 if 'fundingIntervalHours' in venue_data else None),
+                    interval_seconds=interval_hours * 3600 if interval_hours is not None else None),
             ))
             break   # only HlPerp per asset
 

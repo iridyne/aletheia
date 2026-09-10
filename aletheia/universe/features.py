@@ -756,7 +756,6 @@ async def _fetch_single_feature(
     taker_buy_ratio = None
     if is_perp:
         perp_sym = to_ccxt_perp(symbol)
-        mark_price = None
         try:
             if exchange.id == "bitget":
                 info = ticker.get("info") or {}
@@ -772,7 +771,6 @@ async def _fetch_single_feature(
                 )
             received_at = datetime.now(timezone.utc)
             if fr_data:
-                mark_price = fr_data.get("markPrice")
                 live_rate = fr_data.get("fundingRate")
                 if live_rate is not None and not isinstance(live_rate, bool):
                     live_funding_rate = float(live_rate)
@@ -788,13 +786,9 @@ async def _fetch_single_feature(
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
-        # Live open interest overrides a stale DB fallback for the absolute value.
-        # oi_delta_1h stays from the collector's true-1h computation (oi_row) —
-        # features has only the current instant, not a 1h-ago reference. Same
-        # USD-unit rule as the collector (prefer openInterestValue, else
-        # amount × mark) via the shared extractor.
+        # Live and stored OI use the same proved canonical units.
         try:
-            from aletheia.data.collectors.derivatives import extract_oi_usd
+            from aletheia.data.derivatives_facts import ccxt_metadata, normalize_open_interest
             oi_data = await asyncio.wait_for(
                 exchange.fetch_open_interest(perp_sym),
                 timeout=5.0,
@@ -806,9 +800,12 @@ async def _fetch_single_feature(
             if observed_at and fresh_row(
                 {"observed_at": observed_at}, "open_interest", now=received_at,
             ):
-                extracted = extract_oi_usd(oi_data or {}, mark_price)
-                if extracted is not None:
-                    open_interest = extracted[0]
+                market = (getattr(exchange, 'markets', {}) or {}).get(perp_sym) or {}
+                proof = json.loads(ccxt_metadata(symbol, venue, market, oi_data or {}, family='open_interest'))
+                fact = normalize_open_interest(oi_data or {}, instrument=proof['instrument'],
+                    provider='ccxt', venue=venue, acquired_at=received_at, value_unit=proof['oi_unit'])
+                if fact['availability'] == 'available':
+                    open_interest = fact['value']
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
@@ -993,7 +990,10 @@ async def _fetch_single_feature(
             diagnostics_out["feature_persistence_failed"] = 1
         return None
     should_write = True
-    if prev_row is not None and not force_persist:
+    derivatives_changed = prev_row is not None and any(
+        prev_row.get(field) != getattr(snap, field) for field in ('open_interest', 'oi_delta_1h')
+    )
+    if prev_row is not None and not force_persist and not derivatives_changed:
         age_sec = _seconds_between(prev_row.get("ts"), assembled_at)
         if age_sec is not None:
             if age_sec < _FEATURE_SUPPRESSION_MIN_SEC:

@@ -140,12 +140,21 @@ def normalize_funding(raw, *, instrument, provider, venue, acquired_at, interval
     return result
 
 
-def normalize_open_interest(
-    raw, *, instrument, provider, venue, acquired_at, amount_unit=None, mark_price=None, value_unit=None
-):
-    from aletheia.data.collectors.derivatives import provider_source_time
+def funding_interval_seconds(raw):
+    interval = raw.get('interval')
+    hours = finite(interval[:-1]) if isinstance(interval, str) and interval.endswith('h') else None
+    return finite(hours * 3600) if hours is not None and hours > 0 else None
 
-    source, status = provider_source_time(raw, acquired_at)
+
+def annualize_funding(rate, interval_seconds):
+    rate, interval = finite(rate), finite(interval_seconds)
+    return finite(rate * (365 * 86400 / interval)) if rate is not None and interval is not None and interval > 0 else None
+
+
+def open_interest_usd(raw, *, instrument, amount_unit=None, mark_price=None, value_unit=None):
+    """The sole unit conversion primitive; callers supply source-proved semantics."""
+    if not _instrument_valid(instrument):
+        return None, 'instrument_unproven'
     amount, mark = finite(raw.get("openInterestAmount")), finite(mark_price)
     value, reason = None, "oi_unit_unproven"
     if value_unit == "USD":
@@ -158,6 +167,20 @@ def normalize_open_interest(
             value, reason = amount * size * mark, None
     if finite(value) is not None and finite(value) < 0:
         value, reason = None, "negative_open_interest"
+    number = finite(value)
+    if value is not None and number is None:
+        reason = 'nonfinite_value'
+    return number, reason or ('value_unavailable' if number is None else None)
+
+
+def normalize_open_interest(
+    raw, *, instrument, provider, venue, acquired_at, amount_unit=None, mark_price=None, value_unit=None
+):
+    from aletheia.data.collectors.derivatives import provider_source_time
+
+    source, status = provider_source_time(raw, acquired_at)
+    value, reason = open_interest_usd(raw, instrument=instrument, amount_unit=amount_unit,
+        mark_price=mark_price, value_unit=value_unit)
     return _fact(
         "open_interest",
         value,
@@ -243,8 +266,6 @@ def snapshot_metadata(
 
 def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None, acquired_at=None):
     """Persist only semantics proved by the current CCXT response, never its fallback arithmetic."""
-    interval = raw.get("interval")
-    hours = finite(interval[:-1]) if isinstance(interval, str) and interval.endswith("h") else None
     info = raw.get("info") or {}
     unit = None
     # CCXT 4.5.56 maps these explicitly USD-native fields to openInterestValue.
@@ -261,7 +282,7 @@ def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None, acquired_a
         provider="ccxt",
         venue=venue,
         instrument=instrument,
-        interval_seconds=finite(hours * 3600) if hours is not None and hours > 0 and family == "funding" else None,
+        interval_seconds=funding_interval_seconds(raw) if family == "funding" else None,
         oi_unit=unit if family == "open_interest" else None,
         ratios=ratios,
     )
@@ -459,7 +480,7 @@ def read_derivatives_facts(symbol: str, *, venue: str, now=None) -> list[dict]:
     return result
 
 
-def _open_interest_change(row, current):
+def _open_interest_change(row, current, *, include_comparison=True):
     """Same physical series only, in the existing 45–75 minute baseline band."""
     from aletheia.storage import repositories as repo
     result = dict(current, fact_type='open_interest_change_1h', value_kind='derived', unit='ratio', value=None)
@@ -469,7 +490,7 @@ def _open_interest_change(row, current):
     clock = parse_utc(current['source_observed_at'] or current['acquired_at'])
     acquired = parse_utc(current['acquired_at'])
     candidates = repo._select_all('open_interest_snapshots',
-        where='symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ?',
+        where='symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ?' + ('' if include_comparison else ' AND '+repo.LEGACY_DERIVATIVES_WHERE),
         params=(row['symbol'], row['exchange'], (clock-timedelta(minutes=75)).isoformat(),
             (clock-timedelta(minutes=45)).isoformat()), order='observed_at DESC', limit=64)
     valid = []
@@ -557,3 +578,17 @@ def derivatives_readiness(symbol, cfg, *, now=None):
         coverage_acquired_at=coverage.get('acquired_at'), coverage_fresh=coverage_fresh,
         exact_venues=exact, aggregate_providers={'coinalyze':read_derivatives_facts(symbol, venue='coinalyze', now=now)} if md.enable_coinalyze else {},
         comparisons=comparisons)
+
+
+def project_runtime_snapshot(row, family, *, now=None):
+    """Current carrier view; raw history stays in storage, unproved economics do not leak out."""
+    if row is None:
+        return None
+    fact = project_snapshot(row, family, now=now)[0]
+    if family == 'funding':
+        value = annualize_funding(fact['value'], fact.get('interval_seconds'))
+        return dict(row, funding_rate_annualized=value)
+    if fact['availability'] != 'available':
+        return None
+    delta = _open_interest_change(row, fact, include_comparison=False)['value']
+    return dict(row, open_interest_usd=fact['value'], oi_change_1h_pct=delta*100 if delta is not None else None)

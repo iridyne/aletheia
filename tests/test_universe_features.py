@@ -446,6 +446,7 @@ async def test_live_funding_override_requires_finite_rate(
 
     class Exchange:
         id = venue
+        markets = {'BTC/USDT:USDT': dict(id='BTC-USDT-SWAP',symbol='BTC/USDT:USDT',swap=True,base='BTC',quote='USDT',settle='USDT',linear=True)}
 
         async def fetch_ohlcv(self, *args, **kwargs):
             return [[int((now - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
@@ -461,6 +462,7 @@ async def test_live_funding_override_requires_finite_rate(
         async def fetch_open_interest(self, *args, **kwargs):
             return {
                 "openInterestValue": 123.0,
+                "info": {"oiUsd":123},
                 "timestamp": int(
                     (now - timedelta(minutes=source_age)).timestamp() * 1000
                 ),
@@ -485,7 +487,7 @@ async def test_live_funding_override_requires_finite_rate(
 
     assert feature is not None
     assert feature["funding_rate"] == expected
-    assert feature["open_interest"] == expected_oi
+    assert feature["open_interest"] == (expected_oi if venue == "okx" else None)
 
 
 @pytest.mark.asyncio
@@ -518,6 +520,7 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
 
     class Exchange:
         id = "okx"
+        markets = {"BTC/USDT:USDT":dict(id="BTC-USDT-SWAP",symbol="BTC/USDT:USDT",swap=True,base="BTC",quote="USDT",settle="USDT",linear=True)}
 
         async def fetch_ohlcv(self, *args, **kwargs):
             return [[int((scan_started_at - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
@@ -531,6 +534,7 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
         async def fetch_open_interest(self, *args, **kwargs):
             return {
                 "openInterestValue": 123.0,
+                "info": {"oiUsd":123},
                 "timestamp": int(oi_received_at.timestamp() * 1000),
             }
 

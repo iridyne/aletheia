@@ -51,7 +51,7 @@ class FundingRateSnapshot(BaseModel):
     symbol: str
     exchange: str
     funding_rate: float
-    funding_rate_annualized: float
+    funding_rate_annualized: float | None = None
     next_funding_time: str | None = None
     mark_price: float | None = Field(default=None, gt=0)
     source_observed_at: str | None = None

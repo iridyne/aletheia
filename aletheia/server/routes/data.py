@@ -1557,7 +1557,7 @@ def get_market_microstructure(
     if market_type in {"perp", "futures"}:
         from aletheia.storage.repositories import LEGACY_DERIVATIVES_WHERE
         fr_sql = (
-            "SELECT funding_rate, funding_rate_annualized "
+            "SELECT * "
             "FROM funding_rate_snapshots WHERE symbol = ? "
             f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
@@ -1567,15 +1567,17 @@ def get_market_microstructure(
             fr_params.append(exchange)
         fr_sql += "ORDER BY observed_at DESC LIMIT 1"
         try:
-            fr_row = db.execute(fr_sql, fr_params).fetchone()
+            from aletheia.data.derivatives_facts import project_runtime_snapshot
+            raw = db.execute(fr_sql, fr_params).fetchone()
+            fr_row = project_runtime_snapshot(dict(raw), 'funding') if raw else None
             if fr_row:
-                res["funding_rate"] = fr_row[0]
-                res["funding_rate_annualized"] = fr_row[1]
+                res["funding_rate"] = fr_row['funding_rate']
+                res["funding_rate_annualized"] = fr_row['funding_rate_annualized']
         except Exception as e:
             logger.debug("funding query skipped: %s", e)
 
         oi_sql = (
-            "SELECT open_interest_usd, oi_change_1h_pct "
+            "SELECT * "
             "FROM open_interest_snapshots WHERE symbol = ? "
             f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
@@ -1585,10 +1587,12 @@ def get_market_microstructure(
             oi_params.append(exchange)
         oi_sql += "ORDER BY observed_at DESC LIMIT 1"
         try:
-            oi_row = db.execute(oi_sql, oi_params).fetchone()
+            from aletheia.data.derivatives_facts import project_runtime_snapshot
+            raw = db.execute(oi_sql, oi_params).fetchone()
+            oi_row = project_runtime_snapshot(dict(raw), 'open_interest') if raw else None
             if oi_row:
-                res["open_interest_usd"] = oi_row[0]
-                res["oi_change_1h_pct"] = oi_row[1]
+                res["open_interest_usd"] = oi_row['open_interest_usd']
+                res["oi_change_1h_pct"] = oi_row['oi_change_1h_pct']
         except Exception as e:
             logger.debug("oi query skipped: %s", e)
 

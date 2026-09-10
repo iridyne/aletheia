@@ -158,23 +158,19 @@ def test_batch_open_interest_returns_latest_hyperliquid_row(tmp_path, monkeypatc
     from aletheia.storage.repositories import batch_open_interest
     from aletheia.storage.sqlite import get_db
 
+    from datetime import datetime, timedelta, timezone
+    from aletheia.data.derivatives_facts import hyperliquid_metadata
     db = get_db()
-    db.executemany(
-        "INSERT INTO open_interest_snapshots "
-        "(id, symbol, exchange, open_interest_usd, oi_change_1h_pct, observed_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [
-            ("hl-old", "BTC", "hyperliquid", 1_000.0, 1.0, "2026-07-17T08:00:00Z"),
-            ("hl-new", "BTC", "hyperliquid", 2_000.0, 2.0, "2026-07-17T09:00:00Z"),
-            ("okx-new", "BTC", "okx", 9_000.0, 9.0, "2026-07-17T10:00:00Z"),
-        ],
-    )
+    now = datetime.now(timezone.utc)
+    for rid,venue,usd,age in [('hl-old','hyperliquid',1000,2),('hl-new','hyperliquid',2000,1),('okx-new','okx',9000,0)]:
+        stamp = (now-timedelta(minutes=age)).isoformat()
+        db.execute('INSERT INTO open_interest_snapshots (id,symbol,exchange,open_interest_usd,observed_at,derivatives_metadata_json) VALUES (?,?,?,?,?,?)',
+            (rid,'BTC/USDT',venue,usd,stamp,hyperliquid_metadata('BTC/USDT',stamp,oi=True)))
     db.commit()
-
-    result = batch_open_interest(["BTC", "ETH"], "hyperliquid")
-    assert result["BTC"]["id"] == "hl-new"
-    assert "ETH" not in result
-    assert batch_open_interest([], "hyperliquid") == {}
+    result = batch_open_interest(['BTC/USDT','ETH/USDT'], 'hyperliquid')
+    assert result['BTC/USDT']['id'] == 'hl-new'
+    assert 'ETH/USDT' not in result
+    assert batch_open_interest([], 'hyperliquid') == {}
 
 
 # ---------------------------------------------------------------------------
