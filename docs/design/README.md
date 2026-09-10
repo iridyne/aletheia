@@ -32,7 +32,7 @@ This is the main implementation authority after governance and product scope. Re
 | Opportunity → Ranker → Operator → Proposal lifecycle | `contracts/decision_lifecycle_contract.md`, then `contracts/filter_evidence_contract.md` and `api/api_reference.md` |
 | Learning or knowledge behavior | `contracts/learning_contract.md`, `contracts/knowledge_contract.md`, then any accepted learning proposal under `proposals/` |
 | Scheduler behavior | `contracts/scheduler_contract.md` |
-| Frontend structure | `frontend/ui_design_system.md`, `frontend/webui_page_map.md` |
+| Frontend structure | `frontend/guidelines/ui_design_system.md`, `frontend/architecture/webui_page_map.md` |
 
 ## Agent Rule
 

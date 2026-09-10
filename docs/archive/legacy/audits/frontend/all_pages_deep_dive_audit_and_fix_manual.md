@@ -280,4 +280,4 @@
 
 ---
 
-*（本文档已完整保存至本地：`docs/design/frontend/all_pages_deep_dive_audit_and_fix_manual.md`，全站 13 个页面的每一处隐藏 Bug 与缺陷均已建立代码级修复档案，随时可直接照单实施）*
+*（本文档已归档保存至本地：`docs/archive/legacy/audits/frontend/all_pages_deep_dive_audit_and_fix_manual.md`）*

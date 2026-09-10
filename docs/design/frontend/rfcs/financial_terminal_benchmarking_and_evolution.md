@@ -222,4 +222,4 @@
 
 ---
 
-*（本文档已妥善保存至本地：`docs/design/frontend/financial_terminal_benchmarking_and_evolution.md`，作为 Aletheia 迈向国际顶级金融终端水准的演进参考与设计基石）*
+*（本文档已妥善保存至本地：`docs/design/frontend/rfcs/financial_terminal_benchmarking_and_evolution.md`，作为 Aletheia 迈向国际顶级金融终端水准的演进参考与设计基石）*

@@ -1646,9 +1646,7 @@ export const api = {
 		}>(`/analytics/opportunity-funnel?hours=${hours}`),
 
 	// Fast subset of getOpportunityFunnel — returns just `current` + config +
-	// family_ttl_sec. Retained for legacy Opportunity diagnostics. See
-	// docs/design/frontend/blotter_design.md#performance-backlog for why this
-	// split exists.
+	// family_ttl_sec. Retained for legacy Opportunity diagnostics.
 	getOpportunityFunnelCurrentSnapshot: (hours = 24) =>
 		fetchJson<{
 			window_hours: number;

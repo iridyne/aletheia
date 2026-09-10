@@ -187,4 +187,4 @@ $$\text{Market Feed} \longrightarrow \text{AI Agents} \longrightarrow \text{Entr
 
 ---
 
-*（本文档已完整保存在本地：`docs/design/frontend/observer_mission_control_and_physical_telemetry_design.md`，确立了 Aletheia 作为“自主 AI 任务控制中心”在排版稳定前提下的物理遥测审美标准）*
+*（本文档已完整保存在本地：`docs/design/frontend/architecture/observer_mission_control_and_physical_telemetry_design.md`，确立了 Aletheia 作为“自主 AI 任务控制中心”在排版稳定前提下的物理遥测审美标准）*

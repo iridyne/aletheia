@@ -186,4 +186,4 @@ export function SymbolLink({ symbol, marketType = 'spot', exchange, className = 
 
 ---
 
-*（本文档已完整保存至本地：`docs/design/frontend/cross_page_symbol_teleportation_and_realistic_market_data.md`，确立了全站标的秒级穿透与微观市场数据诚实表达的技术标准）*
+*（本文档已完整保存至本地：`docs/design/frontend/architecture/cross_page_symbol_teleportation_and_realistic_market_data.md`，确立了全站标的秒级穿透与微观市场数据诚实表达的技术标准）*

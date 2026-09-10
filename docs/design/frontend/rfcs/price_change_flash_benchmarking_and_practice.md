@@ -261,4 +261,4 @@ function PriceCell({ price }: { price: number }) {
 
 ---
 
-*（本文档已保存至：`docs/design/frontend/price_change_flash_benchmarking_and_practice.md`，可作为后续直接拿来借鉴实装的免造轮子标准依据）*
+*（本文档已保存至：`docs/design/frontend/rfcs/price_change_flash_benchmarking_and_practice.md`，可作为后续直接拿来借鉴实装的免造轮子标准依据）*

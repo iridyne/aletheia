@@ -207,4 +207,4 @@
 
 ---
 
-*（本文档已保存至：`docs/design/frontend/design_system_optimization_proposal.md`，可作为后续前端设计系统迭代的指导技术方案）*
+*（本文档已保存至：`docs/design/frontend/rfcs/design_system_optimization_proposal.md`，可作为后续前端设计系统迭代的指导技术方案）*

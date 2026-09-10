@@ -269,4 +269,4 @@
 
 ---
 
-*（本文档已完整保存在本地：`docs/design/frontend/table_architecture_and_cell_audit.md`，可作为后续表格清洗、列收敛与单元格排版优化的专项重构蓝图）*
+*（本文档已归档保存至本地：`docs/archive/legacy/audits/frontend/table_architecture_and_cell_audit.md`）*

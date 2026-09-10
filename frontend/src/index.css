@@ -2871,7 +2871,7 @@ button.market-instrument-group-title { font-family: inherit; }
    Canonical "main + rail" responsive layout — mirrors shadcn / Tailwind
    dashboard-01 grid at `lg`. Below lg the rail stacks under main as a
    single flex column (NO CSS multicol masonry — see
-   docs/design/frontend/ui_design_system.md §3.x for the rationale:
+   docs/design/frontend/guidelines/ui_design_system.md §3.x for the rationale:
    collapsibles reshuffle siblings between columns and reading order
    goes Z-shaped). See that section for the canonical breakpoint scale
    this rule participates in. */
@@ -3141,7 +3141,7 @@ button.market-instrument-group-title { font-family: inherit; }
 
 
 
-/* ---------- Blotter (docs/design/frontend/blotter_design.md) -------------
+/* ---------- Blotter (historical decision blotter styles) -------------
    Bloomberg EMSX "state as token, not sentence" — five fixed columns above a
    two-panel Candidates + Awaiting-Sign-off band, above a full-width Order
    History table. Class prefix .bl- to avoid collision with the pre-existing

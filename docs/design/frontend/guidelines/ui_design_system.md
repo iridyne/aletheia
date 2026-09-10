@@ -96,8 +96,7 @@
 
 不同分母的 coverage axis 禁止组合成雷达图或总分。雷达面积会暗示轴可比较、可相加；
 改用逐行的 label / coverage / status / reason。子类型指标也必须先检查集合关系：cached
-属于 input，reasoning 属于 output，不能与父总量作为同一饼图的并列切片。完整范例见
-[`usage_insights_design.md`](usage_insights_design.md)。
+属于 input，reasoning 属于 output，不能与父总量作为同一饼图的并列切片。
 
 渐进加载的分组应匹配视觉优先级：先返回首屏核心事实，再启动互相独立的下层查询。
 已显示的 stale 数据可以保留，但必须保留自身窗口标签，禁止用新 selector 的标签包装旧值。

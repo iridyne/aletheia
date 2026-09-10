@@ -132,4 +132,4 @@
 
 ---
 
-*（本文档已永久保存至：`docs/design/frontend/terminal_taste_and_zero_entropy_rules.md`，作为 Aletheia 全站 UI 审查的最高品味基准）*
+*（本文档已永久保存至：`docs/design/frontend/guidelines/terminal_taste_and_zero_entropy_rules.md`，作为 Aletheia 全站 UI 审查的最高品味基准）*

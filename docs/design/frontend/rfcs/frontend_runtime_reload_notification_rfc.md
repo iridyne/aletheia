@@ -184,4 +184,4 @@ export function DriftUpdatePill({ driftIssue, driftRange }: { driftIssue: string
 
 ---
 
-*（本方案已完整保存在本地：`docs/design/frontend/frontend_runtime_reload_notification_rfc.md`，彻底厘清了热重载的实施边界与多账户议题的结论）*
+*（本方案已完整保存在本地：`docs/design/frontend/rfcs/frontend_runtime_reload_notification_rfc.md`，彻底厘清了热重载的实施边界与多账户议题的结论）*

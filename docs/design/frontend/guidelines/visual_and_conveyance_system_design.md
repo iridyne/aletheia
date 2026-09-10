@@ -250,4 +250,4 @@
 
 ---
 
-*（本文档已完整保存至本地：`docs/design/frontend/visual_and_conveyance_system_design.md`，可作为 Aletheia 视觉与传达系统正规化的基石规范）*
+*（本文档已完整保存至本地：`docs/design/frontend/guidelines/visual_and_conveyance_system_design.md`，可作为 Aletheia 视觉与传达系统正规化的基石规范）*

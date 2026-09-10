@@ -119,4 +119,4 @@
 
 ---
 
-*（本文档已保存至：`docs/design/frontend/uncovered_strategic_topics_and_future_discussion.md`，可作为后续产品需求评审与技术委员会研讨的输入提案）*
+*（本文档已保存至：`docs/design/frontend/rfcs/uncovered_strategic_topics_and_future_discussion.md`，可作为后续产品需求评审与技术委员会研讨的输入提案）*

@@ -201,7 +201,7 @@ button {
 
 ## 六、 第四阶段：Overview 终态 3 列式控制台重构（Overview 3-Column Docking）
 
-*参考原型：`docs/design/frontend/overview_preview.html`*
+*参考原型：`docs/design/frontend/rfcs/prototypes/overview_preview.html`*
 
 彻底突破当前 Overview 垂直单一流布局，在 1440px 宽屏下演进为三大业务列：
 1. **左列：核心资产与台账区（40% 宽）**：巨幅净值、当日 PnL 盈亏曲线、未结订单微缩条；
@@ -210,4 +210,4 @@ button {
 
 ---
 
-*（本文档永久保存在 `docs/design/frontend/overview_and_topbar_visual_refinement_plan.md`，作为后续专项视觉精细化推进的权威依据）*
+*（本文档永久保存在 `docs/design/frontend/architecture/overview_and_topbar_visual_refinement_plan.md`，作为后续专项视觉精细化推进的权威依据）*

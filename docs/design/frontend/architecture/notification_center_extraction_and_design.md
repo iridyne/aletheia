@@ -148,4 +148,4 @@ const LAST_READ_KEY = 'aletheia.notifications.lastReadAt'
 
 ---
 
-*（本文档已保存至：`docs/design/frontend/notification_center_extraction_and_design.md`，可直接作为后续落地拆分的实施依据）*
+*（本文档已保存至：`docs/design/frontend/architecture/notification_center_extraction_and_design.md`，可直接作为后续落地拆分的实施依据）*

@@ -1447,8 +1447,7 @@ def get_pipeline_funnel(hours: int = 24):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Funnel endpoint helpers (extracted so /opportunity-funnel and the faster
-# /opportunity-funnel/current-snapshot child route reuse the same base query
-# set — see docs/design/frontend/blotter_design.md#performance-backlog).
+# /opportunity-funnel/current-snapshot child route reuse the same base query set.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Perf item 2: process-local TTL cache for the current-snapshot payload.
