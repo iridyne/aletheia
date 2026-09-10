@@ -756,3 +756,28 @@ def test_legacy_retirement_preserves_submission_evidence(_inmemory_db):
     assert {row[0] for row in events} == {"unsubmitted", "old-pending"}
     _apply_retired_entry_authority_v72(db)
     assert list(db.execute("SELECT entity_id,before_state,after_state FROM audit_events WHERE event_type='entry_path_retired'")) == events
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_unavailable_lifecycle_only_promises_retry_while_cycle_is_active(terminal):
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "outcome_class": "planning_unavailable", "outcome_reason": "PROVIDER_TIMEOUT",
+             "attention_status": "terminal" if terminal else "active"}
+    lifecycle = project_candidate_entry_lifecycle({}, [cycle])
+    assert lifecycle["lifecycle_state"] == "PLANNING_UNAVAILABLE"
+    assert lifecycle["next_action"] == (
+        "await_material_input_or_owner_replan" if terminal else "bounded_retry")
+
+
+def test_expired_activation_reports_actual_expiry_as_state_transition_time():
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "entry_plan_status": "triggered", "activation_recoverable": True,
+             "activation_expires_at": "2026-01-01T00:00:02+00:00",
+             "entry_plan_updated_at": "2026-01-01T00:00:00+00:00"}
+    lifecycle = project_candidate_entry_lifecycle({}, [cycle])
+    assert lifecycle["lifecycle_reason"] == "entry_trigger_activation_expired"
+    assert lifecycle["state_changed_at"] == cycle["activation_expires_at"]

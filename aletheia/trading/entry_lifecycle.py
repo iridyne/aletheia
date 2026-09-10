@@ -54,7 +54,8 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
     if outcome == "planning_blocked":
         return "PLANNING_BLOCKED", reason, "resume_on_authority_change"
     if outcome == "planning_unavailable":
-        return "PLANNING_UNAVAILABLE", reason, "bounded_retry"
+        return "PLANNING_UNAVAILABLE", reason, (
+            "await_material_input_or_owner_replan" if cycle.get("attention_status") == "terminal" else "bounded_retry")
     if outcome == "planning_failed":
         return "PLANNING_FAILED", reason, "await_material_input_or_owner_replan"
     if outcome == "no_plan":
@@ -82,6 +83,8 @@ def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict]) -> di
     if (current and state in {"PLAN_READY", "WAITING_MARKET"}
         and current.get("entry_plan_monitoring_state") == "ready"):
         changed_at = (current.get("passive_entry") or {}).get("observed_at") or changed_at
+    if current and reason == "entry_trigger_activation_expired":
+        changed_at = current["activation_expires_at"]
     return {
         "lifecycle_state": state,
         "execution_state": (current.get("execution") or {}).get("execution_state", "NOT_STARTED") if current else "NOT_STARTED",
