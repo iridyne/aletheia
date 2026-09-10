@@ -9,6 +9,14 @@ supersedes: []
 
 # Minimal canonical Derivatives Facts
 
+## Current consumer boundary
+
+The original #2890 consumer-equivalence boundary below records that completed
+phase. Owner-approved #3067 now converges current consumers to the
+[current economic semantics contract](../contracts/derivatives_economic_semantics.md),
+including correction of erroneous Feature inputs. Historical raw evidence remains
+unchanged; comparison-source admission and trading authority remain outside scope.
+
 ## Summary
 
 Keep the existing collectors and Funding/OI/Liquidation tables. Introduce one

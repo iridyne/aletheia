@@ -11196,7 +11196,8 @@ def latest_funding_rate(symbol: str, exchange: str | None = None) -> dict | None
         order="observed_at DESC",
         limit=1,
     )
-    return rows[0] if rows else None
+    from aletheia.data.derivatives_facts import project_runtime_snapshot
+    return project_runtime_snapshot(rows[0], 'funding') if rows else None
 
 
 def insert_open_interest_snapshot(data: dict) -> None:
@@ -11277,7 +11278,8 @@ def latest_open_interest(symbol: str, exchange: str | None = None) -> dict | Non
         order="observed_at DESC",
         limit=1,
     )
-    return rows[0] if rows else None
+    from aletheia.data.derivatives_facts import project_runtime_snapshot
+    return project_runtime_snapshot(rows[0], 'open_interest') if rows else None
 
 
 def open_interest_near(
@@ -11498,7 +11500,8 @@ def batch_funding_rates(symbols: list[str], exchange: str) -> dict[str, dict]:
         """,
         (*symbols, exchange),
     ).fetchall()
-    return {dict(r)["symbol"]: dict(r) for r in rows}
+    from aletheia.data.derivatives_facts import project_runtime_snapshot
+    return {row['symbol']: row for r in rows if (row := project_runtime_snapshot(dict(r), 'funding')) is not None}
 
 
 def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
@@ -11523,7 +11526,8 @@ def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
         )
         .fetchall()
     )
-    return {dict(row)["symbol"]: dict(row) for row in rows}
+    from aletheia.data.derivatives_facts import project_runtime_snapshot
+    return {row['symbol']: row for r in rows if (row := project_runtime_snapshot(dict(r), 'open_interest')) is not None}
 
 
 def batch_news(

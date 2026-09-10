@@ -901,7 +901,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE universe_members (id TEXT PRIMARY KEY);
         CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY);
-        CREATE TABLE funding_rate_snapshots (id TEXT PRIMARY KEY);
+        CREATE TABLE funding_rate_snapshots (id TEXT PRIMARY KEY, funding_rate_annualized REAL NOT NULL);
         CREATE TABLE collector_health_state (domain TEXT PRIMARY KEY);
         CREATE TABLE serenity_research_runs (
             id TEXT PRIMARY KEY,

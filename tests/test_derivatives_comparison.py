@@ -93,28 +93,28 @@ def test_public_replay_preserves_ownership_partial_failure_and_price_identity(mo
 def test_newer_comparison_rows_cannot_change_legacy_scalar_consumers(monkeypatch):
     from aletheia.server.routes.data import get_market_microstructure
     now = datetime.now(timezone.utc)
-    market = next(r for r in PUBLIC['results'] if r['venue']=='bitget')['market']
-    funding = derivatives._parse_funding('BTC/USDT','bitget', {'fundingRate':.001}).model_dump()
-    oi = derivatives._parse_oi('BTC/USDT','bitget', {'openInterestValue':1000000}).model_dump()
+    market = next(r for r in PUBLIC['results'] if r['venue']=='okx')['market']
+    funding = derivatives._parse_funding('BTC/USDT','okx', {'fundingRate':.001,'interval':'8h'},market=market).model_dump()
+    oi = derivatives._parse_oi('BTC/USDT','okx', {'openInterestValue':1000000,'info':{'oiUsd':1000000}},market=market).model_dump()
     repo.insert_collector_snapshot_batch(funding=[funding], open_interest=[oi])
     stamp = (now+timedelta(seconds=1)).isoformat()
     for row, family, writer in ((funding,'funding',repo.insert_funding_rate_snapshot),
                                 (oi,'open_interest',repo.insert_open_interest_snapshot)):
         newer = {**row, 'observed_at':stamp, 'acquired_at':stamp,
-            'derivatives_metadata_json':ccxt_metadata('BTC/USDT','bitget',market,{},family=family)}
+            'derivatives_metadata_json':ccxt_metadata('BTC/USDT','okx',market,{},family=family)}
         if family == 'funding':
             newer['funding_rate'] = .9
         else:
             newer['open_interest_usd'] = 9000000
         writer(comparison_row(newer))
     assert repo.latest_funding_rate('BTC/USDT')['funding_rate'] == .001
-    assert repo.latest_open_interest('BTC/USDT','bitget')['open_interest_usd'] == 1000000
-    assert repo.batch_funding_rates(['BTC/USDT'],'bitget')['BTC/USDT']['funding_rate'] == .001
-    assert repo.batch_open_interest(['BTC/USDT'],'bitget')['BTC/USDT']['open_interest_usd'] == 1000000
-    assert repo.open_interest_near('BTC/USDT','bitget', reference_at=now+timedelta(hours=1,seconds=1))['open_interest_usd'] == 1000000
-    telemetry = get_market_microstructure('BTC/USDT', exchange='bitget', market_type='perp')
+    assert repo.latest_open_interest('BTC/USDT','okx')['open_interest_usd'] == 1000000
+    assert repo.batch_funding_rates(['BTC/USDT'],'okx')['BTC/USDT']['funding_rate'] == .001
+    assert repo.batch_open_interest(['BTC/USDT'],'okx')['BTC/USDT']['open_interest_usd'] == 1000000
+    assert repo.open_interest_near('BTC/USDT','okx', reference_at=now+timedelta(hours=1,seconds=1))['open_interest_usd'] == 1000000
+    telemetry = get_market_microstructure('BTC/USDT', exchange='okx', market_type='perp')
     assert telemetry['funding_rate'] == .001 and telemetry['open_interest_usd'] == 1000000
-    assert read_derivatives_facts('BTC/USDT', venue='bitget')[0]['value'] == .9
+    assert read_derivatives_facts('BTC/USDT', venue='okx')[0]['value'] == .9
 
 
 def test_workset_uses_complete_registry_and_config_not_candidate_rank(monkeypatch):

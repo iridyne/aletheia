@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v81"
+SCHEMA_VERSION = "aletheia-sqlite-v82"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8226,6 +8226,24 @@ def _apply_derivatives_coverage_v81(db: sqlite3.Connection) -> None:
         db.execute(statement)
 
 
+
+def _apply_nullable_funding_annualization_v82(db: sqlite3.Connection) -> None:
+    """Relax only the carrier constraint; preserve every historical field and rowid."""
+    columns = db.execute('PRAGMA table_info(funding_rate_snapshots)').fetchall()
+    if not next(row[3] for row in columns if row[1] == 'funding_rate_annualized'):
+        return
+    ddl = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='funding_rate_snapshots'").fetchone()[0]
+    indexes = db.execute("SELECT sql FROM sqlite_master WHERE tbl_name='funding_rate_snapshots' AND type='index' AND sql IS NOT NULL").fetchall()
+    ddl = ddl.replace('funding_rate_snapshots', 'funding_rate_snapshots_nullable', 1)
+    ddl = ddl.replace('funding_rate_annualized REAL NOT NULL', 'funding_rate_annualized REAL')
+    db.execute(ddl)
+    names = ','.join('"'+row[1]+'"' for row in columns)
+    db.execute(f'INSERT INTO funding_rate_snapshots_nullable (rowid,{names}) SELECT rowid,{names} FROM funding_rate_snapshots')
+    db.execute('DROP TABLE funding_rate_snapshots')
+    db.execute('ALTER TABLE funding_rate_snapshots_nullable RENAME TO funding_rate_snapshots')
+    for row in indexes:
+        db.execute(row[0])
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8706,6 +8724,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256("\n".join(_DERIVATIVES_COVERAGE_SQL).encode()).hexdigest(),
         schema_version="aletheia-sqlite-v81",
         apply=_apply_derivatives_coverage_v81,
+    ),
+    MigrationStep(
+        migration_id="20260910_0081_nullable_funding_annualization_v82",
+        checksum=hashlib.sha256(b"nullable_funding_annualization_v82:preserve_history").hexdigest(),
+        schema_version="aletheia-sqlite-v82",
+        apply=_apply_nullable_funding_annualization_v82,
     ),
 )
 

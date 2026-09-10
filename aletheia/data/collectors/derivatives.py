@@ -24,7 +24,7 @@ from aletheia.data.models import (
     OpenInterestSnapshot,
 )
 from aletheia.data.freshness import MAX_FUTURE_SKEW
-from aletheia.data.derivatives_facts import ccxt_metadata
+from aletheia.data.derivatives_facts import ccxt_metadata, finite
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
@@ -148,13 +148,9 @@ class DerivativesCollector:
                         errors.append(f"oi {sym}: {e}")
                         logger.debug("OI fetch failed for %s: %s", sym, e)
 
-                # Capture mark price from funding so the OI parse can convert a
-                # coin/contract amount to USD when the venue omits
-                # openInterestValue (e.g. Binance/Bitget live OI).
-                mark_price = fr.get("markPrice") if fr else None
                 market = exchange.markets.get(perp_sym) or {}
                 if fr:
-                    snap = _parse_funding(sym, primary_name, fr)
+                    snap = _parse_funding(sym, primary_name, fr, market=market)
                     if snap:
                         snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, fr, family='funding', acquired_at=snap.acquired_at)
                         funding.append(snap)
@@ -170,7 +166,7 @@ class DerivativesCollector:
                         sym, primary_name, raw_oi,
                         lsr=(lsr_map.get(sym) or {}).get('value'),
                         top_position_ratio=(top_position_map.get(sym) or {}).get('value'),
-                        mark_price=mark_price,
+                        market=market,
                     )
                     if snap:
                         snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, raw_oi,
@@ -257,7 +253,7 @@ class DerivativesCollector:
                                     funding_map[markets[symbol]['symbol']] = raw
                         for symbol in funding_names:
                             raw = funding_map.get(markets[symbol]['symbol'])
-                            snap = _parse_funding(symbol, venue, {**raw, 'markPrice': None}) if raw else None
+                            snap = _parse_funding(symbol, venue, {**raw, 'markPrice': None}, market=markets[symbol]) if raw else None
                             if snap:
                                 snap.derivatives_metadata_json = ccxt_metadata(symbol, venue, markets[symbol], raw, family='funding', acquired_at=snap.acquired_at)
                                 result['funding'].append(comparison_row(snap.model_dump()))
@@ -438,17 +434,16 @@ def _to_perp_symbol(spot_symbol: str, exchange) -> str | None:
 
 
 def _parse_funding(
-    symbol: str, exchange: str, raw: dict
+    symbol: str, exchange: str, raw: dict, *, market: dict | None = None
 ) -> FundingRateSnapshot | None:
-    rate = _finite_float(raw.get("fundingRate"))
+    rate = finite(raw.get("fundingRate"))
     if rate is None:
         return None
-    annualized = rate * 3 * 365  # 8h intervals → annual
-    if not math.isfinite(annualized):
-        return None
+    from aletheia.data.derivatives_facts import annualize_funding, funding_interval_seconds
+    annualized = annualize_funding(rate, funding_interval_seconds(raw))
     next_time = raw.get("fundingDatetime") or raw.get("nextFundingDatetime")
     raw_mark = raw.get("markPrice")
-    mark = _finite_float(raw_mark) if raw_mark is not None else None
+    mark = finite(raw_mark) if raw_mark is not None else None
     if raw_mark is not None and (mark is None or mark <= 0):
         return None
     acquired_at = datetime.now(timezone.utc)
@@ -459,7 +454,8 @@ def _parse_funding(
             symbol=symbol,
             exchange=exchange,
             funding_rate=rate,
-            funding_rate_annualized=round(annualized, 4),
+            funding_rate_annualized=annualized,
+            derivatives_metadata_json=ccxt_metadata(symbol, exchange, market or {}, raw, family="funding", acquired_at=acquired_at.isoformat()),
             next_funding_time=str(next_time) if next_time else None,
             mark_price=mark,
             source_observed_at=source_observed_at,
@@ -469,22 +465,6 @@ def _parse_funding(
         )
     except ValueError:
         return None
-
-
-# OI-delta sanity ceiling. A legitimate 1h open-interest move is at most a few
-# tens of percent; anything larger is a data artifact — a stored-units
-# transition, a venue mismatch that slipped the exchange filter, or a
-# thin/relisted market. Drop it to None rather than feed a fake surge to the
-# derivatives/event scanners.
-_OI_DELTA_SANITY_PCT = 300.0
-
-
-def _finite_float(value: Any) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
 
 
 def provider_source_time(
@@ -518,91 +498,42 @@ def provider_source_time(
     return parsed.isoformat(), "provided"
 
 
-def extract_oi_usd(
-    raw: dict, mark_price: float | None = None
-) -> tuple[float, float | None] | None:
-    """Return ``(open_interest_usd, open_interest_coin)`` from a CCXT OI dict.
-
-    Prefer the exchange-reported USD notional (CCXT unified ``openInterestValue``,
-    e.g. OKX ``oiUsd``); fall back to coin/contract amount × mark price. Returns
-    None when neither is available, so callers store None rather than a
-    wrong-unit value. Single source of truth for the OI→USD rule shared by the
-    collector and the universe feature path.
-    """
-    raw_oi_amount = raw.get("openInterestAmount")
-    raw_oi_value_usd = raw.get("openInterestValue")
-    oi_amount = _finite_float(raw_oi_amount)
-    if raw_oi_amount is not None and (oi_amount is None or oi_amount < 0):
-        return None
-
-    if raw_oi_value_usd is not None:
-        oi_usd = _finite_float(raw_oi_value_usd)
-    elif oi_amount is not None:
-        mark = _finite_float(mark_price)
-        if mark is None or mark <= 0:
-            return None
-        oi_usd = _finite_float(oi_amount * mark)
-    else:
-        return None
-    if oi_usd is None or oi_usd < 0:
-        return None
-
-    oi_coin = oi_amount
-    info = raw.get("info", {})
-    if oi_coin is None and "sumOpenInterest" in info:
-        oi_coin = _finite_float(info["sumOpenInterest"])
-        if oi_coin is None or oi_coin < 0:
-            return None
-    return oi_usd, oi_coin
-
-
 def _parse_oi(
     symbol: str,
     exchange: str,
     raw: dict,
     lsr: float | None = None,
     top_position_ratio: float | None = None,
-    mark_price: float | None = None,
+    *, market: dict | None = None,
 ) -> OpenInterestSnapshot | None:
-    # Prefer the exchange-reported USD notional. Storing the raw amount as USD
-    # (the previous behaviour) was wrong by the asset price — ~660× on OKX BTC,
-    # where openInterestAmount is a contract count and openInterestValue (the
-    # true USD) was silently ignored.
-    extracted = extract_oi_usd(raw, mark_price)
-    if extracted is None:
-        return None  # cannot express in USD — honest None beats a wrong-unit value
-    oi_usd, oi_coin = extracted
+    from aletheia.data.derivatives_facts import open_interest_usd
+    metadata = ccxt_metadata(symbol, exchange, market or {}, raw, family='open_interest')
+    proof = json.loads(metadata)
+    oi_usd, reason = open_interest_usd(raw, instrument=proof['instrument'], value_unit=proof['oi_unit'])
+    if reason or oi_usd is None:
+        return None
+    # A CCXT amount is not a proved base quantity; do not relabel contracts as coins.
+    oi_coin = None
 
     # Binance positioning ratios are optional enrichment.  Invalid enrichment
     # must degrade to unavailable, never discard an otherwise valid venue OI
     # snapshot (MS-C01).
-    lsr = _finite_float(lsr)
+    lsr = finite(lsr)
     if lsr is not None and lsr < 0:
         lsr = None
-    top_position_ratio = _finite_float(top_position_ratio)
+    top_position_ratio = finite(top_position_ratio)
     if top_position_ratio is not None and top_position_ratio < 0:
         top_position_ratio = None
     acquired_at = datetime.now(timezone.utc)
     source_observed_at, source_time_status = provider_source_time(raw, acquired_at)
 
-    # TRUE ~1h change vs a snapshot ~1h ago on THIS venue — not the ~2-min
-    # previous tick (data_collectors runs every 2 min, so the old delta almost
-    # never cleared the scanner's 1h-calibrated thresholds), and not a
-    # foreign-venue row with different units (which fabricated ±100%–2500%
-    # deltas). open_interest_near returns None outside its age band, so a
-    # collector gap yields "no delta" instead of a bogus multi-hour jump.
-    oi_change_1h_pct = None
-    try:
-        from aletheia.storage.repositories import open_interest_near
-        prev = open_interest_near(symbol, exchange)
-        if prev and prev.get("open_interest_usd"):
-            prev_oi = float(prev["open_interest_usd"])
-            if prev_oi > 0:
-                delta = round((oi_usd - prev_oi) / prev_oi * 100, 2)
-                if abs(delta) <= _OI_DELTA_SANITY_PCT:
-                    oi_change_1h_pct = delta
-    except Exception:
-        pass
+    from aletheia.data.derivatives_facts import _open_interest_change, project_snapshot
+    current = dict(symbol=symbol, exchange=exchange, open_interest_usd=oi_usd,
+        derivatives_metadata_json=metadata, source_observed_at=source_observed_at,
+        acquired_at=acquired_at.isoformat(), source_time_status=source_time_status,
+        observed_at=source_observed_at or acquired_at.isoformat())
+    delta = _open_interest_change(current, project_snapshot(current, 'open_interest')[0], include_comparison=False)['value']
+    oi_change_1h_pct = delta*100 if delta is not None else None
 
     try:
         return OpenInterestSnapshot(
@@ -610,6 +541,7 @@ def _parse_oi(
             exchange=exchange,
             open_interest_usd=oi_usd,
             open_interest_coin=oi_coin,
+            derivatives_metadata_json=metadata,
             oi_change_1h_pct=oi_change_1h_pct,
             long_short_ratio=lsr,
             top_trader_position_ratio=top_position_ratio,
@@ -623,7 +555,7 @@ def _parse_oi(
 
 
 def _insert_historical_funding_snapshot(
-    sym: str, exchange_name: str, ts_ms: int, rate: float,
+    sym: str, exchange_name: str, ts_ms: int, rate: float, *, raw: dict | None = None, market: dict | None = None,
 ) -> int:
     """Store one observed historical rate; do not invent a subsequent settlement."""
     from aletheia.storage.repositories import _select_all, insert_funding_rate_snapshot, LEGACY_DERIVATIVES_WHERE
@@ -637,11 +569,11 @@ def _insert_historical_funding_snapshot(
     )
     if prior:
         return 0
-    snapshot = FundingRateSnapshot(
-        symbol=sym, exchange=exchange_name, funding_rate=rate,
-        funding_rate_annualized=round(rate * 3 * 365, 4),
-        next_funding_time=observed_at, mark_price=None, observed_at=observed_at,
-    )
+    snapshot = _parse_funding(sym, exchange_name,
+        {**(raw or {}), 'fundingRate':rate, 'timestamp':ts_ms}, market=market)
+    if snapshot is None:
+        return 0
+    snapshot.next_funding_time = observed_at
     insert_funding_rate_snapshot(snapshot.model_dump())
     return 1
 
@@ -668,26 +600,26 @@ async def _maybe_backfill_funding_history(
         if errors is not None:
             errors.append(f"funding_history {sym}: {e}")
         return 0, False
-    valid_items: list[tuple[int, float]] = []
+    valid_items: list[tuple[int, float, dict]] = []
     invalid_found = False
     for item in history:
         raw_ts = item.get("timestamp")
         raw_rate = item.get("fundingRate")
-        ts = _finite_float(raw_ts)
-        rate = _finite_float(raw_rate)
-        annualized = _finite_float(rate * 3 * 365) if rate is not None else None
-        if ts is None or ts <= 0 or rate is None or annualized is None:
+        ts = finite(raw_ts)
+        rate = finite(raw_rate)
+        if ts is None or ts <= 0 or rate is None:
             invalid_found = True
             continue
-        valid_items.append((int(ts), rate))
+        valid_items.append((int(ts), rate, item))
     if invalid_found:
         code = f"funding_history_invalid {sym}"
         if errors is not None and code not in errors:
             errors.append(code)
     valid_items.sort(key=lambda item: item[0])
     n = 0
-    for ts_ms, rate in valid_items:
-        n += _insert_historical_funding_snapshot(sym, exchange_name, ts_ms, rate)
+    for ts_ms, rate, raw in valid_items:
+        n += _insert_historical_funding_snapshot(sym, exchange_name, ts_ms, rate,
+            raw=raw, market=(getattr(exchange, 'markets', {}) or {}).get(perp_sym))
     return n, False
 
 
@@ -720,7 +652,7 @@ async def _maybe_backfill_oi_history(
     n = 0
     for item in history:
         raw_ts = item.get("timestamp")
-        ts = _finite_float(raw_ts)
+        ts = finite(raw_ts)
         if ts is None or ts <= 0:
             if raw_ts is not None:
                 code = f"oi_history_invalid {sym}"
@@ -730,13 +662,16 @@ async def _maybe_backfill_oi_history(
         # Store USD, consistent with the live path. History rows on OKX/Binance
         # carry openInterestValue (USD); if a venue omits it we skip rather than
         # persist a coin/contract amount as USD and mix units within the table.
-        extracted = extract_oi_usd(item)
-        if extracted is None:
+        from aletheia.data.derivatives_facts import open_interest_usd
+        metadata = ccxt_metadata(sym, exchange_name, exchange.markets.get(perp_sym) or {}, item, family='open_interest')
+        proof = json.loads(metadata)
+        oi_usd, reason = open_interest_usd(item, instrument=proof['instrument'], value_unit=proof['oi_unit'])
+        if reason or oi_usd is None:
             code = f"oi_history_invalid {sym}"
             if errors is not None and code not in errors:
                 errors.append(code)
             continue
-        oi_usd, oi_coin = extracted
+        oi_coin = None
         observed = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat()
         prior = _select_all(
             "open_interest_snapshots",
@@ -753,6 +688,8 @@ async def _maybe_backfill_oi_history(
             long_short_ratio=None,
             top_trader_position_ratio=None,
             observed_at=observed,
+            source_observed_at=observed, acquired_at=datetime.now(timezone.utc).isoformat(),
+            source_time_status="provided", derivatives_metadata_json=metadata,
         )
         insert_open_interest_snapshot(snap.model_dump())
         n += 1
@@ -775,7 +712,7 @@ async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, 
                         return
                     items = resp.json()
                     if isinstance(items, list) and items:
-                        ratio = _finite_float(items[0].get("longShortRatio"))
+                        ratio = finite(items[0].get("longShortRatio"))
                         if ratio is not None and ratio > 0:
                             acquired = datetime.now(timezone.utc)
                             source, status = provider_source_time(items[0], acquired)

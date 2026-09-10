@@ -111,6 +111,7 @@ def test_new_provenance_survives_dedup_without_rewriting_legacy():
     clock = datetime.now(timezone.utc)
     raw = {"fundingRate": 0.001, "interval": "1h", "timestamp": int(clock.timestamp() * 1000)}
     snapshot = derivatives._parse_funding("BTC/USDT", "okx", raw).model_dump()
+    snapshot["derivatives_metadata_json"] = None
     repo.insert_funding_rate_snapshot(snapshot)
     legacy = repo.latest_funding_rate("BTC/USDT", exchange="okx")
     assert (
@@ -122,7 +123,8 @@ def test_new_provenance_survives_dedup_without_rewriting_legacy():
     repo.insert_funding_rate_snapshot(snapshot)
     current = repo._select_all("funding_rate_snapshots", order="rowid DESC", limit=1)[0]
     assert current["id"] != legacy["id"]
-    assert current["funding_rate_annualized"] == legacy["funding_rate_annualized"]
+    assert legacy["funding_rate_annualized"] is None
+    assert current["funding_rate_annualized"] == pytest.approx(8.76)
     projected = facts().read_derivatives_facts("BTC/USDT", venue="okx", now=clock)[0]
     assert projected["availability"] == "available"
     assert projected["interval_seconds"] == 3600
