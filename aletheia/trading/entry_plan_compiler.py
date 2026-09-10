@@ -4,25 +4,15 @@ from __future__ import annotations
 
 import math
 import hashlib
-from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from aletheia.risk.policy import UnknownRiskExecutionMode, resolve_risk_policy
 from aletheia.trading.entry_plan import EntryPlan, SIDEWAYS_STOP_MULT
 from aletheia.trading.instruments import get_max_leverage
-from aletheia.trading.momentum_entry_geometry import (
-    MomentumEntryGeometry,
-    MomentumGeometryUnavailable,
-    compile_momentum_entry_geometry,
-)
-from aletheia.trading.trigger_specs import (
-    require_compatible_trigger_spec,
-    require_registered_trigger_spec,
-)
 
 if TYPE_CHECKING:
-    from aletheia.agent_shell.entry_planner import PlanIntent
+    from aletheia.trading.entry_analysis import EntryHypothesis
 
 
 _RISK_REWARD_TARGET = {"LOW": 1.5, "MEDIUM": 2.5}
@@ -30,7 +20,6 @@ _RISK_TIER_LEVERAGE_CAP = {"LOW": 2, "MEDIUM": 3}
 _RISK_TIER_MAX_RISK_PCT = {"LOW": 0.5, "MEDIUM": 1.0}
 _HORIZON_HOURS = {"INTRADAY": 4.0, "SWING": 24.0}
 _HORIZON_LIFETIME_MINUTES = {"INTRADAY": 60, "SWING": 240}
-_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 
 
 def _number(value: Any, code: str, *, positive: bool = False) -> float:
@@ -67,63 +56,21 @@ def _stop_reference(feature: dict, cfg) -> tuple[float, float]:
     return atr_pct, vol_target_pct
 
 
-def _require_trigger(
-    intent: "PlanIntent",
-    candidate_family: str,
-    entry_zone: tuple[float, float],
-    stop_price: float,
-    entry_price: float,
-    *,
-    geometry: MomentumEntryGeometry | None = None,
-):
-    spec_id = str(intent.trigger_spec_id)
-    if spec_id == _MOMENTUM_GEOMETRY_TRIGGER:
-        if geometry is None:
-            raise _intent_error("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
-        try:
-            return require_registered_trigger_spec(spec_id, geometry.trigger_params())
-        except ValueError as exc:
-            raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
-
-    try:
-        contract = require_compatible_trigger_spec(candidate_family, spec_id)
-    except ValueError as exc:
-        code = (
-            "NO_COMPATIBLE_TRIGGER_SPEC"
-            if str(exc) == "trigger_spec_candidate_family_unsupported"
-            else "UNSUPPORTED_TRIGGER_SPEC"
-        )
-        raise _intent_error(code) from exc
-    raw_params = {
-        "breakout_level": entry_price,
-        "pullback_low": entry_zone[0],
-        "pullback_high": entry_zone[1],
-        "entry_low": entry_zone[0],
-        "entry_high": entry_zone[1],
-        "invalidation_price": stop_price,
-    }
-    try:
-        return contract, contract.validate_params(raw_params)
-    except ValueError as exc:
-        raise _intent_error("COMPILER_TRIGGER_PARAMS_INVALID", str(exc)) from exc
-
-
 def _compile_bounded_risk_envelope(
     generation: dict,
     candidate: dict,
     feature: dict,
-    intent: "PlanIntent",
+    hypothesis: "EntryHypothesis",
     cfg,
     *,
-    candles: Sequence[Mapping[str, Any]] | None = None,
     now: datetime | None = None,
 ) -> EntryPlan:
-    """Compile deterministic plan facts; v2 requires an explicit causal candle snapshot."""
+    """Compute the existing conservative risk envelope for canonical compilation."""
 
     from aletheia.agent_shell.entry_planner import PlanIntentError
 
     try:
-        if intent.decision != "ENTRY_PLAN":
+        if hypothesis.decision != "ENTRY_PLAN":
             raise PlanIntentError("COMPILER_ENTRY_INTENT_REQUIRED")
         raw_market_type = generation.get("market_type")
         if raw_market_type not in {"spot", "perp"}:
@@ -133,26 +80,9 @@ def _compile_bounded_risk_envelope(
         if raw_direction not in {"long", "short"}:
             raise PlanIntentError("COMPILER_DIRECTION_INVALID")
         direction = cast(Literal["long", "short"], raw_direction)
-        if intent.execution_mode not in {"RESTING_MAKER", "TRIGGERED"}:
-            raise PlanIntentError("COMPILER_EXECUTION_MODE_INVALID")
-        execution_mode = cast(
-            Literal["RESTING_MAKER", "TRIGGERED"],
-            intent.execution_mode,
-        )
-        tactic_pair = (execution_mode, intent.order_tactic)
-        if tactic_pair not in {
-            ("RESTING_MAKER", "POST_ONLY_LIMIT"),
-            ("TRIGGERED", "POST_ONLY_LIMIT"),
-            ("TRIGGERED", "OPPOSING_BBO_IOC"),
-        }:
-            raise PlanIntentError("COMPILER_TACTIC_INVALID")
-        order_tactic = cast(
-            Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"],
-            intent.order_tactic,
-        )
-        if intent.risk_tier not in _RISK_REWARD_TARGET:
+        if hypothesis.risk_tier not in _RISK_REWARD_TARGET:
             raise PlanIntentError("COMPILER_RISK_TIER_INVALID")
-        if intent.horizon not in _HORIZON_HOURS:
+        if hypothesis.horizon not in _HORIZON_HOURS:
             raise PlanIntentError("COMPILER_HORIZON_INVALID")
 
         try:
@@ -161,100 +91,22 @@ def _compile_bounded_risk_envelope(
             raise PlanIntentError("STALE_CANDIDATE_PRICE") from exc
 
         current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[intent.horizon])
-        treatment_exposure_id: str | None = None
-        selected_geometry: MomentumEntryGeometry | None = None
-        candidate_key = candidate.get("learning_candidate_key")
-        execution_account_mode = str(cfg.exchange.paper_execution_mode)
-        is_baseline_momentum = (
-            execution_mode == "TRIGGERED"
-            and generation.get("candidate_family") == "momentum"
-            and str(intent.trigger_spec_id) == "momentum-retrace-reclaim"
-        )
-        if is_baseline_momentum and execution_account_mode == "bitget_demo" and candidate_key:
-            geometry_error: str | None = None
-            if candles is None:
-                geometry_error = "momentum_candles_missing"
-            else:
-                try:
-                    selected_geometry = compile_momentum_entry_geometry(
-                        candidate=candidate,
-                        feature=feature or {},
-                        candles=candles,
-                        direction=direction,
-                        minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
-                        source_cutoff_at=current,
-                        valid_until=expires,
-                    )
-                except MomentumGeometryUnavailable as exc:
-                    geometry_error = str(exc)
-            from aletheia.learning.experiments import apply_numeric_treatment
-
-            decision = apply_numeric_treatment(
-                path_id="momentum_entry_geometry",
-                scope={"candidate_family": "momentum", "execution_mode": "paper"},
-                action={"trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER},
-                source_cohort="exact-momentum-candidate/v1",
-                target_horizon="4h",
-                candidate_key=str(candidate_key),
-                baseline=0.0,
-                treatment=1.0 if selected_geometry is not None else 0.0,
-                consumer="entry_plan_compiler",
-                consumer_stage="entry_geometry",
-                outcome_candidate_key=f"{candidate_key}:4h",
-                manifest={
-                    "candidate_id": generation["last_candidate_id"],
-                    "control": "momentum-retrace-reclaim",
-                    "treatment": _MOMENTUM_GEOMETRY_TRIGGER,
-                    "geometry_available": selected_geometry is not None,
-                    "unavailable_reason": geometry_error,
-                },
-            )
-            treatment_exposure_id = decision.exposure_id
-            if selected_geometry is not None and decision.value == 1.0:
-                intent = intent.model_copy(
-                    update={"trigger_spec_id": _MOMENTUM_GEOMETRY_TRIGGER}
-                )
-
-        geometry: MomentumEntryGeometry | None = selected_geometry
-        if (
-            execution_mode == "TRIGGERED"
-            and str(intent.trigger_spec_id) == _MOMENTUM_GEOMETRY_TRIGGER
-        ):
-            if geometry is None:
-                if candles is None:
-                    raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", "momentum_candles_missing")
-                try:
-                    geometry = compile_momentum_entry_geometry(
-                        candidate=candidate,
-                        feature=feature or {},
-                        candles=candles,
-                        direction=direction,
-                        minimum_risk_reward=_RISK_REWARD_TARGET[intent.risk_tier],
-                        source_cutoff_at=current,
-                        valid_until=expires,
-                    )
-                except MomentumGeometryUnavailable as exc:
-                    raise PlanIntentError("COMPILER_GEOMETRY_UNAVAILABLE", str(exc)) from exc
-            entry_zone = geometry.entry_zone
-            stop_price = geometry.stop_price
-            target_price = geometry.target_price
+        expires = current + timedelta(minutes=_HORIZON_LIFETIME_MINUTES[hypothesis.horizon])
+        atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
+        stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
+        if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
+            raise PlanIntentError("NO_STOP_REFERENCE")
+        if direction == "long":
+            stop_price = candidate_price * (1.0 - stop_distance_pct / 100.0)
+            target_price = candidate_price + _RISK_REWARD_TARGET[hypothesis.risk_tier] * (candidate_price - stop_price)
         else:
-            atr_pct, vol_target_pct = _stop_reference(feature or {}, cfg)
-            stop_distance_pct = max(vol_target_pct, atr_pct) * SIDEWAYS_STOP_MULT
-            if not math.isfinite(stop_distance_pct) or stop_distance_pct <= 0:
-                raise PlanIntentError("NO_STOP_REFERENCE")
-            if direction == "long":
-                stop_price = candidate_price * (1.0 - stop_distance_pct / 100.0)
-                target_price = candidate_price + _RISK_REWARD_TARGET[intent.risk_tier] * (candidate_price - stop_price)
-            else:
-                stop_price = candidate_price * (1.0 + stop_distance_pct / 100.0)
-                target_price = candidate_price - _RISK_REWARD_TARGET[intent.risk_tier] * (stop_price - candidate_price)
-            band_pct = 0.5 * vol_target_pct
-            entry_zone = (
-                candidate_price * (1.0 - band_pct / 100.0),
-                candidate_price * (1.0 + band_pct / 100.0),
-            )
+            stop_price = candidate_price * (1.0 + stop_distance_pct / 100.0)
+            target_price = candidate_price - _RISK_REWARD_TARGET[hypothesis.risk_tier] * (stop_price - candidate_price)
+        band_pct = 0.5 * vol_target_pct
+        entry_zone = (
+            candidate_price * (1.0 - band_pct / 100.0),
+            candidate_price * (1.0 + band_pct / 100.0),
+        )
 
         execution_account_mode = str(cfg.exchange.paper_execution_mode)
         try:
@@ -270,11 +122,11 @@ def _compile_bounded_risk_envelope(
         except Exception as exc:
             raise PlanIntentError("COMPILER_LEVERAGE_UNAVAILABLE") from exc
         max_leverage = (
-            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[intent.risk_tier])
+            1 if market_type == "spot" else min(venue_leverage_cap, _RISK_TIER_LEVERAGE_CAP[hypothesis.risk_tier])
         )
         max_risk_pct = min(
             float(policy.loss.max_single_trade_risk_pct),
-            _RISK_TIER_MAX_RISK_PCT[intent.risk_tier],
+            _RISK_TIER_MAX_RISK_PCT[hypothesis.risk_tier],
         )
         try:
             from aletheia.risk.engine import (
@@ -310,24 +162,6 @@ def _compile_bounded_risk_envelope(
         if max_leverage < 1 or max_risk_pct <= 0 or max_notional <= 0:
             raise PlanIntentError("COMPILER_RISK_LIMIT_INVALID")
 
-        maker = order_tactic == "POST_ONLY_LIMIT"
-        trigger_spec_id = None
-        trigger_params: dict = {}
-        trigger_requirements: tuple[str, ...] = ()
-        trigger_freshness_ms = None
-        if execution_mode == "TRIGGERED":
-            raise PlanIntentError("CURRENT_COMPILER_TRIGGER_ROUTE_INVALID")
-
-        plan_entry_price = (
-            (entry_zone[0] + entry_zone[1]) / 2.0
-            if geometry is not None
-            else candidate_price
-        )
-        taker_worst_price = (
-            entry_zone[1] if direction == "long" else entry_zone[0]
-        ) if geometry is not None else (
-            candidate_price * (1.002 if direction == "long" else 0.998)
-        )
         try:
             return EntryPlan.model_construct(
                 planning_generation_id=generation["id"],
@@ -337,35 +171,35 @@ def _compile_bounded_risk_envelope(
                 symbol=generation["symbol"],
                 market_type=market_type,
                 direction=direction,
-                thesis=intent.thesis,
-                evidence_refs=tuple(intent.evidence_refs),
-                scenario=intent.scenario,
-                execution_mode=execution_mode,
-                trigger_spec_id=trigger_spec_id,
-                trigger_params=trigger_params,
-                trigger_data_requirements=trigger_requirements,
-                trigger_freshness_ms=trigger_freshness_ms,
+                thesis=f"{hypothesis.mechanism} grounded entry",
+                evidence_refs=tuple(hypothesis.supporting_fact_refs),
+                scenario=str(hypothesis.entry_profile_id),
+                execution_mode="RESTING_MAKER",
+                trigger_spec_id=None,
+                trigger_params={},
+                trigger_data_requirements=(),
+                trigger_freshness_ms=None,
                 entry_zone=entry_zone,
                 invalidation_conditions=(("close_below_stop",) if direction == "long" else ("close_above_stop",)),
                 invalidation_price=stop_price,
                 stop_price=stop_price,
                 target_price=target_price,
-                expected_horizon_hours=_HORIZON_HOURS[intent.horizon],
+                expected_horizon_hours=_HORIZON_HOURS[hypothesis.horizon],
                 approved_at=current.isoformat(),
                 expires_at=expires.isoformat(),
-                order_tactic=order_tactic,
-                maker_required=maker,
-                time_in_force="POST_ONLY" if maker else "IOC",
-                limit_price=plan_entry_price if maker else None,
-                price_rule="EXACT_LIMIT" if maker else "OPPOSING_BBO",
-                bbo_reference=None if maker else ("ask" if direction == "long" else "bid"),
-                max_wait_sec=60 if maker else 0,
+                order_tactic="POST_ONLY_LIMIT",
+                maker_required=True,
+                time_in_force="POST_ONLY",
+                limit_price=candidate_price,
+                price_rule="EXACT_LIMIT",
+                bbo_reference=None,
+                max_wait_sec=60,
                 cancel_replace_policy="CANCEL_ONLY",
                 max_requotes=0,
                 partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
                 taker_fallback_allowed=False,
-                max_slippage_bps=None if maker else 20.0,
-                worst_price=None if maker else taker_worst_price,
+                max_slippage_bps=None,
+                worst_price=None,
                 max_notional=max_notional,
                 max_risk_pct=max_risk_pct,
                 max_leverage=max_leverage,
@@ -374,7 +208,7 @@ def _compile_bounded_risk_envelope(
                 risk_policy_id=str(policy.policy_id),
                 risk_policy_revision=int(policy.revision),
                 risk_policy_hash=resolved_policy.policy_hash,
-                treatment_exposure_id=treatment_exposure_id,
+                treatment_exposure_id=None,
             )
         except ValueError as exc:
             raise PlanIntentError(f"COMPILER_GEOMETRY_UNSATISFIABLE:{str(exc)[:100]}") from exc
@@ -386,7 +220,7 @@ def _compile_bounded_risk_envelope(
 
 def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
-    from aletheia.agent_shell.entry_planner import PlanIntent, PlanIntentError
+    from aletheia.agent_shell.entry_planner import PlanIntentError
     from aletheia.trading.entry_analysis import (
         canonical_json,
         fingerprint,
@@ -505,17 +339,8 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
             {key: value for key, value in trigger_params.items() if key != "geometry_fingerprint"}
         )
         geometry_material["trigger_params"] = trigger_params
-    thesis = f"{hypothesis.mechanism} grounded entry"
-    scenario = str(hypothesis.entry_profile_id)
-    synthetic = PlanIntent(
-        decision="ENTRY_PLAN", reason_code="OK", thesis=thesis,
-        scenario=scenario, evidence_refs=list(hypothesis.supporting_fact_refs),
-        execution_mode="RESTING_MAKER", order_tactic="POST_ONLY_LIMIT",
-        trigger_spec_id=None,
-        risk_tier=hypothesis.risk_tier, horizon=hypothesis.horizon,
-    )
     base = _compile_bounded_risk_envelope(
-        frozen_generation, frozen_candidate, frozen_feature, synthetic, cfg
+        frozen_generation, frozen_candidate, frozen_feature, hypothesis, cfg
     )
     old_entry = base.entry_zone[1] if direction == "long" else base.entry_zone[0]
     old_fraction = abs(old_entry - base.stop_price) / old_entry
@@ -528,9 +353,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     else:
         raise PlanIntentError("EXECUTION_URGENCY_INVALID")
     bid, ask = float(context.execution_context["bid"]), float(context.execution_context["ask"])
+    if not all(math.isfinite(value) and value > 0 for value in (bid, ask)) or ask < bid:
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
     limit_price = primary.price if maker else None
-    if maker and ((direction == "long" and primary.price >= ask) or (direction == "short" and primary.price <= bid)):
-        raise PlanIntentError("POST_ONLY_WOULD_CROSS")
+    # Frozen BBO is context, not future submission authority. The fixed passive
+    # price waits for current-BBO eligibility in the existing execution boundary.
     hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
     source = context.candidate_opportunity_context["source"]
     updates = {

@@ -7603,17 +7603,41 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
             batch = keys[offset:offset + 200]
             placeholders = ",".join("?" for _ in batch)
             rows = [dict(row) for row in get_db().execute(
-                "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
+                "SELECT pg.*, ep.id AS linked_entry_plan_id, ep.status AS entry_plan_status, "
                 "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
                 "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
-                "ep.terminal_reason AS entry_plan_terminal_reason "
+                "ep.terminal_reason AS entry_plan_terminal_reason, "
+                "ep.monitoring_state AS entry_plan_monitoring_state, ep.monitoring_evidence_json, "
+                "ep.trigger_activation_id, ta.created_at AS activation_created_at, "
+                "ta.expires_at AS activation_expires_at, ta.activation_json "
                 "FROM candidate_planning_generations pg "
                 "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
+                "LEFT JOIN entry_trigger_activations ta ON ta.id=ep.trigger_activation_id "
                 f"WHERE pg.planning_key IN ({placeholders}) ORDER BY pg.cycle_number,pg.created_at,pg.id",
                 batch,
             )]
+            for row in rows:
+                row["entry_plan_id"] = row.pop("linked_entry_plan_id")
+            activation_history: dict[str, list[dict]] = {}
+            for activation in get_db().execute(
+                "SELECT ta.plan_id, ta.created_at FROM entry_trigger_activations ta "
+                "JOIN entry_plans ep ON ep.id=ta.plan_id "
+                "JOIN candidate_planning_generations pg ON pg.id=ep.planning_generation_id "
+                f"WHERE pg.planning_key IN ({placeholders}) ORDER BY ta.created_at,ta.id", batch,
+            ):
+                activation_history.setdefault(activation["plan_id"], []).append(dict(activation))
             lineage = get_entry_plan_execution_lineage([row["entry_plan_id"] for row in rows if row.get("entry_plan_id")])
             for row in rows:
+                monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+                row["passive_entry"] = monitoring.get("passive_entry")
+                row["monitoring_changed_at"] = monitoring.get("state_changed_at")
+                row["activation_history"] = activation_history.get(row.get("entry_plan_id"), [])
+                if row.get("entry_plan_status") in {"triggered", "risk_reserved"}:
+                    row["activation_recoverable"] = entry_plan_activation_can_refresh(row["entry_plan_id"])
+                    snapshot = json.loads(row.get("activation_json") or "{}").get("snapshot", {})
+                    row["activation_stream_current"] = (monitoring.get("state") == "ready"
+                        and snapshot.get("stream_generation_id") == monitoring.get("stream_generation_id")
+                        and snapshot.get("subscription_generation_id") == monitoring.get("subscription_generation_id"))
                 row["execution"] = lineage.get(row.get("entry_plan_id"))
                 result[row["planning_key"]].append(row)
     return result
@@ -7944,6 +7968,13 @@ def ensure_candidate_planning_generation(
             and (
                 existing_plan.get("status") in {"ordered", "partially_filled"}
                 or get_db().execute(
+                    "SELECT 1 FROM trade_proposals p LEFT JOIN proposal_execution_claims c ON c.proposal_id=p.id "
+                    "WHERE p.entry_plan_id=? AND (c.lease_expires_at>? "
+                    "OR p.status IN ('executing','submission_unknown','materialization_missing') "
+                    "OR (p.status='executed' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id))) LIMIT 1",
+                    (existing_plan["id"], timestamp),
+                ).fetchone()
+                or get_db().execute(
                     "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
                     "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
                     "'submission_unknown','materialization_missing') OR "
@@ -8219,6 +8250,7 @@ def claim_next_candidate_planning(
     lease_seconds: int = 300,
     max_attempts: int = 3,
     now: datetime | None = None,
+    resume_only: bool = False,
 ) -> dict | None:
     """CAS one current generation; duplicate wakes return no second owner."""
 
@@ -8234,6 +8266,7 @@ def claim_next_candidate_planning(
                 "JOIN universe_members um ON um.id=pg.last_candidate_id "
                 "WHERE pg.is_current=1 AND pg.attention_status='active' "
                 "AND pg.entry_behavior_fingerprint IS NOT NULL "
+                "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
                 "AND um.execution_eligible=1 "
                 "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
                 "AND pg.attempt_count<? AND (pg.status='pending' "
@@ -8242,7 +8275,7 @@ def claim_next_candidate_planning(
                 "OR (pg.status='planning' AND pg.claim_expires_at<=?)) "
                 "ORDER BY CASE WHEN um.rank IS NULL THEN 1 ELSE 0 END, um.rank ASC, "
                 "pg.created_at ASC, pg.id ASC LIMIT 1",
-                (timestamp, timestamp, max_attempts, timestamp, timestamp),
+                (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
             )
             .fetchone()
         )
@@ -8502,6 +8535,7 @@ def count_pending_candidate_planning(
     max_attempts: int = 3,
     *,
     now: datetime | None = None,
+    resume_only: bool = False,
 ) -> int:
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
@@ -8513,12 +8547,13 @@ def count_pending_candidate_planning(
             "JOIN universe_members um ON um.id=pg.last_candidate_id "
             "WHERE pg.is_current=1 AND pg.attention_status='active' "
             "AND pg.entry_behavior_fingerprint IS NOT NULL "
+            "AND (?=0 OR pg.validated_hypothesis_json IS NOT NULL) "
             "AND um.execution_eligible=1 "
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? "
             "AND pg.attempt_count<? AND (pg.status='pending' "
             "OR (pg.status='unavailable' AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
             "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
-            (timestamp, timestamp, max_attempts, timestamp, timestamp),
+            (resume_only, timestamp, timestamp, max_attempts, timestamp, timestamp),
         )
         .fetchone()
     )
@@ -8803,6 +8838,36 @@ def bind_candidate_planner_input(
     return updated.rowcount == 1
 
 
+def bind_candidate_planning_hypothesis(
+    generation_id: str, owner_token: str, payload: str,
+    *, now: datetime | None = None,
+) -> bool:
+    """Checkpoint one validated model result under the existing claim and frozen input."""
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint, validate_hypothesis_references
+
+    generation = get_candidate_planning_generation(generation_id)
+    if generation is None or not generation.get("planner_input_json"):
+        return False
+    context = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
+    if fingerprint(context.model_dump(mode="json")) != generation["planner_input_hash"]:
+        raise ValueError("planner_input_hash_mismatch")
+    hypothesis = EntryHypothesis.model_validate_json(payload)
+    validate_hypothesis_references(hypothesis, context)
+    payload = canonical_json(hypothesis.model_dump(mode="json"))
+    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+    updated = execute_write(
+        "UPDATE candidate_planning_generations SET validated_hypothesis_json=?, "
+        "last_stage='hypothesis_validated', updated_at=? "
+        "WHERE id=? AND is_current=1 AND status='planning' AND owner_token=? "
+        "AND attention_status='active' AND planner_input_hash=? "
+        "AND claim_expires_at>? AND soft_expires_at>? AND hard_expires_at>? "
+        "AND (validated_hypothesis_json IS NULL OR validated_hypothesis_json=?)",
+        (payload, timestamp, generation_id, owner_token, generation["planner_input_hash"],
+         timestamp, timestamp, timestamp, payload),
+    )
+    return updated.rowcount == 1
+
+
 def complete_candidate_planning_with_plan(
     generation_id: str,
     owner_token: str,
@@ -8849,6 +8914,9 @@ def complete_candidate_planning_with_plan(
             return "stale", None
         if row["status"] != "planning":
             return "claim_lost", None
+        if (row["validated_hypothesis_json"] is not None
+            and plan.entry_hypothesis_json != row["validated_hypothesis_json"]):
+            raise ValueError("entry_plan_hypothesis_checkpoint_mismatch")
         if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
             from aletheia.trading.entry_contract import entry_contract_fingerprints
@@ -9229,6 +9297,68 @@ def has_current_entry_plan_for_instrument(venue: str, symbol: str, market_type: 
     return row is not None
 
 
+def get_entry_trigger_activation(activation_id: str) -> dict | None:
+    row = get_db().execute("SELECT * FROM entry_trigger_activations WHERE id=?", (activation_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def entry_plan_activation_can_refresh(plan_id: str) -> bool:
+    """A new trigger can refresh an unsubmitted intent, never an exchange handoff."""
+    proposal = get_trade_proposal_by_entry_plan(plan_id)
+    return proposal is None or (proposal["status"] in {"pending", "approved"}
+        and get_proposal_execution_claim(proposal["id"]) is None
+        and not has_order_for_proposal(proposal["id"]))
+
+
+def bind_entry_trigger_activation(activation, *, expected_activation_id: str | None, now: datetime | None = None) -> bool:
+    """Watcher-owned CAS: retain immutable proof before making the Plan executable."""
+    from aletheia.execution.entry_plan_execution import require_entry_plan_runtime_authority
+    from aletheia.trading.entry_activation import EntryTriggerActivationV1
+    from aletheia.trading.entry_compat import decode_entry_plan
+
+    activation = EntryTriggerActivationV1.model_validate(activation)
+    with transaction(immediate=True):
+        now = now or datetime.now(timezone.utc)
+        row = get_entry_plan(activation.plan_id)
+        if row is None or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
+            return False
+        if not entry_plan_activation_can_refresh(activation.plan_id):
+            return False
+        plan = decode_entry_plan(row["plan_json"])
+        require_entry_plan_runtime_authority(plan)
+        activation.require_valid(plan, now=now)
+        if row["plan_hash"] != activation.plan_hash:
+            raise ValueError("entry_plan_hash_mismatch")
+        if row.get("trigger_activation_id") != expected_activation_id:
+            persisted = get_entry_trigger_activation(activation.activation_id)
+            return (row.get("trigger_activation_id") == activation.activation_id
+                    and persisted is not None and persisted["activation_hash"] == activation.activation_hash)
+        monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+        snapshot = activation.snapshot
+        if (row.get("monitoring_state") != "ready"
+            or monitoring.get("stream_generation_id") != snapshot.stream_generation_id
+            or monitoring.get("subscription_generation_id") != snapshot.subscription_generation_id):
+            raise ValueError("entry_trigger_activation_monitoring_mismatch")
+        if expected_activation_id:
+            previous = EntryTriggerActivationV1.model_validate_json(
+                get_entry_trigger_activation(expected_activation_id)["activation_json"])
+            if (datetime.fromisoformat(previous.expires_at) > now
+                and previous.snapshot.stream_generation_id == snapshot.stream_generation_id
+                and previous.snapshot.subscription_generation_id == snapshot.subscription_generation_id):
+                return False
+        execute_write("INSERT INTO entry_trigger_activations "
+            "(id,plan_id,activation_hash,activation_json,created_at,expires_at) VALUES (?,?,?,?,?,?)",
+            (activation.activation_id, activation.plan_id, activation.activation_hash,
+             activation.model_dump_json(), activation.created_at, activation.expires_at))
+        updated = execute_write("UPDATE entry_plans SET trigger_activation_id=?, "
+            "status=CASE WHEN status='waiting' THEN 'triggered' ELSE status END,updated_at=? "
+            "WHERE id=? AND trigger_activation_id IS ? AND status IN ('waiting','triggered','risk_reserved')",
+            (activation.activation_id, now.isoformat(), activation.plan_id, expected_activation_id))
+        if updated.rowcount != 1:
+            raise ValueError("entry_trigger_activation_claim_lost")
+        return True
+
+
 def transition_entry_plan(
     plan_id: str,
     *,
@@ -9271,11 +9401,13 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
 
     def signature(value: dict) -> tuple:
         channels = value.get("channels") if isinstance(value.get("channels"), dict) else {}
+        passive = value.get("passive_entry") or {}
         return (
             value.get("state"),
             value.get("stream_generation_id"),
             value.get("subscription_generation_id"),
             tuple(value.get("required_channels") or ()),
+            passive.get("eligible"), passive.get("ever_eligible"),
             tuple(
                 (name, facts.get("state"), facts.get("reason"))
                 for name, facts in sorted(channels.items())
@@ -9287,8 +9419,17 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
         existing = json.loads(row.get("monitoring_evidence_json") or "null")
     except (TypeError, json.JSONDecodeError):
         existing = None
+    previous_passive = existing.get("passive_entry", {}) if isinstance(existing, dict) else {}
+    if "passive_entry" in evidence:
+        passive = evidence["passive_entry"]
+        evidence = {**evidence, "passive_entry": {**passive,
+            "ever_eligible": bool(previous_passive.get("ever_eligible") or passive["eligible"]),
+        }}
+    elif previous_passive:
+        evidence = {**evidence, "passive_entry": previous_passive}
     if isinstance(existing, dict) and signature(existing) == signature(evidence):
         return False
+    evidence = {**evidence, "state_changed_at": datetime.now(timezone.utc).isoformat()}
     payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))
     execute_write(
         "UPDATE entry_plans SET monitoring_state=?, monitoring_evidence_json=?, "

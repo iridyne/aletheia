@@ -10,10 +10,7 @@ from datetime import datetime, timezone
 
 from aletheia.data.symbols import InstrumentId
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import (
-    AuditEvent,
-)
-from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
+from aletheia.trading.entry_compat import decode_entry_plan, historical_plan_version
 from aletheia.trading.entry_plan import EntryPlan
 from aletheia.trading.momentum_trigger import (
     MomentumTriggerEngine,
@@ -24,12 +21,9 @@ from aletheia.universe.fast_stream import (
     fast_market_stream_for_config,
 )
 from aletheia.universe.fast_trigger import (
-    TriggerEngine,
     TriggerPolicy,
     validate_fast_trigger_stream,
 )
-_MOMENTUM_TRIGGER = "momentum-retrace-reclaim"
-_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 _ANCHOR_RETRACE_TRIGGER = "anchor-retrace-reclaim"
 
 logger = logging.getLogger("aletheia.fast_trigger_watch")
@@ -47,7 +41,7 @@ _WATCHER_RELOAD_INTERVAL_SEC = 2.0
 
 
 async def _prewarm_market_structure(
-    engine: TriggerEngine | MomentumTriggerEngine,
+    engine: MomentumTriggerEngine,
     instrument: InstrumentId,
 ) -> None:
     """Warm from bounded exact-instrument local history; never fetch remotely."""
@@ -82,148 +76,6 @@ async def _prewarm_market_structure(
             instrument,
             exc_info=True,
         )
-def _entry_plan_trigger_id(plan) -> str:
-    historical = historical_trigger_id(plan)
-    if historical is not None:
-        return historical
-    return str(getattr(plan, "trigger_spec_id", None) or _MOMENTUM_TRIGGER)
-
-
-def _is_momentum_geometry_trigger_plan(plan) -> bool:
-    return _entry_plan_trigger_id(plan) == _MOMENTUM_GEOMETRY_TRIGGER
-async def _shadow_plan_terminal_state(plan_id: str) -> str | None:
-    """Return a durable v2 terminal fact; None means the audit store was unavailable."""
-
-    try:
-        if await asyncio.to_thread(
-            repo.has_audit_event,
-            event_type="momentum_v2_trigger_observed",
-            entity_id=plan_id,
-        ):
-            return "triggered"
-        if await asyncio.to_thread(
-            repo.has_audit_event,
-            event_type="momentum_v2_state_transition",
-            entity_id=plan_id,
-        ):
-            events = await asyncio.to_thread(
-                repo.list_audit_events,
-                limit=100,
-                event_type="momentum_v2_state_transition",
-            )
-            if any(
-                row.get("entity_id") == plan_id
-                and '"state":"invalidated"' in str(row.get("after_state") or "")
-                for row in events
-            ):
-                return "invalidated"
-        return ""
-    except Exception:
-        logger.warning("Momentum v2 Shadow audit state unavailable for %s", plan_id, exc_info=True)
-        return None
-
-
-def _json_state(value: object) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
-
-
-def _persist_shadow_audit(event: AuditEvent) -> None:
-    repo.insert_audit_event_once(event)
-    try:
-        from aletheia.files.jsonl import write_audit
-
-        if not write_audit(event.model_dump(), mirror_db=False, dedup_id=event.id):
-            logger.warning("Shadow audit JSONL write unavailable: %s", event.id)
-    except Exception:
-        logger.warning("Shadow audit JSONL write failed: %s", event.id, exc_info=True)
-
-
-async def _observe_entry_plan_engine(plan, engine, event):
-    """Observe one plan and retain v2 state/trigger facts without execution."""
-
-    before_path: tuple[str, ...] = tuple(getattr(engine, "state_path", ()))
-    ready = engine.observe(event)
-    if not _is_momentum_geometry_trigger_plan(plan):
-        return ready
-
-    params = plan.trigger_params
-    geometry = {
-        "geometry_version": params.get("geometry_version"),
-        "geometry_fingerprint": params.get("geometry_fingerprint"),
-    }
-    state_path: tuple[str, ...] = tuple(engine.state_path)
-    for index in range(len(before_path), len(state_path)):
-        previous = state_path[index - 1] if index > 0 else "armed"
-        current = state_path[index]
-        event_id = f"momentum-v2-state:{plan.plan_id}:{index}:{event.sequence}:{current}"
-        audit = AuditEvent(
-            id=event_id,
-            timestamp=datetime.fromtimestamp(
-                event.received_timestamp_ms / 1000,
-                tz=timezone.utc,
-            ).isoformat(),
-            actor="system",
-            source="fast_trigger_shadow",
-            event_type="momentum_v2_state_transition",
-            entity_type="entry_plan",
-            entity_id=plan.plan_id,
-            before_state=_json_state(
-                {"state": previous, "state_path": list(state_path[:index])}
-            ),
-            after_state=_json_state(
-                {
-                    **geometry,
-                    "state": current,
-                    "state_path": list(state_path[: index + 1]),
-                    "event_type": event.event_type,
-                    "event_sequence": event.sequence,
-                    "event_received_at_ms": event.received_timestamp_ms,
-                    "event_exchange_at_ms": event.exchange_timestamp_ms,
-                }
-            ),
-            message=f"Shadow Momentum TriggerSpec v2 state transition {previous}->{current}",
-        )
-        await asyncio.to_thread(_persist_shadow_audit, audit)
-
-    if ready is None:
-        return None
-    trigger = dict(ready.entry_trigger)
-    event_id = (
-        f"momentum-v2-trigger:{plan.plan_id}:{ready.quote_sequence}:"
-        f"{ready.trade_sequence}:{ready.depth_sequence}:"
-        f"{trigger.get('geometry_fingerprint', '')}"
-    )
-    audit = AuditEvent(
-        id=event_id,
-        timestamp=ready.observed_at,
-        actor="system",
-        source="fast_trigger_shadow",
-        event_type="momentum_v2_trigger_observed",
-        entity_type="entry_plan",
-        entity_id=plan.plan_id,
-        before_state=_json_state({"state": "reclaim"}),
-        after_state=_json_state(
-            {
-                **geometry,
-                "state": "triggered",
-                "entry_price": ready.entry_price,
-                "bid": ready.bid,
-                "ask": ready.ask,
-                "spread_bps": ready.spread_bps,
-                "depth_10bps_usd": ready.depth_10bps_usd,
-                "taker_buy_ratio": ready.taker_buy_ratio,
-                "quote_sequence": ready.quote_sequence,
-                "trade_sequence": ready.trade_sequence,
-                "depth_sequence": ready.depth_sequence,
-                "entry_trigger": trigger,
-            }
-        ),
-        message="Shadow Momentum TriggerSpec v2 produced a trigger; no execution authority granted.",
-    )
-    await asyncio.to_thread(_persist_shadow_audit, audit)
-    return ready
-
-
 def current_fast_trigger_task() -> asyncio.Task | None:
     return _watch_task
 
@@ -439,12 +291,12 @@ def _entry_plan_outcome_is_unresolved(outcome: str) -> bool:
 
 async def _load_entry_plan_watchers(
     cfg,
-    existing: dict[str, TriggerEngine | MomentumTriggerEngine] | None = None,
-) -> tuple[dict[str, EntryPlan], dict[str, TriggerEngine | MomentumTriggerEngine]]:
+    existing: dict[str, MomentumTriggerEngine] | None = None,
+) -> tuple[dict[str, EntryPlan], dict[str, MomentumTriggerEngine]]:
     from aletheia.execution.gateway import cancel_entry_plan_order
 
     plans: dict[str, EntryPlan] = {}
-    engines: dict[str, TriggerEngine | MomentumTriggerEngine] = {}
+    engines: dict[str, MomentumTriggerEngine] = {}
     now = datetime.now(timezone.utc)
     for row in await asyncio.to_thread(repo.list_watchable_entry_plans, None):
         payload = str(row["plan_json"])
@@ -476,6 +328,14 @@ async def _load_entry_plan_watchers(
                 reason="incompatible_planning_generation",
                 cancel_entry_plan_order=cancel_entry_plan_order,
                 now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
+            continue
+        if historical_plan_version(plan) is not None:
+            outcome = await _terminalize_entry_plan(
+                row, status="invalidated", reason="entry_plan_runtime_authority_revoked",
+                cancel_entry_plan_order=cancel_entry_plan_order, now=now,
             )
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
@@ -576,31 +436,26 @@ async def _load_entry_plan_watchers(
                     )
                     continue
         plans[plan.plan_id] = plan
-        if _is_momentum_geometry_trigger_plan(plan):
-            shadow_state = await _shadow_plan_terminal_state(plan.plan_id)
-            if shadow_state is None:
-                logger.warning("Skipping Momentum v2 plan %s until Shadow audit is readable", plan.plan_id)
-                continue
-            if shadow_state == "triggered":
-                continue
-            if shadow_state == "invalidated":
-                outcome = await _terminalize_entry_plan(
-                    row,
-                    status="invalidated",
-                    reason="entry_plan_price_invalidated",
-                    cancel_entry_plan_order=cancel_entry_plan_order,
-                    now=now,
-                )
-                if _entry_plan_outcome_is_unresolved(outcome):
-                    plans[plan.plan_id] = plan
-                else:
-                    plans.pop(plan.plan_id, None)
-                continue
-        if plan.execution_mode != "TRIGGERED" or row["status"] != "waiting":
+        if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
             continue
+        if row["status"] in {"triggered", "risk_reserved"}:
+            if not await asyncio.to_thread(repo.entry_plan_activation_can_refresh, plan.plan_id):
+                continue
+            activation_row = await asyncio.to_thread(repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
+            if activation_row is not None:
+                from aletheia.trading.entry_activation import EntryTriggerActivationV1
+
+                activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
+                monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
+                if (datetime.fromisoformat(activation.expires_at) > now
+                    and monitoring.get("stream_generation_id") == activation.snapshot.stream_generation_id
+                    and monitoring.get("subscription_generation_id") == activation.snapshot.subscription_generation_id):
+                    continue
+            # Keep an already rearmed engine across reloads so its new
+            # trigger sequence can finish. Triggered/faulted engines reset below.
         if existing is not None and plan.plan_id in existing:
             watching = existing[plan.plan_id]
-            if not health_reason_requires_resync(watching.health_reason):
+            if watching.state != "triggered" and not health_reason_requires_resync(watching.health_reason):
                 engines[plan.plan_id] = watching
                 continue
             # ponytail: rebuilt on every reload while the fault persists; add a
@@ -609,7 +464,7 @@ async def _load_entry_plan_watchers(
             logger.warning(
                 "Entry Plan %s trigger engine resynchronizing after %s",
                 plan.plan_id,
-                watching.health_reason,
+                watching.health_reason or "activation_not_bound",
             )
         params = plan.trigger_params
         instrument = InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
@@ -617,34 +472,24 @@ async def _load_entry_plan_watchers(
             max_spread_bps=float(cfg.universe.max_spread_bps),
             min_depth_10bps_usd=float(cfg.universe.min_depth_10bps_usd),
         )
-        trigger_id = _entry_plan_trigger_id(plan)
+        trigger_id = getattr(plan, "trigger_spec_id", None)
         try:
-            if trigger_id in {_MOMENTUM_GEOMETRY_TRIGGER, _ANCHOR_RETRACE_TRIGGER}:
-                engine: TriggerEngine | MomentumTriggerEngine = MomentumTriggerEngine(
-                    instrument=instrument,
-                    direction=plan.direction,
-                    breakout_level=float(params["breakout_level"]),
-                    pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
-                    sweep_band=(float(params["sweep_low"]), float(params["sweep_high"])),
-                    entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
-                    invalidation_price=float(params["invalidation_price"]),
-                    atr_abs=float(params["atr_abs"]),
-                    geometry_version=str(params["geometry_version"]),
-                    geometry_fingerprint=str(params["geometry_fingerprint"]),
-                    policy=policy,
-                    trigger_spec_id=trigger_id,
-                )
-            elif trigger_id == _MOMENTUM_TRIGGER:
-                engine = TriggerEngine(
-                    instrument=instrument,
-                    direction=plan.direction,
-                    breakout_level=float(params["breakout_level"]),
-                    pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
-                    entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
-                    policy=policy,
-                )
-            else:
+            if trigger_id != _ANCHOR_RETRACE_TRIGGER:
                 raise ValueError("entry_plan_trigger_spec_unsupported")
+            engine: MomentumTriggerEngine = MomentumTriggerEngine(
+                instrument=instrument,
+                direction=plan.direction,
+                breakout_level=float(params["breakout_level"]),
+                pullback_band=(float(params["pullback_low"]), float(params["pullback_high"])),
+                sweep_band=(float(params["sweep_low"]), float(params["sweep_high"])),
+                entry_zone=(float(params["entry_low"]), float(params["entry_high"])),
+                invalidation_price=float(params["invalidation_price"]),
+                atr_abs=float(params["atr_abs"]),
+                geometry_version=str(params["geometry_version"]),
+                geometry_fingerprint=str(params["geometry_fingerprint"]),
+                policy=policy,
+                trigger_spec_id=trigger_id,
+            )
             await _prewarm_market_structure(engine, instrument)
         except (KeyError, TypeError, ValueError, OverflowError):
             logger.error(
@@ -669,14 +514,13 @@ async def _load_entry_plan_watchers(
 
 
 def _watched_instruments(
-    plan_engines: dict[str, TriggerEngine | MomentumTriggerEngine],
+    plan_engines: dict[str, MomentumTriggerEngine],
     plans: dict[str, EntryPlan],
 ) -> set[InstrumentId]:
     instruments = {engine.instrument for engine in plan_engines.values()}
     instruments.update(
         InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
         for plan in plans.values()
-        if plan.order_tactic == "POST_ONLY_LIMIT"
     )
     return instruments
 
@@ -728,6 +572,10 @@ def _entry_plan_expiry_reason(row: dict, engine=None) -> str:
         except (StopIteration, TypeError, ValueError, json.JSONDecodeError):
             return "monitoring_stream_unavailable"
         return f"monitoring_channel_unavailable:{channel}"
+    passive = json.loads(row.get("monitoring_evidence_json") or "{}").get("passive_entry", {})
+    if (row.get("execution_mode") == "RESTING_MAKER" and state == "ready" and passive.get("eligible") is False
+        and passive.get("ever_eligible") is False and engine is None):
+        return "passive_entry_never_became_eligible"
     if engine is not None:
         final_reason = getattr(engine, "final_requirement_reason", None)
         if final_reason:
@@ -782,6 +630,30 @@ async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
             key = "unresolved" if _entry_plan_outcome_is_unresolved(outcome) else "terminalized"
             cleanup[key] += 1
         after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
+
+
+async def _submit_activated_entry_plan(plan, activation, event) -> None:
+    """Reuse the earned proof while both it and the exact market facts are fresh."""
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    snapshot = activation.snapshot
+    try:
+        await asyncio.to_thread(execute_entry_plan, plan.plan_id,
+            bid=float(event.bid), ask=float(event.ask),
+            observed_at=datetime.fromtimestamp(event.received_timestamp_ms / 1000, timezone.utc).isoformat(),
+            source_observed_at=datetime.fromtimestamp(event.exchange_timestamp_ms / 1000, timezone.utc).isoformat(),
+            stream_generation_id=str(event.stream_generation_id or ""),
+            subscription_generation_id=str(event.subscription_generation_id or ""), quote_sequence=event.sequence,
+            required_channels=_plan_required_channels(plan),
+            depth_bids=snapshot.depth_bids, depth_asks=snapshot.depth_asks,
+            depth_exchange_timestamp_ms=snapshot.depth_exchange_timestamp_ms,
+            depth_received_timestamp_ms=snapshot.depth_received_timestamp_ms, depth_sequence=snapshot.depth_sequence,
+            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash)
+    except ValueError as exc:
+        if str(exc) not in {"post_only_would_cross_bbo", "entry_trigger_activation_expired",
+                            "entry_trigger_activation_generation_mismatch", "entry_trigger_activation_required",
+                            "entry_trigger_activation_monitoring_mismatch"}:
+            raise
 
 
 async def _watch_loop(cfg) -> None:
@@ -890,13 +762,23 @@ async def _watch_loop(cfg) -> None:
                         plan.market_type,
                     )
                     if instrument == event.instrument:
+                        evidence = stream.monitoring_state(instrument, _plan_monitoring_channels(plan))
+                        if (plan.order_tactic == "POST_ONLY_LIMIT" and event.event_type == "quote"
+                            and evidence.get("state") == "ready"):
+                            from aletheia.trading.entry_plan import post_only_price_is_passive
+
+                            evidence = {**evidence, "passive_entry": {
+                                "eligible": post_only_price_is_passive(
+                                    plan.direction, plan.limit_price, float(event.bid), float(event.ask),
+                                ),
+                                "observed_at": datetime.fromtimestamp(
+                                    event.received_timestamp_ms / 1000, timezone.utc,
+                                ).isoformat(),
+                            }}
                         await asyncio.to_thread(
                             repo.record_entry_plan_monitoring,
                             plan_id,
-                            stream.monitoring_state(
-                                instrument,
-                                _plan_monitoring_channels(plan),
-                            ),
+                            evidence,
                         )
                 _confirm_ready_engines(stream, plan_engines, plans)
                 if event.event_type == "quote" and _monitoring_ready(
@@ -909,9 +791,7 @@ async def _watch_loop(cfg) -> None:
                         if instrument != event.instrument:
                             continue
                         row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
-                        if row is None:
-                            continue
-                        if _is_momentum_geometry_trigger_plan(plan):
+                        if row is None or historical_plan_version(plan) is not None:
                             continue
                         invalidated = (plan.direction == "long" and float(event.bid) <= plan.invalidation_price) or (
                             plan.direction == "short" and float(event.ask) >= plan.invalidation_price
@@ -959,81 +839,37 @@ async def _watch_loop(cfg) -> None:
                                 if str(exc) != "post_only_would_cross_bbo":
                                     raise
                         elif row["status"] in {"triggered", "risk_reserved"}:
-                            from aletheia.execution.entry_plan_execution import execute_entry_plan
+                            from aletheia.trading.entry_activation import EntryTriggerActivationV1
 
-                            await asyncio.to_thread(
-                                execute_entry_plan,
-                                plan_id,
-                                bid=float(event.bid),
-                                ask=float(event.ask),
-                                observed_at=datetime.fromtimestamp(
-                                    event.received_timestamp_ms / 1000,
-                                    tz=timezone.utc,
-                                ).isoformat(),
-                                source_observed_at=datetime.fromtimestamp(
-                                    event.exchange_timestamp_ms / 1000,
-                                    tz=timezone.utc,
-                                ).isoformat(),
-                                stream_generation_id=str(event.stream_generation_id or ""),
-                                subscription_generation_id=str(
-                                    event.subscription_generation_id or ""
-                                ),
-                                quote_sequence=event.sequence,
-                            )
+                            activation_row = await asyncio.to_thread(
+                                repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
+                            if activation_row is not None:
+                                activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
+                                await _submit_activated_entry_plan(plan, activation, event)
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
                         continue
                     plan = plans.get(plan_id)
                     if plan is None:
                         continue
-                    ready = await _observe_entry_plan_engine(plan, engine, event)
-                    if _is_momentum_geometry_trigger_plan(plan) and engine.state == "invalidated":
-                        from aletheia.execution.gateway import cancel_entry_plan_order
+                    ready = engine.observe(event)
+                    if ready is not None:
+                        from aletheia.trading.entry_activation import build_entry_trigger_activation
 
                         row = await asyncio.to_thread(repo.get_entry_plan, plan_id)
-                        if row is not None and row["status"] == "waiting":
-                            await _terminalize_entry_plan(
-                                row,
-                                status="invalidated",
-                                reason="entry_plan_price_invalidated",
-                                cancel_entry_plan_order=cancel_entry_plan_order,
-                                now=datetime.now(timezone.utc),
-                            )
-                        continue
-                    if _is_momentum_geometry_trigger_plan(plan) and ready is not None:
-                        logger.info(
-                            "fast trigger treatment plan=%s result=trigger_observed",
-                            plan_id,
-                        )
-                    if ready is not None:
-                        from aletheia.execution.entry_plan_execution import execute_entry_plan
-
-                        await asyncio.to_thread(
-                            execute_entry_plan,
-                            plan_id,
-                            bid=ready.bid,
-                            ask=ready.ask,
-                            observed_at=datetime.fromtimestamp(
-                                ready.quote_received_timestamp_ms / 1000,
-                                tz=timezone.utc,
-                            ).isoformat(),
-                            source_observed_at=datetime.fromtimestamp(
-                                ready.quote_exchange_timestamp_ms / 1000,
-                                tz=timezone.utc,
-                            ).isoformat(),
-                            stream_generation_id=str(ready.stream_generation_id or ""),
-                            subscription_generation_id=str(
-                                ready.subscription_generation_id or ""
-                            ),
-                            quote_sequence=ready.quote_sequence,
-                            required_channels=_plan_required_channels(plan),
-                            depth_bids=ready.depth_bids,
-                            depth_asks=ready.depth_asks,
-                            depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
-                            depth_received_timestamp_ms=ready.depth_received_timestamp_ms,
-                            depth_sequence=ready.depth_sequence,
-                            trigger_evidence=ready.entry_trigger,
-                        )
+                        if row is None:
+                            continue
+                        now = datetime.now(timezone.utc)
+                        try:
+                            activation = build_entry_trigger_activation(plan, ready, now=now)
+                            bound = await asyncio.to_thread(repo.bind_entry_trigger_activation, activation,
+                                expected_activation_id=row.get("trigger_activation_id"))
+                        except ValueError as exc:
+                            if str(exc) not in {"entry_trigger_activation_expired", "entry_trigger_activation_market_stale"}:
+                                raise
+                            continue
+                        if bound:
+                            await _submit_activated_entry_plan(plan, activation, event)
                 backoff = 1.0
         except asyncio.CancelledError:
             raise

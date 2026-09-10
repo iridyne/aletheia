@@ -210,7 +210,10 @@ A terminal generation without a Plan may gain one successor only on a later
 active completed snapshot, the same thread and behavior/schema, and a new fact
 confirmed after its birth/frozen-input cutoff. The transaction rechecks the
 expected current generation, exact Candidate context and instrument, monotonic
-source time and unresolved execution before CAS. A waiting/triggered/reserved
+source time and unresolved execution before CAS. Active Proposal execution claims,
+unknown/in-progress submissions and executed Proposals without their Order also
+block replacement; a pending claim that merely expired does not grant execution
+authority or permanently block recovery. A waiting/triggered/reserved
 Plan is not superseded by this path. Missing material proof grants no recovery.
 The proof and selected fact values belong to the generation's existing
 requalification source JSON; attention renewals retain this birth proof.
@@ -245,31 +248,29 @@ pre-order states are invalidated with a reason; `ordered` and
 `partially_filled` states request cancellation through Gateway reconciliation.
 Fast Monitoring status exposes the bounded IDs it actually watches.
 
-## PlanIntent authority and failure semantics
+## Entry hypothesis authority and failure semantics
 
-`PlanIntent` owns only qualitative judgment:
-
-- `decision`, economic `reason_code`, thesis, scenario, evidence references,
-  risk tier, and horizon;
-- `execution_mode`; and
-- `order_tactic` plus a registered compatible TriggerSpec identity when the
-  mode is triggered.
+`EntryHypothesis` is the sole current model-output contract. It owns the
+qualitative decision and economic reason, mechanism/direction, supplied anchor
+references, entry profile, urgency, risk tier, horizon and evidence references.
+The Compiler consumes this validated hypothesis directly, including when
+resuming from its immutable checkpoint; no intermediate PlanIntent protocol is
+constructed.
 
 It never owns prices, quantity, notional, leverage, stop, target, expiry,
-slippage, timeout, TriggerSpec parameters, or Risk policy identity.
+slippage, timeout, TriggerSpec parameters, or Risk policy identity. The profile
+and urgency determine the Compiler's final execution fields:
 
-The allowed intent matrix is:
+| Profile | Urgency | Execution mode | Tactic |
+|---|---|---|---|
+| `grounded-anchor-resting-maker` | `PASSIVE` | `RESTING_MAKER` | `POST_ONLY_LIMIT` |
+| `grounded-anchor-retrace-reclaim` | `PASSIVE` | `TRIGGERED` | `POST_ONLY_LIMIT` |
+| `grounded-anchor-retrace-reclaim` | `BOUNDED_URGENT` | `TRIGGERED` | `OPPOSING_BBO_IOC` |
 
-| Decision/mode | Tactic | Trigger |
-|---|---|---|
-| `NO_PLAN` | null | null |
-| `RESTING_MAKER` | `POST_ONLY_LIMIT` | null |
-| `TRIGGERED` | `POST_ONLY_LIMIT` | compatible registered spec |
-| `TRIGGERED` | `OPPOSING_BBO_IOC` | compatible registered spec |
-
-After the model selects `NO_PLAN`, execution-only fields are non-authoritative
-and are canonicalized to the null/`NONE` row above before semantic validation.
-The model-owned decision, reason, thesis, scenario, and evidence remain unchanged.
+After the model selects `NO_PLAN`, anchor/profile/urgency fields are
+non-authoritative and canonicalized to null, with risk tier and horizon `NONE`.
+The decision, reason, mechanism, direction and evidence references remain
+unchanged. No execution Plan is produced.
 
 Profile/TriggerSpec registries own compatibility, required data and validation.
 Missing capability/Profile blocks before inference; invalid model references,
@@ -311,7 +312,52 @@ The compiler continues to own Candidate price/geometry, volatility floor,
 entry zone, stop/target, expiry, notional, leverage, Risk policy identity,
 TriggerSpec parameters, producer identity, and final `EntryPlan` validation.
 
+## Trigger activation authority
+
+Only the canonical watcher may bind an `EntryTriggerActivationV1` before a
+Triggered Plan enters execution. The immutable receipt records Plan id/hash,
+instrument/direction, machine-derived TriggerSpec identity, compiled geometry and
+validated parameter hashes, ordered pullback/sweep/reclaim/confirmation events,
+and the exact quote/trade/depth source/receive times, sequences and stream identities.
+The active TriggerSpec identity is derived from its current implementation;
+receipt schema labels do not select another production implementation.
+
+SQLite appends activation facts and CAS-binds the existing Plan to its current
+activation. Plan JSON/hashes and old activations are never rewritten. Execution
+accepts only a stored activation id/hash, and rechecks Plan ownership, current
+monitoring generation, event order and freshness. Caller-authored trigger dictionaries
+provide no execution authority. Gateway repeats the shared check before claiming
+a new attempt and immediately before entering the broker; Risk still owns approval.
+
+Activation expires at the earliest required market fact's freshness boundary,
+bounded by Plan expiry. Expiry or a stream-generation change requires a fresh
+state-machine observation; it cannot be repaired by attaching a new quote to the old
+proof. A still-unsubmitted pending/approved Proposal may use newly earned activation
+on the same Plan; its original JSON/hash remains unchanged and the execution attempt
+receipt binds the new activation. Claims, Orders and unresolved exchange handoffs
+prevent activation replacement. Their recovery remains Gateway/reconciliation-owned
+and never requires a new trigger merely to observe an existing execution.
+
+Workbench projects `WAITING_TRIGGER` while an unsubmitted Plan needs fresh
+activation and `WAITING_MARKET` for an authorized passive Plan whose current quote
+would cross. The cycle timeline retains the current activation creation time.
+
 ## Maker lifetime
+
+Post-Only crossing is a current-market wait, not deterministic invalid geometry.
+The Compiler retains the validated fixed limit and all geometry/Risk bounds even
+when the frozen context quote would cross it. It still rejects invalid execution
+context. Submission rechecks the unchanged strict passive-price condition against
+fresh exact-instrument BBO; no crossing order, repricing or IOC fallback is allowed.
+Resting Plans remain waiting within their existing Plan expiry; Candidate attention
+expiry does not cancel an active Plan.
+Monitoring records current passive eligibility and whether an eligible quote has
+ever been observed. Workbench projects `WAITING_MARKET` while a ready stream reports
+crossing. For a resting Plan with ready monitoring and no observed eligible quote, the expiry reason is
+`passive_entry_never_became_eligible`; monitoring gaps retain their unavailable
+reasons. Expiry still requires a later completed requalification for a successor.
+Triggered Plans must additionally earn canonical trigger activation; quote
+eligibility alone grants no trigger or submission authority.
 
 Maker lifetime belongs to the actual Post-Only Order, not the plan mode, plan
 approval time, or trigger-wait time. Fast Monitoring starts the timeout only

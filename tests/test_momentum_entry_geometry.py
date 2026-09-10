@@ -119,16 +119,10 @@ def test_geometry_exports_exact_trigger_payload():
     geometry = _compile()
     params = geometry.trigger_params()
 
-    from aletheia.trading.trigger_specs import require_registered_trigger_spec
-
-    contract, normalized = require_registered_trigger_spec(
-        "momentum-retrace-reclaim-geometry", params
-    )
-    assert contract.spec_id == "momentum-retrace-reclaim-geometry"
-    assert normalized["breakout_level"] == geometry.breakout_level
-    assert normalized["atr_abs"] == geometry.atr_abs
-    assert normalized["geometry_version"] == GEOMETRY_VERSION
-    assert normalized["geometry_fingerprint"] == geometry.geometry_fingerprint
+    assert params["breakout_level"] == geometry.breakout_level
+    assert params["atr_abs"] == geometry.atr_abs
+    assert params["geometry_version"] == GEOMETRY_VERSION
+    assert params["geometry_fingerprint"] == geometry.geometry_fingerprint
 
 
 def test_geometry_rejects_future_forming_or_stale_latest_bar():
@@ -213,18 +207,10 @@ def test_geometry_rejects_non_confirming_breakout_and_future_feature():
         compile_momentum_entry_geometry(**future_feature)
 
 
-def test_geometry_trigger_is_registered_but_not_planner_visible():
-    from aletheia.trading.trigger_specs import compatible_trigger_specs, registered_trigger_specs
+def test_retired_geometry_has_no_production_trigger_registration():
+    from aletheia.trading.trigger_specs import registered_trigger_specs, require_registered_trigger_spec
 
-    assert [spec.spec_id for spec in compatible_trigger_specs("momentum")] == [
-        "momentum-retrace-reclaim"
-    ]
-    geometry = next(
-        spec for spec in registered_trigger_specs()
-        if spec.spec_id == "momentum-retrace-reclaim-geometry"
-    )
-    assert geometry.planner_visible is False
-    with pytest.raises(ValueError, match="trigger_spec_not_planner_visible"):
-        from aletheia.trading.trigger_specs import require_compatible_trigger_spec
-
-        require_compatible_trigger_spec("momentum", geometry.spec_id)
+    assert [spec.spec_id for spec in registered_trigger_specs()] == ["anchor-retrace-reclaim"]
+    for spec_id in ("momentum-retrace-reclaim", "momentum-retrace-reclaim-geometry"):
+        with pytest.raises(ValueError, match="trigger_spec_not_registered"):
+            require_registered_trigger_spec(spec_id, {})

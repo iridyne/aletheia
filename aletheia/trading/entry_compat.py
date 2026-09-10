@@ -223,14 +223,3 @@ def decode_entry_plan(payload: str):
 def historical_plan_version(plan: object) -> str | None:
     metadata = getattr(plan, "_historical_entry_metadata", {})
     return str(metadata.get("version")) if metadata.get("version") else None
-
-
-def historical_trigger_id(plan: object) -> str | None:
-    metadata = getattr(plan, "_historical_entry_metadata", {})
-    spec_id = getattr(plan, "trigger_spec_id", None)
-    spec_version = metadata.get("trigger_spec_version")
-    if spec_id is None or spec_version is None:
-        return None
-    if (str(spec_id), str(spec_version)) == ("momentum-retrace-reclaim", "v2"):
-        return "momentum-retrace-reclaim-geometry"
-    return str(spec_id)

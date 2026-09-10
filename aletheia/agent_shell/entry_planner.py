@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import ValidationError
 
 from aletheia.storage import repositories as repo
 from aletheia.trading.entry_analysis import (
@@ -36,69 +37,6 @@ class PlanIntentError(ValueError):
         self.code = str(code)
         message = self.code if not detail else f"{self.code}:{detail}"
         super().__init__(message)
-
-
-class _PlanIntentWire(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    decision: Literal["ENTRY_PLAN", "NO_PLAN"]
-    reason_code: Literal[
-        "INSUFFICIENT_EVIDENCE",
-        "CONFLICTING_SIGNALS",
-        "STALE_FACTS",
-        "NO_VALID_TRIGGER",
-        "OK",
-    ]
-    thesis: str = Field(max_length=400)
-    scenario: str = Field(max_length=200)
-    evidence_refs: list[str] = Field(max_length=8)
-    execution_mode: Literal["RESTING_MAKER", "TRIGGERED"] | None
-    order_tactic: Literal["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"] | None
-    trigger_spec_id: str | None
-    risk_tier: Literal["LOW", "MEDIUM", "NONE"]
-    horizon: Literal["INTRADAY", "SWING", "NONE"]
-
-
-class PlanIntent(_PlanIntentWire):
-    @model_validator(mode="after")
-    def _validate_semantics(self) -> "PlanIntent":
-        trigger_fields_empty = self.trigger_spec_id is None
-        if self.decision == "NO_PLAN":
-            if self.reason_code == "OK":
-                raise PlanIntentError("NO_PLAN_REASON_REQUIRED")
-            if (
-                self.execution_mode is not None
-                or self.order_tactic is not None
-                or self.risk_tier != "NONE"
-                or self.horizon != "NONE"
-                or not trigger_fields_empty
-            ):
-                raise PlanIntentError("NO_PLAN_EXECUTION_FIELDS_FORBIDDEN")
-            return self
-
-        if self.reason_code != "OK":
-            raise PlanIntentError("ENTRY_PLAN_REASON_MUST_BE_OK")
-        if self.execution_mode is None:
-            raise PlanIntentError("ENTRY_PLAN_EXECUTION_MODE_REQUIRED")
-        if self.order_tactic is None:
-            raise PlanIntentError("ENTRY_PLAN_ORDER_TACTIC_REQUIRED")
-        if self.risk_tier == "NONE":
-            raise PlanIntentError("ENTRY_PLAN_RISK_TIER_REQUIRED")
-        if self.horizon == "NONE":
-            raise PlanIntentError("ENTRY_PLAN_HORIZON_REQUIRED")
-        if not self.thesis.strip():
-            raise PlanIntentError("ENTRY_PLAN_THESIS_REQUIRED")
-        if not self.scenario.strip():
-            raise PlanIntentError("ENTRY_PLAN_SCENARIO_REQUIRED")
-        if self.execution_mode == "RESTING_MAKER":
-            if self.order_tactic != "POST_ONLY_LIMIT":
-                raise PlanIntentError("RESTING_MAKER_TACTIC_INVALID")
-            if not trigger_fields_empty:
-                raise PlanIntentError("RESTING_MAKER_TRIGGER_FIELDS_FORBIDDEN")
-            return self
-        if self.order_tactic not in {"POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"}:
-            raise PlanIntentError("TRIGGERED_TACTIC_INVALID")
-        return self
 
 
 PlannerFn = Callable[
@@ -138,6 +76,7 @@ async def plan_next_candidate(
     cfg=None,
     owner_token: str | None = None,
     model_provider: str = "custom_planner",
+    resume_only: bool = False,
 ) -> dict[str, Any]:
     """Claim, reason once, and CAS the result against the current generation."""
 
@@ -145,7 +84,7 @@ async def plan_next_candidate(
 
     cfg = cfg or load_config(persist_migrations=False)
     owner = owner_token or f"entry-planner-{uuid4().hex}"
-    generation = repo.claim_next_candidate_planning(owner)
+    generation = repo.claim_next_candidate_planning(owner, resume_only=resume_only)
     if generation is None:
         return {"status": "idle", "model_invoked": False}
     dispatched = False
@@ -354,122 +293,117 @@ async def plan_next_candidate(
                 "planning_generation_id": generation["id"],
                 "model_invoked": False,
             }
-        if not repo.mark_candidate_planning_stage(
-            generation["id"], owner, "model_invoking"
-        ):
-            return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": False}
-        try:
-            dispatched = True
-            raw = await planner(context)
-        except PlannerBackpressure as exc:
-            repo.release_candidate_planning_claim(generation["id"], owner, str(exc), retry_seconds=1)
-            return {
-                "status": "backpressure",
-                "planning_generation_id": generation["id"],
-                "model_invoked": False,
-            }
-        except PlanIntentError as exc:
-            if exc.code.startswith((
-                "PLANNER_SCHEMA_INVALID", "PLANNER_INVALID_JSON",
-                "PLANNER_SEMANTIC_INVALID",
-            )):
-                repo.fail_candidate_planning(
-                    generation["id"], owner, exc.code, stage="validation",
-                    model_invoked=True, compiler_invoked=False,
+        if generation.get("validated_hypothesis_json"):
+            raw = json.loads(generation["validated_hypothesis_json"])
+        else:
+            if not repo.mark_candidate_planning_stage(
+                generation["id"], owner, "model_invoking"
+            ):
+                return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": False}
+            try:
+                dispatched = True
+                raw = await planner(context)
+            except PlannerBackpressure as exc:
+                repo.release_candidate_planning_claim(generation["id"], owner, str(exc), retry_seconds=1)
+                return {
+                    "status": "backpressure",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": False,
+                }
+            except PlanIntentError as exc:
+                if exc.code.startswith((
+                    "PLANNER_SCHEMA_INVALID", "PLANNER_INVALID_JSON",
+                    "PLANNER_SEMANTIC_INVALID",
+                )):
+                    repo.fail_candidate_planning(
+                        generation["id"], owner, exc.code, stage="validation",
+                        model_invoked=True, compiler_invoked=False,
+                    )
+                    status = "failed"
+                else:
+                    repo.defer_candidate_planning(
+                        generation["id"], owner, str(exc), stage="provider", model_invoked=True,
+                    )
+                    status = "unavailable"
+                return {
+                    "status": status,
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True,
+                }
+            except Exception as exc:
+                repo.defer_candidate_planning_with_code(
+                    generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__,
+                    model_invoked=True,
                 )
-                status = "failed"
-            else:
-                repo.defer_candidate_planning(
-                    generation["id"], owner, str(exc), stage="provider", model_invoked=True,
+                return {
+                    "status": "unavailable",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True,
+                }
+            if not repo.mark_candidate_planning_stage(
+                generation["id"], owner, "model_complete", model_invoked=True
+            ):
+                return {
+                    "status": "stale",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True,
+                }
+            if raw is None:
+                repo.defer_candidate_planning_with_code(
+                    generation["id"], owner, "PLANNER_UNAVAILABLE", model_invoked=True
                 )
-                status = "unavailable"
-            return {
-                "status": status,
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
-        except Exception as exc:
-            repo.defer_candidate_planning_with_code(
-                generation["id"], owner, "PLANNER_INTERNAL", type(exc).__name__,
-                model_invoked=True,
-            )
-            return {
-                "status": "unavailable",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
-        if not repo.mark_candidate_planning_stage(
-            generation["id"], owner, "model_complete", model_invoked=True
-        ):
-            return {
-                "status": "stale",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
-        if raw is None:
-            repo.defer_candidate_planning_with_code(
-                generation["id"], owner, "PLANNER_UNAVAILABLE", model_invoked=True
-            )
-            return {
-                "status": "unavailable",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
+                return {
+                    "status": "unavailable",
+                    "planning_generation_id": generation["id"],
+                    "model_invoked": True,
+                }
         try:
             intent = EntryHypothesis.model_validate(raw)
         except ValidationError as exc:
             code = _intent_validation_code(exc)
             repo.fail_candidate_planning(
                 generation["id"], owner, f"INTENT_SEMANTIC:{code}",
-                stage="validation", model_invoked=True, compiler_invoked=False,
+                stage="validation", model_invoked=dispatched, compiler_invoked=False,
             )
             return {
                 "status": "failed",
                 "planning_generation_id": generation["id"],
-                "model_invoked": True,
+                "model_invoked": dispatched,
             }
-        if intent.decision == "NO_PLAN":
-            try:
-                validate_hypothesis_references(intent, context_model)
-            except ValueError as exc:
-                stored = repo.fail_candidate_planning(
-                    generation["id"], owner, f"INVALID_HYPOTHESIS_REFERENCE:{str(exc)[:100]}",
-                    stage="validation", model_invoked=True, compiler_invoked=False,
-                )
-                return {"status": "failed" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": False}
-            stored = repo.complete_candidate_planning_no_plan(
-                generation["id"],
-                owner,
-                intent.model_dump(mode="json"),
+        try:
+            validate_hypothesis_references(intent, context_model)
+        except ValueError as exc:
+            stored = repo.fail_candidate_planning(
+                generation["id"], owner, f"INVALID_HYPOTHESIS_REFERENCE:{str(exc)[:100]}",
+                stage="validation", model_invoked=dispatched, compiler_invoked=False,
             )
-            return {
-                "status": "no_plan" if stored else "stale",
-                "planning_generation_id": generation["id"],
-                "model_invoked": True,
-            }
+            return {"status": "failed" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": False}
+        if not generation.get("validated_hypothesis_json"):
+            if not repo.bind_candidate_planning_hypothesis(
+                generation["id"], owner, canonical_json(intent.model_dump(mode="json")),
+            ):
+                return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched}
+        if intent.decision == "NO_PLAN":
+            stored = repo.complete_candidate_planning_no_plan(
+                generation["id"], owner, intent.model_dump(mode="json"),
+            )
+            return {"status": "no_plan" if stored else "stale",
+                    "planning_generation_id": generation["id"], "model_invoked": dispatched}
         from aletheia.trading.entry_authority import resolve_entry_runtime_authority
 
         authority = resolve_entry_runtime_authority(cfg)
         if not authority.allowed:
             stored = repo.block_candidate_planning(
                 generation["id"], owner, authority.reason or "entry_runtime_authority_unavailable",
-                stage="post_inference_authority", model_invoked=True,
+                stage="post_inference_authority", model_invoked=dispatched,
             )
-            return {"status": "blocked" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": False}
-        try:
-            validate_hypothesis_references(intent, context_model)
-        except ValueError as exc:
-            stored = repo.fail_candidate_planning(
-                generation["id"], owner, f"INVALID_HYPOTHESIS_REFERENCE:{str(exc)[:100]}",
-                stage="validation", model_invoked=True, compiler_invoked=False,
-            )
-            return {"status": "failed" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": False}
+            return {"status": "blocked" if stored else "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": False}
         from aletheia.trading.entry_plan_compiler import compile_entry_plan
 
         if not repo.mark_candidate_planning_stage(
-            generation["id"], owner, "compiler", model_invoked=True, compiler_invoked=True
+            generation["id"], owner, "compiler", model_invoked=dispatched, compiler_invoked=True
         ):
-            return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": False}
+            return {"status": "stale", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": False}
         try:
             plan = compile_entry_plan(generation, context_model, intent, cfg)
         except ValueError as exc:
@@ -480,25 +414,25 @@ async def plan_next_candidate(
             }:
                 stored = repo.defer_candidate_planning(
                     generation["id"], owner, f"ENTRY_PLAN_COMPILE_UNAVAILABLE:{code}",
-                    stage="compiler", model_invoked=True, compiler_invoked=True,
+                    stage="compiler", model_invoked=dispatched, compiler_invoked=True,
                 )
                 return {"status": "unavailable" if stored else "stale",
                         "planning_generation_id": generation["id"],
-                        "model_invoked": True, "compiler_invoked": True}
+                        "model_invoked": dispatched, "compiler_invoked": True}
             repo.fail_candidate_planning(
                 generation["id"], owner, f"ENTRY_PLAN_COMPILE_INVALID:{code}",
-                stage="compiler", model_invoked=True, compiler_invoked=True,
+                stage="compiler", model_invoked=dispatched, compiler_invoked=True,
             )
-            return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": True}
+            return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": True}
         except Exception as exc:
             logger.exception(
                 "entry_plan_compile_unexpected generation_id=%s", generation["id"]
             )
             repo.defer_candidate_planning(
                 generation["id"], owner, f"COMPILER_INTERNAL:{type(exc).__name__}",
-                stage="compiler", model_invoked=True, compiler_invoked=True,
+                stage="compiler", model_invoked=dispatched, compiler_invoked=True,
             )
-            return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": True}
+            return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": True}
         try:
             status, record = repo.complete_candidate_planning_with_plan(
                 generation["id"], owner, plan
@@ -507,10 +441,10 @@ async def plan_next_candidate(
             repo.fail_candidate_planning(
                 generation["id"], owner,
                 f"ENTRY_PLAN_ACTIVATION_INVALID:{type(exc).__name__}",
-                stage="activation", model_invoked=True, compiler_invoked=True,
+                stage="activation", model_invoked=dispatched, compiler_invoked=True,
             )
-            return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": True, "compiler_invoked": True}
-        return {"status": status, "planning_generation_id": generation["id"], "entry_plan_id": record["id"] if record else None, "model_invoked": True, "compiler_invoked": True}
+            return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": True}
+        return {"status": status, "planning_generation_id": generation["id"], "entry_plan_id": record["id"] if record else None, "model_invoked": dispatched, "compiler_invoked": True}
     except asyncio.CancelledError:
         cancelled = True
         raise
@@ -634,6 +568,7 @@ async def run_entry_planner_once(
     cfg=None,
     *,
     provider_name: str | None = None,
+    resume_only: bool = False,
 ) -> dict[str, Any]:
     if provider_name is None:
         from aletheia.model_provider.router import get_provider_for_tier
@@ -643,7 +578,7 @@ async def run_entry_planner_once(
     async def planner(context: dict) -> EntryHypothesis | None:
         return await system_operator_entry_planner(context, provider_name)
 
-    return await plan_next_candidate(planner, cfg=cfg, model_provider=provider_name)
+    return await plan_next_candidate(planner, cfg=cfg, model_provider=provider_name, resume_only=resume_only)
 
 
 async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
@@ -668,6 +603,9 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
         ENTRY_PLANNER_MAX_CONCURRENCY,
         available,
     )
+    resume_only = worker_count <= 0
+    if resume_only:
+        worker_count = min(repo.count_pending_candidate_planning(resume_only=True), ENTRY_PLANNER_MAX_CONCURRENCY)
     if worker_count <= 0:
         return {
             "status": "backpressure" if pending else "idle",
@@ -679,7 +617,7 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     async with asyncio.TaskGroup() as group:
         tasks = [
-            group.create_task(run_entry_planner_once(cfg=cfg, provider_name=provider_name)) for _ in range(worker_count)
+            group.create_task(run_entry_planner_once(cfg=cfg, provider_name=provider_name, resume_only=resume_only)) for _ in range(worker_count)
         ]
     results = [task.result() for task in tasks]
     claimed = [result for result in results if result.get("status") != "idle"]

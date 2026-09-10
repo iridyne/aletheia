@@ -334,10 +334,6 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
         "aletheia.agent_shell.entry_planner.fast_market_data_unavailability_reason",
         lambda *_args: None,
     )
-    monkeypatch.setattr(
-        "aletheia.agent_shell.entry_planner.validate_hypothesis_references",
-        lambda *_args: None,
-    )
     compiler_calls = 0
 
     def compiler(*_args):
@@ -356,7 +352,7 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
             "entry_profile_id": "grounded-anchor-resting-maker",
             "execution_urgency": "PASSIVE", "risk_tier": "LOW",
             "horizon": "INTRADAY",
-            "supporting_fact_refs": [f"candidate:{candidate.id}"],
+            "supporting_fact_refs": [invalidation.anchor_id],
         }
 
     result = asyncio.run(plan_next_candidate(
@@ -453,7 +449,7 @@ def test_current_broker_backpressure_consumes_no_attempt(_inmemory_db, monkeypat
 
 
 def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, monkeypatch):
-    from aletheia.agent_shell.entry_planner import plan_next_candidate
+    from aletheia.agent_shell.entry_planner import PlanIntentError, plan_next_candidate
     from aletheia.storage import repositories as repo
 
     candidate = _typed_candidate()
@@ -464,18 +460,20 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
         lambda *_args: None,
     )
     cfg = _cfg("Full", "bitget_demo")
+    calls = []
 
     async def planner(_context):
+        calls.append(_context)
         cfg.agent.permission_mode = "Observe"
         return {
             "decision": "ENTRY_PLAN", "reason_code": "OK",
             "mechanism": "reversal", "direction": "long",
-            "primary_anchor_ref": "ignored-until-authority-recovers",
-            "invalidation_anchor_ref": "also-ignored",
+            "primary_anchor_ref": _context["anchors"][0]["anchor_id"],
+            "invalidation_anchor_ref": _context["anchors"][1]["anchor_id"],
             "entry_profile_id": "grounded-anchor-resting-maker",
             "execution_urgency": "PASSIVE", "risk_tier": "LOW",
             "horizon": "INTRADAY",
-            "supporting_fact_refs": ["ignored"],
+            "supporting_fact_refs": [_context["anchors"][1]["anchor_id"]],
         }
 
     result = asyncio.run(plan_next_candidate(planner, cfg=cfg))
@@ -487,6 +485,53 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
     assert stored["compiler_invoked"] == 0
     assert stored["outcome_class"] == "planning_blocked"
     assert stored["attempt_count"] == 1
+    assert stored["validated_hypothesis_json"] is not None
+    cfg.agent.permission_mode = "Full"
+    repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
+                       (generation["id"],))
+    def compiler(_generation, _context, hypothesis, _cfg):
+        assert hypothesis == type(hypothesis).model_validate_json(stored["validated_hypothesis_json"])
+        raise PlanIntentError("EXPECTED_COMPILER_STOP")
+    monkeypatch.setattr("aletheia.trading.entry_plan_compiler.compile_entry_plan", compiler)
+    resumed = asyncio.run(plan_next_candidate(planner, cfg=cfg))
+    assert resumed["status"] == "failed" and resumed["model_invoked"] is False
+    assert resumed["compiler_invoked"] is True
+    assert len(calls) == 1
+    assert repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"] == stored["validated_hypothesis_json"]
+
+
+def test_hypothesis_checkpoint_requires_live_claim_and_is_write_once(_inmemory_db):
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_analysis import EntryHypothesis
+
+    now = datetime.now(timezone.utc)
+    candidate = _typed_candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id, now=now)
+    _bind_test_context(repo, generation)
+    repo.claim_next_candidate_planning("first-owner", now=now)
+    hypothesis = EntryHypothesis(decision="NO_PLAN", reason_code="CONFLICTING_SIGNALS",
+                                mechanism="reversal", direction="long", risk_tier="NONE", horizon="NONE")
+    expired = now + timedelta(seconds=301)
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "first-owner",
+                                                     hypothesis.model_dump_json(), now=expired)
+    claimed = repo.claim_next_candidate_planning("second-owner", now=expired)
+    assert claimed["id"] == generation["id"]
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "first-owner",
+                                                     hypothesis.model_dump_json(), now=expired)
+    assert repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                 hypothesis.model_dump_json(), now=expired)
+    checkpoint = repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"]
+    assert repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                 checkpoint, now=expired)
+    other = hypothesis.model_copy(update={"reason_code": "INSUFFICIENT_EVIDENCE"})
+    assert not repo.bind_candidate_planning_hypothesis(generation["id"], "second-owner",
+                                                     other.model_dump_json(), now=expired)
+    with pytest.raises(sqlite3.IntegrityError, match="hypothesis is immutable"):
+        repo.execute_write("UPDATE candidate_planning_generations SET validated_hypothesis_json=NULL WHERE id=?",
+                           (generation["id"],))
+    assert repo.get_candidate_planning_generation(generation["id"])["validated_hypothesis_json"] == checkpoint
 
 
 def _legacy_structure_candidate(source_at, *, price=100, rank=1):
@@ -598,7 +643,7 @@ def test_b1_rejects_unproven_requalification(_inmemory_db, guard):
     assert not created and same["id"] == first["id"]
 
 
-@pytest.mark.parametrize("execution", ["waiting", "order", "fill", "position"])
+@pytest.mark.parametrize("execution", ["waiting", "order", "fill", "position", "active_claim", "executing", "submission_unknown", "materialization_missing", "executed_without_order"])
 def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Fill, Position
@@ -606,7 +651,15 @@ def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     candidate = _legacy_structure_candidate(first_at.isoformat())
     first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
     _insert_expired_plan(repo, first, candidate.id, "plan-b1", first_at.isoformat())
-    if execution in {"waiting", "triggered", "risk_reserved"}:
+    if execution in {"active_claim", "executing", "submission_unknown", "materialization_missing", "executed_without_order"}:
+        from datetime import timedelta
+        status = "pending" if execution == "active_claim" else "executed" if execution == "executed_without_order" else execution
+        repo.execute_write("INSERT INTO trade_proposals(id,entry_plan_id,symbol,market_type,direction,status) "
+            "VALUES ('proposal-b1','plan-b1','BTC/USDT','perp','long',?)", (status,))
+        if execution == "active_claim":
+            repo.execute_write("INSERT INTO proposal_execution_claims(proposal_id,owner_token,claimed_at,lease_expires_at) "
+                "VALUES ('proposal-b1','gateway',?,?)", (first_at.isoformat(), (later_at+timedelta(hours=1)).isoformat()))
+    elif execution in {"waiting", "triggered", "risk_reserved"}:
         repo.execute_write("UPDATE entry_plans SET status=? WHERE id='plan-b1'", (execution,))
     else:
         order = Order(symbol="BTC/USDT", market_type="perp", direction="long", order_type="limit",
@@ -622,6 +675,18 @@ def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     later = _legacy_structure_candidate(later_at.isoformat())
     same, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
     assert not created and same["id"] == first["id"]
+
+    if execution == "active_claim":
+        # An expired pending claim has not submitted; it must not strand recovery.
+        repo.execute_write("UPDATE proposal_execution_claims SET lease_expires_at=? WHERE proposal_id='proposal-b1'",
+                           (first_at.isoformat(),))
+    elif execution in {"executing", "submission_unknown", "materialization_missing", "executed_without_order"}:
+        # Fixture represents Gateway finishing reconciliation without an Order.
+        repo.execute_write("UPDATE trade_proposals SET status='rejected' WHERE id='proposal-b1'")
+    else:
+        return
+    successor, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert created and successor["previous_generation_id"] == first["id"]
 
 
 @pytest.mark.real_db
@@ -711,3 +776,40 @@ def test_legacy_retirement_preserves_submission_evidence(_inmemory_db):
     assert {row[0] for row in events} == {"unsubmitted", "old-pending"}
     _apply_retired_entry_authority_v72(db)
     assert list(db.execute("SELECT entity_id,before_state,after_state FROM audit_events WHERE event_type='entry_path_retired'")) == events
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_unavailable_lifecycle_only_promises_retry_while_cycle_is_active(terminal):
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "outcome_class": "planning_unavailable", "outcome_reason": "PROVIDER_TIMEOUT",
+             "attention_status": "terminal" if terminal else "active"}
+    lifecycle = project_candidate_entry_lifecycle({}, [cycle])
+    assert lifecycle["lifecycle_state"] == "PLANNING_UNAVAILABLE"
+    assert lifecycle["next_action"] == (
+        "await_material_input_or_owner_replan" if terminal else "bounded_retry")
+
+
+def test_expired_activation_reports_actual_expiry_as_state_transition_time():
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "entry_plan_status": "triggered", "activation_recoverable": True,
+             "activation_expires_at": "2026-01-01T00:00:02+00:00",
+             "entry_plan_updated_at": "2026-01-01T00:00:00+00:00"}
+    lifecycle = project_candidate_entry_lifecycle({}, [cycle])
+    assert lifecycle["lifecycle_reason"] == "entry_trigger_activation_expired"
+    assert lifecycle["state_changed_at"] == cycle["activation_expires_at"]
+
+
+def test_monitoring_generation_change_uses_its_own_time_without_inventing_history():
+    from aletheia.trading.entry_lifecycle import project_candidate_entry_lifecycle
+
+    cycle = {"id": "generation", "is_current": 1, "cycle_number": 1,
+             "entry_plan_status": "triggered", "activation_recoverable": True,
+             "activation_expires_at": "2099-01-01T00:00:02+00:00", "activation_stream_current": False,
+             "entry_plan_updated_at": "2026-01-01T00:00:00+00:00"}
+    assert project_candidate_entry_lifecycle({}, [cycle])["state_changed_at"] is None
+    cycle["monitoring_changed_at"] = "2026-01-01T00:00:01+00:00"
+    assert project_candidate_entry_lifecycle({}, [cycle])["state_changed_at"] == cycle["monitoring_changed_at"]

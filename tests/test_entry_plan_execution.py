@@ -17,6 +17,7 @@ from aletheia.storage.models import (
     UniverseSnapshot,
 )
 from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+from aletheia.trading.entry_activation import require_entry_trigger_activation as _actual_activation_gate
 
 @pytest.mark.parametrize("kind,school,source_id,holding", [
     ("serenity", "serenity", "research-opportunity", 2160),
@@ -200,6 +201,11 @@ def _isolate_execution_contract(monkeypatch):
         "aletheia.execution.entry_plan_execution._require_ai_entry_authority",
         lambda _plan: None,
     )
+    # These unit tests own order geometry, Risk envelopes and reconciliation.
+    # Durable trigger authority is exercised against the real engine/store in
+    # test_entry_activation; the bypass regression below restores this gate.
+    monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation",
+                        lambda *args, **kwargs: None)
 
 
 def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_demo", provenance=True) -> EntryPlan:
@@ -247,6 +253,9 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
     trigger_params = (
         {
             "breakout_level": 100.0,
+            "sweep_low": 98.5, "sweep_high": 99.0, "atr_abs": 2.0,
+            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "f" * 64,
             "pullback_low": 99.0,
             "pullback_high": 100.0,
             "entry_low": 100.0,
@@ -275,7 +284,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         thesis="bounded continuation",
         scenario="retrace reclaim",
         execution_mode=mode,
-        trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
+        trigger_spec_id="anchor-retrace-reclaim" if triggered else None,
         trigger_params=trigger_params,
         trigger_data_requirements=("quote", "trade", "books5", "candle1m") if triggered else (),
         trigger_freshness_ms=2_000 if triggered else None,
@@ -351,56 +360,99 @@ def _with_geometry_hash(payload: dict) -> dict:
     return result
 
 
-def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch):
-    plan = _plan(account_mode="bitget_demo").model_copy(
-        update={
-            "trigger_spec_id": "momentum-retrace-reclaim-geometry",
-            "treatment_exposure_id": "exposure-treatment",
-            "trigger_params": {
-                **_plan().trigger_params,
-                "sweep_low": 99.0,
-                "sweep_high": 100.0,
-                "atr_abs": 2.0,
-                "geometry_version": "momentum-entry-geometry/v2",
-                "geometry_fingerprint": "f" * 64,
-            },
-        }
-    )
-    monkeypatch.setattr(
-        "aletheia.learning.ledger.get_exposure",
-        lambda _exposure_id: {
-            "path_id": "momentum_entry_geometry",
-            "assignment": "treatment",
-            "after_json": json.dumps({"value": 1.0}),
-            "manifest_json": json.dumps({"geometry_available": True}),
-        },
-    )
-    observed_at = datetime.now(timezone.utc).isoformat()
-    trigger_evidence = {
-        "trigger_spec_id": "momentum-retrace-reclaim-geometry",
-        "geometry_fingerprint": "f" * 64,
-    }
-    proposal = build_entry_plan_order_intent(
-        plan,
-        bid=100,
-        ask=100.05,
-        observed_at=observed_at,
-        source_observed_at=observed_at,
-        trigger_evidence=trigger_evidence,
-    )
-    attribution = json.loads(proposal.attribution_snapshot)
-    assert attribution["treatment_exposure_id"] == "exposure-treatment"
-    assert attribution["geometry_version"] == "momentum-entry-geometry/v2"
+@pytest.mark.parametrize("failure", ["entry_plan_unique", "storage", "check", "proposal_identity"])
+def test_proposal_race_rebinds_receipt_only_for_the_entry_plan_unique_conflict(monkeypatch, failure):
+    import sqlite3
 
-    with pytest.raises(ValueError, match="entry_plan_treatment_exposure_required"):
-        build_entry_plan_order_intent(
-            plan.model_copy(update={"treatment_exposure_id": None}),
-            bid=100,
-            ask=100.05,
-            observed_at=observed_at,
-            source_observed_at=observed_at,
-            trigger_evidence=trigger_evidence,
-        )
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    plan = _persist_waiting_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    insert = repo.insert_trade_proposal
+    submitted = []
+    winner_id = "concurrent-entry-proposal"
+
+    def racing_insert(proposal):
+        # Another caller publishes after the first read but before this insert.
+        insert(proposal.model_copy(update={"id": winner_id}))
+        if failure == "entry_plan_unique":
+            insert(proposal)  # Real SQLite constraint, not a fabricated race exception.
+        elif failure == "storage":
+            raise sqlite3.OperationalError("disk I/O error")
+        elif failure == "check":
+            error = sqlite3.IntegrityError("CHECK constraint failed: proposal_invariant")
+            error.sqlite_errorcode = sqlite3.SQLITE_CONSTRAINT_CHECK
+            raise error
+        else:
+            raise ValueError("proposal commit hash does not match immutable content")
+
+    def submit(proposal_id, _mode, *, execution_receipt):
+        assert execution_receipt.hash_is_valid()
+        assert execution_receipt.proposal_id == proposal_id == winner_id
+        submitted.append(proposal_id)
+        return {"status": "submitted"}
+
+    monkeypatch.setattr(repo, "insert_trade_proposal", racing_insert)
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal", submit)
+    now = datetime.now(timezone.utc)
+    kwargs = dict(bid=99.9, ask=100.1, observed_at=now.isoformat(),
+        source_observed_at=now.isoformat(), stream_generation_id="stream-1",
+        subscription_generation_id="subscription-1", quote_sequence=1, now=now)
+    if failure == "entry_plan_unique":
+        assert execute_entry_plan(plan.plan_id, **kwargs)["status"] == "submitted"
+        assert submitted == [winner_id]
+    else:
+        expected = {"storage": sqlite3.OperationalError, "check": sqlite3.IntegrityError,
+                    "proposal_identity": ValueError}[failure]
+        with pytest.raises(expected):
+            execute_entry_plan(plan.plan_id, **kwargs)
+        assert submitted == []
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == winner_id
+
+
+@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
+def test_triggered_plan_cannot_submit_from_caller_authored_geometry(monkeypatch, tactic):
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+
+    monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation", _actual_activation_gate)
+
+    params = {**_plan().trigger_params, "geometry_fingerprint": "f" * 64,
+              "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+              "sweep_low": 98.5, "sweep_high": 99.0, "atr_abs": 2.0}
+    plan = _persist_waiting_plan(tactic=tactic, plan_updates={
+        "trigger_spec_id": "anchor-retrace-reclaim", "trigger_params": params,
+    })
+    reached_gateway = []
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal",
+        lambda *args, **kwargs: reached_gateway.append(args) or {"status": "submitted"})
+    now = datetime.now(timezone.utc)
+    try:
+        execute_entry_plan(plan.plan_id, bid=100, ask=100.05,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now,
+            trigger_activation_id="caller-authored-activation",
+            trigger_activation_hash="f" * 64,
+            **_execution_receipt_kwargs(now, depth=True))
+    except ValueError as exc:
+        assert str(exc) == "entry_trigger_activation_required"
+    assert reached_gateway == [], "caller-authored geometry reached Gateway without activation"
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+
+
+@pytest.mark.parametrize("exposure_id", [None, "historical-treatment"])
+def test_historical_treatment_never_grants_current_execution(monkeypatch, exposure_id):
+    from aletheia.trading.entry_compat import decode_entry_plan
+    payload = _plan().model_dump(mode="json")
+    payload.update(version="entry-plan/v1", trigger_spec_version="v2",
+                   trigger_spec_id="momentum-retrace-reclaim", treatment_exposure_id=exposure_id)
+    historical = decode_entry_plan(json.dumps(payload))
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", _actual_ai_entry_authority)
+    def no_experiment_authority(*args):
+        raise AssertionError("Historical experiment ledger cannot authorize current execution")
+    monkeypatch.setattr("aletheia.learning.ledger.get_exposure", no_experiment_authority)
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValueError, match="ai_entry_running_contract_mismatch"):
+        build_entry_plan_order_intent(historical, bid=100, ask=100.05,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
 
 
 def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():

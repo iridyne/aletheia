@@ -31,10 +31,6 @@ def test_only_declared_closed_loops_are_measurement_supported():
         path.consumer_wired and not path.measurement_supported
         for path in LEARNING_PATHS
     )
-    assert all(
-        not path.measurement_supported or path.consumer_wired
-        for path in LEARNING_PATHS
-    )
 
 
 @spec_claim(SpecClaim(

@@ -109,6 +109,7 @@ class MomentumTriggerEngine:
         self.policy = policy
         self.state: State = "armed"
         self.state_path: list[State] = ["armed"]
+        self._activation_events: dict[str, FastMarketEvent] = {}
         self.subscription_confirmed = False
         self.health_reason: str | None = None
         self.final_requirement_reason: str | None = None
@@ -141,6 +142,8 @@ class MomentumTriggerEngine:
             return
         self.state = state
         self.state_path.append(state)
+        if state in {"pullback", "sweep", "reclaim", "triggered"} and self._quote is not None:
+            self._activation_events[state] = self._quote
         if state == "pullback":
             self._pullback_seen_ms = observed_at_ms
         elif state == "sweep":
@@ -341,6 +344,7 @@ class MomentumTriggerEngine:
             depth_bids=depth.bids,
             depth_asks=depth.asks,
             entry_price=entry,
+            activation_events=tuple(self._activation_events[state] for state in ("pullback", "sweep", "reclaim", "triggered")),
             entry_trigger={
                 "trigger_spec_id": self.trigger_spec_id,
                 "geometry_version": self.geometry_version,

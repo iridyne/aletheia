@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 from uuid import uuid4
@@ -13,17 +14,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import TradeProposal
-from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
+from aletheia.trading.entry_compat import decode_entry_plan
 from aletheia.trading.entry_plan import (
     EntryPlan,
     calculate_entry_plan_risk_reward,
     opposing_bbo_price,
+    post_only_price_is_passive,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
-from aletheia.trading.trigger_specs import require_registered_trigger_spec
 
 
-_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 _RECEIPT_VERSION = "entry-execution-receipt/v1"
 _RECEIPT_CHANNELS = frozenset({"quote", "trade", "depth", "candle"})
 
@@ -43,6 +43,7 @@ class EntryExecutionReceiptV1(BaseModel):
     required_channels: tuple[Literal["quote", "trade", "depth", "candle"], ...]
     quote: dict[str, object]
     depth: dict[str, object] | None = None
+    trigger_activation_id: str | None = None
     trigger_evidence_hash: str | None = None
     captured_at: str
     expires_at: str
@@ -95,11 +96,18 @@ def build_entry_execution_receipt(
     depth_exchange_timestamp_ms: int | None = None,
     depth_received_timestamp_ms: int | None = None,
     depth_sequence: int | None = None,
-    trigger_evidence: dict | None = None,
+    trigger_activation_id: str | None = None,
+    trigger_activation_hash: str | None = None,
 ) -> EntryExecutionReceiptV1:
     """Bind exact runtime evidence to one immutable Proposal without mutating it."""
 
-    _require_entry_trigger_evidence(plan, trigger_evidence)
+    from aletheia.trading.entry_activation import require_entry_trigger_activation
+
+    activation = require_entry_trigger_activation(
+        plan, trigger_activation_id, trigger_activation_hash, now=datetime.now(timezone.utc),
+        stream_generation_id=stream_generation_id, subscription_generation_id=subscription_generation_id,
+        quote_sequence=quote_sequence,
+    )
     channels = tuple(dict.fromkeys(str(item) for item in required_channels))
     if not channels or any(item not in _RECEIPT_CHANNELS for item in channels):
         raise ValueError("entry_execution_receipt_channels_invalid")
@@ -131,13 +139,7 @@ def build_entry_execution_receipt(
 
     captured = _instant(observed_at)
     freshness_ms = int(plan.trigger_freshness_ms or 2_000)
-    trigger_hash = (
-        hashlib.sha256(
-            json.dumps(trigger_evidence, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        if trigger_evidence is not None
-        else None
-    )
+    trigger_hash = activation.activation_hash if activation else None
     payload = {
         "version": _RECEIPT_VERSION,
         "attempt_id": uuid4().hex,
@@ -169,6 +171,7 @@ def build_entry_execution_receipt(
             if bids or asks or depth_required
             else None
         ),
+        "trigger_activation_id": activation.activation_id if activation else None,
         "trigger_evidence_hash": trigger_hash,
         "captured_at": captured.isoformat(),
         "expires_at": (captured + timedelta(milliseconds=freshness_ms)).isoformat(),
@@ -178,26 +181,6 @@ def build_entry_execution_receipt(
         **payload,
         receipt_hash=hashlib.sha256(canonical.encode()).hexdigest(),
     )
-
-
-def _require_momentum_geometry_authority(plan: EntryPlan) -> None:
-    if _trigger_id(plan) != _MOMENTUM_GEOMETRY_TRIGGER:
-        return
-    if plan.execution_account_mode != "bitget_demo":
-        raise ValueError("entry_plan_tactic_capability_unavailable")
-    if not plan.treatment_exposure_id:
-        raise ValueError("entry_plan_treatment_exposure_required")
-    from aletheia.learning.ledger import get_exposure
-
-    exposure = get_exposure(plan.treatment_exposure_id)
-    if (
-        exposure is None
-        or exposure.get("path_id") != "momentum_entry_geometry"
-        or exposure.get("assignment") != "treatment"
-        or json.loads(str(exposure.get("after_json") or "{}")).get("value") != 1.0
-        or not json.loads(str(exposure.get("manifest_json") or "{}")).get("geometry_available")
-    ):
-        raise ValueError("entry_plan_treatment_exposure_invalid")
 
 
 def _require_ai_entry_authority(plan: EntryPlan) -> None:
@@ -278,18 +261,7 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
 def require_entry_plan_runtime_authority(plan: EntryPlan) -> None:
     """Revalidate persisted plan lineage and global authority without creating an Order."""
 
-    _require_momentum_geometry_authority(plan)
     _require_ai_entry_authority(plan)
-
-
-def _trigger_id(plan: EntryPlan) -> str | None:
-    historical = historical_trigger_id(plan)
-    if historical is not None:
-        return historical
-    if plan.trigger_spec_id is None:
-        return None
-    contract, _params = require_registered_trigger_spec(plan.trigger_spec_id, plan.trigger_params)
-    return contract.spec_id
 
 
 def _instant(raw: str) -> datetime:
@@ -299,20 +271,6 @@ def _instant(raw: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _require_entry_trigger_evidence(plan: EntryPlan, trigger_evidence: dict | None) -> None:
-    trigger_id = _trigger_id(plan)
-    if trigger_id not in {_MOMENTUM_GEOMETRY_TRIGGER, "anchor-retrace-reclaim"}:
-        return
-    if not isinstance(trigger_evidence, dict):
-        raise ValueError("ai_entry_trigger_evidence_required")
-    if (
-        trigger_evidence.get("trigger_spec_id") != trigger_id
-        or not plan.trigger_params.get("geometry_fingerprint")
-        or trigger_evidence.get("geometry_fingerprint")
-        != plan.trigger_params["geometry_fingerprint"]
-    ):
-        raise ValueError("ai_entry_trigger_identity_mismatch")
-
 
 def build_entry_plan_order_intent(
     plan: EntryPlan,
@@ -321,13 +279,16 @@ def build_entry_plan_order_intent(
     ask: float,
     observed_at: str,
     source_observed_at: str,
-    trigger_evidence: dict | None = None,
+    trigger_activation_id: str | None = None,
+    trigger_activation_hash: str | None = None,
     now: datetime | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
     require_entry_plan_runtime_authority(plan)
-    _require_entry_trigger_evidence(plan, trigger_evidence)
+    from aletheia.trading.entry_activation import require_entry_trigger_activation
+
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    activation = require_entry_trigger_activation(plan, trigger_activation_id, trigger_activation_hash, now=current)
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
     freshness_ms = plan.trigger_freshness_ms or 2_000
@@ -343,7 +304,7 @@ def build_entry_plan_order_intent(
         if plan.limit_price is None:
             raise ValueError("entry_plan_limit_price_required")
         price = float(plan.limit_price)
-        if (plan.direction == "long" and price >= ask) or (plan.direction == "short" and price <= bid):
+        if not post_only_price_is_passive(plan.direction, price, bid, ask):
             raise ValueError("post_only_would_cross_bbo")
         time_in_force = "post_only"
         post_only = True
@@ -408,7 +369,8 @@ def build_entry_plan_order_intent(
                 "risk_policy_hash": plan.risk_policy_hash,
                 "market_received_at": observed_at,
                 "market_source_at": source_observed_at,
-                **({"entry_trigger": dict(trigger_evidence)} if trigger_evidence is not None else {}),
+                **({"entry_trigger_activation_id": activation.activation_id,
+                    "entry_trigger_activation_hash": activation.activation_hash} if activation else {}),
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -422,6 +384,31 @@ def build_entry_plan_order_intent(
         max_slippage_bps=plan.max_slippage_bps,
         worst_price=plan.worst_price,
     )
+
+
+def require_execution_receipt_activation(proposal: TradeProposal, receipt, *, now: datetime) -> None:
+    """Recheck current Plan/quote/activation at claims and before the broker."""
+    from aletheia.trading.entry_activation import require_entry_trigger_activation
+
+    row = repo.get_entry_plan(proposal.entry_plan_id)
+    if row is None:
+        raise ValueError("entry_plan_not_found")
+    plan = decode_entry_plan(row["plan_json"])
+    if receipt is None:
+        raise ValueError("entry_execution_receipt_required")
+    if (not receipt.hash_is_valid() or receipt.proposal_id != proposal.id
+        or receipt.entry_plan_id != plan.plan_id):
+        raise ValueError("entry_execution_receipt_integrity_failed")
+    build_entry_plan_order_intent(plan, bid=receipt.quote["bid"], ask=receipt.quote["ask"],
+        observed_at=datetime.fromtimestamp(receipt.quote["received_timestamp_ms"] / 1000, timezone.utc).isoformat(),
+        source_observed_at=datetime.fromtimestamp(receipt.quote["exchange_timestamp_ms"] / 1000, timezone.utc).isoformat(),
+        trigger_activation_id=receipt.trigger_activation_id, trigger_activation_hash=receipt.trigger_evidence_hash,
+        now=now)
+    require_entry_trigger_activation(plan,
+        receipt.trigger_activation_id, receipt.trigger_evidence_hash, now=now,
+        stream_generation_id=receipt.stream_generation_id,
+        subscription_generation_id=receipt.subscription_generation_id,
+        quote_sequence=receipt.quote.get("sequence"))
 
 
 def execute_entry_plan(
@@ -440,7 +427,8 @@ def execute_entry_plan(
     depth_exchange_timestamp_ms: int | None = None,
     depth_received_timestamp_ms: int | None = None,
     depth_sequence: int | None = None,
-    trigger_evidence: dict | None = None,
+    trigger_activation_id: str | None = None,
+    trigger_activation_hash: str | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Idempotently submit one approved plan through the existing Gateway."""
@@ -461,9 +449,14 @@ def execute_entry_plan(
         from aletheia.execution.gateway import execute_existing_proposal
 
         proposal = TradeProposal.model_validate(existing)
-        if trigger_evidence is None:
+        if proposal.status not in {"pending", "approved"}:
+            # Observing/reconciling an existing handoff must not earn a new
+            # trigger. Gateway owns these states and never resubmits them.
+            return execute_existing_proposal(proposal.id, proposal.execution_mode)
+        if trigger_activation_id is None:
             attribution = json.loads(proposal.attribution_snapshot or "{}")
-            trigger_evidence = attribution.get("entry_trigger")
+            trigger_activation_id = attribution.get("entry_trigger_activation_id")
+            trigger_activation_hash = attribution.get("entry_trigger_activation_hash")
         receipt = build_entry_execution_receipt(
             plan,
             proposal,
@@ -480,7 +473,8 @@ def execute_entry_plan(
             depth_exchange_timestamp_ms=depth_exchange_timestamp_ms,
             depth_received_timestamp_ms=depth_received_timestamp_ms,
             depth_sequence=depth_sequence,
-            trigger_evidence=trigger_evidence,
+            trigger_activation_id=trigger_activation_id,
+            trigger_activation_hash=trigger_activation_hash,
         )
         return execute_existing_proposal(
             existing["id"], existing["execution_mode"], execution_receipt=receipt
@@ -492,7 +486,8 @@ def execute_entry_plan(
         ask=ask,
         observed_at=observed_at,
         source_observed_at=source_observed_at,
-        trigger_evidence=trigger_evidence,
+        trigger_activation_id=trigger_activation_id,
+        trigger_activation_hash=trigger_activation_hash,
         now=now,
     )
     receipt = build_entry_execution_receipt(
@@ -511,17 +506,17 @@ def execute_entry_plan(
         depth_exchange_timestamp_ms=depth_exchange_timestamp_ms,
         depth_received_timestamp_ms=depth_received_timestamp_ms,
         depth_sequence=depth_sequence,
-        trigger_evidence=trigger_evidence,
+        trigger_activation_id=trigger_activation_id,
+        trigger_activation_hash=trigger_activation_hash,
     )
-    if plan.execution_mode == "TRIGGERED" and row["status"] == "waiting":
-        if not repo.transition_entry_plan(plan.plan_id, expected_status="waiting", status="triggered", now=now):
-            return {"status": "already_claimed", "entry_plan_id": plan.plan_id}
-    elif plan.execution_mode == "RESTING_MAKER" and row["status"] != "waiting":
+    if plan.execution_mode == "RESTING_MAKER" and row["status"] != "waiting":
         return {"status": row["status"], "entry_plan_id": plan.plan_id}
 
     try:
         repo.insert_trade_proposal(proposal)
-    except Exception:
+    except sqlite3.IntegrityError as exc:
+        if str(exc) != "UNIQUE constraint failed: trade_proposals.entry_plan_id":
+            raise
         existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
         if existing is None:
             raise

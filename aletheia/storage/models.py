@@ -1680,6 +1680,7 @@ class CandidatePlanningGeneration(_Provenanced):
     attention_terminal_reason: str | None = None
     planner_input_json: str | None = None
     planner_input_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    validated_hypothesis_json: str | None = None
     cycle_number: int = Field(default=1, ge=1)
     previous_generation_id: str | None = None
     cycle_reason: str = "initial_candidate"

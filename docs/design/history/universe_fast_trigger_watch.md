@@ -196,3 +196,15 @@ facts only at a same-venue deterministic trigger, and preserve Risk/Gateway as
 the execution authority. When repository and runtime behavior converge, move
 the normative state and failure semantics into the decision, execution,
 filter-evidence, and data contracts and mark this Proposal implemented.
+
+## Canonical Entry retirement
+
+The Momentum v2 Shadow watcher producer and audit-driven runtime resume path are retired. Historical Plan formats remain readable through `entry_compat`, but the watcher routes them to existing Gateway cancellation/reconciliation and never arms their trigger engines. Existing Shadow audit rows and stored Plan JSON/hashes are historical evidence and are not rewritten. Current canonical trigger evidence is bound through immutable Entry trigger activations.
+
+The canonical Compiler also removes the old baseline-Momentum/treatment selection branches from its private risk-envelope helper. Its only production caller supplies the fixed resting-maker intermediate envelope; grounded anchor geometry and the final tactic are applied and validated by `compile_entry_plan`. Historical experiment exposures remain evidence; the Compiler does not create new exposures through those retired branches.
+
+The original three-step `TriggerEngine` and its implicit missing-spec fallback are deleted. Production watcher construction accepts only `anchor-retrace-reclaim` and uses `MomentumTriggerEngine` with explicit pullback, sweep, reclaim and confirmation evidence. Shared trigger snapshot/policy types remain in `universe.fast_trigger`; they do not select an implementation.
+
+The former `PlanIntent` / `_PlanIntentWire` model protocol is retired. Canonical compilation consumes the validated `EntryHypothesis` directly; old experiment descriptions referring to PlanIntent describe frozen historical evidence, not an executable compatibility path.
+
+The production TriggerSpec registry now contains only `anchor-retrace-reclaim`. The old momentum geometry treatment receipt is no longer consulted for execution authority; historical Plans are rejected by current contract/provenance checks regardless of an old exposure receipt. The Learning registry retains the historical measurement identity but marks its retired compiler consumer and Paper influence unsupported.

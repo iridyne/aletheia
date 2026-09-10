@@ -58,13 +58,17 @@ def _bars(direction: str) -> list[dict]:
 def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=1_000),
@@ -85,8 +89,9 @@ def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
     engine.observe(event("depth", 1_050, 1, bids=((99.99, 20.0),), asks=((100.01, 20.0),)))
     engine.observe(event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"))
     engine.observe(event("trade", 1_150, 2, price=100.0, size=4.0, side="sell"))
-    assert engine.observe(event("quote", 1_200, 2, bid=100.04, ask=100.06)) is None
-    ready = engine.observe(event("quote", 1_550, 3, bid=100.05, ask=100.07))
+    assert engine.observe(event("quote", 1_175, 2, bid=99.89, ask=99.91)) is None
+    assert engine.observe(event("quote", 1_200, 3, bid=100.04, ask=100.06)) is None
+    ready = engine.observe(event("quote", 1_550, 4, bid=100.05, ask=100.07))
 
     assert ready is not None
     assert ready.entry_price == pytest.approx(100.07)
@@ -98,13 +103,17 @@ def test_trigger_requires_pullback_two_quotes_flow_spread_depth_and_freshness():
 def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="short",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=102, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(99.75, 100.0),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=1_000),
@@ -133,8 +142,9 @@ def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
     )
     engine.observe(event("trade", 1_100, 1, price=100.0, size=4.0, side="buy"))
     engine.observe(event("trade", 1_150, 2, price=100.0, size=10.0, side="sell"))
-    assert engine.observe(event("quote", 1_200, 2, bid=99.96, ask=99.98)) is None
-    ready = engine.observe(event("quote", 1_550, 3, bid=99.95, ask=99.97))
+    assert engine.observe(event("quote", 1_175, 2, bid=100.09, ask=100.11)) is None
+    assert engine.observe(event("quote", 1_200, 3, bid=99.96, ask=99.98)) is None
+    ready = engine.observe(event("quote", 1_550, 4, bid=99.95, ask=99.97))
 
     assert ready is not None
     assert ready.entry_price == pytest.approx(99.95)
@@ -144,13 +154,17 @@ def test_short_trigger_requires_pullback_then_two_reclaim_quotes():
 def test_trigger_rejects_market_evidence_from_mixed_stream_generations():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -172,22 +186,27 @@ def test_trigger_rejects_market_evidence_from_mixed_stream_generations():
     engine.observe(event("quote", 1_000, 1, "stream-a", bid=99.98, ask=100.00))
     engine.observe(event("depth", 1_050, 1, "stream-b", bids=((99.99, 2.0),), asks=((100.01, 2.0),)))
     engine.observe(event("trade", 1_100, 1, "stream-a", price=100.0, size=10.0, side="buy"))
-    engine.observe(event("quote", 1_200, 2, "stream-a", bid=100.04, ask=100.06))
+    engine.observe(event("quote", 1_175, 2, "stream-a", bid=99.89, ask=99.91))
+    engine.observe(event("quote", 1_200, 3, "stream-a", bid=100.04, ask=100.06))
 
-    assert engine.observe(event("quote", 1_550, 3, "stream-a", bid=100.05, ask=100.07)) is None
+    assert engine.observe(event("quote", 1_550, 4, "stream-a", bid=100.05, ask=100.07)) is None
     assert engine.health_reason == "market_evidence_generation_mismatch"
 
 
 def test_reclaim_side_alone_does_not_count_as_pullback():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -263,13 +282,17 @@ def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
 def test_sequence_regression_disarms_trigger():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.75, 100.25),
         entry_zone=(100.0, 100.25),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -1015,10 +1038,6 @@ async def test_watch_loop_reloads_entry_plans_while_stream_is_busy(monkeypatch):
     monkeypatch.setattr(watch, "_load_entry_plan_watchers", load_watchers)
     monkeypatch.setattr(watch.repo, "record_entry_plan_monitoring", lambda *args: None)
     monkeypatch.setattr(watch.repo, "get_entry_plan", lambda *args: None)
-    monkeypatch.setattr(watch, "_is_momentum_geometry_trigger_plan", lambda plan: False)
-    async def observe(plan, engine, event):
-        return engine.observe(event)
-    monkeypatch.setattr(watch, "_observe_entry_plan_engine", observe)
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
 
@@ -1052,6 +1071,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         invalidation_price=90.0,
         execution_mode="RESTING_MAKER",
         order_tactic="POST_ONLY_LIMIT",
+        limit_price=100.2,
     )
     execute_calls = 0
 
@@ -1222,13 +1242,17 @@ def test_binance_spot_and_perp_messages_are_normalized():
 def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
     from aletheia.data.symbols import InstrumentId
     from aletheia.universe.fast_stream import parse_binance_message
-    from aletheia.universe.fast_trigger import TriggerEngine, TriggerPolicy
+    from aletheia.universe.fast_trigger import TriggerPolicy
+    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
-    engine = TriggerEngine(
+    engine = MomentumTriggerEngine(
         instrument=instrument,
         direction="long",
         breakout_level=100.0,
+        sweep_band=(99.75, 100.25), invalidation_price=98, atr_abs=2,
+        geometry_version="anchor-retrace-reclaim-geometry/v1",
+        geometry_fingerprint="a" * 64, trigger_spec_id="anchor-retrace-reclaim",
         pullback_band=(99.5, 100.5),
         entry_zone=(100.0, 100.5),
         policy=TriggerPolicy(max_spread_bps=10, min_depth_10bps_usd=100),
@@ -2066,7 +2090,8 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch):
+@pytest.mark.parametrize("spec_id", ["anchor-retrace-reclaim", "momentum-retrace-reclaim", "momentum-retrace-reclaim-geometry", None])
+async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch, spec_id):
     """A TRIGGERED+POST_ONLY_LIMIT plan still in 'waiting' state must NOT be
     subject to maker timeout — the order hasn't been placed yet."""
     from types import SimpleNamespace
@@ -2095,7 +2120,11 @@ async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch)
         symbol="ETH/USDT",
         market_type="perp",
         direction="long",
+        trigger_spec_id=spec_id,
         trigger_params={
+            "sweep_low": 2900, "sweep_high": 2950, "invalidation_price": 2800,
+            "atr_abs": 50, "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "a" * 64,
             "breakout_level": "3000.0",
             "pullback_low": "2900.0",
             "pullback_high": "2950.0",
@@ -2132,7 +2161,7 @@ async def test_triggered_maker_waiting_does_not_start_maker_timeout(monkeypatch)
 
     assert cancellations == []
     assert "triggered-waiting" in plans
-    assert "triggered-waiting" in engines
+    assert ("triggered-waiting" in engines) is (spec_id == "anchor-retrace-reclaim")
 
 
 def test_triggered_maker_stays_subscribed_after_trigger():
@@ -2167,174 +2196,30 @@ async def test_reconfigure_unavailable_status_has_watched_plan_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_entry_plan_watcher_dispatches_hidden_momentum_v2_engine(monkeypatch):
+@pytest.mark.parametrize("outcome", ["invalidated", "active_claim"])
+async def test_entry_plan_watcher_retires_historical_plan_without_starting_engine(monkeypatch, outcome):
     from types import SimpleNamespace
-
     from aletheia.agent_runtime import fast_trigger_watch as watch
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
     payload = "{}"
-    row = {
-        "id": "v2-shadow-plan",
-        "status": "waiting",
-        "plan_json": payload,
-        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
-        "order_id": None,
-    }
-    plan = SimpleNamespace(
-        plan_id="v2-shadow-plan",
-        planning_generation_id="generation-v2",
-        risk_policy_id="policy-v2",
-        risk_policy_revision=1,
-        risk_policy_hash="policy-hash-v2",
-        execution_account_mode="bitget_demo",
-        execution_mode="TRIGGERED",
-        order_tactic="OPPOSING_BBO_IOC",
-        max_wait_sec=0,
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        venue="bitget",
-        symbol="BTC/USDT",
-        market_type="perp",
-        direction="long",
-        trigger_spec_id="momentum-retrace-reclaim",
-        _historical_entry_metadata={"trigger_spec_version": "v2"},
-        trigger_params={
-            "breakout_level": 100.0,
-            "pullback_low": 99.5,
-            "pullback_high": 100.5,
-            "entry_low": 100.0,
-            "entry_high": 100.5,
-            "invalidation_price": 98.0,
-            "sweep_low": 99.5,
-            "sweep_high": 100.0,
-            "atr_abs": 2.0,
-            "geometry_version": "momentum-entry-geometry/v2",
-            "geometry_fingerprint": "a" * 64,
-        },
-    )
+    row = {"id": "historical-plan", "status": "waiting", "plan_json": payload,
+           "plan_hash": hashlib.sha256(payload.encode()).hexdigest(), "order_id": None}
+    plan = SimpleNamespace(plan_id=row["id"], planning_generation_id="generation",
+                           _historical_entry_metadata={"version": "entry-plan/v1"})
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
-    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
-    monkeypatch.setattr(
-        "aletheia.risk.policy.resolve_risk_policy",
-        lambda _cfg, _mode: SimpleNamespace(
-            policy=SimpleNamespace(policy_id="policy-v2", revision=1),
-            policy_hash="policy-hash-v2",
-        ),
-    )
+    monkeypatch.setattr(watch, "decode_entry_plan", lambda _payload: plan)
+    retired = []
 
-    async def no_prewarm(*_args, **_kwargs):
-        return None
+    async def retire(row, **kwargs):
+        retired.append((row["id"], kwargs["reason"]))
+        return outcome
 
-    monkeypatch.setattr(watch, "_prewarm_market_structure", no_prewarm)
-    cfg = SimpleNamespace(
-        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
-        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
-        universe=SimpleNamespace(max_spread_bps=50, min_depth_10bps_usd=100),
-    )
-
-    plans, engines = await watch._load_entry_plan_watchers(cfg)
-
-    assert plans[plan.plan_id] is plan
-    assert isinstance(engines[plan.plan_id], MomentumTriggerEngine)
-
-
-@pytest.mark.asyncio
-async def test_momentum_v2_shadow_records_complete_state_and_trigger_once(tmp_path, monkeypatch):
-    _prepare(tmp_path, monkeypatch)
-    from types import SimpleNamespace
-
-    from aletheia.agent_runtime import fast_trigger_watch as watch
-    from aletheia.data.symbols import InstrumentId
-    from aletheia.storage import repositories as repo
-    from aletheia.trading.momentum_trigger import MomentumTriggerEngine
-    from aletheia.universe.fast_stream import FastMarketEvent
-    from aletheia.universe.fast_trigger import TriggerPolicy
-
-    instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
-    engine = MomentumTriggerEngine(
-        instrument=instrument,
-        direction="long",
-        breakout_level=100.0,
-        pullback_band=(99.5, 100.5),
-        sweep_band=(99.5, 100.0),
-        entry_zone=(100.0, 100.5),
-        invalidation_price=98.0,
-        atr_abs=2.0,
-        geometry_version="momentum-entry-geometry/v2",
-        geometry_fingerprint="b" * 64,
-        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-    )
-    engine.confirm_subscription()
-    plan = SimpleNamespace(
-        plan_id="v2-audit-plan",
-        trigger_spec_id="momentum-retrace-reclaim",
-        _historical_entry_metadata={"trigger_spec_version": "v2"},
-        trigger_params={
-            "geometry_version": "momentum-entry-geometry/v2",
-            "geometry_fingerprint": "b" * 64,
-        },
-    )
-
-    def event(kind, at, sequence, **values):
-        return FastMarketEvent(
-            event_type=kind,
-            instrument=instrument,
-            exchange_timestamp_ms=at,
-            received_timestamp_ms=at,
-            sequence=sequence,
-            **values,
-        )
-
-    events = (
-        event("quote", 1_000, 1, bid=99.9, ask=99.95),
-        event("depth", 1_050, 1, bids=((100.1, 10.0),), asks=((100.2, 10.0),)),
-        event("trade", 1_100, 1, price=100.0, size=10.0, side="buy"),
-        event("trade", 1_250, 2, price=100.0, size=4.0, side="sell"),
-        event("quote", 1_200, 2, bid=99.8, ask=99.9),
-        event("quote", 1_500, 3, bid=100.05, ask=100.15),
-        event("quote", 1_900, 4, bid=100.1, ask=100.2),
-    )
-    ready = None
-    for observed in events:
-        ready = await watch._observe_entry_plan_engine(plan, engine, observed) or ready
-
-    assert ready is not None
-    assert engine.state_path == ["armed", "pullback", "sweep", "reclaim", "triggered"]
-    state_audits = repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")
-    trigger_audits = repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")
-    assert len(state_audits) == 4
-    assert {json.loads(row["after_state"])["state"] for row in state_audits} == {
-        "pullback",
-        "sweep",
-        "reclaim",
-        "triggered",
-    }
-    assert len(trigger_audits) == 1
-    trigger_state = json.loads(trigger_audits[0]["after_state"])
-    assert trigger_state["geometry_fingerprint"] == "b" * 64
-    assert trigger_state["entry_trigger"]["state_path"] == engine.state_path
-    assert repo.get_db().execute("SELECT COUNT(*) FROM trade_proposals").fetchone()[0] == 0
-
-    assert await watch._observe_entry_plan_engine(plan, engine, events[-1]) is None
-    assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_state_transition")) == 4
-    assert len(repo.list_audit_events(limit=50, event_type="momentum_v2_trigger_observed")) == 1
-
-    anchor_engine = MomentumTriggerEngine(
-        instrument=instrument, direction="long", breakout_level=100.0,
-        pullback_band=(99.5, 100.5), sweep_band=(99.5, 100.0),
-        entry_zone=(100.0, 100.5), invalidation_price=98.0, atr_abs=2.0,
-        geometry_version="anchor-retrace-reclaim-geometry/v1",
-        geometry_fingerprint="c" * 64,
-        policy=TriggerPolicy(max_spread_bps=50, min_depth_10bps_usd=100),
-        trigger_spec_id="anchor-retrace-reclaim",
-    )
-    anchor_engine.confirm_subscription()
-    anchor_ready = None
-    for observed in events:
-        anchor_ready = anchor_engine.observe(observed) or anchor_ready
-    assert anchor_ready.entry_trigger["trigger_spec_id"] == "anchor-retrace-reclaim"
-    assert "trigger_spec_version" not in anchor_ready.entry_trigger
+    monkeypatch.setattr(watch, "_terminalize_entry_plan", retire)
+    plans, engines = await watch._load_entry_plan_watchers(SimpleNamespace())
+    assert engines == {}
+    assert plans == ({plan.plan_id: plan} if outcome == "active_claim" else {})
+    assert retired == [(plan.plan_id, "entry_plan_runtime_authority_revoked")]
 
 
 @pytest.mark.asyncio
@@ -2444,3 +2329,9 @@ async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch)
     assert fresh.health_reason is None
     assert fresh.state == "armed"
     assert fresh.subscription_confirmed is False
+    # If proof persistence expired/failed after observe(), the durable Plan is
+    # still waiting. A terminal in-memory engine cannot strand that Plan.
+    fresh.state = "triggered"
+    _, rearmed = await watch._load_entry_plan_watchers(cfg, rebuilt)
+    assert rearmed[plan.plan_id] is not fresh
+    assert rearmed[plan.plan_id].state == "armed"
