@@ -41,7 +41,7 @@ def _setup_db(tmp_path, monkeypatch):
         "pipeline_outcome_feedback",
         "§1 external outcome handoff",
         "L2c",
-        "An external entry chain closed through production PnL becomes one "
+        "An Opportunity-backed external entry chain closed through production PnL becomes one "
         "versioned eligible broker-fill Outcome whose Proposal, Risk, Order, Position, "
         "Opportunity, and scanner identity reach Attribution and factor Feedback.",
         status="implemented",
@@ -125,8 +125,8 @@ def test_unverified_exchange_close_is_explicitly_excluded_from_feedback(
         "pipeline_outcome_feedback",
         "§4 attribution gate",
         "L2b",
-        "A verified external close without the Proposal, entry Order, and Opportunity "
-        "identity required by downstream Attribution remains explicitly ineligible.",
+        "A verified external close without the Proposal, entry Order, and source-specific "
+        "causal identity required by downstream Attribution remains explicitly ineligible.",
         status="implemented",
     )
 )

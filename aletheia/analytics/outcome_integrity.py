@@ -198,82 +198,84 @@ def outcome_write_eligibility(
     return assessment.eligible, assessment.reason
 
 
-def attribution_chain_complete(row: dict[str, Any], *, db: Any = None) -> bool:
-    """Prove that every entry leg names the Position's relational chain.
+# One relational rule for prospective close writes and snapshot cohort reads.
+# ``p`` is a persisted Position or the prospective Position supplied by a producer.
+_ATTRIBUTION_SQL = """
+    EXISTS (
+        SELECT 1 FROM orders o
+        JOIN trade_proposals tp ON tp.id = p.proposal_id
+        WHERE o.id = p.order_id AND o.position_id = p.id
+          AND o.proposal_id = tp.id
+          AND (o.close_reason IS NULL OR trim(o.close_reason) = '')
+          AND (
+              (
+                  p.opportunity_id IS NULL AND tp.opportunity_id IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM entry_plans ep
+                      JOIN candidate_planning_generations pg
+                        ON pg.id = ep.planning_generation_id
+                      JOIN universe_members um ON um.id = ep.candidate_id
+                      JOIN universe_snapshots us ON us.id = um.snapshot_id
+                      WHERE ep.id = tp.entry_plan_id
+                        AND ep.order_id = o.id
+                        AND pg.entry_plan_id = ep.id
+                        AND pg.last_candidate_id = um.id
+                        AND us.source_kind = 'universe'
+                        AND json_extract(ep.plan_json, '$.source_kind') = 'universe'
+                        AND json_extract(ep.plan_json, '$.source_id') = um.id
+                        AND json_extract(ep.plan_json, '$.candidate_id') = um.id
+                        AND json_extract(ep.plan_json, '$.planning_generation_id') = pg.id
+                  )
+              )
+              OR (
+                  trim(p.opportunity_id) != ''
+                  AND tp.opportunity_id = p.opportunity_id
+                  AND (
+                      tp.entry_plan_id IS NULL
+                      OR EXISTS (
+                          SELECT 1 FROM entry_plans ep WHERE ep.id = tp.entry_plan_id
+                            AND json_extract(ep.plan_json, '$.source_kind') = 'serenity'
+                            AND json_extract(ep.plan_json, '$.source_id') = p.opportunity_id
+                      )
+                  )
+                  AND (
+                      EXISTS (SELECT 1 FROM opportunities op WHERE op.id = p.opportunity_id)
+                      OR EXISTS (SELECT 1 FROM serenity_opportunities sop WHERE sop.id = p.opportunity_id)
+                  )
+              )
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM orders leg
+              WHERE leg.position_id = p.id
+                AND (leg.close_reason IS NULL OR trim(leg.close_reason) = '')
+                AND (leg.proposal_id IS NULL OR leg.proposal_id <> tp.id)
+          )
+    )
+"""
 
-    Producer-side hooks run immediately after commit, before the read cohort has
-    a chance to reject a mismatched backlink.  Therefore a Position cannot be
-    marked feedback-eligible merely because three UUID-shaped strings exist or
-    because only its first Order matches.  Any additional non-close Order linked
-    to the Position must use the same Proposal and Opportunity.
+
+def attribution_chain_complete(row: dict[str, Any], *, db: Any = None) -> bool:
+    """Prove source-specific ancestry and every entry leg's Proposal backlink.
+
+    Universe entries use their immutable Plan and its completed Generation /
+    Candidate binding. Opportunity and Serenity source history keeps its existing
+    relational rule. Current Candidate eligibility or Generation freshness is not
+    a prerequisite for evaluating an already executed trade.
     """
     position_id = str(row.get("position_id") or row.get("id") or "").strip()
     proposal_id = str(row.get("proposal_id") or "").strip()
     order_id = str(row.get("order_id") or "").strip()
-    opportunity_id = str(row.get("opportunity_id") or "").strip()
-    if not position_id or not proposal_id or not order_id or not opportunity_id:
+    if not position_id or not proposal_id or not order_id:
         return False
     if db is None:
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
-
     try:
         matched = db.execute(
-            """
-            SELECT CASE WHEN
-                EXISTS (
-                    SELECT 1
-                    FROM orders o
-                    JOIN trade_proposals tp ON tp.id = ?
-                    WHERE o.id = ?
-                      AND o.position_id = ?
-                      AND o.proposal_id = tp.id
-                      AND (
-                          o.close_reason IS NULL
-                          OR trim(o.close_reason) = ''
-                      )
-                      AND tp.opportunity_id = ?
-                      AND (
-                          EXISTS (
-                              SELECT 1 FROM opportunities op WHERE op.id = ?
-                          )
-                          OR EXISTS (
-                              SELECT 1 FROM serenity_opportunities sop
-                              WHERE sop.id = ?
-                          )
-                      )
-                )
-                AND NOT EXISTS (
-                    SELECT 1
-                    FROM orders leg
-                    LEFT JOIN trade_proposals leg_tp ON leg_tp.id = leg.proposal_id
-                    WHERE leg.position_id = ?
-                      AND (
-                          leg.close_reason IS NULL
-                          OR trim(leg.close_reason) = ''
-                      )
-                      AND (
-                          leg.proposal_id IS NULL
-                          OR leg.proposal_id <> ?
-                          OR leg_tp.id IS NULL
-                          OR leg_tp.opportunity_id IS NULL
-                          OR leg_tp.opportunity_id <> ?
-                      )
-                )
-            THEN 1 ELSE 0 END
-            """,
-            (
-                proposal_id,
-                order_id,
-                position_id,
-                opportunity_id,
-                opportunity_id,
-                opportunity_id,
-                position_id,
-                proposal_id,
-                opportunity_id,
-            ),
+            "SELECT " + _ATTRIBUTION_SQL + " FROM "
+            "(SELECT ? AS id, ? AS proposal_id, ? AS order_id, ? AS opportunity_id) p",
+            (position_id, proposal_id, order_id, row.get("opportunity_id")),
         ).fetchone()
     except sqlite3.DatabaseError as exc:
         raise AttributionReadError(str(exc)) from exc
@@ -410,7 +412,7 @@ def assess_position_closure(
 
     has_attribution_ids = all(
         str(row.get(field) or "").strip()
-        for field in ("proposal_id", "order_id", "opportunity_id")
+        for field in ("proposal_id", "order_id")
     )
     marker_was_injected = (
         "_attribution_complete" in row
@@ -513,48 +515,7 @@ def raw_account_events(
                    ORDER BY aletheia_instant_us(f.filled_at), f.id
                    LIMIT 1
                ) AS _paper_fill_model_version,
-               CASE WHEN EXISTS (
-                   SELECT 1
-                   FROM orders o
-                   JOIN trade_proposals tp ON tp.id = p.proposal_id
-                   WHERE o.id = p.order_id
-                     AND o.position_id = p.id
-                     AND o.proposal_id = p.proposal_id
-                     AND (
-                         o.close_reason IS NULL
-                         OR trim(o.close_reason) = ''
-                     )
-                     AND p.opportunity_id IS NOT NULL
-                     AND tp.opportunity_id = p.opportunity_id
-                     AND (
-                         EXISTS (
-                             SELECT 1 FROM opportunities op
-                             WHERE op.id = p.opportunity_id
-                         )
-                         OR EXISTS (
-                             SELECT 1 FROM serenity_opportunities sop
-                             WHERE sop.id = p.opportunity_id
-                         )
-                     )
-                     AND NOT EXISTS (
-                         SELECT 1
-                         FROM orders leg
-                         LEFT JOIN trade_proposals leg_tp
-                           ON leg_tp.id = leg.proposal_id
-                         WHERE leg.position_id = p.id
-                           AND (
-                               leg.close_reason IS NULL
-                               OR trim(leg.close_reason) = ''
-                           )
-                           AND (
-                               leg.proposal_id IS NULL
-                               OR leg.proposal_id <> p.proposal_id
-                               OR leg_tp.id IS NULL
-                               OR leg_tp.opportunity_id IS NULL
-                               OR leg_tp.opportunity_id <> p.opportunity_id
-                           )
-                     )
-               ) THEN 1 ELSE 0 END AS _attribution_complete
+               """ + _ATTRIBUTION_SQL + """ AS _attribution_complete
         FROM positions p
         WHERE """ + " AND ".join(conditions)
         + " ORDER BY aletheia_instant_us(p.closed_at) DESC, p.id DESC LIMIT ?"

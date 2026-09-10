@@ -845,6 +845,46 @@ refreeze unless the exact current prospective path is independently authorized; 
 errored authority remains advisory/fail-closed. Risk account-loss semantics remain separately
 controlled by OI-C03.
 
+### 11.1 Source-specific realized Outcome ancestry
+
+Owner-approved D1, #3031: a Universe Entry does not require an Opportunity.
+The shared `analytics/outcome_integrity.py` owner validates the canonical
+Candidate → Planning Generation → EntryPlan → Proposal → Order/Position chain
+for both prospective close producers and snapshot read cohorts:
+
+- Position and every non-close entry Order name the same existing Proposal;
+  the primary Order points back to that Position and is not a close Order.
+- The Proposal names its EntryPlan, the Plan names its primary Order and
+  completed Generation, and that Generation points back to the Plan.
+- The Plan's immutable Candidate identity matches the Generation's bound
+  `last_candidate_id` (the original generation seed may precede requalification).
+  Its payload source is `universe`, its source ID is that retained Candidate,
+  and the Candidate belongs to a Universe snapshot. Payload Candidate/Generation
+  IDs match the relational IDs. Candidate expiry or Generation supersession after
+  execution does not invalidate an already executed trade's ancestry.
+- Universe Position/Proposal `opportunity_id` stays NULL. The existing historical
+  Opportunity path and source-specific Serenity Opportunity path remain valid;
+  a Plan-bound entry cannot use an unrelated Opportunity as a fallback for a
+  broken Universe chain.
+
+Trade Attribution projects the verified Plan/Generation/Candidate IDs directly,
+without manufacturing an Opportunity or scanner evidence. Review/Learning and
+hook replay retain the same shared eligibility owner. Exact-account execution,
+verified entry/exit fills, complete fee/funding/realized economics, administrative
+exclusions and clean-window gates remain required and unchanged.
+
+This change performs no migration, eligibility backfill, payload/hash rewrite or
+measurement-window replay. Previously persisted negative eligibility remains
+negative on reads. Existing retryable producer-owned evidence recovery may still
+reassess a record under its original recovery authority; this is not permission
+to reopen completed hook jobs or historical experiments. The existing `oi-v1`
+closure/economic evidence format and clean-window anchor remain unchanged;
+source ancestry admission is the explicit D1 delta here.
+
+Executable proof: `tests/e2e/test_pipeline_universe_outcome.py` (PL-OF-20), with
+existing Outcome/Serenity/multileg/account/settlement regressions. Offline venue
+and Risk doubles demonstrate the data path, not exchange route qualification.
+
 ## 12. Bounded Entry Learning context
 
 `entry-learning-context/v1` is a read-only T1-cutoff projection over existing
