@@ -1,5 +1,9 @@
 import sqlite3
+import os
+import sys
 from pathlib import Path
+
+import pytest
 
 
 def test_operator_shell_root_can_be_overridden(tmp_path, monkeypatch):
@@ -139,6 +143,32 @@ def _make_operator_shell_fixture(tmp_path, monkeypatch):
     entry.write_text("console.log('ok')", encoding="utf-8")
     monkeypatch.setattr(operator_shell, "operator_shell_root", lambda: root)
     return operator_shell
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group recovery")
+def test_operator_recovery_terminates_only_its_process_group(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config
+    from aletheia.gateway.pidfile import kill_pid_tree
+
+    operator_shell = _make_operator_shell_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(operator_shell, "_list_operator_shell_processes", lambda: [])
+    monkeypatch.setattr(
+        operator_shell, "build_operator_shell_command",
+        lambda cfg: [sys.executable, "-c", "import time; time.sleep(30)"],
+    )
+    proc = operator_shell.spawn_operator_shell(load_config())
+    try:
+        # Check the real OS boundary before exercising group termination, so a
+        # regression fails without sending SIGTERM to the test runner itself.
+        assert os.getpgid(proc.pid) == proc.pid
+        assert os.getpgid(proc.pid) != os.getpgrp()
+        kill_pid_tree(proc.pid)
+        assert proc.wait(timeout=5) != 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 def test_spawn_operator_shell_adopts_existing_pid_without_spawning(tmp_path, monkeypatch):

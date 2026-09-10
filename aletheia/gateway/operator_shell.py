@@ -475,6 +475,9 @@ def spawn_operator_shell(
         }
         if platform.system() == "Windows":
             popen_kwargs["creationflags"] = CREATE_NO_WINDOW
+        else:
+            # Child recovery must not signal the Gateway supervisor's group.
+            popen_kwargs["start_new_session"] = True
 
         with log_path.open("a", encoding="utf-8") as log_file:
             popen_kwargs["stderr"] = log_file
