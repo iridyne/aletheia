@@ -54,7 +54,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         entry_reference_contract,
         validate_hypothesis_references,
     )
-    from aletheia.trading.entry_plan import EntryPlan
+    from aletheia.trading.entry_plan import EntryPlan, post_only_price_is_passive
     from aletheia.trading import entry_plan_compiler, momentum_trigger, trigger_specs
     from aletheia.agent_runtime.fast_trigger_watch import (
         _load_entry_plan_watchers, _observe_entry_plan_engine, _watch_loop,
@@ -94,6 +94,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
                 "reference_validation": validate_hypothesis_references,
                 "compiler": entry_plan_compiler,
                 "runtime_authority": resolve_entry_runtime_authority,
+                "passive_price_eligibility": post_only_price_is_passive,
                 "trigger_registry": trigger_specs,
                 "trigger_engine": momentum_trigger,
                 "watcher_loading": _load_entry_plan_watchers,

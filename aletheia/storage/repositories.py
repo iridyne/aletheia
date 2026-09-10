@@ -7606,7 +7606,8 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
                 "SELECT pg.*, ep.id AS entry_plan_id, ep.status AS entry_plan_status, "
                 "ep.execution_mode, ep.created_at AS entry_plan_created_at, "
                 "ep.updated_at AS entry_plan_updated_at, ep.terminal_at AS entry_plan_terminal_at, "
-                "ep.terminal_reason AS entry_plan_terminal_reason "
+                "ep.terminal_reason AS entry_plan_terminal_reason, "
+                "ep.monitoring_state AS entry_plan_monitoring_state, ep.monitoring_evidence_json "
                 "FROM candidate_planning_generations pg "
                 "LEFT JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
                 f"WHERE pg.planning_key IN ({placeholders}) ORDER BY pg.cycle_number,pg.created_at,pg.id",
@@ -7614,6 +7615,7 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
             )]
             lineage = get_entry_plan_execution_lineage([row["entry_plan_id"] for row in rows if row.get("entry_plan_id")])
             for row in rows:
+                row["passive_entry"] = json.loads(row.get("monitoring_evidence_json") or "{}").get("passive_entry")
                 row["execution"] = lineage.get(row.get("entry_plan_id"))
                 result[row["planning_key"]].append(row)
     return result
@@ -9308,11 +9310,13 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
 
     def signature(value: dict) -> tuple:
         channels = value.get("channels") if isinstance(value.get("channels"), dict) else {}
+        passive = value.get("passive_entry") or {}
         return (
             value.get("state"),
             value.get("stream_generation_id"),
             value.get("subscription_generation_id"),
             tuple(value.get("required_channels") or ()),
+            passive.get("eligible"), passive.get("ever_eligible"),
             tuple(
                 (name, facts.get("state"), facts.get("reason"))
                 for name, facts in sorted(channels.items())
@@ -9324,6 +9328,14 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
         existing = json.loads(row.get("monitoring_evidence_json") or "null")
     except (TypeError, json.JSONDecodeError):
         existing = None
+    previous_passive = existing.get("passive_entry", {}) if isinstance(existing, dict) else {}
+    if "passive_entry" in evidence:
+        passive = evidence["passive_entry"]
+        evidence = {**evidence, "passive_entry": {**passive,
+            "ever_eligible": bool(previous_passive.get("ever_eligible") or passive["eligible"]),
+        }}
+    elif previous_passive:
+        evidence = {**evidence, "passive_entry": previous_passive}
     if isinstance(existing, dict) and signature(existing) == signature(evidence):
         return False
     payload = json.dumps(evidence, sort_keys=True, separators=(",", ":"))

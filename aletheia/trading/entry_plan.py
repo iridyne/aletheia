@@ -448,6 +448,11 @@ def entry_plan_transition_allowed(current: str, target: str) -> bool:
     return target in ENTRY_PLAN_TRANSITIONS.get(current, ())
 
 
+def post_only_price_is_passive(direction: str, limit_price: float, bid: float, ask: float) -> bool:
+    """Exact Post-Only eligibility for a validated Plan and current BBO."""
+    return limit_price < ask if direction == "long" else limit_price > bid
+
+
 def opposing_bbo_price(
     *,
     direction: str,

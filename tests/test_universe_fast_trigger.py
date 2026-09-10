@@ -1052,6 +1052,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         invalidation_price=90.0,
         execution_mode="RESTING_MAKER",
         order_tactic="POST_ONLY_LIMIT",
+        limit_price=100.2,
     )
     execute_calls = 0
 

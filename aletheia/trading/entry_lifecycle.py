@@ -21,6 +21,10 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
     if plan_status == "expired":
         return "PLAN_EXPIRED", cycle.get("entry_plan_terminal_reason"), "await_requalification"
     if plan_status == "waiting":
+        if (cycle.get("execution_mode") == "RESTING_MAKER"
+            and cycle.get("entry_plan_monitoring_state") == "ready"
+            and (cycle.get("passive_entry") or {}).get("eligible") is False):
+            return "WAITING_MARKET", "post_only_would_cross_bbo", "await_passive_market"
         state = "WAITING_TRIGGER" if cycle.get("execution_mode") == "TRIGGERED" else "PLAN_READY"
         return state, None, "fast_monitoring"
     if plan_status == "triggered":
@@ -64,6 +68,9 @@ def project_candidate_entry_lifecycle(candidate: dict, cycles: list[dict]) -> di
         or current.get("updated_at")
         if current else candidate.get("created_at")
     )
+    if (current and state in {"PLAN_READY", "WAITING_MARKET"}
+        and current.get("entry_plan_monitoring_state") == "ready"):
+        changed_at = (current.get("passive_entry") or {}).get("observed_at") or changed_at
     return {
         "lifecycle_state": state,
         "execution_state": (current.get("execution") or {}).get("execution_state", "NOT_STARTED") if current else "NOT_STARTED",
@@ -121,6 +128,11 @@ def _cycle_projection(cycle: dict) -> dict[str, Any]:
             "at": cycle.get("entry_plan_terminal_at") or cycle.get("entry_plan_updated_at"),
             "reason": cycle.get("entry_plan_terminal_reason"),
         })
+    if cycle.get("passive_entry"):
+        passive = cycle["passive_entry"]
+        events.append({"event": "passive_entry_eligible" if passive["eligible"] else "waiting_for_passive_market",
+                       "at": passive.get("observed_at"),
+                       "reason": None if passive["eligible"] else "post_only_would_cross_bbo"})
     return {
         "generation_id": cycle.get("id"),
         "cycle_number": int(cycle.get("cycle_number") or 1),

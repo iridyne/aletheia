@@ -184,6 +184,22 @@ describe('Entry Workbench', () => {
     expect(renderState('PLAN_EXPIRED', 2, 2)).toContain('Plan Expired · cycle 2 · expired 2×')
   })
 
+  it('shows passive market waiting as an active plan lifecycle', () => {
+    const html = renderWorkbench({
+      ...workbench,
+      current_candidates: [{
+        ...workbench.current_candidates![0],
+        planning_generation_id: 'generation-1',
+        lifecycle_state: 'WAITING_MARKET',
+        lifecycle_reason: 'post_only_would_cross_bbo',
+        current_cycle_number: 1,
+        next_action: 'await_passive_market',
+      }],
+    })
+    expect(html).toContain('Waiting Market · cycle 1 · Post Only Would Cross Bbo')
+    expect(html).not.toContain('No Planning Generation yet')
+  })
+
   it('labels target utility without reinterpreting the legacy score', () => {
     const html = renderWorkbench({
       ...workbench,

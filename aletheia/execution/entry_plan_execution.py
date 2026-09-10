@@ -19,6 +19,7 @@ from aletheia.trading.entry_plan import (
     EntryPlan,
     calculate_entry_plan_risk_reward,
     opposing_bbo_price,
+    post_only_price_is_passive,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
 from aletheia.trading.trigger_specs import require_registered_trigger_spec
@@ -344,7 +345,7 @@ def build_entry_plan_order_intent(
         if plan.limit_price is None:
             raise ValueError("entry_plan_limit_price_required")
         price = float(plan.limit_price)
-        if (plan.direction == "long" and price >= ask) or (plan.direction == "short" and price <= bid):
+        if not post_only_price_is_passive(plan.direction, price, bid, ask):
             raise ValueError("post_only_would_cross_bbo")
         time_in_force = "post_only"
         post_only = True

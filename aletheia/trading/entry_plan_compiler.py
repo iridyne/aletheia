@@ -528,9 +528,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     else:
         raise PlanIntentError("EXECUTION_URGENCY_INVALID")
     bid, ask = float(context.execution_context["bid"]), float(context.execution_context["ask"])
+    if not all(math.isfinite(value) and value > 0 for value in (bid, ask)) or ask < bid:
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
     limit_price = primary.price if maker else None
-    if maker and ((direction == "long" and primary.price >= ask) or (direction == "short" and primary.price <= bid)):
-        raise PlanIntentError("POST_ONLY_WOULD_CROSS")
+    # Frozen BBO is context, not future submission authority. The fixed passive
+    # price waits for current-BBO eligibility in the existing execution boundary.
     hypothesis_json = canonical_json(hypothesis.model_dump(mode="json"))
     source = context.candidate_opportunity_context["source"]
     updates = {

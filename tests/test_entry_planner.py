@@ -1042,6 +1042,77 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
 
 
 
+def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
+    from aletheia.trading.entry_analysis import EntryAnalysisContext, EntryHypothesis, canonical_json, fingerprint
+    from tests.test_entry_analysis import _anchor, _context_v2
+
+    cfg = load_config()
+    monkeypatch.setattr("aletheia.risk.engine.account_equity_for_execution", lambda *_args: 5000.0)
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.execute_write("UPDATE candidate_planning_generations SET producer_commit='controlled-passive-test' WHERE id=?",
+                       (generation["id"],))
+    primary = _anchor("candidate_reference", 100, f"candidate:{candidate.id}")
+    invalidation = _anchor("confirmed_swing", 95, "swing:1")
+    data = _context_v2((primary, invalidation)).model_dump(mode="json", exclude={"context_fingerprint"})
+    data["planning_generation"] = {"id": generation["id"], "candidate_id": candidate.id,
+        "candidate_family": "mean_reversion", "cycle_number": 1,
+        "entry_behavior_fingerprint": generation["entry_behavior_fingerprint"],
+        "schema_fingerprint": generation["schema_fingerprint"]}
+    data["candidate_opportunity_context"] = json.loads(candidate.candidate_opportunity_context_json)
+    data["candidate"]["candidate_price"] = 100
+    data["market_structure"]["15m"].update(atr14=2, break_tolerance=0.1)
+    data["execution_context"].update(availability="available", bid=99.89, ask=99.9,
+        spread_bps=1.01, depth_10bps_usd=100000, estimated_costs=0.1)
+    context = EntryAnalysisContext.model_validate(data)
+    frozen = canonical_json(context.model_dump(mode="json"))
+    repo.execute_write("UPDATE candidate_planning_generations SET planner_input_json=?,planner_input_hash=? WHERE id=?",
+                       (frozen, fingerprint(context.model_dump(mode="json")), generation["id"]))
+    calls = []
+    async def model(value):
+        calls.append(value)
+        return EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
+            primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
+            entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE",
+            risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(invalidation.anchor_id,))
+
+    result = asyncio.run(plan_next_candidate(model, cfg=cfg))
+    assert result["status"] == "planned", repo.get_candidate_planning_generation(generation["id"])["outcome_reason"]
+    record = repo.get_entry_plan(result["entry_plan_id"])
+    plan = EntryPlan.model_validate_json(record["plan_json"])
+    now = datetime.now(timezone.utc)
+    times = dict(observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
+    with pytest.raises(ValueError, match="post_only_would_cross_bbo"):
+        build_entry_plan_order_intent(plan, bid=99.89, ask=99.9, **times)
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
+    from aletheia.agent_runtime.fast_trigger_watch import _entry_plan_expiry_reason
+
+    monitoring = {"state": "ready", "passive_entry": {"eligible": False, "observed_at": now.isoformat()}}
+    assert repo.record_entry_plan_monitoring(plan.plan_id, monitoring)
+    assert _entry_plan_expiry_reason(repo.get_entry_plan(plan.plan_id)) == "passive_entry_never_became_eligible"
+    lifecycle = repo.get_candidate_entry_lifecycle(candidate.id)
+    assert lifecycle["lifecycle_state"] == "WAITING_MARKET"
+    assert lifecycle["lifecycle_reason"] == "post_only_would_cross_bbo"
+    assert lifecycle["state_changed_at"] == now.isoformat()
+    intent = build_entry_plan_order_intent(plan, bid=99.99, ask=100.01, **times)
+    assert intent.price == plan.limit_price == 100
+    assert intent.order_tactic == "POST_ONLY_LIMIT" and intent.post_only is True
+    ready = {"state": "ready", "passive_entry": {"eligible": True, "observed_at": now.isoformat()}}
+    assert repo.record_entry_plan_monitoring(plan.plan_id, ready)
+    assert repo.get_candidate_entry_lifecycle(candidate.id)["lifecycle_state"] == "PLAN_READY"
+    assert repo.record_entry_plan_monitoring(plan.plan_id, monitoring)
+    assert _entry_plan_expiry_reason(repo.get_entry_plan(plan.plan_id)) == "entry_plan_expired"
+    assert repo.record_entry_plan_monitoring(plan.plan_id, {"state": "unavailable"})
+    assert _entry_plan_expiry_reason(repo.get_entry_plan(plan.plan_id)) == "monitoring_stream_unavailable"
+    assert json.loads(repo.get_entry_plan(plan.plan_id)["monitoring_evidence_json"])["passive_entry"]["ever_eligible"] is True
+    assert repo.get_entry_plan(plan.plan_id)["plan_json"] == record["plan_json"]
+    assert repo.get_candidate_planning_generation(generation["id"])["planner_input_json"] == frozen
+    assert asyncio.run(plan_next_candidate(model, cfg=cfg))["status"] == "idle"
+    assert len(calls) == 1
+
+
 def test_plan_intent_portable_schema_requires_every_strict_property():
     schema = portable_json_schema_payload(_PlanIntentWireSchema)
     properties = schema["properties"]

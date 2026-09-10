@@ -728,6 +728,10 @@ def _entry_plan_expiry_reason(row: dict, engine=None) -> str:
         except (StopIteration, TypeError, ValueError, json.JSONDecodeError):
             return "monitoring_stream_unavailable"
         return f"monitoring_channel_unavailable:{channel}"
+    passive = json.loads(row.get("monitoring_evidence_json") or "{}").get("passive_entry", {})
+    if (state == "ready" and passive.get("eligible") is False
+        and passive.get("ever_eligible") is False and engine is None):
+        return "passive_entry_never_became_eligible"
     if engine is not None:
         final_reason = getattr(engine, "final_requirement_reason", None)
         if final_reason:
@@ -890,13 +894,23 @@ async def _watch_loop(cfg) -> None:
                         plan.market_type,
                     )
                     if instrument == event.instrument:
+                        evidence = stream.monitoring_state(instrument, _plan_monitoring_channels(plan))
+                        if (plan.order_tactic == "POST_ONLY_LIMIT" and event.event_type == "quote"
+                            and evidence.get("state") == "ready"):
+                            from aletheia.trading.entry_plan import post_only_price_is_passive
+
+                            evidence = {**evidence, "passive_entry": {
+                                "eligible": post_only_price_is_passive(
+                                    plan.direction, plan.limit_price, float(event.bid), float(event.ask),
+                                ),
+                                "observed_at": datetime.fromtimestamp(
+                                    event.received_timestamp_ms / 1000, timezone.utc,
+                                ).isoformat(),
+                            }}
                         await asyncio.to_thread(
                             repo.record_entry_plan_monitoring,
                             plan_id,
-                            stream.monitoring_state(
-                                instrument,
-                                _plan_monitoring_channels(plan),
-                            ),
+                            evidence,
                         )
                 _confirm_ready_engines(stream, plan_engines, plans)
                 if event.event_type == "quote" and _monitoring_ready(

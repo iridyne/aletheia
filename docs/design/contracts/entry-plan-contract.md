@@ -313,6 +313,21 @@ TriggerSpec parameters, producer identity, and final `EntryPlan` validation.
 
 ## Maker lifetime
 
+Post-Only crossing is a current-market wait, not deterministic invalid geometry.
+The Compiler retains the validated fixed limit and all geometry/Risk bounds even
+when the frozen context quote would cross it. It still rejects invalid execution
+context. Submission rechecks the unchanged strict passive-price condition against
+fresh exact-instrument BBO; no crossing order, repricing or IOC fallback is allowed.
+Resting Plans remain waiting within their existing Plan expiry; Candidate attention
+expiry does not cancel an active Plan.
+Monitoring records current passive eligibility and whether an eligible quote has
+ever been observed. Workbench projects `WAITING_MARKET` while a ready stream reports
+crossing. For a resting Plan with ready monitoring and no observed eligible quote, the expiry reason is
+`passive_entry_never_became_eligible`; monitoring gaps retain their unavailable
+reasons. Expiry still requires a later completed requalification for a successor.
+Triggered Plans must additionally earn canonical trigger activation; quote
+eligibility alone grants no trigger or submission authority.
+
 Maker lifetime belongs to the actual Post-Only Order, not the plan mode, plan
 approval time, or trigger-wait time. Fast Monitoring starts the timeout only
 when an `ordered` or `partially_filled` plan has a durable Order and measures
