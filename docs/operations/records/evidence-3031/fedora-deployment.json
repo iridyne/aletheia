@@ -1,0 +1,342 @@
+{
+  "before": {
+    "as_of": "2026-09-10T05:54:50.816154+00:00",
+    "disk_sha": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+    "version": {
+      "version": "0.8.6",
+      "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+      "pid": 232221,
+      "uptime_sec": 6803.0
+    },
+    "health": {
+      "status": "healthy",
+      "issues": [],
+      "version": "0.8.6",
+      "paused": false,
+      "pause_owners": [],
+      "pause_blockers": [],
+      "resume_blocked_reason": null,
+      "scheduler_resume_authority": {
+        "allowed": true,
+        "blocked_by": [],
+        "dependency_recovery_is_resume": false
+      }
+    },
+    "status": {
+      "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+      "current_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+      "gateway_running": true,
+      "paper_execution_mode": "bitget_demo",
+      "execution_target": "external_exchange",
+      "uses_external_exchange": true,
+      "execution_exchange": "bitget",
+      "live_state": "live_disabled",
+      "permission_mode": "Full",
+      "scheduler_running": true,
+      "scheduler_state": "running",
+      "scheduler_job_count": 42,
+      "scheduler_last_tick": "2026-09-10T05:54:48.162320+00:00",
+      "health_status": "healthy",
+      "health_issues": [],
+      "observation_execution": {
+        "available": true,
+        "unavailable_reason": null,
+        "owner": "worker",
+        "job_id": "filter_controller_observe",
+        "main_cycle_registered": false,
+        "exclusive": true
+      }
+    },
+    "require_llm_at_startup": false,
+    "sessions": [
+      {
+        "session_id": "d96c5d259218",
+        "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T04:01:28.681451+00:00",
+        "ended_at": null
+      },
+      {
+        "session_id": "d0a700350619",
+        "boot_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T03:49:31.255399+00:00",
+        "ended_at": "2026-09-10T04:01:05.390304+00:00"
+      }
+    ],
+    "account": {
+      "fetched_at": "2026-09-10T05:51:39.647598+00:00",
+      "sync_status": "ok",
+      "sync_complete": true,
+      "connected_brokers": [
+        "bitget_demo"
+      ],
+      "accounts": [
+        {
+          "broker_id": "bitget_demo",
+          "identity": {
+            "account_id": "bitget_demo",
+            "execution_mode": "bitget_demo",
+            "venue": "bitget",
+            "environment": "demo",
+            "profile": "classic_v2",
+            "account_fingerprint": "sha256:6dc3d2fc5b4ab7bd90248de369abfd00e3571cb87a1d439173ff1c44041b2577",
+            "credential_generation": 29,
+            "sub_accounts": [],
+            "adapter_implementation": "CCXTUTAAdapter",
+            "adapter_version": "1",
+            "ccxt_version": "4.5.56"
+          },
+          "account_completeness": "complete",
+          "position_completeness": "complete",
+          "reason_code": null
+        }
+      ],
+      "positions_count": 0
+    },
+    "qualification_artifact_exists": false,
+    "open_positions": [],
+    "orders": [
+      {
+        "execution_mode": "paper_internal",
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "execution_mode": "paper_internal",
+        "status": "filled",
+        "n": 838
+      }
+    ],
+    "historical": {
+      "orders": {
+        "count": 847,
+        "selected_fields": "id,status,proposal_id,position_id,quantity,price",
+        "sha256": "b32a09ed3bf7e7fa8359f281a5f031fa93a61650e65a3c177beac82e9d577e95"
+      },
+      "fills": {
+        "count": 838,
+        "selected_fields": "id,order_id,fill_price,fill_quantity,fee,fee_currency",
+        "sha256": "20822c4d59ec3a470ff7c3780bf522a431d291e3d8c995b7aa69ba797078ca9d"
+      },
+      "positions": {
+        "count": 419,
+        "selected_fields": "id,status,proposal_id,order_id,opportunity_id,realized_pnl,entry_fee,exit_fee,funding_cost,outcome_eligible,outcome_exclusion_reason",
+        "sha256": "098cbb4c80a2ed81c97b46d118888e7abd1c31d8e1fa4f797c01d534ba976850"
+      }
+    }
+  },
+  "after": {
+    "as_of": "2026-09-10T05:57:09.714311+00:00",
+    "disk_sha": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+    "version": {
+      "version": "0.8.6",
+      "boot_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+      "pid": 372195,
+      "uptime_sec": 105.1
+    },
+    "health": {
+      "status": "healthy",
+      "issues": [],
+      "version": "0.8.6",
+      "paused": false,
+      "pause_owners": [],
+      "pause_blockers": [],
+      "resume_blocked_reason": null,
+      "scheduler_resume_authority": {
+        "allowed": true,
+        "blocked_by": [],
+        "dependency_recovery_is_resume": false
+      }
+    },
+    "status": {
+      "boot_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+      "current_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+      "gateway_running": true,
+      "paper_execution_mode": "bitget_demo",
+      "execution_target": "external_exchange",
+      "uses_external_exchange": true,
+      "execution_exchange": "bitget",
+      "live_state": "live_disabled",
+      "permission_mode": "Full",
+      "scheduler_running": true,
+      "scheduler_state": "running",
+      "scheduler_job_count": 44,
+      "scheduler_last_tick": "2026-09-10T05:57:09.359294+00:00",
+      "health_status": "healthy",
+      "health_issues": [],
+      "observation_execution": {
+        "available": true,
+        "unavailable_reason": null,
+        "owner": "worker",
+        "job_id": "filter_controller_observe",
+        "main_cycle_registered": false,
+        "exclusive": true
+      }
+    },
+    "require_llm_at_startup": false,
+    "sessions": [
+      {
+        "session_id": "0a12ec905278",
+        "boot_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T05:55:25.473742+00:00",
+        "ended_at": null
+      },
+      {
+        "session_id": "d96c5d259218",
+        "boot_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T04:01:28.681451+00:00",
+        "ended_at": "2026-09-10T05:55:10.914150+00:00"
+      }
+    ],
+    "account": {
+      "fetched_at": "2026-09-10T05:55:37.086552+00:00",
+      "sync_status": "ok",
+      "sync_complete": true,
+      "connected_brokers": [
+        "bitget_demo"
+      ],
+      "accounts": [
+        {
+          "broker_id": "bitget_demo",
+          "identity": {
+            "account_id": "bitget_demo",
+            "execution_mode": "bitget_demo",
+            "venue": "bitget",
+            "environment": "demo",
+            "profile": "classic_v2",
+            "account_fingerprint": "sha256:6dc3d2fc5b4ab7bd90248de369abfd00e3571cb87a1d439173ff1c44041b2577",
+            "credential_generation": 29,
+            "sub_accounts": [],
+            "adapter_implementation": "CCXTUTAAdapter",
+            "adapter_version": "1",
+            "ccxt_version": "4.5.56"
+          },
+          "account_completeness": "complete",
+          "position_completeness": "complete",
+          "reason_code": null
+        }
+      ],
+      "positions_count": 0
+    },
+    "qualification_artifact_exists": false,
+    "open_positions": [],
+    "orders": [
+      {
+        "execution_mode": "paper_internal",
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "execution_mode": "paper_internal",
+        "status": "filled",
+        "n": 838
+      }
+    ],
+    "historical": {
+      "orders": {
+        "count": 847,
+        "selected_fields": "id,status,proposal_id,position_id,quantity,price",
+        "sha256": "b32a09ed3bf7e7fa8359f281a5f031fa93a61650e65a3c177beac82e9d577e95"
+      },
+      "fills": {
+        "count": 838,
+        "selected_fields": "id,order_id,fill_price,fill_quantity,fee,fee_currency",
+        "sha256": "20822c4d59ec3a470ff7c3780bf522a431d291e3d8c995b7aa69ba797078ca9d"
+      },
+      "positions": {
+        "count": 419,
+        "selected_fields": "id,status,proposal_id,order_id,opportunity_id,realized_pnl,entry_fee,exit_fee,funding_cost,outcome_eligible,outcome_exclusion_reason",
+        "sha256": "098cbb4c80a2ed81c97b46d118888e7abd1c31d8e1fa4f797c01d534ba976850"
+      }
+    }
+  },
+  "flow": {
+    "as_of": "2026-09-10T05:57:28.573133+00:00",
+    "session": {
+      "session_id": "0a12ec905278",
+      "started_at": "2026-09-10T05:55:25.473742+00:00"
+    },
+    "session_counts": {
+      "candidate_planning_generations": 0,
+      "entry_plans": 0,
+      "trade_proposals": 0,
+      "orders": 0,
+      "fills": 0,
+      "positions": 0
+    },
+    "completed_runs": [
+      {
+        "id": "1d82190cfbf3",
+        "agent_name": "position_reconciler",
+        "status": "completed",
+        "started_at": "2026-09-10T05:56:32.892388+00:00",
+        "ended_at": "2026-09-10T05:56:32.931169+00:00"
+      },
+      {
+        "id": "d06cebde7608",
+        "agent_name": "market_observer",
+        "status": "completed",
+        "started_at": "2026-09-10T05:56:42.106797+00:00",
+        "ended_at": "2026-09-10T05:56:42.164375+00:00"
+      }
+    ],
+    "hook_job_counts": [
+      {
+        "status": "completed",
+        "n": 754
+      }
+    ],
+    "evidence_epochs": [
+      {
+        "epoch_id": "802bca4a142b",
+        "epoch_kind": "evidence_anchor:profit_loop_observability",
+        "started_at": "2026-09-10T04:01:29.602992+00:00",
+        "ended_at": "2026-09-10T05:55:27.009666+00:00",
+        "deploy_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "epoch_id": "d24de8833825",
+        "epoch_kind": "evidence_anchor:profit_loop_observability",
+        "started_at": "2026-09-10T05:55:27.009666+00:00",
+        "ended_at": null,
+        "deploy_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459"
+      }
+    ],
+    "read_only_cohort": {
+      "cohort_complete": true,
+      "cohort_state": "available",
+      "raw_count": 419,
+      "eligible_count": 0
+    }
+  },
+  "control_session": {
+    "available": true,
+    "unavailable_reason": null,
+    "source": "durable_db",
+    "verification": "gateway_process_tree",
+    "verified_live_gateway": true,
+    "session_id": "0a12ec905278",
+    "runtime_id": "runtime-local-current",
+    "boot_sha": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+    "behavior_fingerprint": "66e1e0bed9fff5e4",
+    "schema_version": "aletheia-sqlite-v79",
+    "execution_mode": "bitget_demo",
+    "started_at": "2026-09-10T05:55:25.473742+00:00",
+    "durable": true
+  },
+  "control_window_continuity": {
+    "evidence_anchored": true,
+    "evidence_sha_consistent": true,
+    "deployed_head_consistent": true
+  },
+  "update_output": "Update phase timings:\n  Running preflight checks: 609 ms\n  Stopping runtime: 1580 ms\n  Settling Observation data: 434 ms\n  Fetching latest commits: 3986 ms\n  Running smoke check: 6780 ms\n  Restarting gateway: 6846 ms\n  Verifying continuity: 891 ms\n  Total: 21127 ms\nUpdated 1543c7c1 -> 5ba82d18 (deps reinstalled: False).\nGateway restarted and readiness verified.\nObserver continuity verified: owner=worker, worker_sha=3a3f3b20a665, data_root_unchanged=True, main_health=initializing.\nContinuity verification completed in 21127 ms.\nObserver warnings: main_health_initializing\n",
+  "historical_selected_fields_equal": true,
+  "exact_account_identity_equal": true
+}
