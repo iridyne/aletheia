@@ -1549,5 +1549,568 @@
         "n": 11
       }
     ]
+  },
+  "post_scheduled_sync": {
+    "as_of": "2026-09-10T06:55:54.006007+00:00",
+    "disk_sha": "51387fb70d2815e8209d356215796b11ff96144e",
+    "version": {
+      "version": "0.8.6",
+      "boot_commit": "51387fb70d2815e8209d356215796b11ff96144e",
+      "pid": 447111,
+      "uptime_sec": 347.0
+    },
+    "health": {
+      "status": "degraded",
+      "issues": [
+        "candidate_refresh_failed"
+      ],
+      "version": "0.8.6",
+      "paused": false,
+      "pause_owners": [],
+      "pause_blockers": [],
+      "resume_blocked_reason": null,
+      "scheduler_resume_authority": {
+        "allowed": true,
+        "blocked_by": [],
+        "dependency_recovery_is_resume": false
+      }
+    },
+    "status": {
+      "boot_commit": "51387fb70d2815e8209d356215796b11ff96144e",
+      "current_commit": "51387fb70d2815e8209d356215796b11ff96144e",
+      "gateway_running": true,
+      "paper_execution_mode": "bitget_demo",
+      "execution_target": "external_exchange",
+      "uses_external_exchange": true,
+      "execution_exchange": "bitget",
+      "live_state": "live_disabled",
+      "permission_mode": "Full",
+      "scheduler_running": true,
+      "scheduler_state": "running",
+      "scheduler_job_count": 42,
+      "scheduler_last_tick": "2026-09-10T06:55:49.903353+00:00",
+      "startup_failure_policy": [
+        {
+          "stage": "bootstrap",
+          "on_failure": "fail_startup",
+          "readiness_effect": "interface_not_ready"
+        },
+        {
+          "stage": "secret_migration",
+          "on_failure": "warn_continue",
+          "readiness_effect": "none"
+        },
+        {
+          "stage": "database_migration_verification",
+          "on_failure": "fail_startup",
+          "readiness_effect": "interface_not_ready"
+        },
+        {
+          "stage": "runtime_reconciliation",
+          "on_failure": "warn_continue",
+          "readiness_effect": "none"
+        },
+        {
+          "stage": "tool_registry_and_job_manager",
+          "on_failure": "fail_startup",
+          "readiness_effect": "interface_not_ready"
+        },
+        {
+          "stage": "scheduler_initialization",
+          "on_failure": "warn_continue",
+          "readiness_effect": "operation_degraded"
+        },
+        {
+          "stage": "llm_startup_gate",
+          "on_failure": "pause_autonomy",
+          "readiness_effect": "operation_blocked"
+        },
+        {
+          "stage": "startup_exchange_sync",
+          "on_failure": "warn_continue",
+          "readiness_effect": "data_warming"
+        },
+        {
+          "stage": "exchange_connectivity_gate",
+          "on_failure": "pause_autonomy",
+          "readiness_effect": "operation_blocked"
+        },
+        {
+          "stage": "startup_behavior_gate",
+          "on_failure": "pause_autonomy",
+          "readiness_effect": "operation_blocked"
+        },
+        {
+          "stage": "pi_daemon",
+          "on_failure": "warn_continue",
+          "readiness_effect": "operation_degraded"
+        },
+        {
+          "stage": "telegram",
+          "on_failure": "warn_continue",
+          "readiness_effect": "integration_degraded"
+        }
+      ],
+      "health_status": "degraded",
+      "health_issues": [
+        "candidate_refresh_failed"
+      ],
+      "observation_execution": {
+        "available": true,
+        "unavailable_reason": null,
+        "owner": "worker",
+        "job_id": "filter_controller_observe",
+        "main_cycle_registered": false,
+        "exclusive": true
+      }
+    },
+    "require_llm_at_startup": false,
+    "sessions": [
+      {
+        "session_id": "e0bc27dbc722",
+        "boot_commit": "51387fb70d2815e8209d356215796b11ff96144e",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T06:50:07.931030+00:00",
+        "ended_at": null
+      },
+      {
+        "session_id": "0a12ec905278",
+        "boot_commit": "5ba82d189cca78d899ff5d3e5d7c1d07483d2459",
+        "schema_version": "aletheia-sqlite-v79",
+        "execution_mode": "bitget_demo",
+        "started_at": "2026-09-10T05:55:25.473742+00:00",
+        "ended_at": "2026-09-10T06:49:52.019301+00:00"
+      }
+    ],
+    "account": {
+      "fetched_at": "2026-09-10T06:55:19.919738+00:00",
+      "sync_status": "ok",
+      "sync_complete": true,
+      "connected_brokers": [
+        "bitget_demo"
+      ],
+      "accounts": [
+        {
+          "broker_id": "bitget_demo",
+          "identity": {
+            "account_id": "bitget_demo",
+            "execution_mode": "bitget_demo",
+            "venue": "bitget",
+            "environment": "demo",
+            "profile": "classic_v2",
+            "account_fingerprint": "sha256:6dc3d2fc5b4ab7bd90248de369abfd00e3571cb87a1d439173ff1c44041b2577",
+            "credential_generation": 29,
+            "sub_accounts": [],
+            "adapter_implementation": "CCXTUTAAdapter",
+            "adapter_version": "1",
+            "ccxt_version": "4.5.56"
+          },
+          "account_completeness": "complete",
+          "position_completeness": "complete",
+          "reason_code": null
+        }
+      ],
+      "positions_count": 0
+    },
+    "qualification_artifact_exists": false,
+    "open_positions": [],
+    "orders": [
+      {
+        "execution_mode": "paper_internal",
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "execution_mode": "paper_internal",
+        "status": "filled",
+        "n": 838
+      }
+    ],
+    "historical": {
+      "orders": {
+        "count": 847,
+        "selected_fields": "id,status,proposal_id,position_id,quantity,price",
+        "sha256": "b32a09ed3bf7e7fa8359f281a5f031fa93a61650e65a3c177beac82e9d577e95"
+      },
+      "fills": {
+        "count": 838,
+        "selected_fields": "id,order_id,fill_price,fill_quantity,fee,fee_currency",
+        "sha256": "20822c4d59ec3a470ff7c3780bf522a431d291e3d8c995b7aa69ba797078ca9d"
+      },
+      "positions": {
+        "count": 419,
+        "selected_fields": "id,status,proposal_id,order_id,opportunity_id,realized_pnl,entry_fee,exit_fee,funding_cost,outcome_eligible,outcome_exclusion_reason",
+        "sha256": "098cbb4c80a2ed81c97b46d118888e7abd1c31d8e1fa4f797c01d534ba976850"
+      }
+    },
+    "external_orders": [],
+    "proposal_states": [
+      {
+        "status": "executed",
+        "execution_mode": "paper_internal",
+        "n": 428
+      },
+      {
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "n": 22
+      },
+      {
+        "status": "rejected",
+        "execution_mode": "paper_internal",
+        "n": 324
+      }
+    ],
+    "plans": [
+      {
+        "id": "ee9ae4665093",
+        "planning_generation_id": "b0a26e335f2f",
+        "candidate_id": "d0bf4311fcb5",
+        "symbol": "DOGE/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038",
+        "runtime_session_id": "d96c5d259218",
+        "created_at": "2026-09-10T04:04:04.225386+00:00"
+      },
+      {
+        "id": "7b07a362f74f",
+        "planning_generation_id": "9a21cd211442",
+        "candidate_id": "acc852d3ed14",
+        "symbol": "BGB/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "invalidated",
+        "terminal_reason": "entry_plan_runtime_authority_revoked",
+        "monitoring_state": "degraded",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010",
+        "runtime_session_id": "54ad4d1f2a39",
+        "created_at": "2026-09-10T03:48:42.808866+00:00"
+      },
+      {
+        "id": "25963a63e7cb",
+        "planning_generation_id": "46b3a9df17df",
+        "candidate_id": "33b617348f7c",
+        "symbol": "DOGE/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "degraded",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010",
+        "runtime_session_id": "54ad4d1f2a39",
+        "created_at": "2026-09-10T03:48:40.334306+00:00"
+      },
+      {
+        "id": "d93e361aeb64",
+        "planning_generation_id": "3877d4ecfe29",
+        "candidate_id": "2abaa7fa0649",
+        "symbol": "HYPE/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "57e212cc200c88ddff5464bbb0cf1db164de4b95",
+        "runtime_session_id": "7eabe0c5046e",
+        "created_at": "2026-09-09T07:41:46.357605+00:00"
+      },
+      {
+        "id": "945d4975903b",
+        "planning_generation_id": "09770516c36a",
+        "candidate_id": "fa203c4b2f91",
+        "symbol": "LTC/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "b2e22d6b17e170578d5075afe728e75d77389341",
+        "runtime_session_id": "3416c617bbca",
+        "created_at": "2026-09-09T03:08:27.254663+00:00"
+      },
+      {
+        "id": "690a7d733197",
+        "planning_generation_id": "44ce1edbfe4a",
+        "candidate_id": "62f038d1050f",
+        "symbol": "SAMSUNG/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "b2e22d6b17e170578d5075afe728e75d77389341",
+        "runtime_session_id": "72c7021a0cb9",
+        "created_at": "2026-09-08T15:02:47.828903+00:00"
+      },
+      {
+        "id": "c359d759876f",
+        "planning_generation_id": "18cfd26c1429",
+        "candidate_id": "1e1375127869",
+        "symbol": "BZ/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "b2e22d6b17e170578d5075afe728e75d77389341",
+        "runtime_session_id": "72c7021a0cb9",
+        "created_at": "2026-09-08T14:48:36.612201+00:00"
+      },
+      {
+        "id": "820c079f86cf",
+        "planning_generation_id": "3fd58f2b03ba",
+        "candidate_id": "334a3642846a",
+        "symbol": "AVAX/USDT",
+        "execution_mode": "RESTING_MAKER",
+        "status": "failed",
+        "terminal_reason": "canonical_risk_rejected",
+        "monitoring_state": "ready",
+        "order_id": null,
+        "trigger_activation_id": null,
+        "producer_commit": "b2e22d6b17e170578d5075afe728e75d77389341",
+        "runtime_session_id": "3fe9a9b96149",
+        "created_at": "2026-09-08T13:18:41.262260+00:00"
+      }
+    ],
+    "generations": [
+      {
+        "id": "179966302246",
+        "candidate_id": "e653bc7a4593",
+        "symbol": "NEAR/USDT",
+        "is_current": 1,
+        "status": "unavailable",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "ENTRY_PLAN_COMPILE_INVALID:EXECUTION_CONTEXT_UNAVAILABLE",
+        "created_at": "2026-09-10T05:03:49.403106+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "id": "4495761ed195",
+        "candidate_id": "56e30f5c269e",
+        "symbol": "BGB/USDT",
+        "is_current": 1,
+        "status": "unavailable",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "model_invoked": 1,
+        "compiler_invoked": 0,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "PLANNER_SCHEMA_INVALID: constraint_violation",
+        "created_at": "2026-09-10T05:03:49.403106+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "id": "b0a26e335f2f",
+        "candidate_id": "d0bf4311fcb5",
+        "symbol": "DOGE/USDT",
+        "is_current": 1,
+        "status": "planned",
+        "result_kind": "entry_plan",
+        "entry_plan_id": "ee9ae4665093",
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "entry_plan",
+        "outcome_reason": "entry_plan_created",
+        "created_at": "2026-09-10T04:03:37.482883+00:00",
+        "producer_commit": "1543c7c1e705de816a13e63f3a4aa3f9f8bd8038"
+      },
+      {
+        "id": "9a21cd211442",
+        "candidate_id": "acc852d3ed14",
+        "symbol": "BGB/USDT",
+        "is_current": 0,
+        "status": "superseded",
+        "result_kind": "entry_plan",
+        "entry_plan_id": "7b07a362f74f",
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "entry_plan",
+        "outcome_reason": "entry_plan_created",
+        "created_at": "2026-09-10T03:46:02.983814+00:00",
+        "producer_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010"
+      },
+      {
+        "id": "46b3a9df17df",
+        "candidate_id": "33b617348f7c",
+        "symbol": "DOGE/USDT",
+        "is_current": 0,
+        "status": "superseded",
+        "result_kind": "entry_plan",
+        "entry_plan_id": "25963a63e7cb",
+        "model_invoked": 1,
+        "compiler_invoked": 1,
+        "outcome_class": "entry_plan",
+        "outcome_reason": "entry_plan_created",
+        "created_at": "2026-09-10T03:46:02.983814+00:00",
+        "producer_commit": "e7904a7d44816beb785c0a1a0e4ee025d6de6010"
+      },
+      {
+        "id": "a32d9548a0db",
+        "candidate_id": "f7ff8eecd442",
+        "symbol": "BGB/USDT",
+        "is_current": 0,
+        "status": "superseded",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "model_invoked": 1,
+        "compiler_invoked": 0,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "PLANNER_SCHEMA_INVALID: constraint_violation",
+        "created_at": "2026-09-10T03:17:47.867270+00:00",
+        "producer_commit": "4031bed5d1dd7f5e5c6f56abbd06ba32b32a1ed9"
+      },
+      {
+        "id": "e459a8677cb6",
+        "candidate_id": "4d793a4823c0",
+        "symbol": "DOGE/USDT",
+        "is_current": 0,
+        "status": "superseded",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "model_invoked": 1,
+        "compiler_invoked": 0,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "PLANNER_SCHEMA_INVALID: constraint_violation",
+        "created_at": "2026-09-10T03:17:47.867270+00:00",
+        "producer_commit": "4031bed5d1dd7f5e5c6f56abbd06ba32b32a1ed9"
+      },
+      {
+        "id": "814cf3608fad",
+        "candidate_id": "f233a8f28522",
+        "symbol": "NEAR/USDT",
+        "is_current": 0,
+        "status": "superseded",
+        "result_kind": "unavailable",
+        "entry_plan_id": null,
+        "model_invoked": 1,
+        "compiler_invoked": 0,
+        "outcome_class": "planning_failed",
+        "outcome_reason": "PLANNER_SEMANTIC_INVALID:hypothesis_current_market_fact_required",
+        "created_at": "2026-09-10T02:17:54.303750+00:00",
+        "producer_commit": "4031bed5d1dd7f5e5c6f56abbd06ba32b32a1ed9"
+      }
+    ],
+    "demo_proposals": [
+      {
+        "id": "2afd512012bf",
+        "entry_plan_id": "ee9ae4665093",
+        "symbol": "DOGE/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-10T04:17:02.521217+00:00"
+      },
+      {
+        "id": "113719099dc3",
+        "entry_plan_id": "25963a63e7cb",
+        "symbol": "DOGE/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-10T03:50:36.893016+00:00"
+      },
+      {
+        "id": "d6ca39623b3f",
+        "entry_plan_id": "d93e361aeb64",
+        "symbol": "HYPE/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-09T07:41:50.352413+00:00"
+      },
+      {
+        "id": "08c1b9a7f983",
+        "entry_plan_id": "945d4975903b",
+        "symbol": "LTC/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-09T03:08:33.660298+00:00"
+      },
+      {
+        "id": "b5452014f4b0",
+        "entry_plan_id": "690a7d733197",
+        "symbol": "SAMSUNG/USDT",
+        "status": "rejected",
+        "execution_mode": "bitget_demo",
+        "created_at": "2026-09-08T15:02:53.136437+00:00"
+      }
+    ],
+    "demo_risks": [
+      {
+        "id": "74ef7bfc8837",
+        "proposal_id": "2afd512012bf",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:0.2532<1.5000\", \"spot_short_not_allowed\"]",
+        "created_at": "2026-09-10T04:17:02.637373+00:00"
+      },
+      {
+        "id": "9b8ae8bdb9e3",
+        "proposal_id": "113719099dc3",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:0.1949<1.5000\", \"spot_short_not_allowed\"]",
+        "created_at": "2026-09-10T03:50:36.988903+00:00"
+      },
+      {
+        "id": "9a6562628fe6",
+        "proposal_id": "d6ca39623b3f",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:1.4760<1.5000\", \"stale_market_data_demo:age=5777.36582\"]",
+        "created_at": "2026-09-09T07:41:50.466150+00:00"
+      },
+      {
+        "id": "10ac7821de52",
+        "proposal_id": "08c1b9a7f983",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:0.8833<1.5000\", \"spot_short_not_allowed\"]",
+        "created_at": "2026-09-09T03:08:33.804720+00:00"
+      },
+      {
+        "id": "e7760cdffc53",
+        "proposal_id": "b5452014f4b0",
+        "approved": 0,
+        "decision_role": "preflight",
+        "violations": "[\"stop_distance_below_vol_target:0.8025<1.5000\"]",
+        "created_at": "2026-09-08T15:02:53.253554+00:00"
+      }
+    ],
+    "plan_states": [
+      {
+        "status": "cancelled",
+        "n": 9
+      },
+      {
+        "status": "expired",
+        "n": 90
+      },
+      {
+        "status": "failed",
+        "n": 27
+      },
+      {
+        "status": "filled",
+        "n": 1
+      },
+      {
+        "status": "invalidated",
+        "n": 11
+      }
+    ]
   }
 }

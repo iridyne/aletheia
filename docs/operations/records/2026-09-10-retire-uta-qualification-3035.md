@@ -82,3 +82,10 @@ against the live Gateway process tree (`verified_live_gateway=true`); deployed,
 disk, running and recorded SHA agree. A 06:55:08 readback still reports the same
 scanner/private-account limitation. This bounds #3035's completed code retirement
 and rollout verification; it does not certify general runtime health or Gate B.
+
+At 06:55:54 UTC the existing scheduled private sync had recovered without operator
+intervention: fetched_at 06:55:19, sync_status=ok, sync_complete=true, exact same
+Bitget Demo identity, account/position completeness=complete, zero external
+positions in that complete snapshot. Health still carries `candidate_refresh_failed`
+from the last scanner attempt. Thus private-account recovery is now observed;
+scanner recovery and a new executable natural Plan remain unproved.
