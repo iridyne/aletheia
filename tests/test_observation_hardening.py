@@ -29,6 +29,11 @@ def test_worker_mode_bypasses_freshness_gate(monkeypatch):
     Worker passes."""
     from aletheia.analytics import filter_controller
 
+    # Lab authority is a DB-backed precondition that runs before the gate under
+    # test; this test owns no runtime DB, so satisfy it explicitly.
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="controller fixture")
+
     # Rig ``_is_fresh_prior_run`` to always claim freshness would swallow.
     monkeypatch.setattr(filter_controller, "_is_fresh_prior_run", lambda _hours: True)
 
@@ -53,6 +58,8 @@ def test_main_mode_still_honors_freshness_gate(monkeypatch):
     """Main-mode backward compatibility: fresh prior run still short-circuits."""
     from aletheia.analytics import filter_controller
 
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="controller fixture")
     monkeypatch.setattr(filter_controller, "_is_fresh_prior_run", lambda _hours: True)
     ran = {"count": 0}
     monkeypatch.setattr(

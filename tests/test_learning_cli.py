@@ -11,12 +11,20 @@ runner = CliRunner()
 
 
 def test_learning_knowledge_zero_and_missing_inspect_are_explicit():
+    """Zero and unavailable stay distinguishable.
+
+    Post-Lab-cutover an unavailable canonical projection reports
+    `current_qualified_n = None` + state `unavailable`, not `0`/`none`. That
+    distinction is the point: a missing projection must not read as "measured
+    zero qualified knowledge".
+    """
     listed = runner.invoke(app, ["learning", "knowledge", "list"])
     assert listed.exit_code == 0, listed.output
     payload = json.loads(listed.stdout)
-    assert payload["current_qualified_n"] == 0
+    assert payload["availability"] == "unavailable"
+    assert payload["current_qualified_n"] is None
     assert payload["items"] == []
-    assert payload["production_economic_contribution_state"] == "none"
+    assert payload["production_economic_contribution_state"] == "unavailable"
     assert payload["fixture_evidence_is_not_production_proof"] is True
 
     inspected = runner.invoke(

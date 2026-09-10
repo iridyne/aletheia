@@ -10,11 +10,20 @@ Verifies:
 """
 from __future__ import annotations
 
+import pytest
+
 from aletheia.analytics import filter_controller as fc
 from aletheia.analytics.filter_registry import (
     tunable_filters,
     FILTER_REGISTRY,
 )
+
+
+@pytest.fixture(autouse=True)
+def _grant_lab_authority():
+    """Exercise controller behavior behind the real Lab authority guard."""
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="controller fixture")
 
 
 def test_unattributed_family_performance_never_becomes_filter_advice(monkeypatch):
@@ -201,7 +210,11 @@ def test_controller_report_renders_registered_prospective_experiment(monkeypatch
 
 
 def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
-    calls = {"registered": 0, "evaluated": 0}
+    from datetime import datetime, timezone
+
+    from aletheia.counterfactual.filter_experiments import register_observation_from_spec
+
+    calls = {"registered": 0}
     cutoffs = {}
 
     def fake_compute(min_samples=20, *, as_of_at=None):
@@ -223,27 +236,32 @@ def test_observe_cycle_registers_and_evaluates_shadow_experiments(monkeypatch):
         calls["registered"] += 1
         return {"registered": 1, "already_registered": 0, "skipped": 0}
 
-    def fake_evaluate():
-        calls["evaluated"] += 1
-        return {
-            "evaluated": 1,
-            "ready_for_review": 0,
-            "completed_no_support": 0,
-            "invalidated": 0,
-        }
-
     monkeypatch.setattr(
         "aletheia.counterfactual.filter_experiments.register_replay_ready_experiments",
         fake_register,
     )
-    monkeypatch.setattr(
-        "aletheia.counterfactual.filter_experiments.evaluate_active_shadow_experiments",
-        fake_evaluate,
+
+    # Under Lab authority the evaluate pass projects the durable windows it finds;
+    # it does not call a separate evaluator. Give it exactly one active window.
+    register_observation_from_spec(
+        {
+            "filter_name": "ranker_confidence_gate",
+            "filter_version": "observe-cycle-v1",
+            "stage": "paper_ranker",
+            "scanner_family": "mean_reversion",
+            "direction": "long",
+            "market_type": "perp",
+            "horizon": "4h",
+            "control": {"minimum_confidence": "high"},
+            "treatment": {"minimum_confidence": "medium"},
+            "min_samples": 20,
+        },
+        now=datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc),
     )
 
     summary = fc.run_controller_observe()
 
-    assert calls == {"registered": 1, "evaluated": 1}
+    assert calls == {"registered": 1}
     assert summary["experiments_registered"] == 1
     assert summary["experiments_evaluated"] == 1
     assert cutoffs["compute"] is not None

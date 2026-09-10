@@ -1271,10 +1271,10 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
     from aletheia.analytics import filter_controller
 
     common = {
-        "filter_name": "ranker_confidence_gate",
-        "stage": "ranker_excluded",
+        "filter_name": "family_ttl",
+        "stage": "ttl_expired",
         "filter_version": "v1-test",
-        "parameter_snapshot": '{"minimum_confidence":"medium"}',
+        "parameter_snapshot": "momentum=1800s",
         "scanner_family": "momentum",
         "direction": "long",
         "market_type": "perp",
@@ -1294,14 +1294,14 @@ def test_controller_only_flags_overrestriction_after_paired_gates(monkeypatch):
 
     rec = next(
         row for row in filter_controller.compute_filter_feedback()
-        if row.filter_name == "ranker_confidence_gate"
+        if row.filter_name == "family_ttl"
     )
     assert rec.verdict == "overrestrictive_suspect"
     assert rec.suggested_direction == "review_loosen"
     assert rec.passed_n == 20
     assert rec.rejected_n == 20
-    assert rec.stage == "ranker_excluded"
-    assert rec.current_value == '{"minimum_confidence":"medium"}'
+    assert rec.stage == "ttl_expired"
+    assert rec.current_value == "momentum=1800s"
 
 
 def test_filter_feedback_stats_respects_decision_time_window():
@@ -1365,8 +1365,8 @@ def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
     as_of = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
     common = dict(
         candidate_kind="opportunity",
-        filter_name="ranker_confidence_gate",
-        stage="paper_ranker",
+        filter_name="family_ttl",
+        stage="ttl_expired",
         reason_code="test",
         symbol="BTC/USDT",
         venue="okx",
@@ -1399,8 +1399,7 @@ def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
 
     rows = [
         row for row in filter_feedback_stats(as_of_at=as_of)
-        if row["filter_name"] == "ranker_confidence_gate"
-        and row["horizon"] == "4h"
+        if row["filter_name"] == "family_ttl"
     ]
     assert {row["decision"] for row in rows} == {"passed", "rejected"}
     assert all(row["n_total"] == 1 for row in rows)
@@ -1411,7 +1410,7 @@ def test_filter_feedback_excludes_settlements_after_one_observed_cutoff():
 
     recommendation = next(
         row for row in compute_filter_feedback(min_samples=1, as_of_at=as_of)
-        if row.filter_name == "ranker_confidence_gate"
+        if row.filter_name == "family_ttl"
         and row.horizon == "4h"
     )
     assert recommendation.verdict == "insufficient_data"
@@ -1478,13 +1477,18 @@ def test_filter_feedback_assigns_each_candidate_to_first_exposure_only():
 
 
 def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
+    """The controller must use the stage from the evidence rows, not the registry.
+
+    Uses family_ttl with a custom stage (not the registry's 'ttl_expired') to
+    prove the controller preserves what the evidence recorded.
+    """
     from aletheia.analytics import filter_controller
 
     common = {
-        "filter_name": "direction_bias_brake",
-        "stage": "proposal_submission",
-        "filter_version": "v1-proposal-brake",
-        "parameter_snapshot": '{"max_share":0.95,"min_sample":15}',
+        "filter_name": "family_ttl",
+        "stage": "custom_evidence_stage",
+        "filter_version": "v1-stage-test",
+        "parameter_snapshot": "momentum=1800s",
         "scanner_family": "momentum",
         "direction": "long",
         "market_type": "perp",
@@ -1504,9 +1508,9 @@ def test_controller_uses_evidence_stage_instead_of_registry_stage(monkeypatch):
 
     rec = next(
         row for row in filter_controller.compute_filter_feedback()
-        if row.filter_name == "direction_bias_brake"
+        if row.filter_name == "family_ttl"
     )
-    assert rec.stage == "proposal_submission"
+    assert rec.stage == "custom_evidence_stage"
     assert rec.current_value == common["parameter_snapshot"]
 
 
@@ -1515,6 +1519,8 @@ def test_controller_persists_new_observational_verdict_through_legacy_schema(mon
     from aletheia.analytics.filter_controller import FilterRecommendation
     from aletheia.storage.sqlite import get_db
 
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="controller fixture")
     recommendation = FilterRecommendation(
         filter_name="family_ttl",
         scanner_family="momentum",

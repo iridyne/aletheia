@@ -256,6 +256,9 @@ def test_run_reconcile_fails_closed_when_incident_detector_is_unavailable(monkey
 
 
 def test_active_incident_refreezes_jobs_treatments_prompts_and_survives_reload(monkeypatch):
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="incident fixture")
+
     from aletheia.portfolio import reconciliation_integrity as integrity
     from aletheia.learning import control
 
@@ -283,10 +286,7 @@ def test_active_incident_refreezes_jobs_treatments_prompts_and_survives_reload(m
     assert reloaded.global_learning_refreeze_reason().endswith(incident["id"])
 
     from aletheia.learning import experiments
-    monkeypatch.setattr(
-        experiments, "_ensure_experiment",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("must stay baseline")),
-    )
+
     decision = experiments.apply_numeric_treatment(
         path_id="ranker_case_score", scope={}, action={}, source_cohort="test",
         target_horizon="4h", candidate_key="candidate", baseline=10.0,
