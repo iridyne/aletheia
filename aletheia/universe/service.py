@@ -606,7 +606,6 @@ class UniverseService:
         from aletheia.universe.features import collect_features
         from aletheia.universe.outcome_recorder import build_pending, settle_due
         from aletheia.universe.registry import sync_registry
-        from aletheia.universe.scanners import _infer_direction
 
         from aletheia.universe.candidate_selection_authority import (
             recover_candidate_selection_authority_transition,
@@ -936,7 +935,7 @@ class UniverseService:
                 ttl_sec = min(item.get("ttl_sec", 3600), snapshot_ttl_sec)
                 member_expires = (now + timedelta(seconds=ttl_sec)).isoformat()
                 entry_price = item.get("last_price")
-                scanner_direction = item.get("scanner_direction") or _infer_direction(item.get("scanner_family"), item)
+                scanner_direction = item["scanner_direction"]
                 member_id = uuid4().hex[:12]
                 target_record = item.get("_candidate_opportunity_record")
                 if not isinstance(target_record, dict):
