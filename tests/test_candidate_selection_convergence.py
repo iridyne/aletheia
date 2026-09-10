@@ -460,7 +460,3 @@ def test_candidate_storage_projection_is_cadence_bounded(denominator_rows):
         projection["mib_per_day"] * 30,
     )
     assert projection["mib_per_day"] < 12.0
-
-
-
-

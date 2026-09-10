@@ -37,9 +37,9 @@ RANKER_CASE_OUTCOME_SOURCE = "filter_candidate_outcomes"
 # after its exact outcome and statistical-unit contracts are executable AND have
 # focused passing cohort tests that exercise the full round-trip.
 #
-# Universe full-arm support:
+# Historical Universe full-arm support (the current Utility path does not write it):
 #   - outcome contract: universe_forward_outcomes (universe-keyed, {learning_key}:{horizon})
-#   - allocation_selected: populated by universe/service._register_experiment_candidate_outcomes
+#   - allocation_selected: persisted by the retired Universe calibration writer
 #   - statistical unit: full-arm Universe allocation member
 #
 # Ranker case support:

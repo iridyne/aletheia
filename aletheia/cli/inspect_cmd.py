@@ -553,12 +553,14 @@ def universe(
     """List active universe members by rank."""
     from aletheia.storage.repositories import get_active_universe_members
     rows = get_active_universe_members(limit=limit)
-    display_keys = ["symbol", "rank", "total_score", "opportunity_score", "tradability_score",
-                    "scanner_family", "execution_eligible", "expires_at", "risk_flags",
-                    "late_entry_penalty", "crowding_risk"]
+    display_keys = ["symbol", "rank", "candidate_selection_policy", "candidate_selection_utility_pct",
+                    "opportunity_mechanism", "scanner_direction", "scanner_family",
+                    "execution_eligible", "expires_at", "risk_flags"]
     result = []
     for r in rows:
         entry = {k: r.get(k) for k in display_keys}
+        if r.get("candidate_selection_policy") != "candidate_selection_utility_v1":
+            entry["historical_total_score"] = r.get("total_score")
         rf = entry.get("risk_flags")
         if isinstance(rf, str):
             try:
@@ -1007,7 +1009,7 @@ def status(
             "created_at": snap["created_at"],
             "age_hours": round(age_sec / 3600, 1),
             "stale": age_sec > 86400,
-            "top_members": [f"{m['symbol']}({m.get('total_score', 0):.0f})" for m in members],
+            "top_members": [m["symbol"] for m in members],
         }
 
     # Data quality

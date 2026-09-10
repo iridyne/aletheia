@@ -11,7 +11,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -105,7 +104,6 @@ def _prepare_planning_requalifications(members) -> dict[str, dict | None]:
     return proofs
 
 
-
 def _ensure_planning_generations(
     members,
     *,
@@ -152,8 +150,6 @@ def _build_candidate_selection_bundle(
     scanner_run_id: str,
     captured_at: str,
     cfg,
-    family_spread_tolerances: dict[str, float] | None = None,
-    family_spread_evidence: dict[str, object] | None = None,
     authority_applied: bool = False,
     qualification_evidence: dict | None = None,
     training_diagnostics_out: dict[str, object] | None = None,
@@ -253,8 +249,6 @@ def _assert_candidate_selection_publication_authority(
         or candidate_selection_policy_identity(current) != expected_selection_policy
     ):
         raise RuntimeError("candidate_selection_authority_changed_before_publication")
-
-
 
 
 def _volume_ranked_instruments(rows: list, default_venue: str):
@@ -433,134 +427,6 @@ def _previous_snapshot_fingerprint(
         except ValueError:
             age = None
     return fp, prev.get("id"), age
-
-
-
-
-def _build_experiment_candidate_outcomes(
-    scored: list[dict],
-    *,
-    entry_ts: str,
-    allocated: list[dict] | None = None,
-) -> list:
-    """P0-3: settle the FULL experiment arms, not just the survivors.
-
-    A Universe Learning exposure is created for every calibrated candidate during
-    scoring (allocator.compute_total_score), before allocation narrows the pool.
-    Forward outcomes, however, were only registered for the members that were
-    selected — so a candidate whose treatment multiplier pushed it out of the
-    Universe silently had no outcome. Missing outcomes then correlate with the
-    treatment itself → post-treatment selection bias (the verdict compares two
-    self-selected survivor subsets, not treatment-vs-control on the same pool).
-
-    Register an exposure-aligned fixed-horizon candidate outcome for EVERY exposed
-    candidate (treatment or control, selected or dropped), keyed by the exposure's
-    ``candidate_key``. Persist the final allocator-selection fact on the target horizon so
-    contribution evaluates intent-to-treat allocation utility without discarding the
-    dropped denominator. Each exposure declares exactly one ``target_horizon``;
-    persisting the other three canonical horizons created unconsumed rows. General
-    filter evidence still keeps its four-horizon matrix. ``linked_settled_exposure_counts``
-    joins the experiment row as ``outcome_candidate_key || ':' || horizon``, which
-    equals the exposure's ``outcome_candidate_key`` (``candidate_key:horizon``).
-    """
-    from aletheia.analytics.filter_evidence import build_candidate_outcomes
-
-    selected_keys = {
-        str(item["learning_candidate_key"])
-        for item in (scored if allocated is None else allocated)
-        if item.get("learning_candidate_key")
-    }
-    outcomes = []
-    for item in scored:
-        key = item.get("learning_candidate_key")
-        if not key:
-            continue
-        direction = item.get("scanner_direction") or item.get("direction")
-        venue = item.get("venue")
-        entry_price = item.get("last_price")
-        target_horizon = item.get("learning_target_horizon")
-        if (
-            direction not in {"long", "short"}
-            or not isinstance(venue, str)
-            or not venue.strip()
-            or not item.get("symbol")
-            or float(entry_price or 0) <= 0
-            or not target_horizon
-        ):
-            raise RuntimeError("universe_learning_outcome_identity_incomplete")
-        built = build_candidate_outcomes(
-                    outcome_candidate_key=key,
-                    venue=venue.strip(),
-                    symbol=item.get("symbol"),
-                    market_type=item.get("market_type", "spot"),
-                    direction=direction,
-                    scanner_family=item.get("scanner_family"),
-                    regime_tag=None,
-                    entry_price_usd=float(entry_price),
-                    entry_spread_bps=item.get("spread_bps"),
-                    funding_rate_at_entry=item.get("funding_rate"),
-                    entry_ts=str(item.get("learning_outcome_entry_ts") or entry_ts),
-                    allocation_selected=str(key) in selected_keys,
-                    horizons=(str(target_horizon),),
-                    rsi_1h_at_entry=item.get("rsi_14"),
-                    rsi_15m_at_entry=item.get("rsi_15m"),
-                    return_24h_at_entry=item.get("return_24h"),
-                    direction_exhaustion_signal=item.get("direction_exhaustion_signal"),
-                )
-        if len(built) != 1:
-            raise RuntimeError("universe_learning_outcome_build_incomplete")
-        outcomes.extend(built)
-    return outcomes
-
-
-def _register_experiment_candidate_outcomes(
-    scored: list[dict],
-    *,
-    entry_ts: str,
-    allocated: list[dict] | None = None,
-) -> int:
-    """Compatibility writer for callers that still invoke the old helper.
-
-    The refresh pipeline builds and persists outcomes in one explicit flow.  A
-    few older tests/tools call the former register helper directly; preserve
-    that API without creating another implementation path.  Lab authority
-    deliberately does not write the legacy Main table.
-    """
-    try:
-        from aletheia.observation_lab.canonical import get_authority_source
-
-        if get_authority_source().source == "lab":
-            return 0
-    except sqlite3.OperationalError as exc:
-        # Pre-V2 databases have no durable authority row and are unambiguously
-        # legacy; any other SQLite failure remains fail-closed.
-        if "no such table: observation_authority_state" not in str(exc):
-            return 0
-    except Exception:
-        return 0
-    valid_scored = []
-    for item in scored:
-        try:
-            if (
-                item.get("scanner_direction") or item.get("direction")
-            ) not in {"long", "short"} or not isinstance(item.get("venue"), str):
-                continue
-            if (
-                not item["venue"].strip()
-                or not item.get("symbol")
-                or float(item.get("last_price") or 0) <= 0
-                or not item.get("learning_target_horizon")
-            ):
-                continue
-        except (TypeError, ValueError):
-            continue
-        valid_scored.append(item)
-    outcomes = _build_experiment_candidate_outcomes(
-        valid_scored,
-        entry_ts=entry_ts,
-        allocated=allocated,
-    )
-    return int(repo.insert_filter_candidate_outcomes_batch(outcomes))
 
 
 def _capture_universe_discovery_nonfatal(
@@ -1092,17 +958,11 @@ class UniverseService:
                     rank=rank,
                     # Historical NOT NULL carrier only; Utility never reads this score.
                     total_score=0.0,
-                    opportunity_score=item.get("opportunity_score"),
-                    tradability_score=item.get("tradability_score"),
-                    liquidity_score=item.get("liquidity_score"),
                     estimated_cost=(2.0 * cfg.trading.execution_fee_pct
                                     + (float(item["spread_bps"]) + 2.0 * cfg.trading.slippage_bps) / 100.0),
-                    crowding_risk=item.get("crowding_risk"),
-                    late_entry_penalty=item.get("late_entry_penalty"),
                     scanner_family=item.get("scanner_family"),
                     scanner_direction=scanner_direction,
                     regime_tag=regime_tag,
-                    all_scores=json.dumps(item.get("all_scores", {})),
                     quote_volume_24h=item.get("quote_volume_24h"),
                     spread_bps=item.get("spread_bps"),
                     ttl_sec=ttl_sec,
@@ -1290,4 +1150,3 @@ class UniverseService:
     def fallback_static_universe(self) -> list[str]:
         """Return the static fallback symbol list."""
         return load_config().universe.fallback_symbols
-
