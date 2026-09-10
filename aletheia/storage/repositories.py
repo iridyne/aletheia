@@ -269,11 +269,12 @@ def _stamp_provenance(data: dict) -> dict:
     return data
 
 
-def _insert(table: str, data: dict) -> None:
+def _insert(table: str, data: dict, *, ignore_existing_id: bool = False) -> None:
     cols = ", ".join(data.keys())
     placeholders = ", ".join(["?"] * len(data))
     execute_write(
-        f"INSERT INTO {table} ({cols}) VALUES ({placeholders})",
+        f"INSERT INTO {table} ({cols}) VALUES ({placeholders})"
+        + (" ON CONFLICT(id) DO NOTHING" if ignore_existing_id else ""),
         list(data.values()),
     )
 
@@ -2826,6 +2827,7 @@ def _seed_entry_fill_outcome(f: Fill) -> None:
         funding = db.execute(
             "SELECT funding_rate FROM funding_rate_snapshots WHERE symbol=? "
             "AND exchange=? AND julianday(observed_at)<=julianday(?) "
+            f"AND {LEGACY_DERIVATIVES_WHERE} "
             "ORDER BY julianday(observed_at) DESC,id DESC LIMIT 1",
             (owner["symbol"], owner["venue"], fill_at),
         ).fetchone()
@@ -6357,6 +6359,7 @@ def upsert_collector_health_state(state: dict) -> None:
         "budget_skips",
         "failures",
         "last_error_code",
+        "derivatives_coverage_json",
     )
     values = tuple(state.get(column) for column in columns)
     updates = ", ".join(f"{column}=excluded.{column}" for column in columns if column != "domain")
@@ -11109,6 +11112,7 @@ def _funding_source_semantics(data: dict) -> dict:
     # Acquisition advances on native retries; only changed source semantics
     # should bypass the existing ten-minute numeric heartbeat.
     metadata.pop("acquired_at", None)
+    metadata.pop("source_observed_at", None)
     return metadata
 
 
@@ -11155,7 +11159,8 @@ def insert_funding_rate_snapshot(data: dict) -> None:
                         return
                 except (TypeError, ValueError):
                     pass
-    _insert("funding_rate_snapshots", data)
+    _insert("funding_rate_snapshots", data,
+        ignore_existing_id=bool(json.loads(data.get('derivatives_metadata_json') or '{}').get('observation_only')))
 
 
 # Cross-venue / secondary feeds (Hyperliquid and Coinalyze aggregate data)
@@ -11164,6 +11169,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
 # primary collector's own delta all consume as the PRIMARY trading venue's
 # view. Excluded by default; pass exchange=<name> to target one venue exactly.
 _CROSS_VENUE_TAGS = ("hyperliquid", "hyperliquid_predicted", "coinalyze")
+LEGACY_DERIVATIVES_WHERE = "COALESCE(json_extract(derivatives_metadata_json, '$.observation_only'), 0) = 0"
 
 
 def _latest_deriv_where(exchange: str | None) -> tuple[str, tuple]:
@@ -11173,10 +11179,10 @@ def _latest_deriv_where(exchange: str | None) -> tuple[str, tuple]:
     exchange="x"   → exactly that venue's rows.
     """
     if exchange is not None:
-        return "symbol = ? AND exchange = ?", (exchange,)
+        return f"symbol = ? AND exchange = ? AND {LEGACY_DERIVATIVES_WHERE}", (exchange,)
     placeholders = ",".join("?" * len(_CROSS_VENUE_TAGS))
     return (
-        f"symbol = ? AND (exchange IS NULL OR exchange NOT IN ({placeholders}))",
+        f"symbol = ? AND (exchange IS NULL OR exchange NOT IN ({placeholders})) AND {LEGACY_DERIVATIVES_WHERE}",
         _CROSS_VENUE_TAGS,
     )
 
@@ -11198,7 +11204,12 @@ def insert_open_interest_snapshot(data: dict) -> None:
 
     if "id" not in data:
         data["id"] = new_id()
-    _insert("open_interest_snapshots", data)
+    _insert("open_interest_snapshots", data,
+        ignore_existing_id=bool(json.loads(data.get('derivatives_metadata_json') or '{}').get('observation_only')))
+
+
+def insert_perp_price_snapshot(data: dict) -> None:
+    _insert('perp_price_snapshots', data, ignore_existing_id=True)
 
 
 class CollectorBatchPersistError(RuntimeError):
@@ -11310,7 +11321,7 @@ def open_interest_near(
     newest = (now - timedelta(minutes=lo)).isoformat()
     rows = _select_all(
         "open_interest_snapshots",
-        where="symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ?",
+        where=f"symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ? AND {LEGACY_DERIVATIVES_WHERE}",
         params=(symbol, exchange, oldest, newest),
         order="observed_at DESC",
         limit=64,
@@ -11482,6 +11493,7 @@ def batch_funding_rates(symbols: list[str], exchange: str) -> dict[str, dict]:
             ) AS _rn
             FROM funding_rate_snapshots
             WHERE symbol IN ({placeholders}) AND exchange = ?
+              AND {LEGACY_DERIVATIVES_WHERE}
         ) WHERE _rn = 1
         """,
         (*symbols, exchange),
@@ -11504,6 +11516,7 @@ def batch_open_interest(symbols: list[str], exchange: str) -> dict[str, dict]:
             ) AS _rn
             FROM open_interest_snapshots
             WHERE symbol IN ({placeholders}) AND exchange = ?
+              AND {LEGACY_DERIVATIVES_WHERE}
         ) WHERE _rn = 1
         """,
             (*symbols, exchange),
@@ -11846,6 +11859,11 @@ def prune_open_interest_snapshots(days: int = 7) -> int:
         "observed_at < ?",
         (cutoff,),
     )
+
+
+def prune_perp_price_snapshots(days: int = 7) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches('perp_price_snapshots', 'observed_at < ?', (cutoff,))
 
 
 def prune_universe_feature_snapshots(days: int = 14) -> int:

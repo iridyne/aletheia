@@ -1805,6 +1805,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/market/derivatives-facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Market Derivatives Facts */
+        get: operations["get_market_derivatives_facts_api_market_derivatives_facts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/market/macro": {
         parameters: {
             query?: never;
@@ -7834,7 +7851,7 @@ export interface components {
          *       `warn_only` means budget crossings are signals, never blocks.
          *       `fallback_to_defaults` and `hard_block` are opt-in for
          *       non-safety callers only; safety-relevant callers
-         *       (pi_trading_decision, risk_critic, paper_trader,
+         *       (pi_trading_decision, risk_critic,
          *       agent_shell/trading_decision) stay warn-only regardless.
          *     - `harness_header_default_on`: Phase 5 feature flag. Off until an
          *       ablation study (see docs/design/proposals/
@@ -9387,6 +9404,8 @@ export interface components {
              * @default 50
              */
             coingecko_top_n_default: number;
+            /** Derivatives Comparison Venues */
+            derivatives_comparison_venues?: ("binance" | "okx" | "bitget")[];
             /**
              * Derivatives History Hours
              * @default 24
@@ -9485,6 +9504,8 @@ export interface components {
              * @default false
              */
             confirm_exchange_divergence: boolean;
+            /** Derivatives Comparison Venues */
+            derivatives_comparison_venues?: ("binance" | "okx" | "bitget")[] | null;
             /** Derivatives History Hours */
             derivatives_history_hours?: number | null;
             /** Enable Coinalyze */
@@ -16114,6 +16135,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_market_derivatives_facts_api_market_derivatives_facts_get: {
+        parameters: {
+            query: {
+                symbol: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

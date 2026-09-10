@@ -1503,6 +1503,12 @@ def get_market_snapshots(
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
 
+@router.get("/market/derivatives-facts")
+def get_market_derivatives_facts(symbol: str = Query(min_length=3, max_length=64)):
+    from aletheia.data.derivatives_facts import derivatives_readiness
+    return derivatives_readiness(symbol, load_config())
+
+
 @router.get("/market/microstructure")
 def get_market_microstructure(
     symbol: str,
@@ -1549,9 +1555,11 @@ def get_market_microstructure(
         logger.debug("orderbook query skipped: %s", e)
 
     if market_type in {"perp", "futures"}:
+        from aletheia.storage.repositories import LEGACY_DERIVATIVES_WHERE
         fr_sql = (
             "SELECT funding_rate, funding_rate_annualized "
             "FROM funding_rate_snapshots WHERE symbol = ? "
+            f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
         fr_params: list = [symbol]
         if exchange:
@@ -1569,6 +1577,7 @@ def get_market_microstructure(
         oi_sql = (
             "SELECT open_interest_usd, oi_change_1h_pct "
             "FROM open_interest_snapshots WHERE symbol = ? "
+            f"AND {LEGACY_DERIVATIVES_WHERE} "
         )
         oi_params: list = [symbol]
         if exchange:
