@@ -57,7 +57,6 @@ def _prepare_broker(monkeypatch, place_order):
     from aletheia.execution import coordinator as broker
     from tests.uta.test_execution_coordinator import _Adapter
     monkeypatch.setattr(broker, "create_uta_adapter", lambda mode: _Adapter(place_order, mode))
-    monkeypatch.setattr(broker, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr("aletheia.execution.order_constraints.prepare_exchange_quantity", lambda mode, symbol, market, qty, price: qty)
     return broker
 

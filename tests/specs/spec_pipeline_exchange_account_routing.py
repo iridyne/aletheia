@@ -90,7 +90,6 @@ def test_entry_client_mode_comes_from_authoritative_order(
         observed_clients.append((command.expected_account.environment, order["execution_mode"]))
         return _ack(command)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: _Adapter(submit, mode))
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
     coordinator.execute_order(
         proposal_id=proposal_id,
         risk_decision_id=risk_decision_id,

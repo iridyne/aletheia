@@ -31,10 +31,6 @@ def _setup_db(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     sq._db_conn = conn
     run_migrations()
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        lambda _mode, **_kwargs: None,
-    )
     return conn
 
 
@@ -293,68 +289,38 @@ def test_coordinator_rolls_back_order_when_plan_link_conflicts(tmp_path, monkeyp
     assert repo.list_orders(limit=10) == []
 
 
-def test_stale_entry_qualification_creates_no_order_or_adapter(tmp_path, monkeypatch):
+@pytest.mark.parametrize("sha", ["old-head", "new-unrelated-head"])
+def test_demo_mutation_needs_no_certificate_or_repository_sha(tmp_path, monkeypatch, sha):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.storage import repositories as repo
-    from aletheia.trust.uta_qualification import UTAQualificationError
-
-    proposal_id, risk_id = "proposal-stale", "risk-stale"
-    _authority(proposal_id, risk_id)
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        lambda _mode: (_ for _ in ()).throw(
-            UTAQualificationError("qualification_code_mismatch")
-        ),
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: (_ for _ in ()).throw(
-            AssertionError("UTA adapter must not be created")
-        ),
-    )
-
-    with pytest.raises(UTAQualificationError) as caught:
-        _execute(proposal_id, risk_id)
-
-    assert caught.value.reason_code == "qualification_code_mismatch"
-    assert repo.list_orders(limit=10) == []
-
-
-def test_entry_sends_through_the_adapter_that_was_qualified(tmp_path, monkeypatch):
-    _setup_db(tmp_path, monkeypatch)
-    proposal_id, risk_id = "proposal-qualified-adapter", "risk-qualified-adapter"
-    _authority(proposal_id, risk_id)
-    qualified = []
+    monkeypatch.setattr("aletheia.update.git_ops.current_commit", lambda: sha)
+    monkeypatch.setattr("aletheia.update.git_ops.is_worktree_dirty", lambda: True)
+    assert not (tmp_path / "qualifications").exists()
+    _authority("proposal-no-certificate", "risk-no-certificate")
     sent = []
-
     async def submit(command):
         sent.append(command.expected_account)
         return _ack(command)
+    adapter = _Adapter(submit)
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter)
+    result = _execute("proposal-no-certificate", "risk-no-certificate")
+    assert sent == [adapter.identity]
+    assert repo.get_order(result["order_id"])["uta_account_identity_json"] == adapter.identity.model_dump_json()
 
-    qualified_adapter = _Adapter(submit)
-    sending_adapter = _Adapter(submit)
-    sending_adapter.identity = UTAAccountIdentity(
-        **{
-            **sending_adapter.identity.__dict__,
-            "credential_generation": 2,
-        }
-    )
 
-    def require_qualification(_mode, adapter=None):
-        qualified.append((adapter or qualified_adapter).identity)
-
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.require_uta_mutation_qualification",
-        require_qualification,
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.create_uta_adapter",
-        lambda _mode: sending_adapter,
-    )
-
-    _execute(proposal_id, risk_id)
-
-    assert sent == qualified[-1:]
+def test_missing_configured_adapter_is_recorded_before_send(tmp_path, monkeypatch):
+    _setup_db(tmp_path, monkeypatch)
+    from aletheia.storage import repositories as repo
+    _authority("proposal-unconfigured", "risk-unconfigured")
+    def unavailable(_mode):
+        raise ValueError("credentials_not_configured")
+    monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", unavailable)
+    with pytest.raises(ValueError, match="credentials_not_configured"):
+        _execute("proposal-unconfigured", "risk-unconfigured")
+    [order] = repo.list_orders(limit=10)
+    assert order["status"] == "error"
+    assert order["error_reason"] == "uta_adapter_unavailable_before_submission"
+    assert order["exchange_order_id"] is None
 
 
 def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
@@ -565,12 +531,11 @@ def test_unreached_venue_rejected_close_is_owner_releasable(tmp_path, monkeypatc
 
 
 @pytest.mark.parametrize("mode", ["binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"])
-def test_external_gateway_close_uses_qualified_account(tmp_path, monkeypatch, mode):
+def test_external_gateway_close_uses_bound_account(tmp_path, monkeypatch, mode):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution import gateway
     from aletheia.storage.models import Position
     from aletheia.storage import repositories as repo
-    from aletheia.trust.uta_qualification import UTAQualificationError
 
     position = Position(symbol="BTC/USDT", market_type="spot", direction="long", quantity=0.01,
                         entry_price=100.0, execution_mode=mode, status="open")
@@ -581,14 +546,6 @@ def test_external_gateway_close_uses_qualified_account(tmp_path, monkeypatch, mo
     adapter = _Adapter(submit)
     adapter.identity = _identity(mode)
     monkeypatch.setattr("aletheia.execution.coordinator.create_uta_adapter", lambda _mode: adapter)
-    def reject(*_args, **_kwargs):
-        raise UTAQualificationError("qualification_identity_mismatch")
-    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", reject)
-    with pytest.raises(UTAQualificationError):
-        gateway.close_exchange_position(position.id, "operator_close")
-    assert adapter.calls == 0
-    assert repo.get_position(position.id)["pending_close_order_id"] is None
-    monkeypatch.setattr("aletheia.execution.coordinator.require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
     result = gateway.close_exchange_position(position.id, "operator_close")
     assert result["closed"] is False
     assert adapter.calls == 1

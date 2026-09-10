@@ -799,7 +799,6 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
         raise RuntimeError("private-detail-must-not-persist")
 
     monkeypatch.setattr(exchange, "set_leverage", _margin_unavailable)
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda mode: CCXTUTAAdapter(_identity(profile), profile))
 
     with pytest.raises(RuntimeError):
@@ -1302,7 +1301,6 @@ def test_close_client_initialization_failure_does_not_strand_pending_claim(tmp_p
     def _client_initialization_failed(*_args, **_kwargs):
         raise RuntimeError("private-client-initialization-detail")
 
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr(coordinator, "create_uta_adapter", _client_initialization_failed)
     position = Position(
         symbol="BTC/USDT",
@@ -1374,7 +1372,6 @@ def test_bitget_entry_client_initialization_failure_is_not_submission_unknown(
     def _client_initialization_failed(*_args, **_kwargs):
         raise RuntimeError("private-client-initialization-detail")
 
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *args, **kwargs: None)
     monkeypatch.setattr(coordinator, "create_uta_adapter", _client_initialization_failed)
     kwargs = {
         "proposal_id": proposal.id,

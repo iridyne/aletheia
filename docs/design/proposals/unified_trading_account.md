@@ -24,9 +24,11 @@ UTA is the sole private account-read path for the six existing external executio
 modes. Gateway routes their mutations through the generic Coordinator and
 CCXTUTAAdapter, retaining separate Binance, OKX, Bitget Classic-v2 and UTA-v3
 profiles. There is no legacy/shadow selector or private broker fallback.
-Exact mutation qualification and Live Trust gates remain mandatory; account reads
-do not grant mutation authority. No credential-backed qualification or remote
-deployment is claimed by this local cutover.
+The SHA-bound mutation certificate is retired by owner-approved #3035
+([decision](retire_uta_qualification.md)). Demo/Testnet uses configured accounts,
+authoritative Risk, Gateway and exact sending-account binding. Live Trust remains
+independent; account reads do not grant mutation authority. No external round-trip
+or remote deployment is claimed by this design document.
 Existing `submission_unknown`, `materialization_missing` and Risk-before-Gateway
 authority remain authoritative. The local simulator is [retired](retire_local_simulated_exchange.md);
 its historical records retain their original identity without account or mutation authority.
@@ -72,32 +74,27 @@ semantics the common driver cannot prove.
 Each migration phase requires focused immutable-model, precision, completeness,
 lifecycle, identity-generation, parity, command-outcome, concurrency,
 reconciliation, funding, verified-exit, Trust, profile and structural tests.
-Every external mutation requires secret-safe qualification bound to exact code,
-account generation and authoritative private Fill evidence. Static completion
-does not create qualification or permit any demo/live order. Historical Orders
-without a proven account identity remain unavailable; migration does not assign
-them the currently configured identity. No real-money order is an acceptance gate.
-The Binance and OKX demo gate is `scripts/qualify_uta.py`; its execution probe
-requires an explicit testnet/demo-order confirmation and derives minimum legal
-size from venue constraints. OKX qualification additionally proves native
-protection submit/cancel. A missing credential or any unresolved command
-produces a non-qualified artifact and cannot authorize mutation.
+External qualification is an evidence verdict from the normal Proposal/Risk/Gateway/
+Coordinator/UTA mainline, not a pre-issued certificate or repository-SHA license.
+Account configuration alone proves neither runtime qualification nor economics.
+Historical Orders without proven account identity remain unavailable; migration
+must not assign them the currently configured identity. Private Fill and complete
+cost evidence remain required. No real-money order is an acceptance gate.
 
 ## Rollout and rollback
 
 All six modes use one implementation. Persisted legacy selectors are removed by
 the existing configuration migration; HTTP writes of retired selectors fail.
 There is no dual write or configuration rollback to a private legacy stack.
-Before deployment, exact-commit qualification and existing-order account mapping
-must be proved. Unknown/mismatched identity blocks new entry and history use;
+Before deployment, inspect in-flight commands and existing-order account identity.
+Deployment identity and runtime evidence must be recorded separately. Unknown/mismatched identity blocks new entry and history use;
 ambiguous submissions retain their records and are never resubmitted elsewhere.
 
 ## Adding a profile within the current exchange scope
 
 A contributor adds one narrow class under `aletheia/uta/profiles/`, registers its
 immutable factory in `aletheia/uta/manager.py`, supplies canonical fixture and
-conformance tests, and extends the existing secret-safe qualification evidence for
-that exact profile and generation. Raw venue parameters stay in the profile. Agent,
+conformance tests, and proves the normal execution path for that exact profile and account generation. Raw venue parameters stay in the profile. Agent,
 Risk, Gateway, Portfolio, recovery and Trust business logic must not change merely
 to add the profile; needing such a change means the frozen contract is insufficient
 and requires an Issue amendment before implementation.

@@ -265,7 +265,6 @@ def test_order_persisted_before_exchange_call(tmp_path, monkeypatch):
         raise ConnectionError("exchange unavailable")
     adapter = _Adapter(submit, "bitget_demo")
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
 
     from aletheia.execution.errors import SubmissionUnknownError
 

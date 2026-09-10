@@ -206,7 +206,6 @@ def test_bitget_broker_forwards_approved_proposal_protection(monkeypatch):
     adapter = _Adapter(submit, "bitget_demo")
     adapter.capabilities = UTACapabilities(native_tpsl=CapabilitySupport.SUPPORTED, source="isolated_test")
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
     coordinator.execute_order(
         proposal_id=proposal.id,
         risk_decision_id=decision.id,
@@ -247,7 +246,6 @@ def test_bitget_broker_rejects_protection_not_in_approved_proposal(monkeypatch):
     )
     captured = []
 
-    monkeypatch.setattr(coordinator, "require_uta_mutation_qualification", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: captured.append(_mode) or pytest.fail("mutated protection reached adapter"))
 
     with pytest.raises(ValueError, match="approved Proposal"):

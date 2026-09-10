@@ -28,7 +28,6 @@ from aletheia.storage.repositories import (
     update_order_metadata,
 )
 from aletheia.storage.sqlite import get_db
-from aletheia.trust.uta_qualification import require_uta_mutation_qualification
 from aletheia.uta.compat import instrument_from_local
 from aletheia.uta.manager import create_uta_adapter
 from aletheia.uta.models import (
@@ -68,12 +67,11 @@ def _close_adapter(adapter) -> None:
         pass
 
 
-def _create_qualified_adapter(execution_mode: str, expected_account: UTAAccountIdentity | None = None):
+def _create_bound_adapter(execution_mode: str, expected_account: UTAAccountIdentity | None = None):
     adapter = create_uta_adapter(execution_mode)
     try:
         if expected_account is not None and adapter.identity != expected_account:
             raise ValueError("uta_account_identity_mismatch")
-        require_uta_mutation_qualification(execution_mode, adapter=adapter)
     except Exception:
         _close_adapter(adapter)
         raise
@@ -81,7 +79,7 @@ def _create_qualified_adapter(execution_mode: str, expected_account: UTAAccountI
 
 
 async def _command(execution_mode: str, method: str, command):
-    adapter = _create_qualified_adapter(execution_mode, command.expected_account)
+    adapter = _create_bound_adapter(execution_mode, command.expected_account)
     try:
         return await getattr(adapter, method)(command)
     finally:
@@ -202,7 +200,6 @@ def execute_order(
     _guard_unresolved_submission(proposal_id, execution_mode)
     if market_type != "spot" and leverage is None:
         raise ValueError("futures UTA order requires leverage")
-    require_uta_mutation_qualification(execution_mode)
     from aletheia.storage.repositories import get_trade_proposal
     proposal = get_trade_proposal(proposal_id)
     if proposal is None:
@@ -244,7 +241,7 @@ def execute_order(
             raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
-        adapter = _create_qualified_adapter(execution_mode)
+        adapter = _create_bound_adapter(execution_mode)
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -450,8 +447,6 @@ def close_position(
         raise ValueError(f"position not found: {position_id}")
     if current.get("status") != "open":
         raise ValueError(f"position {position_id} is not open")
-    if not has_unresolved_close_claim(current):
-        require_uta_mutation_qualification(current["execution_mode"])
     row, order = _claim_close(position_id, reason, close_reasoning)
     if order is None:
         existing = repo.get_order(row["pending_close_order_id"])
@@ -465,7 +460,7 @@ def close_position(
             "already_pending": True,
         }
     try:
-        adapter = _create_qualified_adapter(row["execution_mode"], UTAAccountIdentity.model_validate_json(order.uta_account_identity_json))
+        adapter = _create_bound_adapter(row["execution_mode"], UTAAccountIdentity.model_validate_json(order.uta_account_identity_json))
     except Exception:
         finalize_exchange_acknowledgement(
             order.id,
@@ -550,7 +545,7 @@ def _submit_protection_leg(position: dict, purpose: str, trigger_price: float) -
     adapter = None
     command = None
     try:
-        adapter = _create_qualified_adapter(position["execution_mode"], identity)
+        adapter = _create_bound_adapter(position["execution_mode"], identity)
         command = SubmitOrderCommand(
             command_id=str(uuid4()),
             expected_account=adapter.identity,
@@ -585,7 +580,6 @@ def place_protection(position_id: str) -> dict[str, str]:
     position = repo.get_position(position_id)
     if position is None or position.get("status") != "open":
         raise ValueError(f"open position not found: {position_id}")
-    require_uta_mutation_qualification(position["execution_mode"])
     requested = (
         ("sl", "protective_stop", position.get("stop_price")),
         ("tp", "take_profit", position.get("take_profit_price")),
@@ -613,7 +607,6 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     position = repo.get_position(position_id)
     if position is None or position.get("status") != "open":
         return False
-    require_uta_mutation_qualification(position["execution_mode"])
     try:
         identifiers = json.loads(position.get("exchange_tpsl_order_id") or "{}")
     except (TypeError, ValueError):
@@ -621,7 +614,7 @@ def replace_protective_stop(position_id: str, new_stop_price: float) -> bool:
     old_stop = identifiers.get("sl") if isinstance(identifiers, dict) else None
     if not old_stop:
         return False
-    adapter = _create_qualified_adapter(position["execution_mode"], _position_account(position))
+    adapter = _create_bound_adapter(position["execution_mode"], _position_account(position))
     command = CancelOrderCommand(
         command_id=str(uuid4()),
         expected_account=adapter.identity,
