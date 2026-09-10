@@ -611,9 +611,8 @@ async def _load_entry_plan_watchers(
                     and monitoring.get("stream_generation_id") == activation.snapshot.stream_generation_id
                     and monitoring.get("subscription_generation_id") == activation.snapshot.subscription_generation_id):
                     continue
-            # The old proof stays immutable; a fresh engine must earn a new one.
-            if existing is not None:
-                existing = {key: value for key, value in existing.items() if key != plan.plan_id}
+            # Keep an already rearmed engine across reloads so its new
+            # trigger sequence can finish. Triggered/faulted engines reset below.
         if existing is not None and plan.plan_id in existing:
             watching = existing[plan.plan_id]
             if watching.state != "triggered" and not health_reason_requires_resync(watching.health_reason):

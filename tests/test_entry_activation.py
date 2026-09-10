@@ -234,8 +234,8 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
-@pytest.mark.parametrize("restart", [False, True])
-async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monkeypatch, tactic, restart):
+@pytest.mark.parametrize("scenario", ["cold_start", "restored", "reconnect"])
+async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monkeypatch, tactic, scenario):
     """Restart must retain subscriptions even when a valid proof needs no engine."""
     import asyncio
     from types import SimpleNamespace
@@ -247,9 +247,17 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     activation = build_entry_trigger_activation(plan, ready, now=now)
     monitoring = {"state": "ready", "stream_generation_id": ready.stream_generation_id,
                   "subscription_generation_id": ready.subscription_generation_id}
-    if restart:
+    if scenario != "cold_start":
         repo.record_entry_plan_monitoring(plan.plan_id, monitoring)
         assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+    if scenario == "reconnect":
+        data = ready.model_dump(mode="json")
+        data["stream_generation_id"] = "stream-2"
+        for event in data["activation_events"]:
+            event["stream_generation_id"] = "stream-2"
+        ready = type(ready).model_validate(data)
+        monitoring = {**monitoring, "stream_generation_id": "stream-2"}
+        monkeypatch.setattr(watch, "_WATCHER_RELOAD_INTERVAL_SEC", 0.005)
     cfg = AletheiaConfig()
     cfg.agent.permission_mode = "Full"
     cfg.exchange.paper_execution_mode = "bitget_demo"
@@ -267,8 +275,10 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     def gateway(proposal_id, *args, **kwargs):
         row = repo.get_entry_plan(plan.plan_id)
         assert repo.get_entry_trigger_activation(row["trigger_activation_id"]) is not None
-        if restart:
+        if scenario == "restored":
             assert row["trigger_activation_id"] == activation.activation_id
+        elif scenario == "reconnect":
+            assert row["trigger_activation_id"] != activation.activation_id
         submitted.append(proposal_id)
         return {"status": "submitted"}
 
@@ -290,9 +300,17 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
         async def events(self):
             quote = ready.activation_events[-1]
             if quote.instrument in self.instruments:
-                if not restart:
+                if scenario == "reconnect":
+                    # First event publishes the new generation; the next loader
+                    # pass must create a fresh engine without replaying old proof.
+                    yield quote
+                    assert submitted == []
+                    await asyncio.sleep(0.02)
+                if scenario != "restored":
                     for event in ready.activation_events[:-1]:
                         yield event
+                        if scenario == "reconnect":
+                            await asyncio.sleep(0.02)
                     for kind, values in (
                         ("depth", {"bids": ready.depth_bids, "asks": ready.depth_asks}),
                         ("trade", {"price": 100.1, "size": 100, "side": "buy"}),
@@ -311,5 +329,5 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     assert ready.activation_events[-1].instrument in stream.instruments
     assert len(submitted) == 1
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
-    if restart:
+    if scenario != "cold_start":
         assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
