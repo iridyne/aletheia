@@ -206,3 +206,5 @@ The canonical Compiler also removes the old baseline-Momentum/treatment selectio
 The original three-step `TriggerEngine` and its implicit missing-spec fallback are deleted. Production watcher construction accepts only `anchor-retrace-reclaim` and uses `MomentumTriggerEngine` with explicit pullback, sweep, reclaim and confirmation evidence. Shared trigger snapshot/policy types remain in `universe.fast_trigger`; they do not select an implementation.
 
 The former `PlanIntent` / `_PlanIntentWire` model protocol is retired. Canonical compilation consumes the validated `EntryHypothesis` directly; old experiment descriptions referring to PlanIntent describe frozen historical evidence, not an executable compatibility path.
+
+The production TriggerSpec registry now contains only `anchor-retrace-reclaim`. The old momentum geometry treatment receipt is no longer consulted for execution authority; historical Plans are rejected by current contract/provenance checks regardless of an old exposure receipt. The Learning registry retains the historical measurement identity but marks its retired compiler consumer and Paper influence unsupported.

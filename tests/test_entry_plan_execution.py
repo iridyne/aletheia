@@ -253,6 +253,9 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
     trigger_params = (
         {
             "breakout_level": 100.0,
+            "sweep_low": 98.5, "sweep_high": 99.0, "atr_abs": 2.0,
+            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "f" * 64,
             "pullback_low": 99.0,
             "pullback_high": 100.0,
             "entry_low": 100.0,
@@ -281,7 +284,7 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         thesis="bounded continuation",
         scenario="retrace reclaim",
         execution_mode=mode,
-        trigger_spec_id="momentum-retrace-reclaim" if triggered else None,
+        trigger_spec_id="anchor-retrace-reclaim" if triggered else None,
         trigger_params=trigger_params,
         trigger_data_requirements=("quote", "trade", "books5", "candle1m") if triggered else (),
         trigger_freshness_ms=2_000 if triggered else None,
@@ -435,50 +438,21 @@ def test_triggered_plan_cannot_submit_from_caller_authored_geometry(monkeypatch,
     assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
 
 
-def test_momentum_geometry_requires_and_preserves_treatment_receipt(monkeypatch):
-    plan = _plan(account_mode="bitget_demo").model_copy(
-        update={
-            "trigger_spec_id": "momentum-retrace-reclaim-geometry",
-            "treatment_exposure_id": "exposure-treatment",
-            "trigger_params": {
-                **_plan().trigger_params,
-                "sweep_low": 99.0,
-                "sweep_high": 100.0,
-                "atr_abs": 2.0,
-                "geometry_version": "momentum-entry-geometry/v2",
-                "geometry_fingerprint": "f" * 64,
-            },
-        }
-    )
-    monkeypatch.setattr(
-        "aletheia.learning.ledger.get_exposure",
-        lambda _exposure_id: {
-            "path_id": "momentum_entry_geometry",
-            "assignment": "treatment",
-            "after_json": json.dumps({"value": 1.0}),
-            "manifest_json": json.dumps({"geometry_available": True}),
-        },
-    )
-    observed_at = datetime.now(timezone.utc).isoformat()
-    proposal = build_entry_plan_order_intent(
-        plan,
-        bid=100,
-        ask=100.05,
-        observed_at=observed_at,
-        source_observed_at=observed_at,
-    )
-    attribution = json.loads(proposal.attribution_snapshot)
-    assert attribution["treatment_exposure_id"] == "exposure-treatment"
-    assert attribution["geometry_version"] == "momentum-entry-geometry/v2"
-
-    with pytest.raises(ValueError, match="entry_plan_treatment_exposure_required"):
-        build_entry_plan_order_intent(
-            plan.model_copy(update={"treatment_exposure_id": None}),
-            bid=100,
-            ask=100.05,
-            observed_at=observed_at,
-            source_observed_at=observed_at,
-        )
+@pytest.mark.parametrize("exposure_id", [None, "historical-treatment"])
+def test_historical_treatment_never_grants_current_execution(monkeypatch, exposure_id):
+    from aletheia.trading.entry_compat import decode_entry_plan
+    payload = _plan().model_dump(mode="json")
+    payload.update(version="entry-plan/v1", trigger_spec_version="v2",
+                   trigger_spec_id="momentum-retrace-reclaim", treatment_exposure_id=exposure_id)
+    historical = decode_entry_plan(json.dumps(payload))
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", _actual_ai_entry_authority)
+    def no_experiment_authority(*args):
+        raise AssertionError("Historical experiment ledger cannot authorize current execution")
+    monkeypatch.setattr("aletheia.learning.ledger.get_exposure", no_experiment_authority)
+    now = datetime.now(timezone.utc)
+    with pytest.raises(ValueError, match="ai_entry_running_contract_mismatch"):
+        build_entry_plan_order_intent(historical, bid=100, ask=100.05,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
 
 
 def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import TradeProposal
-from aletheia.trading.entry_compat import decode_entry_plan, historical_trigger_id
+from aletheia.trading.entry_compat import decode_entry_plan
 from aletheia.trading.entry_plan import (
     EntryPlan,
     calculate_entry_plan_risk_reward,
@@ -22,10 +22,8 @@ from aletheia.trading.entry_plan import (
     post_only_price_is_passive,
 )
 from aletheia.trading.instruments import instrument_market_to_db_market
-from aletheia.trading.trigger_specs import require_registered_trigger_spec
 
 
-_MOMENTUM_GEOMETRY_TRIGGER = "momentum-retrace-reclaim-geometry"
 _RECEIPT_VERSION = "entry-execution-receipt/v1"
 _RECEIPT_CHANNELS = frozenset({"quote", "trade", "depth", "candle"})
 
@@ -185,26 +183,6 @@ def build_entry_execution_receipt(
     )
 
 
-def _require_momentum_geometry_authority(plan: EntryPlan) -> None:
-    if _trigger_id(plan) != _MOMENTUM_GEOMETRY_TRIGGER:
-        return
-    if plan.execution_account_mode != "bitget_demo":
-        raise ValueError("entry_plan_tactic_capability_unavailable")
-    if not plan.treatment_exposure_id:
-        raise ValueError("entry_plan_treatment_exposure_required")
-    from aletheia.learning.ledger import get_exposure
-
-    exposure = get_exposure(plan.treatment_exposure_id)
-    if (
-        exposure is None
-        or exposure.get("path_id") != "momentum_entry_geometry"
-        or exposure.get("assignment") != "treatment"
-        or json.loads(str(exposure.get("after_json") or "{}")).get("value") != 1.0
-        or not json.loads(str(exposure.get("manifest_json") or "{}")).get("geometry_available")
-    ):
-        raise ValueError("entry_plan_treatment_exposure_invalid")
-
-
 def _require_ai_entry_authority(plan: EntryPlan) -> None:
     from aletheia.trading.entry_contract import entry_contract_fingerprints
     from aletheia.trading.entry_compat import historical_plan_version
@@ -283,18 +261,7 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
 def require_entry_plan_runtime_authority(plan: EntryPlan) -> None:
     """Revalidate persisted plan lineage and global authority without creating an Order."""
 
-    _require_momentum_geometry_authority(plan)
     _require_ai_entry_authority(plan)
-
-
-def _trigger_id(plan: EntryPlan) -> str | None:
-    historical = historical_trigger_id(plan)
-    if historical is not None:
-        return historical
-    if plan.trigger_spec_id is None:
-        return None
-    contract, _params = require_registered_trigger_spec(plan.trigger_spec_id, plan.trigger_params)
-    return contract.spec_id
 
 
 def _instant(raw: str) -> datetime:

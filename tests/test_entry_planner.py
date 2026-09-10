@@ -206,7 +206,10 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
     )
     hypothesis_json = hypothesis.model_dump_json()
     trigger_params = {
-        "breakout_level": 100.0, "pullback_low": 99.0, "pullback_high": 100.0,
+        "breakout_level": 100.0,
+            "sweep_low": 98.5, "sweep_high": 99.0, "atr_abs": 2.0,
+            "geometry_version": "anchor-retrace-reclaim-geometry/v1",
+            "geometry_fingerprint": "f" * 64, "pullback_low": 99.0, "pullback_high": 100.0,
         "entry_low": 100.0, "entry_high": 101.0, "invalidation_price": 98.0,
     }
     opportunity = json.loads(
@@ -257,7 +260,7 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
         thesis="bounded momentum continuation",
         scenario="retrace then reclaim",
         execution_mode="TRIGGERED",
-        trigger_spec_id="momentum-retrace-reclaim",
+        trigger_spec_id="anchor-retrace-reclaim",
         trigger_params=trigger_params,
         trigger_data_requirements=("quote", "trade", "books5", "candle1m"),
         trigger_freshness_ms=2_000,
