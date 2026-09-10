@@ -66,6 +66,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         _submit_activated_entry_plan, _watched_instruments,
     )
     from aletheia.trading.entry_profiles import registered_entry_profiles
+    from aletheia.universe.fast_stream import events_share_generation
 
     schema_material = {
         "context": EntryAnalysisContext.model_json_schema(),
@@ -103,6 +104,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
                 "passive_price_eligibility": post_only_price_is_passive,
                 "trigger_registry": trigger_specs,
                 "trigger_engine": momentum_trigger,
+                "trigger_event_generation": events_share_generation,
                 "trigger_activation": entry_activation,
                 "activation_binding": bind_entry_trigger_activation,
                 "activation_recovery": entry_plan_activation_can_refresh,

@@ -14,6 +14,7 @@ import pytest
         ("aletheia.trading.entry_plan_compiler", "max_requotes=0", "max_requotes=1", True),
         ("aletheia.trading.momentum_trigger", "ratio < 0.60", "ratio < 0.65", True),
         ("aletheia.trading.trigger_specs", "freshness_ms=2_000", "freshness_ms=1_000", True),
+        ("events_share_generation", ") == 1", ") <= 2", True),
         ("_load_entry_plan_watchers", "MomentumTriggerEngine(", "ChangedTriggerEngine(", True),
     ],
 )
