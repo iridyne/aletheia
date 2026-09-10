@@ -1,0 +1,99 @@
+{
+  "aggregate_oi": {
+    "acquired_at": "2026-09-10T12:00:00+00:00",
+    "exchange": "coinalyze",
+    "long_short_ratio": null,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "oi_change_1h_pct": 10.0,
+    "open_interest_coin": null,
+    "open_interest_usd": 9000000,
+    "source_observed_at": "2026-09-10T12:00:00+00:00",
+    "source_time_status": "provided",
+    "symbol": "BTC/USDT",
+    "top_trader_position_ratio": null
+  },
+  "funding": {
+    "acquired_at": "2026-09-10T12:00:00+00:00",
+    "exchange": "bitget",
+    "funding_rate": 0.0012,
+    "funding_rate_annualized": 1.314,
+    "mark_price": 60000.0,
+    "next_funding_time": null,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "source_observed_at": "2026-09-10T12:00:00+00:00",
+    "source_time_status": "provided",
+    "symbol": "BTC/USDT"
+  },
+  "hyperliquid": {
+    "acquired_at": null,
+    "exchange": "hyperliquid",
+    "funding_rate": 0.0001,
+    "funding_rate_annualized": 0.876,
+    "mark_price": 60000.0,
+    "next_funding_time": null,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "source_observed_at": null,
+    "source_time_status": null,
+    "symbol": "BTC/USDT"
+  },
+  "hyperliquid_oi": {
+    "acquired_at": null,
+    "exchange": "hyperliquid",
+    "long_short_ratio": null,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "oi_change_1h_pct": 20.0,
+    "open_interest_coin": 20.0,
+    "open_interest_usd": 1200000.0,
+    "source_observed_at": null,
+    "source_time_status": null,
+    "symbol": "BTC/USDT",
+    "top_trader_position_ratio": null
+  },
+  "leverage": {
+    "crowding_score": 84.0,
+    "funding_annualized": 1.314,
+    "funding_opportunity": true,
+    "funding_rate": 0.0012,
+    "liquidation_1h_usd": 250000.0,
+    "long_short_ratio": 1.8,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "oi_delta_1h_pct": 10.0,
+    "open_interest_usd": 1100000.0,
+    "symbol": "BTC/USDT"
+  },
+  "liquidation": {
+    "event_time": "2026-09-10T12:00:00+00:00",
+    "exchange": "coinalyze",
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "price": 0.0,
+    "quantity_usd": 250000,
+    "side": "long",
+    "symbol": "BTC/USDT"
+  },
+  "oi": {
+    "acquired_at": "2026-09-10T12:00:00+00:00",
+    "exchange": "bitget",
+    "long_short_ratio": 1.8,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "oi_change_1h_pct": 10.0,
+    "open_interest_coin": 20.0,
+    "open_interest_usd": 1100000.0,
+    "source_observed_at": "2026-09-10T12:00:00+00:00",
+    "source_time_status": "provided",
+    "symbol": "BTC/USDT",
+    "top_trader_position_ratio": 0.7
+  },
+  "predicted": {
+    "acquired_at": null,
+    "exchange": "hyperliquid_predicted",
+    "funding_rate": 0.0002,
+    "funding_rate_annualized": 1.752,
+    "mark_price": null,
+    "next_funding_time": null,
+    "observed_at": "2026-09-10T12:00:00+00:00",
+    "source_observed_at": null,
+    "source_time_status": null,
+    "symbol": "BTC/USDT"
+  },
+  "rendered": "### Derivatives state\n_LSR = long/short account ratio (>1 crowd-long, <1 crowd-short, n/a=no data); Crowding 0-100, higher = more one-sided._\n| Symbol | Funding/8h | Funding Ann. | OI USD | OI \u03941h% | LSR | Crowding |\n|--------|-----------|-------------|--------|---------|-----|---------|\n| BTC/USDT | 0.1200% | 131.4% | $1,100,000 | +10.0% | 1.80 | 84/100 |\n\n**Funding opportunity signals**: BTC/USDT\n\n### Cross-venue funding and OI (Hyperliquid)\nBTC/USDT: Hyperliquid funding +87.6%/yr vs primary +131.4%/yr \u2192 \u0394-43.8pp; predicted +175.2%/yr; OI $1.2M; OI Delta1h +20.0%; observed 2026-09-10T12:00:00+00:00"
+}

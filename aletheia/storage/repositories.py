@@ -11100,6 +11100,7 @@ _FUNDING_DEDUP_FIELDS = (
     "funding_rate_annualized",
     "next_funding_time",
     "mark_price",
+    "derivatives_metadata_json",
 )
 _FUNDING_HEARTBEAT_FLOOR_MINUTES = 10
 
@@ -11118,7 +11119,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
         row = db.execute(
             "SELECT funding_rate, funding_rate_annualized, next_funding_time, "
             "mark_price, observed_at, source_observed_at, acquired_at, "
-            "source_time_status "
+            "source_time_status, derivatives_metadata_json "
             "FROM funding_rate_snapshots "
             "WHERE symbol = ? AND exchange = ? "
             "ORDER BY COALESCE(aletheia_instant_us(acquired_at), "

@@ -23,6 +23,7 @@ from aletheia.data.models import (
     OpenInterestSnapshot,
 )
 from aletheia.data.freshness import MAX_FUTURE_SKEW
+from aletheia.data.derivatives_facts import ccxt_metadata
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
 
@@ -57,8 +58,8 @@ class DerivativesCollector:
         # LSR is a single-exchange (Binance) signal regardless of primary. Pull once
         # for all symbols up-front so a failure here cannot mask the OI write — per
         # spec MS-C01: LSR failure must NOT prevent OpenInterestSnapshot persistence.
-        lsr_map: dict[str, float] = {}
-        top_position_map: dict[str, float] = {}
+        lsr_map: dict[str, dict] = {}
+        top_position_map: dict[str, dict] = {}
         try:
             if cfg.market_data.enable_long_short_ratio:
                 positioning_results = await asyncio.gather(
@@ -150,9 +151,11 @@ class DerivativesCollector:
                 # coin/contract amount to USD when the venue omits
                 # openInterestValue (e.g. Binance/Bitget live OI).
                 mark_price = fr.get("markPrice") if fr else None
+                market = exchange.markets.get(perp_sym) or {}
                 if fr:
                     snap = _parse_funding(sym, primary_name, fr)
                     if snap:
+                        snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, fr, family='funding')
                         funding.append(snap)
                         if snap.source_time_status != "provided":
                             errors.append(
@@ -164,11 +167,14 @@ class DerivativesCollector:
                 if raw_oi:
                     snap = _parse_oi(
                         sym, primary_name, raw_oi,
-                        lsr=lsr_map.get(sym),
-                        top_position_ratio=top_position_map.get(sym),
+                        lsr=(lsr_map.get(sym) or {}).get('value'),
+                        top_position_ratio=(top_position_map.get(sym) or {}).get('value'),
                         mark_price=mark_price,
                     )
                     if snap:
+                        snap.derivatives_metadata_json = ccxt_metadata(sym, primary_name, market, raw_oi,
+                            family='open_interest', ratios=dict(long_short_ratio=lsr_map.get(sym),
+                                top_trader_position_ratio=top_position_map.get(sym)))
                         oi.append(snap)
                         if snap.source_time_status != "provided":
                             errors.append(
@@ -599,8 +605,8 @@ async def _maybe_backfill_oi_history(
     return n, False
 
 
-async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, float]:
-    results: dict[str, float] = {}
+async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, dict]:
+    results: dict[str, dict] = {}
     semaphore = asyncio.Semaphore(4)
     # Four requests per stream, eight combined; CCXT remains sequential.
     async with httpx_client(timeout=_LSR_BUDGET_SEC) as client:
@@ -617,7 +623,13 @@ async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, 
                     if isinstance(items, list) and items:
                         ratio = _finite_float(items[0].get("longShortRatio"))
                         if ratio is not None and ratio > 0:
-                            results[sym] = ratio
+                            acquired = datetime.now(timezone.utc)
+                            source, status = provider_source_time(items[0], acquired)
+                            results[sym] = dict(value=ratio, source_observed_at=source,
+                                source_time_status=status, acquired_at=acquired.isoformat(),
+                                instrument=dict(canonical_symbol=sym, source_instrument_id=sym.replace('/', ''),
+                                    market_type='perp', base_asset=sym.split('/')[0],
+                                    quote_asset=sym.split('/')[-1], settle_asset='USDT', linear=sym.endswith('/USDT')))
                 except Exception as exc:
                     logger.debug("Ratio fetch failed for %s: %s", sym, exc)
 

@@ -901,6 +901,7 @@ def test_production_ledger_advances_through_current_schema(tmp_path, monkeypatch
         CREATE TABLE universe_members (id TEXT PRIMARY KEY);
         CREATE TABLE universe_feature_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE open_interest_snapshots (id TEXT PRIMARY KEY);
+        CREATE TABLE funding_rate_snapshots (id TEXT PRIMARY KEY);
         CREATE TABLE serenity_research_runs (
             id TEXT PRIMARY KEY,
             parent_run_id TEXT,
@@ -1869,10 +1870,10 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
 
     monkeypatch.setattr(migrations, "_is_pytest", lambda: False)
     current_steps = migrations._MIGRATIONS
-    assert current_steps[-3].schema_version == "aletheia-sqlite-v77"
+    v77_end = next(i + 1 for i, step in enumerate(current_steps) if step.schema_version == "aletheia-sqlite-v77")
     try:
         with monkeypatch.context() as old:
-            old.setattr(migrations, "_MIGRATIONS", current_steps[:-2])
+            old.setattr(migrations, "_MIGRATIONS", current_steps[:v77_end])
             old.setattr(migrations, "SCHEMA_VERSION", "aletheia-sqlite-v77")
             db = _setup_db(tmp_path, monkeypatch)
         payload = _plan().model_dump(mode="json")
@@ -1881,6 +1882,12 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
         raw_plan = json.dumps(payload, ensure_ascii=False, indent=2)
         raw_input = '{ "historical" : "原始输入", "numeric_format" : "entry-planner/v1" }'
         timestamp = "2026-01-01T00:00:00+00:00"
+        db.execute("INSERT INTO funding_rate_snapshots "
+            "(id,symbol,exchange,funding_rate,funding_rate_annualized,observed_at) VALUES (?,?,?,?,?,?)",
+            ('old-funding', 'BTC/USDT', 'bitget', .001, 1.095, timestamp))
+        db.execute("INSERT INTO open_interest_snapshots "
+            "(id,symbol,exchange,open_interest_usd,observed_at) VALUES (?,?,?,?,?)",
+            ('old-oi', 'BTC/USDT', 'bitget', 1000000, timestamp))
         db.execute("INSERT INTO candidate_planning_generations "
             "(id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,"
             "venue,symbol,market_type,candidate_family,direction,status,result_kind,result_json,"
@@ -1908,6 +1915,8 @@ def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_value
         before = snapshot(db)
         assert migrations.run_migrations() is True
         assert snapshot(db) == before
+        for table in ('funding_rate_snapshots', 'open_interest_snapshots'):
+            assert db.execute(f'SELECT derivatives_metadata_json FROM {table}').fetchone()[0] is None
         assert db.execute("SELECT validated_hypothesis_json FROM candidate_planning_generations").fetchone()[0] is None
         assert db.execute("SELECT trigger_activation_id FROM entry_plans").fetchone()[0] is None
         assert db.execute("SELECT COUNT(*) FROM entry_trigger_activations").fetchone()[0] == 0
