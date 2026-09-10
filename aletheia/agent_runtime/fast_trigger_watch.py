@@ -692,7 +692,6 @@ def _watched_instruments(
     instruments.update(
         InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type)
         for plan in plans.values()
-        if plan.order_tactic == "POST_ONLY_LIMIT"
     )
     return instruments
 

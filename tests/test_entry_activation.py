@@ -77,9 +77,7 @@ def test_activation_rejects_invalid_trigger_facts(defect):
         build_entry_trigger_activation(plan, ready.model_copy(update={"activation_events": tuple(events)}), now=now)
 
 
-@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
-def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monkeypatch, tactic):
-    import sqlite3
+def _persist_observed_plan(monkeypatch, tactic):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import EntryPlanRecord
     from aletheia.trading.entry_plan import entry_plan_payload
@@ -98,6 +96,17 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
         market_type=plan.market_type, direction=plan.direction, execution_mode=plan.execution_mode,
         plan_json=payload, plan_hash=digest).model_dump())
     monkeypatch.setattr("aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority", lambda _: None)
+    return plan, ready, now, candidate
+
+
+@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
+def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monkeypatch, tactic):
+    import sqlite3
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_plan import entry_plan_payload
+
+    plan, ready, now, candidate = _persist_observed_plan(monkeypatch, tactic)
+    payload, digest = entry_plan_payload(plan)
     activation = build_entry_trigger_activation(plan, ready, now=now)
     with pytest.raises(ValueError, match="monitoring_mismatch"):
         repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
@@ -221,3 +230,86 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
                       "DELETE FROM entry_trigger_activations WHERE id=?"):
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             repo.execute_write(statement, (activation.activation_id,))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
+@pytest.mark.parametrize("restart", [False, True])
+async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monkeypatch, tactic, restart):
+    """Restart must retain subscriptions even when a valid proof needs no engine."""
+    import asyncio
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.storage import repositories as repo
+
+    plan, ready, now, _ = _persist_observed_plan(monkeypatch, tactic)
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    monitoring = {"state": "ready", "stream_generation_id": ready.stream_generation_id,
+                  "subscription_generation_id": ready.subscription_generation_id}
+    if restart:
+        repo.record_entry_plan_monitoring(plan.plan_id, monitoring)
+        assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+    cfg = AletheiaConfig()
+    cfg.agent.permission_mode = "Full"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.universe.max_spread_bps = 10
+    cfg.universe.min_depth_10bps_usd = 100
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda **kwargs: cfg)
+    monkeypatch.setattr("aletheia.risk.policy.resolve_risk_policy", lambda *args: SimpleNamespace(
+        policy=SimpleNamespace(policy_id=plan.risk_policy_id, revision=plan.risk_policy_revision),
+        policy_hash=plan.risk_policy_hash))
+    stop = asyncio.Event()
+    monkeypatch.setattr(watch, "_stop_event", stop)
+    submitted = []
+
+    def gateway(proposal_id, *args, **kwargs):
+        row = repo.get_entry_plan(plan.plan_id)
+        assert repo.get_entry_trigger_activation(row["trigger_activation_id"]) is not None
+        if restart:
+            assert row["trigger_activation_id"] == activation.activation_id
+        submitted.append(proposal_id)
+        return {"status": "submitted"}
+
+    monkeypatch.setattr("aletheia.execution.gateway.execute_existing_proposal", gateway)
+
+    class Stream:
+        async def connect(self, instruments):
+            self.instruments = set(instruments)
+
+        async def set_instruments(self, instruments):
+            self.instruments = set(instruments)
+
+        def monitoring_state(self, *_args):
+            return monitoring
+
+        async def close(self):
+            pass
+
+        async def events(self):
+            quote = ready.activation_events[-1]
+            if quote.instrument in self.instruments:
+                if not restart:
+                    for event in ready.activation_events[:-1]:
+                        yield event
+                    for kind, values in (
+                        ("depth", {"bids": ready.depth_bids, "asks": ready.depth_asks}),
+                        ("trade", {"price": 100.1, "size": 100, "side": "buy"}),
+                    ):
+                        yield FastMarketEvent(event_type=kind, instrument=quote.instrument, sequence=1,
+                            exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
+                            received_timestamp_ms=ready.depth_received_timestamp_ms,
+                            stream_generation_id=ready.stream_generation_id,
+                            subscription_generation_id=ready.subscription_generation_id, **values)
+                yield quote
+            stop.set()
+
+    stream = Stream()
+    monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
+    await asyncio.wait_for(watch._watch_loop(cfg), timeout=2)
+    assert ready.activation_events[-1].instrument in stream.instruments
+    assert len(submitted) == 1
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
+    if restart:
+        assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
