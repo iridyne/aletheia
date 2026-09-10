@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import math
 import hashlib
 from typing import Literal, NotRequired, TypedDict
 
 from aletheia.data.freshness import assess_freshness
+from aletheia.utils.dt import parse_utc
 
 
 class DerivativesFact(TypedDict):
@@ -279,6 +280,9 @@ def comparison_row(row: dict) -> dict:
     """Mark the existing physical row as observation-only and make repeat persistence idempotent."""
     metadata = json.loads(row['derivatives_metadata_json'])
     metadata['observation_only'] = True
+    if metadata.get('source_observed_at'):
+        row.update(source_observed_at=metadata['source_observed_at'],
+            observed_at=metadata['source_observed_at'], source_time_status=metadata['source_time_status'])
     row['derivatives_metadata_json'] = json.dumps(metadata, sort_keys=True, separators=(',', ':'), allow_nan=False)
     identity = dict(row)
     identity.pop('id', None)
@@ -323,7 +327,16 @@ def project_price_snapshot(row, *, now=None):
         reason='reference_kind_unproven' if row['reference_price'] is not None and not row['reference_kind'] else None,
         **common)
     reference['reference_kind'] = row['reference_kind']
-    return [mark, reference]
+    premium = dict(mark, fact_type='perpetual_premium', unit='ratio', value_kind='derived',
+        reference_kind=row['reference_kind'], value=None)
+    if mark['availability'] == reference['availability'] == 'available':
+        premium['value'] = finite(mark['value'] / reference['value'] - 1)
+        if premium['value'] is None:
+            premium.update(availability='invalid', unavailable_reason='nonfinite_value')
+    else:
+        parent = next(f for f in (mark, reference) if f['availability'] != 'available')
+        premium.update(availability=parent['availability'], unavailable_reason=parent['unavailable_reason'])
+    return [mark, reference, premium]
 
 
 def hyperliquid_instrument(symbol):
@@ -418,7 +431,10 @@ def read_derivatives_facts(symbol: str, *, venue: str, now=None) -> list[dict]:
             limit=1,
         )
         if rows:
-            result.extend(project_snapshot(rows[0], family, now=now))
+            projected = project_snapshot(rows[0], family, now=now)
+            result.extend(projected)
+            if family == 'open_interest' and venue != 'coinalyze':
+                result.append(_open_interest_change(rows[0], projected[0]))
     if venue == "hyperliquid":
         forecast = repo.latest_funding_rate(symbol, exchange="hyperliquid_predicted")
         if forecast:
@@ -441,3 +457,103 @@ def read_derivatives_facts(symbol: str, *, venue: str, now=None) -> list[dict]:
     if prices:
         result.extend(project_price_snapshot(prices[0], now=now))
     return result
+
+
+def _open_interest_change(row, current):
+    """Same physical series only, in the existing 45–75 minute baseline band."""
+    from aletheia.storage import repositories as repo
+    result = dict(current, fact_type='open_interest_change_1h', value_kind='derived', unit='ratio', value=None)
+    if current['availability'] != 'available':
+        return result
+    result.update(availability='unavailable', unavailable_reason='compatible_baseline_missing')
+    clock = parse_utc(current['source_observed_at'] or current['acquired_at'])
+    acquired = parse_utc(current['acquired_at'])
+    candidates = repo._select_all('open_interest_snapshots',
+        where='symbol = ? AND exchange = ? AND observed_at BETWEEN ? AND ?',
+        params=(row['symbol'], row['exchange'], (clock-timedelta(minutes=75)).isoformat(),
+            (clock-timedelta(minutes=45)).isoformat()), order='observed_at DESC', limit=64)
+    valid = []
+    for baseline in candidates:
+        # Judge the old observation at its acquisition, not against today's freshness.
+        then = parse_utc(baseline.get('acquired_at') or json.loads(baseline.get('derivatives_metadata_json') or '{}').get('acquired_at'))
+        if then is None or then > acquired:
+            continue
+        fact = project_snapshot(baseline, 'open_interest', now=then)[0]
+        stamp = parse_utc(fact['source_observed_at'] or fact['acquired_at'])
+        if (fact['availability'] != 'available' or fact['value'] <= 0 or stamp is None
+            or not 45*60 <= (clock-stamp).total_seconds() <= 75*60
+            or bool(fact['source_observed_at']) != bool(current['source_observed_at'])
+            or any(fact[k] != current[k] for k in ('provider','source_scope','venue','instrument','unit','value_kind'))):
+            continue
+        valid.append((abs((clock-stamp).total_seconds()-3600), fact))
+    if valid:
+        baseline = min(valid, key=lambda item: item[0])[1]
+        value = finite(current['value']/baseline['value']-1)
+        result.update(value=value, availability='available' if value is not None else 'invalid',
+            unavailable_reason=None if value is not None else 'nonfinite_value', baseline_source_ref=baseline['source_ref'])
+    return result
+
+
+def derivatives_readiness(symbol, cfg, *, now=None):
+    """One diagnostic consumer. Reads durable facts; grants no Candidate or execution authority."""
+    from aletheia.storage import repositories as repo
+    now = now or datetime.now(timezone.utc)
+    md = cfg.market_data
+    venues = list(dict.fromkeys([md.ccxt_exchange, *md.derivatives_comparison_venues,
+        *(['hyperliquid'] if md.enable_hyperliquid else [])]))
+    health = repo.get_collector_health_state('derivatives_comparison') or {}
+    coverage = json.loads(health.get('derivatives_coverage_json') or '{}')
+    coverage_fresh = assess_freshness({'observed_at': coverage.get('acquired_at')}, 'cross_venue_funding', now=now).usable
+    exact, comparable = {}, []
+    for venue in venues:
+        facts = read_derivatives_facts(symbol, venue=venue, now=now)
+        attempt = (coverage.get('venues', {}).get(venue, {}).get(symbol) or {}) if coverage_fresh else {}
+        listed = attempt.get('listed')
+        # A current negative listing observation overrides older stored data without deleting it.
+        if listed is False:
+            facts = [dict(f, value=None, availability='unavailable', unavailable_reason='not_listed') for f in facts]
+        families = {}
+        for family in ('funding_rate','open_interest','open_interest_change_1h','mark_price','reference_price','perpetual_premium'):
+            fact = next((f for f in facts if f['fact_type']==family and f['value_kind']!='forecast'), None)
+            key = {'funding_rate':'funding','open_interest':'open_interest','mark_price':'price','reference_price':'price'}.get(family)
+            reason = attempt.get(key, 'not_observed')
+            if reason in {'available','owned_primary'}:
+                reason = 'not_persisted'
+            families[family] = dict(availability=fact['availability'] if fact else 'unavailable',
+                reason=fact['unavailable_reason'] if fact else reason)
+        exact[venue] = dict(listed=listed, latest_attempt=attempt, families=families, facts=facts)
+        comparable.extend(f for f in facts if f['availability']=='available' and f['source_scope']=='venue_native')
+    groups = {}
+    for fact in comparable:
+        family = fact['fact_type']
+        if family not in {'funding_rate','open_interest','perpetual_premium'} or fact['value_kind']=='forecast':
+            continue
+        value = fact['value']
+        if family == 'funding_rate':
+            interval = finite(fact.get('interval_seconds'))
+            if interval is None or interval <= 0:
+                continue
+            value = finite(value * 3600 / interval)
+            if value is None:
+                continue
+        instrument = fact['instrument']
+        # Do not silently assume parity between USDT- and USDC-settled series.
+        key = (family, *(instrument[k] for k in ('base_asset','market_type','quote_asset','settle_asset')), fact.get('reference_kind'))
+        groups.setdefault(key, {})[fact['venue']] = value
+    comparisons = []
+    for key, values in groups.items():
+        if len(values) < 2:
+            continue
+        family, base, market, quote, settle, reference = key
+        numbers = list(values.values())
+        item = dict(fact_type=family, base_asset=base, market_type=market, quote_asset=quote,
+            settle_asset=settle, reference_kind=reference, covered_venues=sorted(values), values_by_venue=values,
+            unit='USD' if family=='open_interest' else 'rate_per_hour' if family=='funding_rate' else 'ratio',
+            dispersion=finite(max(numbers)-min(numbers)))
+        if family == 'open_interest':
+            item['covered_subtotal'] = finite(sum(numbers))
+        comparisons.append(item)
+    return dict(symbol=symbol, mode='observe_only', observed_at=now.isoformat(), configured_venues=venues,
+        coverage_acquired_at=coverage.get('acquired_at'), coverage_fresh=coverage_fresh,
+        exact_venues=exact, aggregate_providers={'coinalyze':read_derivatives_facts(symbol, venue='coinalyze', now=now)} if md.enable_coinalyze else {},
+        comparisons=comparisons)

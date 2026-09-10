@@ -38,7 +38,7 @@
 
 | 数据域 | 采集器 | 存储 | **消费模块（去向）** | 状态 |
 |---|---|---|---|---|
-| Canonical Derivatives Facts（DU-S29） | 现有 `DerivativesCollector` 的 primary/comparison 路径与 native Hyperliquid；一个 exact venue/instrument/fact 保留一个当前 writer | 原 Funding/OI 表的 nullable provenance；独立 `perp_price_snapshots`；`collector_health_state` 的最新比较覆盖 | `data/derivatives_facts.py` 只读规范投影与 Positioning 数据观察；比较行明确 `observation_only`，旧 scalar/context/evidence readers 排除这些新增行 | 🟡 observation-only；不改变 Candidate、Entry、Risk 或交易权限；未知 interval/单位/历史 provenance 保留 unavailable，不把采集成功当作经济证据 |
+| Canonical Derivatives Facts（DU-S29） | 现有 `DerivativesCollector` 的 primary/comparison 路径与 native Hyperliquid；一个 exact venue/instrument/fact 保留一个当前 writer | 原 Funding/OI 表的 nullable provenance；独立 `perp_price_snapshots`；`collector_health_state` 的最新比较覆盖 | `data/derivatives_facts.py` 只读规范投影及 `GET /api/market/derivatives-facts` 的 Positioning readiness 数据观察；比较行明确 `observation_only`，旧 scalar/context/evidence readers 排除这些新增行 | 🟡 observation-only；不改变 Candidate、Entry、Risk 或交易权限；未知 interval/单位/历史 provenance 保留 unavailable，不把采集成功当作经济证据 |
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；按 venue+symbol+market_type 精确路由；超过 15 分钟整行退出决策 |
 | Binance public fast-market quote/trade/Kline/depth（DU-S28） | `BinanceFastMarketStream`（Spot + USD-M 公共 WebSocket；Spot depth 使用 REST snapshot 连续桥接） | 不持久化原始报文；仅 watcher 内存滚动状态 | Fast Monitoring → exact-instrument TriggerSpec 判断 | ✅ 不读取凭证/账户流，不进入 LLM、Risk、订单路由或跨 venue fallback；缺 ACK、snapshot、连续性或有效值时 unavailable |

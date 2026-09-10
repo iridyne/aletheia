@@ -141,3 +141,12 @@ def test_comparison_setting_can_disable_collection_without_changing_legacy_targe
     assert (cfg.market_data.ccxt_exchange, cfg.market_data.observed_instruments, cfg.market_data.observed_symbols) == before
     with pytest.raises(ValidationError):
         settings.MarketDataConfigUpdate(derivatives_comparison_venues=['hyperliquid'])
+
+
+def test_comparison_okx_source_event_deduplicates_across_acquisition_times():
+    raw = next(r for r in PUBLIC['results'] if r['venue']=='okx')
+    first = derivatives._parse_funding('BTC/USDT','okx',raw['fetch_funding_rate']).model_dump()
+    first['derivatives_metadata_json'] = ccxt_metadata('BTC/USDT','okx',raw['market'],raw['fetch_funding_rate'],family='funding',acquired_at=first['acquired_at'])
+    later = dict(first, acquired_at=(datetime.fromisoformat(first['acquired_at'])+timedelta(minutes=1)).isoformat(),
+        observed_at=(datetime.fromisoformat(first['observed_at'])+timedelta(minutes=1)).isoformat())
+    assert comparison_row(first)['id'] == comparison_row(later)['id']

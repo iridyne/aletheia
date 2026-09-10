@@ -1503,6 +1503,12 @@ def get_market_snapshots(
     _ensure_db()
     return repo.list_market_snapshots(symbol=symbol, limit=limit, exchange=exchange)
 
+@router.get("/market/derivatives-facts")
+def get_market_derivatives_facts(symbol: str = Query(min_length=3, max_length=64)):
+    from aletheia.data.derivatives_facts import derivatives_readiness
+    return derivatives_readiness(symbol, load_config())
+
+
 @router.get("/market/microstructure")
 def get_market_microstructure(
     symbol: str,

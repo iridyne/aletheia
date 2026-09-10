@@ -399,7 +399,7 @@ def comparison_workset(cfg) -> dict[str, list[str]]:
     required = {item.symbol for item in configured if item.market_type == 'perp'}
     required.update(row['symbol'] for row in repo.list_all_open_positions() if row.get('market_type') in {'perp', 'usdt_futures'})
     venues = list(dict.fromkeys(cfg.market_data.derivatives_comparison_venues))
-    for venue in venues:
+    for venue in dict.fromkeys([cfg.market_data.ccxt_exchange, *venues]):
         required.update(row['symbol'] for row in repo.list_universe_assets(venue=venue, active_only=True, limit=None)
             if row.get('market_type') == 'perp')
     return {venue: sorted(required) for venue in venues}

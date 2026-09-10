@@ -159,6 +159,22 @@ not consume Candidate ranking. Latest attempt coverage reuses one bounded
 source attempt within a ten-second source budget; batch endpoints cover the
 listed workset. Mark/reference retention reuses the configured OI retention.
 
+The read-only `GET /api/market/derivatives-facts?symbol=BTC/USDT` consumes these
+persisted observations. It reports exact-venue facts and latest fresh acquisition
+coverage separately, with aggregate providers in a separate object. A failed
+attempt does not erase a still-fresh fact. A fresh explicit not-listed result
+prevents older stored observations from being counted as current coverage.
+
+Premium uses Mark and reference from the same persisted response and retains
+index/oracle kind. OI change uses the existing 45–75 minute baseline band, requiring
+matching provider/scope/venue/full physical instrument/unit/value kind and clock
+basis; historical observations are judged at their own acquisition time. The
+baseline row identity remains inspectable. Cross-venue comparisons require at
+least two exact venues with matching base, market type, quote and settlement;
+Funding comparison requires proved intervals and excludes forecasts. USDT and
+USDC groups remain separate without assuming parity. OI output is explicitly a
+covered subtotal. These outputs remain diagnostic and do not enter Candidate.
+
 ## Verification contract
 
 Frozen current outputs cover primary Funding/OI and both Binance populations,
