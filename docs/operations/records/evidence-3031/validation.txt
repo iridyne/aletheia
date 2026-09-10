@@ -1,0 +1,29 @@
+baseline-tests
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_non_acknowledged_entry_invents_no_economics[pre-submit-failure]
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_non_acknowledged_entry_invents_no_economics[acknowledgement-unknown]
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_non_acknowledged_entry_invents_no_economics[venue-rejected]
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_partial_private_fill_does_not_report_a_complete_entry
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_replayed_private_fill_evidence_stays_idempotent
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_entry_fails_closed_when_another_account_already_holds_the_mode
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_acknowledged_entry_recovers_after_the_connection_is_reopened
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_entry_with_unavailable_cost_is_not_reported_as_complete[fee-absent]
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_entry_with_unavailable_cost_is_not_reported_as_complete[fee-third-currency]
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_real_risk_refuses_an_exchange_entry_the_runtime_is_not_configured_for
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees
+FAILED tests/e2e/test_pipeline_exchange_entry_to_position.py::test_exchange_entry_lineage_links_candidate_to_order_by_exact_ids
+13 failed, 39 passed, 1 xfailed in 11.29s
+
+neighbor-tests
+146 passed in 3.78s
+
+outcome-tests
+21 passed in 1.31s
+
+Diagnostic probes (baseline observations, not defect-fix passes):
+MARGIN {"check18_violations": [], "serialized_margin": "cross", "claim": "check18 alone accepts isolated estimate; not whole Risk approval or an actual liquidation"}
+.ATTRIBUTION {"source_kind": "universe", "proposal_has_plan": true, "position_has_order_and_proposal": true, "position_opportunity_id": null, "attribution_chain_complete": false}
+.PROMPT {"entry": "7db077df89e33b150e09cc0bf6460d1b5320e3e2d1f8678aa8d426c702b2418e", "inference": "fcdae88b2892a8732b767940720e2ec08ab8fa5e7465be8432aec0977312828a"}
+.PROMPT_INTEGRATION {"before": "observational", "after": "unavailable", "reason": "entry_learning_mixed_model_identity"}
+.
+4 passed in 0.85s
