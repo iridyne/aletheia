@@ -14,6 +14,7 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     from aletheia.data.ccxt_provider import CCXTProvider, timeframe_ms
     from aletheia.universe.service import UniverseService
 
+    cfg.exchange.paper_execution_mode = "bitget_demo"
     save_config(cfg)
     cfg = load_config()
     class Exchange:
