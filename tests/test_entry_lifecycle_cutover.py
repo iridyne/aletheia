@@ -643,7 +643,7 @@ def test_b1_rejects_unproven_requalification(_inmemory_db, guard):
     assert not created and same["id"] == first["id"]
 
 
-@pytest.mark.parametrize("execution", ["waiting", "order", "fill", "position"])
+@pytest.mark.parametrize("execution", ["waiting", "order", "fill", "position", "active_claim", "executing", "submission_unknown", "materialization_missing", "executed_without_order"])
 def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Fill, Position
@@ -651,7 +651,15 @@ def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     candidate = _legacy_structure_candidate(first_at.isoformat())
     first, _ = repo.ensure_candidate_planning_generation(candidate.id, now=first_at)
     _insert_expired_plan(repo, first, candidate.id, "plan-b1", first_at.isoformat())
-    if execution in {"waiting", "triggered", "risk_reserved"}:
+    if execution in {"active_claim", "executing", "submission_unknown", "materialization_missing", "executed_without_order"}:
+        from datetime import timedelta
+        status = "pending" if execution == "active_claim" else "executed" if execution == "executed_without_order" else execution
+        repo.execute_write("INSERT INTO trade_proposals(id,entry_plan_id,symbol,market_type,direction,status) "
+            "VALUES ('proposal-b1','plan-b1','BTC/USDT','perp','long',?)", (status,))
+        if execution == "active_claim":
+            repo.execute_write("INSERT INTO proposal_execution_claims(proposal_id,owner_token,claimed_at,lease_expires_at) "
+                "VALUES ('proposal-b1','gateway',?,?)", (first_at.isoformat(), (later_at+timedelta(hours=1)).isoformat()))
+    elif execution in {"waiting", "triggered", "risk_reserved"}:
         repo.execute_write("UPDATE entry_plans SET status=? WHERE id='plan-b1'", (execution,))
     else:
         order = Order(symbol="BTC/USDT", market_type="perp", direction="long", order_type="limit",
@@ -667,6 +675,18 @@ def test_b1_new_structure_cannot_supersede_execution(_inmemory_db, execution):
     later = _legacy_structure_candidate(later_at.isoformat())
     same, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
     assert not created and same["id"] == first["id"]
+
+    if execution == "active_claim":
+        # An expired pending claim has not submitted; it must not strand recovery.
+        repo.execute_write("UPDATE proposal_execution_claims SET lease_expires_at=? WHERE proposal_id='proposal-b1'",
+                           (first_at.isoformat(),))
+    elif execution in {"executing", "submission_unknown", "materialization_missing", "executed_without_order"}:
+        # Fixture represents Gateway finishing reconciliation without an Order.
+        repo.execute_write("UPDATE trade_proposals SET status='rejected' WHERE id='proposal-b1'")
+    else:
+        return
+    successor, created = repo.ensure_candidate_planning_generation(later.id, now=later_at)
+    assert created and successor["previous_generation_id"] == first["id"]
 
 
 @pytest.mark.real_db

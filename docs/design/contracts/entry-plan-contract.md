@@ -210,7 +210,10 @@ A terminal generation without a Plan may gain one successor only on a later
 active completed snapshot, the same thread and behavior/schema, and a new fact
 confirmed after its birth/frozen-input cutoff. The transaction rechecks the
 expected current generation, exact Candidate context and instrument, monotonic
-source time and unresolved execution before CAS. A waiting/triggered/reserved
+source time and unresolved execution before CAS. Active Proposal execution claims,
+unknown/in-progress submissions and executed Proposals without their Order also
+block replacement; a pending claim that merely expired does not grant execution
+authority or permanently block recovery. A waiting/triggered/reserved
 Plan is not superseded by this path. Missing material proof grants no recovery.
 The proof and selected fact values belong to the generation's existing
 requalification source JSON; attention renewals retain this birth proof.

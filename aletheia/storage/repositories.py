@@ -7968,6 +7968,13 @@ def ensure_candidate_planning_generation(
             and (
                 existing_plan.get("status") in {"ordered", "partially_filled"}
                 or get_db().execute(
+                    "SELECT 1 FROM trade_proposals p LEFT JOIN proposal_execution_claims c ON c.proposal_id=p.id "
+                    "WHERE p.entry_plan_id=? AND (c.lease_expires_at>? "
+                    "OR p.status IN ('executing','submission_unknown','materialization_missing') "
+                    "OR (p.status='executed' AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.proposal_id=p.id))) LIMIT 1",
+                    (existing_plan["id"], timestamp),
+                ).fetchone()
+                or get_db().execute(
                     "SELECT 1 FROM orders o WHERE o.entry_plan_id=? AND ("
                     "o.status IN ('open','pending','executing','submitted','partial','partially_filled',"
                     "'submission_unknown','materialization_missing') OR "
