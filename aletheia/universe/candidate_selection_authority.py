@@ -114,6 +114,7 @@ def candidate_selection_policy_identity(
     identity: dict[str, object] = {
         "semantic_manifest": candidate_selection_semantic_manifest(),
         "max_candidates": universe.max_candidates,
+        "short_enabled": getattr(getattr(cfg, "regime", None), "short_enabled", True),
         "min_volume_24h_usdt": float(universe.min_volume_24h_usdt),
         "max_spread_bps": float(universe.max_spread_bps),
         "min_depth_10bps_usd": float(universe.min_depth_10bps_usd),
@@ -169,6 +170,7 @@ def candidate_selection_semantic_manifest() -> dict[str, str]:
         "outcome_contract": CANDIDATE_SELECTION_OUTCOME_VERSION,
         "cost_model": COST_MODEL_VERSION,
         "candidate_selection": CANDIDATE_SELECTION_UTILITY_VERSION,
+        "actionability": "supported-mechanism-and-exact-snapshot-before-capacity/v1",
     }
 
 

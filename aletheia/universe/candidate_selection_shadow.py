@@ -83,7 +83,7 @@ def _compact_candidate_selection(
     }
     opportunity = {
         key: item for key, item in value["opportunity_evidence"].items()
-        if key not in {"candidate_key", "context", "feature_snapshot_id", "instrument"}
+        if key not in {"candidate_key", "feature_snapshot_id", "instrument"}
     }
     opportunity["mechanisms"] = [
         {
@@ -215,6 +215,7 @@ def build_candidate_selection_shadow_bundle(
             hard_gate=gate,
             opportunity_evidence=evidence,
             economic_estimates=estimates,
+            short_enabled=bool(frozen_selection_policy.get("short_enabled", True)),
         )
         decisions.append(decision)
     ranked_target = select_admitted_candidates(decisions, max_candidates=len(decisions))
@@ -654,6 +655,7 @@ def target_candidates_from_bundle(
             "instrument_background", "analysis_context",
         ) if key in source}
         projected.update({
+            "execution_eligible": gate["status"] == "eligible" and gate["actionability"] == "actionable",
             "scanner_family": family,
             "scanner_direction": decision["primary_direction"],
             "candidate_selection_utility_pct": utility,

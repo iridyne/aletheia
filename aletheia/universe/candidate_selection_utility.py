@@ -31,6 +31,7 @@ class CandidateSelectionUtilityV1:
     record_fingerprint: str
     admission_basis: Literal["measured", "startup"] | None = None
     startup_reason: str | None = None
+    short_enabled: bool = True
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -41,6 +42,7 @@ def build_candidate_selection_utility(
     hard_gate: HardGateDecisionV1,
     opportunity_evidence: OpportunityEvidenceBundleV1,
     economic_estimates: Sequence[EconomicUtilityEstimateV2],
+    short_enabled: bool = True,
 ) -> CandidateSelectionUtilityV1:
     if hard_gate.candidate_key != opportunity_evidence.candidate_key:
         raise ValueError("candidate_selection_identity_mismatch")
@@ -49,9 +51,15 @@ def build_candidate_selection_utility(
            or item.market_type != opportunity_evidence.instrument["market_type"]
            for item in economic_estimates):
         raise ValueError("candidate_selection_economic_identity_mismatch")
+    actionable = {
+        (item.mechanism_id, item.direction) for item in opportunity_evidence.mechanisms
+        if item.applicability == "applicable" and not item.capability_gaps
+        and item.direction in ({"long", "short"} if short_enabled else {"long"})
+    }
     available = [
         item for item in economic_estimates
-        if item.estimate_status == "available"
+        if (item.mechanism_id, item.direction) in actionable
+        and item.estimate_status == "available"
         and item.economic_utility_pct is not None and math.isfinite(item.economic_utility_pct)
         and item.tail_evidence.status == "clear"
         and item.min_tradable_edge_pct is not None and math.isfinite(item.min_tradable_edge_pct)
@@ -82,6 +90,9 @@ def build_candidate_selection_utility(
         status = "unavailable"
     elif hard_gate.actionability == "observe_only":
         status = "observe_only"
+    elif not actionable and any(item.applicability == "applicable" and item.direction in {"long", "short"}
+                                for item in opportunity_evidence.mechanisms):
+        status = "observe_only"
     elif direction_conflict:
         status = "direction_conflict"
         primary = None
@@ -96,13 +107,13 @@ def build_candidate_selection_utility(
     startup = None
     scarcity = {"no_history", "parent_sample_insufficient", "child_sample_insufficient"}
     usable = [item for item in opportunity_evidence.mechanisms
-              if item.applicability == "applicable" and item.direction in {"long", "short"}
-              and not item.capability_gaps and item.pessimistic_strength is not None
+              if (item.mechanism_id, item.direction) in actionable and item.pessimistic_strength is not None
               and math.isfinite(item.pessimistic_strength) and 0 < item.pessimistic_strength <= 100]
     estimates = {(item.mechanism_id, item.direction): item for item in economic_estimates}
     if status == "unavailable" and hard_gate.status == "eligible" and hard_gate.actionability != "observe_only":
         # Every usable route must be sparse: never evade a known economic rejection.
-        sparse = bool(usable) and all(item.unavailable_reason in scarcity for item in economic_estimates) and all(
+        sparse = bool(usable) and all(item.unavailable_reason in scarcity for item in economic_estimates
+                                    if (item.mechanism_id, item.direction) in actionable) and all(
             (estimate := estimates.get((item.mechanism_id, item.direction))) is not None
             and estimate.unavailable_reason in scarcity for item in usable
         )
@@ -118,6 +129,7 @@ def build_candidate_selection_utility(
         "version": CANDIDATE_SELECTION_UTILITY_VERSION,
         "candidate_key": hard_gate.candidate_key,
         "hard_gate": hard_gate.as_dict(),
+        "short_enabled": short_enabled,
         "opportunity_evidence": opportunity_evidence.as_dict(),
         "economic_estimates": [item.as_dict() for item in economic_estimates],
         "primary_mechanism": primary_mechanism,
@@ -142,6 +154,7 @@ def build_candidate_selection_utility(
         canonical_fingerprint(material),
         basis,
         startup_reason,
+        short_enabled,
     )
 
 

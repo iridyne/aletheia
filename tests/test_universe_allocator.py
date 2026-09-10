@@ -152,13 +152,13 @@ def test_allocator_checks_freshness_for_the_selected_market_type(cfg, monkeypatc
 
 
 def test_target_selection_uses_shared_execution_and_risk_decoration(cfg, monkeypatch):
-    item = _scored_item("TARGET/USDT", "momentum", 80, venue="okx")
+    item = _scored_item("TARGET/USDT", "momentum", 80, venue="okx", execution_eligible=True)
     monkeypatch.setattr(
         "aletheia.universe.allocator.has_fresh_market_snapshot",
         lambda *_args, **_kwargs: False,
     )
 
-    assert decorate_universe_candidates([item], cfg)[0]["execution_eligible"] is False
+    assert decorate_universe_candidates([item], cfg)[0]["execution_eligible"] is True
 
 
 def test_max_candidates_cap(cfg):

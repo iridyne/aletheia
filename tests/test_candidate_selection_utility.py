@@ -6,6 +6,87 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.config.schema import UniverseConfig
+
+
+def test_snapshot_actionability_precedes_capacity_and_is_not_rechecked(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.universe import service, candidate_selection_shadow, snapshot_freshness
+    from aletheia.universe.allocator import decorate_universe_candidates
+    from tests.test_candidate_selection_convergence import _authority_bundle
+
+    _, population = _authority_bundle(with_history=False)
+    cfg = AletheiaConfig()
+    cfg.universe.max_candidates = 3
+    monkeypatch.setattr(service, "fast_market_data_unavailability_reason", lambda *args: None)
+    monkeypatch.setattr(candidate_selection_shadow, "load_candidate_selection_outcomes", lambda **kwargs: [])
+    blocked = set()
+    calls = []
+
+    def fresh(symbol, market_type, *, exchange=None, **kwargs):
+        calls.append((exchange, market_type, symbol))
+        return symbol not in blocked
+
+    monkeypatch.setattr(snapshot_freshness, "has_fresh_market_snapshot", fresh)
+
+    def select():
+        bundle = service._build_candidate_selection_bundle(
+            population=population, scanner_run_id="actionability", captured_at="2026-09-02T00:00:00+00:00",
+            cfg=cfg, authority_applied=True,
+        )
+        return candidate_selection_shadow.target_candidates_from_bundle(bundle, population)
+
+    original = select()
+    assert len(original) == 3
+    blocked.add(original[0]["symbol"])
+    selected = select()
+    assert len(selected) == 3
+    assert not blocked.intersection(row["symbol"] for row in selected)
+    assert {row["symbol"] for row in original[1:]} <= {row["symbol"] for row in selected}
+    assert set(calls) == {(row["venue"], row["market_type"], row["symbol"]) for row in population}
+    assert all(row["execution_eligible"] for row in selected)
+    # Once T0 actionability is frozen, decoration cannot independently revoke it.
+    monkeypatch.setattr(snapshot_freshness, "has_fresh_market_snapshot", lambda *a, **k: pytest.fail("late recheck"))
+    decorate_universe_candidates(selected, cfg.universe)
+    assert all(row["execution_eligible"] for row in selected)
+
+def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.regime.enabled = True
+    before = candidate_selection_policy_identity(cfg)
+    cfg.regime.short_enabled = not cfg.regime.short_enabled
+    assert candidate_selection_policy_identity(cfg) != before
+    monkeypatch.setattr("aletheia.regime.collector.collect_regime_inputs", AsyncMock(return_value={"fixture": True}))
+    monkeypatch.setattr("aletheia.regime.detector.debounced_detect", lambda **kwargs: SimpleNamespace(
+        state="bear", confidence=0.8, long_bias=0.2, short_bias=0.8, signals={},
+        detected_at=datetime.now(timezone.utc).isoformat(),
+    ))
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    context = json.loads(candidate.candidate_opportunity_context_json)
+    assert candidate.regime_tag == context["context"]["regime"] == "bear"
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV1
+    before_identity = candidate_planning_identity(candidate.model_dump())
+    context["context"]["regime"] = "bull"
+    context.pop("context_hash")
+    changed = CandidateOpportunityContextV1.model_validate(context)
+    after_identity = candidate_planning_identity({
+        **candidate.model_dump(), "candidate_opportunity_context_json": changed.model_dump_json(),
+    })
+    assert before_identity[0] == after_identity[0]
+    assert before_identity[1] != after_identity[1]
+
+
 def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direction, market_type):
     import asyncio
     from aletheia.storage import repositories as repo
@@ -602,12 +683,24 @@ def test_candidate_selection_does_not_fill_and_direction_conflict_fails_closed()
     assert decision.admission_status == "admitted"
     assert select_admitted_candidates((decision,), max_candidates=30) == (decision,)
 
-    short = replace(long, direction="short", economic_utility_pct=long.economic_utility_pct - 0.01)
+    primary = next(item for item in evidence.mechanisms if item.mechanism_id == "continuation")
+    gap = replace(evidence, mechanisms=(replace(primary, capability_gaps=("missing_fact",)),))
+    assert build_candidate_selection_utility(
+        hard_gate=gate, opportunity_evidence=gap, economic_estimates=(long,),
+    ).admission_status == "observe_only"
+
+    short = replace(long, mechanism_id="reversal", direction="short", economic_utility_pct=long.economic_utility_pct - 0.01)
+    both = replace(evidence, mechanisms=(primary, replace(primary, mechanism_id="reversal", direction="short")))
     conflict = build_candidate_selection_utility(
-        hard_gate=gate, opportunity_evidence=evidence, economic_estimates=(long, short),
+        hard_gate=gate, opportunity_evidence=both, economic_estimates=(long, short),
 
     )
     assert conflict.admission_status == "direction_conflict"
+    long_only = build_candidate_selection_utility(
+        hard_gate=gate, opportunity_evidence=both, economic_estimates=(long, short), short_enabled=False,
+    )
+    assert long_only.admission_status == "admitted"
+    assert long_only.primary_direction == "long"
 
 
 @pytest.mark.parametrize("historical", [False, True])
