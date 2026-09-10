@@ -394,50 +394,6 @@ def test_interactions_are_not_labelled_as_independent_additive_votes() -> None:
     assert interaction_kinds == {"interaction"}
 
 
-def test_influence_budgets_match_frozen_step_boundary_envelope() -> None:
-    """Budgets are frozen step-v2 evidence, not tuned to new outputs."""
-
-    import json
-
-    from aletheia.config.schema import UniverseConfig
-    from aletheia.universe.allocator import compute_total_score
-    from aletheia.universe.filters import _compute_tradability_score
-    from aletheia.universe.scanners import run_all_scanners
-
-    fixture = json.loads(
-        (Path(__file__).parent / "fixtures" / "universe_step_score_v2.json").read_text(encoding="utf-8")
-    )
-    values_by_feature: dict[str, set[float]] = {}
-    for group in fixture["threshold_probes"]:
-        values_by_feature.setdefault(group["feature"], set()).update(group["values"])
-
-    cfg = UniverseConfig()
-    neutral = fixture["neutral_features"]
-    budgets: dict[str, float] = {}
-    for group in fixture["threshold_probes"]:
-        feature = group["feature"]
-        totals: list[float] = []
-        for value in sorted(values_by_feature[feature]):
-            feat = {
-                **neutral,
-                **group["base_overrides"],
-                feature: value,
-            }
-            feat["tradability_score"] = _compute_tradability_score(feat, cfg)
-            scanner_result = run_all_scanners(dict(feat))
-            totals.append(compute_total_score(feat, scanner_result, cfg))
-        budgets[feature] = max(budgets.get(feature, 0.0), max(totals) - min(totals))
-
-    declarations = raw_feature_declarations()
-    for feature, budget in budgets.items():
-        if feature in declarations:
-            assert declarations[feature].influence_budget == pytest.approx(budget, abs=1e-9)
-    # Numeric squeeze and beta-adjusted RS had no separate step-v1 boundary
-    # fields; cap them at their frozen equivalent consumer effects.
-    assert declarations["bb_squeeze_ratio"].influence_budget == 15.0 * 0.35
-    assert declarations["rs_beta_adj_24h"].influence_budget == declarations["relative_strength_24h"].influence_budget
-
-
 def test_candidate_sensitivity_perturbs_whole_raw_feature_once() -> None:
     result = evaluate_continuous_candidate(
         _complete_candidate(

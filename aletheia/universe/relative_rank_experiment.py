@@ -1,4 +1,4 @@
-"""Prospective identity for the relative-rank Shadow comparison."""
+"""Historical Relative-Rank fixture construction; no current runtime caller."""
 
 from __future__ import annotations
 

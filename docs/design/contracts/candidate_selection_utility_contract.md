@@ -18,6 +18,15 @@ Historical six-family and `total_score` records remain immutable audit evidence,
 not a runtime fallback or rollback allocator. Risk, Gateway, credentials and
 Live-unlock authority are unchanged.
 
+Historical Twin evaluation still verifies persisted records by replaying the
+old allocation and whole-candidate continuous-scoring rules. Those replay
+functions remain alongside the shared current execution decoration and
+mechanism components; they do not select current Candidates. Relative-Rank
+builders remain for historical fixture reconstruction and reader verification,
+with no refresh/scheduler caller. Their table readers and immutable fixtures
+retain the original meaning. The retired total-score/calibration computation
+and its exposure writer have no such reader dependency and are removed.
+
 Current Candidates are projected from exact raw/typed feature identity and the
 current selection decision. Legacy Scanner/Filter output is not a required
 carrier or fallback. The old two-pass filters and six-family scanner remain

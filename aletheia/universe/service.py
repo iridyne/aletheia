@@ -1120,11 +1120,6 @@ class UniverseService:
             )
 
 
-            # Alpha-control observations are analytics telemetry, not part of
-            # snapshot/Opportunity authority. Persist them after the atomic
-            # publication so their JSON/control construction cannot extend the
-            # SQLite writer critical section.
-
             _notify_operator_feature_refresh("universe_refresh_new_snapshot")
             logger.info(
                 "Universe refresh complete: %d scanned, %d features evaluated, %d selected (snapshot=%s)",

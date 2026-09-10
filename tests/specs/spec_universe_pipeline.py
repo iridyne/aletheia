@@ -12,7 +12,6 @@ feature-keying invariants against regression.
 
 import asyncio
 import inspect
-import json
 
 import pytest
 
@@ -74,33 +73,6 @@ def test_infer_direction_event_branch():
     assert _infer_direction("event", {"return_1h": 2.0}) is None
 
 
-@spec_claim(
-    SpecClaim("UP-02", "universe_pipeline", "§2 US-1 scanner_weights consumed", "L2b",
-              "compute_total_score multiplies opportunity_score by the operator's "
-              "cfg.scanner_weights[family] (PI-adjustable weight is no longer inert)"),
-)
-def test_scanner_weights_scale_opportunity_score():
-    from aletheia.universe.allocator import compute_total_score
-    from aletheia.config.schema import UniverseConfig
-
-    feat = {
-        "tradability_score": 50.0,
-        "quote_volume_24h": 1e12,
-        "spread_bps": 2.0,
-        "analysis_context": {"kind": "crypto"},
-    }
-    sr = {"opportunity_score": 50.0, "scanner_family": "momentum"}
-
-    base = compute_total_score(dict(feat), sr, UniverseConfig())  # weights={} → 1.0
-    boosted = compute_total_score(
-        dict(feat), sr, UniverseConfig(scanner_weights={"momentum": 2.0}),
-    )
-    suppressed = compute_total_score(
-        dict(feat), sr, UniverseConfig(scanner_weights={"momentum": 0.1}),
-    )
-    assert boosted > base > suppressed
-
-
 # ---------------------------------------------------------------------------
 # L2a — Structural (same-source direction, market_type propagation, feature keying)
 # ---------------------------------------------------------------------------
@@ -120,10 +92,6 @@ def test_forward_outcome_direction_uses_scanner_direction():
         "inserted_members direction must prefer scanner_direction (same source as "
         "the emitted opportunity), not re-infer with _infer_direction alone"
     )
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -177,8 +145,6 @@ def test_macro_context_populates_fng():
     src = inspect.getsource(context_builder.build_market_context_from_db)
     assert "fng_value=macro_row.get" in src
     assert "top_movers_summary=macro_row.get" in src
-
-
 
 
 @spec_claim(
@@ -333,8 +299,6 @@ def test_snapshot_freshness_rejects_far_future_timestamp(monkeypatch):
     assert has_fresh_market_snapshot(
         "BTC/USDT", "perp", exchange="bitget", now=now,
     ) is True
-
-
 
 
 @spec_claim(

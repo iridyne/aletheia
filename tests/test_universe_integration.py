@@ -2,17 +2,15 @@
 
 import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from aletheia.config.schema import UniverseConfig, AletheiaConfig
+from aletheia.config.schema import UniverseConfig
 from aletheia.universe.service import UniverseService
 from aletheia.universe.registry import sync_registry
-from aletheia.universe.features import collect_features
 from aletheia.universe.filters import apply_tradability_filters
 from aletheia.universe.scanners import run_all_scanners
-from aletheia.universe.allocator import allocate_universe, compute_total_score
 
 # Authoritative registered-family set — derived from run_all_scanners itself so
 # these assertions track the code instead of a hardcoded list that silently goes
@@ -226,37 +224,6 @@ def _fake_features():
     ]
 
 
-def test_full_pipeline_filters_and_scores():
-    """End-to-end: features → filter → score → allocate."""
-    cfg = _make_cfg()
-    features = _fake_features()
-
-    # Step 1: filter
-    filtered = apply_tradability_filters(features, cfg.universe)
-    symbols = [f["symbol"] for f in filtered]
-    assert "SCAM/USDT" not in symbols  # blacklisted
-    assert "LOWVOL/USDT" not in symbols  # below volume threshold
-    assert "DOGE/USDT" in symbols
-    assert "PEPE/USDT" in symbols
-    assert "SOL/USDT" in symbols
-
-    # Step 2: scan and score
-    scored = []
-    for feat in filtered:
-        scanner_result = run_all_scanners(feat)
-        total = compute_total_score(feat, scanner_result, cfg.universe)
-        scored.append({**feat, **scanner_result, "total_score": total})
-
-    assert all(0 <= item["total_score"] <= 100 for item in scored)
-    assert all(item["scanner_family"] in _VALID_FAMILIES for item in scored)
-
-    # Step 3: allocate
-    allocated = allocate_universe(scored, cfg.universe)
-    assert len(allocated) <= cfg.universe.max_candidates
-    assert all("ttl_sec" in item for item in allocated)
-    assert all("risk_flags" in item for item in allocated)
-
-
 def test_pipeline_all_blacklisted_returns_empty():
     cfg = _make_cfg()
     cfg.universe.blacklist = ["DOGE/USDT", "PEPE/USDT", "SOL/USDT", "SCAM/USDT", "LOWVOL/USDT"]
@@ -278,29 +245,6 @@ def test_pipeline_scorer_assigns_families():
     # At least 1 family assigned (may be all momentum if data skews that way)
     assert len(families_seen) >= 1
     assert all(f in _VALID_FAMILIES for f in families_seen)
-
-
-def test_pipeline_ttl_unified_across_families():
-    """Post-#1325: every family shares one entry_ttl_sec (was per-family TTL).
-
-    The old _FAMILY_TTL conflated membership display with entry-window validity;
-    consolidation means all opportunities carry the same 15-min entry window
-    regardless of scanner family.
-    """
-    cfg = _make_cfg()
-    features = _fake_features()
-    filtered = apply_tradability_filters(features, cfg.universe)
-
-    scored = []
-    for feat in filtered:
-        scanner_result = run_all_scanners(feat)
-        total = compute_total_score(feat, scanner_result, cfg.universe)
-        scored.append({**feat, **scanner_result, "total_score": total})
-
-    allocated = allocate_universe(scored, cfg.universe)
-    if allocated:
-        ttls = set(item["ttl_sec"] for item in allocated)
-        assert ttls == {cfg.universe.entry_ttl_sec}, ttls
 
 
 def test_market_observer_universe_integration():
