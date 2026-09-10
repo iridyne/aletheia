@@ -1855,3 +1855,67 @@ def test_position_path_observations_v26_distinguishes_available_evidence_contrac
         for row in connection.execute("SELECT capture_mode FROM position_path_observations ORDER BY bucket_open_ms")
     ] == ["post_close_final_snapshot", "open_snapshot"]
     connection.close()
+
+
+@pytest.mark.real_db
+def test_entry_checkpoint_activation_upgrade_preserves_all_existing_domain_values(tmp_path, monkeypatch):
+    """Upgrade a real v77 schema, compare every pre-existing domain column, reopen."""
+    import hashlib
+    import json
+    from aletheia.storage import migrations, sqlite as store
+    from aletheia.trading.entry_compat import decode_entry_plan
+    from tests.test_entry_plan_execution import _plan
+    from tests.test_sqlite_writer import _setup_db
+
+    monkeypatch.setattr(migrations, "_is_pytest", lambda: False)
+    current_steps = migrations._MIGRATIONS
+    assert current_steps[-3].schema_version == "aletheia-sqlite-v77"
+    try:
+        with monkeypatch.context() as old:
+            old.setattr(migrations, "_MIGRATIONS", current_steps[:-2])
+            old.setattr(migrations, "SCHEMA_VERSION", "aletheia-sqlite-v77")
+            db = _setup_db(tmp_path, monkeypatch)
+        payload = _plan().model_dump(mode="json")
+        payload.update(version="entry-plan/v1", trigger_spec_version="v1",
+                       trigger_spec_id="momentum-retrace-reclaim", thesis="历史 payload — preserve whitespace")
+        raw_plan = json.dumps(payload, ensure_ascii=False, indent=2)
+        raw_input = '{ "historical" : "原始输入", "numeric_format" : "entry-planner/v1" }'
+        timestamp = "2026-01-01T00:00:00+00:00"
+        db.execute("INSERT INTO candidate_planning_generations "
+            "(id,planning_key,planning_identity,identity_version,candidate_id,last_candidate_id,"
+            "venue,symbol,market_type,candidate_family,direction,status,result_kind,result_json,"
+            "created_at,updated_at,planner_input_json,planner_input_hash) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("generation", "key", "identity", "candidate-planning/v1", "candidate", "candidate",
+             "bitget", "BTC/USDT", "perp", "momentum", "long", "planned", "entry_plan", '{ "plan_id" : "plan" }',
+             timestamp, timestamp, raw_input, hashlib.sha256(raw_input.encode()).hexdigest()))
+        db.execute("INSERT INTO entry_plans "
+            "(id,planning_generation_id,candidate_id,planning_key,version,venue,symbol,market_type,"
+            "direction,execution_mode,plan_json,plan_hash,status,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("plan", "generation", "candidate", "key", "entry-plan/v1", "bitget", "BTC/USDT", "perp",
+             "long", "TRIGGERED", raw_plan, hashlib.sha256(raw_plan.encode()).hexdigest(), "expired", timestamp, timestamp))
+        db.commit()
+        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' AND name != 'aletheia_schema_migrations' ORDER BY name")]
+        columns = {table: [row[1] for row in db.execute(f'PRAGMA table_info("{table}")')] for table in tables}
+
+        def snapshot(connection):
+            return {table: sorted([tuple(row) for row in connection.execute(
+                'SELECT ' + ','.join(f'"{col}"' for col in names) + f' FROM "{table}"')], key=repr)
+                for table, names in columns.items()}
+
+        before = snapshot(db)
+        assert migrations.run_migrations() is True
+        assert snapshot(db) == before
+        assert db.execute("SELECT validated_hypothesis_json FROM candidate_planning_generations").fetchone()[0] is None
+        assert db.execute("SELECT trigger_activation_id FROM entry_plans").fetchone()[0] is None
+        assert db.execute("SELECT COUNT(*) FROM entry_trigger_activations").fetchone()[0] == 0
+        historical = decode_entry_plan(db.execute("SELECT plan_json FROM entry_plans").fetchone()[0])
+        assert historical.thesis == payload["thesis"]
+        assert snapshot(db) == before
+        store.reset_db()
+        assert migrations.run_migrations() is False
+        assert snapshot(store.get_db()) == before
+    finally:
+        store.reset_db()
