@@ -1,6 +1,6 @@
 """Minimal canonical #2890 contract and durable provenance boundary."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib
 import pytest
 
@@ -174,3 +174,22 @@ def test_ccxt_usd_proof_and_binance_population_are_independent_of_primary_venue(
     raw["info"] = {}
     row["derivatives_metadata_json"] = facts().ccxt_metadata("BTC/USDT", "okx", market, raw, family="open_interest")
     assert facts().project_snapshot(row, "open_interest", now=NOW)[0]["unavailable_reason"] == "oi_unit_unproven"
+
+
+def test_native_retry_keeps_legacy_heartbeat_but_new_interval_is_persisted():
+    from aletheia.data.collectors.hyperliquid import _parse_funding
+    from aletheia.storage import repositories as repo
+    now = datetime.now(timezone.utc)
+    first = _parse_funding('BTC/USDT', {'funding':'.001', 'markPx':'60000'}, now.isoformat()).model_dump()
+    first['derivatives_metadata_json'] = facts().hyperliquid_metadata('BTC/USDT', now.isoformat())
+    repo.insert_funding_rate_snapshot(first)
+    later = (now + timedelta(seconds=1)).isoformat()
+    retry = {**first, 'observed_at': later,
+        'derivatives_metadata_json': facts().hyperliquid_metadata('BTC/USDT', later)}
+    retry.pop('id')
+    repo.insert_funding_rate_snapshot(retry)
+    assert len(repo._select_all('funding_rate_snapshots')) == 1
+    retry.pop('id')
+    retry['derivatives_metadata_json'] = facts().hyperliquid_metadata('BTC/USDT', later, interval_seconds=7200)
+    repo.insert_funding_rate_snapshot(retry)
+    assert len(repo._select_all('funding_rate_snapshots')) == 2

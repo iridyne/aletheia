@@ -11100,9 +11100,16 @@ _FUNDING_DEDUP_FIELDS = (
     "funding_rate_annualized",
     "next_funding_time",
     "mark_price",
-    "derivatives_metadata_json",
 )
 _FUNDING_HEARTBEAT_FLOOR_MINUTES = 10
+
+
+def _funding_source_semantics(data: dict) -> dict:
+    metadata = json.loads(data.get("derivatives_metadata_json") or "{}")
+    # Acquisition advances on native retries; only changed source semantics
+    # should bypass the existing ten-minute numeric heartbeat.
+    metadata.pop("acquired_at", None)
+    return metadata
 
 
 def insert_funding_rate_snapshot(data: dict) -> None:
@@ -11130,6 +11137,7 @@ def insert_funding_rate_snapshot(data: dict) -> None:
             latest = dict(row)
             same = (
                 all(data.get(field) == latest.get(field) for field in _FUNDING_DEDUP_FIELDS)
+                and _funding_source_semantics(data) == _funding_source_semantics(latest)
                 and data.get("source_time_status") == latest.get("source_time_status")
                 and iso_instant_us(data.get("source_observed_at"))
                 == iso_instant_us(latest.get("source_observed_at"))
