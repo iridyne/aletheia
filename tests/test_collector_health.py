@@ -175,7 +175,10 @@ def test_collector_rollup_requires_success_without_partial_empty_or_never_run(
         ("", "collector_health_timestamp_missing"),
         ("not-a-timestamp", "collector_health_timestamp_invalid"),
         (
-            (datetime.now(timezone.utc) + timedelta(minutes=6)).isoformat(),
+            # Use a fixed far-future offset so this parametrization stays "future"
+            # even in a long test suite run; datetime.now() at module import time
+            # drifts over 4 minutes and stops being "future" mid-suite.
+            (datetime(2099, 1, 1, 0, 0, tzinfo=timezone.utc)).isoformat(),
             "collector_health_timestamp_future",
         ),
     ],

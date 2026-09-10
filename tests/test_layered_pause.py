@@ -161,12 +161,18 @@ class TestLayeredPause:
     def test_resume_handles_blanket_and_selective(self, monkeypatch):
         """If both blanket-paused AND selectively-paused jobs exist, resume all."""
         from aletheia.agent_runtime import scheduler
-        from apscheduler.schedulers.base import STATE_PAUSED
+        from apscheduler.schedulers.base import STATE_PAUSED, STATE_RUNNING
 
         monkeypatch.setattr(scheduler, "load_config", lambda: _cfg(layered=True))
 
         mock_sched = MagicMock()
         mock_sched.state = STATE_PAUSED
+        # resume_scheduler verifies the scheduler actually reached STATE_RUNNING
+        # (scheduler_resume_incomplete otherwise), so the mock must transition.
+        def _resume():
+            mock_sched.state = STATE_RUNNING
+
+        mock_sched.resume.side_effect = _resume
         scheduler._scheduler = mock_sched
         scheduler._selectively_paused_jobs = {"market_observer"}
 
