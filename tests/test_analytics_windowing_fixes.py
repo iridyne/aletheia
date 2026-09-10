@@ -653,8 +653,8 @@ def _insert_verdict(conn, verdict_id: str, verdict: str, experiment_id: str = "e
     conn.commit()
 
 
-def test_learning_contribution_verdict_counts_use_verdict_column(tmp_path, monkeypatch):
-    """#322: route queried 'classification' (non-existent) — fixed to 'verdict'."""
+def test_learning_contribution_does_not_count_legacy_verdicts_without_lab(tmp_path, monkeypatch):
+    """Legacy verdict rows must not become current Lab contribution evidence."""
     _setup_env(tmp_path, monkeypatch)
     import aletheia.storage.sqlite as sq
 
@@ -667,11 +667,12 @@ def test_learning_contribution_verdict_counts_use_verdict_column(tmp_path, monke
 
     result = get_learning_contribution()
 
-    assert result["verdicts"]["total"] == 3
-    assert "error" not in result["verdicts"]
-    by_verdict = {row["verdict"]: row["n"] for row in result["verdicts"]["by_verdict"]}
-    assert by_verdict["invalid"] == 2
-    assert by_verdict["insufficient_data"] == 1
+    assert result["verdicts"] == {
+        "total": None,
+        "by_verdict": [],
+        "query_error": "canonical_lab_projection_unavailable",
+    }
+
 
 
 def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path, monkeypatch):
@@ -690,7 +691,7 @@ def test_learning_contribution_verdict_db_error_surfaces_error_not_zero(tmp_path
     # total is None (not 0) when a DB error occurred — total=0 is ambiguous with "no verdicts"
     assert result["verdicts"]["total"] is None
     assert "query_error" in result["verdicts"]
-    assert result["verdicts"]["query_error"] == "read_failed"
+    assert result["verdicts"]["query_error"] == "canonical_lab_projection_unavailable"
     assert "no such table" not in str(result)
 
 

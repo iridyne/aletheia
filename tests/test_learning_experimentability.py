@@ -1,4 +1,4 @@
-"""Feasibility gates the existing Shadow experiment ledger without new authority."""
+"""Feasibility is evidence; Observation Lab owns experiment admission."""
 
 from tests.test_learning_hypothesis_nominations import _envelope
 
@@ -24,16 +24,24 @@ def _preflight(path_id: str, hypothesis_id: str, **overrides):
 
 
 def test_unsupported_and_nonviable_preflight_open_no_experiment():
-    from aletheia.learning.hypothesis_compiler import admit_nomination_to_shadow
+    """Retired-capability guard: shadow admission was removed by the 2026-09-07
+    single-mainline cutover (Observation Lab is the only Experiment authority).
+    Preflight still classifies feasibility; nothing may open an experiment.
+    """
+    import aletheia.learning.hypothesis_compiler as compiler
     from aletheia.learning.hypotheses import publish_hypothesis_nomination
     from aletheia.learning.ledger import list_records
+
+    assert not hasattr(compiler, "admit_nomination_to_shadow"), (
+        "admit_nomination_to_shadow was retired; a reinstated shadow-admission "
+        "path would bypass Observation Lab experiment authority"
+    )
 
     nomination = publish_hypothesis_nomination(_envelope("preflight-unsupported"))
     unsupported = _preflight(
         "ranker_learned_guard", nomination.hypothesis_id or "missing",
     )
     assert unsupported.status == "unsupported"
-    assert admit_nomination_to_shadow(nomination.nomination_id, unsupported) is None
 
     nonviable = _preflight(
         "ranker_learned_guard",
@@ -43,12 +51,13 @@ def test_unsupported_and_nonviable_preflight_open_no_experiment():
         eligible_event_rate_per_day=None,
     )
     assert nonviable.status == "unsupported"
-    assert admit_nomination_to_shadow(nomination.nomination_id, nonviable) is None
     assert list_records("learning_experiments") == []
 
 
-def test_viable_preflight_opens_exactly_one_shadow_experiment(monkeypatch):
-    from aletheia.learning.hypothesis_compiler import admit_nomination_to_shadow
+def test_viable_preflight_does_not_open_an_experiment():
+    """Retired-capability guard: a `ready` preflight is feasibility evidence only.
+    Without shadow admission no experiment may be opened by this path.
+    """
     from aletheia.learning.hypotheses import publish_hypothesis_nomination
     from aletheia.learning.ledger import list_records
 
@@ -58,31 +67,4 @@ def test_viable_preflight_opens_exactly_one_shadow_experiment(monkeypatch):
     preflight = _preflight("ranker_case_score", hypothesis_id)
 
     assert preflight.status == "ready"
-    experiment = admit_nomination_to_shadow(nomination.nomination_id, preflight)
-    assert experiment is not None
-    assert experiment.stage == "shadow"
-    assert experiment.status == "registered"
-    repeated = admit_nomination_to_shadow(nomination.nomination_id, preflight)
-    assert repeated is not None
-    assert repeated.experiment_id == experiment.experiment_id
-    assert len(list_records("learning_experiments")) == 1
-    from aletheia.learning import experiments
-
-    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
-    decision = experiments.apply_numeric_treatment(
-        path_id="ranker_case_score",
-        scope={"symbol": "BTC/USDT", "direction": "long"},
-        action={"type": "score_adjustment", "delta": -1.0},
-        source_cohort="cohort-1",
-        target_horizon="4h",
-        candidate_key="opportunity-shadow",
-        baseline=100.0,
-        treatment=99.0,
-        consumer="paper ranker",
-        consumer_stage="ranking",
-    )
-    assert decision.value == 100.0
-    assert decision.applied is False
-    assert decision.reason == "baseline:experiment_stage_not_paper"
-    assert len(list_records("learning_exposures")) == 1
-    assert list_records("learning_contribution_verdicts") == []
+    assert list_records("learning_experiments") == []

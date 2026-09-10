@@ -579,13 +579,13 @@ async def test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monke
 
 
 # ---------------------------------------------------------------------------
-# PL-MD-06  L2b  typed_freshness: futures freshness prefers the perp snapshot
+# PL-MD-09  L2b  typed_freshness: futures freshness prefers the perp snapshot
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "PL-MD-06", "pipeline_market_data", "§3 typed_freshness", "L2b",
+        "PL-MD-09", "pipeline_market_data", "§3 typed_freshness", "L2b",
         "_market_data_age_seconds(symbol, market_type='usdt_futures') reads the "
         "perp snapshot, not a same-symbol spot snapshot — so a futures decision's "
         "freshness is not computed off a spot row (#13)",

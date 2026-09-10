@@ -1053,7 +1053,9 @@ async def test_promote_already_promoted(client):
     repo.insert_serenity_theme(theme)
 
     resp = await client.post(f"/api/serenity/themes/{theme.id}/promote")
-    assert resp.status_code == 400
+    # 409 Conflict: promoting an already-promoted theme is a state conflict, not
+    # a malformed request. Matches the empty-handoff conflict case above.
+    assert resp.status_code == 409
 
 
 @pytest.mark.anyio

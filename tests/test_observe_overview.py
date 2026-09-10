@@ -55,6 +55,9 @@ def _ensure_lab() -> None:
 
 
 def _register_ranker() -> None:
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="overview fixture")
+
     from aletheia.counterfactual.filter_experiments import register_observation_from_spec
 
     register_observation_from_spec(

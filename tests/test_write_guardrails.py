@@ -90,6 +90,9 @@ def test_filter_controller_skips_both_insufficient(monkeypatch):
     """
     from aletheia.analytics import filter_controller
 
+    from aletheia.observation_lab.canonical import set_authority_source
+    set_authority_source("lab", actor="test", reason="controller fixture")
+
     class _R:
         def __init__(self, verdict: str, direction: str) -> None:
             self.filter_name = "f"
