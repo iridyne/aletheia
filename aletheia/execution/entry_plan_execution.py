@@ -399,11 +399,13 @@ def require_execution_receipt_activation(proposal: TradeProposal, receipt, *, no
     if (not receipt.hash_is_valid() or receipt.proposal_id != proposal.id
         or receipt.entry_plan_id != plan.plan_id):
         raise ValueError("entry_execution_receipt_integrity_failed")
-    build_entry_plan_order_intent(plan, bid=receipt.quote["bid"], ask=receipt.quote["ask"],
+    intent = build_entry_plan_order_intent(plan, bid=receipt.quote["bid"], ask=receipt.quote["ask"],
         observed_at=datetime.fromtimestamp(receipt.quote["received_timestamp_ms"] / 1000, timezone.utc).isoformat(),
         source_observed_at=datetime.fromtimestamp(receipt.quote["exchange_timestamp_ms"] / 1000, timezone.utc).isoformat(),
         trigger_activation_id=receipt.trigger_activation_id, trigger_activation_hash=receipt.trigger_evidence_hash,
         now=now)
+    if intent.price != proposal.price:
+        raise ValueError("entry_execution_receipt_intent_price_mismatch")
     require_entry_trigger_activation(plan,
         receipt.trigger_activation_id, receipt.trigger_evidence_hash, now=now,
         stream_generation_id=receipt.stream_generation_id,

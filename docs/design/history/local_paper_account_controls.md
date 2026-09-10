@@ -216,3 +216,8 @@ an approved, not-yet-executing external Demo Proposal cannot reuse stored approv
 to bypass a newly active kill switch. Capacity/race and reservation-cleanup tests
 use external account inputs; an exchange acknowledgement does not create a
 Position before matched private Fill materialization.
+
+The former Entry Workbench `funding_readiness` field was exclusively produced by
+`local_funding_schedule_readiness` for `paper_internal` perpetual Plans. Its
+producer was deleted in #3022; the remaining UI/type/API declarations are retired
+as well. This field never represented external exchange funding settlement.

@@ -415,12 +415,7 @@ export default function Universe() {
         ? 'not available.'
         : plans.length === 0
           ? 'no active Entry Plans.'
-          : plans.map(plan => {
-            const funding = plan.market_type === 'perp'
-              ? ` · funding ${plan.funding_readiness?.ready ? 'ready' : humanize(plan.funding_readiness?.reason)}`
-              : ''
-            return `${plan.venue} ${fmtSymbol(plan.symbol)} ${plan.market_type}: ${monitoringLabel(plan)}${funding}`
-          }).join(' · ')}
+          : plans.map(plan => `${plan.venue} ${fmtSymbol(plan.symbol)} ${plan.market_type}: ${monitoringLabel(plan)}`).join(' · ')}
     </Card>
 
     {workbenchUnavailable ? <Card role="alert">Entry Workbench is unavailable. Summary counts and rows are not inferred.</Card> : null}
@@ -455,7 +450,6 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
         <DrawerField label="Terminal reason" value={plan.terminal_reason ? humanize(plan.terminal_reason) : 'Not applicable'} />
         <DrawerField label="Monitoring" value={monitoringLabel(plan)} />
         <DrawerField label="Monitoring evidence" value={plan.monitoring_evidence_json ?? 'Not available'} mono />
-        <DrawerField label="Funding readiness" value={plan.market_type === 'perp' ? plan.funding_readiness?.ready ? 'Ready' : humanize(plan.funding_readiness?.reason) : 'Not applicable'} />
         <DrawerField label="Expiry / countdown" value={expiryLabel(plan.plan?.expires_at)} />
       </DrawerSection>
       <DrawerSection label="Entry Geometry">

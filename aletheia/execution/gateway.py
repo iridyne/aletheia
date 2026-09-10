@@ -770,16 +770,10 @@ def _reject_for_risk(proposal: TradeProposal, risk_result) -> dict:
     }
 
 
-def _reject_retryable_execution_attempt(proposal: TradeProposal, risk_result) -> dict:
-    """Release one failed ephemeral attempt without terminalizing its Plan."""
-
-    update_trade_proposal(proposal.id, status="pending")
-    return {
-        "status": "attempt_rejected",
-        "proposal_id": proposal.id,
-        "risk_violations": getattr(risk_result, "violations", []),
-        "message": risk_result.message,
-    }
+def _reject_execution_receipt(proposal: TradeProposal) -> dict:
+    """A claimed attempt with invalid evidence is a confirmed pre-submit failure."""
+    return _terminal_execution_error(proposal, reason_code="entry_execution_receipt_rejected",
+        safe_message="Execution receipt failed validation; no order was submitted.")
 
 
 def _receipt_only_risk_rejection(risk_result) -> bool:
@@ -1421,10 +1415,7 @@ def _execute_proposal(
         )
         if not preflight_result.approved:
             if _receipt_only_risk_rejection(preflight_result):
-                return _reject_retryable_execution_attempt(
-                    proposal,
-                    preflight_result,
-                )
+                return _reject_execution_receipt(proposal)
             return _reject_for_risk(proposal, preflight_result)
 
         preflight_mode = preflight_result.allowed_execution_mode
@@ -1452,7 +1443,7 @@ def _execute_proposal(
 
         if not risk_result.approved:
             if _receipt_only_risk_rejection(risk_result):
-                return _reject_retryable_execution_attempt(proposal, risk_result)
+                return _reject_execution_receipt(proposal)
             return _reject_for_risk(proposal, risk_result)
 
         # The broker consumes only the authoritative decision and its exact
@@ -1561,9 +1552,8 @@ def _execute_proposal(
         try:
             require_execution_receipt_activation(execution_proposal, execution_receipt, now=datetime.now(timezone.utc))
         except ValueError as exc:
-            update_trade_proposal(proposal.id, status="pending")
-            return {"status": "attempt_rejected", "reason_code": str(exc), "proposal_id": proposal.id,
-                    "message": "Trigger activation is no longer valid; no order was submitted."}
+            return _terminal_execution_error(proposal, reason_code=str(exc),
+                safe_message="Trigger activation is no longer valid; no order was submitted.")
     try:
         if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard

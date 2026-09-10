@@ -117,3 +117,47 @@ that these changes are deployed or currently effective. Historical measurement
 formats deliberately remain read-only; their presence is not a second current
 runtime. Live/Risk/Gateway authority, Candidate Selection economics and Alpha
 remain outside this change.
+
+## Deployed evidence and corrective review (#3027)
+
+#3026 merged as `e7904a7d44816beb785c0a1a0e4ee025d6de6010` and deployed
+through Fedora's normal update command. Verified session `54ad4d1f2a39` ran that
+SHA with schema v79 and Bitget Demo. Health completed initialization successfully.
+Two natural compatibility-cutover cycles first recorded execution-context
+unavailability without model/Compiler invocation, then automatically recovered
+and created Plans with validated hypothesis checkpoints. Two Workbench refreshes
+preserved the same Plan/cycle identities. A normal Gateway restart produced
+session `d0a700350619` on the same SHA; Plan hashes remained unchanged and market
+monitoring reconnected. One Plan subsequently reached canonical Risk rejection;
+the other remained in passive market wait. No runtime rows were injected.
+
+Actual deployment comparison found zero missing/changed payloads among 135 old
+Plans, 351 frozen inputs and 35 Entry Proposal attributions. Comparing the normal
+pre-activation backup to the live database also proved all original columns of
+151 historical runtime-unsupported generations and the existing Universe
+discovery benchmark definition unchanged. All 151 classify as planning_blocked;
+all 135 old Plans fail current runtime-authority validation. Live remains disabled.
+
+The completed review of #3026 identified two executable defects and one stale
+retirement surface, tracked separately in #3027:
+
+- Renewed/current IOC quotes could validate while the stored Proposal retained
+  a different price. Shared validation now compares rebuilt and immutable intent
+  prices before claim and before broker submission. The pre-fix IOC counterexample
+  fails; same-price intent and venue quantity normalization remain supported.
+- An invalid receipt after claim could silently move executing back to pending.
+  Both receipt-only Risk refusal and final activation validation now use the
+  existing terminal error/audit helper, consistent with trust/execution contracts.
+  Six pre-fix cases cover both tactics at preflight, authoritative Risk and final
+  pre-broker validation. No broker call occurs; claim release is preserved.
+  A still-pending, unclaimed intent may renew its activation, while a failed claimed
+  attempt is terminal. Neither Proposal nor Plan hashes are rewritten.
+- Workbench funding_readiness belonged exclusively to the paper_internal producer
+  deleted by #3022. Remaining UI/types/API declarations are removed and archived;
+  external funding settlement is not represented by that retired field.
+
+Corrective verification: 232 focused backend/spec checks, 14 Universe checks,
+frontend production build/performance, Ruff, docs governance and diff checks pass.
+These corrections still require their own merged-commit update. No natural
+triggered activation/order/fill was observed in the initial deployment window;
+the tests for those boundaries are not real-exchange qualification evidence.
