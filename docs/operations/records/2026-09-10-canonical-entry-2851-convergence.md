@@ -2,9 +2,16 @@
 
 Starting master: `4031bed5d1dd7f5e5c6f56abbd06ba32b32a1ed9` (2026-09-10).
 Branch: `converge/entry-lifecycle-2851`.
-Scope: owner-approved #2851 convergence, including #2720, #2864, #2886 and #3009.
-This record establishes repository evidence. The changes have not yet been
-deployed; production qualification is pending.
+Scope: owner-approved #2851 convergence, absorbing #2720, #2864 and the
+no-EntryPlan/Compiler dead-end in #3009. Broader #2886 economics/readiness/Alpha
+work remains outside this completion.
+
+Implementation and scoped Fedora deployment, formation and recovery acceptance
+are complete. Main convergence #3026 merged as
+`e7904a7d44816beb785c0a1a0e4ee025d6de6010`; corrective #3028 merged as
+`1543c7c1e705de816a13e63f3a4aa3f9f8bd8038` and was deployed through normal
+`update --verbose`. Final evidence below supersedes earlier deployment-pending
+statements. This is not profitability, Live or full triggered-trade qualification.
 
 ## Authority and production ownership
 
@@ -55,7 +62,7 @@ they do not substitute for runtime qualification.
 | Learning operational outcomes are not economic NO_PLAN | Current context filtering already satisfied | Preserved filters and thread concentration; retired geometry authority marked unwired while historical measurement identities remain readable |
 | Workbench current state and cycle history | Partial: activation renewal lost history and SQL alias hid Plan link | Shared projection uses actual linked Plan, all activation facts, material monitoring transition time and truthful wait/terminal actions; rendered drawer tests pass |
 | Paper Internal production route | Superseded and retired by #3022 | Not restored; obsolete fingerprint material and old test expectations removed |
-| Fedora exact commit/schema/provider/session and natural formation | Baseline only | Pending deployment and real runtime acceptance; local checks do not establish this row |
+| Fedora exact commit/schema/provider/session and natural formation | Baseline only | Verified 1543c7c1 / aletheia-sqlite-v79 / bitget_demo / session d96c5d259218; natural cycle b0a26e335f2f formed a Plan |
 
 ## Root causes and regression evidence
 
@@ -103,20 +110,10 @@ NULL; no synthetic activation appears. Only the migration ledger is excluded
 from equality because its new migration facts must append. This proves the
 isolated migration and read path, not preservation of Fedora's actual database.
 
-Before production acceptance, deploy the exact merged commit through the normal
-Fedora `update` command and establish runtime commit, schema v79, provider,
-session and Gateway/settlement health. Capture actual pre/post historical
-payload/hash comparisons. Observe a naturally formed model/Compiler Plan and
-verify refresh/restart idempotency, expired/current activation behavior and old
-Plan non-authorization. Do not manufacture Candidate, market or economic rows
-to make that gate pass. Health alone is not formation or trading qualification.
-
-The last recorded Fedora observation was starting commit 4031bed5, schema v77,
-Bitget Demo and healthy service state. It is a baseline observation, not evidence
-that these changes are deployed or currently effective. Historical measurement
-formats deliberately remain read-only; their presence is not a second current
-runtime. Live/Risk/Gateway authority, Candidate Selection economics and Alpha
-remain outside this change.
+The actual Fedora historical comparisons and deployed checks below complete the
+scoped operational gate. Historical measurement formats remain read-only; their
+presence is not a second current runtime. Live/Risk/Gateway authority, Candidate
+Selection economics and Alpha remain outside this change.
 
 ## Deployed evidence and corrective review (#3027)
 
@@ -158,6 +155,46 @@ retirement surface, tracked separately in #3027:
 
 Corrective verification: 232 focused backend/spec checks, 14 Universe checks,
 frontend production build/performance, Ruff, docs governance and diff checks pass.
-These corrections still require their own merged-commit update. No natural
-triggered activation/order/fill was observed in the initial deployment window;
-the tests for those boundaries are not real-exchange qualification evidence.
+#3028 completed these corrections and its exact merged commit was deployed.
+
+## Final Fedora acceptance and issue disposition
+
+Source: the local `Entry-2851-evidence-2026-09-10` packet, including
+`final-deployment-identity.json`, `final-historical-comparison.json`,
+`historical-backup-proof.json`, `natural-plans-and-refreshes.json` and its final
+README. The packet manifest's 13 file digests were verified for this sync. These
+are recorded deployment observations on 2026-09-10, not a claim about a later
+runtime or a deployment of this documentation-only change.
+
+| Evidence | Final recorded result |
+| --- | --- |
+| Deployment identity (2026-09-10 04:02:01 UTC) | Running, disk, cached master and recorded SHA all `1543c7c1e705de816a13e63f3a4aa3f9f8bd8038`; verified Gateway process session `d96c5d259218`; schema `aletheia-sqlite-v79`; execution `bitget_demo` |
+| Update and health | Normal update completed in 29,816 ms and restarted Gateway; subsequent health healthy, issues empty, pause blockers empty; deployed execution and Workbench source hashes match the tested tree |
+| Final-commit natural formation | Cycle `b0a26e335f2f`: `planned` / `plan_created`, model_invoked=1, compiler_invoked=1, `entry_plan_created`, producer_commit `1543c7c1e705de816a13e63f3a4aa3f9f8bd8038` |
+| Natural recovery and restart on e7904a7d | Cycles `9a21cd211442` and `46b3a9df17df` recovered from execution-context unavailability to Plans `7b07a362f74f` and `25963a63e7cb`; two refreshes and ordinary restart preserved Plan/cycle/hash identities and restored monitoring |
+| Final immutable-payload comparison | 135/135 old Plan JSON/hash pairs, 351/351 frozen input/hash pairs and 35/35 Proposal attributions unchanged, zero missing; total rows at comparison were 137, 354 and 36 respectively |
+| Backup equality and historical authority | All original columns of 151 historical runtime-unsupported generations and one Universe discovery benchmark definition unchanged; all 151 classify as `planning_blocked`; all 135 old Plans reject current authority with `ai_entry_running_contract_mismatch` |
+| Workbench and Live | All sections available, no stale flags; active=1 and needs_planning=0; `live_disabled`, zero new live-mode Proposals since deployment began |
+
+On the final deployed Fedora code, an isolated temporary runtime/database with
+network/exchange fakes ran
+`test_first_freeze_waits_for_exact_fresh_book_then_resumes` and
+`test_expired_activation_after_claim_is_audited_terminal_error`: **16 passed in
+2.10 s**. No stable database injection or real exchange call was used. The 396
+main-convergence, 232 corrective and 16 deployed checks are different selected
+groups, not a whole-suite metric. No remote GitHub CI was dispatched.
+
+| Issue | Final disposition and evidence |
+| --- | --- |
+| #2851 | Completed: canonical implementation plus scoped exact-commit deployment, natural formation/recovery, refresh/restart and historical preservation acceptance |
+| #2720 | Subsumed by #2851: accepted versionless compatibility cutover and natural successor recovery replace its older numeric-version proposal; historical facts remain immutable and refresh/restart does not duplicate cycles |
+| #2864 | Subsumed by #2851: current/stored identity gates reject all 135 historical Plans; final-commit natural formation demonstrates the current path operates |
+| #3027 | Completed by merged and deployed #3028: IOC immutable-price validation, claimed-attempt terminal audit and retired funding-readiness UI cleanup |
+| #3009 | Resolved/subsumed by #2851 for the no-EntryPlan/Compiler dead-end: natural model and Compiler invocation now produces Plans, including on 1543c7c1; its existing completed state is retained |
+
+No natural triggered Plan activation/order/fill was observed in the bounded
+window. Trigger/concurrency/expiry regression fixtures are not real exchange
+fill or economic qualification evidence. The independent Observation worker
+reported `3a3f3b20a665` and is not used as proof for the new Entry implementation.
+Full Gate B entry-to-close qualification and broader #2886 remain outside this
+closure. No qualification window is opened or reset by this evidence sync.
