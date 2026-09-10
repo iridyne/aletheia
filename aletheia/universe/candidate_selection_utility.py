@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Literal, Mapping, Sequence
+from typing import Literal, Sequence
 
 from aletheia.universe.candidate_eligibility import HardGateDecisionV1, canonical_fingerprint
 from aletheia.universe.economic_utility import EconomicUtilityEstimateV2
@@ -28,7 +28,6 @@ class CandidateSelectionUtilityV1:
     admission_status: Literal[
         "admitted", "below_floor", "unavailable", "ineligible", "observe_only", "direction_conflict"
     ]
-    legacy_control: Mapping[str, object]
     record_fingerprint: str
     admission_basis: Literal["measured", "startup"] | None = None
     startup_reason: str | None = None
@@ -42,7 +41,6 @@ def build_candidate_selection_utility(
     hard_gate: HardGateDecisionV1,
     opportunity_evidence: OpportunityEvidenceBundleV1,
     economic_estimates: Sequence[EconomicUtilityEstimateV2],
-    legacy_control: Mapping[str, object],
 ) -> CandidateSelectionUtilityV1:
     if hard_gate.candidate_key != opportunity_evidence.candidate_key:
         raise ValueError("candidate_selection_identity_mismatch")
@@ -127,7 +125,6 @@ def build_candidate_selection_utility(
         "economic_utility_pct": primary.economic_utility_pct if primary else None,
         "utility_floor_pct": floor,
         "admission_status": status,
-        "legacy_control": dict(legacy_control),
         "admission_basis": basis,
         "startup_reason": startup_reason,
     }
@@ -142,7 +139,6 @@ def build_candidate_selection_utility(
         primary.economic_utility_pct if primary else None,
         floor,
         status,
-        dict(legacy_control),
         canonical_fingerprint(material),
         basis,
         startup_reason,

@@ -148,13 +148,13 @@ const candidateColumns = [
   candidateCol.accessor(row => `${humanize(row.candidate_family)} · ${evidenceLabel(row.inclusion_reason)}`, { id: 'why', header: 'Family / why' }),
   candidateCol.display({
     id: 'quality',
-    header: '选择依据 / Liquidity / Spread',
+    header: '选择依据 / Spread',
     cell: ({ row }) => {
       const r = row.original
       return (
         <span className="mono">
           {selectionMetric(r)}{' '}
-          <span className="text-muted">· {r.liquidity_score ?? '—'} liq · {r.spread_bps != null ? `${r.spread_bps} bps` : '—'}</span>
+          <span className="text-muted">· {r.spread_bps != null ? `${r.spread_bps} bps` : '—'}</span>
         </span>
       )
     },
@@ -543,8 +543,7 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
         <DrawerField label="Rank" value={detail.data?.member.rank} />
         <DrawerField label="Selection policy" value={humanize(detail.data?.member.candidate_selection_policy)} mono />
         <DrawerField label="选择依据" value={detail.data?.member ? selectionMetric(detail.data.member) : '未知'} />
-        <DrawerField label="Legacy score (compatibility)" value={detail.data?.member.total_score} />
-        <DrawerField label="Liquidity / spread" value={`${detail.data?.member.liquidity_score ?? '—'} · ${detail.data?.member.spread_bps ?? '—'} bps`} />
+        <DrawerField label="Spread" value={`${detail.data?.member.spread_bps ?? '—'} bps`} />
         <DrawerField label="Execution eligible" value={detail.data?.member.execution_eligible == null ? 'Unavailable' : detail.data.member.execution_eligible ? 'Yes' : 'No'} />
         <DrawerField label="Risk flags" value={evidenceLabel(detail.data?.member.risk_flags)} />
         <DrawerField label="Candidate expiry" value={fmtTimestamp(detail.data?.member.expires_at)} />

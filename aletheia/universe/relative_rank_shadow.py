@@ -1,4 +1,4 @@
-"""Pure, non-authoritative cross-sectional Universe challenger."""
+"""Historical Relative-Rank comparison reconstruction, not a runtime selector."""
 
 from __future__ import annotations
 

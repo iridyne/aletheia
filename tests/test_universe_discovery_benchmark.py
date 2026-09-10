@@ -690,9 +690,48 @@ def test_service_capture_failure_is_nonfatal(monkeypatch, caplog):
         allocated=[],
         entry_ts=datetime.now(timezone.utc).isoformat(),
         regime_tag=None,
-        cfg=None,
+        cfg=loader.load_config(),
     )
     assert "capture failed (non-fatal)" in caplog.text
+    assert "capture unavailable" in caplog.text
+
+
+def test_research_seam_preserves_pre_decoupling_population(monkeypatch):
+    from aletheia.universe import service
+    from aletheia.universe.filters import (
+        apply_coarse_tradability_filters, apply_fine_tradability_filters,
+    )
+    from aletheia.universe.scanners import run_all_scanners
+
+    cfg = loader.load_config()
+    population = _population()
+    population[0]["symbol"] = "USDC/USDT"
+    population[1]["spread_bps"] = cfg.universe.max_spread_bps * 4
+    population[2]["data_freshness_sec"] = 99999
+    # Exact a4a4074f7 refresh preparation, now owned only by research capture.
+    coarse = apply_coarse_tradability_filters(population, cfg.universe, scanner_run_id="frozen")
+    expected = apply_fine_tradability_filters(
+        [{**row, **run_all_scanners(row)} for row in coarse], cfg.universe,
+        family_tolerances=None, scanner_run_id="frozen",
+    )
+    assert 0 < len(expected) < len(population)
+    allocated = expected[:3]
+    captured = []
+
+    def capture(**kwargs):
+        captured.append(kwargs)
+        return {"accepted": False, "reason": "test_read_only_capture"}
+
+    monkeypatch.setattr(benchmark, "capture_completed_run", capture)
+    service._capture_universe_discovery_nonfatal(
+        scanner_run_id="frozen", population=population, allocated=allocated,
+        entry_ts="2026-01-01T00:00:00+00:00", regime_tag="sideways", cfg=cfg,
+    )
+    assert len(captured) == 1
+    assert captured[0]["population"] == expected
+    assert captured[0]["allocated"] == allocated
+    assert captured[0]["entry_ts"] == "2026-01-01T00:00:00+00:00"
+    assert captured[0]["regime_tag"] == "sideways"
 
 
 def test_directional_annotations_and_absolute_return_ranks(benchmark_db):

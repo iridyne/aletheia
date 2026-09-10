@@ -309,36 +309,6 @@ def test_register_pending_skips_members_without_exact_venue(monkeypatch):
     assert {row.venue for row in captured} == {"okx"}
 
 
-def test_experiment_outcomes_do_not_infer_missing_venue(monkeypatch):
-    from aletheia.universe import service
-
-    captured = []
-    monkeypatch.setattr(
-        service.repo,
-        "insert_filter_candidate_outcomes_batch",
-        lambda rows: captured.extend(rows) or len(rows),
-    )
-    common = {
-        "symbol": "BTC/USDT",
-        "market_type": "perp",
-        "scanner_direction": "long",
-        "learning_target_horizon": "4h",
-        "last_price": 100.0,
-    }
-
-    count = service._register_experiment_candidate_outcomes(
-        [
-            {**common, "learning_candidate_key": "missing", "venue": None},
-            {**common, "learning_candidate_key": "exact", "venue": " okx "},
-        ],
-        entry_ts="2026-07-10T00:00:00+00:00",
-    )
-
-    assert count == 1
-    assert {row.outcome_candidate_key for row in captured} == {"exact"}
-    assert {row.venue for row in captured} == {"okx"}
-
-
 def test_pending_forward_outcome_writer_rejects_missing_venue_atomically():
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseForwardOutcome

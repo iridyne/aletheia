@@ -1,8 +1,8 @@
-"""Pure, non-authoritative Universe continuous scoring primitives.
+"""Current mechanism components and historical continuous-candidate replay.
 
-The module does not import the legacy allocator, filters, signal emitter,
-Learning, repositories, or runtime services.  A separate twin adapter may call
-it for diagnostics, but ``universe-step-v2`` remains the only authority.
+Opportunity Evidence consumes the component family scorers. Whole-candidate
+scoring and sensitivity analysis serve historical Twin/Relative-Rank evidence
+only; neither the step scorer nor this replay scorer selects current Candidates.
 """
 
 from __future__ import annotations

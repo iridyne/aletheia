@@ -348,6 +348,43 @@ def test_list_snapshots(client):
     assert len(data) == 2
 
 
+def test_candidate_reads_hide_retired_scores_without_rewriting_history(client):
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import UniverseAsset, UniverseMember, UniverseSnapshot
+    from aletheia.storage.sqlite import get_db
+
+    asset = UniverseAsset(id="asset", venue="bitget", market_type="perp", symbol="BTC/USDT")
+    snapshot = UniverseSnapshot(id="snapshot", expires_at="2099-01-01T00:00:00+00:00")
+    repo.insert_universe_asset(asset)
+    repo.insert_universe_snapshot(snapshot)
+    for rank, policy in enumerate(("candidate_selection_utility_v1", "legacy_total_score_v1"), 1):
+        repo.insert_universe_member(UniverseMember(
+            id=policy, snapshot_id=snapshot.id, asset_id=asset.id, symbol=asset.symbol,
+            market_type=asset.market_type, rank=rank, total_score=90, liquidity_score=75,
+            expires_at=snapshot.expires_at,
+        ))
+    # Reproduce stored pre-decoupling score fields; this exercises the read
+    # projection, not the current Candidate writer's Context validation.
+    get_db().execute(
+        "UPDATE universe_members SET candidate_selection_policy = ? WHERE id = ?",
+        ("candidate_selection_utility_v1", "candidate_selection_utility_v1"),
+    )
+
+    response = client.get(f"/api/universe/snapshots/{snapshot.id}")
+    assert response.status_code == 200
+    for member in response.json()["members"]:
+        current = member["id"] == "candidate_selection_utility_v1"
+        assert member["total_score"] == (None if current else 90)
+        assert member["liquidity_score"] == (None if current else 75)
+        detail = client.get(f"/api/universe/members/{member['id']}")
+        assert detail.status_code == 200
+        assert detail.json()["member"]["total_score"] == member["total_score"]
+        assert detail.json()["member"]["liquidity_score"] == member["liquidity_score"]
+        stored = repo.get_universe_member(member["id"])
+        assert stored["total_score"] == 90
+        assert stored["liquidity_score"] == 75
+
+
 def test_get_policy_returns_config_defaults(client, disabled_cfg):
     with patch("aletheia.server.routes.universe.load_config", return_value=disabled_cfg):
         with patch("aletheia.server.routes.universe.repo.get_active_universe_policy", return_value=None):

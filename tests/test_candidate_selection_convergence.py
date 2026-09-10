@@ -55,7 +55,7 @@ def _estimate(outcomes):
     )
 
 
-def _authority_bundle():
+def _authority_bundle(*, with_history=True):
     from aletheia.config.schema import UniverseConfig
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
@@ -89,9 +89,6 @@ def _authority_bundle():
                 "atr_pct": 2.0,
             }
         )
-    legacy = [
-        {**item, "scanner_family": "momentum", "scanner_direction": "long", "total_score": 60.0} for item in population
-    ]
     start = datetime(2026, 7, 1, tzinfo=timezone.utc)
     outcomes = [
         {
@@ -100,6 +97,8 @@ def _authority_bundle():
         }
         for index in range(60)
     ]
+    if not with_history:
+        outcomes = []
     cfg = UniverseConfig(max_candidates=3)
     selection_policy = {
         **candidate_selection_policy_identity(cfg),
@@ -113,8 +112,8 @@ def _authority_bundle():
         scanner_run_id="candidate-convergence-bundle",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=cfg,
-        legacy_scored=legacy,
-        legacy_allocated=legacy[:3],
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -127,8 +126,8 @@ def _authority_bundle():
         scanner_run_id="candidate-convergence-authority",
         captured_at="2026-09-02T00:00:00+00:00",
         universe_config=cfg,
-        legacy_scored=legacy,
-        legacy_allocated=legacy[:3],
+
+
         action_route_reasons={
             (item["feature_snapshot_id"], item["venue"], item["market_type"], item["symbol"]): None
             for item in population
@@ -145,7 +144,64 @@ def _authority_bundle():
             "blocking_reasons": [],
             "invalid_reasons": [],
         },
-    ), legacy
+    ), population
+
+
+def _candidate_planning_baseline(*, with_history):
+    from aletheia.trading.entry_plan import candidate_planning_identity
+    from aletheia.universe.candidate_opportunity import target_candidate_opportunity_context
+    from aletheia.universe.candidate_selection_shadow import target_candidates_from_bundle
+
+    bundle, population = _authority_bundle(with_history=with_history)
+    import json
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
+
+    for evidence in bundle.evidence:
+        assert evidence.record_hash == canonical_fingerprint({
+            "input": json.loads(evidence.input_json),
+            "output": json.loads(evidence.compact_output_json),
+        })
+    result = []
+    for rank, candidate in enumerate(target_candidates_from_bundle(bundle, population), 1):
+        record = candidate["_candidate_opportunity_record"]
+        context = target_candidate_opportunity_context(
+            candidate_id=f"golden-{rank}",
+            decision=record["decision"],
+            policy_epoch=candidate["candidate_selection_policy_epoch"],
+            source_record_hash=record["source_record_hash"],
+            detected_at="2026-09-02T00:00:00+00:00",
+        )
+        result.append({
+            "rank": rank,
+            "candidate": {key: candidate[key] for key in (
+                "asset_id", "feature_snapshot_id", "venue", "market_type", "symbol",
+                "scanner_family", "scanner_direction", "admission_basis", "startup_reason",
+                "candidate_selection_key", "candidate_selection_utility_pct",
+                "candidate_selection_policy_epoch", "opportunity_mechanism",
+            )},
+            "context": context.model_dump(mode="json"),
+            "planning_identity": list(candidate_planning_identity({
+                **candidate, "candidate_opportunity_context_json": context.model_dump_json(),
+            })),
+        })
+    return result
+
+
+@pytest.mark.parametrize("with_history", [True, False], ids=["measured", "startup"])
+def test_candidate_planning_frozen_baseline(with_history):
+    import json
+    from pathlib import Path
+
+    golden = json.loads((Path(__file__).parent / "fixtures/candidate_planning_a4a4074f7.json").read_text())
+    expected = golden["measured" if with_history else "startup"]
+    assert len(expected) == 3
+    actual = _candidate_planning_baseline(with_history=with_history)
+    # Owner-approved A boundary: remove only new-record provenance identities.
+    for rows in (actual, expected):
+        for row in rows:
+            row["context"].pop("context_hash")
+            row["context"]["candidate_selection"].pop("source_record_hash")
+    assert actual == expected
 
 
 def test_runtime_commit_is_attested_provenance_not_causal_identity():
@@ -327,33 +383,6 @@ def test_continuation_uses_momentum_as_typed_primary_source():
     assert projected.point_strength == 40.0
 
 
-@pytest.mark.anyio
-async def test_shadow_not_due_skips_expensive_candidate_build(monkeypatch):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe import service
-
-    monkeypatch.setattr(
-        service.repo,
-        "universe_twin_shadow_capture_due",
-        lambda *_args, **_kwargs: False,
-    )
-    monkeypatch.setattr(
-        service,
-        "_build_candidate_selection_bundle",
-        lambda **_kwargs: pytest.fail("not-due shadow must not load or aggregate history"),
-    )
-
-    assert (
-        await service._persist_candidate_selection_shadow_nonfatal(
-            population=[{}],
-            legacy_scored=[],
-            legacy_allocated=[],
-            scanner_run_id="not-due",
-            captured_at="2026-09-03T00:00:00+00:00",
-            cfg=AletheiaConfig(),
-        )
-        == {"status": "not_due", "record_count": 0, "reason": None}
-    )
 
 
 def test_typed_mechanism_survives_target_projection_and_member_model():
@@ -390,7 +419,7 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
         symbol=candidate["symbol"],
         market_type=candidate["market_type"],
         rank=1,
-        total_score=candidate["total_score"],
+        total_score=0.0,
         scanner_family=candidate["scanner_family"],
         scanner_direction=candidate["scanner_direction"],
         candidate_selection_policy=candidate["candidate_selection_policy"],
@@ -431,111 +460,3 @@ def test_candidate_storage_projection_is_cadence_bounded(denominator_rows):
         projection["mib_per_day"] * 30,
     )
     assert projection["mib_per_day"] < 12.0
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("verdict", ["positive", "negative", "neutral", "invalid"])
-async def test_terminal_candidate_qualification_stops_confirmatory_capture(monkeypatch, verdict):
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.universe import (
-        candidate_selection_authority,
-        candidate_selection_evaluation,
-        service,
-    )
-
-    evaluations = 0
-    policy = {}
-
-    def evaluate(**_kwargs):
-        nonlocal evaluations
-        evaluations += 1
-        return {"verdict": verdict, "selection_policy": dict(policy)}
-
-    monkeypatch.setattr(
-        service.repo,
-        "universe_twin_shadow_capture_due",
-        lambda *_args, **_kwargs: True,
-    )
-    monkeypatch.setattr(
-        candidate_selection_evaluation,
-        "evaluate_candidate_selection_policy",
-        evaluate,
-    )
-    monkeypatch.setattr(
-        candidate_selection_authority,
-        "candidate_selection_policy_identity",
-        lambda *_args, **_kwargs: dict(policy),
-    )
-    monkeypatch.setattr(
-        service,
-        "_build_candidate_selection_bundle",
-        lambda **_kwargs: pytest.fail("terminal epoch must not append confirmatory evidence"),
-    )
-    monkeypatch.setattr(service, "_terminal_candidate_selection_policy_fingerprint", None)
-
-    for captured_at in ("2026-09-03T00:00:00+00:00", "2026-09-03T04:00:00+00:00"):
-        assert await service._persist_candidate_selection_shadow_nonfatal(
-            population=[{}],
-            legacy_scored=[],
-            legacy_allocated=[],
-            scanner_run_id="terminal",
-            captured_at=captured_at,
-            cfg=AletheiaConfig(),
-        ) == {"status": "terminal", "record_count": 0, "reason": None}
-    assert evaluations == 1
-
-    policy["epoch"] = 2
-    assert await service._persist_candidate_selection_shadow_nonfatal(
-        population=[{}],
-        legacy_scored=[],
-        legacy_allocated=[],
-        scanner_run_id="new-policy",
-        captured_at="2026-09-03T08:00:00+00:00",
-        cfg=AletheiaConfig(),
-    ) == {"status": "terminal", "record_count": 0, "reason": None}
-    assert evaluations == 2
-
-
-@pytest.mark.anyio
-async def test_shadow_timeout_late_atomic_commit_updates_same_scanner(tmp_path, monkeypatch):
-    import asyncio
-    import json
-    import threading
-    from tests.test_entry_logic import setup_env
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import UniverseScannerRun
-    from aletheia.universe import service
-    from aletheia.universe import candidate_selection_evaluation
-    setup_env(tmp_path, monkeypatch)
-    bundle, _ = _authority_bundle()
-    scanner_id = bundle.batch.scanner_run_id
-    repo.insert_universe_scanner_run(UniverseScannerRun(
-        id=scanner_id, status="completed", metrics=json.dumps({"candidate_path": {"shadow_capture_status": "pending"}}),
-    ))
-    monkeypatch.setattr(service, "_terminal_candidate_selection_policy_fingerprint", None)
-    monkeypatch.setattr(candidate_selection_evaluation, "evaluate_candidate_selection_policy", lambda **kwargs: {"verdict": "insufficient"})
-    monkeypatch.setattr(service, "_build_candidate_selection_bundle", lambda **kwargs: bundle)
-    monkeypatch.setattr(repo, "universe_twin_shadow_capture_due", lambda *args, **kwargs: True)
-    monkeypatch.setattr(service, "_TWIN_SHADOW_TIMEOUT_SEC", 0.1)
-    entered, release = threading.Event(), threading.Event()
-    original_insert = repo.insert_universe_twin_shadow_bundle
-    def delayed_insert(*args, **kwargs):
-        count = original_insert(*args, **kwargs)
-        entered.set()
-        assert release.wait(5)
-        return count
-    monkeypatch.setattr(repo, "insert_universe_twin_shadow_bundle", delayed_insert)
-    try:
-        result = await service._persist_candidate_selection_shadow_nonfatal(
-            population=[], legacy_scored=[], legacy_allocated=[], scanner_run_id=scanner_id,
-            captured_at=bundle.batch.captured_at, cfg=AletheiaConfig(),
-        )
-        assert entered.is_set()
-        assert result == {"status": "pending", "record_count": 0, "reason": "capture_completion_unknown"}
-    finally:
-        release.set()
-        await asyncio.gather(*tuple(service._candidate_shadow_tasks))
-    metrics = json.loads(repo.get_db().execute("SELECT metrics FROM universe_scanner_runs WHERE id=?", (scanner_id,)).fetchone()[0])
-    assert metrics["candidate_path"]["shadow_capture_status"] == "captured"
-    assert repo.get_db().execute("SELECT COUNT(*) FROM universe_twin_shadow_batches WHERE scanner_run_id=?", (scanner_id,)).fetchone()[0] == 1

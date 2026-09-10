@@ -11,6 +11,15 @@ from typing_extensions import NotRequired, TypedDict
 # Read projections intentionally describe SQLite JSON, not domain write validators.
 # Documentation-only response schemas preserve historical keys and absent fields.
 
+
+def _hide_retired_candidate_scores(member: dict) -> None:
+    if member.get("candidate_selection_policy") == "candidate_selection_utility_v1":
+        member.update(dict.fromkeys((
+            "total_score", "opportunity_score", "tradability_score", "liquidity_score",
+            "crowding_risk", "late_entry_penalty", "all_scores",
+        )))
+
+
 class UniverseSnapshot(TypedDict):
     id: str
     created_at: str
@@ -762,8 +771,7 @@ def get_entry_workbench(
             response[section] = read()
             if section in {"current_candidates", "candidate_attention"}:
                 for candidate in response[section]:
-                    if candidate.get("candidate_selection_policy") == "candidate_selection_utility_v1":
-                        candidate["total_score"] = None
+                    _hide_retired_candidate_scores(candidate)
             response["availability"][section] = {"available": True, "stale": False}
         except Exception as exc:
             response["availability"][section] = {
@@ -845,8 +853,7 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     enriched = []
     for member in members:
         item = dict(member)
-        if item.get("candidate_selection_policy") == "candidate_selection_utility_v1":
-            item["total_score"] = None
+        _hide_retired_candidate_scores(item)
         candidate_id = str(item.get("id") or "")
         plan = plans_by_candidate.get(candidate_id)
         item["entry_plan_id"] = plan.get("id") if plan else None
@@ -904,6 +911,8 @@ def get_snapshot(snapshot_id: str):
     if not row:
         raise HTTPException(404, "Snapshot not found")
     members = repo.list_universe_members(snapshot_id, limit=50)
+    for member in members:
+        _hide_retired_candidate_scores(member)
     return {"snapshot": dict(row), "members": members}
 
 

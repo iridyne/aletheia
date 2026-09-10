@@ -13,10 +13,6 @@ from pathlib import Path
 import pytest
 
 from aletheia.config.schema import UniverseConfig
-from aletheia.universe.allocator import (
-    compute_late_entry_penalty,
-    compute_total_score,
-)
 from aletheia.universe.filters import _compute_tradability_score
 from aletheia.universe.scanners import (
     UNIVERSE_SCORER_BEHAVIOR_VERSION,
@@ -163,16 +159,8 @@ def test_all_threshold_neighborhoods_match_frozen_outputs(golden: dict) -> None:
             elif component == "tradability":
                 actual = _compute_tradability_score(feat, cfg)
                 assert actual == pytest.approx(expected, abs=1e-9), context
-            elif component == "late_entry":
-                actual = compute_late_entry_penalty(feat)
-                assert actual == pytest.approx(expected, abs=1e-9), context
-            elif component == "total_score":
-                scanner_result = {
-                    "opportunity_score": 50.0,
-                    "scanner_family": "momentum",
-                }
-                actual = compute_total_score(feat, scanner_result, cfg)
-                assert actual == pytest.approx(expected, abs=1e-9), context
+            elif component in {"late_entry", "total_score"}:
+                continue  # Frozen historical fixture; these producers are retired.
             else:  # pragma: no cover - fixture schema guard
                 pytest.fail(f"unknown component {component!r} in {context}")
 
@@ -197,11 +185,6 @@ def test_categorical_and_missing_semantics_match_frozen_outputs(golden: dict) ->
             actual = _compute_tradability_score(feat, cfg)
             assert actual == pytest.approx(expected, abs=1e-9), context
         elif component == "total_score":
-            scanner_result = {
-                "opportunity_score": 50.0,
-                "scanner_family": "momentum",
-            }
-            actual = compute_total_score(feat, scanner_result, cfg)
-            assert actual == pytest.approx(expected, abs=1e-9), context
+            continue  # Preserve historical expected values without a dead writer.
         else:  # pragma: no cover - fixture schema guard
             pytest.fail(f"unknown edge component {component!r} in {context}")

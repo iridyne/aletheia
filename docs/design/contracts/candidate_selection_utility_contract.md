@@ -18,6 +18,21 @@ Historical six-family and `total_score` records remain immutable audit evidence,
 not a runtime fallback or rollback allocator. Risk, Gateway, credentials and
 Live-unlock authority are unchanged.
 
+Historical Twin evaluation still verifies persisted records by replaying the
+old allocation and whole-candidate continuous-scoring rules. Those replay
+functions remain alongside the shared current execution decoration and
+mechanism components; they do not select current Candidates. Relative-Rank
+builders remain for historical fixture reconstruction and reader verification,
+with no refresh/scheduler caller. Their table readers and immutable fixtures
+retain the original meaning. The retired total-score/calibration computation
+and its exposure writer have no such reader dependency and are removed.
+
+Current Candidates are projected from exact raw/typed feature identity and the
+current selection decision. Legacy Scanner/Filter output is not a required
+carrier or fallback. The old two-pass filters and six-family scanner remain
+only at the separate #2556 research capture seam after successful publication.
+Their failure cannot revoke or prevent current Candidate publication.
+
 The current chain is:
 
 1. `universe-hard-gate/v1` records exact physical/data eligibility as
@@ -122,6 +137,14 @@ Later batches cannot replace an incomplete prefix or rewrite its terminal result
 Historical admission evidence, protected prefixes, linked outcomes and Runtime
 Session attestations retain their existing retention/audit protections.
 
+The A-batch provenance boundary accepted in #3056 permits new records to omit
+retired `legacy_control` diagnostics and consequently produce a new
+`source_record_hash` and `CandidateOpportunityContext.context_hash`. Historical
+JSON and hashes are never rewritten. For the same frozen inputs, selected
+identity/order, Utility, mechanism/direction, all other Context semantics, and
+Planning ownership/material identity must remain equal. Provenance hash equality
+is not substituted for that semantic and Planning equivalence check.
+
 `uv run aletheia evidence candidate-selection status --json` remains a historical
 read-only audit. Its positive qualification flags do not grant current runtime
 authority. Runtime record-v4 dynamic cutoffs are not fixed-window confirmatory
@@ -169,6 +192,13 @@ pending/unavailable reporting. Historical terminal qualification is not a
 runtime selection gate. Candidate reads contain durable members only; static
 instruments remain explicit observation fallbacks. Read errors are unavailable,
 not empty success. Hard gates and execution permissions remain unchanged.
+
+Current funnel counts describe Hard Gate/actionability, admitted, selected and
+Planning results. Historical `filtered`/`assets_passed` retains its original
+legacy-filter meaning; it is not a current admission count. Current Candidate
+API/UI/CLI projections expose Utility and typed admission evidence, not synthetic
+legacy scores. Historical score values remain readable under their old policy;
+the required physical `total_score` column is not an economic authority.
 
 ## Isolation
 

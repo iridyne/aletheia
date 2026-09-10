@@ -1,4 +1,4 @@
-"""Durable, non-authoritative evidence for the relative-rank challenger."""
+"""Historical Relative-Rank evidence serialization for archived-fixture tests."""
 
 from __future__ import annotations
 

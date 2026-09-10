@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import ast
 import copy
 from dataclasses import replace
 import inspect
-import json
 from pathlib import Path
 import random
 
 import pytest
 
 from aletheia.config.schema import UniverseConfig
-from aletheia.universe.allocator import compute_total_score
 from aletheia.universe.continuous_scoring import (
     ContinuousScoringPolicy,
     evaluate_continuous_candidate,
@@ -103,121 +100,6 @@ def _policy(**overrides: float) -> ContinuousScoringPolicy:
         min_volume_24h_usdt=overrides.get("min_volume_24h_usdt", 5_000_000.0),
         min_depth_10bps_usd=overrides.get("min_depth_10bps_usd", 25_000.0),
     )
-
-
-def test_allocator_audit_is_observational_and_records_realized_multiplier() -> None:
-    cfg = UniverseConfig(scanner_weights={"momentum": 1.2})
-    feat_without_audit = _feature()
-    feat_with_audit = _feature()
-    scanner = _step_result()
-    expected = compute_total_score(feat_without_audit, scanner, cfg)
-    audit: dict[str, object] = {}
-    actual = compute_total_score(
-        feat_with_audit,
-        scanner,
-        cfg,
-        scoring_audit_out=audit,
-    )
-    assert actual == expected
-    assert audit["contract"] == "universe-authority-score-audit/v1"
-    assert audit["calibration_effective_multiplier"] == 1.0
-    assert audit["operator_multiplier"] == 1.2
-    assert audit["effective_opportunity_multiplier"] == 1.2
-
-
-@pytest.mark.parametrize("invalid_score", [None, "55"])
-def test_allocator_audit_does_not_coerce_invalid_authority_score(
-    invalid_score: object,
-) -> None:
-    cfg = UniverseConfig()
-    scanner = _step_result(opportunity_score=invalid_score)
-    with pytest.raises(TypeError):
-        compute_total_score(_feature(), scanner, cfg)
-    with pytest.raises(TypeError):
-        compute_total_score(
-            _feature(),
-            scanner,
-            cfg,
-            scoring_audit_out={},
-        )
-
-
-def test_allocator_audit_records_realized_learning_authority(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.learning.experiments import InfluenceDecision
-
-    monkeypatch.setattr(
-        "aletheia.learning.experiments.apply_numeric_treatment",
-        lambda **kwargs: InfluenceDecision(
-            value=float(kwargs["treatment"]),
-            applied=True,
-            assignment="treatment",
-            reason="authorized",
-            exposure_id="exposure-1",
-        ),
-    )
-    audit: dict[str, object] = {}
-    compute_total_score(
-        _feature(),
-        _step_result(),
-        UniverseConfig(),
-        calibration={"momentum:long:perp": 1.2},
-        scoring_cohort_key="run-1",
-        scoring_audit_out=audit,
-    )
-    assert audit["calibration_effective_multiplier"] == pytest.approx(1.1)
-    assert audit["calibration_authority_applied"] is True
-    assert audit["calibration_assignment"] == "treatment"
-    assert audit["effective_opportunity_multiplier"] == pytest.approx(1.1)
-
-
-def test_zero_score_shadow_treatment_persists_blocked_authority_provenance(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.config.schema import AletheiaConfig
-    from aletheia.learning import authority, experiments
-    from aletheia.learning.authority import AuthorityDecision
-    from aletheia.learning.ledger import get_record
-
-    cfg = AletheiaConfig()
-    monkeypatch.setattr(experiments, "load_config", lambda: cfg)
-    monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
-    monkeypatch.setattr(experiments, "stable_assignment", lambda *_args: "treatment")
-    monkeypatch.setattr(
-        authority,
-        "resolve_learning_authority",
-        lambda _path, experiment, _epoch: AuthorityDecision(
-            False,
-            "experiment_stage_not_paper",
-            experiment.stage,
-            experiment.allocation_pct,
-            experiment.activation_verdict_id,
-            None,
-        ),
-    )
-    feature = _feature(feature_snapshot_id="zero-score-feature")
-    audit: dict[str, object] = {}
-
-    compute_total_score(
-        feature,
-        _step_result(opportunity_score=0.0),
-        cfg.universe,
-        calibration={"momentum:long:perp": 1.2},
-        scoring_cohort_key="zero-score-run",
-        scoring_audit_out=audit,
-    )
-
-    exposure = get_record("learning_exposures", feature["learning_exposure_id"])
-    manifest = json.loads(exposure["manifest_json"])
-    assert audit["calibration_assignment"] == "treatment"
-    assert audit["calibration_authority_applied"] is False
-    assert audit["calibration_reason"] == "baseline:experiment_stage_not_paper"
-    assert exposure["before_json"] == exposure["after_json"]
-    assert manifest["authority_applied"] is False
-    assert manifest["authority_reason"] == "experiment_stage_not_paper"
-    assert manifest["behavior_changed"] is False
-    assert manifest["behavior_change_reason"] == "authority_not_applied"
 
 
 def test_twin_applies_same_realized_external_multiplier_without_authority() -> None:
@@ -409,16 +291,6 @@ def test_threshold_crossings_and_summary_are_diagnostic_only() -> None:
     assert summary.interaction_residual_unavailable_count == 1
 
 
-def test_shadow_threshold_contract_is_locked_to_current_authority() -> None:
-    from aletheia.universe import allocator, signal_emitter
-
-    assert twin_scoring._SCORE_THRESHOLDS == (
-        ("explore_admission", allocator._EXPLORE_MIN_SCORE),
-        ("opportunity_emission", signal_emitter._MIN_SCORE),
-        ("high_label", signal_emitter._HIGH_CONF_THRESHOLD),
-    )
-
-
 def test_no_chase_authority_gate_remains_an_explicit_blocker() -> None:
     record = build_twin_shadow_record(
         _twin_input(
@@ -462,111 +334,6 @@ def test_twin_module_has_no_authority_consumer_or_persistence_imports() -> None:
         "aletheia.universe.signal_emitter",
     )
     assert not any(module == prefix or module.startswith(f"{prefix}.") for module in imported for prefix in forbidden)
-
-
-
-
-def test_shadow_batch_failure_cannot_fail_authority_refresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.universe import service
-
-    async def fail_to_thread(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("batch failed")
-
-    monkeypatch.setattr(service.asyncio, "to_thread", fail_to_thread)
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            base_policy=_policy(),
-        )
-    )
-    assert result == ()
-
-
-def test_shadow_batch_timeout_cannot_stall_authority_refresh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from aletheia.universe import service
-
-    async def never_finishes(*_args: object, **_kwargs: object) -> object:
-        await asyncio.Event().wait()
-
-    monkeypatch.setattr(service.asyncio, "to_thread", never_finishes)
-    monkeypatch.setattr(service, "_TWIN_SHADOW_TIMEOUT_SEC", 0.001)
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            base_policy=_policy(),
-        )
-    )
-    assert result == ()
-
-
-def test_shadow_allocation_failure_preserves_records_as_blocked() -> None:
-    from aletheia.universe import service
-
-    record = build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy())
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("allocation replay failed")
-
-    marked = asyncio.run(
-        service._compute_twin_shadow_allocation_nonfatal(
-            fail,
-            twin_scoring.mark_shadow_allocation_unavailable,
-            (record,),
-            (_twin_input(),),
-        )
-    )
-    assert len(marked) == 1
-    assert "shadow_allocation_replay_failed:RuntimeError" in marked[0].blocking_reasons
-    assert marked[0].shadow_point_selected is None
-
-
-def test_shadow_policy_failure_cannot_fail_authority_refresh() -> None:
-    from aletheia.universe import service
-
-    def fail_policy(**_kwargs: object) -> object:
-        raise ValueError("invalid diagnostic policy")
-
-    result = asyncio.run(
-        service._compute_twin_shadow_nonfatal(
-            object(),
-            (_twin_input(),),
-            scanner_run_id="run-1",
-            policy_factory=fail_policy,
-            policy_kwargs={"unused": True},
-        )
-    )
-    assert result == ()
-
-
-@pytest.mark.parametrize("failing_stage", ["annotator", "summarizer"])
-def test_shadow_finalization_failure_cannot_fail_authority_refresh(
-    failing_stage: str,
-) -> None:
-    from aletheia.universe import service
-
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("diagnostic finalization failed")
-
-    records = (build_twin_shadow_record(_twin_input(), scanner_run_id="run-1", base_policy=_policy()),)
-    annotator = fail if failing_stage == "annotator" else annotate_authority_selection
-    summarizer = fail if failing_stage == "summarizer" else summarize_twin_shadow_records
-    finalized, summary = service._finalize_twin_shadow_nonfatal(
-        records,
-        annotator=annotator,
-        summarizer=summarizer,
-        fine_filtered=[_feature()],
-        allocated=[_feature()],
-    )
-    assert finalized == ()
-    assert summary is None
 
 
 def test_external_multiplier_policy_is_bounded_and_observable() -> None:
