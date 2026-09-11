@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v84"
+SCHEMA_VERSION = "aletheia-sqlite-v85"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8249,6 +8249,16 @@ def _apply_macro_source_times_v83(db: sqlite3.Connection) -> None:
                "CHECK(source_times_json IS NULL OR json_valid(source_times_json))")
 
 
+def _apply_options_volatility_v85(db: sqlite3.Connection) -> None:
+    db.execute("""CREATE TABLE options_volatility_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL CHECK(symbol IN ('BTC','ETH')),
+        acquired_at TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL CHECK(json_valid(snapshot_json))
+    )""")
+    db.execute("CREATE INDEX idx_options_volatility_cutoff ON options_volatility_snapshots(symbol, acquired_at DESC)")
+
+
 def _apply_candidate_funding_v84(db: sqlite3.Connection) -> None:
     db.execute("ALTER TABLE filter_candidate_outcomes ADD COLUMN funding_evidence_json TEXT "
                "CHECK(funding_evidence_json IS NULL OR json_valid(funding_evidence_json))")
@@ -8752,6 +8762,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"candidate_funding_v84:additive").hexdigest(),
         schema_version="aletheia-sqlite-v84",
         apply=_apply_candidate_funding_v84,
+    ),
+    MigrationStep(
+        migration_id="20260911_0084_options_volatility_v85",
+        checksum=hashlib.sha256(b"options_volatility_v85:independent_summary").hexdigest(),
+        schema_version="aletheia-sqlite-v85",
+        apply=_apply_options_volatility_v85,
     ),
 )
 

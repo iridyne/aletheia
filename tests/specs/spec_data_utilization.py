@@ -48,6 +48,17 @@ _CONTRACT = "data_utilization_contract"
 
 
 @spec_claim(SpecClaim(
+    'DU-S31', _CONTRACT, 'Options volatility observation-only export', 'L2c',
+    'IV facts use a separate as-of research read without changing existing GEX consumers.',
+    status='implemented',
+))
+def test_options_volatility_observation_export():
+    from tests.test_options_volatility import test_cutoff_storage_and_legacy_isolation
+
+    test_cutoff_storage_and_legacy_isolation()
+
+
+@spec_claim(SpecClaim(
     'DU-S30', _CONTRACT, 'Current Derivatives Economic Semantics', 'L2c',
     'Current consumers reject unproved historical derivatives economics while raw history remains readable.',
     status='implemented',

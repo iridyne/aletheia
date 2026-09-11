@@ -2983,6 +2983,7 @@ def _run_cleanup():
             "perp_structure_shadow_outcomes": repo.prune_perp_structure_shadow_outcomes(30),
             "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
             "options_market_structure_snapshots": repo.prune_options_structure_snapshots(30),
+            "options_volatility_snapshots": repo.prune_options_volatility_snapshots(30),
             "liquidation_events": repo.prune_liquidation_events(7),
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
@@ -4533,6 +4534,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     options_snapshots = [
         snap.model_dump() for snap in options_result.get("snapshots", [])
     ]
+    options_volatility = [snap.model_dump() for snap in options_result.get("volatility_snapshots", [])]
     macro_row = macro_snapshot.model_dump() if macro_snapshot else None
     context_error_codes: list[str] = []
 
@@ -4602,6 +4604,11 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
                     repo.insert_options_structure_snapshot(row)
                     for row in _options_snapshots
                 ],
+            )
+        if options_volatility:
+            _persist_domain(
+                "options_structure",
+                lambda: [repo.insert_options_volatility_snapshot(row) for row in options_volatility],
             )
 
     from aletheia.data.collector_health import classify_collector_result
