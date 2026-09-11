@@ -262,6 +262,9 @@ def _entry_plan_authority_violations(
             exact_limit = False
         if not exact_limit:
             violations.append("entry_plan_limit_price_mismatch")
+    if plan.capture_policy_id and not maker and proposal.order_tactic in allowed_tactics:
+        if proposal_price is None or not math.isclose(proposal_price, plan.ioc_limit_price, rel_tol=1e-9, abs_tol=1e-9):
+            violations.append("entry_plan_ioc_limit_price_mismatch")
     policy = resolved_policy.policy
     if (
         plan.risk_policy_id != policy.policy_id

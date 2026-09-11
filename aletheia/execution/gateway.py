@@ -534,6 +534,19 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     def fully_filled(current_order: dict) -> bool:
         return filled_quantity(current_order) + 1e-12 >= float(current_order["quantity"])
 
+    def pending():
+        with repo.transaction(immediate=True):
+            current = repo.get_order(order["id"])
+            if current["status"] in {"filled", "cancelled"}:
+                return {"status": current["status"], "entry_plan_id": plan_id}
+            repo.transition_order(order["id"], status=current["status"], error_reason=f"entry_cancel_pending:{reason}",
+                                  filled_at=current.get("filled_at"))
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+
+    reconciling_cancel = str(order.get("error_reason") or "").startswith("entry_cancel_pending:")
+    if reconciling_cancel:
+        reason = order["error_reason"].partition(":")[2]
+
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
@@ -546,17 +559,18 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
         if identity.execution_mode != order["execution_mode"]:
             raise ValueError("uta_account_identity_mismatch")
-        result = cancel_order(CancelOrderCommand(
-            command_id=str(uuid4()), expected_account=identity,
-            instrument=instrument_from_local(order["symbol"], order["market_type"]),
-            purpose="entry", proposal_id=order["proposal_id"],
-            target_venue_order_id=order["exchange_order_id"],
-            target_client_order_id=order.get("client_order_id"), reason=reason,
-        ))
+        if not reconciling_cancel:
+            result = cancel_order(CancelOrderCommand(
+                command_id=str(uuid4()), expected_account=identity,
+                instrument=instrument_from_local(order["symbol"], order["market_type"]),
+                purpose="entry", proposal_id=order["proposal_id"],
+                target_venue_order_id=order["exchange_order_id"],
+                target_client_order_id=order.get("client_order_id"), reason=reason,
+            ))
+            if result.evidence is not CommandEvidence.ACKNOWLEDGED:
+                return pending()
     except Exception:
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
-    if result.evidence is not CommandEvidence.ACKNOWLEDGED:
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        return pending()
 
     fresh_after_ack = repo.get_order(order["id"])
     if fresh_after_ack and (
@@ -597,30 +611,30 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
         report, rows = _run_coro(exact_cancel_evidence())
         if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if rows:
             materialize_bitget_entry(order["id"], rows)
         exact_state = report.found.state
         exact_filled = float(report.found.filled_quantity)
         local_filled = filled_quantity(repo.get_order(order["id"]))
         if abs(exact_filled - local_filled) > max(1e-12, float(order["quantity"]) * 1e-9):
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if exact_state not in {
             OrderLifecycle.CANCELED,
             OrderLifecycle.EXPIRED,
             OrderLifecycle.REJECTED,
             OrderLifecycle.FILLED,
         }:
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if exact_state is OrderLifecycle.FILLED and not fully_filled(repo.get_order(order["id"])):
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
     except Exception:
         logger.warning(
             "Exact post-cancel evidence unavailable for Entry Plan %s",
             plan_id,
             exc_info=True,
         )
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        return pending()
 
     with repo.transaction(immediate=True):
         fresh_order = repo.get_order(order["id"])

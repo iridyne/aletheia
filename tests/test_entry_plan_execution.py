@@ -1454,7 +1454,8 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
     from aletheia.uta.models import ReadCompleteness
 
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(coordinator, "cancel_order", _cancel_ack)
+    cancels = []
+    monkeypatch.setattr(coordinator, "cancel_order", lambda command: cancels.append(command) or _cancel_ack(command))
 
     async def incomplete_order(*_args, **_kwargs):
         return SimpleNamespace(
@@ -1467,6 +1468,11 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
     assert result["status"] == "cancel_pending"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "submitted"
+
+    assert repo.get_order(order.id)["error_reason"] == "entry_cancel_pending:price_invalidated"
+    # A new invocation reads durable cancellation uncertainty and only queries.
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="retry")["status"] == "cancel_pending"
+    assert len(cancels) == 1
 
 
 def test_gateway_cancel_waits_when_order_quantity_leads_fill_history(monkeypatch):
@@ -1634,3 +1640,78 @@ def test_resting_maker_receipt_has_plan_lifetime_not_trigger_ttl():
         quote_sequence=1, required_channels=("quote",))
     assert receipt.expires_at == plan.expires_at
     assert proposal.price == plan.limit_price
+
+
+def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeypatch):
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.storage.models import Position, TradeProposal
+    from tests.test_entry_execution_projection import plan_for
+
+    from aletheia.storage.models import EntryPlanRecord
+    from tests.test_entry_planner import _typed_candidate
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    plan = plan_for(monkeypatch).model_copy(update={
+        "planning_generation_id": generation["id"], "candidate_id": candidate.id})
+    payload, digest = entry_plan_payload(plan)
+    repo._insert("entry_plans", EntryPlanRecord(id=plan.plan_id,
+        planning_generation_id=generation["id"], candidate_id=candidate.id,
+        planning_key=generation["planning_key"], venue=plan.venue, symbol=plan.symbol,
+        market_type=plan.market_type, direction=plan.direction, execution_mode=plan.execution_mode,
+        status="active", plan_json=payload, plan_hash=digest).model_dump())
+    before = repo.get_entry_plan(plan.plan_id)["plan_json"]
+    receipts, orders = [], []
+
+    def handoff(proposal_id, mode, *, execution_receipt, **kwargs):
+        proposal = TradeProposal.model_validate(repo.get_trade_proposal(proposal_id))
+        decision = RiskDecision(proposal_id=proposal_id, approved=True, allowed_execution_mode=mode,
+            proposal_execution_mode=mode, decision_role="authoritative", evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash, execution_receipt_json=execution_receipt.model_dump_json(),
+            execution_receipt_hash=execution_receipt.receipt_hash)
+        repo.insert_risk_decision(decision)
+        order = Order(proposal_id=proposal_id, risk_decision_id=decision.id, symbol=proposal.symbol,
+            market_type=proposal.market_type, direction=proposal.direction, execution_mode=mode,
+            order_type="limit", price=proposal.price, quantity=proposal.quantity, client_order_id=proposal_id,
+            entry_plan_id=plan.plan_id, order_tactic=proposal.order_tactic, post_only=proposal.post_only,
+            status="submitted", exchange_order_id=f"native-{len(orders)}")
+        repo.insert_order(order)
+        receipts.append(execution_receipt)
+        orders.append(order)
+        return {"status": "submitted"}
+
+    monkeypatch.setattr(gateway, "execute_existing_proposal", handoff)
+    def wake(ask=100.01):
+        now = datetime.now(timezone.utc)
+        return execute_entry_plan(plan.plan_id, bid=99.99, ask=ask,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(),
+            **_execution_receipt_kwargs(now, depth=True))
+
+    result = wake()
+    assert result["status"] == "submitted", (result, plan.model_dump())
+    first = orders[0]
+    assert wake()["status"] == "waiting_market"
+    assert len(orders) == 1
+    fill = Fill(order_id=first.id, fill_price=first.price, fill_quantity=first.quantity*.4, fee_source="reconciled")
+    repo.insert_fill(fill)
+    position = Position(symbol=first.symbol, market_type=first.market_type, direction=first.direction,
+        execution_mode=first.execution_mode, quantity=fill.fill_quantity, entry_price=first.price,
+        order_id=first.id, proposal_id=first.proposal_id, entry_fill_verified=True, entry_price_source="broker_fill")
+    repo.insert_position(position)
+    repo.update_order_metadata(first.id, position_id=position.id)
+    # Canonical reconciliation has confirmed cancellation and materialized all private fills.
+    repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (first.id,))
+    result = wake(ask=100.)
+    assert result["status"] == "submitted", result
+    second = orders[1]
+    assert second.quantity == pytest.approx(plan.target_quantity*.6)
+    assert second.price == plan.ioc_limit_price
+    assert second.order_tactic == "OPPOSING_BBO_IOC" and not second.post_only
+    assert first.proposal_id != second.proposal_id and first.risk_decision_id != second.risk_decision_id
+    assert receipts[0].receipt_hash != receipts[1].receipt_hash
+    assert [repo.get_trade_proposal(order.proposal_id)["entry_leg_index"] for order in orders] == [0, 1]
+    assert wake()["status"] == "reconciliation_required"
+    repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (second.id,))
+    assert wake()["status"] == "cancelled"
+    assert len(orders) == 2
+    assert repo.get_entry_plan(plan.plan_id)["plan_json"] == before

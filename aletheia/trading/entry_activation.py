@@ -165,7 +165,7 @@ def build_entry_trigger_activation(plan: EntryPlan, ready: TriggerReady, *, now:
 def require_entry_trigger_activation(
     plan: EntryPlan, activation_id: str | None, activation_hash: str | None, *, now: datetime,
     stream_generation_id: str | None = None, subscription_generation_id: str | None = None,
-    quote_sequence: int | None = None,
+    quote_sequence: int | None = None, entry_leg_index: int = 0,
 ) -> EntryTriggerActivationV1 | None:
     from aletheia.storage import repositories as repo
 
@@ -183,11 +183,37 @@ def require_entry_trigger_activation(
     if (activation.activation_id != activation_id or activation.activation_hash != activation_hash
         or row["plan_id"] != plan.plan_id):
         raise ValueError("entry_trigger_activation_identity_mismatch")
-    activation.require_valid(plan, now=now)
+    activation.require_valid(plan, now=_instant(activation.created_at) if entry_leg_index == 1 else now)
     if owner["plan_hash"] != activation.plan_hash:
         raise ValueError("entry_plan_hash_mismatch")
     if owner["status"] != "active":
         raise ValueError("entry_trigger_activation_plan_not_executable")
+    if entry_leg_index == 1:
+        # Reuse the original proof only after its exact first Broker handoff.
+        # This is verification of existing owners, not a renewed trigger lease.
+        from aletheia.execution.entry_plan_execution import EntryExecutionReceiptV1
+        first = repo.get_trade_proposal_by_entry_plan(plan.plan_id, leg_index=0)
+        orders = repo.get_db().execute(
+            "SELECT * FROM orders WHERE proposal_id=? AND entry_plan_id=? AND close_reason IS NULL",
+            (first["id"] if first else None, plan.plan_id),
+        ).fetchall()
+        if (plan.capture_priority != "MAKER_PREFERRED" or _instant(plan.expires_at) <= now
+            or len(orders) != 1 or orders[0]["status"] != "cancelled"
+            or orders[0]["source"] != "native" or not orders[0]["exchange_order_id"]):
+            raise ValueError("entry_capture_handoff_required")
+        order = dict(orders[0])
+        repo.validate_native_order_authority(order)
+        decision = repo.get_db().execute("SELECT * FROM risk_decisions WHERE id=?", (order["risk_decision_id"],)).fetchone()
+        original = EntryExecutionReceiptV1.model_validate_json(decision["execution_receipt_json"])
+        if (not original.hash_is_valid() or original.proposal_id != first["id"]
+            or original.entry_plan_id != plan.plan_id or original.trigger_activation_id != activation_id
+            or original.trigger_evidence_hash != activation_hash
+            or original.attempt_id != order["execution_attempt_id"]
+            or original.receipt_hash != order["execution_receipt_hash"]
+            or original.receipt_hash != decision["execution_receipt_hash"]
+            or not _instant(activation.created_at) <= _instant(order["created_at"]) < _instant(activation.expires_at)):
+            raise ValueError("entry_capture_handoff_identity_mismatch")
+        return activation
     monitoring = json.loads(owner.get("monitoring_evidence_json") or "{}")
     if (owner.get("monitoring_state") != "ready"
         or monitoring.get("stream_generation_id") != activation.snapshot.stream_generation_id

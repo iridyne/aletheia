@@ -411,26 +411,22 @@ async def _load_entry_plan_watchers(
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
             continue
-        if (
-            plan.order_tactic == "POST_ONLY_LIMIT"
-            and row["status"] in {"ordered", "partially_filled"}
-            and plan.max_wait_sec > 0
-            and row.get("order_id")
-        ):
-            order = await asyncio.to_thread(repo.get_order, row["order_id"])
-            if order is not None:
-                placed_at = datetime.fromisoformat(str(order["created_at"]).replace("Z", "+00:00")).astimezone(
-                    timezone.utc
-                )
-                if (now - placed_at).total_seconds() >= plan.max_wait_sec:
-                    from aletheia.execution.gateway import cancel_entry_plan_order
+        if getattr(plan, "capture_policy_id", None):
+            from aletheia.execution.entry_plan_execution import _capture_facts
+            from aletheia.trading.entry_execution_projection import resolve_entry_execution
 
-                    await asyncio.to_thread(
-                        cancel_entry_plan_order,
-                        plan.plan_id,
-                        reason="maker_order_unfilled_until_expiry",
-                    )
-                    continue
+            facts = await asyncio.to_thread(_capture_facts, plan, bid=None, ask=None, now=now)
+            directive = resolve_entry_execution(plan, facts)
+            if directive.command == "CANCEL_PASSIVE" or facts.cancellation_unresolved:
+                await asyncio.to_thread(cancel_entry_plan_order, plan.plan_id, reason=directive.reason)
+                plans[plan.plan_id] = plan
+                continue
+            if directive.action in {"STOP", "DONE"}:
+                status = ("filled" if directive.reason == "entry_target_filled"
+                          else "cancelled" if directive.action == "DONE" else "failed")
+                await asyncio.to_thread(repo.transition_entry_plan, plan.plan_id,
+                    expected_status=row["status"], status=status, reason=directive.reason, now=now)
+                continue
         plans[plan.plan_id] = plan
         if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "active"}:
             continue
@@ -529,6 +525,9 @@ def _plan_required_channels(plan) -> tuple[str, ...]:
 
 
 def _plan_monitoring_channels(plan) -> tuple[str, ...]:
+    if getattr(plan, "capture_policy_id", None):
+        return tuple(dict.fromkeys(("quote", *_plan_required_channels(plan),
+            *(("depth",) if plan.capture_priority in {"MAKER_PREFERRED", "FILL_FIRST"} else ()))))
     if plan.order_tactic == "POST_ONLY_LIMIT" and plan.execution_mode == "RESTING_MAKER":
         return ("quote", "trade")
     return _plan_required_channels(plan)
@@ -628,11 +627,22 @@ async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
         after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
 
 
-async def _submit_activated_entry_plan(plan, activation, event, *, current_market=None) -> None:
+async def _submit_entry_plan(plan, event, *, activation=None, depth=None, current_market=None) -> None:
     """Reuse the earned proof while both it and the exact market facts are fresh."""
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
-    snapshot = activation.snapshot
+    snapshot = activation.snapshot if activation else None
+    if depth and (depth.stream_generation_id != event.stream_generation_id
+                  or depth.subscription_generation_id != event.subscription_generation_id):
+        depth = None
+    if snapshot and (snapshot.stream_generation_id != event.stream_generation_id
+                     or snapshot.subscription_generation_id != event.subscription_generation_id):
+        snapshot = None
+    depth_values = ({"depth_bids": depth.bids, "depth_asks": depth.asks,
+        "depth_exchange_timestamp_ms": depth.exchange_timestamp_ms, "depth_received_timestamp_ms": depth.received_timestamp_ms,
+        "depth_sequence": depth.sequence} if depth else {"depth_bids": snapshot.depth_bids, "depth_asks": snapshot.depth_asks,
+        "depth_exchange_timestamp_ms": snapshot.depth_exchange_timestamp_ms, "depth_received_timestamp_ms": snapshot.depth_received_timestamp_ms,
+        "depth_sequence": snapshot.depth_sequence} if snapshot else {})
     try:
         await asyncio.to_thread(execute_entry_plan, plan.plan_id,
             bid=float(event.bid), ask=float(event.ask),
@@ -640,16 +650,15 @@ async def _submit_activated_entry_plan(plan, activation, event, *, current_marke
             source_observed_at=datetime.fromtimestamp(event.exchange_timestamp_ms / 1000, timezone.utc).isoformat(),
             stream_generation_id=str(event.stream_generation_id or ""),
             subscription_generation_id=str(event.subscription_generation_id or ""), quote_sequence=event.sequence,
-            required_channels=_plan_required_channels(plan),
-            depth_bids=snapshot.depth_bids, depth_asks=snapshot.depth_asks,
-            depth_exchange_timestamp_ms=snapshot.depth_exchange_timestamp_ms,
-            depth_received_timestamp_ms=snapshot.depth_received_timestamp_ms, depth_sequence=snapshot.depth_sequence,
-            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash,
+            required_channels=("quote",), **depth_values,
+            trigger_activation_id=activation.activation_id if activation else None,
+            trigger_activation_hash=activation.activation_hash if activation else None,
             current_market=current_market)
     except ValueError as exc:
         if str(exc) not in {"post_only_would_cross_bbo", "entry_trigger_activation_expired",
                             "entry_trigger_activation_generation_mismatch", "entry_trigger_activation_required",
-                            "entry_trigger_activation_monitoring_mismatch"}:
+                            "entry_trigger_activation_monitoring_mismatch", "entry_execution_receipt_depth_required",
+                            "entry_execution_receipt_depth_stale", "entry_ioc_outside_frozen_bounds"}:
             raise
 
 
@@ -682,6 +691,7 @@ async def _watch_loop(cfg) -> None:
         event_task: asyncio.Task | None = None
         execution_tasks: dict[str, asyncio.Task] = {}
         latest_quotes = {}
+        latest_depth = {}
 
         def current_market(instrument):
             return latest_quotes.get(instrument), stream.monitoring_state(instrument, ("quote",))
@@ -771,6 +781,8 @@ async def _watch_loop(cfg) -> None:
                     event_task = None
                 if event.event_type == "quote":
                     latest_quotes[event.instrument] = event
+                elif event.event_type == "depth":
+                    latest_depth[event.instrument] = event
                 for plan_id, plan in plans.items():
                     instrument = InstrumentId.from_parts(
                         plan.venue,
@@ -832,30 +844,8 @@ async def _watch_loop(cfg) -> None:
                                 )
                             continue
                         if plan.activation_policy == "IMMEDIATE" and row["status"] == "active":
-                            from aletheia.execution.entry_plan_execution import execute_entry_plan
-
-                            try:
-                                dispatch(plan_id, asyncio.to_thread,
-                                    execute_entry_plan,
-                                    plan_id,
-                                    bid=float(event.bid),
-                                    ask=float(event.ask),
-                                    observed_at=datetime.fromtimestamp(
-                                        event.received_timestamp_ms / 1000, tz=timezone.utc
-                                    ).isoformat(),
-                                    source_observed_at=datetime.fromtimestamp(
-                                        event.exchange_timestamp_ms / 1000, tz=timezone.utc
-                                    ).isoformat(),
-                                    stream_generation_id=str(event.stream_generation_id or ""),
-                                    subscription_generation_id=str(
-                                        event.subscription_generation_id or ""
-                                    ),
-                                    quote_sequence=event.sequence,
-                                    current_market=lambda instrument=instrument: current_market(instrument),
-                                )
-                            except ValueError as exc:
-                                if str(exc) != "post_only_would_cross_bbo":
-                                    raise
+                            dispatch(plan_id, _submit_entry_plan, plan, event, depth=latest_depth.get(instrument),
+                                current_market=lambda instrument=instrument: current_market(instrument))
                         elif row["status"] in {"active"}:
                             from aletheia.trading.entry_activation import EntryTriggerActivationV1
 
@@ -863,7 +853,7 @@ async def _watch_loop(cfg) -> None:
                                 repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
                             if activation_row is not None:
                                 activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
-                                dispatch(plan_id, _submit_activated_entry_plan, plan, activation, event,
+                                dispatch(plan_id, _submit_entry_plan, plan, event, activation=activation, depth=latest_depth.get(instrument),
                                     current_market=lambda instrument=instrument: current_market(instrument))
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
@@ -888,7 +878,7 @@ async def _watch_loop(cfg) -> None:
                                 raise
                             continue
                         if bound:
-                            dispatch(plan_id, _submit_activated_entry_plan, plan, activation, event,
+                            dispatch(plan_id, _submit_entry_plan, plan, event, activation=activation, depth=latest_depth.get(event.instrument),
                                 current_market=lambda instrument=event.instrument: current_market(instrument))
                 backoff = 1.0
         except asyncio.CancelledError:

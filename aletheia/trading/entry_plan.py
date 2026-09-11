@@ -267,6 +267,15 @@ class EntryPlan(BaseModel):
         # including a short Maker price above its worst (lowest) IOC price.
         return self.max_notional / max(self.entry_zone)
 
+    @property
+    def ioc_limit_price(self) -> float:
+        if self.max_slippage_bps is None or self.worst_price is None:
+            raise ValueError("entry_plan_taker_bounds_required")
+        anchor = _positive_finite((self.primary_anchor_snapshot or {}).get("price") or self.limit_price,
+                                  "entry_plan_ioc_anchor")
+        bound = anchor * (1 + (1 if self.direction == "long" else -1) * self.max_slippage_bps / 10_000)
+        return min(self.worst_price, bound) if self.direction == "long" else max(self.worst_price, bound)
+
     @field_validator(
         "stop_price",
         "target_price",
