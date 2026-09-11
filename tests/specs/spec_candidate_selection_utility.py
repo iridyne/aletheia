@@ -109,3 +109,14 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
     )
 
 
+
+
+@spec_claim(SpecClaim(
+    "CSU-S05", _CONTRACT, "current Candidate bootstrap actionability", "L2c",
+    "An empty Universe admits valid T0 dynamic Candidates and Planning without "
+    "a slow market snapshot; downstream freshness retains its separate authority.",
+    status="implemented",
+))
+def test_current_candidate_bootstrap_without_slow_cache(tmp_path, monkeypatch):
+    from tests.test_candidate_selection_utility import test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache
+    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)

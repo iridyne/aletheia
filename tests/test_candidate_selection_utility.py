@@ -8,25 +8,22 @@ import pytest
 from aletheia.config.schema import UniverseConfig
 
 
-def test_snapshot_actionability_precedes_capacity_and_is_not_rechecked(monkeypatch):
+def test_fast_route_actionability_does_not_require_slow_snapshots(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe import service, candidate_selection_shadow, snapshot_freshness
     from aletheia.universe.allocator import decorate_universe_candidates
+    from aletheia.storage import repositories as repo
     from tests.test_candidate_selection_convergence import _authority_bundle
 
     _, population = _authority_bundle(with_history=False)
     cfg = AletheiaConfig()
     cfg.universe.max_candidates = 3
-    monkeypatch.setattr(service, "fast_market_data_unavailability_reason", lambda *args: None)
+    route_reason = None
+    monkeypatch.setattr(service, "fast_market_data_unavailability_reason", lambda *args: route_reason)
     monkeypatch.setattr(candidate_selection_shadow, "load_candidate_selection_outcomes", lambda **kwargs: [])
-    blocked = set()
-    calls = []
-
-    def fresh(symbol, market_type, *, exchange=None, **kwargs):
-        calls.append((exchange, market_type, symbol))
-        return symbol not in blocked
-
-    monkeypatch.setattr(snapshot_freshness, "has_fresh_market_snapshot", fresh)
+    monkeypatch.setattr(snapshot_freshness, "has_fresh_market_snapshot",
+                        lambda *args, **kwargs: pytest.fail("slow snapshot must not own current admission"))
+    assert repo.get_db().execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0] == 0
 
     def select():
         bundle = service._build_candidate_selection_bundle(
@@ -35,19 +32,55 @@ def test_snapshot_actionability_precedes_capacity_and_is_not_rechecked(monkeypat
         )
         return candidate_selection_shadow.target_candidates_from_bundle(bundle, population)
 
-    original = select()
-    assert len(original) == 3
-    blocked.add(original[0]["symbol"])
     selected = select()
-    assert len(selected) == 3
-    assert not blocked.intersection(row["symbol"] for row in selected)
-    assert {row["symbol"] for row in original[1:]} <= {row["symbol"] for row in selected}
-    assert set(calls) == {(row["venue"], row["market_type"], row["symbol"]) for row in population}
-    assert all(row["execution_eligible"] for row in selected)
-    # Once T0 actionability is frozen, decoration cannot independently revoke it.
-    monkeypatch.setattr(snapshot_freshness, "has_fresh_market_snapshot", lambda *a, **k: pytest.fail("late recheck"))
+    assert len(selected) == 3 and all(row["execution_eligible"] for row in selected)
     decorate_universe_candidates(selected, cfg.universe)
     assert all(row["execution_eligible"] for row in selected)
+    route_reason = "fast_market_route_unsupported"
+    assert select() == []
+
+
+def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.storage import repositories as repo
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    db = repo.get_db()
+    for table in ("universe_members", "candidate_planning_generations", "market_snapshots"):
+        assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    assert candidate.symbol.startswith("COIN") and candidate.execution_eligible
+    generation = repo.get_candidate_planning_for_candidate(candidate.id)
+    assert generation and generation["status"] == "pending"
+    assert generation["candidate_id"] == candidate.id
+    assert db.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0] == 0
+
+
+def test_actionability_manifest_rotates_existing_policy_epoch(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = load_config()
+    current = candidate_selection_policy_identity(cfg)
+    old = {**current, "semantic_manifest": {**current["semantic_manifest"],
+        "actionability": "supported-mechanism-and-exact-snapshot-before-capacity/v1"}}
+    old_epoch = canonical_fingerprint(old)
+    cfg.universe.candidate_selection_policy_epoch = old_epoch
+    save_config(cfg)
+    restored = load_config()
+    assert restored.universe.candidate_selection_policy_epoch == canonical_fingerprint(current)
+    assert restored.universe.candidate_selection_policy_epoch != old_epoch
+    assert {k:v for k,v in old.items() if k != "semantic_manifest"} == {
+        k:v for k,v in current.items() if k != "semantic_manifest"}
+
 
 def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, monkeypatch):
     import json
@@ -125,9 +158,6 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
             closes = [100+slope*(i-limit+1) + (.3*(-1)**i if mechanism == "continuation" else 0) for i in range(limit)]
             return [[end-(limit-i)*step, close, close+.1, close-.1, close, 1000] for i, close in enumerate(closes)]
     monkeypatch.setattr(CCXTProvider, "_ensure_primary", lambda self, *args, **kwargs: Exchange())
-    from aletheia.storage.models import MarketSnapshot
-    for i in range(20):
-        repo.insert_market_snapshot(MarketSnapshot(symbol=f"COIN{i}/USDT", exchange="bitget", market_type=market_type, price=100, volume_24h=10_000_000))
     service = UniverseService()
     snapshot_id = asyncio.run(service.refresh())
     assert snapshot_id is not None, [dict(r) for r in repo.get_db().execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1")]
@@ -1599,3 +1629,26 @@ def test_startup_direction_conflict_and_zero_signal_do_not_hide_economic_rejecti
     assert decide(short, short_estimate).admission_basis == "startup"
     assert decide(replace(short, pessimistic_strength=1.0), short_estimate).admission_status == "direction_conflict"
     assert decide(short, replace(short_estimate, unavailable_reason="tail_harm")).admission_status == "unavailable"
+
+
+@pytest.mark.parametrize('reason', ['channel_event_not_observed', 'channel_stale'])
+def test_missing_required_fast_channel_cannot_authorize_order_intent(monkeypatch, reason):
+    from tests.test_entry_activation import _persist_observed_plan
+    from aletheia.storage import repositories as repo
+    from aletheia.trading.entry_activation import build_entry_trigger_activation
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent
+
+    plan, ready, now, _ = _persist_observed_plan(monkeypatch, 'OPPOSING_BBO_IOC')
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    repo.record_entry_plan_monitoring(plan.plan_id, {
+        'state': 'unavailable', 'stream_generation_id': ready.stream_generation_id,
+        'subscription_generation_id': ready.subscription_generation_id,
+        'required_channels': ['quote', 'trade', 'depth', 'candle'],
+        'channels': {'depth': {'state': 'unavailable', 'reason': reason}},
+    })
+    with pytest.raises(ValueError, match='monitoring_mismatch'):
+        repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+    with pytest.raises(ValueError, match='activation_required'):
+        build_entry_plan_order_intent(plan, bid=ready.bid, ask=ready.ask,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None

@@ -202,8 +202,14 @@ the required physical `total_score` column is not an economic authority.
 
 ## Pre-capacity actionability amendment — 2026-09-10
 
-Current actionability freezes the supported fast-market route and the existing
-exact venue/physical-market snapshot freshness result before capacity selection.
+As corrected by owner-approved #2917 (2026-09-11), current actionability freezes
+supported mechanism capability and the exact Fast Monitoring route before capacity
+selection. Exact T0 feature facts remain Hard Gate inputs. Slow `market_snapshots`
+freshness is not Candidate admission authority: dynamic snapshot targets depend on
+already-active Candidate/Planning work, so requiring that cache would prevent
+empty-Universe discovery from recovering. Planner still requires a fresh exact
+orderbook before model dispatch, and execution still requires fresh FastMarketStream
+channels and source/receipt evidence before Order Intent. Neither gate is relaxed.
 Post-selection decoration projects TTL/risk flags without rechecking eligibility.
 Unsupported or capability-gap mechanisms cannot become measured or Startup
 primaries. The explicit `regime.short_enabled` control applies before direction
@@ -211,7 +217,9 @@ comparison and is part of the policy identity. Detected regime is frozen once
 into current feature context, Candidate evidence and outcomes; it does not add
 an economic score or automatic directional bias.
 
-This B amendment rotates the current policy epoch through its actionability
+The #2917 actionability manifest `supported-mechanism-and-fast-route-before-capacity/v2`
+rotates the existing current policy epoch. The original B amendment rotated identity
+through its actionability
 contract material and short-control configuration. It does not rewrite A's
 historical golden policy, Context/Planning identity or any persisted evidence.
 Historical allocator replay retains its original late-decoration behavior.
