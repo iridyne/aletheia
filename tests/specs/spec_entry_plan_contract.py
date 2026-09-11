@@ -380,7 +380,7 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
 
 @spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
     "Entry preparation waits without external effects; only a fenced final market check starts submission.", status="implemented"))
-@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback", "invalidated"])
+@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback", "invalidated", "dependency_timeout", "adapter_timeout"])
 def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -424,7 +424,18 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         repo.insert_risk_decision(decision)
         return SimpleNamespace(approved=True, allowed_execution_mode="bitget_demo", decision_id=decision.id)
 
+    original_prepare = gateway._prepare_exchange_quantity
     def prepare(*args, **kwargs):
+        if scenario == "dependency_timeout":
+            from aletheia.execution import order_constraints
+            def unavailable(*args, **kwargs):
+                try:
+                    raise TimeoutError("temporary venue metadata read")
+                except TimeoutError as exc:
+                    raise order_constraints.ConstraintUnavailable("metadata refresh failed") from exc
+            with monkeypatch.context() as dependency:
+                dependency.setattr(order_constraints, "prepare_exchange_quantity", unavailable)
+                return original_prepare(*args, **kwargs)
         clock[0] = initial + timedelta(seconds=3)
         return args[3], None
 
@@ -450,7 +461,11 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
                 reason_code="post_only_rejected" if scenario == "venue_rejected" else None,
                 venue_order_id=None if scenario == "venue_rejected" else "demo-order-1")
 
-    monkeypatch.setattr(coordinator, "_create_bound_adapter", lambda *args: Adapter())
+    def create_adapter(*args):
+        if scenario == "adapter_timeout":
+            raise TimeoutError("temporary adapter dependency")
+        return Adapter()
+    monkeypatch.setattr(coordinator, "_create_bound_adapter", create_adapter)
 
     if scenario == "boundary_rollback":
         original_transition = coordinator.transition_entry_plan
@@ -485,8 +500,9 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         monkeypatch.setattr(gateway, "_prepare_exchange_quantity", prepare_expired)
     result = execute_entry_plan(plan.plan_id, **facts)
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
-    assert roles == ["preflight", "authoritative"]
-    if scenario in {"crossing", "stale", "unavailable"}:
+    first_roles = ["preflight"] if scenario == "dependency_timeout" else ["preflight", "authoritative"]
+    assert roles == first_roles
+    if scenario in {"crossing", "stale", "unavailable", "dependency_timeout", "adapter_timeout"}:
         assert result["status"] == "waiting_market"
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         assert proposal["status"] == "pending"
@@ -499,7 +515,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert recovered["status"] == "submitted"
         assert len(calls) == 1
         assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["commit_hash"] == original_hash
-        assert roles == ["preflight", "authoritative"] * 2
+        assert roles == first_roles + ["preflight", "authoritative"]
     elif scenario == "invalidated":
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         terminal_plan = repo.get_entry_plan(plan.plan_id)
@@ -531,3 +547,12 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     elif scenario == "boundary_rollback":
         errors = [event for event in audits if event.get("event_type") == "demo_order_error"]
         assert len(errors) == 1 and errors[0]["before"]["status"] == "pending"
+
+    if scenario == "slow":
+        from aletheia.storage.models import TradeProposal
+        late = gateway._terminal_execution_error(
+            TradeProposal.model_validate(repo.get_trade_proposal(proposal["id"])),
+            reason_code="execution_precheck_failed", safe_message="late preparation failure",
+        )
+        assert late["status"] == "submitted"
+        assert repo.get_trade_proposal(proposal["id"])["status"] == "submitted"

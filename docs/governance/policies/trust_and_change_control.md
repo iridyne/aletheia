@@ -87,6 +87,7 @@ pending -> approved -> executing
 pending ----------------> executing
 pending / approved -----> rejected
 approved ---------------> error
+pending ----------------> error  (Entry terminal preparation only; handoff proven absent)
 executing -> submitted -> partially_filled -> executed
 executing -------------------------------> executed
 executing / submitted / partially_filled -> error
@@ -111,6 +112,11 @@ Rules:
 - `rejected` means a human action or risk check rejected the proposal.
 - `error` means execution is confirmed not submitted or failed without an
   accepted venue handoff.
+  The owner-approved #3096 Entry `pending → error` edge requires a terminal
+  preparation failure with no Order and no possible Broker handoff. Temporary
+  market/dependency conditions remain WAIT with the Proposal pending; any possible
+  handoff remains reconciliation-owned. This edge never fabricates approval or
+  broadens unknown/accepted execution into a retryable preparation failure.
 - `submission_unknown` means venue acceptance cannot be disproved; automatic
   resubmission is forbidden until reconciliation.
 - `materialization_missing` means an Order or venue fill activity exists but the

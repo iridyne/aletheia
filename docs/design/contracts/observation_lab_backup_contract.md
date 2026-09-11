@@ -77,6 +77,23 @@ only the work required to prove one deployable cut:
    Main outbox watermark;
 5. save the changed cut and require strict `fingerprint_match`.
 
+Owner-approved #3096 adds one bounded applied-delivery admission to step 1.
+It requires all experiment/window/result/manifest evidence to be absent, only
+unclassified receipt audits, and a valid retry-free Main cursor. Replaying the
+retained receipt chain must reproduce the current cursor; reconstructing the prior
+cursor and removing only the suffix in memory must reproduce both the trusted full
+Lab fingerprint and checkpoint ledger. Every applied suffix receipt must match
+Main's immutable fields and have confirmed application/acknowledgement. App/Lab
+schema and manifest identity must remain unchanged. Pending receipts must stay
+identityless captures eligible for unclassified import. Missing, altered or other
+evidence refuses recovery without saving a checkpoint (OBC-UPD-04).
+
+Preflight may report this read-only proof as settlement-required, never as strict
+checkpoint health. The proof is repeated after producers stop under the cycle lock;
+only the existing importer and checkpoint writer complete the cut. All historical
+rows are preserved. This admission adds no reset/re-anchor/fallback mechanism and
+does not loosen the ordinary runner or behavior-bearing verification rules.
+
 When the strict checkpoint already matches and the delivery frontier is already
 caught up, the activation settlement is a read-only no-op: it reuses that trusted
 fingerprint and does not run empty importer, audit-mirror, pruning, compaction or
@@ -111,7 +128,7 @@ Once `verify_joint_checkpoint().ok is False` returns:
 
 ## 6. What this contract does NOT do
 
-- No automatic recovery. On a mismatch the operator resolves it manually — either by rolling forward the lagging file or by declaring the mismatch acceptable (a deliberate ledger reset) and starting a new checkpoint chain. The Lab cannot know which is correct.
+- No generic automatic recovery, reset, or fallback. Only the explicitly proven applied-delivery suffix above may enter update settlement; all other mismatches require separate owner resolution and must not create a replacement baseline.
 - No incremental/Merkle checkpoint ledger. Checkpoint computation remains the current canonical full-state proof; performance work may remove redundant computations but may not replace strict evidence with an unverified cache.
 - No permission to skip, delete or force-acknowledge a blocking receipt. The contiguous importer remains fail-closed.
 

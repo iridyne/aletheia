@@ -40,6 +40,20 @@ drains the shared bridge, rejects failed/retry/unavailable state, and requires a
 strict `fingerprint_match`. Failure restarts the unchanged old runtime; it never
 replaces an unproven checkpoint baseline.
 
+Owner-approved #3096 bounded recovery additionally admits an applied receipt suffix
+only when its complete retained receipt chain reconstructs the trusted prior Lab
+fingerprint and checkpoint ledger exactly, with unchanged app/Lab schema and manifests.
+Eligibility requires no Observation experiment/window/result/manifest evidence,
+unclassified receipt audits only, a valid retry-free Main cursor, and exact immutable
+Main receipt matches with confirmed application and acknowledgement. Pending receipts
+must remain identityless capture receipts eligible for the same unclassified importer path.
+The preflight proof is read-only and only permits entry into settlement; settlement
+repeats it after producers stop under the existing worker lock, drains through the
+existing importer, saves through the existing checkpoint writer and requires strict
+`fingerprint_match`. It preserves all history and adds no reset, re-anchor override,
+or fallback. Any unmatched prior state, receipt, retry, schema or evidence rejects
+recovery without writing a checkpoint.
+
 ## Target-loaded post-pull boundary
 
 The interactive updater process necessarily starts under the pre-update checkout. After `git pull`, its existing Python objects and `sys.modules` entries are therefore treated as stale for target-owned semantics.
