@@ -289,7 +289,12 @@ def bounded_entry_ioc_price(plan: EntryPlan, *, bid: float, ask: float) -> float
         max_slippage_bps=plan.max_slippage_bps, worst_price=plan.worst_price)
     limit = plan.ioc_limit_price
     long = plan.direction == "long"
-    if (not plan.entry_zone[0] <= reference <= plan.entry_zone[1]
+    improving_direct = (
+        plan.activation_policy == "IMMEDIATE"
+        and plan.capture_priority in {"MAKER_PREFERRED", "FILL_FIRST"}
+        and (reference <= plan.entry_zone[0] if long else reference >= plan.entry_zone[1])
+    )
+    if (not (improving_direct or plan.entry_zone[0] <= reference <= plan.entry_zone[1])
         or (reference > limit if long else reference < limit)):
         raise ValueError("entry_ioc_outside_frozen_bounds")
     return limit

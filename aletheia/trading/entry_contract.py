@@ -55,6 +55,7 @@ def entry_contract_fingerprints() -> tuple[str, str]:
         "triggers": [trigger_contract_material(spec) for spec in registered_trigger_specs()],
         "profiles": [profile.as_dict() for profile in registered_entry_profiles()],
         "submission_authority": "pre-broker-current-market/v1",
+        "direct_ioc_eligibility": "frozen-limit-price-improvement/v1",
         "route_permissions": ENTRY_EXECUTION_MINIMUM_PERMISSION,
     }
     return hashlib.sha256(canonical(behavior_material).encode()).hexdigest(), schema
