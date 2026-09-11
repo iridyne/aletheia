@@ -114,7 +114,7 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
         def market(self, symbol):
             return self.markets[symbol]
         async def fetch_tickers(self, symbols):
-            return {s: {"last": 100, "quoteVolume": 10_000_000, "percentage": 5 if mechanism == "continuation" else 0, "bid": 99.99, "ask": 100.01} for s in symbols}
+            return {s: {"symbol": s, "last": 100, "quoteVolume": 10_000_000, "percentage": 5 if mechanism == "continuation" else 0, "bid": 99.99, "ask": 100.01} for s in symbols}
         async def fetch_order_book(self, symbol, limit=20):
             return {"symbol": symbol, "bids": [[99.99, 10000]], "asks": [[100.01, 10000]]}
         async def fetch_ohlcv(self, symbol, timeframe="1h", limit=100, **kwargs):
@@ -125,9 +125,6 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
             closes = [100+slope*(i-limit+1) + (.3*(-1)**i if mechanism == "continuation" else 0) for i in range(limit)]
             return [[end-(limit-i)*step, close, close+.1, close-.1, close, 1000] for i, close in enumerate(closes)]
     monkeypatch.setattr(CCXTProvider, "_ensure_primary", lambda self, *args, **kwargs: Exchange())
-    from aletheia.storage.models import MarketSnapshot
-    for i in range(20):
-        repo.insert_market_snapshot(MarketSnapshot(symbol=f"COIN{i}/USDT", exchange="bitget", market_type=market_type, price=100, volume_24h=10_000_000))
     service = UniverseService()
     snapshot_id = asyncio.run(service.refresh())
     assert snapshot_id is not None, [dict(r) for r in repo.get_db().execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1")]
@@ -137,6 +134,29 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     assert candidate.opportunity_mechanism == mechanism and candidate.scanner_direction == direction
     assert candidate.candidate_selection_policy_epoch == cfg.universe.candidate_selection_policy_epoch
     return candidate
+
+def test_cold_discovery_publishes_candidates_after_legacy_experiment_retirement(tmp_path, monkeypatch):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.loader import load_config
+    from aletheia.observation_lab.canonical import set_authority_source
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.migrations import retire_legacy_experiment_tables
+
+    setup_env(tmp_path, monkeypatch)
+    set_authority_source("lab", actor="schema_migration", reason="fresh_install_lab_authority")
+    retire_legacy_experiment_tables()
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.regime.enabled = False
+    candidate = _controlled_admitted_target_candidate(
+        cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+    )
+    generation = repo.get_db().execute(
+        "SELECT * FROM candidate_planning_generations WHERE last_candidate_id=?", (candidate.id,),
+    ).fetchone()
+    assert generation["status"] == "pending"
+    assert generation["symbol"] == candidate.symbol
+
 
 def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env

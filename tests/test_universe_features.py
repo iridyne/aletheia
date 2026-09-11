@@ -689,3 +689,117 @@ async def test_discovery_rejects_unavailable_books_without_persisting(tmp_path, 
     else:
         assert await call is None
     assert repo.latest_orderbook("ETH/USDT", exchange="okx", market_type="spot") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", [
+    "spot", "perp", "receipt_time", "missing_ticker", "missing_identity",
+    "wrong_symbol", "wrong_venue", "wrong_market", "stale", "stale_datetime", "future",
+    "bool_timestamp", "nan_price", "bool_price", "negative_volume",
+    "invalid_high", "low_volume", "persist_failure",
+])
+async def test_discovery_ticker_bootstraps_exact_snapshot_gate(tmp_path, monkeypatch, case):
+    from tests.test_entry_logic import setup_env
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data import ccxt_provider
+    from aletheia.storage import repositories as repo
+    from aletheia.universe import features
+    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
+
+    setup_env(tmp_path, monkeypatch)
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "okx"
+    cfg.universe.min_volume_24h_usdt = 1000
+    market_type = "perp" if case == "perp" else "spot"
+    symbol = "ETH/USDT:USDT" if market_type == "perp" else "ETH/USDT"
+    observed_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+    if case in {"stale", "stale_datetime"}:
+        observed_at -= timedelta(hours=3)
+    elif case == "future":
+        observed_at += timedelta(hours=1)
+    ticker = {
+        "symbol": symbol, "last": 100, "quoteVolume": 1000000,
+        "percentage": 0, "timestamp": int(observed_at.timestamp() * 1000),
+    }
+    ticker.update({
+        "receipt_time": {"timestamp": None},
+        "stale_datetime": {"timestamp": None, "datetime": observed_at.isoformat()},
+        "missing_identity": {"symbol": None},
+        "wrong_symbol": {"symbol": "ETH/USDT:USDT"},
+        "bool_timestamp": {"timestamp": True},
+        "nan_price": {"last": float("nan")},
+        "bool_price": {"last": True},
+        "negative_volume": {"quoteVolume": -1},
+        "invalid_high": {"high": float("inf")},
+        "low_volume": {"quoteVolume": 1},
+    }.get(case, {}))
+
+    class Exchange:
+        id = "bitget" if case == "wrong_venue" else "okx"
+        options = {}
+        markets = {symbol: {
+            "symbol": symbol, "spot": market_type == "spot" and case != "wrong_market",
+            "swap": market_type == "perp" or case == "wrong_market",
+            "contract": market_type == "perp" or case == "wrong_market",
+        }}
+
+        def market(self, requested):
+            return self.markets[requested]
+
+        async def load_markets(self):
+            return self.markets
+
+        async def fetch_tickers(self, symbols):
+            return {} if case == "missing_ticker" else {symbol: ticker}
+
+    class Provider:
+        def __init__(self, **kwargs):
+            pass
+
+        def _ensure_primary(self, *args):
+            return Exchange()
+
+        async def close(self):
+            pass
+
+    expected = case in {"spot", "perp", "receipt_time"}
+
+    async def fetch_feature(exchange, asset, *args, **kwargs):
+        # The real pre-capacity consumer must already see the DB fact before
+        # feature collection returns, with no Candidate/Position seeded.
+        assert has_fresh_market_snapshot("ETH/USDT", market_type, exchange="okx") is expected
+        return {"asset_id": asset["id"]}
+
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(features, "_fetch_single_feature", fetch_feature)
+    if case == "persist_failure":
+        def fail_write(_snapshots):
+            raise OSError("snapshot writer unavailable")
+        monkeypatch.setattr(repo, "insert_market_snapshot_batch", fail_write)
+    call = features.collect_features([{
+        "id": "discovered", "symbol": "ETH/USDT", "venue": "okx", "market_type": market_type,
+    }], cfg)
+    if case == "persist_failure":
+        with pytest.raises(OSError, match="snapshot writer unavailable"):
+            await call
+    elif case in {"missing_ticker", "negative_volume"}:
+        with pytest.raises(RuntimeError, match="universe_feature_collection_unavailable"):
+            await call
+    else:
+        await call
+    assert has_fresh_market_snapshot("ETH/USDT", market_type, exchange="okx") is expected
+    assert not has_fresh_market_snapshot("ETH/USDT", market_type, exchange="bitget")
+    assert not has_fresh_market_snapshot(
+        "ETH/USDT", "spot" if market_type == "perp" else "perp", exchange="okx",
+    )
+    rows = repo.list_market_snapshots(symbol="ETH/USDT", exchange="okx", market_type=market_type)
+    if case in {"stale", "stale_datetime"}:
+        assert len(rows) == 1
+        assert datetime.fromisoformat(rows[0]["snapshot_at"]) == (
+            observed_at if case == "stale_datetime" else datetime.fromtimestamp(
+                ticker["timestamp"] / 1000, timezone.utc,
+            )
+        )
+    elif not expected:
+        assert rows == []
+
