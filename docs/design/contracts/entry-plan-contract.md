@@ -541,3 +541,27 @@ Current-product RED cases deliberately retain the missing Immediate IOC and
 MakerPreferred contract boundary; they are not evidence of implemented remainder
 or cancellation behavior. Their strict expected failures must be revisited at the
 corresponding serial stage, not hidden by relaxing a test or current contract.
+
+### Capture compilation contract (#3111 Stage 2)
+
+Current `EntryHypothesis` uses `capture_priority`, nonempty `capture_reason` and
+`capture_evidence_refs`; tactic-shaped `execution_urgency` is retired. At least one
+capture reference must name a supplied current market fact. Learning alone cannot
+supply that authority. `NO_PLAN` clears all three fields. AI still supplies no
+price, quantity, timeout or slippage values.
+
+`grounded-anchor-direct` owns Immediate activation; retrace/reclaim owns
+Conditional activation. Both may compile PriceFirst, MakerPreferred or FillFirst.
+The Compiler freezes one `capture_policy_id` in EntryPlan. PriceFirst has no
+passive timeout, MakerPreferred has one 60-second passive attempt, and FillFirst
+has no passive attempt. Existing `max_wait_sec` stores that policy value and
+`worst_price` stores the already-derived geometry bound; no second numeric envelope
+is introduced. The policy registry participates in machine behavior fingerprints.
+Plan validation rejects a mismatched policy/tactic, timeout or geometry bound.
+
+Historical rows and hashes are not migrated. The old profile literal remains
+readable in stored Plans; it is absent from the current model-facing registry.
+The current fingerprint boundary prevents historical hypotheses from acquiring
+new-policy authority. Compilation does not establish support for a second order
+leg: Stage 3/4 must wire canonical claims, Risk, Order/Fill and reconciliation
+before deployment of the new capture contract.

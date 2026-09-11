@@ -51,7 +51,7 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     context = EntryAnalysisContext.model_validate(data)
     hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
+        entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW",
         horizon="SWING", supporting_fact_refs=(invalidation.anchor_id,))
     plan = compile_entry_plan(generation, context, hypothesis, cfg)
     assert plan.expected_horizon_hours == 24
@@ -178,7 +178,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
             and (a["price"] < 100 if direction == "long" else a["price"] > 100))
         hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
             primary_anchor_ref=primary["anchor_id"], invalidation_anchor_ref=invalidation["anchor_id"],
-            entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
+            entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation["anchor_id"],), risk_tier="LOW",
             horizon="SWING" if school == "serenity" else "INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],))
         from aletheia.agents import helpers
         from aletheia.model_provider.base import ModelResponse
@@ -251,8 +251,8 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         direction="long",
         primary_anchor_ref=primary.anchor_id,
         invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id=("grounded-anchor-retrace-reclaim" if triggered else "grounded-anchor-resting-maker"),
-        execution_urgency="BOUNDED_URGENT" if triggered else "PASSIVE",
+        entry_profile_id=("grounded-anchor-retrace-reclaim" if triggered else "grounded-anchor-direct"),
+        capture_priority="FILL_FIRST" if triggered else "PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(primary.anchor_id,),
         risk_tier="LOW",
         horizon="INTRADAY",
         supporting_fact_refs=(primary.anchor_id,),

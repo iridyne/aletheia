@@ -24,8 +24,12 @@ class EntryProfileCapability:
     trigger_freshness_ms: int | None
     unavailable_reason: str | None = None
 
+    @property
+    def activation_policy(self) -> Literal["IMMEDIATE", "CONDITIONAL"]:
+        return "CONDITIONAL" if self.trigger_spec_id else "IMMEDIATE"
+
     def as_dict(self) -> dict[str, object]:
-        return {"id": self.profile_id, **{key: value for key, value in asdict(self).items() if key != "profile_id"}}
+        return {"id": self.profile_id, "activation_policy": self.activation_policy, **{key: value for key, value in asdict(self).items() if key != "profile_id"}}
 
 
 _SUPPORTED: tuple[Mechanism, ...] = (
@@ -33,7 +37,7 @@ _SUPPORTED: tuple[Mechanism, ...] = (
 )
 _REGISTRY = (
     EntryProfileCapability(
-        "grounded-anchor-resting-maker", _SUPPORTED,
+        "grounded-anchor-direct", _SUPPORTED,
         ("market_structure", "execution_context"),
         ("candidate_reference", "causal_breakout", "confirmed_swing", "broken_structure_level"),
         ("confirmed_swing", "broken_structure_level"),

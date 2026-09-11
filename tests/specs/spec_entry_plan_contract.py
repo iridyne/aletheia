@@ -194,7 +194,7 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
             "primary_anchor_ref": "anchor:ignored",
             "invalidation_anchor_ref": "anchor:ignored-too",
             "entry_profile_id": "anchor-resting-maker",
-            "execution_urgency": "PASSIVE",
+            "capture_priority": "PRICE_FIRST",
             "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [],
@@ -204,7 +204,7 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
     assert no_plan.primary_anchor_ref is None
     assert no_plan.invalidation_anchor_ref is None
     assert no_plan.entry_profile_id is None
-    assert no_plan.execution_urgency is None
+    assert no_plan.capture_priority is None
     assert no_plan.risk_tier == "NONE"
     assert no_plan.horizon == "NONE"
 
