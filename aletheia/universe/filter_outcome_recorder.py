@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -185,6 +186,13 @@ async def settle_due_filter_outcomes(
         """
         if is_deferred(observation):
             return _DEFERRED
+        canonical = row.get("scanner_family") == "candidate_selection_utility"
+        if canonical and (
+            not observation
+            or observation.get("price_source") not in {"horizon_ohlcv", "horizon_ohlcv_local"}
+            or any(observation.get(field) is None for field in ("range_high", "range_low"))
+        ):
+            return _DEFERRED
         price = observation.get("exit_price") if observation else None
         if price is None or float(price) <= 0:
             repo.fail_filter_candidate_outcome(row["id"], settled_at=now_iso)
@@ -226,7 +234,7 @@ async def settle_due_filter_outcomes(
         execution_fee_pct = cfg.trading.execution_fee_pct
         slippage_bps = cfg.trading.slippage_bps
         fallback_spread_bps = cfg.universe.max_spread_bps
-        if row.get("scanner_family") == "candidate_selection_utility":
+        if canonical:
             try:
                 cost_snapshot = repo.candidate_selection_cost_assumptions(
                     str(row["outcome_candidate_key"])
@@ -253,6 +261,14 @@ async def settle_due_filter_outcomes(
             range_low=observation.get("range_low"),
             price_quality_ok=True,
         )
+        if canonical and any(
+            economics.get(field) is None or not math.isfinite(economics[field])
+            for field in (
+                "net_return_pct", "mae_pct", "min_tradable_edge_pct",
+                "estimated_fee_pct", "estimated_spread_slippage_pct", "estimated_funding_pct",
+            )
+        ):
+            return _DEFERRED
         won = repo.settle_filter_candidate_outcome(
             row["id"],
             exit_price=exit_price,

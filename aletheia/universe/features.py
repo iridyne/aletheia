@@ -15,7 +15,7 @@ from aletheia.data.symbols import (
     instrument_analysis_context,
     instrument_background_from_metadata,
 )
-from aletheia.storage.models import UniverseFeatureSnapshot
+from aletheia.storage.models import MarketSnapshot, UniverseFeatureSnapshot
 from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
 from aletheia.trading.technical_analysis import TechnicalBar, timeframe_milliseconds
@@ -497,10 +497,71 @@ async def _chunked_fetch_tickers(exchange, symbols: list[str]) -> dict:
     for i in range(0, len(valid), _TICKER_CHUNK_SIZE):
         chunk = valid[i:i + _TICKER_CHUNK_SIZE]
         try:
-            all_tickers.update(await exchange.fetch_tickers(chunk))
+            response = await exchange.fetch_tickers(chunk)
+            received_at = datetime.now(timezone.utc)
+            for symbol in chunk:
+                ticker = response.get(symbol)
+                if isinstance(ticker, dict) and ticker:
+                    ticker["_received_at"] = received_at
+                    all_tickers[symbol] = ticker
         except Exception as e:
             logger.warning("Ticker chunk %d-%d failed: %s", i, i + len(chunk), e)
     return all_tickers
+
+
+def _discovery_market_snapshot(
+    exchange, asset: dict, ticker: dict, ccxt_symbol: str,
+) -> MarketSnapshot | None:
+    """Keep the exact raw ticker observation, never the later OHLCV price/time."""
+    try:
+        venue = str(asset.get("venue") or "")
+        if not venue or getattr(exchange, "id", None) != venue:
+            return None
+        market = exchange.market(ccxt_symbol)
+        market_type = asset.get("market_type")
+        if market_type in {"swap", "usdt_futures"}:
+            market_type = "perp"
+        physical_flag = {"spot": "spot", "perp": "swap", "futures": "future"}.get(market_type)
+        if (
+            physical_flag is None or not market.get(physical_flag)
+            or market.get("symbol") != ccxt_symbol
+            or bool(market.get("contract")) != (market_type != "spot")
+            or ticker.get("symbol") != ccxt_symbol
+        ):
+            return None
+        received_at = ticker["_received_at"]
+        # Match the ticker contract receipt-time policy only without source time.
+        # An old provider observation must never acquire the later assembly time.
+        observed_at = received_at
+        if ticker.get("timestamp") is not None:
+            timestamp = _positive_float(ticker["timestamp"])
+            if timestamp is None:
+                return None
+            observed_at = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+        elif ticker.get("datetime") is not None:
+            observed_at = datetime.fromisoformat(ticker["datetime"].replace("Z", "+00:00"))
+            if observed_at.tzinfo is None:
+                return None
+        if observed_at > received_at:
+            return None
+        if ticker.get("quoteVolume") is None and (
+            ticker.get("baseVolume") is None
+            or (market.get("contract") and _positive_float(market.get("contractSize")) is None)
+        ):
+            return None
+        volume = _quote_volume_24h(exchange, ccxt_symbol, ticker)
+        if volume is None:
+            return None
+        return MarketSnapshot(
+            symbol=asset["symbol"], market_type=market_type, exchange=venue,
+            price=ticker.get("last") if ticker.get("last") is not None else ticker.get("close"),
+            volume_24h=volume, change_pct_24h=ticker.get("percentage"),
+            high_24h=ticker.get("high"), low_24h=ticker.get("low"),
+            provider=venue, snapshot_at=observed_at.astimezone(timezone.utc).isoformat(),
+        )
+    except (AttributeError, KeyError, TypeError, ValueError, OverflowError, OSError):
+        logger.debug("Discovery ticker unavailable", exc_info=True)
+        return None
 
 
 async def _fetch_feature_orderbook(exchange, asset: dict, ccxt_symbol: str) -> dict | None:
@@ -1112,6 +1173,20 @@ async def collect_features(
             "Volume pre-filter: %d/%d assets pass (min_vol=%.0f USDT)",
             len(candidates), len(assets), min_vol,
         )
+
+        # Bootstrap the existing pre-capacity exact-snapshot gate from this
+        # discovery population, without requiring an already admitted Candidate.
+        market_snapshots = []
+        for asset, ticker in candidates:
+            is_perp = _is_derivatives_market(asset.get("market_type"))
+            snapshot = _discovery_market_snapshot(
+                perp_exchange if is_perp else spot_exchange, asset, ticker,
+                to_ccxt_perp(asset["symbol"]) if is_perp else asset["symbol"],
+            )
+            if snapshot is not None:
+                market_snapshots.append(snapshot)
+        if market_snapshots:
+            repo.insert_market_snapshot_batch(market_snapshots)
 
         # --- BTC baseline for crypto-relative features only ---
         btc_return_24h = None

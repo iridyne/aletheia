@@ -233,6 +233,72 @@ def test_candidate_settlement_uses_capture_time_costs_without_learning_tables(mo
     assert row["net_return_pct"] == pytest.approx(1.70)
 
 
+def test_candidate_retries_until_complete_horizon_economics(monkeypatch):
+    import math
+
+    from aletheia.data.providers import Candle, Ticker
+    from aletheia.storage import repositories as repo
+    from aletheia.universe.economic_utility import (
+        CANDIDATE_SELECTION_OUTCOME_VERSION,
+        estimate_economic_utility,
+    )
+    from aletheia.universe.filter_outcome_recorder import settle_due_filter_outcomes
+    from aletheia.universe.opportunity_evidence import OPPORTUNITY_EVIDENCE_VERSION
+
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    due_ms = now_ms // 300_000 * 300_000 - 300_000
+    entry_ms = due_ms - 4 * 3_600_000
+    outcome = _hourly_filter_outcome("candidate-selection-utility:v1:path:long", entry_ms, due_ms)
+    outcome.horizon = "4h"
+    outcome.scanner_family = "candidate_selection_utility"
+    repo.insert_filter_candidate_outcomes_batch([outcome])
+    costs = {"execution_fee_pct": 0.10, "slippage_bps": 0.0, "fallback_spread_bps": 10.0}
+    monkeypatch.setattr(repo, "candidate_selection_cost_assumptions", lambda _key: costs)
+
+    class Provider(_PersistingProvider):
+        async def get_ticker(self, instrument):
+            return Ticker(instrument.symbol, 102.0, 1000.0, 2.0, provider=instrument.exchange)
+
+    provider = Provider(entry_ms, bars=0)
+    monkeypatch.setattr(
+        "aletheia.data.ccxt_provider.get_market_data_provider",
+        lambda *args, **kwargs: provider,
+    )
+    complete = [
+        Candle(entry_ms + i * 300_000, 100, 103, 99, 102, 10) for i in range(48)
+    ]
+    # Ticker-only, a fresh tail, and a count-preserving duplicate hiding a gap
+    # must all remain retryable; none proves the horizon MAE.
+    for bars in ([], complete[-1:], complete[:20] + [complete[19]] + complete[21:]):
+        provider._candles = bars
+        assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 0
+        row = repo.get_db().execute(
+            "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+        ).fetchone()
+        assert row["status"] == "pending"
+        assert row["settled_at"] is None
+
+    provider._candles = complete
+    assert asyncio.run(settle_due_filter_outcomes(max_rows=1)) == 1
+    row = dict(repo.get_db().execute(
+        "SELECT * FROM filter_candidate_outcomes WHERE id=?", (outcome.id,)
+    ).fetchone())
+    assert row["status"] == "settled"
+    assert math.isfinite(row["net_return_pct"])
+    assert row["mae_pct"] == pytest.approx(-1.0)
+    row.update(
+        scanner_run_id="path-run", mechanism_id="momentum", strength_quintile=5,
+        mechanism_behavior_version=OPPORTUNITY_EVIDENCE_VERSION,
+        outcome_contract_version=CANDIDATE_SELECTION_OUTCOME_VERSION, cost_assumptions=costs,
+    )
+    estimate = estimate_economic_utility(
+        candidate_key="next-candidate", mechanism_id="momentum", direction="long",
+        venue="okx", market_type="spot", strength_percentile=0.9, outcomes=[row],
+        source_cutoff_at=datetime.now(timezone.utc).isoformat(), cost_assumptions=costs,
+    )
+    assert estimate.unavailable_reason == "parent_sample_insufficient"
+
+
 def _due_filter_outcome(key, *, horizon="24h", hours_ago=25):
     """A canonical outcome whose 24h horizon is already past due."""
     from aletheia.storage.models import FilterCandidateOutcome

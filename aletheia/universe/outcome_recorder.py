@@ -16,6 +16,7 @@ Self-evolution Tier 1:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -618,7 +619,8 @@ async def _batch_fetch_market_observations(
         # consume one of the _MAX_CONCURRENT_FETCHES network permits, which is
         # where the throughput comes from. Only a miss (absent / stale / short)
         # falls through to the exchange below.
-        local, reason = _local_observation(plan)
+        require_complete = row.get("scanner_family") == "candidate_selection_utility"
+        local, reason = _local_observation(plan, require_complete=require_complete)
         local_reasons[reason] = local_reasons.get(reason, 0) + 1
         if local is not None:
             return plan.row_id, local
@@ -644,6 +646,7 @@ async def _batch_fetch_market_observations(
                     entry_ms=plan.entry_ms,
                     due_ms=plan.due_ms,
                     bar_ms=plan.bar_ms,
+                    require_complete=require_complete,
                 )
                 if window is not None:
                     return plan.row_id, {
@@ -662,6 +665,9 @@ async def _batch_fetch_market_observations(
                     plan.horizon,
                     exc,
                 )
+
+            if require_complete:
+                return plan.row_id, deferred_observation("horizon_path_incomplete")
 
             try:
                 ticker = require_exact_ticker_venue(
@@ -793,7 +799,9 @@ def local_market_observations(
             reasons["unplannable"] = reasons.get("unplannable", 0) + 1
             misses.append(row)
             continue
-        observation, reason = _local_observation(plan)
+        observation, reason = _local_observation(
+            plan, require_complete=row.get("scanner_family") == "candidate_selection_utility"
+        )
         reasons[reason] = reasons.get(reason, 0) + 1
         if observation is not None:
             observations[plan.row_id] = observation
@@ -898,6 +906,7 @@ def _window_observation(
     entry_ms: int,
     due_ms: int,
     bar_ms: int,
+    require_complete: bool = False,
 ) -> dict | None:
     """Aggregate the eligible fixed-horizon window; None when unusable.
 
@@ -914,6 +923,8 @@ def _window_observation(
 
     ``bar_ms <= 0`` (unsupported timeframe: ``timeframe_ms()`` returns 0) yields
     None rather than degenerating the predicate into an at-``due_at`` lookahead.
+    Canonical Candidate evidence additionally requires every aligned eligible bar,
+    without gaps or duplicates, and finite positive prices before reporting MAE.
     """
     if bar_ms <= 0:
         return None
@@ -923,6 +934,16 @@ def _window_observation(
     )
     if not eligible:
         return None
+    if require_complete:
+        expected = _expected_bar_count(entry_ms=entry_ms, due_ms=due_ms, bar_ms=bar_ms)
+        first = -(-entry_ms // bar_ms) * bar_ms
+        if len(eligible) != expected or any(
+            bar[0] != first + index * bar_ms
+            or not all(math.isfinite(value) and value > 0 for value in bar[1:])
+            or not bar[2] <= bar[3] <= bar[1]
+            for index, bar in enumerate(eligible)
+        ):
+            return None
     last = eligible[-1]
     if due_ms - (last[0] + bar_ms) > max(60_000, bar_ms * 2):
         return None
@@ -1006,7 +1027,9 @@ def _local_window_bars(
         return []
 
 
-def _local_observation(plan: _ObservationPlan) -> tuple[dict | None, str]:
+def _local_observation(
+    plan: _ObservationPlan, *, require_complete: bool = False
+) -> tuple[dict | None, str]:
     """Try to satisfy one observation from the persisted market_ohlcv window.
 
     Returns ``(observation, reason)`` where reason is one of hit / absent / stale /
@@ -1027,7 +1050,8 @@ def _local_observation(plan: _ObservationPlan) -> tuple[dict | None, str]:
     if not bars:
         return None, "absent"
     window = _window_observation(
-        bars, entry_ms=plan.entry_ms, due_ms=plan.due_ms, bar_ms=plan.bar_ms
+        bars, entry_ms=plan.entry_ms, due_ms=plan.due_ms, bar_ms=plan.bar_ms,
+        require_complete=require_complete,
     )
     if window is None:
         return None, "stale"

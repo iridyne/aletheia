@@ -13,7 +13,6 @@ from aletheia.config.schema import UniverseConfig
 
 LEGACY_CANDIDATE_POLICY = "legacy_total_score_v1"
 TARGET_CANDIDATE_POLICY = "candidate_selection_utility_v1"
-_PAPER_STAGES = frozenset({"paper_10", "paper_25", "paper_50", "paper_active"})
 _TRANSITION_JOURNAL = "candidate_selection_authority_transition.json"
 
 
@@ -191,18 +190,6 @@ def learning_candidate_selection_overlap_block_reason(
     return None
 
 
-def candidate_selection_overlap_block_reason() -> str | None:
-    """Prevent two Candidate-ranking authorities from operating together."""
-
-    try:
-        from aletheia.learning.ledger import list_open_experiments
-
-        rows = list_open_experiments(path_id="universe_family_calibration")
-    except Exception:
-        return "candidate_selection_overlap_evidence_unavailable"
-    if any(str(row.get("stage") or "") in _PAPER_STAGES for row in rows):
-        return "candidate_selection_overlapping_learning_authority"
-    return None
 
 
 def candidate_selection_authority_block_reason(cfg: object) -> str | None:
@@ -226,7 +213,6 @@ __all__ = [
     "candidate_selection_semantic_manifest",
     "candidate_selection_policy_identity",
     "learning_candidate_selection_overlap_block_reason",
-    "candidate_selection_overlap_block_reason",
     "candidate_selection_authority_block_reason",
     "recover_candidate_selection_authority_transition",
     "stage_candidate_selection_authority_transition",

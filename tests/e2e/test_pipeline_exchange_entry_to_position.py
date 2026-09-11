@@ -165,17 +165,31 @@ def _approving_risk(monkeypatch):
 
 def _drive_entry(plan):
     from aletheia.execution.entry_plan_execution import execute_entry_plan
-    from tests.test_entry_plan_execution import _execution_receipt_kwargs
+    from aletheia.trading.entry_activation import build_entry_trigger_activation
+    from tests.test_entry_activation import _observed_activation
 
-    now = datetime.now(timezone.utc)
+    _, ready, now = _observed_activation()
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    repo.record_entry_plan_monitoring(plan.plan_id, {
+        "state": "ready",
+        "stream_generation_id": ready.stream_generation_id,
+        "subscription_generation_id": ready.subscription_generation_id,
+    })
+    assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
     return execute_entry_plan(
         plan.plan_id,
-        bid=100,
-        ask=100.05,
-        observed_at=now.isoformat(),
-        source_observed_at=now.isoformat(),
-        now=now,
-        **_execution_receipt_kwargs(now, depth=True),
+        bid=ready.bid, ask=ready.ask,
+        observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now,
+        stream_generation_id=ready.stream_generation_id,
+        subscription_generation_id=ready.subscription_generation_id,
+        quote_sequence=ready.quote_sequence,
+        required_channels=("quote", "trade", "depth", "candle"),
+        depth_bids=ready.depth_bids, depth_asks=ready.depth_asks,
+        depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
+        depth_received_timestamp_ms=ready.depth_received_timestamp_ms,
+        depth_sequence=ready.depth_sequence,
+        trigger_activation_id=activation.activation_id,
+        trigger_activation_hash=activation.activation_hash,
     )
 
 
@@ -184,14 +198,30 @@ def _seeded_plan():
 
 
 def _seeded_plan_with(plan_updates):
-    from tests.test_entry_plan_execution import _persist_waiting_plan
+    from aletheia.storage.models import EntryPlanRecord
+    from aletheia.trading.entry_plan import entry_plan_payload
+    from tests.test_entry_activation import _observed_activation
+    from tests.test_entry_planner import _typed_candidate
 
-    return _persist_waiting_plan(
-        account_mode=_MODE,
-        mode="TRIGGERED",
-        tactic="OPPOSING_BBO_IOC",
-        plan_updates=plan_updates,
-    )
+    plan, _, _ = _observed_activation()
+    candidate = _typed_candidate(mechanism="continuation", family="momentum")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    plan = plan.model_copy(update={
+        "planning_generation_id": generation["id"],
+        "candidate_id": candidate.id,
+        "execution_account_mode": _MODE,
+        **(plan_updates or {}),
+    })
+    payload, digest = entry_plan_payload(plan)
+    # This suite starts at an approved Plan; Planner compilation is tested separately.
+    repo._insert("entry_plans", EntryPlanRecord(
+        id=plan.plan_id, planning_generation_id=generation["id"],
+        candidate_id=candidate.id, planning_key=generation["planning_key"],
+        venue=plan.venue, symbol=plan.symbol, market_type=plan.market_type,
+        direction=plan.direction, execution_mode=plan.execution_mode,
+        plan_json=payload, plan_hash=digest,
+    ).model_dump())
+    return plan
 
 
 def _private_entry_fill(order: dict, *, quantity=None, fee="0.02", fee_coin="USDT"):
@@ -211,17 +241,11 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     e2e_db, monkeypatch
 ):
     from aletheia.execution import gateway
-    from aletheia.execution.entry_plan_execution import execute_entry_plan
     from aletheia.storage.models import RiskDecision
     from types import SimpleNamespace
-    from tests.test_entry_plan_execution import (
-        _execution_receipt_kwargs,
-        _persist_waiting_plan,
-    )
 
     submitted, identity_of = _wire_venue(monkeypatch)
-    plan = _persist_waiting_plan(account_mode=_MODE, mode="TRIGGERED",
-                                 tactic="OPPOSING_BBO_IOC")
+    plan = _seeded_plan()
 
     def approve(proposal, *, decision_role, execution_receipt=None):
         decision = RiskDecision(
@@ -243,16 +267,7 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
 
     monkeypatch.setattr(gateway, "evaluate_proposal", approve)
 
-    now = datetime.now(timezone.utc)
-    result = execute_entry_plan(
-        plan.plan_id,
-        bid=100,
-        ask=100.05,
-        observed_at=now.isoformat(),
-        source_observed_at=now.isoformat(),
-        now=now,
-        **_execution_receipt_kwargs(now, depth=True),
-    )
+    result = _drive_entry(plan)
 
     # An acknowledgement alone must not create a Fill or Position.
     assert result["status"] == "submitted", result

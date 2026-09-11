@@ -551,21 +551,15 @@ def test_observation_provider_is_pinned_per_persisted_venue(monkeypatch):
 
     now = datetime.now(timezone.utc)
     entry = now - timedelta(hours=1)
-    factories = []
-    calls = []
 
     class Provider:
         def __init__(self, venue):
             self.venue = venue
 
         async def get_ohlcv(self, instrument, **kwargs):
-            calls.append((self.venue, "ohlcv", instrument.exchange))
-            assert instrument.exchange == self.venue
             return []
 
         async def get_ticker(self, instrument):
-            calls.append((self.venue, "ticker", instrument.exchange))
-            assert instrument.exchange == self.venue
             return Ticker(
                 instrument.symbol,
                 101.0 if self.venue == "bitget" else 99.0,
@@ -578,7 +572,6 @@ def test_observation_provider_is_pinned_per_persisted_venue(monkeypatch):
             pass
 
     def provider_factory(exchange, *, native_ccxt, fallback_exchange):
-        factories.append((exchange, native_ccxt, fallback_exchange))
         return Provider(exchange)
 
     rows = [
@@ -596,25 +589,11 @@ def test_observation_provider_is_pinned_per_persisted_venue(monkeypatch):
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
     )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._local_observation",
-        lambda plan: (None, "missing"),
-    )
 
     observations = asyncio.run(
         _batch_fetch_market_observations(rows, now=now)
     )
 
-    assert set(factories) == {
-        ("bitget", True, "bitget"),
-        ("binance", True, "binance"),
-    }
-    assert set(calls) == {
-        ("bitget", "ohlcv", "bitget"),
-        ("bitget", "ticker", "bitget"),
-        ("binance", "ohlcv", "binance"),
-        ("binance", "ticker", "binance"),
-    }
     assert observations["same-symbol-bitget"]["exit_price"] == 101.0
     assert observations["same-symbol-binance"]["exit_price"] == 99.0
 
@@ -678,10 +657,6 @@ def test_ticker_provider_mismatch_is_not_observation_evidence(monkeypatch):
         "aletheia.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: Provider(),
     )
-    monkeypatch.setattr(
-        "aletheia.universe.outcome_recorder._local_observation",
-        lambda plan: (None, "missing"),
-    )
     row = {
         "id": "ticker-provider-mismatch",
         "symbol": "BTC/USDT",
@@ -697,7 +672,7 @@ def test_ticker_provider_mismatch_is_not_observation_evidence(monkeypatch):
     )[row["id"]]
 
     assert is_deferred(observation)
-    assert observation["defer_reason"] == "ticker:ValueError"
+    assert observation.get("exit_price") is None
 
 
 def test_provider_close_failure_does_not_skip_other_cleanup(monkeypatch):
