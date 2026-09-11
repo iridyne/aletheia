@@ -968,6 +968,10 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
     preflight_started = time.monotonic()
     before = capture_update_continuity()
     preflight = evaluate_preflight(before)
+    recovery = ((before.get("observation") or {}).get("checkpoint") or {}).get("settleable") or {}
+    if not restart and recovery.get("reason") == "applied_delivery_suffix_proven":
+        preflight = {**preflight, "ok": False,
+                     "failures": [*preflight["failures"], "observation_recovery_requires_restart"]}
     preflight_capture_ms = round((time.monotonic() - preflight_started) * 1000)
     if not preflight["ok"]:
         finish_phase()

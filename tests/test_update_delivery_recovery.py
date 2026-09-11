@@ -46,3 +46,19 @@ def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
     else:
         assert lab.execute("SELECT COUNT(*) FROM joint_checkpoints").fetchone()[0] == count
         assert not verify_joint_checkpoint().ok
+
+
+def test_recovery_preflight_cannot_skip_stopping_producers(monkeypatch):
+    from aletheia.update import continuity, applier
+    from tests.test_update_observer_continuity import _snapshot
+    before = _snapshot()
+    before["observation"]["checkpoint"] = {
+        "verified": {"ok": False, "mismatch_components": ["lab_state"]},
+        "settleable": {"ok": True, "reason": "applied_delivery_suffix_proven"},
+    }
+    monkeypatch.setattr(continuity, "capture_update_continuity", lambda: before)
+    monkeypatch.setattr(continuity, "_record", lambda *a, **kw: None)
+    monkeypatch.setattr(applier, "apply_update", lambda **kw: pytest.fail("source mutation before settlement"))
+    result = continuity.apply_update_with_continuity(restart=False)
+    assert not result["applied"]
+    assert "observation_recovery_requires_restart" in result["continuity"]["preflight"]["failures"]
