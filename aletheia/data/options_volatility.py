@@ -84,7 +84,8 @@ def derive_options_volatility(currency: str, items: list, acquired_at: str) -> O
         raise ValueError("acquisition_timezone_required")
     snapshot = OptionsVolatilitySnapshot(symbol=currency, acquired_at=acquired_at)
     rejected: Counter = Counter()
-    names = Counter(row.get("instrument_name") for row in items if isinstance(row, dict))
+    names = Counter(row["instrument_name"] for row in items
+                    if isinstance(row, dict) and isinstance(row.get("instrument_name"), str))
     expiries: dict[datetime, list[dict]] = {}
     for item in items:
         try:
@@ -117,7 +118,11 @@ def derive_options_volatility(currency: str, items: list, acquired_at: str) -> O
                 raise ValueError("stale_or_future_source")
             t = days / 365.25
             sigma = iv / 100
+            if sigma <= 0:
+                raise ValueError("invalid_numeric")
             d1 = (math.log(forward / strike) + sigma * sigma * t / 2) / (sigma * math.sqrt(t))
+            if not math.isfinite(d1):
+                raise ValueError("invalid_numeric")
             delta = NormalDist().cdf(d1) - (1 if side == "P" else 0)
             row = {"instrument": name, "strike": strike, "side": side,
                    "expiry": expiry.isoformat(), "iv": iv, "forward": forward,
@@ -125,7 +130,7 @@ def derive_options_volatility(currency: str, items: list, acquired_at: str) -> O
                    "delta": delta}
             row["id"] = hashlib.sha256(json.dumps(row, sort_keys=True, allow_nan=False).encode()).hexdigest()
             rows.append(row)
-        except (ValueError, TypeError, OverflowError, OSError) as exc:
+        except (ValueError, TypeError, OverflowError, OSError, ZeroDivisionError) as exc:
             rejected[str(exc) if isinstance(exc, ValueError) else "invalid_numeric"] += 1
 
     selected: dict[str, dict] = {}

@@ -71,6 +71,7 @@ def test_missing_side(side):
 @pytest.mark.parametrize("field,value", [
     ("mark_iv", None), ("mark_iv", 0), ("mark_iv", float("nan")),
     ("mark_iv", float("inf")), ("underlying_price", float("inf")),
+    ("mark_iv", 5e-324), ("mark_iv", 1e308),
     ("underlying_index", "index_price"), ("creation_timestamp", None),
     ("creation_timestamp", (NOW.timestamp()-121)*1000),
     ("creation_timestamp", (NOW.timestamp()+1)*1000),
@@ -94,6 +95,14 @@ def test_expired_and_nonfinite_strike():
     assert result.atm_iv_7d is None
     expired = derive_options_volatility("BTC", chain(), (NOW+timedelta(days=61)).isoformat())
     assert expired.coverage["rejected"]["expired_instrument"] == len(chain())
+
+
+def test_malformed_instrument_does_not_discard_valid_chain():
+    expected = derive_options_volatility("BTC", chain(), NOW.isoformat())
+    result = derive_options_volatility("BTC", chain()+[{"instrument_name": []}], NOW.isoformat())
+    assert result.inputs == expected.inputs
+    assert result.atm_iv_30d == expected.atm_iv_30d
+    assert result.coverage["rejected"] == {"wrong_underlying": 1}
 
 
 def test_sparse_delta_and_duplicate_input():
@@ -201,7 +210,8 @@ def test_cutoff_storage_and_legacy_isolation():
     assert repo.options_volatility_at("BTC", (NOW+timedelta(seconds=2)).isoformat())["atm_iv_30d"] is None
 
 
-def test_same_response_gex_unchanged(monkeypatch):
+@pytest.mark.parametrize("invalid_iv", [None, 5e-324, 1e308])
+def test_same_response_gex_unchanged(monkeypatch, invalid_iv):
     import aletheia.data.collectors.options_structure as collector
 
     calls = []
@@ -219,7 +229,10 @@ def test_same_response_gex_unchanged(monkeypatch):
             pass
 
         def json(self):
-            return {"result": chain(self.currency)}
+            items = chain(self.currency)
+            if invalid_iv is not None:
+                items[1]["mark_iv"] = invalid_iv
+            return {"result": items}
 
     class Client:
         async def get(self, url, params):
@@ -232,10 +245,18 @@ def test_same_response_gex_unchanged(monkeypatch):
 
     monkeypatch.setattr(collector, "datetime", FrozenDatetime)
     monkeypatch.setattr(collector, "httpx_client", client)
-    legacy = [asyncio.run(collector._collect_currency(c)).model_dump() for c in ("BTC", "ETH")]
+    legacy = []
+    for currency in ("BTC", "ETH"):
+        if invalid_iv == 1e308:
+            # Preserve the existing GEX rejection as well as successful output.
+            with pytest.raises(OverflowError):
+                asyncio.run(collector._collect_currency(currency))
+        else:
+            legacy.append(asyncio.run(collector._collect_currency(currency)).model_dump())
     calls.clear()
     enriched = asyncio.run(collector.OptionsStructureCollector().collect())
     assert [s.model_dump() for s in enriched["snapshots"]] == legacy
+    assert len(enriched["errors"]) == (2 if invalid_iv == 1e308 else 0)
     assert len(calls) == 2
     assert len(enriched["volatility_snapshots"]) == 2
     assert all(s.atm_iv_30d == 65 for s in enriched["volatility_snapshots"])
