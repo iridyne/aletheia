@@ -560,6 +560,19 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
         if identity.execution_mode != order["execution_mode"]:
             raise ValueError("uta_account_identity_mismatch")
         if not reconciling_cancel:
+            # Fence the one cancel attempt before the external call. A crash or
+            # competing watcher after this commit can only reconcile the Order.
+            with repo.transaction(immediate=True):
+                current = repo.get_order(order["id"])
+                if current["status"] in {"filled", "cancelled"} or fully_filled(current):
+                    return {"status": "filled" if fully_filled(current) else current["status"], "entry_plan_id": plan_id}
+                reconciling_cancel = str(current.get("error_reason") or "").startswith("entry_cancel_pending:")
+                if reconciling_cancel:
+                    reason = current["error_reason"].partition(":")[2]
+                else:
+                    repo.transition_order(order["id"], status=current["status"], error_reason=f"entry_cancel_pending:{reason}",
+                                          filled_at=current.get("filled_at"))
+        if not reconciling_cancel:
             result = cancel_order(CancelOrderCommand(
                 command_id=str(uuid4()), expected_account=identity,
                 instrument=instrument_from_local(order["symbol"], order["market_type"]),

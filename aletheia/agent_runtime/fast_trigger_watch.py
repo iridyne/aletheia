@@ -336,24 +336,23 @@ async def _load_entry_plan_watchers(
             if _entry_plan_outcome_is_unresolved(outcome):
                 plans[plan.plan_id] = plan
             continue
-        if getattr(plan, "entry_hypothesis_json", None) is not None:
-            try:
-                from aletheia.execution.entry_plan_execution import (
-                    require_entry_plan_runtime_authority,
-                )
+        try:
+            from aletheia.execution.entry_plan_execution import (
+                require_entry_plan_runtime_authority,
+            )
 
-                await asyncio.to_thread(require_entry_plan_runtime_authority, plan)
-            except (TypeError, ValueError):
-                outcome = await _terminalize_entry_plan(
-                    row,
-                    status="invalidated",
-                    reason="entry_plan_runtime_authority_revoked",
-                    cancel_entry_plan_order=cancel_entry_plan_order,
-                    now=now,
-                )
-                if _entry_plan_outcome_is_unresolved(outcome):
-                    plans[plan.plan_id] = plan
-                continue
+            await asyncio.to_thread(require_entry_plan_runtime_authority, plan)
+        except (TypeError, ValueError):
+            outcome = await _terminalize_entry_plan(
+                row,
+                status="invalidated",
+                reason="entry_plan_runtime_authority_revoked",
+                cancel_entry_plan_order=cancel_entry_plan_order,
+                now=now,
+            )
+            if _entry_plan_outcome_is_unresolved(outcome):
+                plans[plan.plan_id] = plan
+            continue
         try:
             from aletheia.risk.policy import resolve_risk_policy
 
@@ -534,8 +533,8 @@ def _plan_monitoring_channels(plan) -> tuple[str, ...]:
 
 
 def _entry_plan_expiry_reason(row: dict, engine=None) -> str:
-    if row.get("status") in {"ordered", "partially_filled"}:
-        order = repo.get_order(row.get("order_id")) if row.get("order_id") else None
+    order = repo.get_order_for_entry_plan(row["id"])
+    if order is not None:
         try:
             monitoring = json.loads(row.get("monitoring_evidence_json") or "{}")
         except (TypeError, ValueError, json.JSONDecodeError):

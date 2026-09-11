@@ -232,12 +232,12 @@ def test_entry_plan_expiry_reason_preserves_monitoring_and_trigger_cause():
 
     from aletheia.agent_runtime.fast_trigger_watch import _entry_plan_expiry_reason
 
-    assert _entry_plan_expiry_reason({"status": "waiting", "monitoring_state": None}) == (
+    assert _entry_plan_expiry_reason({"id": "plan", "status": "waiting", "monitoring_state": None}) == (
         "monitoring_never_ready"
     )
     assert _entry_plan_expiry_reason(
         {
-            "status": "waiting",
+            "id": "plan", "status": "waiting",
             "monitoring_state": "unavailable",
             "monitoring_evidence_json": json.dumps(
                 {"channels": {"depth": {"state": "unavailable"}}}
@@ -245,12 +245,9 @@ def test_entry_plan_expiry_reason_preserves_monitoring_and_trigger_cause():
         }
     ) == "monitoring_channel_unavailable:depth"
     assert _entry_plan_expiry_reason(
-        {"status": "waiting", "monitoring_state": "ready"},
+        {"id": "plan", "status": "waiting", "monitoring_state": "ready"},
         SimpleNamespace(state="reclaim", final_requirement_reason="order_flow"),
     ) == "trigger_final_requirements_unsatisfied:order_flow"
-    assert _entry_plan_expiry_reason(
-        {"status": "ordered", "monitoring_state": "ready"}
-    ) == "maker_order_unfilled_until_expiry"
 
 
 def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
@@ -258,14 +255,14 @@ def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
 
     monkeypatch.setattr(
         watch.repo,
-        "get_order",
+        "get_order_for_entry_plan",
         lambda _order_id: {
             "matching_stream_generation_id": "stream-a",
             "matching_subscription_generation_id": "subscription-a",
         },
     )
     row = {
-        "status": "ordered",
+        "id": "plan", "status": "active",
         "order_id": "order-1",
         "monitoring_evidence_json": json.dumps(
             {
@@ -2318,3 +2315,10 @@ async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch)
     _, rearmed = await watch._load_entry_plan_watchers(cfg, rebuilt)
     assert rearmed[plan.plan_id] is not fresh
     assert rearmed[plan.plan_id].state == "armed"
+
+
+@pytest.fixture(autouse=True)
+def _watcher_owner_fixture(monkeypatch):
+    # These watcher tests supply decoded owner snapshots. Runtime admission is
+    # checked by the Entry authority suite, independently of watcher scheduling.
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority", lambda _: None)

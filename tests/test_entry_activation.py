@@ -185,8 +185,8 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
             changed_quote = {**kwargs, "bid": ready.bid + delta, "ask": ready.ask + delta}
             changed_receipt = build_entry_execution_receipt(plan, proposal,
                 **{key: value for key, value in changed_quote.items() if key != "now"})
-            with pytest.raises(ValueError, match="entry_execution_receipt_intent_price_mismatch"):
-                require_execution_receipt_activation(proposal, changed_receipt, now=now)
+            require_execution_receipt_activation(proposal, changed_receipt, now=now)
+            assert proposal.price == plan.ioc_limit_price
     # Even a self-consistent execution-receipt hash cannot replace the durable
     # activation. Verify the real Gateway refuses before acquiring ownership.
     forged = receipt.model_copy(update={"trigger_activation_id": "forged"})
@@ -265,6 +265,7 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
         def now(cls, tz=None):
             return now
     monkeypatch.setattr(watch, "datetime", Clock)
+    monkeypatch.setattr(repo, "datetime", Clock)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution.datetime", Clock)
     activation = build_entry_trigger_activation(plan, ready, now=now)
     monitoring = {"state": "ready", "stream_generation_id": ready.stream_generation_id,
@@ -293,6 +294,14 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     stop = asyncio.Event()
     monkeypatch.setattr(watch, "_stop_event", stop)
     submitted = []
+    engine_ready = asyncio.Event()
+    load_watchers = watch._load_entry_plan_watchers
+    async def load(*args, **kwargs):
+        plans, engines = await load_watchers(*args, **kwargs)
+        if plan.plan_id in engines:
+            engine_ready.set()
+        return plans, engines
+    monkeypatch.setattr(watch, "_load_entry_plan_watchers", load)
 
     def gateway(proposal_id, *args, **kwargs):
         row = repo.get_entry_plan(plan.plan_id)
@@ -327,12 +336,10 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
                     # pass must create a fresh engine without replaying old proof.
                     yield quote
                     assert submitted == []
-                    await asyncio.sleep(0.02)
+                    await engine_ready.wait()
                 if scenario != "restored":
                     for event in ready.activation_events[:-1]:
                         yield event
-                        if scenario == "reconnect":
-                            await asyncio.sleep(0.02)
                     for kind, values in (
                         ("depth", {"bids": ready.depth_bids, "asks": ready.depth_asks}),
                         ("trade", {"price": 100.1, "size": 100, "side": "buy"}),
@@ -356,7 +363,8 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     await asyncio.wait_for(watch._watch_loop(cfg), timeout=2)
     assert ready.activation_events[-1].instrument in stream.instruments
-    assert len(set(submitted)) == 1
+    assert len(set(submitted)) == 1, (repo.get_entry_plan(plan.plan_id)["status"],
+        repo.get_entry_plan(plan.plan_id)["trigger_activation_id"], activation.activation_id, watch._status)
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
     if scenario != "cold_start":
         assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
