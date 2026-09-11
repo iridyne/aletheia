@@ -632,7 +632,7 @@ async def _cancel_open_entry_plans(reason: str) -> dict[str, int]:
         after = (str(rows[-1]["created_at"]), str(rows[-1]["id"]))
 
 
-async def _submit_activated_entry_plan(plan, activation, event) -> None:
+async def _submit_activated_entry_plan(plan, activation, event, *, current_market=None) -> None:
     """Reuse the earned proof while both it and the exact market facts are fresh."""
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
@@ -648,7 +648,8 @@ async def _submit_activated_entry_plan(plan, activation, event) -> None:
             depth_bids=snapshot.depth_bids, depth_asks=snapshot.depth_asks,
             depth_exchange_timestamp_ms=snapshot.depth_exchange_timestamp_ms,
             depth_received_timestamp_ms=snapshot.depth_received_timestamp_ms, depth_sequence=snapshot.depth_sequence,
-            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash)
+            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash,
+            current_market=current_market)
     except ValueError as exc:
         if str(exc) not in {"post_only_would_cross_bbo", "entry_trigger_activation_expired",
                             "entry_trigger_activation_generation_mismatch", "entry_trigger_activation_required",
@@ -683,6 +684,22 @@ async def _watch_loop(cfg) -> None:
             continue
         stream = fast_market_stream_for_config(cfg)
         event_task: asyncio.Task | None = None
+        execution_tasks: dict[str, asyncio.Task] = {}
+        latest_quotes = {}
+
+        def current_market(instrument):
+            return latest_quotes.get(instrument), stream.monitoring_state(instrument, ("quote",))
+
+        def dispatch(plan_id, operation, *args, **kwargs):
+            task = execution_tasks.get(plan_id)
+            if task is not None and not task.done():
+                return
+            async def run():
+                try:
+                    await operation(*args, **kwargs)
+                except Exception as exc:
+                    logger.warning("Entry execution stopped: %s", type(exc).__name__)
+            execution_tasks[plan_id] = asyncio.create_task(run())
         try:
             plans, plan_engines = await _load_entry_plan_watchers(cfg)
             instruments = _watched_instruments(plan_engines, plans)
@@ -715,6 +732,7 @@ async def _watch_loop(cfg) -> None:
                         break
                     next_config_check = now + 2.0
                 if now >= next_watcher_reload:
+                    execution_tasks = {key: task for key, task in execution_tasks.items() if not task.done()}
                     fresh_plans, fresh_plan_engines = await _load_entry_plan_watchers(cfg, plan_engines)
                     fresh_instruments = _watched_instruments(
                         fresh_plan_engines,
@@ -755,6 +773,8 @@ async def _watch_loop(cfg) -> None:
                     break
                 finally:
                     event_task = None
+                if event.event_type == "quote":
+                    latest_quotes[event.instrument] = event
                 for plan_id, plan in plans.items():
                     instrument = InstrumentId.from_parts(
                         plan.venue,
@@ -814,11 +834,11 @@ async def _watch_loop(cfg) -> None:
                                     now=datetime.now(timezone.utc),
                                 )
                             continue
-                        if plan.execution_mode == "RESTING_MAKER" and row["status"] == "waiting":
+                        if plan.execution_mode == "RESTING_MAKER" and row["status"] in {"waiting", "risk_reserved"}:
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
                             try:
-                                await asyncio.to_thread(
+                                dispatch(plan_id, asyncio.to_thread,
                                     execute_entry_plan,
                                     plan_id,
                                     bid=float(event.bid),
@@ -834,6 +854,7 @@ async def _watch_loop(cfg) -> None:
                                         event.subscription_generation_id or ""
                                     ),
                                     quote_sequence=event.sequence,
+                                    current_market=lambda instrument=instrument: current_market(instrument),
                                 )
                             except ValueError as exc:
                                 if str(exc) != "post_only_would_cross_bbo":
@@ -845,7 +866,8 @@ async def _watch_loop(cfg) -> None:
                                 repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
                             if activation_row is not None:
                                 activation = EntryTriggerActivationV1.model_validate_json(activation_row["activation_json"])
-                                await _submit_activated_entry_plan(plan, activation, event)
+                                dispatch(plan_id, _submit_activated_entry_plan, plan, activation, event,
+                                    current_market=lambda instrument=instrument: current_market(instrument))
                 for plan_id, engine in tuple(plan_engines.items()):
                     if engine.instrument != event.instrument:
                         continue
@@ -869,7 +891,8 @@ async def _watch_loop(cfg) -> None:
                                 raise
                             continue
                         if bound:
-                            await _submit_activated_entry_plan(plan, activation, event)
+                            dispatch(plan_id, _submit_activated_entry_plan, plan, activation, event,
+                                current_market=lambda instrument=event.instrument: current_market(instrument))
                 backoff = 1.0
         except asyncio.CancelledError:
             raise
@@ -886,6 +909,7 @@ async def _watch_loop(cfg) -> None:
                 event_task.cancel()
                 await asyncio.gather(event_task, return_exceptions=True)
             await stream.close()
+            await asyncio.gather(*execution_tasks.values(), return_exceptions=True)
         if not stop.is_set():
             try:
                 await asyncio.wait_for(stop.wait(), timeout=backoff)

@@ -2,6 +2,8 @@
 
 import inspect
 
+import pytest
+
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
@@ -374,3 +376,133 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
     test_spot_short_blocks_before_market_model_and_compiler(monkeypatch)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda _plan: None)
     test_compiled_holding_is_separate_from_swing_timing(monkeypatch, "universe", "short_term", "c1", 24)
+
+
+@spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
+    "Entry preparation waits without external effects; only a fenced final market check starts submission.", status="implemented"))
+@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected"])
+def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import RiskDecision
+    from tests.test_entry_plan_execution import _persist_waiting_plan
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda plan: None)
+    monkeypatch.setattr("aletheia.trading.entry_activation.require_entry_trigger_activation", lambda *a, **kw: None)
+    from aletheia.execution import gateway, coordinator
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.universe.fast_stream import FastMarketEvent
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.uta.models import SubmissionReport, CommandEvidence, CapabilitySupport
+    from tests.uta.test_execution_coordinator import _identity
+
+    plan = _persist_waiting_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    initial = datetime.now(timezone.utc)
+    clock = [initial]
+    calls, audits, roles = [], [], []
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0]
+
+    monkeypatch.setattr(gateway, "datetime", Clock)
+    monkeypatch.setattr(gateway, "write_audit", audits.append)
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *a: None)
+
+    def risk(proposal, *, decision_role, execution_receipt):
+        assert repo.get_trade_proposal(proposal.id)["status"] == "pending"
+        assert not repo.has_order_for_proposal(proposal.id)
+        roles.append(decision_role)
+        if scenario == "duplicate_wake":
+            duplicate = gateway.execute_existing_proposal(proposal.id, proposal.execution_mode, execution_receipt=execution_receipt)
+            assert duplicate["status"] == "already_claimed"
+        decision = RiskDecision(proposal_id=proposal.id, approved=True, allowed_execution_mode="bitget_demo",
+            proposal_execution_mode="bitget_demo", decision_role=decision_role,
+            evaluated_quantity=proposal.quantity, proposal_commit_hash=repo.get_trade_proposal(proposal.id)["commit_hash"],
+            execution_attempt_id=execution_receipt.attempt_id, execution_receipt_hash=execution_receipt.receipt_hash)
+        repo.insert_risk_decision(decision)
+        return SimpleNamespace(approved=True, allowed_execution_mode="bitget_demo", decision_id=decision.id)
+
+    def prepare(*args, **kwargs):
+        clock[0] = initial + timedelta(seconds=3)
+        return args[3], None
+
+    monkeypatch.setattr(gateway, "evaluate_proposal", risk)
+    monkeypatch.setattr(gateway, "_prepare_exchange_quantity", prepare)
+
+    class Adapter:
+        identity = _identity("bitget_demo")
+        capabilities = SimpleNamespace(native_tpsl=CapabilitySupport.SUPPORTED)
+
+        async def close(self):
+            pass
+
+        async def submit_order(self, command):
+            calls.append(command)
+            assert repo.get_trade_proposal(command.proposal_id)["status"] == "executing"
+            assert repo.has_order_for_proposal(command.proposal_id)
+            if scenario == "unknown":
+                raise TimeoutError
+            return SubmissionReport(identity=self.identity, command_id=command.command_id,
+                client_order_id=command.client_order_id, received_at=clock[0], profile_version="1",
+                evidence=CommandEvidence.VENUE_REJECTED if scenario == "venue_rejected" else CommandEvidence.ACKNOWLEDGED,
+                reason_code="post_only_rejected" if scenario == "venue_rejected" else None,
+                venue_order_id=None if scenario == "venue_rejected" else "demo-order-1")
+
+    monkeypatch.setattr(coordinator, "_create_bound_adapter", lambda *args: Adapter())
+
+    def market():
+        if scenario == "expired":
+            clock[0] = datetime.fromisoformat(plan.expires_at) + timedelta(seconds=1)
+        proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+        if scenario == "owner_lost":
+            repo.execute_write("UPDATE proposal_execution_claims SET owner_token='replacement' WHERE proposal_id=?", (proposal["id"],))
+        event_time = initial if scenario == "stale" else clock[0]
+        event = FastMarketEvent(event_type="quote", instrument=InstrumentId.from_parts("bitget", "BTC/USDT", "perp"),
+            exchange_timestamp_ms=int(event_time.timestamp()*1000), received_timestamp_ms=int(event_time.timestamp()*1000),
+            sequence=2, stream_generation_id="stream", subscription_generation_id="subscription",
+            bid=99.8, ask=99.9 if scenario == "crossing" else 100.1)
+        return event, {"state": "unavailable" if scenario == "unavailable" else "ready"}
+
+    facts = dict(bid=99.9, ask=100.1, observed_at=initial.isoformat(), source_observed_at=initial.isoformat(),
+        stream_generation_id="stream", subscription_generation_id="subscription", quote_sequence=1,
+        current_market=market)
+    if scenario == "expired":
+        # Expiry occurs after preparation and before the final authority check.
+        def prepare_expired(*args, **kwargs):
+            clock[0] = datetime.fromisoformat(plan.expires_at) + timedelta(seconds=1)
+            return args[3], None
+        monkeypatch.setattr(gateway, "_prepare_exchange_quantity", prepare_expired)
+    result = execute_entry_plan(plan.plan_id, **facts)
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    assert roles == ["preflight", "authoritative"]
+    if scenario in {"crossing", "stale", "unavailable"}:
+        assert result["status"] == "waiting_market"
+        assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
+        assert proposal["status"] == "pending"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+        assert repo.get_proposal_execution_claim(proposal["id"]) is None
+        assert repo.get_entry_risk_reservation(proposal["id"]) is None
+        original_hash = proposal["commit_hash"]
+        scenario = "slow"
+        recovered = execute_entry_plan(plan.plan_id, **facts)
+        assert recovered["status"] == "submitted"
+        assert len(calls) == 1
+        assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["commit_hash"] == original_hash
+        assert roles == ["preflight", "authoritative"] * 2
+    elif scenario in {"expired", "owner_lost"}:
+        assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
+        assert result["status"] == ("error" if scenario == "expired" else "already_claimed")
+    else:
+        assert len(calls) == 1
+        assert calls[0].limit_price == plan.limit_price
+        again = execute_entry_plan(plan.plan_id, **facts)
+        assert len(calls) == 1
+        if scenario == "unknown":
+            assert result["status"] == again["status"] == "submission_unknown"
+        elif scenario == "venue_rejected":
+            assert result["status"] != "submission_unknown"
+            assert repo.get_db().execute("SELECT status FROM orders WHERE proposal_id=?", (proposal["id"],)).fetchone()[0] == "submission_rejected"
+        else:
+            assert result["status"] == "submitted"

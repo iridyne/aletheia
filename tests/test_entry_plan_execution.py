@@ -393,7 +393,7 @@ def test_proposal_race_rebinds_receipt_only_for_the_entry_plan_unique_conflict(m
         else:
             raise ValueError("proposal commit hash does not match immutable content")
 
-    def submit(proposal_id, _mode, *, execution_receipt):
+    def submit(proposal_id, _mode, *, execution_receipt, current_market=None):
         assert execution_receipt.hash_is_valid()
         assert execution_receipt.proposal_id == proposal_id == winner_id
         submitted.append(proposal_id)
@@ -1655,3 +1655,17 @@ def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
 
     assert repo.get_order(order.id)["status"] == "submitted"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
+
+
+def test_resting_maker_receipt_has_plan_lifetime_not_trigger_ttl():
+    from aletheia.execution.entry_plan_execution import build_entry_execution_receipt
+
+    plan = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    now = datetime.fromisoformat(plan.approved_at)
+    facts = dict(bid=99.9, ask=100.1, observed_at=now.isoformat(), source_observed_at=now.isoformat())
+    proposal = build_entry_plan_order_intent(plan, **facts, now=now + timedelta(seconds=3))
+    receipt = build_entry_execution_receipt(plan, proposal, **facts,
+        stream_generation_id="stream", subscription_generation_id="subscription",
+        quote_sequence=1, required_channels=("quote",))
+    assert receipt.expires_at == plan.expires_at
+    assert proposal.price == plan.limit_price

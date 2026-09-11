@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
@@ -138,7 +138,6 @@ def build_entry_execution_receipt(
         raise ValueError("entry_execution_receipt_depth_sequence_invalid")
 
     captured = _instant(observed_at)
-    freshness_ms = int(plan.trigger_freshness_ms or 2_000)
     trigger_hash = activation.activation_hash if activation else None
     payload = {
         "version": _RECEIPT_VERSION,
@@ -174,7 +173,7 @@ def build_entry_execution_receipt(
         "trigger_activation_id": activation.activation_id if activation else None,
         "trigger_evidence_hash": trigger_hash,
         "captured_at": captured.isoformat(),
-        "expires_at": (captured + timedelta(milliseconds=freshness_ms)).isoformat(),
+        "expires_at": activation.expires_at if activation else plan.expires_at,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return EntryExecutionReceiptV1(
@@ -291,13 +290,13 @@ def build_entry_plan_order_intent(
     activation = require_entry_trigger_activation(plan, trigger_activation_id, trigger_activation_hash, now=current)
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
-    freshness_ms = plan.trigger_freshness_ms or 2_000
+    freshness_ms = plan.trigger_freshness_ms
     for timestamp in (observed_at, source_observed_at):
         age_ms = (current - _instant(timestamp)).total_seconds() * 1_000
-        if age_ms < 0 or age_ms > freshness_ms:
+        if age_ms < 0 or (freshness_ms is not None and age_ms > freshness_ms):
             raise ValueError("entry_exact_state_stale")
     bid, ask = float(bid), float(ask)
-    if bid <= 0 or ask < bid:
+    if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask < bid:
         raise ValueError("entry_exact_bbo_invalid")
 
     if plan.order_tactic == "POST_ONLY_LIMIT":
@@ -393,6 +392,8 @@ def require_execution_receipt_activation(proposal: TradeProposal, receipt, *, no
     row = repo.get_entry_plan(proposal.entry_plan_id)
     if row is None:
         raise ValueError("entry_plan_not_found")
+    if hashlib.sha256(row["plan_json"].encode()).hexdigest() != row["plan_hash"]:
+        raise ValueError("entry_plan_hash_mismatch")
     plan = decode_entry_plan(row["plan_json"])
     if receipt is None:
         raise ValueError("entry_execution_receipt_required")
@@ -432,6 +433,7 @@ def execute_entry_plan(
     trigger_activation_id: str | None = None,
     trigger_activation_hash: str | None = None,
     now: datetime | None = None,
+    current_market=None,
 ) -> dict:
     """Idempotently submit one approved plan through the existing Gateway."""
 
@@ -479,7 +481,7 @@ def execute_entry_plan(
             trigger_activation_hash=trigger_activation_hash,
         )
         return execute_existing_proposal(
-            existing["id"], existing["execution_mode"], execution_receipt=receipt
+            existing["id"], existing["execution_mode"], execution_receipt=receipt, current_market=current_market
         )
 
     proposal = build_entry_plan_order_intent(
@@ -534,4 +536,43 @@ def execute_entry_plan(
         proposal.id,
         proposal.execution_mode,
         execution_receipt=receipt,
+        current_market=current_market,
     )
+
+
+class EntryMarketWaiting(ValueError):
+    """Temporary pre-broker ineligibility; never an external submission result."""
+
+
+def require_current_submission_market(proposal, receipt, current_market, *, now):
+    """Read the watcher's current exact quote without changing immutable intent."""
+    require_execution_receipt_activation(proposal, receipt, now=now)
+    if current_market is None:
+        raise EntryMarketWaiting("entry_submission_market_unavailable")
+    event, monitoring = current_market()
+    if event is None or monitoring.get("state") != "ready":
+        raise EntryMarketWaiting("entry_submission_market_unavailable")
+    from aletheia.data.symbols import InstrumentId
+    plan = decode_entry_plan(repo.get_entry_plan(proposal.entry_plan_id)["plan_json"])
+    if event.instrument != InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type):
+        raise ValueError("entry_submission_market_identity_mismatch")
+    if (event.stream_generation_id != receipt.stream_generation_id
+        or event.subscription_generation_id != receipt.subscription_generation_id):
+        raise EntryMarketWaiting("entry_submission_market_generation_changed")
+    if event.sequence < receipt.quote["sequence"]:
+        raise EntryMarketWaiting("entry_submission_market_stale")
+    # Monitoring owns current quote freshness; Trigger TTL never supplies it.
+    from aletheia.universe.fast_stream import _CHANNEL_FRESHNESS_MS
+    for timestamp in (event.exchange_timestamp_ms, event.received_timestamp_ms):
+        age = now.timestamp() * 1000 - timestamp
+        if not 0 <= age <= _CHANNEL_FRESHNESS_MS["quote"]:
+            raise EntryMarketWaiting("entry_submission_market_stale")
+    bid, ask = float(event.bid), float(event.ask)
+    if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask < bid:
+        raise EntryMarketWaiting("entry_submission_market_invalid")
+    if ((plan.direction == "long" and bid <= plan.invalidation_price)
+        or (plan.direction == "short" and ask >= plan.invalidation_price)):
+        raise ValueError("entry_plan_price_invalidated")
+    if proposal.post_only and not post_only_price_is_passive(plan.direction, proposal.price, bid, ask):
+        raise EntryMarketWaiting("post_only_would_cross_bbo")
+    return event

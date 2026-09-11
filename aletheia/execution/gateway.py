@@ -272,6 +272,7 @@ def execute_existing_proposal(
     execution_mode: str = "",
     *,
     execution_receipt=None,
+    current_market=None,
 ) -> dict:
     """Atomically claim and execute one stored proposal without rewriting intent.
 
@@ -397,13 +398,20 @@ def execute_existing_proposal(
                 reason_code,
             )
         else:
+            if receipt is not None and claim is not None and not has_order_for_proposal(proposal.id):
+                # Expired internal preparation never crossed the persisted broker marker.
+                # Release it before asking the watcher to earn a fresh activation.
+                release_proposal_execution_claim(proposal.id, str(claim["owner_token"]))
+                release_entry_risk_reservation(proposal.id)
+                claim = None
             if receipt is not None:
                 from aletheia.execution.entry_plan_execution import require_execution_receipt_activation
 
                 try:
                     require_execution_receipt_activation(proposal, receipt, now=now)
                 except ValueError as exc:
-                    return {"status": "rejected", "reason_code": str(exc), "proposal_id": proposal.id,
+                    temporary = str(exc) in {"entry_trigger_activation_expired", "entry_trigger_activation_monitoring_mismatch", "entry_exact_state_stale", "post_only_would_cross_bbo"}
+                    return {"status": "waiting_market" if temporary else "rejected", "reason_code": str(exc), "proposal_id": proposal.id,
                             "message": "Entry trigger activation did not authorize a new execution attempt."}
             owner_token = uuid4().hex
             if claim is None:
@@ -434,9 +442,9 @@ def execute_existing_proposal(
                     "proposal_id": proposal.id,
                     "message": ("Proposal execution was claimed concurrently; no new order was created."),
                 }
-            if proposal.status in {"pending", "approved"}:
+            if not proposal.entry_plan_id:
                 update_trade_proposal(proposal.id, status="executing")
-            proposal.status = "executing"
+                proposal.status = "executing"
 
     if reconciliation_result is not None:
         before_status, after_status, reason_code = reconciliation_transition
@@ -460,11 +468,13 @@ def execute_existing_proposal(
     if owner_token is None:
         raise RuntimeError(f"proposal execution claim missing after acquire: {proposal_id}")
 
+    _entry_execution_stage(proposal, receipt, "internal_claim_acquired", market_received_at=receipt.captured_at if receipt else None)
     try:
         try:
             return _execute_proposal(
                 proposal,
                 execution_receipt=receipt,
+                **({"current_market": current_market, "owner_token": owner_token} if receipt else {}),
             )
         except ProposalIntegrityError as exc:
             return _terminal_execution_error(
@@ -1397,6 +1407,8 @@ def _execute_proposal(
     proposal: TradeProposal,
     *,
     execution_receipt=None,
+    current_market=None,
+    owner_token=None,
 ) -> dict:
     """Run risk and execution for an already-created proposal."""
     try:
@@ -1415,6 +1427,7 @@ def _execute_proposal(
             decision_role="preflight",
             **receipt_kwargs,
         )
+        _entry_execution_stage(proposal, execution_receipt, "preflight_risk_completed")
         if not preflight_result.approved:
             if _receipt_only_risk_rejection(preflight_result):
                 return _reject_execution_receipt(proposal)
@@ -1429,6 +1442,7 @@ def _execute_proposal(
             proposal.price or 0.0,
             **({"allow_increase": False} if proposal.entry_plan_id else {}),
         )
+        _entry_execution_stage(proposal, execution_receipt, "quantity_normalization_completed")
         if constraint_error:
             return _reject_for_exchange_constraints(proposal, constraint_error)
 
@@ -1444,6 +1458,7 @@ def _execute_proposal(
             **receipt_kwargs,
         )
 
+        _entry_execution_stage(proposal, execution_receipt, "authoritative_risk_completed")
         if not risk_result.approved:
             if _receipt_only_risk_rejection(risk_result):
                 return _reject_execution_receipt(proposal)
@@ -1549,14 +1564,24 @@ def _execute_proposal(
 
     accepted_exchange_result: dict | None = None
     accepted_exchange_channel: str | None = None
-    if execution_proposal.entry_plan_id:
-        from aletheia.execution.entry_plan_execution import require_execution_receipt_activation
+    def validate_submission():
+        from aletheia.execution.entry_plan_execution import require_current_submission_market
+        now = datetime.now(timezone.utc)
+        event = require_current_submission_market(execution_proposal, execution_receipt, current_market, now=now)
+        _entry_execution_stage(proposal, execution_receipt, "final_market_check_completed",
+                               quote=event.model_dump(mode="json"))
+    def before_submission():
+        # Coordinator holds the same short transaction through pending Order insert.
+        now = datetime.now(timezone.utc)
+        claim = get_proposal_execution_claim(proposal.id)
+        stored = get_trade_proposal(proposal.id)
+        if (not claim or claim["owner_token"] != owner_token
+            or not _execution_claim_is_fresh(claim, now)
+            or stored["status"] not in {"pending", "approved"}
+            or has_order_for_proposal(proposal.id)):
+            raise ValueError("entry_execution_owner_lost")
+        update_trade_proposal(proposal.id, status="executing")
 
-        try:
-            require_execution_receipt_activation(execution_proposal, execution_receipt, now=datetime.now(timezone.utc))
-        except ValueError as exc:
-            return _terminal_execution_error(proposal, reason_code=str(exc),
-                safe_message="Trigger activation is no longer valid; no order was submitted.")
     try:
         if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard
@@ -1591,10 +1616,25 @@ def _execute_proposal(
                     time_in_force=execution_proposal.time_in_force,
                     post_only=bool(execution_proposal.post_only),
                 )
+                if execution_proposal.entry_plan_id:
+                    order_kwargs["validate_submission"] = validate_submission
+                    order_kwargs["before_submission"] = before_submission
+                    order_kwargs["submission_started"] = lambda: _entry_execution_stage(
+                        proposal, execution_receipt, "broker_submission_started")
                 result = execute_live_order(**order_kwargs)
+                _entry_execution_stage(proposal, execution_receipt, "broker_response_received", result_status=result.get("status"))
             except (PostSubmitDBError, SubmissionUnknownError) as e:
+                _entry_execution_stage(proposal, execution_receipt, "broker_response_unknown", reason=type(e).__name__)
                 return _record_unresolved_execution(proposal, e)
             except Exception as e:
+                from aletheia.execution.entry_plan_execution import EntryMarketWaiting
+                if execution_receipt and (isinstance(e, EntryMarketWaiting) or str(e) in {
+                    "entry_trigger_activation_expired", "entry_trigger_activation_monitoring_mismatch",
+                    "entry_exact_state_stale",
+                }):
+                    return _wait_for_entry_market(proposal, owner_token, execution_receipt, str(e))
+                if execution_receipt and str(e) == "entry_execution_owner_lost":
+                    return {"status": "already_claimed", "reason_code": str(e), "proposal_id": proposal.id}
                 recovered = _recover_broker_exception_from_durable_order(
                     proposal,
                     e,
@@ -1883,3 +1923,30 @@ def _capture_attribution_snapshot_json(
         return json.dumps(snapshot, default=str)
     except Exception:
         return None
+
+
+def _entry_execution_stage(proposal, receipt, stage, **facts):
+    if receipt is not None:
+        write_audit({"actor": "system", "source": "execution_gateway",
+            "event_type": "entry_execution_stage", "entity_type": "trade_proposal",
+            "entity_id": proposal.id, "message": stage,
+            "after": {"stage": stage, "at": datetime.now(timezone.utc).isoformat(),
+                "execution_attempt_id": receipt.attempt_id, "entry_plan_id": proposal.entry_plan_id, **facts}})
+
+
+def _wait_for_entry_market(proposal, owner_token, receipt, reason):
+    from aletheia.storage import repositories as repo
+    with transaction(immediate=True):
+        claim = get_proposal_execution_claim(proposal.id)
+        stored = get_trade_proposal(proposal.id)
+        if (not claim or claim["owner_token"] != owner_token
+            or stored["status"] not in {"pending", "approved"}
+            or has_order_for_proposal(proposal.id)):
+            return {"status": "already_claimed", "proposal_id": proposal.id}
+        plan = repo.get_entry_plan(proposal.entry_plan_id)
+        repo.transition_entry_plan(proposal.entry_plan_id, expected_status="risk_reserved",
+            status="waiting" if plan["execution_mode"] == "RESTING_MAKER" else "triggered")
+        release_entry_risk_reservation(proposal.id)
+        release_proposal_execution_claim(proposal.id, owner_token)
+    _entry_execution_stage(proposal, receipt, "waiting_market", reason=reason, submission_evidence="NOT_SENT")
+    return {"status": "waiting_market", "reason_code": reason, "proposal_id": proposal.id}
