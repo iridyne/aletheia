@@ -25,6 +25,7 @@ from aletheia.storage.repositories import (
     get_authoritative_risk_decision,
     get_candidate_planning_generation,
     get_entry_plan,
+    get_db,
     get_entry_risk_reservation,
     get_opportunity,
     get_serenity_opportunity,
@@ -38,6 +39,7 @@ from aletheia.storage.repositories import (
     transaction,
     update_trade_proposal,
     validate_trade_proposal_commit_hash,
+    validate_native_order_authority,
 )
 from aletheia.trading.entry_compat import decode_entry_plan
 from aletheia.trading.entry_plan import (
@@ -93,6 +95,50 @@ def _physical_market_type(value: str | None) -> str | None:
     return None
 
 
+def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
+    """The accepted second leg is completion of one Plan, never pyramiding."""
+    if proposal.entry_leg_index != 1 or not proposal.entry_plan_id or proposal.execution_mode != "bitget_demo":
+        return None
+    owner = get_entry_plan(proposal.entry_plan_id)
+    if owner is None or owner["status"] != "active":
+        return None
+    try:
+        plan = decode_entry_plan(owner["plan_json"])
+        if plan.capture_priority != "MAKER_PREFERRED":
+            return None
+        orders = get_db().execute(
+            "SELECT o.* FROM orders o JOIN trade_proposals p ON p.id=o.proposal_id "
+            "WHERE o.entry_plan_id=? AND p.entry_plan_id=? AND COALESCE(p.entry_leg_index,0)=0 "
+            "AND o.close_reason IS NULL", (proposal.entry_plan_id, proposal.entry_plan_id),
+        ).fetchall()
+        if len(orders) != 1:
+            return None
+        order = dict(orders[0])
+        if (order["status"] != "cancelled" or order["source"] != "native"
+            or order["order_tactic"] != "POST_ONLY_LIMIT" or not order["post_only"]
+            or any(order[key] != getattr(proposal, key) for key in ("symbol", "market_type", "direction", "execution_mode"))):
+            return None
+        validate_native_order_authority(order)
+        filled = float(get_db().execute(
+            "SELECT COALESCE(SUM(fill_quantity),0) FROM fills WHERE order_id=?", (order["id"],),
+        ).fetchone()[0])
+        if not math.isfinite(filled) or filled < 0 or filled + float(proposal.quantity or 0) > plan.target_quantity + 1e-12:
+            return None
+        if filled:
+            position = get_db().execute("SELECT * FROM positions WHERE id=?", (order["position_id"],)).fetchone()
+            if (position is None or position["status"] != "open" or position["pending_close_order_id"]
+                or position["order_id"] != order["id"] or position["proposal_id"] != order["proposal_id"]
+                or not position["entry_fill_verified"] or position["entry_price_source"] != "broker_fill"
+                or not math.isclose(float(position["quantity"]), filled, rel_tol=1e-9, abs_tol=1e-12)
+                or any(position[key] != order[key] for key in ("symbol", "market_type", "direction", "execution_mode"))):
+                return None
+        elif order["position_id"]:
+            return None
+        return order
+    except (TypeError, ValueError):
+        return None
+
+
 def _entry_plan_authority_violations(
     proposal: TradeProposal,
     *,
@@ -113,12 +159,14 @@ def _entry_plan_authority_violations(
     except Exception:
         return ["entry_plan_contract_invalid"]
     violations = []
+    if proposal.entry_leg_index == 1 and _confirmed_entry_remainder_order(proposal) is None:
+        violations.append("entry_plan_remainder_not_confirmed")
     if digest != row.get("plan_hash") or plan.plan_id != proposal.entry_plan_id:
         violations.append("entry_plan_integrity_failed")
     generation = get_candidate_planning_generation(plan.planning_generation_id)
     if generation is None or not bool(generation.get("is_current")):
         violations.append("entry_plan_generation_superseded")
-    if row.get("status") not in {"waiting", "triggered", "risk_reserved"}:
+    if row.get("status") != "active":
         violations.append("entry_plan_lifecycle_not_executable")
     try:
         expires_at = datetime.fromisoformat(plan.expires_at.replace("Z", "+00:00"))
@@ -155,13 +203,22 @@ def _entry_plan_authority_violations(
             violations.append(f"entry_plan_{field}_mismatch")
     if proposal.stop_source != "operator":
         violations.append("entry_plan_stop_source_mismatch")
-    if proposal.order_tactic != plan.order_tactic:
+    allowed_tactics = {plan.order_tactic}
+    if plan.capture_priority == "MAKER_PREFERRED":
+        allowed_tactics.add("OPPOSING_BBO_IOC")
+    if plan.capture_policy_id and proposal.entry_leg_index not in {0, 1}:
+        violations.append("entry_plan_leg_identity_required")
+    if proposal.entry_leg_index == 1:
+        allowed_tactics = {"OPPOSING_BBO_IOC"}
+    if proposal.order_tactic not in allowed_tactics:
         violations.append("entry_plan_order_tactic_mismatch")
-    if str(proposal.time_in_force or "").upper() != plan.time_in_force:
+    maker = proposal.order_tactic == "POST_ONLY_LIMIT"
+    if str(proposal.time_in_force or "").upper() != ("POST_ONLY" if maker else "IOC"):
         violations.append("entry_plan_time_in_force_mismatch")
-    if proposal.post_only is not bool(plan.maker_required):
+    if proposal.post_only is not maker:
         violations.append("entry_plan_post_only_mismatch")
-    if proposal.bbo_reference != plan.bbo_reference:
+    expected_bbo = None if maker else ("ask" if plan.direction == "long" else "bid")
+    if proposal.bbo_reference != expected_bbo:
         violations.append("entry_plan_bbo_reference_mismatch")
     for field in ("max_slippage_bps", "worst_price"):
         expected = getattr(plan, field)
@@ -196,7 +253,7 @@ def _entry_plan_authority_violations(
             worst_price_exceeded = True
         if worst_price_exceeded:
             violations.append("entry_plan_worst_price_exceeded")
-    if plan.order_tactic == "POST_ONLY_LIMIT":
+    if maker:
         try:
             exact_limit = plan.limit_price is not None and math.isclose(
                 proposal_price, float(plan.limit_price), rel_tol=1e-9, abs_tol=1e-9
@@ -214,12 +271,47 @@ def _entry_plan_authority_violations(
         violations.append("entry_plan_risk_authority_revoked")
     quantity = float(proposal.quantity or 0.0)
     price = float(proposal.price or 0.0)
-    if price * quantity > plan.max_notional + 1e-12:
+    prior_quantity = prior_notional = prior_risk = 0.0
+    # Fills are the additive entry evidence (Position quantity can already shrink
+    # through closes). Unknown Orders reserve their entire unfilled remainder.
+    rows = get_db().execute(
+        """SELECT o.id, o.quantity, o.price, o.status,
+                  COALESCE(SUM(f.fill_quantity), 0) AS filled_quantity,
+                  COALESCE(SUM(f.fill_price*f.fill_quantity), 0) AS filled_notional,
+                  COALESCE(SUM(ABS(f.fill_price-?)*f.fill_quantity), 0) AS filled_risk,
+                  SUM(CASE WHEN f.id IS NOT NULL AND
+                      (f.fill_quantity IS NULL OR f.fill_quantity <= 0 OR f.fill_price IS NULL OR f.fill_price <= 0)
+                      THEN 1 ELSE 0 END) AS invalid_fills
+           FROM orders o LEFT JOIN fills f ON f.order_id=o.id
+           WHERE o.entry_plan_id=? AND o.proposal_id!=? AND o.close_reason IS NULL
+           GROUP BY o.id""",
+        (plan.stop_price, plan.plan_id, proposal.id),
+    ).fetchall()
+    for row in rows:
+        filled = float(row["filled_quantity"])
+        total = float(row["quantity"])
+        order_price = float(row["price"] or 0)
+        if (not all(math.isfinite(float(row[key])) for key in
+                    ("quantity", "filled_quantity", "filled_notional", "filled_risk"))
+            or row["invalid_fills"] or total <= 0
+            or not math.isfinite(order_price) or order_price <= 0 or filled < 0 or filled > total + 1e-12
+            or (row["status"] == "filled" and not math.isclose(filled, total, rel_tol=1e-9, abs_tol=1e-12))):
+            violations.append("entry_plan_prior_fill_evidence_invalid")
+            continue
+        remaining = 0.0 if row["status"] in {
+            "filled", "cancelled", "expired", "submission_rejected", "rejected",
+        } else max(0.0, total - filled)
+        prior_quantity += filled + remaining
+        prior_notional += float(row["filled_notional"]) + remaining * order_price
+        prior_risk += float(row["filled_risk"]) + remaining * abs(order_price - plan.stop_price)
+    if plan.capture_policy_id and prior_quantity + quantity > plan.target_quantity + 1e-12:
+        violations.append("entry_plan_target_quantity_exceeded")
+    if prior_notional + price * quantity > plan.max_notional + 1e-12:
         violations.append("entry_plan_max_notional_exceeded")
     if int(proposal.leverage or 1) > plan.max_leverage:
         violations.append("entry_plan_max_leverage_exceeded")
     if proposal.stop_price is not None and capital_base > 0:
-        risk_amount = abs(price - float(proposal.stop_price)) * quantity
+        risk_amount = prior_risk + abs(price - float(proposal.stop_price)) * quantity
         plan_max_risk = capital_base * plan.max_risk_pct / 100.0
         if risk_amount > plan_max_risk + 1e-12:
             violations.append("entry_plan_max_risk_exceeded")
@@ -661,6 +753,24 @@ class RiskCheckResult:
     message: str = ""
     decision_id: str | None = None
 
+    @property
+    def disposition(self) -> str:
+        """Risk owns the finite retry taxonomy; unknown/hard violations reject."""
+        if self.approved and not self.violations:
+            return "APPROVED"
+        temporary = {
+            "account_balance_unavailable", "capital_base_unavailable", "account_loss_unavailable",
+            "account_equity_unavailable", "account_equity_non_positive",
+            "max_demo_positions_reached", "max_live_positions_reached", "symbol_already_open",
+            "stale_market_data", "stale_market_data_demo", "account_leverage_ratio",
+            "max_total_demo_exposure_exceeded", "max_total_live_exposure_exceeded",
+            "exceeds_demo_position_margin", "exceeds_max_position_margin",
+            "sector_concentration", "portfolio_beta", "exceeds_per_symbol_notional",
+        }
+        if self.violations and all(str(value).partition(":")[0] in temporary for value in self.violations):
+            return "DEFER"
+        return "REJECT"
+
 
 def evaluate_proposal(
     proposal: TradeProposal,
@@ -740,6 +850,7 @@ def evaluate_proposal(
                     stored = get_trade_proposal(proposal.id)
                     if (
                         not _receipt_only_rejection(result.violations)
+                        and not (proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and result.disposition == "DEFER")
                         and stored is not None
                         and str(stored.get("status") or "")
                         in {"pending", "approved"}
@@ -1040,19 +1151,23 @@ def _evaluate_proposal_locked(
         1 for entry in pool_unresolved_entries if not entry.has_open_position
     )
     pre_order_entry_slots = len(pool_pre_order_entries)
+    remainder_order = _confirmed_entry_remainder_order(proposal)
+    remainder_position_id = remainder_order.get("position_id") if remainder_order else None
+    # Reuse the existing slot only for this exact still-open same-Plan Position.
+    reused_slot = int(any(p["id"] == remainder_position_id for p in open_positions))
     if prop_is_live:
         live_positions = [p for p in open_positions if _is_live(p.get("execution_mode", ""))]
         live_slot_count = (
             len(live_positions) + unresolved_entry_slots + pre_order_entry_slots
         )
-        if live_slot_count >= risk.max_open_positions_live:
+        if live_slot_count >= risk.max_open_positions_live + reused_slot:
             violations.append(f"max_live_positions_reached:{live_slot_count}")
     else:
         demo_positions = [p for p in open_positions if not _is_live(p.get("execution_mode", ""))]
         demo_slot_count = (
             len(demo_positions) + unresolved_entry_slots + pre_order_entry_slots
         )
-        if demo_slot_count >= risk.max_open_positions_demo:
+        if demo_slot_count >= risk.max_open_positions_demo + reused_slot:
             violations.append(f"max_demo_positions_reached:{demo_slot_count}")
 
     # 6b. No duplicate open position for same symbol in the same pool (demo or live).
@@ -1060,7 +1175,7 @@ def _evaluate_proposal_locked(
     #     on a different broker in the same pool.
     same_symbol_open = [
         p for p in open_positions
-        if p.get("symbol") == proposal.symbol
+        if p.get("symbol") == proposal.symbol and p["id"] != remainder_position_id
         and _is_live(p.get("execution_mode", "")) == prop_is_live
     ]
     same_symbol_unresolved = any(

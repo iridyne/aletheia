@@ -586,7 +586,7 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -642,7 +642,7 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(mon
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -681,7 +681,7 @@ def test_canonical_risk_enforces_the_plan_worst_price_boundary(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -719,7 +719,7 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -765,7 +765,7 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -837,7 +837,7 @@ def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -997,13 +997,11 @@ def _execution_receipt_kwargs(
         "authority_released",
     ),
     [
-        ("bitget_demo", "waiting", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "triggered", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "risk_reserved", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "waiting", "approved", True, False, "active_claim", False),
-        ("bitget_demo", "triggered", "executing", False, False, "external_execution", False),
-        ("bitget_demo", "waiting", "executed", False, False, "external_execution", False),
-        ("bitget_demo", "risk_reserved", "executing", False, True, "order_present", False),
+        ("bitget_demo", "active", "approved", False, False, "invalidated", True),
+        ("bitget_demo", "active", "approved", True, False, "active_claim", False),
+        ("bitget_demo", "active", "executing", False, False, "external_execution", False),
+        ("bitget_demo", "active", "executed", False, False, "external_execution", False),
+        ("bitget_demo", "active", "executing", False, True, "order_present", False),
     ],
 )
 def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
@@ -1024,18 +1022,6 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         mode="RESTING_MAKER",
         tactic="POST_ONLY_LIMIT",
     )
-    if plan_status in {"triggered", "risk_reserved"}:
-        assert repo.transition_entry_plan(
-            plan.plan_id,
-            expected_status="waiting",
-            status="triggered",
-        )
-    if plan_status == "risk_reserved":
-        assert repo.transition_entry_plan(
-            plan.plan_id,
-            expected_status="triggered",
-            status="risk_reserved",
-        )
     now = datetime.now(timezone.utc)
     proposal = build_entry_plan_order_intent(
         plan,
@@ -1262,36 +1248,15 @@ def _cancel_ack(command):
                          venue_order_id=command.target_venue_order_id, profile_version="1")
 
 
-def test_order_and_entry_plan_transition_roll_back_together(monkeypatch):
+def test_order_transition_does_not_write_entry_plan_authority(monkeypatch):
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(repo, "transition_entry_plan", lambda *_args, **_kwargs: False)
-
-    with pytest.raises(repo.OrderTransitionConflict):
-        repo.transition_order(order.id, status="filled")
-
-    assert repo.get_order(order.id)["status"] == "submitted"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    before = repo.get_entry_plan(plan.plan_id)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Order owner cannot write Plan authority")
+    monkeypatch.setattr(repo, "transition_entry_plan", forbidden)
+    repo.transition_order(order.id, status="filled")
+    assert repo.get_order(order.id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id) == before
 
 
 
@@ -1385,7 +1350,7 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
     monkeypatch.setattr(coordinator, "cancel_order", fill_during_cancel)
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "filled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "filled"
 
 
@@ -1431,7 +1396,7 @@ def test_gateway_cancel_recovers_exact_entry_order_relation():
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
 
     assert result["status"] == "filled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
 
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
@@ -1477,7 +1442,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     )
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "cancelled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "cancelled"
     assert materialized == [{"orderId": "exchange-1", "fillQuantity": "0.5"}]
     assert sum(fill["fill_quantity"] for fill in repo.list_fills(order_id=order.id)) == 0.5
@@ -1607,7 +1572,7 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     stored = repo.get_order(order.id)
     assert stored["status"] == "cancelled"
     assert stored["error_reason"] == expected_reason
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"  # historical Plan authority is unchanged
 
 
 def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):

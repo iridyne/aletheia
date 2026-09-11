@@ -23,7 +23,6 @@ from aletheia.storage.repositories import (
     finalize_exchange_acknowledgement,
     insert_order,
     transaction,
-    transition_entry_plan,
     transition_order,
     update_order_metadata,
 )
@@ -236,13 +235,6 @@ def execute_order(
     if before_submission is None:
         with transaction(immediate=True):
             insert_order(order)
-            if entry_plan_id and not transition_entry_plan(
-                entry_plan_id,
-                expected_status="risk_reserved",
-                status="ordered",
-                order_id=order.id,
-            ):
-                raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
         adapter = _create_bound_adapter(execution_mode)
@@ -304,9 +296,6 @@ def execute_order(
             with transaction(immediate=True):
                 before_submission()
                 insert_order(order)
-                if not transition_entry_plan(entry_plan_id, expected_status="risk_reserved",
-                                             status="ordered", order_id=order.id):
-                    raise RuntimeError("entry_plan_order_transition_conflict")
         except BaseException:
             _close_adapter(adapter)
             raise

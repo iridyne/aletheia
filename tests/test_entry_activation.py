@@ -119,7 +119,7 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     assert not repo.bind_entry_trigger_activation(competitor, expected_activation_id=None, now=now)
     assert repo.get_entry_trigger_activation(competitor.activation_id) is None
     row = repo.get_entry_plan(plan.plan_id)
-    assert row["status"] == "triggered" and row["trigger_activation_id"] == activation.activation_id
+    assert row["status"] == "active" and row["trigger_activation_id"] == activation.activation_id
     assert row["plan_json"] == payload and row["plan_hash"] == digest
     lifecycle = repo.get_candidate_entry_lifecycle(candidate.id)
     assert lifecycle["lifecycle_state"] == "TRIGGERED"
@@ -152,7 +152,7 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
         crossing = ready.activation_events[-1].model_copy(update={"bid": 99.9, "ask": 99.95})
         asyncio.run(_submit_activated_entry_plan(plan, restored, crossing))
         assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
-        assert repo.get_entry_plan(plan.plan_id)["status"] == "triggered"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
     with pytest.raises(ValueError, match="generation_mismatch"):
         execute_entry_plan(plan.plan_id, **{**kwargs, "stream_generation_id": "another-stream"})
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
@@ -414,6 +414,6 @@ def test_expired_activation_before_broker_returns_to_waiting(monkeypatch, tactic
         else "entry_execution_receipt_rejected")
     assert broker_calls == []
     assert repo.get_trade_proposal(proposal.id)["status"] == ("pending" if expiry_stage == "broker" else "error")
-    assert repo.get_entry_plan(plan.plan_id)["status"] == ("triggered" if expiry_stage == "broker" else "failed")
+    assert repo.get_entry_plan(plan.plan_id)["status"] == ("active" if expiry_stage == "broker" else "failed")
     assert any(event["event_type"] == ("entry_execution_stage" if expiry_stage == "broker" else "execution_error") for event in audit)
     assert repo.get_proposal_execution_claim(proposal.id) is None

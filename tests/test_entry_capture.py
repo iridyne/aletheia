@@ -47,6 +47,7 @@ def test_six_capture_cells_freeze_compiler_policy(monkeypatch, profile, activati
     assert plan.max_wait_sec == policy.passive_attempt_timeout_sec
     assert plan.worst_price is not None
     assert plan.entry_zone[0] <= plan.worst_price <= plan.entry_zone[1]
+    assert plan.target_quantity * max(plan.entry_zone) == pytest.approx(plan.max_notional)
 
 
 def test_capture_requires_current_supplied_evidence(monkeypatch):

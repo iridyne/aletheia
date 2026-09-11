@@ -468,12 +468,11 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     monkeypatch.setattr(coordinator, "_create_bound_adapter", create_adapter)
 
     if scenario == "boundary_rollback":
-        original_transition = coordinator.transition_entry_plan
-        def reject_order_transition(*args, **kwargs):
-            if kwargs.get("status") == "ordered":
-                return False
-            return original_transition(*args, **kwargs)
-        monkeypatch.setattr(coordinator, "transition_entry_plan", reject_order_transition)
+        insert = coordinator.insert_order
+        def interrupted_insert(order):
+            insert(order)
+            raise RuntimeError("injected_order_insert_failure")
+        monkeypatch.setattr(coordinator, "insert_order", interrupted_insert)
 
     def market():
         if scenario == "expired":
@@ -506,7 +505,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert result["status"] == "waiting_market"
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         assert proposal["status"] == "pending"
-        assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
         assert repo.get_proposal_execution_claim(proposal["id"]) is None
         assert repo.get_entry_risk_reservation(proposal["id"]) is None
         original_hash = proposal["commit_hash"]

@@ -24,6 +24,7 @@ SIDEWAYS_STOP_MULT = 2.0
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
     "waiting",
+    "active",
     "risk_reserved",
     "triggered",
     "ordered",
@@ -36,7 +37,8 @@ ENTRY_PLAN_STATUSES = (
 )
 
 ENTRY_PLAN_TRANSITIONS = {
-    "waiting": frozenset({"risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
+    "active": frozenset({"filled", "expired", "invalidated", "cancelled", "failed"}),
+    "waiting": frozenset({"active", "risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
     "triggered": frozenset({"risk_reserved", "invalidated", "expired", "cancelled", "failed"}),
     "risk_reserved": frozenset({"waiting", "triggered", "ordered", "invalidated", "expired", "cancelled", "failed"}),
     "ordered": frozenset({"partially_filled", "filled", "cancelled", "failed"}),
@@ -258,6 +260,12 @@ class EntryPlan(BaseModel):
         from aletheia.trading.entry_capture import CAPTURE_POLICIES
         return next((priority for priority, policy in CAPTURE_POLICIES.items()
                      if policy.policy_id == self.capture_policy_id), None)
+
+    @property
+    def target_quantity(self) -> float:
+        # A fixed target must fit the notional ceiling at every permitted price,
+        # including a short Maker price above its worst (lowest) IOC price.
+        return self.max_notional / max(self.entry_zone)
 
     @field_validator(
         "stop_price",

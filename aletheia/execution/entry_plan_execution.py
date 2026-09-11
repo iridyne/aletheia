@@ -323,7 +323,7 @@ def build_entry_plan_order_intent(
     if not plan.entry_zone[0] <= price <= plan.entry_zone[1]:
         raise ValueError("entry_price_outside_plan_zone")
 
-    quantity = float(plan.max_notional) / price
+    quantity = plan.target_quantity if plan.capture_policy_id else float(plan.max_notional) / price
     risk_reward = calculate_entry_plan_risk_reward(price, plan.stop_price, plan.target_price)
     if quantity <= 0 or risk_reward is None:
         raise ValueError("entry_order_intent_geometry_invalid")
@@ -376,6 +376,7 @@ def build_entry_plan_order_intent(
             default=str,
         ),
         entry_plan_id=plan.plan_id,
+        entry_leg_index=0,
         order_tactic=plan.order_tactic,
         time_in_force=time_in_force,
         post_only=post_only,
@@ -513,13 +514,13 @@ def execute_entry_plan(
         trigger_activation_id=trigger_activation_id,
         trigger_activation_hash=trigger_activation_hash,
     )
-    if plan.execution_mode == "RESTING_MAKER" and row["status"] != "waiting":
+    if plan.execution_mode == "RESTING_MAKER" and row["status"] != "active":
         return {"status": row["status"], "entry_plan_id": plan.plan_id}
 
     try:
         repo.insert_trade_proposal(proposal)
     except sqlite3.IntegrityError as exc:
-        if str(exc) != "UNIQUE constraint failed: trade_proposals.entry_plan_id":
+        if str(exc) != "UNIQUE constraint failed: index 'idx_trade_proposals_entry_plan_leg'":
             raise
         existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
         if existing is None:

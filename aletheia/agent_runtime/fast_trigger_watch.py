@@ -202,6 +202,8 @@ def _invalidate_pre_order_entry_plan(
         current = repo.get_entry_plan(plan_id)
         if current is None or current["status"] != expected_status:
             return "stale"
+        if repo.get_order_for_entry_plan(plan_id) is not None:
+            return "order_present"
         proposal = repo.get_trade_proposal_by_entry_plan(plan_id)
         claim = None
         if proposal is not None:
@@ -254,13 +256,6 @@ async def _terminalize_entry_plan(
     cancel_entry_plan_order,
     now: datetime,
 ) -> str:
-    if row["status"] in {"ordered", "partially_filled"}:
-        result = await asyncio.to_thread(
-            cancel_entry_plan_order,
-            row["id"],
-            reason=reason,
-        )
-        return str(result.get("status") or "cancel_pending")
     outcome = await asyncio.to_thread(
         _invalidate_pre_order_entry_plan,
         row["id"],
@@ -270,12 +265,13 @@ async def _terminalize_entry_plan(
         now=now,
     )
     if outcome == "order_present":
-        result = await asyncio.to_thread(
-            cancel_entry_plan_order,
-            row["id"],
-            reason=reason,
-        )
-        return str(result.get("status") or "cancel_pending")
+        result = await asyncio.to_thread(cancel_entry_plan_order, row["id"], reason=reason)
+        outcome = str(result.get("status") or "cancel_pending")
+        if outcome in {"filled", "cancelled"}:
+            terminal = "filled" if outcome == "filled" else status
+            changed = await asyncio.to_thread(repo.transition_entry_plan, row["id"],
+                expected_status=row["status"], status=terminal, reason=reason, now=now)
+            return terminal if changed else "stale"
     return outcome
 
 
@@ -436,9 +432,9 @@ async def _load_entry_plan_watchers(
                     )
                     continue
         plans[plan.plan_id] = plan
-        if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
+        if plan.execution_mode != "TRIGGERED" or row["status"] not in {"waiting", "active"}:
             continue
-        if row["status"] in {"triggered", "risk_reserved"}:
+        if row["status"] in {"active"}:
             if not await asyncio.to_thread(repo.entry_plan_activation_can_refresh, plan.plan_id):
                 continue
             activation_row = await asyncio.to_thread(repo.get_entry_trigger_activation, row.get("trigger_activation_id"))
@@ -819,6 +815,7 @@ async def _watch_loop(cfg) -> None:
                         if invalidated:
                             if row["status"] in {
                                 "waiting",
+                                "active",
                                 "triggered",
                                 "risk_reserved",
                                 "ordered",
@@ -834,7 +831,7 @@ async def _watch_loop(cfg) -> None:
                                     now=datetime.now(timezone.utc),
                                 )
                             continue
-                        if plan.execution_mode == "RESTING_MAKER" and row["status"] in {"waiting", "risk_reserved"}:
+                        if plan.activation_policy == "IMMEDIATE" and row["status"] == "active":
                             from aletheia.execution.entry_plan_execution import execute_entry_plan
 
                             try:
@@ -859,7 +856,7 @@ async def _watch_loop(cfg) -> None:
                             except ValueError as exc:
                                 if str(exc) != "post_only_would_cross_bbo":
                                     raise
-                        elif row["status"] in {"triggered", "risk_reserved"}:
+                        elif row["status"] in {"active"}:
                             from aletheia.trading.entry_activation import EntryTriggerActivationV1
 
                             activation_row = await asyncio.to_thread(

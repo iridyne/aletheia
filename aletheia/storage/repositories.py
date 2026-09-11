@@ -1812,6 +1812,9 @@ def _compute_proposal_hash(p: TradeProposal) -> str:
     from aletheia.storage.hashing import sha256_json
 
     payload = p.model_dump(exclude=_PROPOSAL_HASH_EXCLUDES)
+    # Additive identity: NULL historical rows retain their exact original hash.
+    if p.entry_leg_index is None:
+        payload.pop("entry_leg_index")
     return sha256_json(payload)[:16]
 
 
@@ -1897,12 +1900,14 @@ def get_trade_proposal(pid: str) -> dict | None:
     return _select_one("trade_proposals", pid)
 
 
-def get_trade_proposal_by_entry_plan(entry_plan_id: str) -> dict | None:
+def get_trade_proposal_by_entry_plan(entry_plan_id: str, *, leg_index: int | None = None) -> dict | None:
     row = (
         get_db()
         .execute(
-            "SELECT * FROM trade_proposals WHERE entry_plan_id=? LIMIT 1",
-            (entry_plan_id,),
+            "SELECT * FROM trade_proposals WHERE entry_plan_id=? "
+            "AND (? IS NULL OR COALESCE(entry_leg_index,0)=?) "
+            "ORDER BY COALESCE(entry_leg_index,0) DESC LIMIT 1",
+            (entry_plan_id, leg_index, leg_index),
         )
         .fetchone()
     )
@@ -2181,9 +2186,11 @@ def has_order_for_proposal(proposal_id: str) -> bool:
 
 
 def get_order_for_entry_plan(entry_plan_id: str) -> dict | None:
-    """Return the entry Order durably attributed to one EntryPlan."""
+    """Read the latest leg Order; the Plan backlink is historical provenance only."""
     row = get_db().execute(
-        "SELECT * FROM orders WHERE entry_plan_id=? ORDER BY created_at ASC LIMIT 1",
+        "SELECT o.* FROM orders o LEFT JOIN trade_proposals p ON p.id=o.proposal_id "
+        "WHERE o.entry_plan_id=? AND o.close_reason IS NULL "
+        "ORDER BY COALESCE(p.entry_leg_index,0) DESC, o.created_at DESC, o.id DESC LIMIT 1",
         (entry_plan_id,),
     ).fetchone()
     return dict(row) if row else None
@@ -2488,13 +2495,7 @@ _ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
     "failed": frozenset(),
     "rejected": frozenset(),
 }
-_ORDER_ENTRY_PLAN_STATUS = {
-    "partial": "partially_filled",
-    "partially_filled": "partially_filled",
-    "filled": "filled",
-    "cancelled": "cancelled",
-    "error": "failed",
-}
+
 
 
 class OrderTransitionConflict(RuntimeError):
@@ -2517,9 +2518,7 @@ def transition_order(
     error_reason: str | None = None,
     filled_at: str | None = None,
 ) -> dict:
-    """Apply one legal Order transition and its reachable EntryPlan transition."""
-
-    from aletheia.trading.entry_plan import entry_plan_transition_allowed
+    """Apply one legal Order transition; EntryPlan owns its aggregate authority."""
 
     with transaction(immediate=True):
         order = get_order(order_id)
@@ -2545,24 +2544,6 @@ def transition_order(
         if updated.rowcount != 1:
             raise OrderTransitionConflict(f"order_transition_conflict:{order_id}")
 
-        plan_status = _ORDER_ENTRY_PLAN_STATUS.get(status)
-        plan_id = order.get("entry_plan_id")
-        plan = get_entry_plan(plan_id) if plan_id and plan_status else None
-        if current != status and plan and plan["status"] != plan_status:
-            if not entry_plan_transition_allowed(plan["status"], plan_status):
-                raise OrderTransitionConflict(
-                    f"order_entry_plan_transition_invalid:{order_id}"
-                )
-            if not transition_entry_plan(
-                plan_id,
-                expected_status=plan["status"],
-                status=plan_status,
-                order_id=order_id,
-                reason=error_reason,
-            ):
-                raise OrderTransitionConflict(
-                    f"order_entry_plan_transition_conflict:{order_id}"
-                )
         return get_order(order_id) or {}
 
 
@@ -7645,7 +7626,7 @@ def list_candidate_planning_cycles_batch(*, planning_keys: list[str]) -> dict[st
                 row["passive_entry"] = monitoring.get("passive_entry")
                 row["monitoring_changed_at"] = monitoring.get("state_changed_at")
                 row["activation_history"] = activation_history.get(row.get("entry_plan_id"), [])
-                if row.get("entry_plan_status") in {"triggered", "risk_reserved"}:
+                if row.get("entry_plan_status") in {"active", "triggered", "risk_reserved"}:
                     row["activation_recoverable"] = entry_plan_activation_can_refresh(row["entry_plan_id"])
                     snapshot = json.loads(row.get("activation_json") or "{}").get("snapshot", {})
                     row["activation_stream_current"] = (monitoring.get("state") == "ready"
@@ -8405,7 +8386,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
         result["watchable_plan_counts"] = {
             row["state"]: row["count"] for row in db.execute(
                 "SELECT COALESCE(monitoring_state,'unavailable') AS state, COUNT(*) AS count "
-                "FROM entry_plans WHERE status IN ('waiting','triggered','risk_reserved','ordered','partially_filled') "
+                "FROM entry_plans WHERE status IN ('waiting','active','triggered','risk_reserved','ordered','partially_filled') "
                 "GROUP BY COALESCE(monitoring_state,'unavailable')"
             ).fetchall()
         }
@@ -8419,7 +8400,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
             "AND pg.soft_expires_at>? AND pg.hard_expires_at>? AND pg.attempt_count<3 "
             "AND pg.entry_plan_id IS NULL AND NOT EXISTS (SELECT 1 FROM entry_plans ep "
             "WHERE ep.planning_generation_id=pg.id AND ep.status IN "
-            "('waiting','triggered','risk_reserved','ordered','partially_filled')) "
+            "('waiting','active','triggered','risk_reserved','ordered','partially_filled')) "
             "AND (pg.status='pending' OR (pg.status='unavailable' "
             "AND (pg.retry_not_before IS NULL OR pg.retry_not_before<=?)) "
             "OR (pg.status='planning' AND pg.claim_expires_at<=?))",
@@ -8991,6 +8972,7 @@ def complete_candidate_planning_with_plan(
             execution_mode=plan.execution_mode,
             plan_json=payload,
             plan_hash=digest,
+            status="active" if plan.activation_policy == "IMMEDIATE" else "waiting",
             created_at=timestamp,
             updated_at=timestamp,
         )
@@ -9252,7 +9234,7 @@ def list_planning_history(
 def list_watchable_entry_plans(limit: int | None = 100) -> list[dict]:
     return _select_all(
         "entry_plans",
-        where=("status IN ('waiting','triggered','risk_reserved','ordered','partially_filled')"),
+        where=("status IN ('waiting','active','triggered','risk_reserved','ordered','partially_filled')"),
         order="created_at ASC",
         limit=limit,
     )
@@ -9263,7 +9245,7 @@ def watchable_entry_plan_high_watermark() -> tuple[str, str] | None:
         get_db()
         .execute(
             "SELECT created_at, id FROM entry_plans "
-            "WHERE status IN ('waiting','triggered','risk_reserved','ordered','partially_filled') "
+            "WHERE status IN ('waiting','active','triggered','risk_reserved','ordered','partially_filled') "
             "ORDER BY created_at DESC, id DESC LIMIT 1"
         )
         .fetchone()
@@ -9278,7 +9260,7 @@ def list_watchable_entry_plans_page(
     limit: int = 100,
 ) -> list[dict]:
     where = [
-        "status IN ('waiting','triggered','risk_reserved','ordered','partially_filled')",
+        "status IN ('waiting','active','triggered','risk_reserved','ordered','partially_filled')",
         "(created_at < ? OR (created_at = ? AND id <= ?))",
     ]
     params: list[str] = [through[0], through[0], through[1]]
@@ -9316,13 +9298,16 @@ def get_entry_trigger_activation(activation_id: str) -> dict | None:
 
 def entry_plan_activation_can_refresh(plan_id: str, *, now: datetime | None = None) -> bool:
     """A new trigger can refresh an unsubmitted intent, never an exchange handoff."""
-    proposal = get_trade_proposal_by_entry_plan(plan_id)
-    if proposal is None:
-        return True
-    claim = get_proposal_execution_claim(proposal["id"])
-    return (proposal["status"] in {"pending", "approved"}
-        and (claim is None or not proposal_execution_claim_is_fresh(claim, now or datetime.now(timezone.utc)))
-        and not has_order_for_proposal(proposal["id"]))
+    if get_order_for_entry_plan(plan_id) is not None:
+        return False
+    proposals = _select_all("trade_proposals", where="entry_plan_id=?", params=(plan_id,), limit=None)
+    for proposal in proposals:
+        claim = get_proposal_execution_claim(proposal["id"])
+        if (proposal["status"] not in {"pending", "approved"}
+            or has_order_for_proposal(proposal["id"])
+            or (claim is not None and proposal_execution_claim_is_fresh(claim, now or datetime.now(timezone.utc)))):
+            return False
+    return True
 
 
 def bind_entry_trigger_activation(activation, *, expected_activation_id: str | None, now: datetime | None = None) -> bool:
@@ -9335,7 +9320,7 @@ def bind_entry_trigger_activation(activation, *, expected_activation_id: str | N
     with transaction(immediate=True):
         now = now or datetime.now(timezone.utc)
         row = get_entry_plan(activation.plan_id)
-        if row is None or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
+        if row is None or row["status"] not in {"waiting", "active"}:
             return False
         if not entry_plan_activation_can_refresh(activation.plan_id, now=now):
             return False
@@ -9366,8 +9351,8 @@ def bind_entry_trigger_activation(activation, *, expected_activation_id: str | N
             (activation.activation_id, activation.plan_id, activation.activation_hash,
              activation.model_dump_json(), activation.created_at, activation.expires_at))
         updated = execute_write("UPDATE entry_plans SET trigger_activation_id=?, "
-            "status=CASE WHEN status='waiting' THEN 'triggered' ELSE status END,updated_at=? "
-            "WHERE id=? AND trigger_activation_id IS ? AND status IN ('waiting','triggered','risk_reserved')",
+            "status=CASE WHEN status='waiting' THEN 'active' ELSE status END,updated_at=? "
+            "WHERE id=? AND trigger_activation_id IS ? AND status IN ('waiting','active')",
             (activation.activation_id, now.isoformat(), activation.plan_id, expected_activation_id))
         if updated.rowcount != 1:
             raise ValueError("entry_trigger_activation_claim_lost")

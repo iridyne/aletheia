@@ -684,6 +684,9 @@ async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch)
         "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
     }
     calls = []
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _: row)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan", lambda _: {"id": "owned-order"})
+    monkeypatch.setattr(watch.repo, "transition_entry_plan", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(
         watch.repo,
@@ -736,6 +739,8 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
     monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan",
+        lambda _: {"id": "order-1"} if expected_action == "cancel" else None)
     if integrity == "contract":
         monkeypatch.setattr(
             watch.EntryPlan,
@@ -755,7 +760,7 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
     await watch._load_entry_plan_watchers(SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10)))
 
     if expected_action == "cancel":
-        assert transitions == []
+        assert len(transitions) == 1 and transitions[0][1]["status"] == "failed"
         assert cancellations == [
             (row["id"], f"entry_plan_{integrity}_mismatch" if integrity == "hash" else "entry_plan_contract_invalid")
         ]
@@ -853,6 +858,8 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
         "get_entry_plan",
         lambda plan_id: next(row for row in rows if row["id"] == plan_id),
     )
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan",
+        lambda plan_id: {"id": "order-1"} if plan_id == "ordered-plan" else None)
     monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     monkeypatch.setattr(
         watch.repo,
@@ -866,7 +873,8 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     await watch._cancel_open_entry_plans("fast_trigger_paused")
 
-    assert len(transitions) == 1
+    assert len(transitions) == 2
+    assert transitions[1][0] == "ordered-plan" and transitions[1][1]["status"] == "invalidated"
     plan_id, kwargs = transitions[0]
     assert plan_id == "waiting-plan"
     assert kwargs["expected_status"] == "waiting"
@@ -1070,6 +1078,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         direction="long",
         invalidation_price=90.0,
         execution_mode="RESTING_MAKER",
+        activation_policy="IMMEDIATE",
         order_tactic="POST_ONLY_LIMIT",
         limit_price=100.2,
     )
@@ -1123,7 +1132,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         "_load_entry_plan_watchers",
         lambda _cfg: asyncio.sleep(0, result=({plan.plan_id: plan}, {})),
     )
-    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _id: {"status": "waiting"})
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _id: {"status": "active"})
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution.execute_entry_plan", reject_cross)
@@ -1905,6 +1914,9 @@ async def test_venue_mismatch_ordered_plan_routes_through_gateway(monkeypatch):
         trigger_params={},
     )
     cancellations = []
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _: row)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan", lambda _: {"id": "owned-order"})
+    monkeypatch.setattr(watch.repo, "transition_entry_plan", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
     monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)

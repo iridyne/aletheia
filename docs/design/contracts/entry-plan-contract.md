@@ -565,3 +565,34 @@ The current fingerprint boundary prevents historical hypotheses from acquiring
 new-policy authority. Compilation does not establish support for a second order
 leg: Stage 3/4 must wire canonical claims, Risk, Order/Fill and reconciliation
 before deployment of the new capture contract.
+
+### Plan authority and leg accounting (#3111 Stage 3)
+
+Current Plan authority is `waiting` before Conditional activation and `active`
+after activation (Immediate starts active). Risk reservations and Order/Fill
+progress remain with their existing owners; they no longer write parallel
+`risk_reserved`, `ordered` or `partially_filled` Plan states. The watcher owns
+aggregate terminalization. Gateway cancellation returns the exact Order result
+without terminalizing its parent Plan. Historical state rows remain readable.
+
+One immutable `entry_leg_index` (0 or 1) on Proposal replaces the one-Proposal-per-
+Plan uniqueness constraint with one-Proposal-per-Plan-leg uniqueness. Historical
+NULL occupies leg 0 and preserves its original hash representation. The v87
+migration changes schema atomically without rewriting historical rows or hashes.
+
+A current capture Plan's fixed target quantity is its frozen max notional divided
+by the highest permitted entry-zone price, so both long and short legs fit the
+notional ceiling throughout the zone. Every leg accounts for existing same-Plan
+fills and all unresolved Order remainder before its quantity/notional/risk checks.
+Closing a Position does not erase historical entry fills from that accounting.
+Only a confirmed cancelled native passive leg of a MakerPreferred Plan can admit
+a second leg; any existing Position must be the exact verified, still-open,
+unchanged-quantity Position and have no pending close. This completion reuses its
+existing position slot; unrelated same-symbol positions and all exposure limits
+remain binding. Price/quantity intent remains immutable per leg.
+
+Risk owns the `APPROVED` / `DEFER` / `REJECT` disposition derived from its explicit
+violation codes. Temporary market/account/capacity conditions keep Bitget Demo Entry Proposal
+pending and release preparation ownership; hard or unknown violations reject.
+Gateway consumes this disposition without classifying freeform Risk messages.
+The original RiskDecision and violations remain the persisted evidence.

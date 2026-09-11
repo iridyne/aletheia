@@ -186,7 +186,7 @@ def require_entry_trigger_activation(
     activation.require_valid(plan, now=now)
     if owner["plan_hash"] != activation.plan_hash:
         raise ValueError("entry_plan_hash_mismatch")
-    if owner["status"] not in {"triggered", "risk_reserved"}:
+    if owner["status"] != "active":
         raise ValueError("entry_trigger_activation_plan_not_executable")
     monitoring = json.loads(owner.get("monitoring_evidence_json") or "{}")
     if (owner.get("monitoring_state") != "ready"
