@@ -15,6 +15,7 @@ import { initWakeupGate } from './lib/wakeupGate'
 import { useRealtimeUpdates } from './lib/useRealtimeUpdates'
 import { NAV } from './routeManifest'
 
+import { StorageService } from './core/storage/storageService'
 // Local paper exchange honesty is rendered by AccountSnapshot: Local paper · no exchange.
 
 // Overview is the only route in the initial navigation path. Every other page
@@ -67,9 +68,9 @@ export default function App() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia?.(MOBILE_QUERY).matches === true)
-  const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(RAIL_STORAGE_KEY) === 'true' } catch { return false }
-  })
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(() =>
+    StorageService.get('aletheia.sidebar.rail.collapsed', false)
+  )
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [privacyMode, setPrivacyMode] = useState(false)
   const [updateRequested, setUpdateRequested] = useState(false)
@@ -107,7 +108,7 @@ export default function App() {
   useDialogFocus(sidebarOpen && isMobile, sidebarRef, () => setSidebarOpen(false))
 
   useEffect(() => {
-    try { localStorage.setItem(RAIL_STORAGE_KEY, String(railCollapsed)) } catch { /* ignore */ }
+    StorageService.set('aletheia.sidebar.rail.collapsed', railCollapsed)
   }, [railCollapsed])
 
   useEffect(() => {

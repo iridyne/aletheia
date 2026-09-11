@@ -5,6 +5,7 @@ import { DetailDrawer, DrawerSection, DrawerField } from './DetailDrawer'
 import ThesisText from './ThesisText'
 import { ProposalRationaleDetail } from './ProposalRationaleDetail'
 import { fmtOpportunityScore, fmtScore100, fmtSymbol, opportunityScoreLabel } from '../lib/format'
+import { StorageService } from '../core/storage/storageService'
 
 /**
  * Agent activity feed.
@@ -167,16 +168,14 @@ export default function AgentFeed({ bootstrap }: { bootstrap?: OverviewBootstrap
   const cardRef = useRef<HTMLDivElement>(null)
   const [availableHeight, setAvailableHeight] = useState<number | null>(null)
   const [mode, setMode] = useState<FeedMode>(() => {
-    try {
-      const v = localStorage.getItem(MODE_KEY) as FeedMode | null
-      return v && MODES.includes(v) ? v : 'both'
-    } catch { return 'both' }
+    const v = StorageService.get(MODE_KEY, 'both')
+    return (MODES as readonly string[]).includes(v) ? (v as FeedMode) : 'both'
   })
   const [selected, setSelected] = useState<FeedItem | null>(null)
 
   function pickMode(m: FeedMode) {
     setMode(m)
-    try { localStorage.setItem(MODE_KEY, m) } catch { /* ignore */ }
+    StorageService.set(MODE_KEY, m)
   }
 
   // Re-render every 30s to update relative timestamps

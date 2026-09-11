@@ -8,6 +8,7 @@ import PageHeader from '../components/PageHeader'
 import Tabs from '../components/Tabs'
 import type { TabDef } from '../components/Tabs'
 import { DetailDrawer, DrawerSection, DrawerField } from '../components/DetailDrawer'
+import { StorageService } from '../core/storage/storageService'
 import { StatusBadge } from '../components/DataTable'
 import { DataStateMessage } from '../components/DataState'
 import { Badge, Button, Card, ListRowButton, StatusText, TableWrap, useToast, type StatusTone } from '../components/ui'
@@ -581,12 +582,9 @@ export function PredictionStatusNotice({ state, enabled }: { state: PredictionSt
 // refresh or treats an unreadable live status as current.
 const PRED_ENABLED_CACHE = 'aletheia.prediction.enabled'
 function readCachedEnabled(): boolean | undefined {
-  try {
-    const v = localStorage.getItem(PRED_ENABLED_CACHE)
-    return v == null ? undefined : v === 'true'
-  } catch {
-    return undefined
-  }
+  const raw = StorageService.getString(PRED_ENABLED_CACHE, '')
+  if (!raw) return undefined
+  return raw === 'true'
 }
 
 // --- Main Page ---
@@ -610,7 +608,7 @@ export default function PredictionLens() {
 
   useEffect(() => {
     if (statusQuery.data?.enabled != null) {
-      try { localStorage.setItem(PRED_ENABLED_CACHE, String(statusQuery.data.enabled)) } catch { /* ignore */ }
+      StorageService.setString(PRED_ENABLED_CACHE, String(statusQuery.data.enabled))
     }
   }, [statusQuery.data?.enabled])
 

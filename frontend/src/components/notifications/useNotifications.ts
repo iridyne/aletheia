@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../../api/client'
+import { StorageService } from '../../core/storage/storageService'
 
 const LAST_READ_KEY = 'aletheia.notifications.lastReadAt'
 
@@ -21,7 +22,7 @@ function healthSeverity(issue: string): 'error' | 'warning' | 'info' {
 
 export function useNotifications() {
   const [lastReadAt, setLastReadAt] = useState<number>(() => {
-    const stored = localStorage.getItem(LAST_READ_KEY)
+    const stored = StorageService.getString(LAST_READ_KEY)
     return stored ? new Date(stored).getTime() : 0
   })
 
@@ -77,7 +78,7 @@ export function useNotifications() {
 
   const markAllRead = () => {
     const now = new Date().toISOString()
-    localStorage.setItem(LAST_READ_KEY, now)
+    StorageService.setString(LAST_READ_KEY, now)
     setLastReadAt(Date.now())
   }
 

@@ -11,6 +11,7 @@ import {
 } from '@tanstack/react-table'
 import { useEffect, useState } from 'react'
 import { humanize } from '../lib/format'
+import { StorageService } from '../core/storage/storageService'
 import { DataStateMessage, type DataState } from './DataState'
 
 interface DataTableProps<T> {
@@ -35,12 +36,7 @@ interface DataTableProps<T> {
 
 function loadVisibility(tableId?: string): VisibilityState {
   if (!tableId) return {}
-  try {
-    const raw = localStorage.getItem(`dt-cols:${tableId}`)
-    return raw ? (JSON.parse(raw) as VisibilityState) : {}
-  } catch {
-    return {}
-  }
+  return StorageService.get(`dt-cols:${tableId}`, {})
 }
 
 export function DataTable<T>({
@@ -55,9 +51,7 @@ export function DataTable<T>({
   // Persist column visibility per table so the user's choice survives reloads.
   useEffect(() => {
     if (!tableId) return
-    try {
-      localStorage.setItem(`dt-cols:${tableId}`, JSON.stringify(columnVisibility))
-    } catch { /* storage unavailable — visibility stays session-only */ }
+    StorageService.set(`dt-cols:${tableId}`, columnVisibility)
   }, [tableId, columnVisibility])
 
   // TanStack Table owns live table state; React Compiler cannot safely memoize this API.

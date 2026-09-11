@@ -28,16 +28,13 @@ export type PlanningHistoryQuery = NonNullable<operations["get_planning_history_
 export type EntryWorkbenchQuery = NonNullable<operations["get_entry_workbench_api_universe_workbench_get"]["parameters"]["query"]>;
 export type SnapshotsQuery = NonNullable<operations["list_snapshots_api_universe_snapshots_get"]["parameters"]["query"]>;
 
+import { StorageService } from "../core/storage/storageService";
 const BASE = "/api";
 const REMOTE_CONTROL_TOKEN_KEY = "aletheia.remoteControlToken";
 
 function remoteControlHeaders(): Record<string, string> {
-	try {
-		const token = window.localStorage.getItem(REMOTE_CONTROL_TOKEN_KEY)?.trim();
-		return token ? { "X-Aletheia-Token": token } : {};
-	} catch {
-		return {};
-	}
+	const token = StorageService.getString(REMOTE_CONTROL_TOKEN_KEY).trim();
+	return token ? { "X-Aletheia-Token": token } : {};
 }
 
 type RemoteControlTokenStorageResult =
@@ -80,8 +77,8 @@ function setRemoteControlToken(token: string): RemoteControlTokenStorageResult {
 	try {
 		const normalized = token.trim();
 		if (normalized)
-			window.localStorage.setItem(REMOTE_CONTROL_TOKEN_KEY, normalized);
-		else window.localStorage.removeItem(REMOTE_CONTROL_TOKEN_KEY);
+			StorageService.setString(REMOTE_CONTROL_TOKEN_KEY, normalized);
+		else StorageService.remove(REMOTE_CONTROL_TOKEN_KEY);
 		return { ok: true };
 	} catch {
 		return {

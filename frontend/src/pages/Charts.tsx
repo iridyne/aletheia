@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { StorageService } from '../core/storage/storageService'
 import { useQuery } from '@tanstack/react-query'
 import {
   api, type MarketNewsItem, type MarketOpportunityInstrument, type MarketTrade, type OhlcvResult,
@@ -404,11 +405,8 @@ function sanitizeIndicatorArray<T extends string>(values: unknown, allowed: read
 }
 
 function hydrateChartSettings(): ChartSettings {
-  if (typeof window === 'undefined') return DEFAULT_CHART_SETTINGS
   try {
-    const raw = window.localStorage.getItem(CHART_SETTINGS_STORAGE_KEY)
-    if (!raw) return DEFAULT_CHART_SETTINGS
-    const parsed = JSON.parse(raw) as
+    const parsed = StorageService.get(CHART_SETTINGS_STORAGE_KEY, null) as
       | (Partial<Omit<ChartSettings, 'indicators'>> & {
           indicators?: {
             main?: unknown
@@ -990,8 +988,7 @@ export default function Charts() {
     onToggleGroup={toggleGroupCollapse}
   />
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    try { window.localStorage.setItem(CHART_SETTINGS_STORAGE_KEY, JSON.stringify(chartSettings)) } catch { /* localStorage unavailable */ }
+    StorageService.set(CHART_SETTINGS_STORAGE_KEY, chartSettings)
   }, [chartSettings])
   const resetChartSettings = useCallback(() => setChartSettings(DEFAULT_CHART_SETTINGS), [])
 
