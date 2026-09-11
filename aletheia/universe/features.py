@@ -733,8 +733,9 @@ async def _fetch_single_feature(
         last_ts = int(ohlcv_1h[-1][0]) / 1000
         data_freshness_sec = int(time.time() - last_ts)
 
+    enrichment_at = datetime.now(timezone.utc)
     ob_row, fr_row, oi_row = _load_fresh_enrichment_rows(
-        asset, now=datetime.now(timezone.utc),
+        asset, now=enrichment_at,
     )
     if ob_row is None:
         ob_row = await _fetch_feature_orderbook(exchange, asset, ccxt_sym)
@@ -742,6 +743,8 @@ async def _fetch_single_feature(
     if ob_row is None and diagnostics_out is not None:
         diagnostics_out["orderbook_unavailable"] = 1
     depth_10bps = ob_row["total_depth_10bps_usd"] if ob_row else None
+    from aletheia.universe.candidate_funding import stored_funding_proof
+    funding_evidence = stored_funding_proof(fr_row, now=enrichment_at)
     funding_rate = fr_row["funding_rate"] if fr_row else None
     funding_observed_at = fr_row.get("observed_at") if fr_row else None
     open_interest = oi_row["open_interest_usd"] if oi_row else None
@@ -783,6 +786,29 @@ async def _fetch_single_feature(
                         ):
                             funding_rate = live_funding_rate
                             funding_observed_at = observed_at
+                            from aletheia.data.derivatives_facts import (
+                                funding_interval_seconds, instrument_from_market, normalize_funding,
+                            )
+                            from aletheia.universe.candidate_funding import PERP_FUNDING_EVIDENCE_VERSION
+                            market = (getattr(exchange, "markets", {}) or {}).get(perp_sym) or {}
+                            interval_raw = fr_data
+                            interval_source = "funding_response.interval"
+                            if exchange.id == "bitget":
+                                hours = (market.get("info") or {}).get("fundInterval")
+                                interval_raw = {"interval": f"{hours}h"}
+                                interval_source = "bitget.contracts.fundInterval"
+                            funding_evidence = normalize_funding(
+                                fr_data, instrument=instrument_from_market(symbol, market),
+                                provider="ccxt", venue=exchange.id, acquired_at=received_at,
+                                interval_seconds=funding_interval_seconds(interval_raw),
+                            )
+                            funding_evidence.update(
+                                version=PERP_FUNDING_EVIDENCE_VERSION,
+                                interval_source=interval_source,
+                                interval_raw=interval_raw.get("interval"),
+                                interval_acquired_at=(getattr(exchange, "_candidate_markets_acquired_at", None)
+                                                      if exchange.id == "bitget" else received_at.isoformat()),
+                            )
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
@@ -876,6 +902,7 @@ async def _fetch_single_feature(
         "return_24h": return_24h,
         "funding_rate": funding_rate,
         "funding_observed_at": funding_observed_at,
+        "funding_evidence_json": json.dumps(funding_evidence, sort_keys=True),
         "open_interest": open_interest,
         "oi_delta_1h": oi_delta_1h,
         "long_short_ratio": long_short_ratio,
@@ -1078,6 +1105,7 @@ async def collect_features(
                 perp_exchange = perp_provider._ensure_primary("perp")
                 perp_exchange.options["defaultType"] = "swap"
                 await perp_exchange.load_markets()
+                perp_exchange._candidate_markets_acquired_at = datetime.now(timezone.utc).isoformat()
             except Exception as exc:
                 perp_exchange = None
                 logger.warning("Perp market bootstrap failed: %s", type(exc).__name__)

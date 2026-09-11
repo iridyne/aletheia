@@ -125,3 +125,13 @@ MFE/MAE 是毛路径指标，用来区分方向错误与出入场表达错误；
 ## 9. 安全边界
 
 该结果层是 observation-only：不提交订单、不修改风险、不开实盘、不自动放宽过滤器。任何依据净结果改变排序、阈值或仓位的动作必须进入独立受控实验。
+
+### Canonical Candidate Perp Funding amendment — #3086
+
+For `scanner_family=candidate_selection_utility`, the 8h estimate in §4 is
+superseded by the T0 proved interval in `funding_evidence_json`:
+`rate * 100 * hold_seconds / interval_seconds * direction_sign`.
+Unknown interval or unusable source proof leaves funding/net NULL. This scoped
+amendment does not change other forward/counterfactual/benchmark consumers or
+§5 near-due MAE behavior. See the Perp Funding section of
+[candidate selection contract](candidate_selection_utility_contract.md).

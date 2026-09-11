@@ -232,3 +232,25 @@ model, stopping rule, or result package. Code/tests prove contract behavior and
 replayability. This implementation does not itself prove profitability, a
 positive prospective qualification, live-trading authority, or deployment of
 the exact code on Fedora.
+
+## Perp T0 Funding evidence — #3086
+
+Canonical Candidate Perp outcomes freeze `candidate-perp-funding/v1` in
+`funding_evidence_json`: exact physical instrument/venue, observed rate, positive
+proved settlement interval, source/acquisition times and interval provenance.
+Bitget reuses the same ticker observation and the already-loaded contracts
+`fundInterval`; the exact primary stored fact is only a bounded fallback.
+Unknown interval/source proof produces unavailable funding/net, never an 8h
+assumption. The shared non-Candidate outcome paths keep their existing contract;
+this amendment changes only canonical Candidate settlement.
+
+The Candidate semantic manifest adds `perp_funding`, rotating the existing policy
+epoch. Training explicitly counts pre-contract Perp outcomes as
+`perp_funding_historical_incompatible`; they remain immutable/queryable and do
+not enter current compatible cohorts. Feature acquisition identity and Spot
+history are unchanged. New incomplete proofs remain counted as
+`perp_funding_current_incomplete` and stay in the current outcome denominator,
+where overdue/incomplete economics fail closed. `perp_funding_current_complete`
+counts T0 proof completeness, not settlement, MAE completeness or profitability.
+Counts use unique outcome rows before mechanism label expansion. Near-due path
+and MAE semantics remain owned by #3073 and unchanged.

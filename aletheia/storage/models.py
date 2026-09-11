@@ -406,6 +406,7 @@ class FilterCandidateOutcome(BaseModel):
     entry_price_usd: float
     entry_spread_bps: float | None = None
     funding_rate_at_entry: float | None = None
+    funding_evidence_json: str | None = None
     entry_ts: str = Field(default_factory=_utcnow)
     due_at: str
     settled_at: str | None = None
