@@ -112,3 +112,15 @@ def test_stale_rules_are_not_used_when_their_refresh_fails(monkeypatch):
     monkeypatch.setattr(rules, "_fetch_constraints", unavailable)
     with pytest.raises(rules.ConstraintUnavailable, match="refresh failed"):
         rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot")
+
+
+def test_bounded_entry_quantity_rounds_down_without_crossing_venue_minima():
+    from aletheia.execution.order_constraints import ConstraintUnavailable, OrderConstraints, normalize_quantity
+    constraints = OrderConstraints(
+        venue="bitget", symbol="BTC/USDT", market_type="usdt_futures",
+        min_quantity=Decimal("0.001"), max_quantity=None,
+        amount_step=Decimal("0.001"), min_notional=Decimal("5"),
+    )
+    assert normalize_quantity(0.0039, 2000, constraints, allow_increase=False) == 0.003
+    with pytest.raises(ConstraintUnavailable, match="below exchange minimum"):
+        normalize_quantity(0.0029, 2000, constraints, allow_increase=False)

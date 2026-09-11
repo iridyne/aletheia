@@ -330,7 +330,7 @@ def test_bound_planner_input_prevents_candidate_retargeting():
     candidate = _candidate()
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     assert repo.claim_next_candidate_planning("owner")["id"] == generation["id"]
-    payload = json.dumps({"frozen_candidate_id": candidate.id}, sort_keys=True)
+    payload = json.dumps({"planning_generation": {"candidate_id": candidate.id}}, sort_keys=True)
     import hashlib
 
     assert repo.bind_candidate_planner_input(
@@ -934,6 +934,12 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         assert stored["planner_input_json"] == input_payload
         assert stored["model_invoked"] == stored["compiler_invoked"] == 1
         assert stored["attention_status"] == ("active" if operational else "terminal")
+        expected_activation = {
+            "RUNNING_CONTRACT_CHANGED": "entry_plan_running_contract_mismatch",
+            "HYPOTHESIS_CHECKPOINT_MISMATCH": "entry_plan_hypothesis_checkpoint_mismatch",
+        }.get(compiler_error)
+        if expected_activation:
+            assert stored["outcome_reason"] == f"ENTRY_PLAN_ACTIVATION_INVALID:{expected_activation}"
         if compiler_error == "COMPILER_RETRY_EXHAUSTED":
             for attempt in (2, 3):
                 repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?",
@@ -1771,4 +1777,30 @@ def test_direct_compiler_keeps_exact_market_quality_backstop(monkeypatch, update
     context = SimpleNamespace(execution_context=dict(availability="available",spread_bps=2,
         depth_10bps_usd=100000,estimated_costs=.1) | updates)
     with pytest.raises(PlanIntentError, match="EXECUTION_CONTEXT_UNAVAILABLE"):
-        compile_entry_plan({}, context, None, load_config())
+        compile_entry_plan({"market_type": "perp", "direction": "long"}, context, None, load_config())
+
+
+def test_unbound_candidate_refresh_preserves_birth_context_owner():
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    repo.claim_next_candidate_planning("owner")
+    replacement = _candidate(rank=8, price=105)
+    same, created = repo.ensure_candidate_planning_generation(replacement.id)
+    assert not created and same["id"] == generation["id"]
+    assert same["last_candidate_id"] == candidate.id
+    source = json.loads(same["requalification_source_json"])["candidate_opportunity_context"]
+    assert source["candidate_id"] == candidate.id
+    assert source["context_hash"] == repo.get_candidate(same["last_candidate_id"])["candidate_opportunity_context_hash"]
+    assert repo.get_candidate_planning_for_candidate(replacement.id)["id"] == generation["id"]
+
+
+def test_spot_short_blocks_before_market_model_and_compiler(monkeypatch):
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", market_type="spot", direction="short")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    def unexpected(*args, **kwargs):
+        pytest.fail("Spot short must stop before market/model work")
+    monkeypatch.setattr(repo, "latest_orderbook", unexpected)
+    result = asyncio.run(plan_next_candidate(unexpected))
+    assert result["reason"] == "spot_short_not_allowed"
+    assert not result["model_invoked"] and not result["compiler_invoked"]
+    assert repo.get_candidate_planning_generation(generation["id"])["planner_input_json"] is None

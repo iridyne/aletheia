@@ -8142,12 +8142,9 @@ def ensure_candidate_planning_generation(
                 ))
             execute_write(
                 "UPDATE candidate_planning_generations SET "
-                "last_candidate_id=CASE WHEN planner_input_json IS NULL AND attention_status='active' THEN ? ELSE last_candidate_id END, "
                 "updated_at=? WHERE id=?",
-                (candidate_id, timestamp, existing["id"]),
+                (timestamp, existing["id"]),
             )
-            if existing.get("planner_input_json") is None and existing.get("attention_status") == "active":
-                existing["last_candidate_id"] = candidate_id
             existing["updated_at"] = timestamp
             return existing, False
 
@@ -8882,11 +8879,11 @@ def complete_candidate_planning_with_plan(
 ) -> tuple[str, dict | None]:
     """Activate only a still-current claimed generation; retain stale result audit."""
 
-    from aletheia.trading.entry_plan import EntryPlan, entry_plan_payload
+    from aletheia.trading.entry_plan import EntryPlan, EntryPlanActivationError, entry_plan_payload
 
     plan = EntryPlan.model_validate(plan)
     if plan.planning_generation_id != generation_id:
-        raise ValueError("entry_plan_generation_mismatch")
+        raise EntryPlanActivationError("entry_plan_generation_mismatch")
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     timestamp = current.isoformat()
     expire_candidate_attention(now=current)
@@ -8921,20 +8918,20 @@ def complete_candidate_planning_with_plan(
             return "claim_lost", None
         if (row["validated_hypothesis_json"] is not None
             and plan.entry_hypothesis_json != row["validated_hypothesis_json"]):
-            raise ValueError("entry_plan_hypothesis_checkpoint_mismatch")
+            raise EntryPlanActivationError("entry_plan_hypothesis_checkpoint_mismatch")
         if plan.entry_hypothesis_json is not None:
             from aletheia.trading.entry_analysis import EntryAnalysisContext, fingerprint
             from aletheia.trading.entry_contract import entry_contract_fingerprints
 
             if (row["entry_behavior_fingerprint"], row["schema_fingerprint"]) != entry_contract_fingerprints():
-                raise ValueError("entry_plan_running_contract_mismatch")
+                raise EntryPlanActivationError("entry_plan_running_contract_mismatch")
 
             try:
                 frozen_context = EntryAnalysisContext.model_validate_json(
                     row["planner_input_json"] or ""
                 )
             except Exception as exc:
-                raise ValueError("entry_plan_frozen_context_invalid") from exc
+                raise EntryPlanActivationError("entry_plan_frozen_context_invalid") from exc
             if (
                 not row["entry_behavior_fingerprint"]
                 or not row["schema_fingerprint"]
@@ -8947,7 +8944,7 @@ def complete_candidate_planning_with_plan(
                 or frozen_context.planning_generation.get("schema_fingerprint")
                 != row["schema_fingerprint"]
             ):
-                raise ValueError("entry_plan_frozen_context_mismatch")
+                raise EntryPlanActivationError("entry_plan_frozen_context_mismatch")
             opportunity = frozen_context.candidate_opportunity_context
             selection = opportunity.get("candidate_selection") or {}
             mechanism = opportunity.get("opportunity") or {}
@@ -8962,7 +8959,7 @@ def complete_candidate_planning_with_plan(
                 or selection.get("policy") != row["candidate_selection_policy"]
                 or selection.get("policy_epoch") != row["candidate_selection_policy_epoch"]
             ):
-                raise ValueError("entry_plan_candidate_opportunity_mismatch")
+                raise EntryPlanActivationError("entry_plan_candidate_opportunity_mismatch")
         if (
             plan.candidate_id != row["last_candidate_id"]
             or plan.venue != row["venue"]
@@ -8971,7 +8968,7 @@ def complete_candidate_planning_with_plan(
             or plan.direction != row["direction"]
             or plan.candidate_family != row["candidate_family"]
         ):
-            raise ValueError("entry_plan_candidate_identity_mismatch")
+            raise EntryPlanActivationError("entry_plan_candidate_identity_mismatch")
         record = EntryPlanRecord(
             id=plan.plan_id,
             planning_generation_id=generation_id,

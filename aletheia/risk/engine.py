@@ -45,6 +45,7 @@ from aletheia.trading.entry_plan import (
     calculate_entry_plan_risk_reward,
     entry_plan_risk_reward_is_plausible,
     stop_distance_below_min_floor,
+    entry_instrument_violation,
 )
 
 logger = logging.getLogger("aletheia.risk.engine")
@@ -1082,8 +1083,9 @@ def _evaluate_proposal_locked(
     #     instrument; a spot+short would reach the broker as a spot SELL of an asset
     #     the account may not hold. Reject at the risk boundary regardless of
     #     allow_short_* (which only gate direction, not instrument type).
-    if proposal.direction == "short" and proposal.market_type == "spot":
-        violations.append("spot_short_not_allowed")
+    instrument_violation = entry_instrument_violation(proposal.market_type, proposal.direction)
+    if instrument_violation:
+        violations.append(instrument_violation)
 
     # 8. Max daily loss — global brake. If today's realized loss breaches the limit,
     #    reject and auto-trip the kill switch (guide §21.3, §2.4).

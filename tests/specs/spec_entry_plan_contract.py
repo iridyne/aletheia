@@ -351,3 +351,26 @@ def test_market_quality_retry_before_input_binding(monkeypatch):
     cfg.agent.permission_mode = "Full"
     save_config(cfg)
     test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, "thin")
+
+
+@spec_claim(SpecClaim(
+    "EP-S15", "entry_plan_contract", "Static executable geometry and capability", "L2a",
+    "Compiler shares Risk stop floor; Spot short stops before inference; refresh retains birth context owner.",
+    status="implemented",
+))
+def test_static_entry_feasibility_and_birth_owner(monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+    from tests.test_entry_planner import (
+        test_spot_short_blocks_before_market_model_and_compiler,
+        test_unbound_candidate_refresh_preserves_birth_context_owner,
+    )
+    from tests.test_entry_plan_execution import test_compiled_holding_is_separate_from_swing_timing
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.agent.permission_mode = "Full"
+    save_config(cfg)
+    test_unbound_candidate_refresh_preserves_birth_context_owner()
+    test_spot_short_blocks_before_market_model_and_compiler(monkeypatch)
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda _plan: None)
+    test_compiled_holding_is_separate_from_swing_timing(monkeypatch, "universe", "short_term", "c1", 24)

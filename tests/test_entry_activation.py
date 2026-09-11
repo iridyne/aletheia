@@ -369,7 +369,10 @@ def test_expired_activation_after_claim_is_audited_terminal_error(monkeypatch, t
     with monkeypatch.context() as gate:
         gate.setattr(gateway, "datetime", PreparationClock)
         gate.setattr(gateway, "evaluate_proposal", risk_decision)
-        gate.setattr(gateway, "_prepare_exchange_quantity", lambda *args: (proposal.quantity, None))
+        def prepare(*args, **kwargs):
+            assert kwargs == {"allow_increase": False}
+            return proposal.quantity, None
+        gate.setattr(gateway, "_prepare_exchange_quantity", prepare)
         gate.setattr(gateway, "_check_symbol_availability", finish_preparation)
         gate.setattr("aletheia.execution.coordinator.execute_order",
             lambda **kwargs: broker_calls.append(kwargs) or {"status": "failed"})
