@@ -455,3 +455,24 @@ attention lifetime and dependency-recovery rules still apply. Compiler uses the
 same predicate as its deterministic backstop; thresholds and geometry do not
 change. Entry behavior identity includes `exact-envelope-before-input-bind/v1`,
 so old bound inputs remain historical through the normal identity cutover.
+
+## Executable static feasibility — Gate B / #2899
+
+Planner blocks `spot_short_not_allowed` before market acquisition or inference;
+Compiler and canonical Risk use the same instrument predicate. No market or venue
+substitution occurs. Compiler applies `stop_distance_below_min_floor()` to the
+closest permitted entry and structural stop before issuing an immutable Plan.
+The existing configuration and published-regime semantics are unchanged; Risk
+rechecks its current floor at execution. Neither entry/stop geometry nor Risk
+limits are widened to manufacture a Plan.
+
+Candidate refresh associates the new Candidate with its existing cycle; it never
+retargets the birth-context owner, including before model input is bound.
+Activation contract failures carry a bounded `entry_plan_*` code under
+`ENTRY_PLAN_ACTIVATION_INVALID`; unknown exceptions and schema failures remain
+explicitly unknown/schema-invalid, without copying arbitrary exception text.
+
+Gateway quantity normalization for an EntryPlan rounds down to executable venue
+steps within the approved intent. A quantity below the venue minima is rejected;
+it must not be rounded above the immutable Plan ceiling. The normalized snapshot
+still passes authoritative Risk and retains original Proposal identity.

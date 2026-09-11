@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_CEILING, InvalidOperation
+from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, InvalidOperation
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -111,18 +111,23 @@ def constraints_from_market(
     )
 
 
-def normalize_quantity(quantity: float, price: float, constraints: OrderConstraints) -> float:
+def normalize_quantity(quantity: float, price: float, constraints: OrderConstraints, *, allow_increase: bool = True) -> float:
     """Round an opening size *up* to the venue step and all published minima.
 
+    Bounded EntryPlan quantities instead round down and may not cross minima.
     The caller must send the returned value through Risk Engine before submission.
     """
     qty = _decimal(quantity, "quantity", required=True)
     step = constraints.amount_step
-    required = max(qty, constraints.min_quantity)
+    minimum = constraints.min_quantity
     if constraints.min_notional is not None:
         quoted_price = _decimal(price, "price", required=True)
-        required = max(required, constraints.min_notional / quoted_price)
-    adjusted = (required / step).to_integral_value(rounding=ROUND_CEILING) * step
+        minimum = max(minimum, constraints.min_notional / quoted_price)
+    required = max(qty, minimum) if allow_increase else qty
+    rounding = ROUND_CEILING if allow_increase else ROUND_FLOOR
+    adjusted = (required / step).to_integral_value(rounding=rounding) * step
+    if adjusted <= 0 or adjusted < minimum:
+        raise ConstraintUnavailable("bounded order quantity is below exchange minimum")
     if constraints.max_quantity is not None and adjusted > constraints.max_quantity:
         raise ConstraintUnavailable("order quantity exceeds exchange maximum")
     return float(adjusted)
@@ -217,6 +222,6 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     return constraints
 
 
-def prepare_exchange_quantity(execution_mode: str, symbol: str, market_type: str, quantity: float, price: float) -> float:
+def prepare_exchange_quantity(execution_mode: str, symbol: str, market_type: str, quantity: float, price: float, *, allow_increase: bool = True) -> float:
     """Return the legal quantity for a real exchange order, or raise fail-closed."""
-    return normalize_quantity(quantity, price, get_order_constraints(execution_mode, symbol, market_type))
+    return normalize_quantity(quantity, price, get_order_constraints(execution_mode, symbol, market_type), allow_increase=allow_increase)

@@ -53,6 +53,19 @@ def _new_id() -> str:
     return uuid4().hex[:12]
 
 
+class EntryPlanActivationError(ValueError):
+    """A bounded persistence-contract failure, without arbitrary exception text."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+def entry_instrument_violation(market_type: str, direction: str) -> str | None:
+    """Spot has no native short-entry capability."""
+    return "spot_short_not_allowed" if market_type == "spot" and direction == "short" else None
+
+
 def stop_distance_pct(entry_price: float | None, stop_price: float | None) -> float | None:
     """Absolute stop distance as a percent of entry. ``None`` if undefined."""
     try:

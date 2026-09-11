@@ -96,6 +96,15 @@ async def plan_next_candidate(
                 "planning_generation_id": generation["id"],
                 "model_invoked": False,
             }
+        from aletheia.trading.entry_plan import entry_instrument_violation
+
+        instrument_violation = entry_instrument_violation(generation["market_type"], generation["direction"])
+        if instrument_violation:
+            stored = repo.block_candidate_planning(
+                generation["id"], owner, instrument_violation, stage="runtime_preflight",
+            )
+            return {"status": "blocked" if stored else "stale", "planning_generation_id": generation["id"],
+                    "reason": instrument_violation, "model_invoked": False, "compiler_invoked": False}
         try:
             venue_reason = fast_market_data_unavailability_reason(
                 cfg,
@@ -450,9 +459,14 @@ async def plan_next_candidate(
                 generation["id"], owner, plan
             )
         except ValueError as exc:
+            from aletheia.trading.entry_plan import EntryPlanActivationError
+
+            code = exc.code if isinstance(exc, EntryPlanActivationError) else (
+                "entry_plan_schema_invalid" if isinstance(exc, ValidationError) else "entry_plan_activation_unknown"
+            )
             repo.fail_candidate_planning(
                 generation["id"], owner,
-                f"ENTRY_PLAN_ACTIVATION_INVALID:{type(exc).__name__}",
+                f"ENTRY_PLAN_ACTIVATION_INVALID:{code}",
                 stage="activation", model_invoked=dispatched, compiler_invoked=True,
             )
             return {"status": "failed", "planning_generation_id": generation["id"], "model_invoked": dispatched, "compiler_invoked": True}

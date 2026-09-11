@@ -129,6 +129,7 @@ def _prepare_exchange_quantity(
     market_type: str,
     quantity: float,
     price: float,
+    *, allow_increase: bool = True,
 ) -> tuple[float, str | None]:
     """Apply executable-venue minima before Risk Engine sees an exchange order."""
     from aletheia.execution.order_constraints import (
@@ -145,6 +146,7 @@ def _prepare_exchange_quantity(
             market_type,
             quantity,
             price,
+            **({"allow_increase": False} if not allow_increase else {}),
         ), None
     except ConstraintUnavailable as exc:
         logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
@@ -1425,6 +1427,7 @@ def _execute_proposal(
             proposal.market_type,
             proposal.quantity or 0.0,
             proposal.price or 0.0,
+            **({"allow_increase": False} if proposal.entry_plan_id else {}),
         )
         if constraint_error:
             return _reject_for_exchange_constraints(proposal, constraint_error)

@@ -36,6 +36,7 @@ def compiler_contract_material() -> dict:
         "sideways_stop_mult": SIDEWAYS_STOP_MULT,
         "geometry": _GEOMETRY, "tactic": _TACTIC,
         "planning_market_quality": "exact-envelope-before-input-bind/v1",
+        "static_risk_feasibility": "shared-instrument-and-stop-floor/v1",
     }
 
 
@@ -272,6 +273,11 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
 
     authority = require_entry_runtime_authority(cfg)
 
+    from aletheia.trading.entry_plan import entry_instrument_violation, stop_distance_below_min_floor
+
+    instrument_violation = entry_instrument_violation(generation["market_type"], generation["direction"])
+    if instrument_violation:
+        raise PlanIntentError(instrument_violation)
     require_entry_market_quality(context.execution_context, cfg)
     anchors = {item.anchor_id: item for item in context.anchors}
     primary = anchors[hypothesis.primary_anchor_ref]
@@ -303,6 +309,14 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     else:
         zone = (primary.price, primary.price)
         worst_entry = primary.price
+    # A fixed structural stop must clear the same floor Risk will recheck.
+    # Check the closest permitted entry: all prices in the frozen zone must fit.
+    closest_entry = zone[0] if direction == "long" else zone[1]
+    tight_stop = stop_distance_below_min_floor(
+        closest_entry, stop, execution_mode=authority.execution_route, cfg=cfg,
+    )
+    if tight_stop:
+        raise PlanIntentError("stop_distance_below_vol_target", tight_stop)
     target = (
         worst_entry + rr * (worst_entry - stop)
         if direction == "long" else worst_entry - rr * (stop - worst_entry)

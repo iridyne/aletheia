@@ -59,6 +59,14 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     assert datetime.fromisoformat(plan.expires_at) - datetime.fromisoformat(plan.approved_at) == timedelta(hours=4)
     assert (plan.source_kind, plan.source_id, plan.trade_school) == (kind, source_id, school)
     assert plan.stop_price == pytest.approx(94.9)
+    # The same supplied geometry becomes impossible under the existing Risk floor.
+    old_target = cfg.trading.vol_target_pct
+    cfg.trading.vol_target_pct = 6.0
+    from aletheia.trading.entry_plan import stop_distance_below_min_floor
+    assert stop_distance_below_min_floor(100, 94.9, execution_mode="bitget_demo", cfg=cfg)
+    with pytest.raises(ValueError, match="stop_distance_below_vol_target"):
+        compile_entry_plan(generation, context, hypothesis, cfg)
+    cfg.trading.vol_target_pct = old_target
     now = datetime.fromisoformat(plan.approved_at)
     proposal = build_entry_plan_order_intent(plan, bid=99.9, ask=100.1,
         observed_at=now.isoformat(), source_observed_at=now.isoformat(), now=now)
