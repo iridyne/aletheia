@@ -40,21 +40,22 @@ class OptionsStructureCollector:
 
     async def collect(self) -> dict[str, Any]:
         snapshots: list[OptionsMarketStructureSnapshot] = []
+        volatility_snapshots = []
         errors: list[str] = []
 
         for currency in _CURRENCIES:
             try:
-                snap = await _collect_currency(currency)
+                snap = await _collect_currency(currency, volatility_snapshots=volatility_snapshots)
                 if snap:
                     snapshots.append(snap)
             except Exception as exc:
                 errors.append(f"{currency}:{exc}")
                 logger.debug("options_structure: %s failed: %s", currency, exc)
 
-        return {"snapshots": snapshots, "errors": errors}
+        return {"snapshots": snapshots, "volatility_snapshots": volatility_snapshots, "errors": errors}
 
 
-async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | None:
+async def _collect_currency(currency: str, *, volatility_snapshots: list | None = None) -> OptionsMarketStructureSnapshot | None:
     observed_at = datetime.now(timezone.utc).isoformat()
 
     async with httpx_client(timeout=15) as client:
@@ -66,6 +67,21 @@ async def _collect_currency(currency: str) -> OptionsMarketStructureSnapshot | N
         data = resp.json()
 
     items = data.get("result") or []
+    acquired_at = datetime.now(timezone.utc).isoformat()
+    try:
+        return _gex_from_items(currency, items, observed_at)
+    finally:
+        # Derive after GEX so added processing cannot shift its clock reads.
+        if volatility_snapshots is not None:
+            from aletheia.data.options_volatility import derive_options_volatility
+
+            try:
+                volatility_snapshots.append(derive_options_volatility(currency, items, acquired_at))
+            except (ValueError, TypeError, OverflowError) as exc:
+                logger.warning("options volatility projection unavailable: %s", type(exc).__name__)
+
+
+def _gex_from_items(currency: str, items: list, observed_at: str) -> OptionsMarketStructureSnapshot | None:
     if not items:
         return None
 

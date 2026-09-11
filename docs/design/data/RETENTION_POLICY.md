@@ -102,6 +102,7 @@ Windows below are the Phase 3 defaults; each is wired through the new
 
 | Table | Window | Prune column | Function | Cascade | Archive? | Rationale |
 |-------|--------|--------------|----------|---------|----------|-----------|
+| `options_volatility_snapshots` | 30d | `acquired_at` | `prune_options_volatility_snapshots` | none | hard delete | Observation-only IV summaries and selected input lineage; no raw-chain history or decision authority. |
 | `market_ohlcv` | 1m=2d / 5m=7d / 15m=30d / 1h=90d / 4h=180d / 1d=730d + hard drop `exchange='legacy_unknown'` | `ts` (integer ms) | `prune_market_ohlcv` (NEW) | none | hard delete | No FK, no audit binding. Every reader is bounded LIMIT or ≤90d horizon. Also removes 27,554 legacy_unknown rows. |
 | `position_path_observations` | lifetime of referenced Position | none | no prune | FK to `positions` | retain append-only | Ordered path evidence is immutable and must remain available for Position replay; the observer writes only exact available/unavailable facts. |
 | `position_path_observation_deferred_buckets` | until materialized or terminally unavailable | none | no prune | FK to `positions` | retain while pending | Durable recovery queue; bounded retries remove a row by writing an append-only terminal fact, so a pending row is never used as indefinite history. |

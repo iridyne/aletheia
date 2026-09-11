@@ -38,6 +38,7 @@
 
 | 数据域 | 采集器 | 存储 | **消费模块（去向）** | 状态 |
 |---|---|---|---|---|
+| Deribit IV surface（DU-S31） | `OptionsStructureCollector` 复用同一次 BTC/ETH public chain response | 独立 `options_volatility_snapshots`，30 天保留 | `aletheia data options-volatility --symbol BTC --cutoff <UTC>` 只读研究导出 | 🟡 observation/research-only；不进入 LLM 或交易决策；规则见 §4 |
 | Canonical Derivatives Facts（DU-S29） | 现有 `DerivativesCollector` 的 primary/comparison 路径与 native Hyperliquid；一个 exact venue/instrument/fact 保留一个当前 writer | 原 Funding/OI 表的 nullable provenance；独立 `perp_price_snapshots`；`collector_health_state` 的最新比较覆盖 | `data/derivatives_facts.py` 只读规范投影及 `GET /api/market/derivatives-facts` 的 Positioning readiness 数据观察；比较行明确 `observation_only`，旧 scalar/context/evidence readers 排除这些新增行 | 🟡 observation-only；不改变 Candidate、Entry、Risk 或交易权限；未知 interval/单位/历史 provenance 保留 unavailable，不把采集成功当作经济证据 |
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；按 venue+symbol+market_type 精确路由；超过 15 分钟整行退出决策 |
@@ -84,6 +85,35 @@
 > retention 窗口是否覆盖新消费者的读取需求（Phase 3, 2026-07-17）。
 
 ## 4. Gap 处置
+
+### Options volatility observation contract
+
+`OptionsVolatilitySnapshot` 与 GEX 独立，使用现有
+[`get_book_summary_by_currency`](https://docs.deribit.com/api-reference/market-data/public-get_book_summary_by_currency)
+的 `mark_iv`（年化百分数）、`underlying_price`、`underlying_index` 和
+`creation_timestamp`。每币种每 10 分钟最多增加一个摘要行，不增加请求、Provider 或 scheduler。
+仅冻结参与派生的 instrument、source timestamp、strike、expiry、IV、forward 和 input hash，
+不保存整条 chain。source time 与收到响应后的 acquisition time 分开。
+
+7/30/60D 分别选择距离目标不超过 2/7/14 天的最近 expiry（等距取较早 expiry）；
+精确 tenor 标记 `exact`，否则 `nearest`，超界 `unavailable`，输出实际 tenor 和 expiry。
+不做跨 expiry 插值或外推。ATM 是同 expiry、同 strike 的 call/put mark IV 均值，
+strike 必须位于 forward 的 ±5%，最近 strike 优先；缺任一侧不可用。
+25Δ 使用 Black 未贴现、非 premium-adjusted forward Delta：
+`d1=(ln(F/K)+sigma²*T/2)/(sigma*sqrt(T))`，call=`N(d1)`，put=`N(d1)-1`，
+ACT/365.25。仅接受 underlying_index 精确匹配该 expiry 的期货；
+不把 index_price 当 forward，不假定利率，不声称等于账户 Delta。
+同 expiry 的每侧以 absolute Delta 对 IV 线性插值到 0.25；必须双侧包围，
+端点在 [0.10,0.40] 且 Delta 间距 ≤0.15，不外推，记录 `exact/interpolated/unavailable`。
+RR=`call_25d_iv-put_25d_iv`；put/call skew=`put_25d_iv-call_25d_iv`，单位均为 IV 百分点。
+term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 与 60D：
+正 slope=`back_higher`，负=`front_higher`，精确相等=`flat`，缺失=`unavailable`。
+
+输入 source age 必须处于 [0,120] 秒，入选输入 source skew ≤30 秒；不明时间、
+重复 instrument、NaN/inf、非正 IV/strike/forward、到期或标的歧义不得贡献事实。
+不可用结果保留原因和 coverage，不补 0。读取要求 acquisition/source time 均不晚于 cutoff，
+且 acquisition 距 cutoff ≤30 分钟，不回退到更旧的可用值。
+这些事实没有 Candidate、Entry、Prompt、Risk、Sizing、Compiler、Gateway、UTA 或 Live authority。
 
 - **Hyperliquid（曾 ❌ orphan）→ 已闭合 ✅**：`market_observer` 同时读取明确标记为 Hyperliquid 的 funding、predicted funding 与 OI；funding 只用 annualized 值跨 venue 比较，OI 显示绝对值、真实 1h delta 和 observed timestamp。System Operator 的 `evidence_manifest_json` 保存实际命中的 funding/OI row id，不把“已采集”误写成“已使用”。锁定于 DU-S01/S02/S21/B01/B02。
 - **永续持仓结构（🟡）**：没有可信自动 endpoint 时，`doctor` 明确显示 not configured；不生成假数据。Owner 可通过显式 CLI 导入白名单 aggregate export，系统保存 source ref/hash 和审计事件，并为有 reference price + directional bias 的行建立 1h/4h/24h shadow outcome。14 天窗口成熟前 `decision_influence=disabled`，之后也只进入人工评审，不自动进入 Risk/Execution。

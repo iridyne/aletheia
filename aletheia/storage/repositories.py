@@ -11692,6 +11692,54 @@ def prune_perp_structure_snapshots(days: int = 30) -> int:
     return _delete_by_rowid_batches("perp_structure_snapshots", "observed_at < ?", (cutoff,))
 
 
+def insert_options_volatility_snapshot(data: dict) -> None:
+    from aletheia.data.options_volatility import OptionsVolatilitySnapshot
+
+    snapshot = OptionsVolatilitySnapshot.model_validate(data)
+    acquired = datetime.fromisoformat(snapshot.acquired_at)
+    if acquired.tzinfo is None:
+        raise ValueError("acquisition_timezone_required")
+    snapshot.acquired_at = acquired.astimezone(timezone.utc).isoformat()
+    _insert("options_volatility_snapshots", {
+        "symbol": snapshot.symbol, "acquired_at": snapshot.acquired_at,
+        "snapshot_json": json.dumps(snapshot.model_dump(), allow_nan=False),
+    })
+
+
+def options_volatility_at(symbol: str, cutoff: str) -> dict:
+    """Research-only as-of read. Never create/migrate a database on inspection."""
+    from aletheia.storage.sqlite import readonly_db
+    from aletheia.data.options_volatility import OptionsVolatilitySnapshot
+
+    end = datetime.fromisoformat(cutoff)
+    if end.tzinfo is None or symbol not in ("BTC", "ETH"):
+        raise ValueError("BTC/ETH symbol and timezone-aware cutoff required")
+    cutoff = end.astimezone(timezone.utc).isoformat()
+    unavailable = {"available": False, "reason": "no_snapshot", "authority": "observation_only"}
+    with readonly_db(allow_missing=True) as db:
+        if db is None or not db.execute("SELECT 1 FROM sqlite_master WHERE name='options_volatility_snapshots'").fetchone():
+            return unavailable
+        row = db.execute(
+            "SELECT id, snapshot_json FROM options_volatility_snapshots "
+            "WHERE symbol=? AND acquired_at<=? ORDER BY acquired_at DESC,id DESC LIMIT 1",
+            (symbol, cutoff),
+        ).fetchone()
+    if row is None:
+        return unavailable
+    snapshot = OptionsVolatilitySnapshot.model_validate_json(row["snapshot_json"])
+    age = (end-datetime.fromisoformat(snapshot.acquired_at)).total_seconds()
+    if not 0 <= age <= 1800:
+        return {**unavailable, "reason": "stale_snapshot"}
+    if any(datetime.fromisoformat(r["source_time"]) > end for r in snapshot.inputs):
+        return {**unavailable, "reason": "future_source"}
+    return {"available": True, "id": row["id"], "cutoff": cutoff, **snapshot.model_dump()}
+
+
+def prune_options_volatility_snapshots(days: int = 30) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches("options_volatility_snapshots", "acquired_at < ?", (cutoff,))
+
+
 def insert_options_structure_snapshot(data: dict) -> None:
     """Persist one OptionsMarketStructureSnapshot row."""
     _insert("options_market_structure_snapshots", data)

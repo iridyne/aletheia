@@ -10,6 +10,21 @@ import typer
 data_app = typer.Typer(no_args_is_help=True)
 
 
+@data_app.command("options-volatility")
+def options_volatility(
+    symbol: str = typer.Option(..., help="BTC or ETH"),
+    cutoff: str = typer.Option(..., help="Timezone-aware ISO decision cutoff"),
+):
+    """Export a bounded observation-only options IV snapshot without fetching."""
+    from aletheia.storage.repositories import options_volatility_at
+
+    try:
+        result = options_volatility_at(symbol, cutoff)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, indent=2, allow_nan=False))
+
+
 @data_app.command("migrate")
 def migrate_database():
     """Explicitly apply pending versioned database migrations."""
