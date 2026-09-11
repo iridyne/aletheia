@@ -747,7 +747,7 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
     assert summary["counts"]["external"] == 1
 
 
-@pytest.mark.parametrize("native_state", ["pending", "submitted", "submission_unknown", "materialization_missing", "filled"])
+@pytest.mark.parametrize("native_state", ["open", "pending", "submitted", "submission_unknown", "materialization_missing", "filled"])
 def test_adoption_waits_for_native_entry_materialization(tmp_path, monkeypatch, native_state):
     """An exchange position may be the native entry whose private fill is delayed."""
     setup_env(tmp_path, monkeypatch)
@@ -777,3 +777,23 @@ def test_adoption_rechecks_position_after_stale_classification(tmp_path, monkeyp
     with pytest.raises(PositionAdoptionIntegrityError, match="position_already_materialized"):
         adopt_position(_ex("DOGEUSDT", "long", 204, entry=0.08689), "demo")
     assert [p["id"] for p in repo.list_positions(status="open")] == [existing.id]
+
+
+def test_adoption_ignores_completed_reverse_linked_native_entry(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.position_reconciler import adopt_position
+
+    repo.get_db().execute(
+        "INSERT INTO orders (id,symbol,market_type,direction,order_type,quantity,price,"
+        "execution_mode,status,source,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("old-native", "DOGE/USDT", "usdt_futures", "long", "limit", 204, 0.08824,
+         "bitget_demo", "filled", "native", "2026-09-11T15:40:40+00:00"),
+    )
+    repo.get_db().commit()
+    old = Position(symbol="DOGE/USDT", market_type="usdt_futures", direction="long",
+                   quantity=204, entry_price=0.08689, current_price=0.08689,
+                   execution_mode="bitget_demo", order_id="old-native", status="closed")
+    repo.insert_position(old)
+    adopted = adopt_position(_ex("DOGEUSDT", "long", 10, entry=0.09), "demo")
+    assert adopted["position_id"] != old.id
+    assert len(repo.list_positions(status="open")) == 1

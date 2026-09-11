@@ -1280,10 +1280,11 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
         pending = db.execute(
             "SELECT 1 FROM orders WHERE symbol=? AND market_type=? AND direction=? "
             "AND execution_mode=? AND source='native' AND close_reason IS NULL AND ("
-            "status IN ('pending','submitted','partial','partially_filled',"
+            "status IN ('open','pending','submitted','partial','partially_filled',"
             "'submission_unknown','materialization_missing') OR "
             "(position_id IS NULL AND (status='filled' OR EXISTS "
-            "(SELECT 1 FROM fills WHERE fills.order_id=orders.id)))) LIMIT 1", identity,
+            "(SELECT 1 FROM fills WHERE fills.order_id=orders.id)) AND NOT EXISTS "
+            "(SELECT 1 FROM positions WHERE positions.order_id=orders.id))) LIMIT 1", identity,
         ).fetchone()
         if existing is not None or pending is not None:
             raise PositionAdoptionIntegrityError(
