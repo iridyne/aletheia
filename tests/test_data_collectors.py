@@ -494,10 +494,11 @@ async def test_fetch_fred_parses_response(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: FakeClient())
 
     spy, vix, dxy, nasdaq = await _fetch_fred("fake-key")
-    assert spy == 5500.12
-    assert vix == 18.50
-    assert dxy == 103.45
-    assert nasdaq == 17200.00
+    assert spy[0] == 5500.12
+    assert spy[1]["source_observed_at"] == "2026-06-13"
+    assert vix[0] == 18.50
+    assert dxy[0] == 103.45
+    assert nasdaq[0] == 17200.00
 
 
 @pytest.mark.asyncio

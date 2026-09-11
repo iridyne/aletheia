@@ -11576,8 +11576,10 @@ def insert_macro_snapshot(data: dict) -> None:
 
 
 def latest_macro_snapshot() -> dict | None:
+    from aletheia.data.freshness import fresh_macro_row
+
     rows = _select_all("macro_snapshots", order="observed_at DESC", limit=1)
-    return rows[0] if rows else None
+    return fresh_macro_row(rows[0]) if rows else None
 
 
 def macro_snapshot_near(

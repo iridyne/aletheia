@@ -440,6 +440,7 @@ def build_market_context_from_db(
             nasdaq_close=macro_row.get("nasdaq_close"),
             risk_regime=macro_row.get("risk_regime", "neutral"),
             observed_at=macro_row.get("observed_at", ""),
+            source_times_json=macro_row.get("source_times_json"),
             # MO-3: F&G + top movers are collected (macro/coingecko collectors) and
             # rendered (build_market_context_snapshot §Macro), but were never read
             # here — so the runtime path always saw None. macro_snapshots stores all

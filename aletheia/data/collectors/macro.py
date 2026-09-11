@@ -11,6 +11,7 @@ FRED API key: env var FRED_API_KEY (register free at https://fred.stlouisfed.org
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -46,7 +47,6 @@ class MacroCollector:
         The scheduler injects it from CoinGeckoTopCollector.movers_summary
         before persisting the snapshot in the Phase B tick.
         """
-        now = datetime.now(timezone.utc).isoformat()
         errors: list[str] = []
 
         try:
@@ -140,8 +140,27 @@ class MacroCollector:
                 errors.append(f"yfinance: {e}")
                 logger.debug("yfinance fallback also failed: %s", e)
 
-        # Risk regime heuristic
-        risk_regime = _classify_risk_regime(vix, total_cap_change)
+        # Preserve source clocks separately from mixed-row acquisition time.
+        source_times = {}
+        values = []
+        for field, observation in zip(
+            ("spy_close", "vix_close", "dxy_close", "nasdaq_close"),
+            (spy, vix, dxy, nasdaq),
+        ):
+            if observation is None:
+                values.append(None)
+                continue
+            value, proof = observation
+            values.append(value)
+            source_times[field] = proof
+        spy, vix, dxy, nasdaq = values
+        now = datetime.now(timezone.utc).isoformat()
+        # Classification is projected from usable inputs at read time as well.
+        from aletheia.data.freshness import fresh_macro_row
+        current = fresh_macro_row(dict(vix_close=vix,
+            total_market_cap_change_24h_pct=total_cap_change, observed_at=now,
+            source_times_json=json.dumps(source_times)))
+        risk_regime = current["risk_regime"] if current else "unavailable"
         accepted_values = (
             btc_dominance,
             total_cap,
@@ -169,6 +188,7 @@ class MacroCollector:
             fng_value=fng_value,
             fng_classification=fng_classification,
             observed_at=now,
+            source_times_json=json.dumps(source_times, sort_keys=True),
         )
 
         return {"snapshot": snapshot, "errors": errors}
@@ -201,7 +221,7 @@ async def _fetch_fng() -> tuple[int | None, str | None]:
 
 async def _fetch_fred(
     api_key: str,
-) -> tuple[float | None, float | None, float | None, float | None]:
+) -> tuple:
     """Fetch latest observations for SPY, VIX, DXY, Nasdaq from FRED.
 
     FRED returns daily data; we grab the most recent non-"." observation
@@ -209,9 +229,9 @@ async def _fetch_fred(
     Free tier: 120 requests/min — we use 4 per call (one per series).
     All four requests run concurrently on a shared client connection pool.
     """
-    results: dict[str, float | None] = {"spy": None, "vix": None, "dxy": None, "nasdaq": None}
+    results: dict[str, tuple | None] = {"spy": None, "vix": None, "dxy": None, "nasdaq": None}
 
-    async def _one(client, key: str, series_id: str) -> tuple[str, float | None]:
+    async def _one(client, key: str, series_id: str) -> tuple[str, tuple | None]:
         try:
             resp = await client.get(
                 _FRED_BASE_URL,
@@ -228,7 +248,11 @@ async def _fetch_fred(
             for obs in observations:
                 val = obs.get("value", ".")
                 if val != ".":
-                    return key, round(float(val), 2)
+                    return key, (round(float(val), 2), {
+                        "source": "fred", "series_id": series_id,
+                        "source_observed_at": obs.get("date"), "precision": "date",
+                        "acquired_at": datetime.now(timezone.utc).isoformat(),
+                    })
         except Exception as e:
             logger.debug("FRED series %s failed: %s", series_id, e)
         return key, None
@@ -269,33 +293,24 @@ async def _fetch_coingecko() -> tuple[float | None, float | None, float | None]:
 # yFinance (fallback)
 # ---------------------------------------------------------------------------
 
-def _fetch_one_tradfi_ticker(ticker_sym: str) -> float | None:
+def _fetch_one_tradfi_ticker(ticker_sym: str) -> tuple | None:
     """Fetch a single yfinance ticker. Intended to run in asyncio.to_thread."""
     try:
         import yfinance as yf
         t = yf.Ticker(ticker_sym)
         hist = t.history(period="2d")
         if not hist.empty:
-            return round(float(hist["Close"].iloc[-1]), 2)
+            return round(float(hist["Close"].iloc[-1]), 2), {
+                "source": "yfinance", "series_id": ticker_sym,
+                "source_observed_at": hist.index[-1].date().isoformat(),
+                "precision": "date",  # history() returns daily bars, not live quotes.
+                "acquired_at": datetime.now(timezone.utc).isoformat(),
+            }
     except ImportError:
         logger.warning("yfinance not installed — tradfi macro fallback unavailable (FRED key required)")
     except Exception as e:
         logger.debug("yfinance tradfi ticker %s failed: %s", ticker_sym, e)
     return None
-
-
-def _fetch_tradfi() -> tuple[float | None, float | None, float | None, float | None]:
-    """Fetch SPY, VIX, DXY, Nasdaq via yfinance. Fallback when FRED unavailable."""
-    spy = _fetch_one_tradfi_ticker("SPY")
-    vix = _fetch_one_tradfi_ticker("^VIX")
-    dxy = _fetch_one_tradfi_ticker("DX-Y.NYB")
-    nasdaq = _fetch_one_tradfi_ticker("^IXIC")
-    if all(v is None for v in (spy, vix, dxy, nasdaq)):
-        logger.warning(
-            "yfinance tradfi fallback: all tickers returned None "
-            "(yfinance library change or Yahoo Finance API outage?)"
-        )
-    return spy, vix, dxy, nasdaq
 
 
 def _classify_risk_regime(

@@ -158,7 +158,8 @@ class MacroSnapshot(BaseModel):
     fng_value: int | None = None  # 0-100 Alt.me index
     fng_classification: str | None = None  # "Extreme Fear" / "Fear" / "Neutral" / "Greed" / "Extreme Greed"
     top_movers_summary: str | None = None  # short pre-formatted "Top Gainers: ... | Top Losers: ..."
-    observed_at: str = ""
+    observed_at: str = ""  # mixed snapshot acquisition, not FRED source time
+    source_times_json: str | None = None
 
 
 class OptionsMarketStructureSnapshot(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Mapping, TypeVar
@@ -124,7 +125,9 @@ def fresh_row(
     now: datetime | None = None,
     timestamp_field: str = "observed_at",
 ) -> RowT | None:
-    """Return the original row only when the entire snapshot is decision-usable."""
+    """Admit a snapshot; mixed macro rows project each source field separately."""
+    if domain == "macro" and timestamp_field == "observed_at":
+        return fresh_macro_row(row, now=now)
     verdict = assess_freshness(row, domain, now=now, timestamp_field=timestamp_field)
     return row if verdict.usable else None
 
@@ -143,3 +146,32 @@ def fresh_rows(
             row, domain, now=now, timestamp_field=timestamp_field,
         ).usable
     ]
+
+
+def fresh_macro_row(row: Mapping | None, *, now: datetime | None = None) -> dict | None:
+    """Project mixed macro inputs without refreshing source dates on acquisition."""
+    if not assess_freshness(row, "macro", now=now).usable:
+        return None
+    from aletheia.data.collectors.macro import _classify_risk_regime
+
+    result = dict(row)
+    try:
+        source_times = json.loads(row.get("source_times_json") or "{}")
+    except (ValueError, TypeError):
+        source_times = {}
+    if not isinstance(source_times, dict):
+        source_times = {}
+    for field in ("spy_close", "vix_close", "dxy_close", "nasdaq_close"):
+        proof = source_times.get(field)
+        # A daily observation date is preserved verbatim, but cannot prove a
+        # 30-minute observation. Legacy rows have no source proof either.
+        if (not isinstance(proof, dict) or proof.get("precision") != "timestamp"
+            or len(str(proof.get("source_observed_at") or "")) <= 10
+            or not assess_freshness(
+            dict(proof, source_time_status="provided"), "macro", now=now,
+        ).usable):
+            result[field] = None
+    result["risk_regime"] = _classify_risk_regime(
+        result.get("vix_close"), result.get("total_market_cap_change_24h_pct"),
+    ) or "unavailable"
+    return result

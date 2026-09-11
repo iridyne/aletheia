@@ -25,8 +25,24 @@ missing fields, retry providers, or change risk and execution behavior.
 
 The limits intentionally allow multiple bounded collector attempts. They are
 decision-use limits, not claims about the underlying economic series' update
-frequency. For example, FRED values may be daily, but the macro row's
-`observed_at` proves when this installation last verified and assembled them.
+frequency. Macro `observed_at` records completed mixed-source acquisition only;
+it does not prove the source time of its TradFi values. Under the owner-approved
+[#1465](https://github.com/iridyne/aletheia/issues/1465) correction, each SPY/VIX/DXY/
+Nasdaq field retains `source`, `series_id`, `source_observed_at`, `precision` and
+`acquired_at` in `source_times_json`. FRED observation dates and yfinance daily-bar
+dates remain dates; they do not invent an intraday observation timestamp. Date-only,
+missing, invalid or stale TradFi proof cannot establish the 30-minute gate, even
+when acquired today. Timestamp-precision proof must satisfy both clocks.
+
+Macro is a mixed-source exception to whole-row rejection: first bound the assembly
+age, then mask unavailable TradFi fields independently. Existing CoinGecko/Fear &
+Greed/top-movers acquisition-based admission is unchanged by this scoped repair;
+an old FRED field does not discard those independent values. The existing risk-regime
+classifier is evaluated from admitted VIX/market-cap inputs without changing its
+thresholds. Context, Market Observer, Regime and current repository/API readers
+share this projection. Raw historical rows remain readable and unmodified;
+legacy TradFi fields without source proof are unavailable in current projections.
+Schema v83 adds only the nullable source-times carrier.
 
 Primary funding and open-interest rows use two clocks. `source_observed_at`
 preserves the CCXT provider timestamp, `acquired_at` preserves local receipt,
@@ -42,7 +58,7 @@ Freshness is fail-closed:
 - Rows older than the domain limit are unusable.
 - Timestamps more than five minutes in the future are unusable. This prevents a
   bad clock or corrupt row from remaining fresh indefinitely.
-- A snapshot is accepted or rejected as a unit. A stale funding row cannot lose
+- Single-source snapshots are accepted or rejected as a unit. A stale funding row cannot lose
   only `funding_rate` while retaining its annualized derivative; a stale OI row
   cannot retain its delta or long/short ratio.
 
