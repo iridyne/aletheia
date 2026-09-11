@@ -246,6 +246,14 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     from aletheia.storage import repositories as repo
 
     plan, ready, now, _ = _persist_observed_plan(monkeypatch, tactic)
+    # This test owns reconnect/restoration, not elapsed-time expiry (covered above).
+    # Keep immutable event time and authority time aligned across thread scheduling.
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+    monkeypatch.setattr(watch, "datetime", Clock)
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.datetime", Clock)
     activation = build_entry_trigger_activation(plan, ready, now=now)
     monitoring = {"state": "ready", "stream_generation_id": ready.stream_generation_id,
                   "subscription_generation_id": ready.subscription_generation_id}
