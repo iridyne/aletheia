@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v82"
+SCHEMA_VERSION = "aletheia-sqlite-v83"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8244,6 +8244,11 @@ def _apply_nullable_funding_annualization_v82(db: sqlite3.Connection) -> None:
     for row in indexes:
         db.execute(row[0])
 
+def _apply_macro_source_times_v83(db: sqlite3.Connection) -> None:
+    db.execute("ALTER TABLE macro_snapshots ADD COLUMN source_times_json TEXT "
+               "CHECK(source_times_json IS NULL OR json_valid(source_times_json))")
+
+
 _MIGRATIONS = (
     MigrationStep(
         migration_id=_LEGACY_BASELINE_ID,
@@ -8730,6 +8735,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"nullable_funding_annualization_v82:preserve_history").hexdigest(),
         schema_version="aletheia-sqlite-v82",
         apply=_apply_nullable_funding_annualization_v82,
+    ),
+    MigrationStep(
+        migration_id="20260911_0082_macro_source_times_v83",
+        checksum=hashlib.sha256(b"macro_source_times_v83:additive").hexdigest(),
+        schema_version="aletheia-sqlite-v83",
+        apply=_apply_macro_source_times_v83,
     ),
 )
 

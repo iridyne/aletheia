@@ -204,7 +204,7 @@ async def test_fng_failure_isolated_from_other_fields(monkeypatch):
     )
     monkeypatch.setattr(mod, "_fetch_coingecko", fake_coingecko)
     monkeypatch.setattr(mod, "_fetch_fng", failing_fng)
-    monkeypatch.setattr(mod, "_fetch_tradfi", lambda: (500.0, 18.0, 104.0, 18000.0))
+    monkeypatch.setattr(mod, "_fetch_one_tradfi_ticker", lambda _: None)
 
     result = await mod.MacroCollector().collect([])
 
@@ -636,3 +636,15 @@ def test_system_prompt_round2_decision_comment():
         f"Per plan §8.6.2 / MS-S15 the comment must record the deliberate decision "
         f"NOT to inject LSR/F&G priors into the prompt — future readers must see why."
     )
+
+
+@spec_claim(SpecClaim(
+    "MS-C09", _CONTRACT, "macro source-time contract", "L2c",
+    "FRED dates survive persistence without acquisition-time rejuvenation; "
+    "independent healthy macro fields survive current consumer projection.",
+    status="implemented",
+))
+@pytest.mark.asyncio
+async def test_macro_source_time_consumer_contract(monkeypatch):
+    from tests.test_macro_source_time import test_fred_source_dates_survive_collection_storage_and_current_consumers
+    await test_fred_source_dates_survive_collection_storage_and_current_consumers(monkeypatch)

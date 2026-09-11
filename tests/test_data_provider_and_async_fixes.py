@@ -128,7 +128,7 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
 
     def fake_one_ticker(sym):
         time.sleep(STALL_SEC)  # deliberately blocking, runs in asyncio.to_thread
-        return 1.0
+        return 1.0, {"source": "yfinance", "precision": "date", "source_observed_at": "2026-09-04"}
 
     async def fake_fred(_key):
         return None, None, None, None  # forces yfinance fallback path
