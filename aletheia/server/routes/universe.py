@@ -829,14 +829,11 @@ def _attach_candidate_handoff_state(members: list[dict]) -> list[dict]:
     placeholders = ",".join("?" for _ in member_ids)
     from aletheia.storage.sqlite import get_db
 
-    plan_rows = get_db().execute(
-        "SELECT pg.last_candidate_id, ep.id, ep.status, ep.execution_mode, "
-        "ep.created_at, ep.updated_at FROM candidate_planning_generations pg "
-        "JOIN entry_plans ep ON ep.planning_generation_id=pg.id "
-        f"WHERE pg.is_current=1 AND pg.last_candidate_id IN ({placeholders})",
-        tuple(member_ids),
-    ).fetchall()
-    plans_by_candidate = {str(row["last_candidate_id"]): dict(row) for row in plan_rows}
+    plans_by_candidate = {}
+    for candidate_id in member_ids:
+        generation = repo.get_candidate_planning_for_candidate(candidate_id)
+        if generation and generation.get("is_current") and generation.get("entry_plan_id"):
+            plans_by_candidate[candidate_id] = repo.get_entry_plan(generation["entry_plan_id"])
     # Historical wire projection is not runtime authority.
     legacy_rows = get_db().execute(
         "SELECT us.member_id, us.state, us.opportunity_id "

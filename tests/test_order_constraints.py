@@ -124,3 +124,16 @@ def test_bounded_entry_quantity_rounds_down_without_crossing_venue_minima():
     assert normalize_quantity(0.0039, 2000, constraints, allow_increase=False) == 0.003
     with pytest.raises(ConstraintUnavailable, match="below exchange minimum"):
         normalize_quantity(0.0029, 2000, constraints, allow_increase=False)
+
+
+def test_bounded_step_restores_only_one_ulp_of_division_noise():
+    from aletheia.execution.order_constraints import ConstraintUnavailable, OrderConstraints, normalize_quantity
+    constraints = OrderConstraints(
+        venue="bitget", symbol="TEST/USDT", market_type="usdt_futures",
+        min_quantity=Decimal("0.996"), max_quantity=None,
+        amount_step=Decimal("0.001"), min_notional=Decimal("5"),
+    )
+    quantity = normalize_quantity(5.00988 / 5.03, 5.03, constraints, allow_increase=False)
+    assert quantity == 0.996 and quantity * 5.03 <= 5.00988 + 1e-12
+    with pytest.raises(ConstraintUnavailable, match="below exchange minimum"):
+        normalize_quantity(0.995999999, 5.03, constraints, allow_increase=False)
