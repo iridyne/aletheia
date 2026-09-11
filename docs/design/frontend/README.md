@@ -51,3 +51,4 @@ This directory serves as the documentation authority for Aletheia's Web UI (`fro
 - **[`02_workstations_interaction_contract.md`](./refactor/02_workstations_interaction_contract.md)**: 四大工作空间（Mission Control, Alpha Workbench, Blotter, Governance）信息架构与交互契约。
 - **[`03_solidjs_runtime_and_islands_contract.md`](./refactor/03_solidjs_runtime_and_islands_contract.md)**: SolidJS vs React 运行时选型与微岛混合架构契约（完全对齐 GitHub Issue #3030）。
 - **[`04_neutral_runtime_decoupling_contract.md`](./refactor/04_neutral_runtime_decoupling_contract.md)**: 框架解耦与中立运行时演进契约（完全对齐 GitHub Issue #3069，七大具体问题解耦规范与三阶段路线）。
+- **[`05_safety_modals_and_contract_invariants.md`](./refactor/05_safety_modals_and_contract_invariants.md)**: 交易安全确认墙、语义诚实状态机与存量契约继承规范（防灾确认、DataState、Switch 65 处持久化与审计链身份）。
