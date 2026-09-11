@@ -1742,3 +1742,24 @@ def test_cancel_handoff_crash_persists_uncertainty_before_external_effect(monkey
     monkeypatch.setattr(manager, "query_uta", unavailable)
     assert gateway.cancel_entry_plan_order(plan.plan_id, reason="restart")["status"] == "cancel_pending"
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("historical_eligible", [False, True])
+def test_first_passive_eligibility_survives_flips_without_inventing_history(historical_eligible):
+    plan = _persist_waiting_plan()
+    if historical_eligible:
+        historical = json.dumps({"state": "warming", "passive_entry": {"eligible": True, "ever_eligible": True}})
+        repo.get_db().execute("UPDATE entry_plans SET monitoring_evidence_json=? WHERE id=?", (historical, plan.plan_id))
+        repo.get_db().commit()
+    first = "2026-09-11T15:00:00+00:00"
+    expected = None if historical_eligible else first
+    evidence = {"state": "ready", "passive_entry": {"eligible": True, "observed_at": first}}
+    assert repo.record_entry_plan_monitoring(plan.plan_id, evidence)
+    for eligible, at in ((False, "2026-09-11T15:00:01+00:00"), (True, "2026-09-11T15:00:02+00:00")):
+        assert repo.record_entry_plan_monitoring(plan.plan_id, {"state": "ready", "passive_entry": {"eligible": eligible, "observed_at": at}})
+        value = json.loads(repo.get_entry_plan(plan.plan_id)["monitoring_evidence_json"])["passive_entry"]
+        assert value["ever_eligible"] is True
+        assert value["first_eligible_at"] == expected
+    assert repo.record_entry_plan_monitoring(plan.plan_id, {"state": "warming"})
+    value = json.loads(repo.get_entry_plan(plan.plan_id)["monitoring_evidence_json"])["passive_entry"]
+    assert value["first_eligible_at"] == expected

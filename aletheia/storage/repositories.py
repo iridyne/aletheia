@@ -9438,7 +9438,11 @@ def record_entry_plan_monitoring(plan_id: str, evidence: dict) -> bool:
     previous_passive = existing.get("passive_entry", {}) if isinstance(existing, dict) else {}
     if "passive_entry" in evidence:
         passive = evidence["passive_entry"]
+        first_eligible_at = previous_passive.get("first_eligible_at")
+        if passive["eligible"] and not previous_passive.get("ever_eligible"):
+            first_eligible_at = passive.get("observed_at")
         evidence = {**evidence, "passive_entry": {**passive,
+            "first_eligible_at": first_eligible_at,
             "ever_eligible": bool(previous_passive.get("ever_eligible") or passive["eligible"]),
         }}
     elif previous_passive:
