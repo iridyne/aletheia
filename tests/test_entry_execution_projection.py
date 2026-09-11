@@ -156,3 +156,23 @@ async def test_original_watcher_timeout_matches_projection(monkeypatch, age):
     await watch._load_entry_plan_watchers(cfg)
     directive = resolve_entry_execution(plan, facts(plan_status="ordered", order_status="submitted", order_age_sec=age))
     assert bool(cancelled) == (directive.command == "CANCEL_PASSIVE")
+
+
+@pytest.mark.parametrize("proposal_status,order_status", [
+    ("partially_filled", None), ("executed", None),
+    ("materialization_missing", None), ("materialization_missing", "filled"),
+])
+def test_handoff_evidence_cannot_become_new_authority(proposal_status, order_status):
+    result = resolve_entry_execution(_plan(mode="TRIGGERED"),
+        facts(proposal_status=proposal_status, order_status=order_status))
+    assert result.action == "RECONCILE"
+    assert result.command is None
+
+
+@pytest.mark.parametrize("order_status", ["submitted", "partial", "partially_filled"])
+@pytest.mark.parametrize("authority", ["entry_plan_expired", "entry_plan_risk_authority_revoked"])
+def test_terminal_authority_cancels_known_working_maker(order_status, authority):
+    result = resolve_entry_execution(_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT"),
+        facts(order_status=order_status, authority_error=authority))
+    assert result.command == "CANCEL_PASSIVE"
+    assert result.reason == authority
