@@ -112,6 +112,7 @@ flowchart TD
    - 行情跳动（Ticks）、仓位变化（Fills）直接通过事件流分发给具体的观察者，不依赖上层视图框架的生命周期。
 3. **L3（呈现层适配器）**：
    - 视图层仅作为消费端，监听 L2 派发的数据快照或细粒度增量，进行高效率渲染。
+   - 严格遵从 **Issue #3030** 决议：采用 **React 19 应用外壳 + SolidJS 性能微岛（按需）** 的双层边界，详见 [`03_solidjs_runtime_and_islands_contract.md`](./03_solidjs_runtime_and_islands_contract.md)。
 
 ---
 
