@@ -11,6 +11,7 @@ This directory serves as the documentation authority for Aletheia's Web UI (`fro
 | [`guidelines/`](./guidelines/) | **长期设计规范** (Living Guidelines) | 🟢 现行权威 (Current Authority) | 界面设计、Token 定义、文案与布局审核、零低熵铁律 |
 | [`architecture/`](./architecture/) | **页面与交互架构** (Information Architecture) | 🟢 现行权威 (Current Authority) | 路由映射、页面职责划分、标的穿透、遥测控制台与通知中心 |
 | [`rfcs/`](./rfcs/) | **行业对标与演进提案** (RFCs & Benchmarks) | 🟡 演进参考 (RFC / Guidance) | 金融终端对标 (Bloomberg/TradingView)、价格闪烁、演进路线与原型 |
+| [`refactor/`](./refactor/) | **前端重构主契约与工作台规范** (Refactor Contracts) | 🟣 施工契约 (Refactor Blueprints) | 核心解耦契约、框架无关通信层、四大工作空间信息架构与迁移路径 |
 
 > 💡 **历史审计与归档说明**：
 > - 早期全站 13 页面缺陷排查、表格审计、全景 UI 走查报告（均已 100% 修复合入 master）已归档至 [`docs/archive/legacy/audits/frontend/`](../../archive/legacy/audits/frontend/)。
@@ -43,3 +44,8 @@ This directory serves as the documentation authority for Aletheia's Web UI (`fro
 - **[`frontend_seven_unresolved_architectural_solutions.md`](./rfcs/frontend_seven_unresolved_architectural_solutions.md)**: 前端七大架构议题深入方案与实施状态。
 - **[`uncovered_strategic_topics_and_future_discussion.md`](./rfcs/uncovered_strategic_topics_and_future_discussion.md)**: 7 项未覆盖深水区战略议题清单。
 - **[`prototypes/overview_preview.html`](./rfcs/prototypes/overview_preview.html)**: Overview 驾驶舱 HTML 交互原型。
+
+### 4. 前端重构蓝图与施工契约 (`refactor/`)
+- **[`00_master_contract.md`](./refactor/00_master_contract.md)**: 前端架构重构总契约、痛点归因、三项铁律与分阶段路线图。
+- **[`01_framework_agnostic_boundary.md`](./refactor/01_framework_agnostic_boundary.md)**: 纯 TypeScript 核心解耦边界、禁止侵入清单与细粒度事件总线。
+- **[`02_workstations_interaction_contract.md`](./refactor/02_workstations_interaction_contract.md)**: 四大工作空间（Mission Control, Alpha Workbench, Blotter, Governance）信息架构与交互契约。
