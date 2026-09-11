@@ -1267,6 +1267,31 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     order.position_id = position.id
 
     with transaction():
+        from aletheia.storage.repositories import get_db
+
+        # Classification predates this write transaction. A native submission
+        # may already own this exposure while its private Fill is still pending.
+        identity = (symbol, market_type, direction, execution_mode)
+        db = get_db()
+        existing = db.execute(
+            "SELECT 1 FROM positions WHERE symbol=? AND market_type=? AND direction=? "
+            "AND execution_mode=? AND status='open' LIMIT 1", identity,
+        ).fetchone()
+        pending = db.execute(
+            "SELECT 1 FROM orders WHERE symbol=? AND market_type=? AND direction=? "
+            "AND execution_mode=? AND source='native' AND close_reason IS NULL AND ("
+            "status IN ('pending','submitted','partial','partially_filled',"
+            "'submission_unknown','materialization_missing') OR "
+            "(position_id IS NULL AND (status='filled' OR EXISTS "
+            "(SELECT 1 FROM fills WHERE fills.order_id=orders.id)))) LIMIT 1", identity,
+        ).fetchone()
+        if existing is not None or pending is not None:
+            raise PositionAdoptionIntegrityError(
+                code=("position_already_materialized" if existing is not None
+                      else "native_entry_materialization_pending"),
+                field="entry_ownership", symbol=symbol,
+                market_type=market_type, direction=direction,
+            )
         insert_trade_proposal(proposal)
         insert_order(order)
         insert_position(position)
