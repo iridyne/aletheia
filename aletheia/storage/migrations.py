@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v85"
+SCHEMA_VERSION = "aletheia-sqlite-v86"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8249,6 +8249,16 @@ def _apply_macro_source_times_v83(db: sqlite3.Connection) -> None:
                "CHECK(source_times_json IS NULL OR json_valid(source_times_json))")
 
 
+def _apply_fred_source_batches_v86(db: sqlite3.Connection) -> None:
+    db.execute("""CREATE TABLE fred_source_batches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        series_id TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL CHECK(json_valid(payload_json))
+    )""")
+    db.execute("CREATE INDEX idx_fred_source_cutoff ON fred_source_batches(series_id, acquired_at DESC)")
+
+
 def _apply_options_volatility_v85(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE options_volatility_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8768,6 +8778,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"options_volatility_v85:independent_summary").hexdigest(),
         schema_version="aletheia-sqlite-v85",
         apply=_apply_options_volatility_v85,
+    ),
+    MigrationStep(
+        migration_id="20260911_0085_fred_source_batches_v86",
+        checksum=hashlib.sha256(b"fred_source_batches_v86:observation_only").hexdigest(),
+        schema_version="aletheia-sqlite-v86",
+        apply=_apply_fred_source_batches_v86,
     ),
 )
 

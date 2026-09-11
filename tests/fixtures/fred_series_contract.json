@@ -1,0 +1,15 @@
+{
+  "evidence_kind": "public_FRED_HTML_metadata_and_observation_excerpts_transcribed_2026-09-11",
+  "note": "These are excerpts from the linked official pages, not captured authenticated API responses. API-shaped test payloads are constructed from these facts using the official JSON schema; realtime metadata in synthetic tests is not vintage proof.",
+  "api_schema_url": "https://fred.stlouisfed.org/docs/api/fred/series_observations.html",
+  "seasonal_adjustment": "Not Seasonally Adjusted",
+  "series": [
+    {"series_id": "SOFR", "url": "https://fred.stlouisfed.org/series/SOFR", "unit": "Percent", "frequency": "Daily", "date": "2026-09-09", "value": "3.64"},
+    {"series_id": "DGS2", "url": "https://fred.stlouisfed.org/series/DGS2", "unit": "Percent", "frequency": "Daily", "date": "2026-09-09", "value": "4.43"},
+    {"series_id": "DGS10", "url": "https://fred.stlouisfed.org/series/DGS10", "unit": "Percent", "frequency": "Daily", "date": "2026-09-09", "value": "4.83"},
+    {"series_id": "WALCL", "url": "https://fred.stlouisfed.org/series/WALCL", "unit": "Millions of U.S. Dollars", "frequency": "Weekly, As of Wednesday", "date": "2026-09-02", "value": "6737204"},
+    {"series_id": "RRPONTSYD", "url": "https://fred.stlouisfed.org/series/RRPONTSYD", "unit": "Billions of US Dollars", "frequency": "Daily", "date": "2026-09-09", "value": "0.432"},
+    {"series_id": "WDTGAL", "url": "https://fred.stlouisfed.org/series/WDTGAL/", "unit": "Millions of U.S. Dollars", "frequency": "Weekly, As of Wednesday", "date": "2026-07-22", "value": "835417"}
+  ],
+  "missing_observation": {"series_id": "SOFR", "date": "2026-09-07", "value": "."}
+}

@@ -10,6 +10,18 @@ import typer
 data_app = typer.Typer(no_args_is_help=True)
 
 
+@data_app.command("macro-liquidity")
+def macro_liquidity(cutoff: str = typer.Option(..., help="Timezone-aware ISO decision cutoff")):
+    """Export observation-only FRED facts; no network, writes or vintage claims."""
+    from aletheia.data.macro_liquidity import derive_macro_liquidity, read_source_batches
+
+    try:
+        result = derive_macro_liquidity(read_source_batches(cutoff), cutoff)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, indent=2, allow_nan=False))
+
+
 @data_app.command("positioning-evidence")
 def positioning_evidence(
     symbol: str = typer.Option(..., help="Canonical symbol, e.g. BTC/USDT"),

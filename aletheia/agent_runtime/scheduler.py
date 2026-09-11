@@ -2984,6 +2984,7 @@ def _run_cleanup():
             "perp_structure_snapshots": repo.prune_perp_structure_snapshots(30),
             "options_market_structure_snapshots": repo.prune_options_structure_snapshots(30),
             "options_volatility_snapshots": repo.prune_options_volatility_snapshots(30),
+            "fred_source_batches": repo.prune_fred_source_batches(90),
             "liquidation_events": repo.prune_liquidation_events(7),
             "funding_rate_snapshots": repo.prune_funding_rate_snapshots(r.funding_rate_snapshots_days),
             "open_interest_snapshots": repo.prune_open_interest_snapshots(r.open_interest_snapshots_days),
@@ -4588,6 +4589,9 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
             )
         if macro_row:
             _persist_domain("macro", lambda: repo.insert_macro_snapshot(macro_row))
+        if macro_result.get("fred_source_batches"):
+            _persist_domain("macro", lambda: [repo.insert_fred_source_batch(row)
+                for row in macro_result["fred_source_batches"]])
         if coinalyze_oi or coinalyze_liquidations:
             _persist_domain(
                 "coinalyze",
