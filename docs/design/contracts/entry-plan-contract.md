@@ -517,3 +517,27 @@ Stage timestamps and attempt identity are retained as entry_execution_stage audi
 market receipt, claim, both Risk passes, quantity normalization, final market check,
 broker start and response/unknown. Natural-window p50/p95 observations must report
 sample counts and missing stages; test timing is not runtime qualification.
+
+### Stage 1 execution projection boundary (#3111)
+
+`entry_execution_projection` is an unconnected, pure read model. EntryPlan remains
+its only intent/authority aggregate; callers supply validated snapshots from the
+existing activation, Risk, claim, Proposal, Order and market owners. Directives
+are observations of the next bounded action, not submission permission. Gateway
+must retain both Risk passes, current-market validation and the fenced Broker
+boundary. The module performs no loading, persistence, wall-clock reads or I/O.
+
+The three existing combinations normalize to Immediate/PriceFirst,
+Conditional/PriceFirst and Conditional/FillFirst. This does not grant historical
+Plans current authority. In particular, normalized PriceFirst retains the stored
+`max_wait_sec`: Stage 1 does not remove the current Maker timeout, change IOC
+pricing, add a leg, or change any live writer/consumer. Unknown external evidence
+remains reconciliation-owned; known terminal Orders cannot authorize a second leg.
+
+The projection and directive replace duplicated watcher/lifecycle decisions only
+at a separately validated later cutover. Until then they have no production
+consumer. No execution state machine, capture ledger or lifecycle owner is added.
+Current-product RED cases deliberately retain the missing Immediate IOC and
+MakerPreferred contract boundary; they are not evidence of implemented remainder
+or cancellation behavior. Their strict expected failures must be revisited at the
+corresponding serial stage, not hidden by relaxing a test or current contract.
