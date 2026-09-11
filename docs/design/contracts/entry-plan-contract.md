@@ -518,29 +518,34 @@ market receipt, claim, both Risk passes, quantity normalization, final market ch
 broker start and response/unknown. Natural-window p50/p95 observations must report
 sample counts and missing stages; test timing is not runtime qualification.
 
-### Stage 1 execution projection boundary (#3111)
+### Bounded execution resolver (#3111)
 
-`entry_execution_projection` is an unconnected, pure read model. EntryPlan remains
-its only intent/authority aggregate; callers supply validated snapshots from the
-existing activation, Risk, claim, Proposal, Order and market owners. Directives
-are observations of the next bounded action, not submission permission. Gateway
-must retain both Risk passes, current-market validation and the fenced Broker
-boundary. The module performs no loading, persistence, wall-clock reads or I/O.
+EntryPlan is the sole Entry intent/authority aggregate. The pure resolver reads
+snapshots supplied by the existing activation, claim, Proposal, Order, Fill and
+market owners. It performs no I/O, clock reads or persistence. Its finite
+`WAIT / COMMAND / STOP / RECONCILE / DONE` directive is not submission permission:
+Gateway retains both Risk passes, fresh market validation and the fenced Broker
+boundary.
 
-The three existing combinations normalize to Immediate/PriceFirst,
-Conditional/PriceFirst and Conditional/FillFirst. This does not grant historical
-Plans current authority. In particular, normalized PriceFirst retains the stored
-`max_wait_sec`: Stage 1 does not remove the current Maker timeout, change IOC
-pricing, add a leg, or change any live writer/consumer. Unknown external evidence
-remains reconciliation-owned; known terminal Orders cannot authorize a second leg.
+PriceFirst leaves its exact passive Order working until Plan authority ends.
+MakerPreferred permits one 60-second passive attempt, exact cancellation and
+at most one IOC remainder. If the initial anchor crosses before a Proposal is
+created, it may use bounded IOC as leg 0. FillFirst uses bounded IOC as leg 0.
+An existing Proposal's tactic is immutable. No policy reprices or creates a third
+leg. Periodic watcher reload can cancel a timed-out passive Order without quotes.
 
-The projection and directive replace duplicated watcher/lifecycle decisions only
-at a separately validated later cutover. Until then they have no production
-consumer. No execution state machine, capture ledger or lifecycle owner is added.
-Current-product RED cases deliberately retain the missing Immediate IOC and
-MakerPreferred contract boundary; they are not evidence of implemented remainder
-or cancellation behavior. Their strict expected failures must be revisited at the
-corresponding serial stage, not hidden by relaxing a test or current contract.
+Unknown submission/materialization/cancel outcomes remain reconciliation-owned.
+Cancellation uncertainty persists on the existing Order; later wakes only query
+and reconcile that Order rather than repeating cancellation. Complete private
+fills and the exact verified Position determine the remainder; missing evidence
+never means zero fills. A full-fill race prevents another leg.
+
+IOC price is a frozen Plan bound derived from the structural anchor, slippage
+and worst-price envelope. Current opposing BBO and depth establish eligibility;
+BBO movement never widens the limit or requires equality with an old quote.
+Conditional activation must be fresh at the first Broker handoff. A second leg
+reuses the exact original activation and immutable first handoff receipt while
+requiring fresh current execution evidence; it never renews Trigger authority.
 
 ### Capture compilation contract (#3111 Stage 2)
 
@@ -562,9 +567,8 @@ Plan validation rejects a mismatched policy/tactic, timeout or geometry bound.
 Historical rows and hashes are not migrated. The old profile literal remains
 readable in stored Plans; it is absent from the current model-facing registry.
 The current fingerprint boundary prevents historical hypotheses from acquiring
-new-policy authority. Compilation does not establish support for a second order
-leg: Stage 3/4 must wire canonical claims, Risk, Order/Fill and reconciliation
-before deployment of the new capture contract.
+new-policy authority. The resolver and canonical per-leg Gateway path implement
+the compiled policy; compilation alone is never execution or qualification proof.
 
 ### Plan authority and leg accounting (#3111 Stage 3)
 
@@ -596,3 +600,19 @@ violation codes. Temporary market/account/capacity conditions keep Bitget Demo E
 pending and release preparation ownership; hard or unknown violations reject.
 Gateway consumes this disposition without classifying freeform Risk messages.
 The original RiskDecision and violations remain the persisted evidence.
+
+### Entry execution read models (#3111)
+
+Workbench exposes all ordered entry legs through `orders`, aggregating their
+Fill IDs/quantity and the one exact Position. Duplicate or missing leg identities
+remain unavailable; close Orders are not entry legs. Position accounting, private
+fill evidence, cost completeness and historical settlement checks retain their
+existing owners. Activation and capture labels describe Plan policy separately
+from each actual Order tactic.
+
+Entry Learning and cohort resolution use the same cutoff-bounded read of all
+entry legs. Each Plan remains one statistical unit. A zero-fill second leg does
+not erase the first leg; each filled leg contributes its exact fixed-4h Outcome,
+weighted by fill notional. Missing or incomplete outcomes keep the unit
+unavailable. The denominator still includes no-plan/no-trigger/no-fill outcomes;
+policy identity is reported independently of measured profitability.

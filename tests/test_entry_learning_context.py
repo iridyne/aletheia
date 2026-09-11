@@ -430,7 +430,8 @@ def test_entry_fill_registers_exact_fixed_4h_outcome_seed():
     assert row["allocation_selected"] == 1
 
 
-def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill():
+@pytest.mark.parametrize("second_leg", [None, "no_fill", "filled", "missing_outcome"])
+def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill(second_leg):
     generation = _generation(created_at="2026-09-01T00:00:00+00:00")
     _insert_plan(generation, plan_id="plan-open", status="filled", mode="RESTING_MAKER")
     order = Order(
@@ -455,12 +456,34 @@ def test_entry_learning_uses_fixed_4h_outcome_anchored_to_actual_fill():
         settled_at="2026-09-01T04:03:00+00:00",
     )
 
+    if second_leg:
+        second = Order(id="second-leg", symbol=order.symbol, market_type=order.market_type,
+            direction=order.direction, order_type="limit", quantity=1, price=100,
+            execution_mode=order.execution_mode, entry_plan_id="plan-open", position_id="position-open",
+            status="cancelled" if second_leg == "no_fill" else "filled",
+            created_at="2026-09-01T00:02:30+00:00")
+        repo._insert("orders", second.model_dump())
+        if second_leg != "no_fill":
+            repo._insert("fills", Fill(id="second-fill", order_id=second.id, fill_price=100, fill_quantity=1,
+                                 filled_at="2026-09-01T00:03:00+00:00").model_dump())
+            if second_leg == "filled":
+                _insert_fill_outcome(fill_id="second-fill", outcome_id="second-outcome", entry_price=100,
+                                     settled_at="2026-09-01T04:03:00+00:00")
+
     context = _context("2026-09-03T00:00:00+00:00")
 
+    if second_leg == "missing_outcome":
+        assert context.status == "unavailable"
+        assert "entry_learning_fixed_horizon_outcome_unavailable" in context.blocking_reasons
+        return
     assert context.status == "observational"
-    assert context.metrics["intent_to_treat_net_utility_pct"] == pytest.approx(
-        (110 - 105) / 105 * 100 - 1.0
-    )
+    first_return = (110 - 105) / 105 * 100 - 1.0
+    expected = (105*first_return + 100*9) / 205 if second_leg == "filled" else first_return
+    assert context.metrics["intent_to_treat_net_utility_pct"] == pytest.approx(expected)
+    if second_leg:
+        assert "order:second-leg" in context.evidence_refs
+    if second_leg == "filled":
+        assert "filter-candidate-outcome:second-outcome" in context.evidence_refs
     assert context.metrics["mfe_pct"] == 7.0
     assert context.metrics["mae_p95_pct"] == 2.0
     assert "filter-candidate-outcome:outcome-open" in context.evidence_refs

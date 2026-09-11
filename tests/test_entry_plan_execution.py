@@ -1714,4 +1714,14 @@ def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeyp
     repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (second.id,))
     assert wake()["status"] == "cancelled"
     assert len(orders) == 2
+    lineage = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
+    assert lineage["availability"]["available"]
+    assert [item["id"] for item in lineage["orders"]] == [first.id, second.id]
+    assert lineage["fills"]["ids"] == [fill.id]
+    assert lineage["position"]["id"] == position.id
+    assert lineage["execution_state"] == "POSITION_OPEN"
+    from pydantic import TypeAdapter
+    from aletheia.server.routes.universe import EntryPlanLineage
+    adapter = TypeAdapter(EntryPlanLineage)
+    assert adapter.dump_python(adapter.validate_python(lineage), mode="json") == lineage
     assert repo.get_entry_plan(plan.plan_id)["plan_json"] == before

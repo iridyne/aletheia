@@ -131,40 +131,35 @@ def test_get_current_uses_service_snapshot_namespace_with_mixed_config(client):
 
 def test_candidate_read_model_prefers_current_entry_plan(monkeypatch):
     from aletheia.server.routes.universe import _attach_candidate_handoff_state
+    from aletheia.storage import repositories as repo
 
     db = MagicMock()
-    plan_result = MagicMock()
-    plan_result.fetchall.return_value = [
-        {
-            "last_candidate_id": "candidate-1",
-            "id": "plan-1",
-            "status": "waiting",
-            "execution_mode": "RESTING_MAKER",
-            "created_at": "2026-08-27T00:00:00+00:00",
-            "updated_at": "2026-08-27T00:00:00+00:00",
-        }
-    ]
-    legacy_result = MagicMock()
-    legacy_result.fetchall.return_value = []
-    db.execute.side_effect = [plan_result, legacy_result]
+    db.execute.return_value.fetchall.return_value = []
     monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
-
+    monkeypatch.setattr(repo, "get_candidate_planning_for_candidate", lambda _: {
+        "is_current": 1, "entry_plan_id": "plan-1"})
+    monkeypatch.setattr(repo, "get_entry_plan", lambda _: {
+        "id": "plan-1", "status": "active", "execution_mode": "RESTING_MAKER"})
     [candidate] = _attach_candidate_handoff_state([{"id": "candidate-1"}])
-
     assert candidate["entry_plan_id"] == "plan-1"
-    assert candidate["entry_plan_status"] == "waiting"
+    assert candidate["entry_plan_status"] == "active"
     assert candidate["entry_plan_execution_mode"] == "RESTING_MAKER"
     assert candidate["setup_state"] is None
 
 
-@pytest.mark.parametrize("failed_query", [0, 1])
-def test_candidate_handoff_read_failure_is_not_no_plan(monkeypatch, failed_query):
+@pytest.mark.parametrize("owner", ["generation", "plan", "legacy"])
+def test_candidate_handoff_read_failure_is_not_no_plan(monkeypatch, owner):
     from aletheia.server.routes.universe import _attach_candidate_handoff_state
+    from aletheia.storage import repositories as repo
+
+    def unavailable(*args):
+        raise RuntimeError("read unavailable")
     db = MagicMock()
-    empty = MagicMock()
-    empty.fetchall.return_value = []
-    db.execute.side_effect = [empty] * failed_query + [RuntimeError("read unavailable")]
+    db.execute.side_effect = unavailable if owner == "legacy" else None
     monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: db)
+    monkeypatch.setattr(repo, "get_candidate_planning_for_candidate", unavailable if owner == "generation"
+        else lambda _: {"is_current": 1, "entry_plan_id": "plan-1"})
+    monkeypatch.setattr(repo, "get_entry_plan", unavailable if owner == "plan" else lambda _: None)
     with pytest.raises(RuntimeError, match="read unavailable"):
         _attach_candidate_handoff_state([{"id": "candidate-1"}])
 

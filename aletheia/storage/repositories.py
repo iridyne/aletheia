@@ -7471,7 +7471,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                 "AND action IN ('position_closed','manual_credit','manual_debit')", pids
             )]
             for plan_id in batch:
-                item = {"order": None, "fills": None, "position": None,
+                item = {"orders": [], "fills": None, "position": None,
                         "close_orders": [], "close_fills": [],
                         "entry_outcomes": [],
                         "availability": {"available": True, "reason": None},
@@ -7479,26 +7479,35 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                         "execution_state": "NOT_STARTED"}
                 result[plan_id] = item
                 plan = plans.get(plan_id)
-                related = [o for o in orders.values() if o.get("entry_plan_id") == plan_id]
+                related = [o for o in orders.values() if o.get("entry_plan_id") == plan_id and not o.get("close_reason")]
                 order = orders.get(plan.get("order_id")) if plan else None
                 reason = None
                 if plan is None:
                     reason = "entry_plan_missing"
                 elif plan.get("order_id") and order is None:
                     reason = "linked_order_missing"
-                elif len(related) > 1 or (order and related and related[0]["id"] != order["id"]):
+                elif order and related and order["id"] not in {o["id"] for o in related}:
                     reason = "order_relation_ambiguous"
                 elif order and order.get("entry_plan_id") not in (None, plan_id):
                     reason = "order_relation_conflict"
-                if order is None and not reason and related:
-                    order = related[0]
-                if order and plan and not reason:
-                    proposal = proposals.get(order.get("proposal_id"))
+                if not related and order and not reason:
+                    related = [order]
+                related.sort(key=lambda o: ((proposals.get(o.get("proposal_id")) or {}).get("entry_leg_index") or 0,
+                                           str(o["created_at"]), o["id"]))
+                if related and not reason:
+                    payload = json.loads(plan["plan_json"])
+                    legs = [(proposals.get(o.get("proposal_id")) or {}).get("entry_leg_index") for o in related]
+                    if ((payload.get("capture_policy_id") and legs not in ([0], [0, 1]))
+                        or (not payload.get("capture_policy_id") and len(related) > 1)):
+                        reason = "order_relation_ambiguous"
+                for linked in related if not reason else []:
+                    proposal = proposals.get(linked.get("proposal_id"))
                     if (proposal is None or proposal.get("entry_plan_id") != plan_id
-                        or normalize_physical_market_type(order.get("market_type")) != plan["market_type"]
-                        or to_canonical(str(order.get("symbol") or "")) != plan["symbol"]
-                        or order.get("direction") != plan["direction"]):
+                        or normalize_physical_market_type(linked.get("market_type")) != plan["market_type"]
+                        or to_canonical(str(linked.get("symbol") or "")) != plan["symbol"]
+                        or linked.get("direction") != plan["direction"]):
                         reason = "order_proposal_identity_conflict"
+                order = related[-1] if related else None
                 if reason:
                     item.update(availability={"available": False, "reason": reason}, execution_state="UNAVAILABLE")
                     continue
@@ -7506,9 +7515,14 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                     if plan["status"] in {"ordered", "partially_filled", "filled"}:
                         item.update(availability={"available": False, "reason": "expected_order_missing"}, execution_state="UNAVAILABLE")
                     continue
-                of = [f for f in fills if f["order_id"] == order["id"]]
+                entry_order_ids = {o["id"] for o in related}
+                of = [f for f in fills if f["order_id"] in entry_order_ids]
                 quantity = sum(float(f["fill_quantity"]) for f in of)
-                item["order"] = {k: order.get(k) for k in ("id", "proposal_id", "risk_decision_id", "exchange_order_id", "status", "quantity", "position_id", "created_at", "filled_at")}
+                item["orders"] = [{**{k: linked.get(k) for k in (
+                    "id", "proposal_id", "risk_decision_id", "exchange_order_id", "status", "quantity",
+                    "position_id", "created_at", "filled_at", "order_tactic", "error_reason")},
+                    "entry_leg_index": proposals[linked["proposal_id"]].get("entry_leg_index")}
+                    for linked in related]
                 item["fills"] = {"ids": [f["id"] for f in of], "count": len(of), "quantity": quantity,
                                  "latest_at": max((str(f["filled_at"]) for f in of), default=None)}
                 for fill in of:
@@ -7531,7 +7545,8 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                         else:
                             summary["reason"] = "fixed_horizon_evidence_unavailable"
                     item["entry_outcomes"].append(summary)
-                ps = [p for p in positions.values() if p["id"] == order.get("position_id") or p.get("order_id") == order["id"]]
+                entry_position_ids = {o["position_id"] for o in related if o.get("position_id")}
+                ps = [p for p in positions.values() if p["id"] in entry_position_ids or p.get("order_id") in entry_order_ids]
                 if len(ps) > 1 or (quantity > 0 and not ps):
                     item.update(availability={"available": False, "reason": "position_relation_unavailable"}, execution_state="UNAVAILABLE")
                     continue
@@ -7543,7 +7558,8 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
                     item.update(availability={"available": False, "reason": "entry_fill_relation_missing"}, execution_state="UNAVAILABLE")
                     continue
                 position = ps[0]
-                if (position.get("proposal_id") != order.get("proposal_id")
+                root = next((o for o in related if o["id"] == position.get("order_id")), None)
+                if (root is None or position.get("proposal_id") != root.get("proposal_id")
                     or position.get("symbol") != order.get("symbol")
                     or normalize_physical_market_type(position.get("market_type")) != plan["market_type"]
                     or position.get("direction") != order.get("direction")

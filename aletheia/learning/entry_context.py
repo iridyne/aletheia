@@ -48,24 +48,43 @@ def _bounded_evidence(refs: list[str]) -> tuple[tuple[str, ...], int, bool]:
     return tuple(complete[:64]), len(complete), len(complete) > 64
 
 
+def _entry_capture_evidence(db, plan_id: str, cutoff: datetime):
+    """Read every entry leg of one learning unit at the approved cutoff."""
+    orders = [dict(row) for row in db.execute(
+        "SELECT * FROM orders WHERE entry_plan_id=? AND close_reason IS NULL "
+        "AND julianday(created_at)<=julianday(?) ORDER BY created_at,id",
+        (plan_id, cutoff.isoformat()))]
+    order_ids = json.dumps([order["id"] for order in orders])
+    fills = [dict(row) for row in db.execute(
+        "SELECT * FROM fills WHERE order_id IN (SELECT value FROM json_each(?)) "
+        "AND julianday(filled_at)<=julianday(?) ORDER BY julianday(filled_at),id",
+        (order_ids, cutoff.isoformat()))]
+    positions = [dict(row) for row in db.execute(
+        "SELECT * FROM positions WHERE (order_id IN (SELECT value FROM json_each(?)) "
+        "OR id IN (SELECT value FROM json_each(?))) AND julianday(opened_at)<=julianday(?)",
+        (order_ids, json.dumps([o["position_id"] for o in orders if o.get("position_id")]), cutoff.isoformat()))]
+    position = positions[0] if len(positions) == 1 else None
+    if position:
+        filled_orders = {fill["order_id"] for fill in fills}
+        if any((order["id"] != position.get("order_id") and order.get("position_id") != position["id"])
+               or any(order[key] != position[key] for key in ("symbol", "market_type", "direction", "execution_mode"))
+               for order in orders if order["id"] in filled_orders):
+            position = None
+    return orders, fills, position
+
+
 def _filled_unit_outcome(
     db,
     *,
     row: dict[str, Any],
     position: dict[str, Any],
+    fills: list[dict[str, Any]],
     cutoff: datetime,
 ) -> tuple[float, float, float, tuple[str, ...]] | tuple[None, None, None, str]:
     """Return the notional-weighted fixed-4h outcome of exact entry Fills."""
 
     if not bool(position.get("outcome_eligible")):
         return None, None, None, "entry_learning_position_outcome_incomplete"
-    fills = [
-        dict(item)
-        for item in db.execute(
-            "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?) ORDER BY filled_at,id",
-            (position["order_id"], cutoff.isoformat()),
-        ).fetchall()
-    ]
     if not fills:
         return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
@@ -464,6 +483,7 @@ def build_entry_learning_context(
     identity_values: set[tuple[str, ...]] = set()
     inference_identities: set[tuple[str, ...]] = set()
     profile_identities: set[str] = set()
+    capture_identities: set[str] = set()
     inference_costs: list[float] = []
     maes: list[float] = []
     mfes: list[float] = []
@@ -556,17 +576,12 @@ def build_entry_learning_context(
             if not profile_identity:
                 raise ValueError
             profile_identities.add(profile_identity)
+            if plan_payload.get("capture_policy_id"):
+                capture_identities.add(str(plan_payload["capture_policy_id"]))
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
             invalid_reasons.add("entry_learning_profile_identity_unavailable")
         evidence_refs.append(f"entry-plan:{plan_id}")
-        orders = [
-            dict(item)
-            for item in db.execute(
-                "SELECT * FROM orders WHERE entry_plan_id=? AND julianday(created_at)<=julianday(?) "
-                "ORDER BY created_at,id",
-                (plan_id, cutoff.isoformat()),
-            ).fetchall()
-        ]
+        orders, fills, position = _entry_capture_evidence(db, plan_id, cutoff)
         if not orders:
             try:
                 plan_terminal_at = _instant(row["plan_terminal_at"])
@@ -591,22 +606,14 @@ def build_entry_learning_context(
             else:
                 invalid_reasons.add("entry_learning_plan_open_at_cutoff")
             continue
-        order = orders[-1]
-        evidence_refs.append(f"order:{order['id']}")
-        fills = [
-            dict(item)
-            for item in db.execute(
-                "SELECT * FROM fills WHERE order_id=? AND julianday(filled_at)<=julianday(?)",
-                (order["id"], cutoff.isoformat()),
-            ).fetchall()
-        ]
+        evidence_refs.extend(f"order:{order['id']}" for order in orders)
         if not fills:
             try:
                 plan_terminal_at = _instant(row["plan_terminal_at"])
             except (TypeError, ValueError):
                 plan_terminal_at = None
             if (
-                order.get("status") in {"cancelled", "rejected", "failed", "expired"}
+                all(order.get("status") in {"cancelled", "rejected", "failed", "expired"} for order in orders)
                 and plan_terminal_at is not None
                 and plan_terminal_at <= cutoff
             ):
@@ -618,11 +625,6 @@ def build_entry_learning_context(
             continue
         filled += 1
         evidence_refs.extend(f"fill:{item['id']}" for item in fills)
-        position = db.execute(
-            "SELECT * FROM positions WHERE order_id=? AND julianday(opened_at)<=julianday(?) "
-            "ORDER BY opened_at DESC,id DESC LIMIT 1",
-            (order["id"], cutoff.isoformat()),
-        ).fetchone()
         if position is None:
             invalid_reasons.add("entry_learning_position_missing")
             continue
@@ -630,7 +632,7 @@ def build_entry_learning_context(
         utility, mfe, mae, outcome_ids = _filled_unit_outcome(
             db,
             row=row,
-            position=position,
+            position=position, fills=fills,
             cutoff=cutoff,
         )
         if utility is None:
@@ -695,6 +697,7 @@ def build_entry_learning_context(
         "max_cycles_per_thread": max(planning_thread_counts.values(), default=0),
         "entry_profile_scope": "parent_summary",
         "entry_profile_identities": sorted(profile_identities),
+        "capture_policy_identities": sorted(capture_identities),
         "current_behavior_identity": dict(sorted(current_identity.items())),
     }
     bounded_refs, evidence_ref_total, evidence_refs_truncated = _bounded_evidence(evidence_refs)
