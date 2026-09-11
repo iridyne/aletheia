@@ -50,3 +50,4 @@ This directory serves as the documentation authority for Aletheia's Web UI (`fro
 - **[`01_framework_agnostic_boundary.md`](./refactor/01_framework_agnostic_boundary.md)**: 纯 TypeScript 核心解耦边界、禁止侵入清单与细粒度事件总线。
 - **[`02_workstations_interaction_contract.md`](./refactor/02_workstations_interaction_contract.md)**: 四大工作空间（Mission Control, Alpha Workbench, Blotter, Governance）信息架构与交互契约。
 - **[`03_solidjs_runtime_and_islands_contract.md`](./refactor/03_solidjs_runtime_and_islands_contract.md)**: SolidJS vs React 运行时选型与微岛混合架构契约（完全对齐 GitHub Issue #3030）。
+- **[`04_neutral_runtime_decoupling_contract.md`](./refactor/04_neutral_runtime_decoupling_contract.md)**: 框架解耦与中立运行时演进契约（完全对齐 GitHub Issue #3069，七大具体问题解耦规范与三阶段路线）。
