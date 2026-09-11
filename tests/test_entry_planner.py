@@ -87,6 +87,7 @@ def _typed_candidate(
     source_at: str = "2026-09-03T00:00:00+00:00",
     primary_ref: str = "fact-1",
     capability: str = "supported",
+    estimated_cost: float | None = None,
 ):
     from uuid import uuid4
 
@@ -137,6 +138,7 @@ def _typed_candidate(
         regime_tag=regime,
         risk_flags=risk_flags,
         entry_price_usd=price,
+        estimated_cost=estimated_cost,
         expires_at="2099-01-01T00:00:00+00:00",
         candidate_selection_policy=policy,
         candidate_selection_policy_epoch=policy_epoch,
@@ -1470,7 +1472,7 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
 def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book, caplog):
     from aletheia.data.collectors.microstructure import MicrostructureCollector, _parse_orderbook
 
-    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     from aletheia.data.providers import Candle
 
@@ -1493,7 +1495,7 @@ def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_b
         if not recovered and bad_book == "timeout":
             raise TimeoutError
         snapshot = _parse_orderbook(
-            "BTC/USDT", "bitget", {"bids": [[99.99, 100]], "asks": [[100.01, 100]]},
+            "BTC/USDT", "bitget", {"bids": [[99.99, 200]], "asks": [[100.01, 200]]},
             0, market_type="perp",
         )
         if not recovered:
@@ -1701,3 +1703,72 @@ def test_system_planner_repairs_identity_without_rewriting(monkeypatch, field, w
             asyncio.run(system_operator_entry_planner(context.model_dump(mode="json"), "test"))
     assert len(calls) == 2
     assert calls[0].structured_schema["properties"][field]["enum"] == [valid[field]]
+
+
+@pytest.mark.parametrize("bad_book", ["wide", "thin"])
+def test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, bad_book):
+    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.providers import Candle
+    from aletheia.trading.entry_plan_compiler import require_entry_market_quality
+    from aletheia.config.loader import load_config
+
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    interval = 15 * 60 * 1000
+    end = int(datetime.now(timezone.utc).timestamp() * 1000) // interval * interval
+    repo.upsert_ohlcv_candles("BTC/USDT", "15m",
+        [Candle(end - (96-i)*interval, 100, 102, 98, 100, 1000) for i in range(96)],
+        exchange="bitget", market_type="perp")
+    known = datetime.fromtimestamp((end-1000)/1000, timezone.utc).isoformat()
+    repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=?,last_mutated_at=?", (known, known))
+
+    def book(recovered=False):
+        snapshot = _parse_orderbook("BTC/USDT", "bitget",
+            {"bids": [[99.99, 200]], "asks": [[100.01, 200]]}, 0, market_type="perp")
+        if not recovered:
+            if bad_book == "wide":
+                snapshot.spread_bps = 26
+            else:
+                snapshot.total_depth_10bps_usd = 24999
+        data = snapshot.model_dump()
+        repo.insert_orderbook_snapshot(data)
+        return data
+
+    book()
+    calls = []
+    async def planner(context):
+        require_entry_market_quality(context["execution_context"], load_config())
+        calls.append(context)
+        raise PlannerBackpressure("busy")
+
+    result = asyncio.run(plan_next_candidate(planner))
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert result["reason"] == "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE"
+    assert result["model_invoked"] is False and result["compiler_invoked"] is False
+    assert not calls and stored["planner_input_json"] is None
+    assert stored["validated_hypothesis_json"] is None and stored["entry_plan_id"] is None
+    assert stored["attention_status"] == "active" and stored["attempt_count"] == 0
+    assert stored["retry_not_before"] is not None
+    recovered = book(True)
+    repo.execute_write("UPDATE candidate_planning_generations SET retry_not_before=NULL WHERE id=?", (generation["id"],))
+    result = asyncio.run(plan_next_candidate(planner))
+    assert result["status"] == "backpressure"
+    assert len(calls) == 1 and recovered["id"] in str(calls[0]["execution_context"]["fact_refs"])
+    assert result["planning_generation_id"] == generation["id"]
+    assert repo.get_db().execute("SELECT count(*) FROM candidate_planning_generations").fetchone()[0] == 1
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["planner_input_json"] is not None and stored["entry_plan_id"] is None
+
+
+@pytest.mark.parametrize("updates", [{"spread_bps": 26}, {"depth_10bps_usd": 24999}, {"estimated_costs": -1}])
+def test_direct_compiler_keeps_exact_market_quality_backstop(monkeypatch, updates):
+    from types import SimpleNamespace
+    from aletheia.config.loader import load_config
+    from aletheia.agent_shell.entry_planner import PlanIntentError
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+    monkeypatch.setattr("aletheia.trading.entry_analysis.validate_hypothesis_references", lambda *a: None)
+    monkeypatch.setattr("aletheia.trading.entry_authority.require_entry_runtime_authority", lambda *a: None)
+    context = SimpleNamespace(execution_context=dict(availability="available",spread_bps=2,
+        depth_10bps_usd=100000,estimated_costs=.1) | updates)
+    with pytest.raises(PlanIntentError, match="EXECUTION_CONTEXT_UNAVAILABLE"):
+        compile_entry_plan({}, context, None, load_config())

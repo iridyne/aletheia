@@ -443,3 +443,15 @@ NULL. Serenity keeps its source-specific Opportunity identity. Both use the
 shared source-specific ancestry rule in [Learning §11.1](learning_contract.md#111-source-specific-realized-outcome-ancestry)
 and retain account, Fill, cost and clean-window gates. Historical records and
 measurement windows are not rewritten or reopened by this handoff.
+
+## Transient market-quality preflight — #3090 / #2886 B2/B4
+
+Before binding `planner_input_json` or invoking a model, canonical Planner uses
+Compiler's exact spread/depth/cost envelope. A fresh book outside that envelope
+releases the existing claim as `ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE`, with
+60-second retry, no bound input, no model/compiler invocation and no consumed
+model attempt. Retry reads a new exact book within the same generation. Existing
+attention lifetime and dependency-recovery rules still apply. Compiler uses the
+same predicate as its deterministic backstop; thresholds and geometry do not
+change. Entry behavior identity includes `exact-envelope-before-input-bind/v1`,
+so old bound inputs remain historical through the normal identity cutover.
