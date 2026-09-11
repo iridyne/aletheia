@@ -75,11 +75,18 @@ def test_recovery_rejects_incomplete_or_changed_evidence_without_mutation(case, 
     before, evidence = case
     evidence = copy.deepcopy(evidence)
     if failure == "risk_missing":
-        before["risk"] = []
+        repo.get_db().execute("UPDATE orders SET risk_decision_id=NULL WHERE id=?", (repair.NATIVE_ORDER,))
+        repo.get_db().execute("DELETE FROM risk_decisions WHERE id='case-risk'")
+        repo.get_db().commit()
+        before = repair.snapshot()
     elif failure == "risk_denied":
-        before["risk"][0]["approved"] = 0
+        repo.get_db().execute("UPDATE risk_decisions SET approved=0 WHERE id='case-risk'")
+        repo.get_db().commit()
+        before = repair.snapshot()
     elif failure == "proposal_pending":
-        next(p for p in before["proposals"] if p["id"] == repair.NATIVE_PROPOSAL)["status"] = "pending"
+        repo.get_db().execute("UPDATE trade_proposals SET status='pending' WHERE id=?", (repair.NATIVE_PROPOSAL,))
+        repo.get_db().commit()
+        before = repair.snapshot()
     elif failure == "partial":
         evidence["fills"]["completeness"] = "partial"
     elif failure == "identity":
