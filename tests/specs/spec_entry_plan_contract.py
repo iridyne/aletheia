@@ -380,7 +380,7 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
 
 @spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
     "Entry preparation waits without external effects; only a fenced final market check starts submission.", status="implemented"))
-@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback"])
+@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback", "invalidated"])
 def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -470,7 +470,8 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         event = FastMarketEvent(event_type="quote", instrument=InstrumentId.from_parts("bitget", "BTC/USDT", "perp"),
             exchange_timestamp_ms=int(event_time.timestamp()*1000), received_timestamp_ms=int(event_time.timestamp()*1000),
             sequence=2, stream_generation_id="stream", subscription_generation_id="subscription",
-            bid=99.8, ask=99.9 if scenario == "crossing" else 100.1)
+            bid=plan.invalidation_price if scenario == "invalidated" else 99.8,
+            ask=99.9 if scenario == "crossing" else 100.1)
         return event, {"state": "unavailable" if scenario == "unavailable" else "ready"}
 
     facts = dict(bid=99.9, ask=100.1, observed_at=initial.isoformat(), source_observed_at=initial.isoformat(),
@@ -499,6 +500,12 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert len(calls) == 1
         assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["commit_hash"] == original_hash
         assert roles == ["preflight", "authoritative"] * 2
+    elif scenario == "invalidated":
+        assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
+        terminal_plan = repo.get_entry_plan(plan.plan_id)
+        assert result["reason_code"] == "entry_plan_price_invalidated"
+        assert terminal_plan["status"] == "invalidated"
+        assert terminal_plan["terminal_reason"] == "entry_plan_price_invalidated"
     elif scenario in {"expired", "owner_lost", "boundary_rollback"}:
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         assert result["status"] == ("already_claimed" if scenario == "owner_lost" else "error")
