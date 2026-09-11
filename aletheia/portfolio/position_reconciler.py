@@ -1267,7 +1267,9 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
     order.position_id = position.id
 
     with transaction():
-        from aletheia.storage.repositories import get_db
+        from aletheia.storage.repositories import (
+            get_db, NATIVE_ENTRY_ORDER_SQL, UNRESOLVED_NATIVE_ENTRY_STATES,
+        )
 
         # Classification predates this write transaction. A native submission
         # may already own this exposure while its private Fill is still pending.
@@ -1277,14 +1279,17 @@ def adopt_position(exchange_pos: dict, account_mode: str) -> dict:
             "SELECT 1 FROM positions WHERE symbol=? AND market_type=? AND direction=? "
             "AND execution_mode=? AND status='open' LIMIT 1", identity,
         ).fetchone()
+        states = ",".join("?" for _ in UNRESOLVED_NATIVE_ENTRY_STATES)
         pending = db.execute(
-            "SELECT 1 FROM orders WHERE symbol=? AND market_type=? AND direction=? "
-            "AND execution_mode=? AND source='native' AND close_reason IS NULL AND ("
-            "status IN ('open','pending','submitted','partial','partially_filled',"
-            "'submission_unknown','materialization_missing') OR "
-            "(position_id IS NULL AND (status='filled' OR EXISTS "
-            "(SELECT 1 FROM fills WHERE fills.order_id=orders.id)) AND NOT EXISTS "
-            "(SELECT 1 FROM positions WHERE positions.order_id=orders.id))) LIMIT 1", identity,
+            "SELECT 1 FROM orders o WHERE o.symbol=? AND o.market_type=? AND o.direction=? "
+            f"AND o.execution_mode=? AND ({NATIVE_ENTRY_ORDER_SQL}) AND ("
+            f"o.status IN ({states}) OR "
+            "((o.status='filled' OR EXISTS (SELECT 1 FROM fills WHERE fills.order_id=o.id)) "
+            "AND NOT EXISTS (SELECT 1 FROM positions represented "
+            "WHERE (represented.id=o.position_id OR represented.order_id=o.id) "
+            "AND represented.symbol=o.symbol AND represented.market_type=o.market_type "
+            "AND represented.direction=o.direction AND represented.execution_mode=o.execution_mode))) LIMIT 1",
+            (*identity, *UNRESOLVED_NATIVE_ENTRY_STATES),
         ).fetchone()
         if existing is not None or pending is not None:
             raise PositionAdoptionIntegrityError(
