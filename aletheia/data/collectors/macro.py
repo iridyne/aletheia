@@ -35,6 +35,9 @@ _FRED_SERIES = {
     "spy": "SP500",           # S&P 500
     "nasdaq": "NASDAQCOM",    # Nasdaq Composite
 }
+# Six research-only attempt buckets prevent repeated HTTP after persistence
+# failure/cancellation. Persisted batches carry the same throttle across restart.
+_FRED_RESEARCH_ATTEMPTS: dict[str, str] = {}
 
 
 class MacroCollector:
@@ -71,8 +74,17 @@ class MacroCollector:
             coros.append(fred_coro)
         if fng_coro is not None:
             coros.append(fng_coro)
+        coros.append(_fetch_fred_research(fred_key))
 
         gathered = await asyncio.gather(*coros, return_exceptions=True)
+        research = gathered.pop()
+        if isinstance(research, BaseException):
+            # Research must not fail the existing macro consumer. Never print
+            # HTTP exceptions, which can contain the FRED key in their URL.
+            errors.append("fred_research:failed")
+            research = []
+        elif any(b["availability"] == "unavailable" and b["unavailable_reason"] != "not_configured" for b in research):
+            errors.append("fred_research:partial")
         idx = 0
 
         cg_result = gathered[idx]; idx += 1
@@ -174,7 +186,7 @@ class MacroCollector:
         )
         if all(value is None for value in accepted_values):
             errors.append("macro:no_usable_inputs")
-            return {"snapshot": None, "errors": list(dict.fromkeys(errors))}
+            return {"snapshot": None, "errors": list(dict.fromkeys(errors)), "fred_source_batches": research}
 
         snapshot = MacroSnapshot(
             btc_dominance=btc_dominance,
@@ -191,7 +203,7 @@ class MacroCollector:
             source_times_json=json.dumps(source_times, sort_keys=True),
         )
 
-        return {"snapshot": snapshot, "errors": errors}
+        return {"snapshot": snapshot, "errors": errors, "fred_source_batches": research}
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +231,44 @@ async def _fetch_fng() -> tuple[int | None, str | None]:
 # FRED API
 # ---------------------------------------------------------------------------
 
+async def _fred_observations(client, api_key, series_id, *, limit):
+    resp = await client.get(_FRED_BASE_URL, params={
+        "series_id": series_id, "api_key": api_key, "file_type": "json",
+        "sort_order": "desc", "limit": limit,
+    })
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def _fetch_fred_research(api_key):
+    from aletheia.data.macro_liquidity import SERIES, clock, read_source_batches, refresh_bucket, source_batch
+
+    now = datetime.now(timezone.utc)
+    # Existing serial scheduler owns persistence. Failed/unconfigured attempts
+    # consume the same cadence bucket, including across process restarts.
+    previous = {b["series_id"]: b for b in read_source_batches(now.isoformat(), require_schema=True)}
+    due = [sid for sid in SERIES if _FRED_RESEARCH_ATTEMPTS.get(sid) != refresh_bucket(sid, now)
+           and (sid not in previous or refresh_bucket(sid, clock(previous[sid]["acquired_at"])) != refresh_bucket(sid, now))]
+    if not due:
+        return []
+    # Update before the first await: concurrent invocations cannot spend twice.
+    _FRED_RESEARCH_ATTEMPTS.update({sid: refresh_bucket(sid, now) for sid in due})
+
+    async def one(client, sid):
+        payload, reason = None, "not_configured" if not api_key else None
+        if api_key:
+            try:
+                async with asyncio.timeout(8):
+                    payload = await _fred_observations(client, api_key, sid,
+                        limit=32 if SERIES[sid][1] == "Daily" else 4)
+            except Exception:
+                reason = "request_failed"
+        return source_batch(sid, payload, datetime.now(timezone.utc).isoformat(), reason=reason)
+
+    async with httpx_client(timeout=7) as client:
+        return await asyncio.gather(*(one(client, sid) for sid in due))
+
+
 async def _fetch_fred(
     api_key: str,
 ) -> tuple:
@@ -233,18 +283,7 @@ async def _fetch_fred(
 
     async def _one(client, key: str, series_id: str) -> tuple[str, tuple | None]:
         try:
-            resp = await client.get(
-                _FRED_BASE_URL,
-                params={
-                    "series_id": series_id,
-                    "api_key": api_key,
-                    "file_type": "json",
-                    "sort_order": "desc",
-                    "limit": 5,  # grab last 5 to skip holidays
-                },
-            )
-            resp.raise_for_status()
-            observations = resp.json().get("observations", [])
+            observations = (await _fred_observations(client, api_key, series_id, limit=5)).get("observations", [])
             for obs in observations:
                 val = obs.get("value", ".")
                 if val != ".":

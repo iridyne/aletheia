@@ -11705,6 +11705,32 @@ def prune_perp_structure_snapshots(days: int = 30) -> int:
     return _delete_by_rowid_batches("perp_structure_snapshots", "observed_at < ?", (cutoff,))
 
 
+def insert_fred_source_batch(data: dict) -> None:
+    from aletheia.data.macro_liquidity import SERIES, VERSION, REVISION, clock, source_batch
+
+    sid = data.get("series_id")
+    if (sid not in SERIES or (data.get("unit"), data.get("frequency")) != SERIES[sid][:2]
+        or data.get("derivation_version") != VERSION or data.get("revision_policy") != REVISION
+        or len(data.get("observations", [])) > 32):
+        raise ValueError("invalid_fred_source_batch")
+    data = {**data, "acquired_at": clock(data["acquired_at"]).isoformat()}
+    checked = source_batch(sid, dict(units="lin", observations=[dict(
+        date=p["observation_date"], value="." if p["value"] is None else p["value"],
+        realtime_start=p.get("realtime_start"), realtime_end=p.get("realtime_end"),
+    ) for p in data["observations"]]), data["acquired_at"], reason=data.get("unavailable_reason"))
+    if data != checked:
+        raise ValueError("invalid_fred_source_batch")
+    payload = json.dumps(data, allow_nan=False)
+    if len(payload.encode()) > 16384:
+        raise ValueError("oversized_fred_source_batch")
+    _insert("fred_source_batches", dict(series_id=sid, acquired_at=data["acquired_at"], payload_json=payload))
+
+
+def prune_fred_source_batches(days: int = 90) -> int:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return _delete_by_rowid_batches("fred_source_batches", "acquired_at < ?", (cutoff,))
+
+
 def insert_options_volatility_snapshot(data: dict) -> None:
     from aletheia.data.options_volatility import OptionsVolatilitySnapshot
 

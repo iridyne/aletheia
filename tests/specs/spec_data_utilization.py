@@ -48,6 +48,17 @@ _CONTRACT = "data_utilization_contract"
 
 
 @spec_claim(SpecClaim(
+    'DU-S33', _CONTRACT, 'FRED rates/liquidity observation-only export', 'L2c',
+    'FRED research excludes post-cutoff acquisitions, replays frozen inputs and leaves macro trading rows unchanged.',
+    status='implemented',
+))
+def test_fred_research_cutoff_and_isolation():
+    from tests.test_macro_liquidity import test_cutoff_storage_replay_and_old_macro_isolation
+
+    test_cutoff_storage_replay_and_old_macro_isolation()
+
+
+@spec_claim(SpecClaim(
     'DU-S32', _CONTRACT, 'Positioning Evidence as-of research export', 'L2c',
     'Read-only positioning evidence excludes future acquisitions and replays from frozen canonical inputs.',
     status='implemented',
