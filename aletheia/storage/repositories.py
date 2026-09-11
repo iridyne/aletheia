@@ -2633,6 +2633,20 @@ def list_orders(
     return _select_all("orders", limit=limit)
 
 
+# Shared Order ownership definition. SQL predicates use the caller's `o` alias.
+UNRESOLVED_NATIVE_ENTRY_STATES = (
+    "open", "pending", "submitted", "partial", "partially_filled",
+    "submission_unknown", "materialization_missing",
+)
+NATIVE_ENTRY_ORDER_SQL = """
+    o.source = 'native' AND TRIM(COALESCE(o.close_reason, '')) = ''
+    AND NOT EXISTS (
+        SELECT 1 FROM positions closing_position
+        WHERE closing_position.pending_close_order_id = o.id
+    )
+"""
+
+
 def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     """Return every unresolved native entry plus its represented local state.
 
@@ -2641,16 +2655,7 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
     both their durable reason and the Position pending-close backlink so older
     rows that predate ``close_reason`` cannot consume a new-entry allowance.
     """
-    unresolved_states = (
-        "open",
-        "pending",
-        "submitted",
-        "partial",
-        "partially_filled",
-        "submission_unknown",
-        "materialization_missing",
-    )
-    placeholders = ",".join("?" for _ in unresolved_states)
+    placeholders = ",".join("?" for _ in UNRESOLVED_NATIVE_ENTRY_STATES)
     rows = (
         get_db()
         .execute(
@@ -2754,18 +2759,12 @@ def list_unresolved_native_entry_orders_for_risk() -> list[dict]:
         LEFT JOIN fills f ON f.order_id = o.id
         LEFT JOIN trade_proposals tp ON tp.id = o.proposal_id
         LEFT JOIN risk_decisions rd ON rd.id = o.risk_decision_id
-        WHERE o.source = 'native'
+        WHERE {NATIVE_ENTRY_ORDER_SQL}
           AND o.status IN ({placeholders})
-          AND TRIM(COALESCE(o.close_reason, '')) = ''
-          AND NOT EXISTS (
-              SELECT 1
-              FROM positions closing_position
-              WHERE closing_position.pending_close_order_id = o.id
-          )
         GROUP BY o.id
         ORDER BY o.created_at ASC, o.rowid ASC
         """,
-            unresolved_states,
+            UNRESOLVED_NATIVE_ENTRY_STATES,
         )
         .fetchall()
     )

@@ -748,7 +748,9 @@ def test_run_reconcile_respects_auto_adopt_disabled(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("native_state", ["open", "pending", "submitted", "submission_unknown", "materialization_missing", "filled"])
-def test_adoption_waits_for_native_entry_materialization(tmp_path, monkeypatch, native_state):
+@pytest.mark.parametrize("close_reason", [None, "", " "])
+@pytest.mark.parametrize("position_id", [None, "missing-position"])
+def test_adoption_waits_for_native_entry_materialization(tmp_path, monkeypatch, native_state, close_reason, position_id):
     """An exchange position may be the native entry whose private fill is delayed."""
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position, PositionAdoptionIntegrityError
@@ -759,6 +761,7 @@ def test_adoption_waits_for_native_entry_materialization(tmp_path, monkeypatch, 
         ("native-in-flight", "DOGE/USDT", "usdt_futures", "long", "limit", 204, 0.08824,
          "bitget_demo", native_state, "native", "2026-09-11T15:40:40+00:00"),
     )
+    repo.get_db().execute("UPDATE orders SET close_reason=?,position_id=? WHERE id='native-in-flight'", (close_reason, position_id))
     repo.get_db().commit()
     with pytest.raises(PositionAdoptionIntegrityError, match="native_entry_materialization_pending"):
         adopt_position(_ex("DOGEUSDT", "long", 204, entry=0.08689), "demo")
@@ -779,7 +782,8 @@ def test_adoption_rechecks_position_after_stale_classification(tmp_path, monkeyp
     assert [p["id"] for p in repo.list_positions(status="open")] == [existing.id]
 
 
-def test_adoption_ignores_completed_reverse_linked_native_entry(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_close", [False, True])
+def test_adoption_ignores_completed_reverse_linked_native_entry(tmp_path, monkeypatch, legacy_close):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position
 
@@ -792,8 +796,12 @@ def test_adoption_ignores_completed_reverse_linked_native_entry(tmp_path, monkey
     repo.get_db().commit()
     old = Position(symbol="DOGE/USDT", market_type="usdt_futures", direction="long",
                    quantity=204, entry_price=0.08689, current_price=0.08689,
-                   execution_mode="bitget_demo", order_id="old-native", status="closed")
+                   execution_mode="bitget_demo", order_id=None if legacy_close else "old-native", status="closed",
+                   pending_close_order_id="old-native" if legacy_close else None)
     repo.insert_position(old)
+    if legacy_close:
+        repo.get_db().execute("UPDATE orders SET status='open' WHERE id='old-native'")
+        repo.get_db().commit()
     adopted = adopt_position(_ex("DOGEUSDT", "long", 10, entry=0.09), "demo")
     assert adopted["position_id"] != old.id
     assert len(repo.list_positions(status="open")) == 1
