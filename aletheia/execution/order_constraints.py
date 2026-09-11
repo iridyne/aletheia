@@ -9,6 +9,7 @@ reason to guess at an order size.
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR, InvalidOperation
 import threading
@@ -123,7 +124,8 @@ def normalize_quantity(quantity: float, price: float, constraints: OrderConstrai
     if constraints.min_notional is not None:
         quoted_price = _decimal(price, "price", required=True)
         minimum = max(minimum, constraints.min_notional / quoted_price)
-    required = max(qty, minimum) if allow_increase else qty
+    # Restore at most one ULP lost by the Plan's max_notional / price division.
+    required = max(qty, minimum) if allow_increase else Decimal(str(math.nextafter(quantity, math.inf)))
     rounding = ROUND_CEILING if allow_increase else ROUND_FLOOR
     adjusted = (required / step).to_integral_value(rounding=rounding) * step
     if adjusted <= 0 or adjusted < minimum:

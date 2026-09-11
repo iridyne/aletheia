@@ -1804,3 +1804,22 @@ def test_spot_short_blocks_before_market_model_and_compiler(monkeypatch):
     assert result["reason"] == "spot_short_not_allowed"
     assert not result["model_invoked"] and not result["compiler_invoked"]
     assert repo.get_candidate_planning_generation(generation["id"])["planner_input_json"] is None
+    stored = repo.get_candidate_planning_generation(generation["id"])
+    assert stored["attention_status"] == "terminal" and stored["outcome_class"] == "planning_failed"
+    assert stored["retry_not_before"] is None
+    assert asyncio.run(plan_next_candidate(unexpected))["status"] == "idle"
+
+
+def test_replacement_candidate_handoff_uses_canonical_cycle_association():
+    from aletheia.server.routes.universe import _attach_candidate_handoff_state
+    candidate = _candidate()
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    replacement = _candidate(rank=8)
+    repo.ensure_candidate_planning_generation(replacement.id)
+    repo.claim_next_candidate_planning("owner")
+    plan = _plan(generation)
+    status, record = repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)
+    assert status == "planned"
+    [projection] = _attach_candidate_handoff_state([repo.get_candidate(replacement.id)])
+    assert projection["entry_plan_id"] == record["id"]
+    assert projection["entry_plan_status"] == record["status"]

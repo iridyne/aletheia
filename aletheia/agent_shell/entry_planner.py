@@ -100,10 +100,11 @@ async def plan_next_candidate(
 
         instrument_violation = entry_instrument_violation(generation["market_type"], generation["direction"])
         if instrument_violation:
-            stored = repo.block_candidate_planning(
+            stored = repo.fail_candidate_planning(
                 generation["id"], owner, instrument_violation, stage="runtime_preflight",
+                model_invoked=False, compiler_invoked=False,
             )
-            return {"status": "blocked" if stored else "stale", "planning_generation_id": generation["id"],
+            return {"status": "failed" if stored else "stale", "planning_generation_id": generation["id"],
                     "reason": instrument_violation, "model_invoked": False, "compiler_invoked": False}
         try:
             venue_reason = fast_market_data_unavailability_reason(
