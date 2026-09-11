@@ -150,9 +150,13 @@ def correction(before: dict, evidence: dict) -> dict:
             and Decimal(str(local[0]["fee"])) == fee, "durable_fill_mismatch")
     proposal = proposals[NATIVE_PROPOSAL]
     require(proposal["source"] == "native" and proposals[ADOPTED_PROPOSAL]["source"] == "adopted", "proposal_ownership_mismatch")
+    require(proposal["status"] == "executed", "native_proposal_not_executed")
+    decision = next((row for row in before["risk"] if row["id"] == native["risk_decision_id"]), None)
+    repo._validate_native_entry_order_snapshot(native, proposal, decision)
     from aletheia.execution.exchange_materialization import _attribution_fields
     return {
         "quantity": float(quantity), "entry_price": float(price), "entry_fee": float(fee),
+        "slippage_cost": abs(float(price) - float(native["price"])) * float(quantity),
         "source": "native", "entry_price_source": "broker_fill", "entry_fill_verified": 1,
         "proposal_id": NATIVE_PROPOSAL, "order_id": NATIVE_ORDER,
         "strategy_id": proposal.get("strategy_id"), "opportunity_id": proposal.get("opportunity_id"),
@@ -186,6 +190,11 @@ def main():
     group.add_argument("--snapshot", type=Path)
     group.add_argument("--apply", type=Path)
     args = parser.parse_args()
+    if args.apply and repo.get_db().execute("SELECT 1 FROM audit_events WHERE id=?", (AUDIT,)).fetchone():
+        # Retry only the committed audit mirror, even if trading state has moved on.
+        mirrored = repo.reconcile_audit_event_outbox(("position_adoption_overlap_corrected",))
+        print(_json({"status": "already_applied", "audit_mirrored": mirrored}))
+        return
     if args.apply:
         packet = json.loads(args.apply.read_text())
         before = packet["before"]
@@ -202,7 +211,9 @@ def main():
             target.write(_json({"before": before, "evidence": evidence, "changes": changes}))
         print(_json({"status": "dry_run", "changes": changes}))
     else:
-        print(_json(apply(before, evidence)))
+        result = apply(before, evidence)
+        result["audit_mirrored"] = repo.reconcile_audit_event_outbox(("position_adoption_overlap_corrected",))
+        print(_json(result))
 
 
 if __name__ == "__main__":
