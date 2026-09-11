@@ -109,7 +109,7 @@ def _fail_entry_plan(proposal: TradeProposal, reason: str) -> None:
         repo.transition_entry_plan(
             proposal.entry_plan_id,
             expected_status=plan["status"],
-            status="failed",
+            status="invalidated" if reason == "entry_plan_price_invalidated" else "failed",
             reason=reason[:160],
         )
 
@@ -1638,10 +1638,13 @@ def _execute_proposal(
                 if recovered is not None:
                     return recovered
                 exchange_oid = getattr(e, "exchange_order_id", None)
+                failure_reason = ("entry_plan_price_invalidated"
+                    if execution_receipt and str(e) == "entry_plan_price_invalidated"
+                    and not has_order_for_proposal(proposal.id) else "demo_order_failed")
                 with transaction():
                     update_trade_proposal(proposal.id, status="error")
-                    _fail_entry_plan(proposal, "demo_order_failed")
-                msg = f"demo_order_failed: broker execution failed ({type(e).__name__})"
+                    _fail_entry_plan(proposal, failure_reason)
+                msg = f"{failure_reason}: execution stopped ({type(e).__name__})"
                 if exchange_oid:
                     msg += f" (exchange_order_id={exchange_oid})"
                 write_audit(
@@ -1666,7 +1669,8 @@ def _execute_proposal(
                     "message": "Broker rejected or failed the order before acceptance was confirmed.",
                     "exchange_order_id": exchange_oid,
                 }
-                reason_code = getattr(e, "reason_code", None)
+                reason_code = (failure_reason if failure_reason == "entry_plan_price_invalidated"
+                               else getattr(e, "reason_code", None))
                 if reason_code:
                     response["reason_code"] = reason_code
                 return response
