@@ -66,10 +66,10 @@ def resolve_entry_execution(
     """Pure existing-behavior projection. No clock, repository, network or writes."""
     projection = normalize_entry_execution(plan)
     # Durable external evidence wins over new activation, market or Risk evidence.
-    if facts.cancellation_unresolved or facts.order_status in {
+    if facts.cancellation_unresolved or facts.proposal_status == "materialization_missing" or facts.order_status in {
         "pending", "submission_unknown", "materialization_missing",
     } or (facts.order_status is None and facts.proposal_status in {
-        "executing", "submitted", "submission_unknown",
+        "executing", "submitted", "submission_unknown", "partially_filled", "executed",
     }):
         return EntryExecutionDirective("RECONCILE", "external_outcome_unresolved")
     if facts.order_status == "filled" or facts.plan_status == "filled":
@@ -78,6 +78,10 @@ def resolve_entry_execution(
         facts.plan_status if facts.plan_status in {"expired", "invalidated", "cancelled", "failed"} else None
     )
     if terminal:
+        if plan.order_tactic == "POST_ONLY_LIMIT" and facts.order_status in {
+            "submitted", "partial", "partially_filled",
+        }:
+            return EntryExecutionDirective("COMMAND", terminal, "CANCEL_PASSIVE")
         return EntryExecutionDirective("STOP", terminal)
     if facts.order_status in {"submitted", "partial", "partially_filled"}:
         if (plan.order_tactic == "POST_ONLY_LIMIT"
