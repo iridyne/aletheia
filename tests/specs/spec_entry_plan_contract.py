@@ -380,7 +380,7 @@ def test_static_entry_feasibility_and_birth_owner(monkeypatch):
 
 @spec_claim(SpecClaim("EP-B16", "entry_plan_contract", "Pre-broker submission authority (#3096)", "L2b",
     "Entry preparation waits without external effects; only a fenced final market check starts submission.", status="implemented"))
-@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected"])
+@pytest.mark.parametrize("scenario", ["slow", "crossing", "stale", "unavailable", "expired", "owner_lost", "duplicate_wake", "unknown", "venue_rejected", "boundary_rollback"])
 def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     from datetime import datetime, timedelta, timezone
     from types import SimpleNamespace
@@ -452,6 +452,14 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
 
     monkeypatch.setattr(coordinator, "_create_bound_adapter", lambda *args: Adapter())
 
+    if scenario == "boundary_rollback":
+        original_transition = coordinator.transition_entry_plan
+        def reject_order_transition(*args, **kwargs):
+            if kwargs.get("status") == "ordered":
+                return False
+            return original_transition(*args, **kwargs)
+        monkeypatch.setattr(coordinator, "transition_entry_plan", reject_order_transition)
+
     def market():
         if scenario == "expired":
             clock[0] = datetime.fromisoformat(plan.expires_at) + timedelta(seconds=1)
@@ -491,9 +499,9 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert len(calls) == 1
         assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["commit_hash"] == original_hash
         assert roles == ["preflight", "authoritative"] * 2
-    elif scenario in {"expired", "owner_lost"}:
+    elif scenario in {"expired", "owner_lost", "boundary_rollback"}:
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
-        assert result["status"] == ("error" if scenario == "expired" else "already_claimed")
+        assert result["status"] == ("already_claimed" if scenario == "owner_lost" else "error")
     else:
         assert len(calls) == 1
         assert calls[0].limit_price == plan.limit_price
@@ -506,3 +514,13 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
             assert repo.get_db().execute("SELECT status FROM orders WHERE proposal_id=?", (proposal["id"],)).fetchone()[0] == "submission_rejected"
         else:
             assert result["status"] == "submitted"
+
+    if calls:
+        terminal_audits = [event for event in audits
+            if event.get("event_type", "").startswith("demo_order_")
+            or event.get("event_type") == "execution_unresolved"]
+        assert terminal_audits
+        assert all(event["before"]["status"] == "executing" for event in terminal_audits)
+    elif scenario == "boundary_rollback":
+        errors = [event for event in audits if event.get("event_type") == "demo_order_error"]
+        assert len(errors) == 1 and errors[0]["before"]["status"] == "pending"
