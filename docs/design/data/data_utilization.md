@@ -38,6 +38,7 @@
 
 | 数据域 | 采集器 | 存储 | **消费模块（去向）** | 状态 |
 |---|---|---|---|---|
+| Positioning Evidence（DU-S32） | 复用 Canonical Derivatives Facts，无新增采集 | 读取既有 Funding/OI/price 表，不新增写表 | `aletheia data positioning-evidence --symbol BTC/USDT --cutoff <UTC> --venue binance --venue okx` | 🟡 observation/research-only；冻结输入与 cutoff 可用于全观察样本的 15m/1h/4h outcome join，不依赖成交筛选 |
 | Deribit IV surface（DU-S31） | `OptionsStructureCollector` 复用同一次 BTC/ETH public chain response | 独立 `options_volatility_snapshots`，30 天保留 | `aletheia data options-volatility --symbol BTC --cutoff <UTC>` 只读研究导出 | 🟡 observation/research-only；不进入 LLM 或交易决策；规则见 §4 |
 | Canonical Derivatives Facts（DU-S29） | 现有 `DerivativesCollector` 的 primary/comparison 路径与 native Hyperliquid；一个 exact venue/instrument/fact 保留一个当前 writer | 原 Funding/OI 表的 nullable provenance；独立 `perp_price_snapshots`；`collector_health_state` 的最新比较覆盖 | `data/derivatives_facts.py` 只读规范投影及 `GET /api/market/derivatives-facts` 的 Positioning readiness 数据观察；比较行明确 `observation_only`，旧 scalar/context/evidence readers 排除这些新增行 | 🟡 observation-only；不改变 Candidate、Entry、Risk 或交易权限；未知 interval/单位/历史 provenance 保留 unavailable，不把采集成功当作经济证据 |
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
@@ -85,6 +86,29 @@
 > retention 窗口是否覆盖新消费者的读取需求（Phase 3, 2026-07-17）。
 
 ## 4. Gap 处置
+
+### Positioning Evidence as-of contract
+
+`data/positioning_evidence.py` 复用 canonical `project_snapshot`、`project_price_snapshot`
+与 `annualize_funding`，不改变现有 latest/readiness 或交易消费者。
+cutoff、source time、acquisition time 均须有时区，source 不得晚于 acquisition 或 cutoff；
+当前事实最大年龄 30 分钟，同一比较组 source skew 最大 5 分钟。
+相同 base/market/quote/settle 的 exact venue 才构成比较组，不假定 USDT/USDC 平价。
+Funding 年化采用 365 天，单位为 ratio/year；median 和 dispersion(range=max-min) 至少需两家。
+Basis 仅使用同响应的 mark/index premium ×10000 bps，oracle 等 reference 不冒充 index。
+OI 只接受 canonical 证明的 USD notional，缺 venue 降低 coverage；subtotal 允许部分覆盖，
+share 仅在 subtotal>0 时定义，disagreement 是 (max-min)/median，median=0 时不可用。
+Price×OI state 使用同 provider/instrument/unit/value-kind 的 45–75 分钟历史，
+当前 price/OI 和两条 baseline 分别要求 source skew≤5 分钟；明确输出各自变化和 input IDs，
+上涨/下跌/不变均为描述，不构成 directional trade recommendation。
+
+查询只读既有表的 cutoff 前 105 分钟，每表最多 2048 行，超过上限整个导出 unavailable。
+新行不可替代 cutoff 当时未知的来源；缺 acquisition/source 证明不可猜时点。
+导出冻结参与当前和 baseline 判断的 canonical facts、原始 row IDs、来源/venue/单位/时间、
+algorithm version 与输入 hash，无新增 Provider、请求、scheduler、存储或交易 authority。
+Funding extreme、OI acceleration、crowding 保持 unavailable：现有有界历史未证明相应
+历史分布/等间隔窗口和规则；Coinalyze population/unit/source contract 未证明时，
+aggregate-vs-exact OI comparison 和 liquidation impulse 保持 unavailable。
 
 ### Options volatility observation contract
 

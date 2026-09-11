@@ -10,6 +10,22 @@ import typer
 data_app = typer.Typer(no_args_is_help=True)
 
 
+@data_app.command("positioning-evidence")
+def positioning_evidence(
+    symbol: str = typer.Option(..., help="Canonical symbol, e.g. BTC/USDT"),
+    cutoff: str = typer.Option(..., help="Timezone-aware ISO decision cutoff"),
+    venue: list[str] = typer.Option(["binance", "okx", "bitget", "hyperliquid"], "--venue"),
+):
+    """Export research-only positioning evidence from existing durable facts."""
+    from aletheia.data.positioning_evidence import read_positioning_evidence
+
+    try:
+        result = read_positioning_evidence(symbol, cutoff, venues=venue)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(json.dumps(result, indent=2, allow_nan=False))
+
+
 @data_app.command("options-volatility")
 def options_volatility(
     symbol: str = typer.Option(..., help="BTC or ETH"),

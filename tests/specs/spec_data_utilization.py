@@ -48,6 +48,17 @@ _CONTRACT = "data_utilization_contract"
 
 
 @spec_claim(SpecClaim(
+    'DU-S32', _CONTRACT, 'Positioning Evidence as-of research export', 'L2c',
+    'Read-only positioning evidence excludes future acquisitions and replays from frozen canonical inputs.',
+    status='implemented',
+))
+def test_positioning_evidence_cutoff_and_replay():
+    from tests.test_positioning_evidence import test_future_acquisition_cannot_change_cutoff_and_inputs_replay
+
+    test_future_acquisition_cannot_change_cutoff_and_inputs_replay()
+
+
+@spec_claim(SpecClaim(
     'DU-S31', _CONTRACT, 'Options volatility observation-only export', 'L2c',
     'IV facts use a separate as-of research read without changing existing GEX consumers.',
     status='implemented',
