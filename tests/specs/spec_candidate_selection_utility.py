@@ -120,3 +120,13 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
 def test_current_candidate_bootstrap_without_slow_cache(tmp_path, monkeypatch):
     from tests.test_candidate_selection_utility import test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache
     test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+
+
+@spec_claim(SpecClaim(
+    "CSU-S06", _CONTRACT, "PerpFundingEvidence", "L2a",
+    "Perp Funding contract cutover preserves Spot and historical rows while current incomplete evidence fails closed.",
+    status="implemented",
+))
+def test_perp_funding_history_cutover():
+    from tests.test_candidate_funding import test_scoped_cutover_keeps_spot_and_current_incomplete_denominator
+    test_scoped_cutover_keeps_spot_and_current_incomplete_denominator()

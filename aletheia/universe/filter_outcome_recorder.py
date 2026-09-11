@@ -238,6 +238,9 @@ async def settle_due_filter_outcomes(
                 fallback_spread_bps = float(cost_snapshot["fallback_spread_bps"])
             except (KeyError, TypeError, ValueError):
                 return _DEFERRED
+        from aletheia.universe.candidate_funding import proved_funding_interval
+        funding_kwargs = ({"funding_interval_seconds": proved_funding_interval(row)}
+                          if row.get("scanner_family") == "candidate_selection_utility" else {})
         economics = estimate_outcome_economics(
             entry_price=entry,
             exit_price=exit_price,
@@ -252,6 +255,7 @@ async def settle_due_filter_outcomes(
             range_high=observation.get("range_high"),
             range_low=observation.get("range_low"),
             price_quality_ok=True,
+            **funding_kwargs,
         )
         won = repo.settle_filter_candidate_outcome(
             row["id"],

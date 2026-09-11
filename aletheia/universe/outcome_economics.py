@@ -13,7 +13,6 @@ from aletheia.config.execution_costs import validate_execution_costs
 from aletheia.data.symbols import MARKET_FUTURES, MARKET_PERP, MARKET_SPOT
 
 
-_FUNDING_INTERVAL_SEC = 8 * 3600
 _PERP_MARKETS = frozenset({MARKET_PERP, MARKET_FUTURES, "swap", "usdt_futures"})
 _VALID_DIRECTIONS = frozenset({"long", "short"})
 _MIN_EDGE_FLOOR_PCT = 0.05
@@ -35,6 +34,8 @@ def estimate_outcome_economics(
     range_high: float | None = None,
     range_low: float | None = None,
     price_quality_ok: bool = True,
+    # Non-Candidate callers retain Opportunity Outcome §4; Candidate always passes proof/None.
+    funding_interval_seconds: float | None = 8 * 3600,
 ) -> dict[str, Any]:
     """Return gross, directional, path and estimated net outcome metrics.
 
@@ -73,7 +74,9 @@ def estimate_outcome_economics(
 
     funding_pct: float | None
     if market in _PERP_MARKETS:
-        if side not in _VALID_DIRECTIONS or funding_rate_at_entry is None:
+        if (side not in _VALID_DIRECTIONS or funding_rate_at_entry is None
+                or funding_interval_seconds is None
+                or not math.isfinite(funding_interval_seconds) or funding_interval_seconds <= 0):
             funding_pct = None
         else:
             # Positive venue funding: longs pay, shorts receive.
@@ -81,7 +84,7 @@ def estimate_outcome_economics(
             funding_pct = (
                 float(funding_rate_at_entry)
                 * 100.0
-                * (hold / _FUNDING_INTERVAL_SEC)
+                * (hold / funding_interval_seconds)
                 * direction_sign
             )
     elif market == MARKET_SPOT:

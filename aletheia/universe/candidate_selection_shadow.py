@@ -245,6 +245,7 @@ def build_candidate_selection_shadow_bundle(
             key=decision_rank,
         )[:universe_config.max_candidates]
     }
+    from aletheia.universe.candidate_funding import freeze_funding_proof
     for feature, gate, evidence, decision in zip(population, gates, bundles, decisions, strict=True):
         if gate.status != "eligible":
             continue
@@ -271,6 +272,7 @@ def build_candidate_selection_shadow_bundle(
                 entry_price_usd=float(price),
                 entry_spread_bps=feature.get("spread_bps"),
                 funding_rate_at_entry=feature.get("funding_rate"),
+                funding_evidence_json=freeze_funding_proof(feature),
                 entry_ts=captured_at,
                 allocation_selected=(
                     decision.candidate_key in target_selected_keys
@@ -502,6 +504,10 @@ def load_candidate_selection_outcomes(
         return []
     keys = sorted(labels_by_key)
     result = []
+    from aletheia.universe.candidate_funding import funding_proof, proved_funding_interval
+    expected_funding = manifest.get("perp_funding")
+    funding_counts = {"perp_funding_historical_incompatible": 0,
+                      "perp_funding_current_incomplete": 0, "perp_funding_current_complete": 0}
     for offset in range(0, len(keys), 500):
         chunk = keys[offset:offset + 500]
         placeholders = ",".join("?" for _ in chunk)
@@ -515,6 +521,13 @@ def load_candidate_selection_outcomes(
             raise ValueError("candidate_selection_history_outcome_missing")
         for row in rows:
             base = dict(row)
+            if base.get("market_type") == "perp" and expected_funding:
+                if funding_proof(base).get("version") != expected_funding:
+                    funding_counts["perp_funding_historical_incompatible"] += 1
+                    continue
+                complete = proved_funding_interval(base) is not None
+                funding_counts["perp_funding_current_complete" if complete else
+                               "perp_funding_current_incomplete"] += 1
             if cutoff:
                 entry_at = parse_utc_instant(base.get("entry_ts"))
                 settled_at = parse_utc_instant(base.get("settled_at"))
@@ -534,6 +547,8 @@ def load_candidate_selection_outcomes(
                     base["status"] = "pending"
             for labels in labels_by_key.get(str(row["outcome_candidate_key"]), ()):
                 result.append({**base, **labels})
+    if diagnostics_out is not None:
+        diagnostics_out.update(funding_counts)
     return result
 
 
