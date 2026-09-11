@@ -202,6 +202,96 @@ def _drain_delivery_receipts(
     }
 
 
+def prove_applied_delivery_suffix() -> dict[str, Any]:
+    """Read-only admission proof; only settlement under the cycle lock may act on it."""
+    from contextlib import closing
+    from aletheia.observation_lab import checkpoint as cp
+    from aletheia.observation_lab.canonical import _hash, _json, _capture_receipt_reason_allowed
+    from aletheia.observation_lab.db import readonly_lab_db
+    from aletheia.storage.sqlite import read_snapshot
+
+    try:
+        last = cp.latest_joint_checkpoint()
+        current = cp.compute_joint_checkpoint(create_lab=False)
+        if (last is None or last.main_outbox_pending_count != 0
+            or not set(cp._mismatch_components(last, current)) <= {"lab_state", "checkpoint_ledger", "main_outbox"}):
+            raise ValueError("checkpoint_scope_mismatch")
+        transport = _delivery_transport_state()
+        if not transport.get("available") or transport.get("retry_sequences"):
+            raise ValueError("delivery_cursor_unproven")
+        with readonly_lab_db() as lab, read_snapshot() as main, closing(sqlite3.connect(":memory:")) as memory:
+            memory.row_factory = sqlite3.Row
+            lab.backup(memory)
+            stored = memory.execute("SELECT checkpoint_id FROM joint_checkpoints ORDER BY recorded_at DESC LIMIT 1").fetchone()
+            if stored is None or stored[0] != last.checkpoint_id:
+                raise ValueError("checkpoint_changed")
+            allowed = {"joint_checkpoints", "lab_schema_migrations", "lab_audit_outbox",
+                       "observation_import_cursors", "observation_job_health"}
+            for row in memory.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"):
+                name = row[0].replace('"', '""')
+                if row[0] not in allowed and memory.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone():
+                    raise ValueError("observation_evidence_present")
+            cursors = memory.execute("SELECT * FROM observation_import_cursors").fetchall()
+            if len(cursors) != 1 or cursors[0]["source_name"] != "main":
+                raise ValueError("delivery_cursor_scope")
+            cursor = cursors[0]
+            material = json.loads(cursor["source_checkpoint_json"])
+            if (cursor["retry_sequences_json"] != "[]" or material.get("retry_sequences") != []
+                or _hash(material) != cursor["source_checkpoint_fingerprint"]
+                or material.get("source_name") != "main"
+                or material.get("contiguous_sequence") != cursor["contiguous_sequence"]):
+                raise ValueError("delivery_cursor_unproven")
+            receipts = []
+            for row in memory.execute("SELECT audit_id,event_type,payload_json FROM lab_audit_outbox"):
+                payload = json.loads(row["payload_json"])
+                if row["event_type"] != "observation_receipt_unclassified":
+                    raise ValueError("classified_audit_present")
+                receipts.append((int(payload["sequence"]), payload["source_receipt_id"], row["audit_id"], payload))
+            receipts.sort(key=lambda row: row[0])
+            chain, prior, previous = None, None, -1
+            suffix = []
+            mutable = {"acknowledged_at", "lab_application_status", "lab_applied_observation_id",
+                       "lab_applied_generation", "lab_applied_event_id", "lab_application_error", "lab_applied_at"}
+            for sequence, receipt_id, audit_id, payload in receipts:
+                if sequence <= previous:
+                    raise ValueError("duplicate_receipt_sequence")
+                previous = sequence
+                chain = _hash({"prior": chain, "sequence": sequence, "receipt_id": receipt_id})
+                if sequence == last.main_outbox_high_watermark:
+                    prior = dict(source_name="main", contiguous_sequence=sequence, last_receipt_id=receipt_id,
+                                 retry_sequences=[], receipt_chain_fingerprint=chain)
+                if sequence > last.main_outbox_high_watermark:
+                    row = main.execute("SELECT * FROM observation_delivery_outbox WHERE sequence=?", (sequence,)).fetchone()
+                    if (row is None or row["receipt_id"] != receipt_id or row["acknowledged_at"] is None
+                        or row["lab_application_status"] != "applied"
+                        or any(row[key] != payload["receipt"].get(key) for key in row.keys() if key not in mutable)):
+                        raise ValueError("suffix_receipt_mismatch")
+                    suffix.append(audit_id)
+            if (not prior or not suffix or chain != material.get("receipt_chain_fingerprint")
+                or previous != cursor["contiguous_sequence"]
+                or receipts[-1][1] != material.get("last_receipt_id")):
+                raise ValueError("receipt_chain_unproven")
+            if main.execute("SELECT 1 FROM observation_delivery_outbox WHERE sequence<=? AND acknowledged_at IS NULL LIMIT 1",
+                            (cursor["contiguous_sequence"],)).fetchone():
+                raise ValueError("acknowledgement_incomplete")
+            # The recovery cut cannot introduce an Observation identity while draining.
+            for row in main.execute("SELECT * FROM observation_delivery_outbox WHERE sequence>?", (cursor["contiguous_sequence"],)):
+                if (row["receipt_kind"] != "capture" or row["observation_id"] or row["generation"] is not None
+                    or not _capture_receipt_reason_allowed(row["resolution_reason"])):
+                    raise ValueError("pending_receipt_outside_recovery_scope")
+            memory.executemany("DELETE FROM lab_audit_outbox WHERE audit_id=?", [(item,) for item in suffix])
+            memory.execute("UPDATE observation_import_cursors SET contiguous_sequence=?,retry_sequences_json='[]',"
+                           "source_checkpoint_json=?,source_checkpoint_fingerprint=? WHERE source_name='main'",
+                           (prior["contiguous_sequence"], _json(prior), _hash(prior)))
+            if (cp._lab_state_fingerprint(db=memory) != last.lab_state_fingerprint
+                or cp._checkpoint_ledger_fingerprint(last.lab_state_fingerprint, db=memory) != last.checkpoint_ledger_fingerprint):
+                raise ValueError("prior_checkpoint_not_reconstructed")
+        return {"ok": True, "reason": "applied_delivery_suffix_proven", "receipt_count": len(suffix),
+                "checkpoint_id": last.checkpoint_id, "prior_lab_fingerprint": last.lab_state_fingerprint}
+    except (OSError, RuntimeError, sqlite3.Error, TypeError, ValueError, KeyError, IndexError) as exc:
+        return {"ok": False, "reason": "applied_delivery_suffix_unproven", "detail": type(exc).__name__}
+
+
 def settle_update_continuity_locked() -> dict[str, Any]:
     """Produce the smallest deployment-authorizing Observation continuity cut.
 
@@ -227,6 +317,10 @@ def settle_update_continuity_locked() -> dict[str, Any]:
     step = time.monotonic()
     checkpoint = runner._pass_checkpoint()
     timings["checkpoint_preverify"] = _elapsed_ms(step)
+    if not checkpoint.get("ok"):
+        proof = prove_applied_delivery_suffix()
+        if proof["ok"]:
+            checkpoint = {**checkpoint, "ok": True, "reason": proof["reason"], "recovery_proof": proof}
     if not checkpoint.get("ok"):
         step = time.monotonic()
         interruption = delivery_import_interruption_status()

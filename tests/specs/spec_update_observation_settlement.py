@@ -58,3 +58,13 @@ def test_activation_cut_contains_only_delivery_and_checkpoint_work(
 def test_activation_cut_lock_covers_backup_and_source_switch(tmp_path, monkeypatch):
     _assert_lock_lifetime(monkeypatch)
     _assert_phase_boundary(tmp_path, monkeypatch)
+
+
+@spec_claim(SpecClaim(
+    "OBC-UPD-04", _CONTRACT, "Bounded applied delivery recovery (#3096)", "L2a",
+    "Only an exact reconstructed prior Lab and unclassified applied receipt suffix may settle; "
+    "altered evidence or retry state cannot authorize a checkpoint.",
+))
+def test_bounded_applied_delivery_recovery():
+    from tests.test_update_delivery_recovery import test_only_exact_unclassified_delivery_suffix_can_settle
+    test_only_exact_unclassified_delivery_suffix_can_settle(None)

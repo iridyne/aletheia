@@ -506,6 +506,12 @@ must pass both Risk evaluations. Expired pre-broker claims can be reclaimed; sta
 owners cannot mark submission. A pending local Order or an executing/unknown Proposal
 prevents automatic repetition. Expiry, identity/hash, policy, permission and immutable
 intent failures remain terminal. Historical terminal Plans are never revived.
+Owner-approved #3096 permits `pending → error` for terminal Entry preparation
+failures only while Broker handoff is proven absent (no Order or external execution
+state). Temporary market or dependency failures remain WAIT and release pre-Order
+reservation/claim for a later natural attempt. Possible handoff evidence takes the
+existing reconciliation path and cannot be overwritten by preparation error.
+
 
 Stage timestamps and attempt identity are retained as entry_execution_stage audit facts:
 market receipt, claim, both Risk passes, quantity normalization, final market check,

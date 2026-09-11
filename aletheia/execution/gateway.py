@@ -8,6 +8,7 @@ from uuid import uuid4
 from aletheia.config.loader import is_preview_mode, load_config
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
+from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
 from aletheia.execution import venue_capabilities as _venue_capabilities
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
@@ -140,6 +141,9 @@ def _prepare_exchange_quantity(
             **({"allow_increase": False} if not allow_increase else {}),
         ), None
     except ConstraintUnavailable as exc:
+        if not allow_increase and is_ambiguous_submission_error(exc):
+            # Entry keeps transient venue metadata failures in preparation WAIT.
+            raise
         logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
         return quantity, "Executable venue order rules are unavailable or do not support this order. No order was sent."
 
@@ -1296,8 +1300,20 @@ def _terminal_execution_error(
             reason_code,
             type(exception).__name__,
         )
-    with transaction():
-        update_trade_proposal(proposal.id, status="error")
+    boundary_present = False
+    with transaction(immediate=True):
+        if proposal.entry_plan_id:
+            stored = get_trade_proposal(proposal.id)
+            boundary_present = has_order_for_proposal(proposal.id) or stored["status"] not in {"pending", "approved"}
+            if boundary_present:
+                proposal.status = stored["status"]
+        if not boundary_present:
+            update_trade_proposal(proposal.id, status="error")
+    if boundary_present:
+        return _recover_broker_exception_from_durable_order(
+            proposal, exception or RuntimeError(reason_code), channel="demo"
+        ) or {"status": "reconciliation_required", "proposal_id": proposal.id,
+              "reason_code": "entry_execution_boundary_unresolved"}
     _fail_entry_plan(proposal, reason_code)
     write_audit(
         {
@@ -1546,6 +1562,8 @@ def _execute_proposal(
             exception=exc,
         )
     except Exception as exc:
+        if execution_receipt and is_ambiguous_submission_error(exc):
+            return _wait_for_entry_market(proposal, owner_token, execution_receipt, "entry_preparation_dependency_unavailable")
         return _terminal_execution_error(
             proposal,
             reason_code="execution_precheck_failed",
@@ -1637,6 +1655,8 @@ def _execute_proposal(
                 )
                 if recovered is not None:
                     return recovered
+                if execution_receipt and is_ambiguous_submission_error(e):
+                    return _wait_for_entry_market(proposal, owner_token, execution_receipt, "entry_preparation_dependency_unavailable")
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 failure_reason = ("entry_plan_price_invalidated"
                     if execution_receipt and str(e) == "entry_plan_price_invalidated"

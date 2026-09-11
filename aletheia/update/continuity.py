@@ -230,6 +230,9 @@ def capture_update_continuity() -> dict[str, Any]:
                 },
                 "settleable": {"ok": settleable.ok, "reason": settleable.reason},
             }
+            if not settleable.ok:
+                from aletheia.observation_lab.update_settlement import prove_applied_delivery_suffix
+                checkpoint["settleable"] = prove_applied_delivery_suffix()
         observation_available = identities.get("available") is True
     except Exception as exc:
         identities = {
@@ -352,7 +355,7 @@ def _checkpoint_preflight_verdict(checkpoint: dict[str, Any]) -> tuple[str | Non
     if (
         isinstance(settleable, dict)
         and settleable.get("ok") is True
-        and settleable.get("reason") == "main_outbox_append_only"
+        and settleable.get("reason") in {"main_outbox_append_only", "applied_delivery_suffix_proven"}
     ):
         return ("warning", "observation_settlement_required")
     components = verified.get("mismatch_components")
@@ -1000,8 +1003,6 @@ def apply_update_with_continuity(*, restart: bool = False, progress=None) -> dic
                 "phase_timeline": phase_timeline,
             },
         }
-
-    from aletheia.update import applier
 
     gateway_quiesced = False
     settlement: dict[str, Any] = {}
