@@ -153,3 +153,17 @@ stall and overdue outcomes are alert-only, never restart or authority signals.
 Normal empty selection, observe-only capability, future retries, natural Trigger
 or Fill waits and terminal qualification capture remain normal explanations.
 The normative clocks and projection fields are in the decision lifecycle contract.
+
+## Accepted #3111 capture convergence amendment
+
+The owner accepted serial implementation of the bounded capture model in
+[#3111](https://github.com/iridyne/aletheia/issues/3111). It supersedes the universal
+Maker timeout and direct urgency-to-tactic mapping above. Profile-owned Immediate
+or Conditional activation is independent of PriceFirst, MakerPreferred or
+FillFirst capture. One Plan retains aggregate authority; at most two immutable
+Proposal/Risk/Order legs use the existing Gateway, claims and reconciliation.
+
+The normative contract is [Entry Plan Contract](../contracts/entry-plan-contract.md).
+Historical JSON/hashes remain immutable. Live, Alpha, Candidate selection, Risk
+limits and accounting/cost integrity are unchanged. Deployment and natural
+Bitget Demo qualification remain separate from implementation availability.

@@ -148,7 +148,9 @@ class EntryHypothesis(BaseModel):
     primary_anchor_ref: str | None = None
     invalidation_anchor_ref: str | None = None
     entry_profile_id: str | None = None
-    execution_urgency: Literal["PASSIVE", "BOUNDED_URGENT"] | None = None
+    capture_priority: Literal["PRICE_FIRST", "MAKER_PREFERRED", "FILL_FIRST"] | None = None
+    capture_reason: str | None = Field(default=None, min_length=1, max_length=512)
+    capture_evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
     risk_tier: Literal["LOW", "MEDIUM", "NONE"]
     horizon: Literal["INTRADAY", "SWING", "NONE"]
     supporting_fact_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=8)
@@ -164,9 +166,11 @@ class EntryHypothesis(BaseModel):
                 "primary_anchor_ref",
                 "invalidation_anchor_ref",
                 "entry_profile_id",
-                "execution_urgency",
+                "capture_priority",
+                "capture_reason",
             ):
                 object.__setattr__(self, field, None)
+            object.__setattr__(self, "capture_evidence_refs", ())
             object.__setattr__(self, "risk_tier", "NONE")
             object.__setattr__(self, "horizon", "NONE")
             return self
@@ -178,10 +182,8 @@ class EntryHypothesis(BaseModel):
             raise ValueError("entry_anchors_must_be_distinct")
         if not self.entry_profile_id:
             raise ValueError("entry_profile_required")
-        if self.execution_urgency not in {"PASSIVE", "BOUNDED_URGENT"}:
-            raise ValueError("entry_execution_urgency_required")
-        if self.entry_profile_id == "grounded-anchor-resting-maker" and self.execution_urgency != "PASSIVE":
-            raise ValueError("resting_maker_must_be_passive")
+        if self.capture_priority is None or not (self.capture_reason or "").strip() or not self.capture_evidence_refs:
+            raise ValueError("entry_capture_evidence_required")
         if self.risk_tier == "NONE" or self.horizon == "NONE":
             raise ValueError("entry_risk_horizon_required")
         if not self.supporting_fact_refs:
@@ -269,7 +271,7 @@ def validate_hypothesis_references(
     hypothesis: EntryHypothesis,
     context: EntryAnalysisContext,
 ) -> None:
-    supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs)
+    supplied_refs = set(hypothesis.supporting_fact_refs + hypothesis.opposing_fact_refs + hypothesis.capture_evidence_refs)
     reference_contract = entry_reference_contract(context)
     anchors = {}
     if supplied_refs or hypothesis.decision != "NO_PLAN":
@@ -316,6 +318,8 @@ def validate_hypothesis_references(
         elif section.get("availability") != "available":
             raise ValueError(f"hypothesis_profile_{section_name}_unavailable")
     current_facts = set(reference_contract["current_market_fact_refs"])
+    if not set(hypothesis.capture_evidence_refs) & current_facts:
+        raise ValueError("hypothesis_capture_current_fact_required")
     if not set(hypothesis.supporting_fact_refs) & current_facts:
         raise ValueError("hypothesis_current_market_fact_required")
 

@@ -37,7 +37,7 @@ def _context(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
         market_structure={"fact_refs": []}, quant_context={"fact_refs": []},
         portfolio_context={"availability": "unavailable"},
         execution_context={"availability": "available"}, anchors=anchors,
-        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
+        entry_profiles=({"id": "grounded-anchor-direct"},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-02T00:00:00Z", mechanism="continuation", direction="long",
             market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
@@ -65,7 +65,7 @@ def _context_v2(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
             "15m": {"availability": "available"},
             "fact_refs": [anchors[-1].anchor_id],
         },
-        entry_profiles=({"id": "grounded-anchor-resting-maker"},),
+        entry_profiles=({"id": "grounded-anchor-direct"},),
         learning_context=empty_entry_learning_context(
             as_of_at="2026-09-02T00:00:00Z", mechanism="reversal", direction="long",
             market_type="perp", policy="candidate_selection_utility_v1", policy_epoch="epoch-1",
@@ -112,7 +112,7 @@ def _maximal_context() -> EntryAnalysisContext:
             "provenance": {"raw": "z" * 5000},
         }
     data["entry_profiles"] = ({
-        "id": "grounded-anchor-resting-maker", "version": "v1",
+        "id": "grounded-anchor-direct", "version": "v1",
         "supported_mechanisms": ("reversal",),
         "required_fact_sections": ("market_structure", "execution_context"),
         "primary_anchor_kinds": ("candidate_reference",),
@@ -140,7 +140,7 @@ def test_entry_model_view_excludes_raw_evidence_and_retains_grounding_identities
     assert {item["anchor_id"] for item in view["anchors"]} == {
         item.anchor_id for item in context.anchors
     }
-    assert view["entry_profiles"][0]["id"] == "grounded-anchor-resting-maker"
+    assert view["entry_profiles"][0]["id"] == "grounded-anchor-direct"
 
 
 def test_entry_model_view_is_deterministic_bounded_and_does_not_mutate_context():
@@ -191,7 +191,7 @@ def test_system_operator_prompt_uses_projection_while_full_context_stays_valid(m
         "primary_anchor_ref": context.anchors[0].anchor_id,
         "invalidation_anchor_ref": context.anchors[1].anchor_id,
         "entry_profile_id": "missing-profile",
-        "execution_urgency": "PASSIVE", "risk_tier": "LOW", "horizon": "INTRADAY",
+        "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [context.anchors[1].anchor_id], "risk_tier": "LOW", "horizon": "INTRADAY",
         "supporting_fact_refs": [context.anchors[1].anchor_id],
     }) == "entry_profile_not_registered"
     assert semantic_validator(result.model_dump(mode="json")) is None
@@ -213,8 +213,8 @@ def test_v2_hypothesis_binds_mechanism_profile_and_current_market_fact():
     hypothesis = EntryHypothesis(
         decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker",
-        execution_urgency="PASSIVE", risk_tier="LOW", horizon="INTRADAY",
+        entry_profile_id="grounded-anchor-direct",
+        capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,), learning_evidence_refs=("learning:1",),
     )
     validate_hypothesis_references(hypothesis, context)
@@ -281,18 +281,6 @@ def test_unavailable_treatment_learning_is_replaced_by_empty_baseline():
     assert result.metrics["intent_to_treat_net_utility_pct"] is None
 
 
-def test_v2_resting_maker_cannot_claim_bounded_urgent_execution():
-    primary = _anchor("candidate_reference", 100.0, "candidate:c1")
-    invalidation = _anchor("confirmed_swing", 95.0, "swing:s1")
-
-    with pytest.raises(ValueError, match="resting_maker_must_be_passive"):
-        EntryHypothesis(
-            decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
-            primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-            entry_profile_id="grounded-anchor-resting-maker",
-            execution_urgency="BOUNDED_URGENT", risk_tier="LOW", horizon="INTRADAY",
-            supporting_fact_refs=(invalidation.anchor_id,),
-        )
 
 
 def test_v2_no_plan_still_binds_opportunity_identity_and_explanatory_refs():

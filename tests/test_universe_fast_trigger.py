@@ -232,12 +232,12 @@ def test_entry_plan_expiry_reason_preserves_monitoring_and_trigger_cause():
 
     from aletheia.agent_runtime.fast_trigger_watch import _entry_plan_expiry_reason
 
-    assert _entry_plan_expiry_reason({"status": "waiting", "monitoring_state": None}) == (
+    assert _entry_plan_expiry_reason({"id": "plan", "status": "waiting", "monitoring_state": None}) == (
         "monitoring_never_ready"
     )
     assert _entry_plan_expiry_reason(
         {
-            "status": "waiting",
+            "id": "plan", "status": "waiting",
             "monitoring_state": "unavailable",
             "monitoring_evidence_json": json.dumps(
                 {"channels": {"depth": {"state": "unavailable"}}}
@@ -245,12 +245,9 @@ def test_entry_plan_expiry_reason_preserves_monitoring_and_trigger_cause():
         }
     ) == "monitoring_channel_unavailable:depth"
     assert _entry_plan_expiry_reason(
-        {"status": "waiting", "monitoring_state": "ready"},
+        {"id": "plan", "status": "waiting", "monitoring_state": "ready"},
         SimpleNamespace(state="reclaim", final_requirement_reason="order_flow"),
     ) == "trigger_final_requirements_unsatisfied:order_flow"
-    assert _entry_plan_expiry_reason(
-        {"status": "ordered", "monitoring_state": "ready"}
-    ) == "maker_order_unfilled_until_expiry"
 
 
 def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
@@ -258,14 +255,14 @@ def test_entry_plan_expiry_identifies_unrecovered_order_generation(monkeypatch):
 
     monkeypatch.setattr(
         watch.repo,
-        "get_order",
+        "get_order_for_entry_plan",
         lambda _order_id: {
             "matching_stream_generation_id": "stream-a",
             "matching_subscription_generation_id": "subscription-a",
         },
     )
     row = {
-        "status": "ordered",
+        "id": "plan", "status": "active",
         "order_id": "order-1",
         "monitoring_evidence_json": json.dumps(
             {
@@ -684,6 +681,9 @@ async def test_superseded_resting_plan_cancels_only_through_gateway(monkeypatch)
         "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
     }
     calls = []
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _: row)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan", lambda _: {"id": "owned-order"})
+    monkeypatch.setattr(watch.repo, "transition_entry_plan", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(
         watch.repo,
@@ -736,6 +736,8 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _plan_id: row)
     monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan",
+        lambda _: {"id": "order-1"} if expected_action == "cancel" else None)
     if integrity == "contract":
         monkeypatch.setattr(
             watch.EntryPlan,
@@ -755,7 +757,7 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
     await watch._load_entry_plan_watchers(SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10)))
 
     if expected_action == "cancel":
-        assert transitions == []
+        assert len(transitions) == 1 and transitions[0][1]["status"] == "failed"
         assert cancellations == [
             (row["id"], f"entry_plan_{integrity}_mismatch" if integrity == "hash" else "entry_plan_contract_invalid")
         ]
@@ -772,60 +774,34 @@ async def test_integrity_failure_preserves_order_lifecycle(monkeypatch, status, 
 @pytest.mark.asyncio
 async def test_triggered_post_only_plan_enforces_maker_timeout(monkeypatch):
     from types import SimpleNamespace
-
     from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.trading.entry_plan import entry_plan_payload
+    from tests.test_entry_execution_projection import plan_for, facts
 
-    payload = "{}"
-    row = {
-        "id": "triggered-maker",
-        "status": "ordered",
-        "plan_json": payload,
-        "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
-        "order_id": "order-1",
-    }
-    plan = SimpleNamespace(
-        plan_id="triggered-maker",
-        planning_generation_id="generation-1",
-        risk_policy_id="policy-1",
-        risk_policy_revision=1,
-        risk_policy_hash="policy-hash",
-        execution_account_mode="bitget_demo",
-        execution_mode="TRIGGERED",
-        order_tactic="POST_ONLY_LIMIT",
-        max_wait_sec=30,
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
-        venue="bitget",
-        market_type="perp",
-    )
+    plan = plan_for(monkeypatch, conditional=True).model_copy(update={
+        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+    payload, plan_hash = entry_plan_payload(plan)
+    row = {"id": plan.plan_id, "status": "active", "plan_json": payload, "plan_hash": plan_hash}
     cancellations = []
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
-    monkeypatch.setattr(
-        watch.repo,
-        "get_order",
-        lambda _id: {"created_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()},
-    )
-    monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
-    monkeypatch.setattr(
-        "aletheia.risk.policy.resolve_risk_policy",
-        lambda _cfg, _mode: SimpleNamespace(
-            policy=SimpleNamespace(policy_id="policy-1", revision=1),
-            policy_hash="policy-hash",
-        ),
-    )
-    monkeypatch.setattr(
-        "aletheia.execution.gateway.cancel_entry_plan_order",
-        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"},
-    )
-    cfg = SimpleNamespace(
-        fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
-        exchange=SimpleNamespace(paper_execution_mode="bitget_demo"),
-    )
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority", lambda _plan: None)
+    def no_market_facts(_plan, *, bid, ask, now):
+        assert bid is None and ask is None
+        return facts(order_status="submitted", order_tactic="POST_ONLY_LIMIT", order_age_sec=61,
+                     passive_eligible=False, ioc_eligible=False)
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._capture_facts", no_market_facts)
+    monkeypatch.setattr("aletheia.risk.policy.resolve_risk_policy", lambda _cfg, _mode: SimpleNamespace(
+        policy=SimpleNamespace(policy_id=plan.risk_policy_id, revision=plan.risk_policy_revision),
+        policy_hash=plan.risk_policy_hash))
+    monkeypatch.setattr("aletheia.execution.gateway.cancel_entry_plan_order",
+        lambda plan_id, *, reason: cancellations.append((plan_id, reason)) or {"status": "cancelled"})
+    cfg = SimpleNamespace(fast_trigger=SimpleNamespace(max_setups=10, mode="shadow"),
+                          exchange=SimpleNamespace(paper_execution_mode="bitget_demo"))
     plans, engines = await watch._load_entry_plan_watchers(cfg)
-
-    assert plans == {}
+    assert plans == {plan.plan_id: plan}
     assert engines == {}
-    assert cancellations == [("triggered-maker", "maker_order_unfilled_until_expiry")]
+    assert cancellations == [(plan.plan_id, "passive_window_elapsed")]
 
 
 @pytest.mark.asyncio
@@ -853,6 +829,8 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
         "get_entry_plan",
         lambda plan_id: next(row for row in rows if row["id"] == plan_id),
     )
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan",
+        lambda plan_id: {"id": "order-1"} if plan_id == "ordered-plan" else None)
     monkeypatch.setattr(watch.repo, "get_trade_proposal_by_entry_plan", lambda _plan_id: None)
     monkeypatch.setattr(
         watch.repo,
@@ -866,7 +844,8 @@ async def test_pause_invalidates_waiting_plan_and_gateway_cancels_order(monkeypa
 
     await watch._cancel_open_entry_plans("fast_trigger_paused")
 
-    assert len(transitions) == 1
+    assert len(transitions) == 2
+    assert transitions[1][0] == "ordered-plan" and transitions[1][1]["status"] == "invalidated"
     plan_id, kwargs = transitions[0]
     assert plan_id == "waiting-plan"
     assert kwargs["expected_status"] == "waiting"
@@ -1070,6 +1049,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         direction="long",
         invalidation_price=90.0,
         execution_mode="RESTING_MAKER",
+        activation_policy="IMMEDIATE",
         order_tactic="POST_ONLY_LIMIT",
         limit_price=100.2,
     )
@@ -1123,7 +1103,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
         "_load_entry_plan_watchers",
         lambda _cfg: asyncio.sleep(0, result=({plan.plan_id: plan}, {})),
     )
-    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _id: {"status": "waiting"})
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _id: {"status": "active"})
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     monkeypatch.setattr(loader, "load_config", lambda persist_migrations=False: cfg)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution.execute_entry_plan", reject_cross)
@@ -1905,6 +1885,9 @@ async def test_venue_mismatch_ordered_plan_routes_through_gateway(monkeypatch):
         trigger_params={},
     )
     cancellations = []
+    monkeypatch.setattr(watch.repo, "get_entry_plan", lambda _: row)
+    monkeypatch.setattr(watch.repo, "get_order_for_entry_plan", lambda _: {"id": "owned-order"})
+    monkeypatch.setattr(watch.repo, "transition_entry_plan", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", lambda _limit: [row])
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
     monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda _payload: plan)
@@ -2021,7 +2004,7 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
         rows.append(
             {
                 "id": plan_id,
-                "status": "ordered" if ordered else "waiting",
+                "status": "active",
                 "plan_json": payload,
                 "plan_hash": hashlib.sha256(payload.encode()).hexdigest(),
                 "order_id": f"order-{index}" if ordered else None,
@@ -2037,6 +2020,8 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
             execution_mode="RESTING_MAKER",
             order_tactic="POST_ONLY_LIMIT",
             max_wait_sec=60,
+            capture_policy_id="maker-preferred/v1", capture_priority="MAKER_PREFERRED",
+            activation_policy="IMMEDIATE", target_quantity=1.,
             expires_at=(datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
             venue="bitget",
             symbol=f"ASSET{index}/USDT",
@@ -2054,16 +2039,11 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
     monkeypatch.setattr(watch.repo, "list_watchable_entry_plans", list_plans)
     monkeypatch.setattr(watch.repo, "get_candidate_planning_generation", lambda _id: {"is_current": 1})
     monkeypatch.setattr(watch.EntryPlan, "model_validate_json", lambda payload: plans[payload])
-    monkeypatch.setattr(
-        watch.repo,
-        "get_order",
-        lambda order_id: {
-            "created_at": (
-                datetime.now(timezone.utc)
-                - timedelta(seconds=120 if order_id == "order-10" else 5)
-            ).isoformat()
-        },
-    )
+    from tests.test_entry_execution_projection import facts
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution._capture_facts",
+        lambda plan, **kwargs: facts(order_status="submitted" if plan.plan_id in {"plan-10", "plan-11"} else None,
+            order_tactic="POST_ONLY_LIMIT", order_age_sec=120 if plan.plan_id == "plan-10" else 5,
+            passive_eligible=False, ioc_eligible=False))
     monkeypatch.setattr(
         "aletheia.risk.policy.resolve_risk_policy",
         lambda _cfg, _mode: SimpleNamespace(
@@ -2083,9 +2063,9 @@ async def test_maker_timeout_does_not_drop_later_plans_at_legacy_cap(monkeypatch
     watched, _ = await watch._load_entry_plan_watchers(cfg)
 
     assert requested_limits == [None]
-    assert len(watched) == 11
+    assert len(watched) == 12
     assert cancellations == [
-        ("plan-10", "maker_order_unfilled_until_expiry"),
+        ("plan-10", "passive_window_elapsed"),
     ]
 
 
@@ -2335,3 +2315,10 @@ async def test_sequence_anomaly_engine_is_resynchronized_not_reused(monkeypatch)
     _, rearmed = await watch._load_entry_plan_watchers(cfg, rebuilt)
     assert rearmed[plan.plan_id] is not fresh
     assert rearmed[plan.plan_id].state == "armed"
+
+
+@pytest.fixture(autouse=True)
+def _watcher_owner_fixture(monkeypatch):
+    # These watcher tests supply decoded owner snapshots. Runtime admission is
+    # checked by the Entry authority suite, independently of watcher scheduling.
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority", lambda _: None)

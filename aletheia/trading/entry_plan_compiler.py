@@ -384,12 +384,9 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     old_fraction = abs(old_entry - base.stop_price) / old_entry
     new_fraction = abs(worst_entry - stop) / worst_entry
     bounded_notional = min(base.max_notional, base.max_notional * old_fraction / new_fraction)
-    if hypothesis.execution_urgency == "PASSIVE":
-        maker = True
-    elif hypothesis.execution_urgency == "BOUNDED_URGENT":
-        maker = False
-    else:
-        raise PlanIntentError("EXECUTION_URGENCY_INVALID")
+    from aletheia.trading.entry_capture import CAPTURE_POLICIES
+    capture_policy = CAPTURE_POLICIES[hypothesis.capture_priority]
+    maker = hypothesis.capture_priority != "FILL_FIRST"
     bid, ask = float(context.execution_context["bid"]), float(context.execution_context["ask"])
     if not all(math.isfinite(value) and value > 0 for value in (bid, ask)) or ask < bid:
         raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
@@ -412,8 +409,9 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "maker_required": maker, "time_in_force": "POST_ONLY" if maker else "IOC",
         "price_rule": "EXACT_LIMIT" if maker else "OPPOSING_BBO",
         "bbo_reference": None if maker else ("ask" if direction == "long" else "bid"),
-        "max_wait_sec": _TACTIC["maker_wait_sec"] if maker else 0,
-        "max_slippage_bps": None if maker else _TACTIC["urgent_slippage_bps"],
+        "max_wait_sec": capture_policy.passive_attempt_timeout_sec,
+        "capture_policy_id": capture_policy.policy_id,
+        "max_slippage_bps": None if hypothesis.capture_priority == "PRICE_FIRST" else _TACTIC["urgent_slippage_bps"],
         "trigger_spec_id": require_current_entry_profile(
             hypothesis.mechanism, hypothesis.entry_profile_id,
         ).trigger_spec_id,
@@ -422,7 +420,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
         "trigger_data_requirements": (("quote", "trade", "books5", "candle1m") if retrace else ()),
         "trigger_freshness_ms": 2000 if retrace else None,
         "limit_price": limit_price,
-        "worst_price": (worst_entry if not maker else None),
+        "worst_price": worst_entry,
         "max_notional": bounded_notional,
         "required_permission": authority.minimum_permission,
         "execution_account_mode": authority.execution_route,

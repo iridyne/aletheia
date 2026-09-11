@@ -287,6 +287,7 @@ class CandidatePlanningFields(TypedDict):
     attention_terminal_reason: str | None
     planner_input_json: str | None
     planner_input_hash: str | None
+    validated_hypothesis_json: str | None
     opportunity_mechanism: str | None
     candidate_selection_policy: str | None
     candidate_selection_policy_epoch: str | None
@@ -314,6 +315,11 @@ class CandidateAttention(CandidatePlanningFields):
 
 
 class CandidateAttentionWorkbench(CandidatePlanningFields, EntryLifecycleProjection):
+    all_scores: NotRequired[str | None]
+    opportunity_score: NotRequired[float | None]
+    tradability_score: NotRequired[float | None]
+    crowding_risk: NotRequired[float | None]
+    late_entry_penalty: NotRequired[float | None]
     identity_version: str | None
     planner_contract_version: str | None
     activation_identity: str | None
@@ -386,6 +392,7 @@ class EntryPlanRow(TypedDict):
     plan_json: str
     plan_hash: str
     status: str
+    trigger_activation_id: str | None
     order_id: str | None
     created_at: str
     updated_at: str
@@ -416,6 +423,9 @@ class EntryPlanPayload(BaseModel):
     thesis: str
     evidence_refs: list[str] | None = None
     scenario: str
+    capture_policy_id: str | None = None
+    capture_priority: str | None = None
+    activation_policy: str | None = None
     execution_mode: str
     trigger_spec_id: str | None = None
     trigger_params: dict[str, JsonValue] | None = None
@@ -485,6 +495,13 @@ class FundingReadiness(TypedDict):
 
 
 class EntryLineageOrder(TypedDict):
+    proposal_id: str | None
+    risk_decision_id: str | None
+    created_at: str | None
+    filled_at: str | None
+    entry_leg_index: int | None
+    order_tactic: str | None
+    error_reason: str | None
     id: str | None
     exchange_order_id: str | None
     status: str | None
@@ -493,12 +510,19 @@ class EntryLineageOrder(TypedDict):
 
 
 class EntryLineageFills(TypedDict):
+    ids: list[str]
     count: int
     quantity: float
     latest_at: str | None
 
 
 class EntryLineagePosition(TypedDict):
+    opened_at: str | None
+    closed_at: str | None
+    pending_close_order_id: str | None
+    pending_close_status: str | None
+    outcome_eligible: int | None
+    outcome_exclusion_reason: str | None
     id: str | None
     status: str | None
     quantity: float | None
@@ -506,7 +530,7 @@ class EntryLineagePosition(TypedDict):
 
 
 class EntryPlanLineage(TypedDict):
-    order: EntryLineageOrder | None
+    orders: list[EntryLineageOrder]
     fills: EntryLineageFills | None
     position: EntryLineagePosition | None
     availability: dict[str, Any]
@@ -674,6 +698,8 @@ def _entry_plan_projection(row: dict) -> dict:
         plan = None
         valid = False
     item["plan"] = json.loads(item["plan_json"]) if plan else None
+    if plan and plan.capture_policy_id:
+        item["plan"].update(capture_priority=plan.capture_priority, activation_policy=plan.activation_policy)
     item["contract_valid"] = valid
     return item
 

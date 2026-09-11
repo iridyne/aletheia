@@ -194,7 +194,7 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
             "primary_anchor_ref": "anchor:ignored",
             "invalidation_anchor_ref": "anchor:ignored-too",
             "entry_profile_id": "anchor-resting-maker",
-            "execution_urgency": "PASSIVE",
+            "capture_priority": "PRICE_FIRST",
             "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [],
@@ -204,7 +204,7 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
     assert no_plan.primary_anchor_ref is None
     assert no_plan.invalidation_anchor_ref is None
     assert no_plan.entry_profile_id is None
-    assert no_plan.execution_urgency is None
+    assert no_plan.capture_priority is None
     assert no_plan.risk_tier == "NONE"
     assert no_plan.horizon == "NONE"
 
@@ -468,12 +468,11 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
     monkeypatch.setattr(coordinator, "_create_bound_adapter", create_adapter)
 
     if scenario == "boundary_rollback":
-        original_transition = coordinator.transition_entry_plan
-        def reject_order_transition(*args, **kwargs):
-            if kwargs.get("status") == "ordered":
-                return False
-            return original_transition(*args, **kwargs)
-        monkeypatch.setattr(coordinator, "transition_entry_plan", reject_order_transition)
+        insert = coordinator.insert_order
+        def interrupted_insert(order):
+            insert(order)
+            raise RuntimeError("injected_order_insert_failure")
+        monkeypatch.setattr(coordinator, "insert_order", interrupted_insert)
 
     def market():
         if scenario == "expired":
@@ -506,7 +505,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         assert result["status"] == "waiting_market"
         assert calls == [] and not repo.has_order_for_proposal(proposal["id"])
         assert proposal["status"] == "pending"
-        assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
         assert repo.get_proposal_execution_claim(proposal["id"]) is None
         assert repo.get_entry_risk_reservation(proposal["id"]) is None
         original_hash = proposal["commit_hash"]
@@ -531,7 +530,9 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         again = execute_entry_plan(plan.plan_id, **facts)
         assert len(calls) == 1
         if scenario == "unknown":
-            assert result["status"] == again["status"] == "submission_unknown"
+            assert result["status"] == "submission_unknown"
+            assert again["status"] == "reconciliation_required"
+            assert repo.get_trade_proposal(proposal["id"])["status"] == "submission_unknown"
         elif scenario == "venue_rejected":
             assert result["status"] != "submission_unknown"
             assert repo.get_db().execute("SELECT status FROM orders WHERE proposal_id=?", (proposal["id"],)).fetchone()[0] == "submission_rejected"
@@ -556,3 +557,69 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         )
         assert late["status"] == "submitted"
         assert repo.get_trade_proposal(proposal["id"])["status"] == "submitted"
+
+
+@spec_claim(SpecClaim("EP-B17", "entry_plan_contract", "Bounded execution resolver (#3111)", "L2b",
+    "Immediate FillFirst retains both real Risk passes, quantity normalization and the Coordinator Broker fence.", status="implemented"))
+def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from tests.test_risk_engine import setup_test_env
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import save_config
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import EntryPlanRecord, MarketSnapshot
+    from aletheia.trading.entry_plan import entry_plan_payload
+    from aletheia.trading.entry_plan_compiler import compile_entry_plan
+    from tests.test_entry_capture import capture_input
+    from tests.test_entry_planner import _typed_candidate
+    from tests.test_exchange_submission_integrity import _prepare_broker
+    from tests.uta.test_execution_coordinator import _ack, _Adapter
+    from types import SimpleNamespace
+    from aletheia.uta.models import CapabilitySupport
+    monkeypatch.setattr(_Adapter, "capabilities", SimpleNamespace(native_tpsl=CapabilitySupport.SUPPORTED), raising=False)
+    from aletheia.universe.fast_stream import FastMarketEvent
+    from aletheia.data.symbols import InstrumentId
+
+    args = capture_input(monkeypatch, "grounded-anchor-direct", "FILL_FIRST")
+    save_config(args[-1])
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    plan = compile_entry_plan(*args).model_copy(update={
+        "planning_generation_id": generation["id"], "candidate_id": candidate.id})
+    payload, digest = entry_plan_payload(plan)
+    repo._insert("entry_plans", EntryPlanRecord(id=plan.plan_id, planning_generation_id=generation["id"],
+        candidate_id=candidate.id, planning_key=generation["planning_key"], venue=plan.venue,
+        symbol=plan.symbol, market_type=plan.market_type, direction=plan.direction,
+        execution_mode=plan.execution_mode, status="active", plan_json=payload, plan_hash=digest).model_dump())
+    # Start after planning admission. All actual Gateway/Risk/Coordinator checks remain.
+    monkeypatch.setattr("aletheia.execution.entry_plan_execution.require_entry_plan_runtime_authority", lambda _: None)
+    monkeypatch.setattr(gateway, "_check_symbol_availability", lambda *args: None)
+    commands = []
+    async def submit(command):
+        commands.append(command)
+        return _ack(command)
+    from aletheia.execution.order_constraints import prepare_exchange_quantity
+    _prepare_broker(monkeypatch, submit)
+    monkeypatch.setattr("aletheia.execution.order_constraints.prepare_exchange_quantity", prepare_exchange_quantity)
+    repo.insert_market_snapshot(MarketSnapshot(symbol=plan.symbol, market_type="usdt_futures", price=100.))
+    now = datetime.now(timezone.utc)
+    ms = int(now.timestamp()*1000)
+    quote = FastMarketEvent(event_type="quote", instrument=InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type),
+        sequence=1, exchange_timestamp_ms=ms, received_timestamp_ms=ms,
+        stream_generation_id="stream", subscription_generation_id="subscription", bid=99.99, ask=100.)
+    result = execute_entry_plan(plan.plan_id, bid=quote.bid, ask=quote.ask,
+        observed_at=now.isoformat(), source_observed_at=now.isoformat(), stream_generation_id="stream",
+        subscription_generation_id="subscription", quote_sequence=1, depth_bids=((99.99,1000.),),
+        depth_asks=((100.,1000.),), depth_exchange_timestamp_ms=ms, depth_received_timestamp_ms=ms, depth_sequence=1,
+        current_market=lambda: (quote, {"state": "ready"}))
+    assert len(commands) == 1, result
+    proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    assert proposal["entry_leg_index"] == 0 and proposal["order_tactic"] == "OPPOSING_BBO_IOC"
+    assert proposal["price"] == plan.ioc_limit_price
+    decisions = repo.get_db().execute("SELECT decision_role,approved FROM risk_decisions WHERE proposal_id=?", (proposal["id"],)).fetchall()
+    assert {row["decision_role"] for row in decisions} == {"preflight", "authoritative"}
+    assert all(row["approved"] for row in decisions)
+    assert repo.get_order_for_entry_plan(plan.plan_id)["status"] == "submitted"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "active"

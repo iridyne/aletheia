@@ -77,13 +77,25 @@ def test_activation_rejects_invalid_trigger_facts(defect):
         build_entry_trigger_activation(plan, ready.model_copy(update={"activation_events": tuple(events)}), now=now)
 
 
-def _persist_observed_plan(monkeypatch, tactic):
+def _persist_observed_plan(monkeypatch, tactic, *, maker_preferred=False):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import EntryPlanRecord
     from aletheia.trading.entry_plan import entry_plan_payload
     from tests.test_entry_planner import _typed_candidate
 
     plan, ready, now = _observed_activation(tactic)
+    if maker_preferred:
+        import hashlib
+        import json
+        from aletheia.trading.entry_capture import CAPTURE_POLICIES
+        hypothesis = json.loads(plan.entry_hypothesis_json)
+        hypothesis["capture_priority"] = "MAKER_PREFERRED"
+        hypothesis_json = json.dumps(hypothesis)
+        plan = EntryPlan.model_validate({**plan.model_dump(),
+            "capture_policy_id": CAPTURE_POLICIES["MAKER_PREFERRED"].policy_id,
+            "max_wait_sec": 60, "max_slippage_bps": 20, "worst_price": plan.entry_zone[1],
+            "entry_hypothesis_json": hypothesis_json,
+            "entry_hypothesis_hash": hashlib.sha256(hypothesis_json.encode()).hexdigest()})
     candidate = _typed_candidate(mechanism="continuation", family="momentum")
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     plan = plan.model_copy(update={"planning_generation_id": generation["id"], "candidate_id": candidate.id})
@@ -119,7 +131,7 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     assert not repo.bind_entry_trigger_activation(competitor, expected_activation_id=None, now=now)
     assert repo.get_entry_trigger_activation(competitor.activation_id) is None
     row = repo.get_entry_plan(plan.plan_id)
-    assert row["status"] == "triggered" and row["trigger_activation_id"] == activation.activation_id
+    assert row["status"] == "active" and row["trigger_activation_id"] == activation.activation_id
     assert row["plan_json"] == payload and row["plan_hash"] == digest
     lifecycle = repo.get_candidate_entry_lifecycle(candidate.id)
     assert lifecycle["lifecycle_state"] == "TRIGGERED"
@@ -144,15 +156,15 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
         trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash, now=now)
     if tactic == "POST_ONLY_LIMIT":
         import asyncio
-        from aletheia.agent_runtime.fast_trigger_watch import _submit_activated_entry_plan
+        from aletheia.agent_runtime.fast_trigger_watch import _submit_entry_plan
         from aletheia.trading.entry_activation import EntryTriggerActivationV1
 
         restored = EntryTriggerActivationV1.model_validate_json(
             repo.get_entry_trigger_activation(activation.activation_id)["activation_json"])
         crossing = ready.activation_events[-1].model_copy(update={"bid": 99.9, "ask": 99.95})
-        asyncio.run(_submit_activated_entry_plan(plan, restored, crossing))
+        asyncio.run(_submit_entry_plan(plan, crossing, activation=restored))
         assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
-        assert repo.get_entry_plan(plan.plan_id)["status"] == "triggered"
+        assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
     with pytest.raises(ValueError, match="generation_mismatch"):
         execute_entry_plan(plan.plan_id, **{**kwargs, "stream_generation_id": "another-stream"})
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
@@ -173,8 +185,8 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
             changed_quote = {**kwargs, "bid": ready.bid + delta, "ask": ready.ask + delta}
             changed_receipt = build_entry_execution_receipt(plan, proposal,
                 **{key: value for key, value in changed_quote.items() if key != "now"})
-            with pytest.raises(ValueError, match="entry_execution_receipt_intent_price_mismatch"):
-                require_execution_receipt_activation(proposal, changed_receipt, now=now)
+            require_execution_receipt_activation(proposal, changed_receipt, now=now)
+            assert proposal.price == plan.ioc_limit_price
     # Even a self-consistent execution-receipt hash cannot replace the durable
     # activation. Verify the real Gateway refuses before acquiring ownership.
     forged = receipt.model_copy(update={"trigger_activation_id": "forged"})
@@ -253,6 +265,7 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
         def now(cls, tz=None):
             return now
     monkeypatch.setattr(watch, "datetime", Clock)
+    monkeypatch.setattr(repo, "datetime", Clock)
     monkeypatch.setattr("aletheia.execution.entry_plan_execution.datetime", Clock)
     activation = build_entry_trigger_activation(plan, ready, now=now)
     monitoring = {"state": "ready", "stream_generation_id": ready.stream_generation_id,
@@ -281,6 +294,14 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     stop = asyncio.Event()
     monkeypatch.setattr(watch, "_stop_event", stop)
     submitted = []
+    engine_ready = asyncio.Event()
+    load_watchers = watch._load_entry_plan_watchers
+    async def load(*args, **kwargs):
+        plans, engines = await load_watchers(*args, **kwargs)
+        if plan.plan_id in engines:
+            engine_ready.set()
+        return plans, engines
+    monkeypatch.setattr(watch, "_load_entry_plan_watchers", load)
 
     def gateway(proposal_id, *args, **kwargs):
         row = repo.get_entry_plan(plan.plan_id)
@@ -315,12 +336,10 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
                     # pass must create a fresh engine without replaying old proof.
                     yield quote
                     assert submitted == []
-                    await asyncio.sleep(0.02)
+                    await engine_ready.wait()
                 if scenario != "restored":
                     for event in ready.activation_events[:-1]:
                         yield event
-                        if scenario == "reconnect":
-                            await asyncio.sleep(0.02)
                     for kind, values in (
                         ("depth", {"bids": ready.depth_bids, "asks": ready.depth_asks}),
                         ("trade", {"price": 100.1, "size": 100, "side": "buy"}),
@@ -344,7 +363,8 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     await asyncio.wait_for(watch._watch_loop(cfg), timeout=2)
     assert ready.activation_events[-1].instrument in stream.instruments
-    assert len(set(submitted)) == 1
+    assert len(set(submitted)) == 1, (repo.get_entry_plan(plan.plan_id)["status"],
+        repo.get_entry_plan(plan.plan_id)["trigger_activation_id"], activation.activation_id, watch._status)
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
     if scenario != "cold_start":
         assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
@@ -414,6 +434,55 @@ def test_expired_activation_before_broker_returns_to_waiting(monkeypatch, tactic
         else "entry_execution_receipt_rejected")
     assert broker_calls == []
     assert repo.get_trade_proposal(proposal.id)["status"] == ("pending" if expiry_stage == "broker" else "error")
-    assert repo.get_entry_plan(plan.plan_id)["status"] == ("triggered" if expiry_stage == "broker" else "failed")
+    assert repo.get_entry_plan(plan.plan_id)["status"] == ("active" if expiry_stage == "broker" else "failed")
     assert any(event["event_type"] == ("entry_execution_stage" if expiry_stage == "broker" else "execution_error") for event in audit)
     assert repo.get_proposal_execution_claim(proposal.id) is None
+
+
+@pytest.mark.parametrize("defect", [None, "no_order", "wrong_receipt", "late_order"])
+def test_second_leg_reuses_exact_original_handoff_proof_without_renewal(monkeypatch, defect):
+    from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent, build_entry_execution_receipt
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order, RiskDecision
+    from aletheia.trading.entry_activation import require_entry_trigger_activation
+
+    plan, ready, now, _ = _persist_observed_plan(monkeypatch, "POST_ONLY_LIMIT", maker_preferred=True)
+    repo.record_entry_plan_monitoring(plan.plan_id, {"state": "ready",
+        "stream_generation_id": ready.stream_generation_id,
+        "subscription_generation_id": ready.subscription_generation_id})
+    activation = build_entry_trigger_activation(plan, ready, now=now)
+    assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+    facts = dict(bid=100, ask=100.1, observed_at=now.isoformat(), source_observed_at=now.isoformat(),
+        trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash)
+    first = build_entry_plan_order_intent(plan, **facts, now=now)
+    repo.insert_trade_proposal(first)
+    receipt = build_entry_execution_receipt(plan, first, **facts,
+        stream_generation_id=ready.stream_generation_id, subscription_generation_id=ready.subscription_generation_id,
+        quote_sequence=ready.quote_sequence, required_channels=("quote",))
+    decision = RiskDecision(proposal_id=first.id, approved=True, decision_role="authoritative",
+        evaluated_quantity=first.quantity, proposal_commit_hash=first.commit_hash,
+        allowed_execution_mode="bitget_demo", proposal_execution_mode="bitget_demo",
+        execution_attempt_id=receipt.attempt_id, execution_receipt_hash=receipt.receipt_hash,
+        execution_receipt_json=receipt.model_dump_json())
+    repo.insert_risk_decision(decision)
+    if defect != "no_order":
+        repo.insert_order(Order(proposal_id=first.id, risk_decision_id=decision.id,
+            symbol=first.symbol, market_type=first.market_type, direction=first.direction,
+            order_type=first.order_type, quantity=first.quantity, price=first.price,
+            execution_mode=first.execution_mode, entry_plan_id=plan.plan_id, client_order_id=first.id,
+            exchange_order_id="first-passive", order_tactic="POST_ONLY_LIMIT", post_only=True,
+            status="cancelled", execution_attempt_id=receipt.attempt_id,
+            execution_receipt_hash="wrong" if defect == "wrong_receipt" else receipt.receipt_hash,
+            created_at=(now+timedelta(seconds=5) if defect == "late_order" else now).isoformat()))
+    later = now + timedelta(seconds=61)
+    with pytest.raises(ValueError, match="entry_trigger_activation_expired"):
+        require_entry_trigger_activation(plan, activation.activation_id, activation.activation_hash, now=later)
+    if defect:
+        with pytest.raises(ValueError, match="entry_capture_handoff"):
+            require_entry_trigger_activation(plan, activation.activation_id, activation.activation_hash,
+                now=later, entry_leg_index=1)
+    else:
+        retained = require_entry_trigger_activation(plan, activation.activation_id, activation.activation_hash,
+            now=later, entry_leg_index=1, stream_generation_id="new-stream", subscription_generation_id="new-subscription", quote_sequence=1)
+        assert retained == activation
+        assert repo.get_entry_trigger_activation(activation.activation_id)["activation_json"] == activation.model_dump_json()

@@ -349,8 +349,8 @@ def test_full_demo_route_reaches_one_model_and_compiler(_inmemory_db, monkeypatc
             "mechanism": "reversal", "direction": "long",
             "primary_anchor_ref": primary.anchor_id,
             "invalidation_anchor_ref": invalidation.anchor_id,
-            "entry_profile_id": "grounded-anchor-resting-maker",
-            "execution_urgency": "PASSIVE", "risk_tier": "LOW",
+            "entry_profile_id": "grounded-anchor-direct",
+            "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [invalidation.anchor_id], "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [invalidation.anchor_id],
         }
@@ -470,8 +470,8 @@ def test_post_inference_authority_change_blocks_before_compiler(_inmemory_db, mo
             "mechanism": "reversal", "direction": "long",
             "primary_anchor_ref": _context["anchors"][0]["anchor_id"],
             "invalidation_anchor_ref": _context["anchors"][1]["anchor_id"],
-            "entry_profile_id": "grounded-anchor-resting-maker",
-            "execution_urgency": "PASSIVE", "risk_tier": "LOW",
+            "entry_profile_id": "grounded-anchor-direct",
+            "capture_priority": "PRICE_FIRST", "capture_reason": "current structure", "capture_evidence_refs": [_context["anchors"][1]["anchor_id"]], "risk_tier": "LOW",
             "horizon": "INTRADAY",
             "supporting_fact_refs": [_context["anchors"][1]["anchor_id"]],
         }

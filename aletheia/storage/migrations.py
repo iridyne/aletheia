@@ -3301,7 +3301,7 @@ def _run_all_ddl(db) -> None:
 
 # Recorded on Runtime Sessions so every process lifecycle can be attributed to the
 # exact schema contract it verified.
-SCHEMA_VERSION = "aletheia-sqlite-v86"
+SCHEMA_VERSION = "aletheia-sqlite-v87"
 _LEGACY_BASELINE_SCHEMA_VERSION = "aletheia-sqlite-v2"
 
 _MIGRATION_LEDGER_DDL = """
@@ -8249,6 +8249,50 @@ def _apply_macro_source_times_v83(db: sqlite3.Connection) -> None:
                "CHECK(source_times_json IS NULL OR json_valid(source_times_json))")
 
 
+def _apply_entry_legs_v87(db: sqlite3.Connection) -> None:
+    # Preserve every historical row byte; only widen the Plan authority check.
+    original = str(db.execute("SELECT sql FROM sqlite_master WHERE name='entry_plans'").fetchone()[0])
+    current_check = "'waiting','risk_reserved','triggered','ordered','partially_filled','filled'"
+    if current_check not in original:
+        raise MigrationStateError("entry_authority_status_schema_mismatch")
+    create_sql = original.replace("entry_plans", "entry_plans_v87", 1).replace(
+        current_check, "'waiting','active','risk_reserved','triggered','ordered','partially_filled','filled'", 1)
+    objects = [str(row[0]) for row in db.execute(
+        "SELECT sql FROM sqlite_master WHERE tbl_name='entry_plans' AND type IN ('index','trigger') AND sql IS NOT NULL")]
+    foreign_keys = bool(db.execute("PRAGMA foreign_keys").fetchone()[0])
+    legacy_alter_table = bool(db.execute("PRAGMA legacy_alter_table").fetchone()[0])
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute("PRAGMA legacy_alter_table=ON")
+    db.execute("SAVEPOINT entry_authority_v87")
+    try:
+        db.execute(create_sql)
+        db.execute("INSERT INTO entry_plans_v87 SELECT * FROM entry_plans")
+        db.execute("DROP TABLE entry_plans")
+        db.execute("ALTER TABLE entry_plans_v87 RENAME TO entry_plans")
+        for sql in objects:
+            if "idx_entry_plans_active_key" in sql:
+                sql = sql.replace("'waiting',", "'waiting','active',", 1)
+            db.execute(sql)
+        db.execute("ALTER TABLE trade_proposals ADD COLUMN entry_leg_index INTEGER "
+                   "CHECK(entry_leg_index IS NULL OR (entry_plan_id IS NOT NULL AND entry_leg_index IN (0,1)))")
+        db.execute("DROP INDEX idx_trade_proposals_entry_plan_once")
+        db.execute("CREATE UNIQUE INDEX idx_trade_proposals_entry_plan_leg "
+                   "ON trade_proposals(entry_plan_id, COALESCE(entry_leg_index,0)) WHERE entry_plan_id IS NOT NULL")
+        db.execute("CREATE TRIGGER trg_entry_leg_immutable BEFORE UPDATE OF entry_leg_index ON trade_proposals "
+                   "BEGIN SELECT RAISE(ABORT, 'Entry leg identity is immutable'); END")
+        if db.execute("PRAGMA foreign_key_check").fetchall():
+            raise MigrationStateError("entry_authority_foreign_key_invalid")
+        db.execute("RELEASE SAVEPOINT entry_authority_v87")
+    except Exception:
+        db.execute("ROLLBACK TO SAVEPOINT entry_authority_v87")
+        db.execute("RELEASE SAVEPOINT entry_authority_v87")
+        raise
+    finally:
+        db.execute(f"PRAGMA legacy_alter_table={int(legacy_alter_table)}")
+        db.execute(f"PRAGMA foreign_keys={int(foreign_keys)}")
+
+
+
 def _apply_fred_source_batches_v86(db: sqlite3.Connection) -> None:
     db.execute("""CREATE TABLE fred_source_batches (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -8784,6 +8828,12 @@ _MIGRATIONS = (
         checksum=hashlib.sha256(b"fred_source_batches_v86:observation_only").hexdigest(),
         schema_version="aletheia-sqlite-v86",
         apply=_apply_fred_source_batches_v86,
+    ),
+    MigrationStep(
+        migration_id="20260911_0086_entry_legs_v87",
+        checksum=hashlib.sha256(b"entry_legs_v87:additive_identity:active_authority").hexdigest(),
+        schema_version="aletheia-sqlite-v87",
+        apply=_apply_entry_legs_v87,
     ),
 )
 

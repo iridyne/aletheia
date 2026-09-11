@@ -540,6 +540,7 @@ class TradeProposal(_Provenanced):
     # #2288 active Order Intent fields. NULL keeps historical/compat callers on
     # their existing semantics; non-NULL fields are hash-covered with Proposal.
     entry_plan_id: str | None = None
+    entry_leg_index: int | None = Field(default=None, ge=0, le=1)
     order_tactic: str | None = None
     time_in_force: str | None = None
     post_only: bool | None = None
@@ -1734,6 +1735,7 @@ class EntryPlanRecord(_Provenanced):
     plan_hash: str = Field(min_length=64, max_length=64)
     status: Literal[
         "waiting",
+        "active",
         "risk_reserved",
         "triggered",
         "ordered",

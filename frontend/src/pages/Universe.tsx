@@ -45,6 +45,7 @@ function riskReward(plan: EntryPlan) {
 }
 
 function tacticLabel(plan: EntryPlan) {
+  if (plan.plan?.capture_priority) return humanize(plan.plan.capture_priority)
   return plan.plan?.order_tactic === 'POST_ONLY_LIMIT'
     ? 'Post-Only limit'
     : plan.plan?.order_tactic === 'OPPOSING_BBO_IOC'
@@ -118,7 +119,7 @@ const planColumns = [
   planCol.accessor(row => {
     const trigger = triggerLabel(row)
     const tactic = tacticLabel(row)
-    const mode = humanize(row.execution_mode)
+    const mode = humanize(row.plan?.activation_policy ?? row.execution_mode)
     const spec = trigger !== '—' && trigger !== tactic ? ` · ${trigger}` : ''
     return `${mode} · ${tactic}${spec}`
   }, { id: 'execution', header: 'Execution / Tactic' }),
@@ -462,12 +463,14 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
       </DrawerSection>
       <DrawerSection label="Trigger & Execution">
         <DrawerField label="TriggerSpec" value={triggerLabel(plan)} />
-        <DrawerField label="Execution mode" value={humanize(plan.execution_mode)} />
-        <DrawerField label="Order tactic" value={tacticLabel(plan)} />
-        <DrawerField label="TIF / price rule" value={`${plan.plan?.time_in_force ?? 'Unavailable'} · ${humanize(plan.plan?.price_rule)}`} />
+        <DrawerField label="Activation" value={humanize(plan.plan?.activation_policy ?? plan.execution_mode)} />
+        <DrawerField label="Capture" value={tacticLabel(plan)} />
+        {!plan.plan?.capture_policy_id && <><DrawerField label="TIF / price rule" value={`${plan.plan?.time_in_force ?? 'Unavailable'} · ${humanize(plan.plan?.price_rule)}`} />
         <DrawerField label="BBO reference" value={plan.plan?.bbo_reference ?? 'Not required'} />
         <DrawerField label="Max wait" value={plan.plan?.max_wait_sec == null ? 'Not recorded' : `${plan.plan.max_wait_sec}s`} />
-        <DrawerField label="Partial fill" value={humanize(plan.plan?.partial_fill_policy)} />
+        <DrawerField label="Partial fill" value={humanize(plan.plan?.partial_fill_policy)} /></>}
+        {plan.plan?.capture_priority === 'MAKER_PREFERRED' && <DrawerField label="Passive attempt" value={`${plan.plan.max_wait_sec}s, then bounded IOC for the remainder`} />}
+        {plan.plan?.capture_priority === 'PRICE_FIRST' && <DrawerField label="Passive lifetime" value="Until Plan authority ends" />}
       </DrawerSection>
       <DrawerSection label="Thesis & Evidence">
         <DrawerField label="Thesis" value={plan.plan?.thesis} />
@@ -483,8 +486,8 @@ function PlanDrawer({ plan, unavailable, onClose, onCandidate, onTrades, onChart
         <DrawerField label="Risk policy" value={plan.plan?.risk_policy_id ? `${plan.plan.risk_policy_id} · rev ${plan.plan.risk_policy_revision ?? 'unavailable'}` : 'Unavailable'} mono />
       </DrawerSection>
       <DrawerSection label="Lineage / exact execution">
-        <DrawerField label="Order" value={plan.lineage?.order ? `${plan.lineage.order.id} · ${humanize(plan.lineage.order.status)}` : 'Not submitted'} mono />
-        <DrawerField label="Exchange order" value={plan.lineage?.order?.exchange_order_id ?? 'Not recorded'} mono />
+        <DrawerField label="Order" value={plan.lineage?.orders.map(order => `${order.id} · ${humanize(order.status)}`).join(' · ') || 'Not submitted'} mono />
+        <DrawerField label="Exchange order" value={plan.lineage?.orders.map(order => order.exchange_order_id).filter(Boolean).join(', ') || 'Not recorded'} mono />
         <DrawerField label="Fills" value={plan.lineage?.fills ? `${plan.lineage.fills.count} · quantity ${fmtNum(plan.lineage.fills.quantity)} · latest ${fmtTimestamp(plan.lineage.fills.latest_at)}` : 'Not submitted'} />
         <DrawerField label="Position" value={plan.lineage?.position ? `${plan.lineage.position.id} · ${humanize(plan.lineage.position.status)} · quantity ${fmtNum(plan.lineage.position.quantity)} @ ${fmtNum(plan.lineage.position.entry_price)}` : 'Not opened'} mono />
       </DrawerSection>
@@ -528,7 +531,7 @@ function CandidateDrawer({ candidateId, candidate, currentCandidate, onClose }: 
           <DrawerField label={`Cycle ${cycle.cycle_number}`} value={`${humanize(cycle.outcome_class ?? cycle.entry_plan_status ?? cycle.last_stage)} · ${cycle.events.map(event => `${humanize(event.event)} ${fmtTimestamp(event.at)}`).join(' · ')}`} />
           <DrawerField label="Execution" value={humanize(cycle.execution_state ?? 'UNAVAILABLE')} />
           {cycle.execution ? <>
-            <DrawerField label="Order / fills" value={cycle.execution.availability.available ? `${cycle.execution.order?.id ?? 'Not submitted'} · ${cycle.execution.fills?.ids.join(', ') || 'No fills'}` : `Unavailable: ${humanize(cycle.execution.availability.reason)}`} mono />
+            <DrawerField label="Order / fills" value={cycle.execution.availability.available ? `${cycle.execution.orders.map(order => order.id).join(', ') || 'Not submitted'} · ${cycle.execution.fills?.ids.join(', ') || 'No fills'}` : `Unavailable: ${humanize(cycle.execution.availability.reason)}`} mono />
             <DrawerField label="Position" value={cycle.execution.availability.available ? cycle.execution.position?.id ?? 'Not opened' : 'Unavailable'} mono />
             <DrawerField label="Opened / closed" value={`${fmtTimestamp(cycle.execution.position?.opened_at)} / ${fmtTimestamp(cycle.execution.position?.closed_at)}`} />
             <DrawerField label="Economics" value={`${humanize(cycle.execution.economics.status)} · ${humanize(cycle.execution.economics.reason ?? cycle.execution.availability.reason)}`} />

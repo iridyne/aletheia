@@ -51,7 +51,7 @@ def test_compiled_holding_is_separate_from_swing_timing(monkeypatch, kind, schoo
     context = EntryAnalysisContext.model_validate(data)
     hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
+        entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,), risk_tier="LOW",
         horizon="SWING", supporting_fact_refs=(invalidation.anchor_id,))
     plan = compile_entry_plan(generation, context, hypothesis, cfg)
     assert plan.expected_horizon_hours == 24
@@ -178,7 +178,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
             and (a["price"] < 100 if direction == "long" else a["price"] > 100))
         hypothesis = EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
             primary_anchor_ref=primary["anchor_id"], invalidation_anchor_ref=invalidation["anchor_id"],
-            entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE", risk_tier="LOW",
+            entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation["anchor_id"],), risk_tier="LOW",
             horizon="SWING" if school == "serenity" else "INTRADAY", supporting_fact_refs=(invalidation["anchor_id"],))
         from aletheia.agents import helpers
         from aletheia.model_provider.base import ModelResponse
@@ -251,8 +251,8 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         direction="long",
         primary_anchor_ref=primary.anchor_id,
         invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id=("grounded-anchor-retrace-reclaim" if triggered else "grounded-anchor-resting-maker"),
-        execution_urgency="BOUNDED_URGENT" if triggered else "PASSIVE",
+        entry_profile_id=("grounded-anchor-retrace-reclaim" if triggered else "grounded-anchor-direct"),
+        capture_priority="PRICE_FIRST" if maker else "FILL_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(primary.anchor_id,),
         risk_tier="LOW",
         horizon="INTRADAY",
         supporting_fact_refs=(primary.anchor_id,),
@@ -310,12 +310,13 @@ def _plan(*, mode="TRIGGERED", tactic="OPPOSING_BBO_IOC", account_mode="bitget_d
         limit_price=100.0 if maker else None,
         price_rule="EXACT_LIMIT" if maker else "OPPOSING_BBO",
         bbo_reference=None if maker else "ask",
-        max_wait_sec=60 if maker else 0,
+        capture_policy_id=("exact-anchor-passive-until-plan-terminal/v1" if maker else "bounded-opposing-bbo-ioc/v1"),
+        max_wait_sec=0,
         cancel_replace_policy="CANCEL_ONLY",
         max_requotes=0,
         partial_fill_policy="KEEP_PARTIAL_CANCEL_REMAINDER",
-        max_slippage_bps=None if maker else 10.0,
-        worst_price=None if maker else 101.2,
+        max_slippage_bps=20.0,
+        worst_price=101.0,
         max_notional=100.0,
         max_risk_pct=0.25,
         max_leverage=2,
@@ -475,7 +476,7 @@ def test_plain_limit_is_not_maker_and_post_only_crossing_fails_closed():
         )
 
 
-def test_urgent_entry_uses_exact_opposing_bbo_ioc():
+def test_urgent_entry_uses_frozen_limit_with_current_opposing_bbo():
     plan = _plan()
     received_at = datetime.now(timezone.utc).isoformat()
     source_at = datetime.now(timezone.utc).isoformat()
@@ -487,7 +488,7 @@ def test_urgent_entry_uses_exact_opposing_bbo_ioc():
         source_observed_at=source_at,
     )
     assert proposal.order_type == "limit"
-    assert proposal.price == 100.05
+    assert proposal.price == plan.ioc_limit_price
     assert proposal.time_in_force == "ioc"
     assert proposal.post_only is False
     evidence = json.loads(proposal.attribution_snapshot)
@@ -508,7 +509,7 @@ def test_urgent_entry_never_chases_beyond_worst_price():
 
 
 def test_urgent_entry_cannot_escape_the_plan_zone():
-    with pytest.raises(ValueError, match="entry_price_outside_plan_zone"):
+    with pytest.raises(ValueError, match="bbo_worst_price_exceeded"):
         build_entry_plan_order_intent(
             _plan(),
             bid=101.09,
@@ -586,7 +587,7 @@ def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -642,7 +643,7 @@ def test_canonical_risk_rejects_proposal_execution_fields_outside_entry_plan(mon
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -681,7 +682,7 @@ def test_canonical_risk_enforces_the_plan_worst_price_boundary(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -719,7 +720,7 @@ def test_canonical_risk_accepts_exact_intent_and_bounded_size_reduction(monkeypa
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -765,7 +766,7 @@ def test_canonical_risk_accepts_execution_fields_from_a_new_approved_plan(monkey
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -837,7 +838,7 @@ def test_canonical_risk_rejects_superseded_or_expired_entry_plan(monkeypatch):
     monkeypatch.setattr(
         engine,
         "get_entry_plan",
-        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "triggered"},
+        lambda _plan_id: {"plan_json": payload, "plan_hash": digest, "status": "active"},
     )
     monkeypatch.setattr(
         engine,
@@ -948,7 +949,7 @@ def _persist_waiting_plan(
     repo.insert_candidate(candidate)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
-    plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic, provenance=False).model_copy(
+    plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(
         update={
             "planning_generation_id": generation["id"],
             "candidate_id": candidate_id,
@@ -956,7 +957,18 @@ def _persist_waiting_plan(
             **(plan_updates or {}),
         }
     )
-    repo.complete_candidate_planning_with_plan(generation["id"], "owner", plan)
+    from aletheia.storage.models import EntryPlanRecord
+    payload, digest = entry_plan_payload(plan)
+    # Execution fixture starts from an already admitted immutable Plan. Compiler
+    # and planning admission are exercised independently with frozen contexts.
+    repo._insert("entry_plans", EntryPlanRecord(id=plan.plan_id,
+        planning_generation_id=generation["id"], candidate_id=candidate_id,
+        planning_key=generation["planning_key"], venue=plan.venue, symbol=plan.symbol,
+        market_type=plan.market_type, direction=plan.direction, execution_mode=plan.execution_mode,
+        status="active" if plan.activation_policy == "IMMEDIATE" else "waiting",
+        plan_json=payload, plan_hash=digest).model_dump())
+    repo.execute_write("UPDATE candidate_planning_generations SET status='planned', entry_plan_id=? WHERE id=?",
+                       (plan.plan_id, generation["id"]))
     return plan
 
 
@@ -997,13 +1009,11 @@ def _execution_receipt_kwargs(
         "authority_released",
     ),
     [
-        ("bitget_demo", "waiting", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "triggered", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "risk_reserved", "approved", False, False, "invalidated", True),
-        ("bitget_demo", "waiting", "approved", True, False, "active_claim", False),
-        ("bitget_demo", "triggered", "executing", False, False, "external_execution", False),
-        ("bitget_demo", "waiting", "executed", False, False, "external_execution", False),
-        ("bitget_demo", "risk_reserved", "executing", False, True, "order_present", False),
+        ("bitget_demo", "active", "approved", False, False, "invalidated", True),
+        ("bitget_demo", "active", "approved", True, False, "active_claim", False),
+        ("bitget_demo", "active", "executing", False, False, "external_execution", False),
+        ("bitget_demo", "active", "executed", False, False, "external_execution", False),
+        ("bitget_demo", "active", "executing", False, True, "order_present", False),
     ],
 )
 def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
@@ -1024,18 +1034,6 @@ def test_watcher_capacity_cleanup_handles_interrupted_pre_order_reservation(
         mode="RESTING_MAKER",
         tactic="POST_ONLY_LIMIT",
     )
-    if plan_status in {"triggered", "risk_reserved"}:
-        assert repo.transition_entry_plan(
-            plan.plan_id,
-            expected_status="waiting",
-            status="triggered",
-        )
-    if plan_status == "risk_reserved":
-        assert repo.transition_entry_plan(
-            plan.plan_id,
-            expected_status="triggered",
-            status="risk_reserved",
-        )
     now = datetime.now(timezone.utc)
     proposal = build_entry_plan_order_intent(
         plan,
@@ -1262,55 +1260,31 @@ def _cancel_ack(command):
                          venue_order_id=command.target_venue_order_id, profile_version="1")
 
 
-def test_order_and_entry_plan_transition_roll_back_together(monkeypatch):
+def test_order_transition_does_not_write_entry_plan_authority(monkeypatch):
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(repo, "transition_entry_plan", lambda *_args, **_kwargs: False)
-
-    with pytest.raises(repo.OrderTransitionConflict):
-        repo.transition_order(order.id, status="filled")
-
-    assert repo.get_order(order.id)["status"] == "submitted"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
-
-
+    before = repo.get_entry_plan(plan.plan_id)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Order owner cannot write Plan authority")
+    monkeypatch.setattr(repo, "transition_entry_plan", forbidden)
+    repo.transition_order(order.id, status="filled")
+    assert repo.get_order(order.id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id) == before
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def test_stale_exact_state_cannot_advance_triggered_plan():
+@pytest.mark.parametrize("clock", ["observed_at", "source_observed_at"])
+def test_stale_market_cannot_advance_active_plan(clock):
     from aletheia.execution.entry_plan_execution import execute_entry_plan
 
-    plan = _persist_waiting_plan()
+    plan = _persist_waiting_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    now = datetime.now(timezone.utc)
+    timestamps = dict(observed_at=now.isoformat(), source_observed_at=now.isoformat())
+    timestamps[clock] = (now - timedelta(seconds=5)).isoformat()
     with pytest.raises(ValueError, match="entry_exact_state_stale"):
-        execute_entry_plan(
-            plan.plan_id,
-            bid=100,
-            ask=100.05,
-            observed_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
-            source_observed_at=datetime.now(timezone.utc).isoformat(),
-            stream_generation_id="stream-1",
-            subscription_generation_id="subscription-1",
-            quote_sequence=1,
-        )
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
+        execute_entry_plan(plan.plan_id, bid=100, ask=100.05, **timestamps,
+            stream_generation_id="stream-1", subscription_generation_id="subscription-1", quote_sequence=1)
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "active"
+    assert repo.get_trade_proposal_by_entry_plan(plan.plan_id) is None
 
 
 def test_entry_plan_monitoring_persists_only_material_readiness_changes():
@@ -1354,22 +1328,6 @@ def test_entry_plan_monitoring_persists_only_material_readiness_changes():
     assert row["monitoring_evidence_hash"] == hashlib.sha256(payload.encode()).hexdigest()
 
 
-def test_stale_source_state_cannot_advance_triggered_plan():
-    from aletheia.execution.entry_plan_execution import execute_entry_plan
-
-    plan = _persist_waiting_plan()
-    with pytest.raises(ValueError, match="entry_exact_state_stale"):
-        execute_entry_plan(
-            plan.plan_id,
-            bid=100,
-            ask=100.05,
-            observed_at=datetime.now(timezone.utc).isoformat(),
-            source_observed_at=(datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
-            stream_generation_id="stream-1",
-            subscription_generation_id="subscription-1",
-            quote_sequence=1,
-        )
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "waiting"
 
 
 def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
@@ -1385,7 +1343,7 @@ def test_gateway_cancel_rechecks_fill_and_fill_wins(monkeypatch):
     monkeypatch.setattr(coordinator, "cancel_order", fill_during_cancel)
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "filled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "filled"
 
 
@@ -1431,7 +1389,7 @@ def test_gateway_cancel_recovers_exact_entry_order_relation():
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
 
     assert result["status"] == "filled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "filled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
 
 
 def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
@@ -1477,7 +1435,7 @@ def test_gateway_cancel_keeps_partial_fill_and_closes_remainder(monkeypatch):
     )
     result = gateway.cancel_entry_plan_order(plan.plan_id, reason="price_invalidated")
     assert result["status"] == "cancelled"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "cancelled"
     assert materialized == [{"orderId": "exchange-1", "fillQuantity": "0.5"}]
     assert sum(fill["fill_quantity"] for fill in repo.list_fills(order_id=order.id)) == 0.5
@@ -1489,7 +1447,8 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
     from aletheia.uta.models import ReadCompleteness
 
     plan, order = _persist_ordered_plan()
-    monkeypatch.setattr(coordinator, "cancel_order", _cancel_ack)
+    cancels = []
+    monkeypatch.setattr(coordinator, "cancel_order", lambda command: cancels.append(command) or _cancel_ack(command))
 
     async def incomplete_order(*_args, **_kwargs):
         return SimpleNamespace(
@@ -1502,6 +1461,11 @@ def test_gateway_cancel_ack_without_complete_private_evidence_stays_pending(monk
     assert result["status"] == "cancel_pending"
     assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"
     assert repo.get_order(order.id)["status"] == "submitted"
+
+    assert repo.get_order(order.id)["error_reason"] == "entry_cancel_pending:price_invalidated"
+    # A new invocation reads durable cancellation uncertainty and only queries.
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="retry")["status"] == "cancel_pending"
+    assert len(cancels) == 1
 
 
 def test_gateway_cancel_waits_when_order_quantity_leads_fill_history(monkeypatch):
@@ -1607,7 +1571,7 @@ def test_reconciliation_terminalizes_ioc_remainder_from_exact_order_evidence(
     stored = repo.get_order(order.id)
     assert stored["status"] == "cancelled"
     assert stored["error_reason"] == expected_reason
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "cancelled"
+    assert repo.get_entry_plan(plan.plan_id)["status"] == "ordered"  # historical Plan authority is unchanged
 
 
 def test_reconciliation_waits_for_lagging_ioc_fill_history(monkeypatch):
@@ -1661,11 +1625,120 @@ def test_resting_maker_receipt_has_plan_lifetime_not_trigger_ttl():
     from aletheia.execution.entry_plan_execution import build_entry_execution_receipt
 
     plan = _plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
-    now = datetime.fromisoformat(plan.approved_at)
+    now = datetime.now(timezone.utc)
+    plan = plan.model_copy(update={"approved_at": (now - timedelta(seconds=3)).isoformat()})
     facts = dict(bid=99.9, ask=100.1, observed_at=now.isoformat(), source_observed_at=now.isoformat())
-    proposal = build_entry_plan_order_intent(plan, **facts, now=now + timedelta(seconds=3))
+    proposal = build_entry_plan_order_intent(plan, **facts, now=now)
     receipt = build_entry_execution_receipt(plan, proposal, **facts,
         stream_generation_id="stream", subscription_generation_id="subscription",
         quote_sequence=1, required_channels=("quote",))
     assert receipt.expires_at == plan.expires_at
     assert proposal.price == plan.limit_price
+
+
+def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeypatch):
+    from aletheia.execution import gateway
+    from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.storage.models import Position, TradeProposal
+    from tests.test_entry_execution_projection import plan_for
+
+    from aletheia.storage.models import EntryPlanRecord
+    from tests.test_entry_planner import _typed_candidate
+    candidate = _typed_candidate(mechanism="reversal", family="mean_reversion")
+    generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
+    plan = plan_for(monkeypatch).model_copy(update={
+        "planning_generation_id": generation["id"], "candidate_id": candidate.id})
+    payload, digest = entry_plan_payload(plan)
+    repo._insert("entry_plans", EntryPlanRecord(id=plan.plan_id,
+        planning_generation_id=generation["id"], candidate_id=candidate.id,
+        planning_key=generation["planning_key"], venue=plan.venue, symbol=plan.symbol,
+        market_type=plan.market_type, direction=plan.direction, execution_mode=plan.execution_mode,
+        status="active", plan_json=payload, plan_hash=digest).model_dump())
+    before = repo.get_entry_plan(plan.plan_id)["plan_json"]
+    receipts, orders = [], []
+
+    def handoff(proposal_id, mode, *, execution_receipt, **kwargs):
+        proposal = TradeProposal.model_validate(repo.get_trade_proposal(proposal_id))
+        decision = RiskDecision(proposal_id=proposal_id, approved=True, allowed_execution_mode=mode,
+            proposal_execution_mode=mode, decision_role="authoritative", evaluated_quantity=proposal.quantity,
+            proposal_commit_hash=proposal.commit_hash, execution_receipt_json=execution_receipt.model_dump_json(),
+            execution_receipt_hash=execution_receipt.receipt_hash)
+        repo.insert_risk_decision(decision)
+        order = Order(proposal_id=proposal_id, risk_decision_id=decision.id, symbol=proposal.symbol,
+            market_type=proposal.market_type, direction=proposal.direction, execution_mode=mode,
+            order_type="limit", price=proposal.price, quantity=proposal.quantity, client_order_id=proposal_id,
+            entry_plan_id=plan.plan_id, order_tactic=proposal.order_tactic, post_only=proposal.post_only,
+            status="submitted", exchange_order_id=f"native-{len(orders)}")
+        repo.insert_order(order)
+        receipts.append(execution_receipt)
+        orders.append(order)
+        return {"status": "submitted"}
+
+    monkeypatch.setattr(gateway, "execute_existing_proposal", handoff)
+    def wake(ask=100.01):
+        now = datetime.now(timezone.utc)
+        return execute_entry_plan(plan.plan_id, bid=99.99, ask=ask,
+            observed_at=now.isoformat(), source_observed_at=now.isoformat(),
+            **_execution_receipt_kwargs(now, depth=True))
+
+    result = wake()
+    assert result["status"] == "submitted", (result, plan.model_dump())
+    first = orders[0]
+    assert wake()["status"] == "waiting_market"
+    assert len(orders) == 1
+    fill = Fill(order_id=first.id, fill_price=first.price, fill_quantity=first.quantity*.4, fee_source="reconciled")
+    repo.insert_fill(fill)
+    position = Position(symbol=first.symbol, market_type=first.market_type, direction=first.direction,
+        execution_mode=first.execution_mode, quantity=fill.fill_quantity, entry_price=first.price,
+        order_id=first.id, proposal_id=first.proposal_id, entry_fill_verified=True, entry_price_source="broker_fill")
+    repo.insert_position(position)
+    repo.update_order_metadata(first.id, position_id=position.id)
+    # Canonical reconciliation has confirmed cancellation and materialized all private fills.
+    repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (first.id,))
+    result = wake(ask=100.)
+    assert result["status"] == "submitted", result
+    second = orders[1]
+    assert second.quantity == pytest.approx(plan.target_quantity*.6)
+    assert second.price == plan.ioc_limit_price
+    assert second.order_tactic == "OPPOSING_BBO_IOC" and not second.post_only
+    assert first.proposal_id != second.proposal_id and first.risk_decision_id != second.risk_decision_id
+    assert receipts[0].receipt_hash != receipts[1].receipt_hash
+    assert [repo.get_trade_proposal(order.proposal_id)["entry_leg_index"] for order in orders] == [0, 1]
+    assert wake()["status"] == "reconciliation_required"
+    repo.execute_write("UPDATE orders SET status='cancelled' WHERE id=?", (second.id,))
+    assert wake()["status"] == "cancelled"
+    assert len(orders) == 2
+    lineage = repo.get_entry_plan_execution_lineage([plan.plan_id])[plan.plan_id]
+    assert lineage["availability"]["available"]
+    assert [item["id"] for item in lineage["orders"]] == [first.id, second.id]
+    assert lineage["fills"]["ids"] == [fill.id]
+    assert lineage["position"]["id"] == position.id
+    assert lineage["execution_state"] == "POSITION_OPEN"
+    from pydantic import TypeAdapter
+    from aletheia.server.routes.universe import EntryPlanLineage
+    adapter = TypeAdapter(EntryPlanLineage)
+    assert adapter.dump_python(adapter.validate_python(lineage), mode="json") == lineage
+    assert repo.get_entry_plan(plan.plan_id)["plan_json"] == before
+
+
+def test_cancel_handoff_crash_persists_uncertainty_before_external_effect(monkeypatch):
+    from aletheia.execution import coordinator, gateway
+    from aletheia.uta import manager
+    from aletheia.uta.models import ReadCompleteness
+
+    plan, order = _persist_ordered_plan()
+    class ProcessExit(BaseException):
+        pass
+    calls = []
+    def crash(command):
+        assert repo.get_order(order.id)["error_reason"] == "entry_cancel_pending:passive_window_elapsed"
+        calls.append(command)
+        raise ProcessExit()
+    monkeypatch.setattr(coordinator, "cancel_order", crash)
+    with pytest.raises(ProcessExit):
+        gateway.cancel_entry_plan_order(plan.plan_id, reason="passive_window_elapsed")
+    async def unavailable(*args):
+        return SimpleNamespace(completeness=ReadCompleteness.UNAVAILABLE, found=None)
+    monkeypatch.setattr(manager, "query_uta", unavailable)
+    assert gateway.cancel_entry_plan_order(plan.plan_id, reason="restart")["status"] == "cancel_pending"
+    assert len(calls) == 1

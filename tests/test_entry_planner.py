@@ -203,7 +203,7 @@ def _plan(generation: dict, *, profiles=None) -> EntryPlan:
     hypothesis = EntryHypothesis(
         decision="ENTRY_PLAN", reason_code="OK", mechanism=mechanism, direction=direction,
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-        entry_profile_id="grounded-anchor-retrace-reclaim", execution_urgency="BOUNDED_URGENT",
+        entry_profile_id="grounded-anchor-retrace-reclaim", capture_priority="FILL_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(primary.anchor_id,),
         risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(primary.anchor_id,),
     )
     hypothesis_json = hypothesis.model_dump_json()
@@ -780,7 +780,7 @@ def test_semantic_exhaustion_terminalizes_without_compiler(monkeypatch):
 
 
 
-@pytest.mark.parametrize("profile", ["grounded-anchor-resting-maker", "grounded-anchor-retrace-reclaim"])
+@pytest.mark.parametrize("profile", ["grounded-anchor-direct", "grounded-anchor-retrace-reclaim"])
 @pytest.mark.parametrize("compiler_error", [None, "COMPILER_RISK_BUDGET_UNAVAILABLE", "COMPILER_RETRY_EXHAUSTED", "FROZEN_CONTEXT_IDENTITY_MISMATCH", "RUNNING_CONTRACT_CHANGED", "HYPOTHESIS_CHECKPOINT_MISMATCH"])
 def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile, compiler_error):
     from types import SimpleNamespace
@@ -817,7 +817,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     monkeypatch.setattr("aletheia.risk.engine.per_symbol_notional_ceiling", lambda *_a, **_k: 1_000_000.0)
     primary = EntryAnchor(
         venue="bitget", symbol="BTC/USDT", market_type="perp",
-        kind="candidate_reference" if profile == "grounded-anchor-resting-maker" else "confirmed_swing",
+        kind="candidate_reference" if profile == "grounded-anchor-direct" else "confirmed_swing",
         price=100, directional_role="entry_candidate", known_at_ms=1,
         source_fact_refs=("candidate:c1",), source_fingerprint="candidate",
     )
@@ -859,7 +859,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
         decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
         primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
         entry_profile_id=profile,
-        execution_urgency="PASSIVE" if profile == "grounded-anchor-resting-maker" else "BOUNDED_URGENT",
+        capture_priority="PRICE_FIRST" if profile == "grounded-anchor-direct" else "FILL_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,),
         risk_tier="LOW", horizon="INTRADAY",
         supporting_fact_refs=(invalidation.anchor_id,),
     )
@@ -1072,7 +1072,7 @@ def test_passive_plan_waits_for_market_without_repricing_or_replanning(monkeypat
         calls.append(value)
         return EntryHypothesis(decision="ENTRY_PLAN", reason_code="OK", mechanism="reversal", direction="long",
             primary_anchor_ref=primary.anchor_id, invalidation_anchor_ref=invalidation.anchor_id,
-            entry_profile_id="grounded-anchor-resting-maker", execution_urgency="PASSIVE",
+            entry_profile_id="grounded-anchor-direct", capture_priority="PRICE_FIRST", capture_reason="fixture current evidence", capture_evidence_refs=(invalidation.anchor_id,),
             risk_tier="LOW", horizon="INTRADAY", supporting_fact_refs=(invalidation.anchor_id,))
 
     result = asyncio.run(plan_next_candidate(model, cfg=cfg))
@@ -1116,7 +1116,7 @@ def test_entry_hypothesis_portable_schema_requires_every_strict_property():
     assert set(schema["required"]) == set(properties)
     assert set(properties) == set(EntryHypothesis.model_fields)
     assert schema["additionalProperties"] is False
-    assert properties["execution_urgency"]["type"] == ["string", "null"]
+    assert properties["capture_priority"]["type"] == ["string", "null"]
     encoded = json.dumps(schema, sort_keys=True)
     assert "$ref" not in encoded
     assert "$defs" not in encoded

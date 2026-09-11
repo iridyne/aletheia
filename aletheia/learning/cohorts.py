@@ -709,11 +709,8 @@ def _load_entry_learning_outcomes(
             if not plan_id:
                 resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
                 continue
-            orders = [dict(item) for item in db.execute(
-                "SELECT * FROM orders WHERE entry_plan_id=? "
-                "AND julianday(created_at)<=julianday(?) ORDER BY created_at,id",
-                (plan_id, as_of_at.isoformat()),
-            ).fetchall()]
+            from aletheia.learning.entry_context import _entry_capture_evidence, _filled_unit_outcome
+            orders, entry_fills, position = _entry_capture_evidence(db, plan_id, as_of_at)
             if not orders:
                 settled = _parse_time(row.get("plan_terminal_at"))
                 if row.get("plan_status") not in {
@@ -722,42 +719,28 @@ def _load_entry_learning_outcomes(
                     resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
                     continue
             else:
-                order = orders[-1]
-                first_fill = db.execute(
-                    "SELECT filled_at FROM fills WHERE order_id=? "
-                    "AND julianday(filled_at)<=julianday(?) "
-                    "ORDER BY julianday(filled_at),id LIMIT 1",
-                    (order["id"], as_of_at.isoformat()),
-                ).fetchone()
+                first_fill = entry_fills[0] if entry_fills else None
                 if first_fill is None:
                     settled = _parse_time(row.get("plan_terminal_at"))
-                    if order.get("status") not in {
+                    if any(order.get("status") not in {
                         "cancelled", "rejected", "failed", "expired",
-                    } or settled is None:
+                    } for order in orders) or settled is None:
                         resolved[generation_id] = (None, "unsettled", 0, 0, None, None)
                         continue
                 else:
-                    outcome_entry = _parse_time(first_fill[0])
+                    outcome_entry = _parse_time(first_fill["filled_at"])
                     if outcome_entry is None or outcome_entry < created:
                         resolved[generation_id] = (
                             None, "retrospective_or_contaminated_exposure", 0, 0, None, None,
                         )
                         continue
-                    position = db.execute(
-                        "SELECT * FROM positions WHERE order_id=? "
-                        "AND julianday(opened_at)<=julianday(?) "
-                        "ORDER BY opened_at DESC,id DESC LIMIT 1",
-                        (order["id"], as_of_at.isoformat()),
-                    ).fetchone()
                     if position is None:
                         resolved[generation_id] = (
                             None, "entry_learning_position_missing", 0, 0, None, None,
                         )
                         continue
-                    from aletheia.learning.entry_context import _filled_unit_outcome
-
                     utility_value, _mfe, mae_value, outcome_ids = _filled_unit_outcome(
-                        db, row=row, position=dict(position), cutoff=as_of_at,
+                        db, row=row, position=position, fills=entry_fills, cutoff=as_of_at,
                     )
                     if utility_value is None:
                         reason = str(outcome_ids)

@@ -24,6 +24,7 @@ SIDEWAYS_STOP_MULT = 2.0
 ENTRY_PLAN_EXECUTION_MODES = ("RESTING_MAKER", "TRIGGERED")
 ENTRY_PLAN_STATUSES = (
     "waiting",
+    "active",
     "risk_reserved",
     "triggered",
     "ordered",
@@ -36,7 +37,8 @@ ENTRY_PLAN_STATUSES = (
 )
 
 ENTRY_PLAN_TRANSITIONS = {
-    "waiting": frozenset({"risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
+    "active": frozenset({"filled", "expired", "invalidated", "cancelled", "failed"}),
+    "waiting": frozenset({"active", "risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
     "triggered": frozenset({"risk_reserved", "invalidated", "expired", "cancelled", "failed"}),
     "risk_reserved": frozenset({"waiting", "triggered", "ordered", "invalidated", "expired", "cancelled", "failed"}),
     "ordered": frozenset({"partially_filled", "filled", "cancelled", "failed"}),
@@ -212,6 +214,7 @@ class EntryPlan(BaseModel):
     price_rule: Literal["EXACT_LIMIT", "PASSIVE_BBO", "OPPOSING_BBO"]
     bbo_reference: Literal["bid", "ask"] | None = None
     max_wait_sec: int = Field(ge=0)
+    capture_policy_id: str | None = None
     cancel_replace_policy: Literal["CANCEL_ONLY", "BOUNDED_REQUOTE"]
     max_requotes: int = Field(ge=0)
     partial_fill_policy: Literal["KEEP_PARTIAL_CANCEL_REMAINDER", "KEEP_RESTING"]
@@ -241,11 +244,37 @@ class EntryPlan(BaseModel):
     entry_profile_id: (
         Literal[
             "grounded-anchor-resting-maker",
+            "grounded-anchor-direct",
             "grounded-anchor-retrace-reclaim",
         ]
         | None
     ) = None
     compiled_geometry_fingerprint: str | None = Field(default=None, min_length=64, max_length=64)
+
+    @property
+    def activation_policy(self) -> str:
+        return "CONDITIONAL" if self.execution_mode == "TRIGGERED" else "IMMEDIATE"
+
+    @property
+    def capture_priority(self) -> str | None:
+        from aletheia.trading.entry_capture import CAPTURE_POLICIES
+        return next((priority for priority, policy in CAPTURE_POLICIES.items()
+                     if policy.policy_id == self.capture_policy_id), None)
+
+    @property
+    def target_quantity(self) -> float:
+        # A fixed target must fit the notional ceiling at every permitted price,
+        # including a short Maker price above its worst (lowest) IOC price.
+        return self.max_notional / max(self.entry_zone)
+
+    @property
+    def ioc_limit_price(self) -> float:
+        if self.max_slippage_bps is None or self.worst_price is None:
+            raise ValueError("entry_plan_taker_bounds_required")
+        anchor = _positive_finite((self.primary_anchor_snapshot or {}).get("price") or self.limit_price,
+                                  "entry_plan_ioc_anchor")
+        bound = anchor * (1 + (1 if self.direction == "long" else -1) * self.max_slippage_bps / 10_000)
+        return min(self.worst_price, bound) if self.direction == "long" else max(self.worst_price, bound)
 
     @field_validator(
         "stop_price",
@@ -343,6 +372,20 @@ class EntryPlan(BaseModel):
         elif self.trigger_spec_id is not None:
             raise ValueError("resting_maker_cannot_require_trigger")
         strict_tactic_contract = True
+        if self.capture_policy_id is not None:
+            from aletheia.trading.entry_capture import CAPTURE_POLICIES
+            if self.capture_priority is None:
+                raise ValueError("entry_capture_policy_not_registered")
+            policy = CAPTURE_POLICIES[self.capture_priority]
+            expected_tactic = "OPPOSING_BBO_IOC" if self.capture_priority == "FILL_FIRST" else "POST_ONLY_LIMIT"
+            if self.order_tactic != expected_tactic:
+                raise ValueError("entry_capture_tactic_mismatch")
+            if self.max_wait_sec != policy.passive_attempt_timeout_sec:
+                raise ValueError("entry_capture_timeout_mismatch")
+            if self.worst_price is None or not low <= self.worst_price <= high:
+                raise ValueError("entry_capture_price_bound_required")
+            if self.entry_hypothesis_json is not None and json.loads(self.entry_hypothesis_json).get("capture_priority") != self.capture_priority:
+                raise ValueError("entry_capture_hypothesis_mismatch")
         if self.order_tactic == "POST_ONLY_LIMIT":
             if not self.maker_required or self.time_in_force != "POST_ONLY":
                 raise ValueError("maker_tactic_requires_post_only")
@@ -353,14 +396,14 @@ class EntryPlan(BaseModel):
             if strict_tactic_contract and (
                 self.price_rule != "EXACT_LIMIT"
                 or self.bbo_reference is not None
-                or self.max_wait_sec <= 0
+                or (self.max_wait_sec <= 0 and self.capture_policy_id is None)
                 or self.max_requotes != 0
                 or self.cancel_replace_policy != "CANCEL_ONLY"
-                or self.max_slippage_bps is not None
+                or (self.max_slippage_bps is not None and self.capture_policy_id is None)
             ):
                 raise ValueError("maker_tactic_contract_incomplete")
         else:
-            if self.execution_mode != "TRIGGERED":
+            if self.execution_mode != "TRIGGERED" and self.capture_policy_id is None:
                 raise ValueError("urgent_taker_requires_triggered_plan")
             if self.maker_required or self.time_in_force != "IOC":
                 raise ValueError("urgent_taker_requires_ioc")
@@ -381,7 +424,7 @@ class EntryPlan(BaseModel):
                 raise ValueError("urgent_taker_contract_incomplete")
         if self.taker_fallback_allowed:
             raise ValueError("entry_plan_taker_fallback_unavailable")
-        if self.order_tactic == "POST_ONLY_LIMIT" and self.worst_price is not None:
+        if self.order_tactic == "POST_ONLY_LIMIT" and self.worst_price is not None and self.capture_policy_id is None:
             raise ValueError("worst_price_requires_taker_authority")
         return self
 

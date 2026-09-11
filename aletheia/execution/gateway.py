@@ -517,14 +517,12 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     plan = repo.get_entry_plan(plan_id)
     if plan is None:
         return {"status": "not_found", "entry_plan_id": plan_id}
-    terminal = {"filled", "cancelled", "invalidated", "expired", "failed"}
-    if plan["status"] in terminal:
-        return {"status": plan["status"], "entry_plan_id": plan_id}
-    order = repo.get_order(plan.get("order_id")) if plan.get("order_id") else None
-    if order is None:
-        order = repo.get_order_for_entry_plan(plan_id)
+    order = repo.get_order_for_entry_plan(plan_id)
     if order is None:
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
+
+    if order["status"] == "cancelled":
+        return {"status": "cancelled", "entry_plan_id": plan_id}
 
     def filled_quantity(current_order: dict) -> float:
         row = repo.get_db().execute(
@@ -536,48 +534,61 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
     def fully_filled(current_order: dict) -> bool:
         return filled_quantity(current_order) + 1e-12 >= float(current_order["quantity"])
 
+    def pending():
+        with repo.transaction(immediate=True):
+            current = repo.get_order(order["id"])
+            if current["status"] in {"filled", "cancelled"}:
+                return {"status": current["status"], "entry_plan_id": plan_id}
+            repo.transition_order(order["id"], status=current["status"], error_reason=f"entry_cancel_pending:{reason}",
+                                  filled_at=current.get("filled_at"))
+        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+
+    reconciling_cancel = str(order.get("error_reason") or "").startswith("entry_cancel_pending:")
+    if reconciling_cancel:
+        reason = order["error_reason"].partition(":")[2]
+
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
     if order.get("execution_mode") not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
         return {"status": "capability_unavailable", "entry_plan_id": plan_id}
 
     if fully_filled(order):
-        repo.transition_entry_plan(
-            plan_id,
-            expected_status=plan["status"],
-            status="filled",
-            reason="fill_won_cancel_race",
-        )
         return {"status": "filled", "entry_plan_id": plan_id}
 
     try:
         identity = UTAAccountIdentity.model_validate_json(order.get("uta_account_identity_json") or "")
         if identity.execution_mode != order["execution_mode"]:
             raise ValueError("uta_account_identity_mismatch")
-        result = cancel_order(CancelOrderCommand(
-            command_id=str(uuid4()), expected_account=identity,
-            instrument=instrument_from_local(order["symbol"], order["market_type"]),
-            purpose="entry", proposal_id=order["proposal_id"],
-            target_venue_order_id=order["exchange_order_id"],
-            target_client_order_id=order.get("client_order_id"), reason=reason,
-        ))
+        if not reconciling_cancel:
+            # Fence the one cancel attempt before the external call. A crash or
+            # competing watcher after this commit can only reconcile the Order.
+            with repo.transaction(immediate=True):
+                current = repo.get_order(order["id"])
+                if current["status"] in {"filled", "cancelled"} or fully_filled(current):
+                    return {"status": "filled" if fully_filled(current) else current["status"], "entry_plan_id": plan_id}
+                reconciling_cancel = str(current.get("error_reason") or "").startswith("entry_cancel_pending:")
+                if reconciling_cancel:
+                    reason = current["error_reason"].partition(":")[2]
+                else:
+                    repo.transition_order(order["id"], status=current["status"], error_reason=f"entry_cancel_pending:{reason}",
+                                          filled_at=current.get("filled_at"))
+        if not reconciling_cancel:
+            result = cancel_order(CancelOrderCommand(
+                command_id=str(uuid4()), expected_account=identity,
+                instrument=instrument_from_local(order["symbol"], order["market_type"]),
+                purpose="entry", proposal_id=order["proposal_id"],
+                target_venue_order_id=order["exchange_order_id"],
+                target_client_order_id=order.get("client_order_id"), reason=reason,
+            ))
+            if result.evidence is not CommandEvidence.ACKNOWLEDGED:
+                return pending()
     except Exception:
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
-    if result.evidence is not CommandEvidence.ACKNOWLEDGED:
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        return pending()
 
     fresh_after_ack = repo.get_order(order["id"])
     if fresh_after_ack and (
         fresh_after_ack.get("status") == "filled" or fully_filled(fresh_after_ack)
     ):
-        fresh_plan = repo.get_entry_plan(plan_id)
-        if fresh_plan and fresh_plan["status"] != "filled":
-            repo.transition_entry_plan(
-                plan_id,
-                expected_status=fresh_plan["status"],
-                status="filled",
-                reason="fill_won_cancel_race",
-            )
         return {"status": "filled", "entry_plan_id": plan_id}
 
     try:
@@ -613,42 +624,34 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
         report, rows = _run_coro(exact_cancel_evidence())
         if report.completeness is not ReadCompleteness.COMPLETE or report.found is None:
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if rows:
             materialize_bitget_entry(order["id"], rows)
         exact_state = report.found.state
         exact_filled = float(report.found.filled_quantity)
         local_filled = filled_quantity(repo.get_order(order["id"]))
         if abs(exact_filled - local_filled) > max(1e-12, float(order["quantity"]) * 1e-9):
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if exact_state not in {
             OrderLifecycle.CANCELED,
             OrderLifecycle.EXPIRED,
             OrderLifecycle.REJECTED,
             OrderLifecycle.FILLED,
         }:
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
         if exact_state is OrderLifecycle.FILLED and not fully_filled(repo.get_order(order["id"])):
-            return {"status": "cancel_pending", "entry_plan_id": plan_id}
+            return pending()
     except Exception:
         logger.warning(
             "Exact post-cancel evidence unavailable for Entry Plan %s",
             plan_id,
             exc_info=True,
         )
-        return {"status": "cancel_pending", "entry_plan_id": plan_id}
+        return pending()
 
     with repo.transaction(immediate=True):
         fresh_order = repo.get_order(order["id"])
-        fresh_plan = repo.get_entry_plan(plan_id)
         if fresh_order and (fresh_order.get("status") == "filled" or fully_filled(fresh_order)):
-            if fresh_plan and fresh_plan["status"] != "filled":
-                repo.transition_entry_plan(
-                    plan_id,
-                    expected_status=fresh_plan["status"],
-                    status="filled",
-                    reason="fill_won_cancel_race",
-                )
             return {"status": "filled", "entry_plan_id": plan_id}
         if fresh_order and fresh_order.get("status") in {
             "pending",
@@ -659,13 +662,6 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
             "materialization_missing",
         }:
             repo.transition_order(order["id"], status="cancelled", error_reason=reason)
-        if fresh_plan:
-            repo.transition_entry_plan(
-                plan_id,
-                expected_status=fresh_plan["status"],
-                status="cancelled",
-                reason=reason,
-            )
     return {"status": "cancelled", "entry_plan_id": plan_id}
 
 
@@ -1436,6 +1432,9 @@ def _execute_proposal(
         )
         _entry_execution_stage(proposal, execution_receipt, "preflight_risk_completed")
         if not preflight_result.approved:
+            if proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and getattr(preflight_result, "disposition", "REJECT") == "DEFER":
+                return _wait_for_entry_market(proposal, owner_token, execution_receipt,
+                    "canonical_risk_deferred", status="waiting_risk")
             if _receipt_only_risk_rejection(preflight_result):
                 return _reject_execution_receipt(proposal)
             return _reject_for_risk(proposal, preflight_result)
@@ -1467,6 +1466,9 @@ def _execute_proposal(
 
         _entry_execution_stage(proposal, execution_receipt, "authoritative_risk_completed")
         if not risk_result.approved:
+            if proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and getattr(risk_result, "disposition", "REJECT") == "DEFER":
+                return _wait_for_entry_market(proposal, owner_token, execution_receipt,
+                    "canonical_risk_deferred", status="waiting_risk")
             if _receipt_only_risk_rejection(risk_result):
                 return _reject_execution_receipt(proposal)
             return _reject_for_risk(proposal, risk_result)
@@ -1506,17 +1508,7 @@ def _execute_proposal(
             from aletheia.storage import repositories as repo
 
             plan_row = repo.get_entry_plan(execution_proposal.entry_plan_id)
-            expected_plan_status = (
-                "waiting" if plan_row and plan_row.get("execution_mode") == "RESTING_MAKER" else "triggered"
-            )
-            if plan_row is None or (
-                plan_row["status"] != "risk_reserved"
-                and not repo.transition_entry_plan(
-                    execution_proposal.entry_plan_id,
-                    expected_status=expected_plan_status,
-                    status="risk_reserved",
-                )
-            ):
+            if plan_row is None or plan_row["status"] != "active":
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan lifecycle no longer permits a Risk reservation.",
@@ -1589,6 +1581,10 @@ def _execute_proposal(
             or stored["status"] not in {"pending", "approved"}
             or has_order_for_proposal(proposal.id)):
             raise ValueError("entry_execution_owner_lost")
+        from aletheia.storage import repositories as repo
+        plan_row = repo.get_entry_plan(proposal.entry_plan_id)
+        if plan_row is None or plan_row["status"] != "active":
+            raise ValueError("entry_plan_authority_not_active")
         update_trade_proposal(proposal.id, status="executing")
 
     def submission_started():
@@ -1953,8 +1949,7 @@ def _entry_execution_stage(proposal, receipt, stage, **facts):
                 "execution_attempt_id": receipt.attempt_id, "entry_plan_id": proposal.entry_plan_id, **facts}})
 
 
-def _wait_for_entry_market(proposal, owner_token, receipt, reason):
-    from aletheia.storage import repositories as repo
+def _wait_for_entry_market(proposal, owner_token, receipt, reason, *, status="waiting_market"):
     with transaction(immediate=True):
         claim = get_proposal_execution_claim(proposal.id)
         stored = get_trade_proposal(proposal.id)
@@ -1962,10 +1957,7 @@ def _wait_for_entry_market(proposal, owner_token, receipt, reason):
             or stored["status"] not in {"pending", "approved"}
             or has_order_for_proposal(proposal.id)):
             return {"status": "already_claimed", "proposal_id": proposal.id}
-        plan = repo.get_entry_plan(proposal.entry_plan_id)
-        repo.transition_entry_plan(proposal.entry_plan_id, expected_status="risk_reserved",
-            status="waiting" if plan["execution_mode"] == "RESTING_MAKER" else "triggered")
         release_entry_risk_reservation(proposal.id)
         release_proposal_execution_claim(proposal.id, owner_token)
-    _entry_execution_stage(proposal, receipt, "waiting_market", reason=reason, submission_evidence="NOT_SENT")
-    return {"status": "waiting_market", "reason_code": reason, "proposal_id": proposal.id}
+    _entry_execution_stage(proposal, receipt, status, reason=reason, submission_evidence="NOT_SENT")
+    return {"status": status, "reason_code": reason, "proposal_id": proposal.id}

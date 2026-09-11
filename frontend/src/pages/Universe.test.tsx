@@ -72,7 +72,7 @@ const workbench: EntryWorkbenchResponse = {
     monitoring_evidence_json: JSON.stringify({ channels: { quote: { state: 'ready', reason: null }, trade: { state: 'degraded', reason: 'channel_event_stale' } } }),
     monitoring_evidence_hash: 'c'.repeat(64),
     lineage: {
-      order: { id: 'order-1', exchange_order_id: 'exchange-1', status: 'submitted', quantity: 1, position_id: 'position-1' },
+      orders: [{ id: 'order-1', exchange_order_id: 'exchange-1', status: 'submitted', quantity: 1, position_id: 'position-1' }],
       fills: { count: 1, quantity: 0.5, latest_at: '2026-08-28T00:30:00Z' },
       position: { id: 'position-1', status: 'open', quantity: 0.5, entry_price: 100 },
     },

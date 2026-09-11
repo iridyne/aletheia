@@ -106,8 +106,10 @@ def build_entry_execution_receipt(
     activation = require_entry_trigger_activation(
         plan, trigger_activation_id, trigger_activation_hash, now=datetime.now(timezone.utc),
         stream_generation_id=stream_generation_id, subscription_generation_id=subscription_generation_id,
-        quote_sequence=quote_sequence,
+        quote_sequence=quote_sequence, entry_leg_index=proposal.entry_leg_index or 0,
     )
+    if not proposal.post_only:
+        required_channels = (*required_channels, "depth")
     channels = tuple(dict.fromkeys(str(item) for item in required_channels))
     if not channels or any(item not in _RECEIPT_CHANNELS for item in channels):
         raise ValueError("entry_execution_receipt_channels_invalid")
@@ -137,6 +139,12 @@ def build_entry_execution_receipt(
     if depth_sequence is not None and (isinstance(depth_sequence, bool) or int(depth_sequence) < 0):
         raise ValueError("entry_execution_receipt_depth_sequence_invalid")
 
+    if depth_required:
+        from aletheia.universe.fast_stream import _CHANNEL_FRESHNESS_MS
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000
+        if any(not 0 <= now_ms - timestamp <= _CHANNEL_FRESHNESS_MS["depth"]
+               for timestamp in (depth_exchange_timestamp_ms, depth_received_timestamp_ms)):
+            raise ValueError("entry_execution_receipt_depth_stale")
     captured = _instant(observed_at)
     trigger_hash = activation.activation_hash if activation else None
     payload = {
@@ -173,7 +181,7 @@ def build_entry_execution_receipt(
         "trigger_activation_id": activation.activation_id if activation else None,
         "trigger_evidence_hash": trigger_hash,
         "captured_at": captured.isoformat(),
-        "expires_at": activation.expires_at if activation else plan.expires_at,
+        "expires_at": activation.expires_at if activation and proposal.entry_leg_index != 1 else plan.expires_at,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return EntryExecutionReceiptV1(
@@ -190,6 +198,8 @@ def _require_ai_entry_authority(plan: EntryPlan) -> None:
         plan.behavior_fingerprint, plan.schema_fingerprint
     ) != entry_contract_fingerprints():
         raise ValueError("ai_entry_running_contract_mismatch")
+    if not plan.capture_policy_id:
+        raise ValueError("entry_capture_policy_required")
     if plan.entry_hypothesis_json is None or plan.source_kind is None:
         raise ValueError("ai_entry_plan_provenance_required")
     generation = repo.get_candidate_planning_generation(plan.planning_generation_id)
@@ -271,6 +281,20 @@ def _instant(raw: str) -> datetime:
 
 
 
+def bounded_entry_ioc_price(plan: EntryPlan, *, bid: float, ask: float) -> float:
+    """A frozen limit; changing BBO is only a current eligibility reference."""
+    if plan.max_slippage_bps is None or plan.worst_price is None:
+        raise ValueError("entry_plan_taker_bounds_required")
+    reference = opposing_bbo_price(direction=plan.direction, bid=bid, ask=ask,
+        max_slippage_bps=plan.max_slippage_bps, worst_price=plan.worst_price)
+    limit = plan.ioc_limit_price
+    long = plan.direction == "long"
+    if (not plan.entry_zone[0] <= reference <= plan.entry_zone[1]
+        or (reference > limit if long else reference < limit)):
+        raise ValueError("entry_ioc_outside_frozen_bounds")
+    return limit
+
+
 def build_entry_plan_order_intent(
     plan: EntryPlan,
     *,
@@ -281,16 +305,20 @@ def build_entry_plan_order_intent(
     trigger_activation_id: str | None = None,
     trigger_activation_hash: str | None = None,
     now: datetime | None = None,
+    entry_leg_index: int = 0,
+    order_tactic: str | None = None,
+    quantity: float | None = None,
 ) -> TradeProposal:
     """Build one bounded immutable intent; no Risk, broker, or LLM work occurs here."""
     require_entry_plan_runtime_authority(plan)
     from aletheia.trading.entry_activation import require_entry_trigger_activation
 
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    activation = require_entry_trigger_activation(plan, trigger_activation_id, trigger_activation_hash, now=current)
+    activation = require_entry_trigger_activation(plan, trigger_activation_id, trigger_activation_hash, now=current, entry_leg_index=entry_leg_index)
     if _instant(plan.expires_at) <= current:
         raise ValueError("entry_plan_expired")
-    freshness_ms = plan.trigger_freshness_ms
+    from aletheia.universe.fast_stream import _CHANNEL_FRESHNESS_MS
+    freshness_ms = _CHANNEL_FRESHNESS_MS["quote"]
     for timestamp in (observed_at, source_observed_at):
         age_ms = (current - _instant(timestamp)).total_seconds() * 1_000
         if age_ms < 0 or (freshness_ms is not None and age_ms > freshness_ms):
@@ -299,7 +327,8 @@ def build_entry_plan_order_intent(
     if not math.isfinite(bid) or not math.isfinite(ask) or bid <= 0 or ask < bid:
         raise ValueError("entry_exact_bbo_invalid")
 
-    if plan.order_tactic == "POST_ONLY_LIMIT":
+    tactic = order_tactic or plan.order_tactic
+    if tactic == "POST_ONLY_LIMIT":
         if plan.limit_price is None:
             raise ValueError("entry_plan_limit_price_required")
         price = float(plan.limit_price)
@@ -310,20 +339,15 @@ def build_entry_plan_order_intent(
     else:
         if plan.max_slippage_bps is None or plan.worst_price is None:
             raise ValueError("entry_plan_taker_bounds_required")
-        price = opposing_bbo_price(
-            direction=plan.direction,
-            bid=bid,
-            ask=ask,
-            max_slippage_bps=float(plan.max_slippage_bps),
-            worst_price=plan.worst_price,
-        )
+        price = bounded_entry_ioc_price(plan, bid=bid, ask=ask)
         time_in_force = "ioc"
         post_only = False
 
     if not plan.entry_zone[0] <= price <= plan.entry_zone[1]:
         raise ValueError("entry_price_outside_plan_zone")
 
-    quantity = float(plan.max_notional) / price
+    if quantity is None:
+        quantity = plan.target_quantity
     risk_reward = calculate_entry_plan_risk_reward(price, plan.stop_price, plan.target_price)
     if quantity <= 0 or risk_reward is None:
         raise ValueError("entry_order_intent_geometry_invalid")
@@ -376,10 +400,11 @@ def build_entry_plan_order_intent(
             default=str,
         ),
         entry_plan_id=plan.plan_id,
-        order_tactic=plan.order_tactic,
+        entry_leg_index=entry_leg_index,
+        order_tactic=tactic,
         time_in_force=time_in_force,
         post_only=post_only,
-        bbo_reference=plan.bbo_reference,
+        bbo_reference=None if post_only else ("ask" if plan.direction == "long" else "bid"),
         max_slippage_bps=plan.max_slippage_bps,
         worst_price=plan.worst_price,
     )
@@ -400,18 +425,90 @@ def require_execution_receipt_activation(proposal: TradeProposal, receipt, *, no
     if (not receipt.hash_is_valid() or receipt.proposal_id != proposal.id
         or receipt.entry_plan_id != plan.plan_id):
         raise ValueError("entry_execution_receipt_integrity_failed")
+    if _instant(plan.expires_at) <= now:
+        raise ValueError("entry_plan_expired")
     intent = build_entry_plan_order_intent(plan, bid=receipt.quote["bid"], ask=receipt.quote["ask"],
         observed_at=datetime.fromtimestamp(receipt.quote["received_timestamp_ms"] / 1000, timezone.utc).isoformat(),
         source_observed_at=datetime.fromtimestamp(receipt.quote["exchange_timestamp_ms"] / 1000, timezone.utc).isoformat(),
         trigger_activation_id=receipt.trigger_activation_id, trigger_activation_hash=receipt.trigger_evidence_hash,
-        now=now)
+        now=_instant(receipt.captured_at), entry_leg_index=proposal.entry_leg_index or 0, order_tactic=proposal.order_tactic, quantity=proposal.quantity)
     if intent.price != proposal.price:
         raise ValueError("entry_execution_receipt_intent_price_mismatch")
     require_entry_trigger_activation(plan,
         receipt.trigger_activation_id, receipt.trigger_evidence_hash, now=now,
         stream_generation_id=receipt.stream_generation_id,
         subscription_generation_id=receipt.subscription_generation_id,
-        quote_sequence=receipt.quote.get("sequence"))
+        quote_sequence=receipt.quote.get("sequence"), entry_leg_index=proposal.entry_leg_index or 0)
+
+
+def _capture_facts(plan: EntryPlan, *, bid: float | None, ask: float | None, now: datetime):
+    """One coherent read of existing Plan/Proposal/Order/Fill owners."""
+    from aletheia.trading.entry_activation import require_entry_trigger_activation
+    from aletheia.trading.entry_execution_projection import EntryExecutionFacts
+
+    with repo.transaction():
+        row = repo.get_entry_plan(plan.plan_id)
+        proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+        orders = [dict(item) for item in repo.get_db().execute(
+            "SELECT o.*, COALESCE(p.entry_leg_index,0) AS entry_leg_index FROM orders o "
+            "LEFT JOIN trade_proposals p ON p.id=o.proposal_id "
+            "WHERE o.entry_plan_id=? AND o.close_reason IS NULL ORDER BY entry_leg_index, o.created_at, o.id",
+            (plan.plan_id,),
+        ).fetchall()]
+        latest = orders[-1] if orders else {}
+        filled = 0.0
+        authority_error = "entry_plan_expired" if _instant(plan.expires_at) <= now else None
+        for order in orders:
+            fills = repo.list_fills(order_id=order["id"], limit=None)
+            quantity = sum(float(item["fill_quantity"]) for item in fills)
+            if (any(not math.isfinite(float(item[key])) or float(item[key]) <= 0
+                    for item in fills for key in ("fill_quantity", "fill_price"))
+                or quantity > float(order["quantity"]) + 1e-12
+                or (order["status"] == "filled" and not math.isclose(quantity, float(order["quantity"]), rel_tol=1e-9, abs_tol=1e-12))
+                or (order["status"] in {"partial", "partially_filled"} and quantity == 0)):
+                filled = None
+                break
+            if quantity:
+                position = repo.get_position(order.get("position_id")) if order.get("position_id") else None
+                if (position is None or not position.get("entry_fill_verified") or position.get("entry_price_source") != "broker_fill"
+                    or any(position[key] != order[key] for key in ("symbol", "market_type", "direction", "execution_mode"))):
+                    filled = None
+                    break
+                if position["status"] == "closed" or position.get("pending_close_order_id"):
+                    authority_error = "entry_position_closing_or_closed"
+            filled += quantity
+        activation_current = plan.activation_policy == "IMMEDIATE"
+        if not orders and not activation_current and row.get("trigger_activation_id"):
+            activation = repo.get_entry_trigger_activation(row["trigger_activation_id"])
+            if activation:
+                try:
+                    require_entry_trigger_activation(plan, row["trigger_activation_id"], activation["activation_hash"], now=now)
+                    activation_current = True
+                except ValueError as exc:
+                    if str(exc) not in {"entry_trigger_activation_expired", "entry_trigger_activation_monitoring_mismatch",
+                                        "entry_trigger_activation_required", "entry_trigger_activation_plan_not_executable"}:
+                        authority_error = str(exc)
+        claim = repo.get_proposal_execution_claim(proposal["id"]) if proposal else None
+        passive = bid is not None and ask is not None and plan.limit_price is not None and post_only_price_is_passive(plan.direction, plan.limit_price, bid, ask)
+        try:
+            if bid is None or ask is None:
+                raise ValueError("entry_market_unavailable")
+            bounded_entry_ioc_price(plan, bid=bid, ask=ask)
+            ioc = True
+        except ValueError:
+            ioc = False
+        return EntryExecutionFacts(plan_status=row["status"], authority_error=authority_error,
+            activation_current=activation_current, filled_quantity=filled,
+            preparation_claim_held=bool(claim and repo.proposal_execution_claim_is_fresh(claim, now)),
+            proposal_status=proposal["status"] if proposal else None,
+            proposal_leg_index=(proposal.get("entry_leg_index") or 0) if proposal else None,
+            proposal_tactic=proposal.get("order_tactic") if proposal else None,
+            proposal_has_order=bool(proposal and any(order["proposal_id"] == proposal["id"] for order in orders)),
+            order_status=latest.get("status"), order_leg_index=latest.get("entry_leg_index", 0),
+            order_tactic=latest.get("order_tactic"),
+            order_age_sec=(now-_instant(latest["created_at"])).total_seconds() if latest else None,
+            cancellation_unresolved=any(str(order.get("error_reason") or "").startswith("entry_cancel_pending:") for order in orders),
+            passive_eligible=passive, ioc_eligible=ioc)
 
 
 def execute_entry_plan(
@@ -448,7 +545,37 @@ def execute_entry_plan(
     if plan.execution_account_mode != "bitget_demo":
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
-    existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+    from aletheia.trading.entry_execution_projection import resolve_entry_execution
+    from aletheia.execution.gateway import cancel_entry_plan_order, execute_existing_proposal
+    current = now or datetime.now(timezone.utc)
+    state = _capture_facts(plan, bid=bid, ask=ask, now=current)
+    directive = resolve_entry_execution(plan, state)
+    if directive.action == "WAIT":
+        return {"status": "waiting_market", "reason_code": directive.reason, "entry_plan_id": plan.plan_id}
+    if directive.action == "RECONCILE":
+        latest = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+        if state.cancellation_unresolved:
+            return cancel_entry_plan_order(plan.plan_id, reason="entry_cancel_reconciliation")
+        if latest and latest["status"] == "executing":
+            execute_existing_proposal(latest["id"], latest["execution_mode"])
+        return {"status": "reconciliation_required", "reason_code": directive.reason, "entry_plan_id": plan.plan_id}
+    if directive.action in {"STOP", "DONE"}:
+        terminal = ("filled" if directive.reason == "entry_target_filled" else "cancelled" if directive.action == "DONE"
+                    else "expired" if directive.reason == "entry_plan_expired" else "failed")
+        if row["status"] in {"waiting", "active"}:
+            repo.transition_entry_plan(plan.plan_id, expected_status=row["status"], status=terminal, reason=directive.reason, now=current)
+        return {"status": terminal, "reason_code": directive.reason, "entry_plan_id": plan.plan_id}
+    if directive.command == "CANCEL_PASSIVE":
+        return cancel_entry_plan_order(plan.plan_id, reason=directive.reason)
+    leg_index = directive.leg_index
+    quantity = directive.quantity
+    tactic = "POST_ONLY_LIMIT" if directive.command == "SUBMIT_PASSIVE" else "OPPOSING_BBO_IOC"
+    if trigger_activation_id is None and row.get("trigger_activation_id"):
+        activation = repo.get_entry_trigger_activation(row["trigger_activation_id"])
+        trigger_activation_id = row["trigger_activation_id"]
+        trigger_activation_hash = activation["activation_hash"] if activation else None
+
+    existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id, leg_index=leg_index)
     if existing is not None:
         from aletheia.execution.gateway import execute_existing_proposal
 
@@ -492,7 +619,7 @@ def execute_entry_plan(
         source_observed_at=source_observed_at,
         trigger_activation_id=trigger_activation_id,
         trigger_activation_hash=trigger_activation_hash,
-        now=now,
+        now=now, entry_leg_index=leg_index, order_tactic=tactic, quantity=quantity,
     )
     receipt = build_entry_execution_receipt(
         plan,
@@ -513,15 +640,15 @@ def execute_entry_plan(
         trigger_activation_id=trigger_activation_id,
         trigger_activation_hash=trigger_activation_hash,
     )
-    if plan.execution_mode == "RESTING_MAKER" and row["status"] != "waiting":
+    if row["status"] != "active":
         return {"status": row["status"], "entry_plan_id": plan.plan_id}
 
     try:
         repo.insert_trade_proposal(proposal)
     except sqlite3.IntegrityError as exc:
-        if str(exc) != "UNIQUE constraint failed: trade_proposals.entry_plan_id":
+        if str(exc) != "UNIQUE constraint failed: index 'idx_trade_proposals_entry_plan_leg'":
             raise
-        existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id)
+        existing = repo.get_trade_proposal_by_entry_plan(plan.plan_id, leg_index=leg_index)
         if existing is None:
             raise
         proposal = TradeProposal.model_validate(existing)
@@ -575,4 +702,16 @@ def require_current_submission_market(proposal, receipt, current_market, *, now)
         raise ValueError("entry_plan_price_invalidated")
     if proposal.post_only and not post_only_price_is_passive(plan.direction, proposal.price, bid, ask):
         raise EntryMarketWaiting("post_only_would_cross_bbo")
+    if not proposal.post_only:
+        if not receipt.depth or any(not 0 <= now.timestamp()*1000 - receipt.depth[clock] <= _CHANNEL_FRESHNESS_MS["depth"]
+                                    for clock in ("exchange_timestamp_ms", "received_timestamp_ms")):
+            raise EntryMarketWaiting("entry_submission_depth_stale")
+        try:
+            price = bounded_entry_ioc_price(plan, bid=bid, ask=ask)
+        except ValueError as exc:
+            if str(exc) in {"entry_ioc_outside_frozen_bounds", "bbo_slippage_envelope_exceeded", "bbo_worst_price_exceeded"}:
+                raise EntryMarketWaiting(str(exc)) from exc
+            raise
+        if price != proposal.price:
+            raise ValueError("entry_execution_receipt_intent_price_mismatch")
     return event

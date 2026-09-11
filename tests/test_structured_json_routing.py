@@ -24,7 +24,7 @@ def test_entry_no_plan_nullable_enum_matches_provider_schema():
     for schema in (EntryHypothesis.model_json_schema(), portable_json_schema_payload(EntryHypothesis)):
         _validate_json_schema_value(payload, schema, root=schema)
         with pytest.raises(ValueError):
-            _validate_json_schema_value({**payload, "execution_urgency": "INVALID"}, schema, root=schema)
+            _validate_json_schema_value({**payload, "capture_priority": "INVALID"}, schema, root=schema)
         with pytest.raises((TypeError, ValueError)):
             _validate_json_schema_value({**payload, "direction": None}, schema, root=schema)
 

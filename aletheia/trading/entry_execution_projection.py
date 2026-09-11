@@ -1,10 +1,5 @@
-"""Stage 1 read-only projection; not connected to submission or persistence.
-
-The caller supplies validated snapshots from existing owners. A directive is a
-projection of the next bounded action, never permission to bypass Gateway/Risk.
-This will replace duplicated watcher/lifecycle branching at a later cutover;
-Stage 1 deliberately preserves the original Plan's tactic and Maker lifetime.
-"""
+"""Pure bounded Entry capture resolution over snapshots from existing owners."""
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -12,45 +7,27 @@ from aletheia.trading.entry_plan import EntryPlan
 
 
 @dataclass(frozen=True)
-class EntryExecutionProjection:
-    activation: Literal["IMMEDIATE", "CONDITIONAL"]
-    capture_priority: Literal["PRICE_FIRST", "FILL_FIRST"]
-    # Keep original semantics visible: PRICE_FIRST does not erase a legacy timeout.
-    max_wait_sec: int
-
-
-def normalize_entry_execution(plan: EntryPlan) -> EntryExecutionProjection:
-    combinations = {
-        ("RESTING_MAKER", "POST_ONLY_LIMIT"): ("IMMEDIATE", "PRICE_FIRST"),
-        ("TRIGGERED", "POST_ONLY_LIMIT"): ("CONDITIONAL", "PRICE_FIRST"),
-        ("TRIGGERED", "OPPOSING_BBO_IOC"): ("CONDITIONAL", "FILL_FIRST"),
-    }
-    try:
-        activation, capture = combinations[(plan.execution_mode, plan.order_tactic)]
-    except KeyError:
-        raise ValueError("entry_execution_combination_not_supported") from None
-    return EntryExecutionProjection(activation, capture, plan.max_wait_sec)
-
-
-@dataclass(frozen=True)
 class EntryExecutionFacts:
-    """Ephemeral owner facts, not a persisted lifecycle or a Risk disposition.
-
-    authority_error includes current Plan expiry, hash/runtime authority failure
-    and policy revocation. market_wait_reason comes from the current market gate.
-    Neither validity nor freshness is inferred from absent evidence.
-    """
     plan_status: str
-    authority_error: str | None
-    activation_current: bool
-    market_wait_reason: str | None
-    risk_approved: bool | None
-    risk_reason: str | None
-    preparation_claim_held: bool
-    proposal_status: str | None
-    order_status: str | None
-    order_age_sec: float | None
-    cancellation_unresolved: bool
+    authority_error: str | None = None
+    activation_current: bool = False
+    market_wait_reason: str | None = None
+    risk_disposition: str | None = None
+    risk_reason: str | None = None
+    preparation_claim_held: bool = False
+    proposal_status: str | None = None
+    proposal_leg_index: int | None = None
+    proposal_tactic: str | None = None
+    proposal_has_order: bool = False
+    order_status: str | None = None
+    order_leg_index: int = 0
+    order_tactic: str | None = None
+    order_age_sec: float | None = None
+    cancellation_unresolved: bool = False
+    # None means materialization is incomplete, never zero fills.
+    filled_quantity: float | None = None
+    passive_eligible: bool | None = None
+    ioc_eligible: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -58,54 +35,70 @@ class EntryExecutionDirective:
     action: Literal["WAIT", "COMMAND", "STOP", "RECONCILE", "DONE"]
     reason: str
     command: Literal["SUBMIT_PASSIVE", "CANCEL_PASSIVE", "SUBMIT_IOC"] | None = None
+    leg_index: int | None = None
+    quantity: float | None = None
 
 
-def resolve_entry_execution(
-    plan: EntryPlan, facts: EntryExecutionFacts,
-) -> EntryExecutionDirective:
-    """Pure existing-behavior projection. No clock, repository, network or writes."""
-    projection = normalize_entry_execution(plan)
-    # Durable external evidence wins over new activation, market or Risk evidence.
-    if facts.cancellation_unresolved or facts.proposal_status == "materialization_missing" or facts.order_status in {
-        "pending", "submission_unknown", "materialization_missing",
-    } or (facts.order_status is None and facts.proposal_status in {
-        "executing", "submitted", "submission_unknown", "partially_filled", "executed",
-    }):
+def resolve_entry_execution(plan: EntryPlan, facts: EntryExecutionFacts) -> EntryExecutionDirective:
+    """No clock, I/O or writes. Submission commands still require fresh Gateway Risk."""
+    if (facts.cancellation_unresolved or facts.proposal_status == "materialization_missing"
+        or facts.order_status in {"pending", "submission_unknown", "materialization_missing"}
+        or (not facts.proposal_has_order and facts.proposal_status in {
+            "executing", "submitted", "submission_unknown", "partially_filled", "executed",
+        })):
         return EntryExecutionDirective("RECONCILE", "external_outcome_unresolved")
-    if facts.order_status == "filled" or facts.plan_status == "filled":
-        return EntryExecutionDirective("DONE", "entry_filled")
+    if facts.filled_quantity is None or not math.isfinite(facts.filled_quantity) or facts.filled_quantity < 0:
+        return EntryExecutionDirective("RECONCILE", "entry_fill_evidence_incomplete")
+    working = facts.order_status in {"submitted", "partial", "partially_filled"}
+    maker = facts.order_tactic == "POST_ONLY_LIMIT"
+    remaining = max(0.0, plan.target_quantity - facts.filled_quantity)
+    if remaining <= 1e-12:
+        if working and maker:
+            return EntryExecutionDirective("COMMAND", "entry_target_filled", "CANCEL_PASSIVE", facts.order_leg_index)
+        return EntryExecutionDirective("DONE", "entry_target_filled")
     terminal = facts.authority_error or (
-        facts.plan_status if facts.plan_status in {"expired", "invalidated", "cancelled", "failed"} else None
-    )
-    if terminal:
-        if plan.order_tactic == "POST_ONLY_LIMIT" and facts.order_status in {
-            "submitted", "partial", "partially_filled",
-        }:
-            return EntryExecutionDirective("COMMAND", terminal, "CANCEL_PASSIVE")
-        return EntryExecutionDirective("STOP", terminal)
-    if facts.order_status in {"submitted", "partial", "partially_filled"}:
-        if (plan.order_tactic == "POST_ONLY_LIMIT"
-            and facts.order_age_sec is not None
-            and projection.max_wait_sec > 0
-            and facts.order_age_sec >= projection.max_wait_sec):
-            return EntryExecutionDirective("COMMAND", "maker_order_unfilled_until_expiry", "CANCEL_PASSIVE")
-        return EntryExecutionDirective("WAIT", "existing_order_owned_by_reconciliation")
-    if facts.order_status in {"cancelled", "submission_rejected", "rejected", "error", "expired"}:
-        # Known terminal Order never authorizes another leg under current contracts.
-        return EntryExecutionDirective("DONE", "existing_order_terminal")
+        facts.plan_status if facts.plan_status in {"expired", "invalidated", "cancelled", "failed", "filled"} else None)
+    if terminal or plan.capture_priority is None:
+        reason = terminal or "entry_capture_policy_required"
+        if working and maker:
+            return EntryExecutionDirective("COMMAND", reason, "CANCEL_PASSIVE", facts.order_leg_index)
+        return EntryExecutionDirective("RECONCILE" if working else "STOP", reason)
+    if working:
+        if not maker:
+            return EntryExecutionDirective("RECONCILE", "ioc_outcome_unresolved")
+        if (plan.capture_priority == "MAKER_PREFERRED" and facts.order_age_sec is not None
+            and facts.order_age_sec >= plan.max_wait_sec):
+            return EntryExecutionDirective("COMMAND", "passive_window_elapsed", "CANCEL_PASSIVE", facts.order_leg_index)
+        return EntryExecutionDirective("WAIT", "passive_order_working")
+    leg = 0
     if facts.order_status is not None:
-        return EntryExecutionDirective("RECONCILE", "unclassified_order_evidence")
-    if facts.proposal_status in {"rejected", "error", "cancelled"}:
+        if (facts.order_status == "cancelled" and maker and facts.order_leg_index == 0
+            and plan.capture_priority == "MAKER_PREFERRED"):
+            leg = 1
+        elif facts.order_status in {"filled", "cancelled", "submission_rejected", "rejected", "expired"}:
+            return EntryExecutionDirective("DONE", "entry_capture_terminal")
+        else:
+            return EntryExecutionDirective("RECONCILE", "unclassified_order_evidence")
+    if facts.proposal_status in {"rejected", "error", "cancelled"} and facts.proposal_leg_index == leg:
         return EntryExecutionDirective("STOP", "proposal_terminal")
     if facts.preparation_claim_held:
         return EntryExecutionDirective("WAIT", "preparation_owned")
-    if projection.activation == "CONDITIONAL" and not facts.activation_current:
+    if leg == 0 and plan.activation_policy == "CONDITIONAL" and not facts.activation_current:
         return EntryExecutionDirective("WAIT", "entry_trigger_activation_required")
     if facts.market_wait_reason:
         return EntryExecutionDirective("WAIT", facts.market_wait_reason)
-    if facts.risk_approved is False:
-        return EntryExecutionDirective("STOP", facts.risk_reason or "risk_rejected")
-    if facts.risk_approved is None:
-        return EntryExecutionDirective("WAIT", "risk_evaluation_required")
-    command = "SUBMIT_PASSIVE" if plan.order_tactic == "POST_ONLY_LIMIT" else "SUBMIT_IOC"
-    return EntryExecutionDirective("COMMAND", "current_entry_eligible", command)
+    if facts.risk_disposition == "DEFER":
+        return EntryExecutionDirective("WAIT", facts.risk_reason or "canonical_risk_deferred")
+    if facts.risk_disposition not in {None, "APPROVED"}:
+        return EntryExecutionDirective("STOP", facts.risk_reason or "canonical_risk_rejected")
+    # Once a Proposal exists its tactic is immutable, even before Broker handoff.
+    tactic = facts.proposal_tactic if facts.proposal_leg_index == leg else None
+    passive = tactic == "POST_ONLY_LIMIT" if tactic else (leg == 0 and (
+        plan.capture_priority == "PRICE_FIRST"
+        or (plan.capture_priority == "MAKER_PREFERRED" and facts.passive_eligible is True)))
+    if passive and facts.passive_eligible is not True:
+        return EntryExecutionDirective("WAIT", "post_only_would_cross_bbo")
+    if not passive and facts.ioc_eligible is not True:
+        return EntryExecutionDirective("WAIT", "entry_ioc_outside_frozen_bounds")
+    return EntryExecutionDirective("COMMAND", "current_entry_eligible",
+        "SUBMIT_PASSIVE" if passive else "SUBMIT_IOC", leg, remaining)

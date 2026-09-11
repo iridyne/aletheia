@@ -194,11 +194,6 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
     from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(repo, "validate_native_order_authority", lambda _order: None)
-    transitions = []
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.transition_entry_plan",
-        lambda plan_id, **kwargs: transitions.append((plan_id, kwargs)) or True,
-    )
     proposal_id, risk_id = "proposal-protected", "risk-protected"
     _authority(proposal_id, risk_id, order_type="limit", stop_price=95.0, take_profit=110.0)
     captured = []
@@ -245,31 +240,23 @@ def test_coordinator_preserves_approved_native_protection_and_tif(tmp_path, monk
     assert stored["time_in_force"] == "GTC"
     assert stored["post_only"] == 1
     assert stored["requested_liquidity"] == "maker"
-    assert transitions == [
-        (
-            "entry-plan-1",
-            {
-                "expected_status": "risk_reserved",
-                "status": "ordered",
-                "order_id": stored["id"],
-            },
-        )
-    ]
 
 
-def test_coordinator_rolls_back_order_when_plan_link_conflicts(tmp_path, monkeypatch):
+def test_coordinator_rolls_back_order_when_insert_fails(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.coordinator import execute_order
     from aletheia.storage import repositories as repo
 
     _authority("proposal-conflict", "risk-conflict", order_type="limit")
     monkeypatch.setattr(repo, "validate_native_order_authority", lambda _order: None)
-    monkeypatch.setattr(
-        "aletheia.execution.coordinator.transition_entry_plan",
-        lambda *_args, **_kwargs: False,
-    )
+    from aletheia.execution import coordinator
+    insert = coordinator.insert_order
+    def interrupted_insert(order):
+        insert(order)
+        raise RuntimeError("insert_interrupted")
+    monkeypatch.setattr(coordinator, "insert_order", interrupted_insert)
 
-    with pytest.raises(RuntimeError, match="entry_plan_order_transition_conflict"):
+    with pytest.raises(RuntimeError, match="insert_interrupted"):
         execute_order(
             proposal_id="proposal-conflict",
             risk_decision_id="risk-conflict",

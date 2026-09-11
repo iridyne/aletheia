@@ -21,7 +21,9 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
     plan_status = cycle.get("entry_plan_status")
     if plan_status == "expired":
         return "PLAN_EXPIRED", cycle.get("entry_plan_terminal_reason"), "await_requalification"
-    if plan_status in {"triggered", "risk_reserved"} and cycle.get("activation_recoverable"):
+    if ((plan_status in {"triggered", "risk_reserved"}
+         or (plan_status == "active" and cycle.get("execution_mode") == "TRIGGERED"))
+        and cycle.get("activation_recoverable")):
         expires = cycle.get("activation_expires_at")
         if not expires:
             return "WAITING_TRIGGER", "entry_trigger_activation_required", "await_fresh_trigger"
@@ -31,14 +33,14 @@ def _state(cycle: dict | None) -> tuple[str, str | None, str]:
             return "WAITING_TRIGGER", "entry_trigger_activation_monitoring_mismatch", "await_fresh_trigger"
         if (cycle.get("passive_entry") or {}).get("eligible") is False:
             return "WAITING_MARKET", "post_only_would_cross_bbo", "await_passive_market"
-    if plan_status == "waiting":
+    if plan_status == "waiting" or (plan_status == "active" and cycle.get("execution_mode") != "TRIGGERED"):
         if (cycle.get("execution_mode") == "RESTING_MAKER"
             and cycle.get("entry_plan_monitoring_state") == "ready"
             and (cycle.get("passive_entry") or {}).get("eligible") is False):
             return "WAITING_MARKET", "post_only_would_cross_bbo", "await_passive_market"
         state = "WAITING_TRIGGER" if cycle.get("execution_mode") == "TRIGGERED" else "PLAN_READY"
         return state, None, "fast_monitoring"
-    if plan_status == "triggered":
+    if plan_status in {"active", "triggered"}:
         return "TRIGGERED", None, "risk_reservation"
     if plan_status == "risk_reserved":
         return "RISK_RESERVED", None, "gateway_execution"

@@ -824,7 +824,7 @@ export interface EntryPlan {
   market_type: 'spot' | 'perp'
   direction: 'long' | 'short'
   execution_mode: 'RESTING_MAKER' | 'TRIGGERED'
-  status: 'waiting' | 'risk_reserved' | 'triggered' | 'ordered' | 'partially_filled' | 'filled' | 'invalidated' | 'expired' | 'cancelled' | 'failed'
+  status: 'waiting' | 'active' | 'risk_reserved' | 'triggered' | 'ordered' | 'partially_filled' | 'filled' | 'invalidated' | 'expired' | 'cancelled' | 'failed'
   order_id: string | null
   plan_hash: string
   created_at: string
@@ -840,7 +840,7 @@ export interface EntryPlan {
   monitoring_evidence_hash?: string | null
   contract_valid: boolean
   lineage?: {
-    order: { id: string; exchange_order_id: string | null; status: string; quantity: number; position_id: string | null } | null
+    orders: Array<{ id: string; exchange_order_id: string | null; status: string; quantity: number; position_id: string | null }>
     fills: { count: number; quantity: number; latest_at: string | null } | null
     position: { id: string; status: string; quantity: number; entry_price: number } | null
   }
@@ -860,6 +860,9 @@ export interface EntryPlan {
     trigger_data_requirements?: string[]
     trigger_freshness_ms?: number | null
     expected_horizon_hours?: number
+    capture_policy_id?: string | null
+    capture_priority?: 'PRICE_FIRST' | 'MAKER_PREFERRED' | 'FILL_FIRST' | null
+    activation_policy?: 'IMMEDIATE' | 'CONDITIONAL' | null
     order_tactic?: 'POST_ONLY_LIMIT' | 'OPPOSING_BBO_IOC'
     maker_required?: boolean
     time_in_force?: string
@@ -946,7 +949,7 @@ export interface EntryLifecycleEvent {
 export interface EntryExecutionLineage {
   availability: { available: boolean; reason: string | null }
   execution_state: string
-  order: { id: string; status: string; created_at: string | null; filled_at: string | null } | null
+  orders: Array<{ id: string; status: string; entry_leg_index: number | null; order_tactic: string; created_at: string | null; filled_at: string | null }>
   fills: { ids: string[]; quantity: number; latest_at: string | null } | null
   position: { id: string; status: string; opened_at: string | null; closed_at: string | null } | null
   close_orders: Array<{ id: string; status: string; created_at: string | null }>

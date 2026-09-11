@@ -6952,6 +6952,8 @@ export interface components {
             symbol: string;
             /** Updated At */
             updated_at: string;
+            /** Validated Hypothesis Json */
+            validated_hypothesis_json: string | null;
             /** Venue */
             venue: string;
         };
@@ -6965,6 +6967,8 @@ export interface components {
             active_entry_plan_status: string | null;
             /** Admission Basis */
             admission_basis?: string | null;
+            /** All Scores */
+            all_scores?: string | null;
             /** Attempt Count */
             attempt_count: number;
             /** Attention Max Age Sec */
@@ -7007,6 +7011,8 @@ export interface components {
             completed_at: string | null;
             /** Created At */
             created_at: string;
+            /** Crowding Risk */
+            crowding_risk?: number | null;
             /** Current Cycle Number */
             current_cycle_number: number | null;
             /** Current Generation Id */
@@ -7049,6 +7055,8 @@ export interface components {
             last_requalified_at: string | null;
             /** Last Stage */
             last_stage: string | null;
+            /** Late Entry Penalty */
+            late_entry_penalty?: number | null;
             /** Lifecycle Reason */
             lifecycle_reason: string | null;
             /** Lifecycle State */
@@ -7071,6 +7079,8 @@ export interface components {
             opportunity_mechanism: string | null;
             /** Opportunity Mechanism Version */
             opportunity_mechanism_version: string | null;
+            /** Opportunity Score */
+            opportunity_score?: number | null;
             /** Opportunity Source Component */
             opportunity_source_component: string | null;
             /** Opportunity Source Cutoff At */
@@ -7131,8 +7141,12 @@ export interface components {
             symbol: string;
             /** Total Score */
             total_score: number | null;
+            /** Tradability Score */
+            tradability_score?: number | null;
             /** Updated At */
             updated_at: string;
+            /** Validated Hypothesis Json */
+            validated_hypothesis_json: string | null;
             /** Venue */
             venue: string;
         };
@@ -8017,6 +8031,8 @@ export interface components {
         EntryLineageFills: {
             /** Count */
             count: number;
+            /** Ids */
+            ids: string[];
             /** Latest At */
             latest_at: string | null;
             /** Quantity */
@@ -8024,23 +8040,49 @@ export interface components {
         };
         /** EntryLineageOrder */
         EntryLineageOrder: {
+            /** Created At */
+            created_at: string | null;
+            /** Entry Leg Index */
+            entry_leg_index: number | null;
+            /** Error Reason */
+            error_reason: string | null;
             /** Exchange Order Id */
             exchange_order_id: string | null;
+            /** Filled At */
+            filled_at: string | null;
             /** Id */
             id: string | null;
+            /** Order Tactic */
+            order_tactic: string | null;
             /** Position Id */
             position_id: string | null;
+            /** Proposal Id */
+            proposal_id: string | null;
             /** Quantity */
             quantity: number | null;
+            /** Risk Decision Id */
+            risk_decision_id: string | null;
             /** Status */
             status: string | null;
         };
         /** EntryLineagePosition */
         EntryLineagePosition: {
+            /** Closed At */
+            closed_at: string | null;
             /** Entry Price */
             entry_price: number | null;
             /** Id */
             id: string | null;
+            /** Opened At */
+            opened_at: string | null;
+            /** Outcome Eligible */
+            outcome_eligible: number | null;
+            /** Outcome Exclusion Reason */
+            outcome_exclusion_reason: string | null;
+            /** Pending Close Order Id */
+            pending_close_order_id: string | null;
+            /** Pending Close Status */
+            pending_close_status: string | null;
             /** Quantity */
             quantity: number | null;
             /** Status */
@@ -8071,7 +8113,8 @@ export interface components {
             /** Execution State */
             execution_state: string;
             fills: components["schemas"]["EntryLineageFills"] | null;
-            order: components["schemas"]["EntryLineageOrder"] | null;
+            /** Orders */
+            orders: components["schemas"]["EntryLineageOrder"][];
             position: components["schemas"]["EntryLineagePosition"] | null;
         };
         /**
@@ -8079,6 +8122,8 @@ export interface components {
          * @description Stored JSON, including immutable historical extension fields.
          */
         EntryPlanPayload: {
+            /** Activation Policy */
+            activation_policy?: string | null;
             /** Analysis Context Fingerprint */
             analysis_context_fingerprint?: string | null;
             /** Analysis Context Version */
@@ -8097,6 +8142,10 @@ export interface components {
             candidate_family: string;
             /** Candidate Id */
             candidate_id: string;
+            /** Capture Policy Id */
+            capture_policy_id?: string | null;
+            /** Capture Priority */
+            capture_priority?: string | null;
             /** Compiled Geometry Fingerprint */
             compiled_geometry_fingerprint?: string | null;
             /** Cycle Number */
@@ -8270,6 +8319,8 @@ export interface components {
             terminal_at: string | null;
             /** Terminal Reason */
             terminal_reason: string | null;
+            /** Trigger Activation Id */
+            trigger_activation_id: string | null;
             /** Updated At */
             updated_at: string;
             /** Venue */
@@ -8321,6 +8372,8 @@ export interface components {
             terminal_at: string | null;
             /** Terminal Reason */
             terminal_reason: string | null;
+            /** Trigger Activation Id */
+            trigger_activation_id: string | null;
             /** Updated At */
             updated_at: string;
             /** Venue */
@@ -10856,6 +10909,8 @@ export interface components {
             symbol: string;
             /** Updated At */
             updated_at: string;
+            /** Validated Hypothesis Json */
+            validated_hypothesis_json: string | null;
             /** Venue */
             venue: string;
         };
