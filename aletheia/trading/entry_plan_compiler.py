@@ -35,6 +35,7 @@ def compiler_contract_material() -> dict:
         "lifetime_minutes": _HORIZON_LIFETIME_MINUTES,
         "sideways_stop_mult": SIDEWAYS_STOP_MULT,
         "geometry": _GEOMETRY, "tactic": _TACTIC,
+        "planning_market_quality": "exact-envelope-before-input-bind/v1",
     }
 
 
@@ -234,6 +235,27 @@ def _compile_bounded_risk_envelope(
         raise PlanIntentError("COMPILER_INTERNAL", type(exc).__name__) from exc
 
 
+def require_entry_market_quality(execution_context, cfg) -> None:
+    """One exact spread/depth/cost envelope for preflight and Compiler."""
+    from aletheia.agent_shell.entry_planner import PlanIntentError
+
+    if execution_context.get("availability") != "available":
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
+    try:
+        spread = float(execution_context["spread_bps"])
+        depth = float(execution_context["depth_10bps_usd"])
+        costs = float(execution_context["estimated_costs"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE") from exc
+    if (
+        not all(math.isfinite(value) for value in (spread, depth, costs))
+        or spread < 0 or costs < 0
+        or spread > float(cfg.universe.max_spread_bps)
+        or depth < float(cfg.universe.min_depth_10bps_usd)
+    ):
+        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
+
+
 def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
     """Compile a supplied-anchor hypothesis through the existing bounded Risk owner."""
     from aletheia.agent_shell.entry_planner import PlanIntentError
@@ -250,21 +272,7 @@ def compile_entry_plan(generation, context, hypothesis, cfg) -> EntryPlan:
 
     authority = require_entry_runtime_authority(cfg)
 
-    if context.execution_context.get("availability") != "available":
-        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
-    try:
-        spread = float(context.execution_context["spread_bps"])
-        depth = float(context.execution_context["depth_10bps_usd"])
-        costs = float(context.execution_context["estimated_costs"])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE") from exc
-    if (
-        not all(math.isfinite(value) for value in (spread, depth, costs))
-        or spread < 0 or costs < 0
-        or spread > float(cfg.universe.max_spread_bps)
-        or depth < float(cfg.universe.min_depth_10bps_usd)
-    ):
-        raise PlanIntentError("EXECUTION_CONTEXT_UNAVAILABLE")
+    require_entry_market_quality(context.execution_context, cfg)
     anchors = {item.anchor_id: item for item in context.anchors}
     primary = anchors[hypothesis.primary_anchor_ref]
     invalidation = anchors[hypothesis.invalidation_anchor_ref]

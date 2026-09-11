@@ -335,3 +335,19 @@ def test_workbench_projects_monitoring_and_plan_integrity():
     assert "contract_valid" not in row
     assert _entry_plan_projection({**row, "plan_hash": "0" * 64})["contract_valid"] is False
 
+
+
+@spec_claim(SpecClaim(
+    "EP-S14", "entry_plan_contract", "Market-quality retry before input binding", "L2a",
+    "Thin exact books release the same generation without model/input consumption; recovery binds a new qualified book.",
+    status="implemented",
+))
+def test_market_quality_retry_before_input_binding(monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+    from tests.test_entry_planner import test_market_quality_wait_does_not_bind_and_recovers_same_generation
+    cfg = load_config()
+    cfg.market_data.ccxt_exchange = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    cfg.agent.permission_mode = "Full"
+    save_config(cfg)
+    test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, "thin")

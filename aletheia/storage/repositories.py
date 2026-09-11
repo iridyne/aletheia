@@ -8065,6 +8065,7 @@ def ensure_candidate_planning_generation(
             dependency_failure = blocked_reason in {
                 "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE",
                 "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+                "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
             }
             if dependency_failure:
                 structure_requalified = False
@@ -8447,6 +8448,7 @@ def get_candidate_path_progress(*, now: datetime | None = None) -> dict:
                     "inference_queue_full", "PLANNER_TIMEOUT", "PLANNER_UNAVAILABLE", "PLANNER_INTERNAL",
                     "PLANNER_CANCELLED_DISPATCH_UNKNOWN", "PLANNER_CANCELLED_BEFORE_DISPATCH",
                     "ENTRY_ANALYSIS_EXECUTION_CONTEXT_UNAVAILABLE", "ENTRY_ANALYSIS_REQUIRED_CONTEXT_UNAVAILABLE",
+                    "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
                     "ENTRY_PLAN_COMPILE_UNAVAILABLE", "COMPILER_INTERNAL",
                 } else "dependency_unavailable"
                 blockers[reason] = blockers.get(reason, 0) + 1

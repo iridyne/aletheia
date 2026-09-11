@@ -257,6 +257,18 @@ async def plan_next_candidate(
                             retry_seconds=60,
                         )
                         return {"status": "unavailable", "planning_generation_id": generation["id"], "model_invoked": False}
+                    from aletheia.trading.entry_plan_compiler import require_entry_market_quality
+
+                    try:
+                        require_entry_market_quality(context_model.execution_context, cfg)
+                    except PlanIntentError:
+                        repo.release_candidate_planning_claim(
+                            generation["id"], owner, "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
+                            retry_seconds=60,
+                        )
+                        return {"status": "unavailable", "planning_generation_id": generation["id"],
+                                "reason": "ENTRY_ANALYSIS_MARKET_QUALITY_UNAVAILABLE",
+                                "model_invoked": False, "compiler_invoked": False}
                     payload = canonical_json(context_model.model_dump(mode="json"))
                     if not repo.bind_candidate_planner_input(
                         generation["id"], owner, payload,
