@@ -1573,6 +1573,11 @@ def _execute_proposal(
             raise ValueError("entry_execution_owner_lost")
         update_trade_proposal(proposal.id, status="executing")
 
+    def submission_started():
+        # Coordinator invokes this only after the broker-boundary transaction commits.
+        proposal.status = "executing"
+        _entry_execution_stage(proposal, execution_receipt, "broker_submission_started")
+
     try:
         if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
             # Real exchange demo/testnet order — exchange-side record, no live guard
@@ -1610,8 +1615,7 @@ def _execute_proposal(
                 if execution_proposal.entry_plan_id:
                     order_kwargs["validate_submission"] = validate_submission
                     order_kwargs["before_submission"] = before_submission
-                    order_kwargs["submission_started"] = lambda: _entry_execution_stage(
-                        proposal, execution_receipt, "broker_submission_started")
+                    order_kwargs["submission_started"] = submission_started
                 result = execute_live_order(**order_kwargs)
                 _entry_execution_stage(proposal, execution_receipt, "broker_response_received", result_status=result.get("status"))
             except (PostSubmitDBError, SubmissionUnknownError) as e:
