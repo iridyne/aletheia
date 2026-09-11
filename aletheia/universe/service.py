@@ -161,7 +161,6 @@ def _build_candidate_selection_bundle(
     from aletheia.universe.candidate_selection_authority import (
         candidate_selection_policy_identity,
     )
-    from aletheia.universe.snapshot_freshness import has_fresh_market_snapshot
 
     action_routes = {
         (
@@ -173,12 +172,7 @@ def _build_candidate_selection_bundle(
             cfg,
             str(item.get("venue") or ""),
             str(item.get("market_type") or "spot"),
-        ) or (None if has_fresh_market_snapshot(
-            str(item.get("symbol") or ""),
-            str(item.get("market_type") or "spot"),
-            exchange=str(item.get("venue") or ""),
-            now=datetime.fromisoformat(captured_at.replace("Z", "+00:00")),
-        ) else "market_snapshot_unavailable")
+        )
         for item in population
     }
     selection_policy = candidate_selection_policy_identity(cfg)
