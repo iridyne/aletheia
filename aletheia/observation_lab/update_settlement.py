@@ -276,7 +276,8 @@ def prove_applied_delivery_suffix() -> dict[str, Any]:
                 raise ValueError("acknowledgement_incomplete")
             # The recovery cut cannot introduce an Observation identity while draining.
             for row in main.execute("SELECT * FROM observation_delivery_outbox WHERE sequence>?", (cursor["contiguous_sequence"],)):
-                if (row["receipt_kind"] != "capture" or row["observation_id"] or row["generation"] is not None
+                if (row["acknowledged_at"] is not None or row["receipt_kind"] != "capture"
+                    or row["observation_id"] or row["generation"] is not None
                     or not _capture_receipt_reason_allowed(row["resolution_reason"])):
                     raise ValueError("pending_receipt_outside_recovery_scope")
             memory.executemany("DELETE FROM lab_audit_outbox WHERE audit_id=?", [(item,) for item in suffix])

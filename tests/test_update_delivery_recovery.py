@@ -4,7 +4,7 @@ import json
 import pytest
 
 
-@pytest.mark.parametrize("defect", [None, "prior_lab", "suffix_receipt", "retry", "foreign_state"])
+@pytest.mark.parametrize("defect", [None, "prior_lab", "suffix_receipt", "retry", "foreign_state", "unproven_ack"])
 def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
     from aletheia.observation_lab.canonical import append_delivery_receipt, import_delivery_receipts
     from aletheia.observation_lab.checkpoint import compute_joint_checkpoint, save_joint_checkpoint, verify_joint_checkpoint
@@ -31,6 +31,9 @@ def test_only_exact_unclassified_delivery_suffix_can_settle(defect):
     assert not verify_joint_checkpoint().ok
     count = lab.execute("SELECT COUNT(*) FROM joint_checkpoints").fetchone()[0]
     append_delivery_receipt(receipt_kind="capture", receipt_id="pending", resolution_reason="adapter_unavailable")
+    if defect == "unproven_ack":
+        from aletheia.storage import repositories as repo
+        repo.execute_write("UPDATE observation_delivery_outbox SET acknowledged_at='unproven' WHERE receipt_id='pending'")
     from aletheia.observation_lab.update_settlement import prove_applied_delivery_suffix
     from aletheia.update.continuity import _checkpoint_preflight_verdict
     proof = prove_applied_delivery_suffix()
