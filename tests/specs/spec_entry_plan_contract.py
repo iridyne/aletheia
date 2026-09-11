@@ -560,7 +560,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
 
 
 @spec_claim(SpecClaim("EP-B17", "entry_plan_contract", "Bounded execution resolver (#3111)", "L2b",
-    "Immediate FillFirst retains both real Risk passes, quantity normalization and the Coordinator Broker fence.", status="implemented"))
+    "Immediate FillFirst accepts improving BBO with a frozen limit and retains both Risk passes and the Coordinator Broker fence.", status="implemented"))
 def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, monkeypatch):
     from datetime import datetime, timezone
     from tests.test_risk_engine import setup_test_env
@@ -608,11 +608,11 @@ def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, mon
     ms = int(now.timestamp()*1000)
     quote = FastMarketEvent(event_type="quote", instrument=InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type),
         sequence=1, exchange_timestamp_ms=ms, received_timestamp_ms=ms,
-        stream_generation_id="stream", subscription_generation_id="subscription", bid=99.99, ask=100.)
+        stream_generation_id="stream", subscription_generation_id="subscription", bid=99.98, ask=99.99)
     result = execute_entry_plan(plan.plan_id, bid=quote.bid, ask=quote.ask,
         observed_at=now.isoformat(), source_observed_at=now.isoformat(), stream_generation_id="stream",
-        subscription_generation_id="subscription", quote_sequence=1, depth_bids=((99.99,1000.),),
-        depth_asks=((100.,1000.),), depth_exchange_timestamp_ms=ms, depth_received_timestamp_ms=ms, depth_sequence=1,
+        subscription_generation_id="subscription", quote_sequence=1, depth_bids=((99.98,1000.),),
+        depth_asks=((99.99,1000.),), depth_exchange_timestamp_ms=ms, depth_received_timestamp_ms=ms, depth_sequence=1,
         current_market=lambda: (quote, {"state": "ready"}))
     assert len(commands) == 1, result
     proposal = repo.get_trade_proposal_by_entry_plan(plan.plan_id)

@@ -543,6 +543,14 @@ never means zero fills. A full-fill race prevents another leg.
 IOC price is a frozen Plan bound derived from the structural anchor, slippage
 and worst-price envelope. Current opposing BBO and depth establish eligibility;
 BBO movement never widens the limit or requires equality with an old quote.
+For current Direct/Immediate FillFirst and MakerPreferred IOC legs, improving
+opposing prices may lie outside the frozen single-point zone (long ask below
+anchor; short bid above anchor). The immutable IOC limit, worst price, slippage,
+current invalidation, depth, both Risk passes and aggregate leg limits still
+apply. Conditional keeps its two-sided entry-zone requirement; PriceFirst is
+unchanged. This owner-accepted #3111 D1 exception participates in the Entry
+behavior fingerprint: existing Plans do not acquire it across the cutover,
+and historical JSON/hashes remain unchanged.
 Conditional activation must be fresh at the first Broker handoff. A second leg
 reuses the exact original activation and immutable first handoff receipt while
 requiring fresh current execution evidence; it never renews Trigger authority.
