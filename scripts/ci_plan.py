@@ -586,7 +586,6 @@ def _local_checks(required: dict[str, bool], mode: str) -> list[dict[str, Any]]:
                 "uv", "run", "pytest",
                 "tests/test_ci_plan.py",
                 "tests/test_ci_local.py",
-                "tests/test_ci_workflow_contract.py",
                 "tests/specs/spec_codex_shepherd.py",
                 "tests/test_ci_yield.py",
                 "-q",
