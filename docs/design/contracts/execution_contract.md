@@ -62,7 +62,7 @@ immutable Proposal、authoritative RiskDecision 和 stable client order identity
 | Position | `Position(symbol, direction, qty, entry_price, stop_price, take_profit_price, mode...)` + 入场环境(btc_entry_price/regime_tag) + `exit_reasoning` (actual close actor/source/trigger) | `open→closed` | `models.py:165` |
 
 **Proposal 状态契约([trust §1.2](../../governance/policies/trust_and_change_control.md)):**
-- `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executing`=已有持久执行 owner · `executed`=Order/Fill/Position 完整成交链已落库 · `rejected`=人工或风控拒 · `error`=确认未提交的终态失败。
+- `pending`=无人工批准 · `approved`=人工/允许的工作流批准 · `executing`=可能已开始外部提交（Entry 内部准备仅由 claim 表示） · `executed`=Order/Fill/Position 完整成交链已落库 · `rejected`=人工或风控拒 · `error`=确认未提交的终态失败。
 - `submission_unknown`=交易所边界可能已越过，必须先对账，禁止自动重发；`materialization_missing`=已有 Order 或交易所已报告成交活动，但本地 Fill/Position 物化未完整，禁止重新下单（交易所执行的本地记录）。
 - **不得**用状态变更替代缺失记录:执行发生则 order 必存在,风控发生则 risk_decision 必存在。
 
@@ -97,7 +97,7 @@ Risk 前置失败，不得产生 authoritative RiskDecision 或 Order。
   V1 authority 中。
 - Risk reservation 必须在 Order 持久化和 exchange submission 之前存在。Order 与 Entry Plan
   `risk_reserved → ordered` 在同一 SQLite writer transaction 中前进。
-- Entry Plan Proposal 的短期 `EntryExecutionReceiptV1` 不进入 immutable Proposal identity；其
+- Entry Plan Proposal 的有界 `EntryExecutionReceiptV1` 不进入 immutable Proposal identity；其
   attempt/hash 必须同时绑定 authoritative RiskDecision、Order 与 Fill。Maker limit 是订单约束，
   不得再要求它等于另一条异步 mark。
 - Fast Monitoring 只提交 Gateway cancel request。Gateway 经 broker/adapter best-effort cancel，

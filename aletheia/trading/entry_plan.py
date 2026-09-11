@@ -38,7 +38,7 @@ ENTRY_PLAN_STATUSES = (
 ENTRY_PLAN_TRANSITIONS = {
     "waiting": frozenset({"risk_reserved", "triggered", "invalidated", "expired", "cancelled", "failed"}),
     "triggered": frozenset({"risk_reserved", "invalidated", "expired", "cancelled", "failed"}),
-    "risk_reserved": frozenset({"ordered", "invalidated", "expired", "cancelled", "failed"}),
+    "risk_reserved": frozenset({"waiting", "triggered", "ordered", "invalidated", "expired", "cancelled", "failed"}),
     "ordered": frozenset({"partially_filled", "filled", "cancelled", "failed"}),
     "partially_filled": frozenset({"filled", "cancelled", "failed"}),
     "filled": frozenset(),

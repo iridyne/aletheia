@@ -194,6 +194,9 @@ def execute_order(
     post_only: bool = False,
     entry_plan_id: str | None = None,
     order_tactic: str | None = None,
+    before_submission=None,
+    validate_submission=None,
+    submission_started=None,
     **_unused,
 ) -> dict:
     """Commit pending intent, send one UTA command, then CAS the report."""
@@ -230,25 +233,23 @@ def execute_order(
         execution_mode=execution_mode,
         status="pending",
     )
-    with transaction(immediate=True):
-        insert_order(order)
-        if entry_plan_id and not transition_entry_plan(
-            entry_plan_id,
-            expected_status="risk_reserved",
-            status="ordered",
-            order_id=order.id,
-        ):
-            raise RuntimeError("entry_plan_order_transition_conflict")
+    if before_submission is None:
+        with transaction(immediate=True):
+            insert_order(order)
+            if entry_plan_id and not transition_entry_plan(
+                entry_plan_id,
+                expected_status="risk_reserved",
+                status="ordered",
+                order_id=order.id,
+            ):
+                raise RuntimeError("entry_plan_order_transition_conflict")
     instrument = instrument_from_local(symbol, market_type)
     try:
         adapter = _create_bound_adapter(execution_mode)
     except Exception:
-        finalize_exchange_acknowledgement(
-            order.id,
-            exchange_order_id=None,
-            status="error",
-            error_reason="uta_adapter_unavailable_before_submission",
-        )
+        if before_submission is None:
+            finalize_exchange_acknowledgement(order.id, exchange_order_id=None, status="error",
+                error_reason="uta_adapter_unavailable_before_submission")
         raise
     try:
         placeholders = ",".join("?" for _ in _RETRY_SUPPRESSING_ORDER_STATES)
@@ -262,10 +263,12 @@ def execute_order(
             if UTAAccountIdentity.model_validate_json(existing["uta_account_identity_json"] or "") != adapter.identity:
                 raise ValueError("uta_account_identity_mismatch")
         order.uta_account_identity_json = adapter.identity.model_dump_json()
-        update_order_metadata(order.id, uta_account_identity_json=order.uta_account_identity_json)
+        if before_submission is None:
+            update_order_metadata(order.id, uta_account_identity_json=order.uta_account_identity_json)
     except Exception:
         _close_adapter(adapter)
-        finalize_exchange_acknowledgement(order.id, exchange_order_id=None, status="error", error_reason="uta_account_identity_unavailable")
+        if before_submission is None:
+            finalize_exchange_acknowledgement(order.id, exchange_order_id=None, status="error", error_reason="uta_account_identity_unavailable")
         raise
     command = SubmitOrderCommand(
         command_id=str(uuid4()),
@@ -295,7 +298,21 @@ def execute_order(
         post_only=post_only,
         leverage=Decimal(leverage) if leverage is not None else None,
     )
+    if before_submission is not None:
+        try:
+            validate_submission()
+            with transaction(immediate=True):
+                before_submission()
+                insert_order(order)
+                if not transition_entry_plan(entry_plan_id, expected_status="risk_reserved",
+                                             status="ordered", order_id=order.id):
+                    raise RuntimeError("entry_plan_order_transition_conflict")
+        except BaseException:
+            _close_adapter(adapter)
+            raise
     try:
+        if submission_started is not None:
+            submission_started()
         report = _run(_call_and_close(adapter, "submit_order", command))
     except Exception:
         report = _fallback_report(adapter, command, CommandEvidence.AMBIGUOUS)

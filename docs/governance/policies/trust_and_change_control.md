@@ -100,8 +100,10 @@ Rules:
 - `pending` means no human approval/rejection has been applied.
 - `approved` means a human-controlled dashboard/API/CLI path approved paper/demo
   execution or a future explicitly allowed workflow approved execution.
-- `executing` means a durable execution owner/lease exists; retries must recover
-  that claim instead of creating a second submission.
+- For Entry Plans, `executing` begins at the persisted external submission boundary;
+  internal preparation owns only a claim while the Proposal stays pending/approved.
+  Other execution paths retain their existing owner/lease semantics. Once external
+  submission may have begun, reconciliation must prevent a second submission.
 - `submitted` / `partially_filled` preserve confirmed exchange progress while
   materialization or the remaining quantity is unresolved.
 - `executed` means the required Order/Fill/Position materialization chain is

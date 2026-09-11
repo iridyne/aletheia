@@ -309,13 +309,20 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
                             stream_generation_id=ready.stream_generation_id,
                             subscription_generation_id=ready.subscription_generation_id, **values)
                 yield quote
+                # Execution no longer blocks the market consumer. A later natural
+                # quote retries after the obsolete reconnect attempt releases ownership.
+                for wake in range(20):
+                    if submitted:
+                        break
+                    await asyncio.sleep(0.01)
+                    yield quote.model_copy(update={"sequence": quote.sequence + wake + 1})
             stop.set()
 
     stream = Stream()
     monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
     await asyncio.wait_for(watch._watch_loop(cfg), timeout=2)
     assert ready.activation_events[-1].instrument in stream.instruments
-    assert len(submitted) == 1
+    assert len(set(submitted)) == 1
     assert repo.get_trade_proposal_by_entry_plan(plan.plan_id)["id"] == submitted[0]
     if scenario != "cold_start":
         assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash
@@ -323,7 +330,7 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
 
 @pytest.mark.parametrize("tactic", ["POST_ONLY_LIMIT", "OPPOSING_BBO_IOC"])
 @pytest.mark.parametrize("expiry_stage", ["preflight", "authoritative", "broker"])
-def test_expired_activation_after_claim_is_audited_terminal_error(monkeypatch, tactic, expiry_stage):
+def test_expired_activation_before_broker_returns_to_waiting(monkeypatch, tactic, expiry_stage):
     from aletheia.storage import repositories as repo
     from aletheia.execution.entry_plan_execution import build_entry_plan_order_intent, build_entry_execution_receipt
     from aletheia.execution.gateway import execute_existing_proposal as actual_gateway
@@ -374,14 +381,17 @@ def test_expired_activation_after_claim_is_audited_terminal_error(monkeypatch, t
             return proposal.quantity, None
         gate.setattr(gateway, "_prepare_exchange_quantity", prepare)
         gate.setattr(gateway, "_check_symbol_availability", finish_preparation)
-        gate.setattr("aletheia.execution.coordinator.execute_order",
-            lambda **kwargs: broker_calls.append(kwargs) or {"status": "failed"})
+        def coordinator(**kwargs):
+            kwargs["validate_submission"]()
+            broker_calls.append(kwargs)
+            return {"status": "failed"}
+        gate.setattr("aletheia.execution.coordinator.execute_order", coordinator)
         result = actual_gateway(proposal.id, proposal.execution_mode, execution_receipt=receipt)
-    assert result["status"] == "error"
+    assert result["status"] == ("waiting_market" if expiry_stage == "broker" else "error")
     assert result["reason_code"] == ("entry_trigger_activation_expired" if expiry_stage == "broker"
         else "entry_execution_receipt_rejected")
     assert broker_calls == []
-    assert repo.get_trade_proposal(proposal.id)["status"] == "error"
-    assert repo.get_entry_plan(plan.plan_id)["status"] == "failed"
-    assert any(event["event_type"] == "execution_error" and event["after"]["status"] == "error" for event in audit)
+    assert repo.get_trade_proposal(proposal.id)["status"] == ("pending" if expiry_stage == "broker" else "error")
+    assert repo.get_entry_plan(plan.plan_id)["status"] == ("triggered" if expiry_stage == "broker" else "failed")
+    assert any(event["event_type"] == ("entry_execution_stage" if expiry_stage == "broker" else "execution_error") for event in audit)
     assert repo.get_proposal_execution_claim(proposal.id) is None

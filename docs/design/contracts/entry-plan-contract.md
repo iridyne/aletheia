@@ -476,3 +476,38 @@ Gateway quantity normalization for an EntryPlan rounds down to executable venue
 steps within the approved intent. A quantity below the venue minima is rejected;
 it must not be rounded above the immutable Plan ceiling. The normalized snapshot
 still passes authoritative Risk and retains original Proposal identity.
+
+
+## Pre-broker submission authority (#3096)
+
+Trigger evidence freshness, current submission-market eligibility and attempt integrity
+have separate owners. RESTING_MAKER has no Trigger TTL: its receipt is bounded by
+Plan expiry. Triggered receipts remain bounded by canonical activation expiry; a new
+quote cannot extend an old activation. Receipt and immutable Proposal hashes remain
+unchanged during an attempt.
+
+The watcher continues consuming market events while one execution task per Plan does
+internal preparation. The existing execution claim fences that work; Entry Proposal
+status remains pending/approved. After both Risk passes and adapter/account preparation,
+Gateway checks the latest exact-instrument quote using existing quote-channel readiness,
+source/receive freshness and stream identity. This is a submission-market check, not a
+replacement global receipt TTL. Maker price stays fixed; IOC price is never rebound.
+
+Before any UTA submit call (including profile transfer/leverage preparation), the current
+claim owner is fenced and Proposal executing plus pending Order plus Plan ordered are
+committed in one short transaction. No network operation spans that transaction.
+External execution then follows existing UTA evidence/reconciliation semantics.
+
+Temporary crossing, stale/unavailable current market, or expired activation before this
+boundary returns to existing market/trigger waiting. The claim and pre-Order Risk allowance
+are released; risk_reserved returns to waiting (resting) or triggered (conditional).
+A later natural event can earn a new attempt on the same immutable Plan/Proposal and
+must pass both Risk evaluations. Expired pre-broker claims can be reclaimed; stale
+owners cannot mark submission. A pending local Order or an executing/unknown Proposal
+prevents automatic repetition. Expiry, identity/hash, policy, permission and immutable
+intent failures remain terminal. Historical terminal Plans are never revived.
+
+Stage timestamps and attempt identity are retained as entry_execution_stage audit facts:
+market receipt, claim, both Risk passes, quantity normalization, final market check,
+broker start and response/unknown. Natural-window p50/p95 observations must report
+sample counts and missing stages; test timing is not runtime qualification.
