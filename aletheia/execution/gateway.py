@@ -18,6 +18,7 @@ from aletheia.trading.entry_snapshot import (
 from aletheia.storage.models import TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     get_proposal_execution_claim,
+    proposal_execution_claim_is_fresh,
     get_order,
     get_trade_proposal,
     has_order_for_proposal,
@@ -49,16 +50,6 @@ def _execution_claim_times() -> tuple[str, str, datetime]:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(seconds=_EXECUTION_LEASE_SECONDS)
     return now.isoformat(), expires.isoformat(), now
-
-
-def _execution_claim_is_fresh(claim: dict, now: datetime) -> bool:
-    try:
-        expires = datetime.fromisoformat(str(claim.get("lease_expires_at")).replace("Z", "+00:00"))
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        return expires > now
-    except (TypeError, ValueError):
-        return False
 
 
 def _write_post_commit_audit(
@@ -368,7 +359,7 @@ def execute_existing_proposal(
 
         claimed_at, lease_expires_at, now = _execution_claim_times()
         claim = get_proposal_execution_claim(proposal.id)
-        if claim is not None and _execution_claim_is_fresh(claim, now):
+        if claim is not None and proposal_execution_claim_is_fresh(claim, now):
             return {
                 "status": "already_claimed",
                 "proposal_id": proposal.id,
@@ -1576,7 +1567,7 @@ def _execute_proposal(
         claim = get_proposal_execution_claim(proposal.id)
         stored = get_trade_proposal(proposal.id)
         if (not claim or claim["owner_token"] != owner_token
-            or not _execution_claim_is_fresh(claim, now)
+            or not proposal_execution_claim_is_fresh(claim, now)
             or stored["status"] not in {"pending", "approved"}
             or has_order_for_proposal(proposal.id)):
             raise ValueError("entry_execution_owner_lost")

@@ -202,6 +202,20 @@ def test_activation_persistence_is_atomic_immutable_and_retains_plan_bytes(monke
     repo.record_entry_plan_monitoring(plan.plan_id, {"state": "ready", "stream_generation_id": "stream-2",
         "subscription_generation_id": "subscription-1"})
     assert repo.get_candidate_entry_lifecycle(candidate.id)["lifecycle_state"] == "WAITING_TRIGGER"
+    # A dead preparation owner must not prevent earning a new trigger proof.
+    assert repo.insert_proposal_execution_claim(proposal.id, "dead-owner", now.isoformat(), later.isoformat())
+    assert not repo.entry_plan_activation_can_refresh(plan.plan_id)
+    assert not repo.bind_entry_trigger_activation(renewed, expected_activation_id=activation.activation_id, now=now)
+    repo.execute_write("UPDATE proposal_execution_claims SET lease_expires_at=? WHERE proposal_id=?",
+                       ((now - timedelta(seconds=1)).isoformat(), proposal.id))
+    assert repo.entry_plan_activation_can_refresh(plan.plan_id)
+    repo.update_trade_proposal(proposal.id, status="executing")
+    assert not repo.entry_plan_activation_can_refresh(plan.plan_id)
+    repo.update_trade_proposal(proposal.id, status=proposal.status)
+    with monkeypatch.context() as order_guard:
+        order_guard.setattr(repo, "has_order_for_proposal", lambda _: True)
+        assert not repo.entry_plan_activation_can_refresh(plan.plan_id)
+    assert repo.get_proposal_execution_claim(proposal.id)["owner_token"] == "dead-owner"
     original_proposal = repo.get_trade_proposal(proposal.id)
     assert repo.bind_entry_trigger_activation(renewed, expected_activation_id=activation.activation_id, now=later)
     assert repo.get_entry_trigger_activation(activation.activation_id)["activation_hash"] == activation.activation_hash

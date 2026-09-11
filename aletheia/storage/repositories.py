@@ -1922,6 +1922,16 @@ def get_proposal_execution_claim(proposal_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def proposal_execution_claim_is_fresh(claim: dict, now: datetime) -> bool:
+    try:
+        expires = datetime.fromisoformat(str(claim.get("lease_expires_at")).replace("Z", "+00:00"))
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        return expires > now
+    except (TypeError, ValueError):
+        return False
+
+
 def get_entry_risk_reservation(proposal_id: str) -> dict | None:
     """Return one durable pre-Order Risk allowance, if present."""
     row = (
@@ -9304,11 +9314,14 @@ def get_entry_trigger_activation(activation_id: str) -> dict | None:
     return dict(row) if row else None
 
 
-def entry_plan_activation_can_refresh(plan_id: str) -> bool:
+def entry_plan_activation_can_refresh(plan_id: str, *, now: datetime | None = None) -> bool:
     """A new trigger can refresh an unsubmitted intent, never an exchange handoff."""
     proposal = get_trade_proposal_by_entry_plan(plan_id)
-    return proposal is None or (proposal["status"] in {"pending", "approved"}
-        and get_proposal_execution_claim(proposal["id"]) is None
+    if proposal is None:
+        return True
+    claim = get_proposal_execution_claim(proposal["id"])
+    return (proposal["status"] in {"pending", "approved"}
+        and (claim is None or not proposal_execution_claim_is_fresh(claim, now or datetime.now(timezone.utc)))
         and not has_order_for_proposal(proposal["id"]))
 
 
@@ -9324,7 +9337,7 @@ def bind_entry_trigger_activation(activation, *, expected_activation_id: str | N
         row = get_entry_plan(activation.plan_id)
         if row is None or row["status"] not in {"waiting", "triggered", "risk_reserved"}:
             return False
-        if not entry_plan_activation_can_refresh(activation.plan_id):
+        if not entry_plan_activation_can_refresh(activation.plan_id, now=now):
             return False
         plan = decode_entry_plan(row["plan_json"])
         require_entry_plan_runtime_authority(plan)
