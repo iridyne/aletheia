@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `992203fa65fb9cb29e8ae1d5246b0aef71d5206f`, under
+Source checkpoint: `8965e969fc1276641cd13b2418b88498a3c58796`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -183,4 +183,13 @@ Demo identity. OKX Demo's CCXT sandbox capability loading remains a specialized
 venue-native consumer, while the registry is the sole generic mode-to-venue
 identity source. Focused local evidence is 82 architecture/spec tests and 212
 execution/registry/pipeline tests; no venue, permission, route, or deployment
+authority changed.
+
+The reconciliation identity seam is now merged at this checkpoint. Its native
+Bitget and non-Bitget UTA/CCXT mode partitions, plus the CCXT live subset, are
+derived from `UTA_EXECUTION_MODES` and the shared environment/venue registry
+instead of a second literal mode list. This preserves the existing venue-native
+recovery exception and unknown-outcome handling while preventing future mode
+identity drift. Focused evidence is 105 reconciliation/UTA/identity/pipeline
+tests with Ruff and local preflight/plan passing; no account, route, or runtime
 authority changed.
