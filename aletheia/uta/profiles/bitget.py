@@ -263,6 +263,8 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
         limit,
         history_params_fn,
         *,
+        request,
+        ledger_requests: tuple[dict[str, object], ...],
         venue_symbol: str | None = None,
     ):
         """Bitget classic_v2 uses fetch_funding_history per symbol.
@@ -277,14 +279,14 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
         rows = []
         history_bound_reached = False
         try:
-            page = await exchange.fetch_funding_history(venue_symbol, since, limit)
+            page = await request(exchange.fetch_funding_history(venue_symbol, since, limit))
             if not isinstance(page, list):
                 raise ValueError("invalid CCXT funding history")
             history_bound_reached = len(page) >= limit
             rows.extend(item for item in page if isinstance(item, dict))
         except (Exception, TimeoutError):
             raise RuntimeError("private funding ledger unavailable")
-        return rows, history_bound_reached
+        return rows, "funding_history_bound_reached" if history_bound_reached else None
 
 
 class BitgetUTAV3Profile(_BitgetDemoProfile):
