@@ -12,17 +12,14 @@ export const MODEL_PROVIDERS_SECTION = {
 	title: "AI Model Providers",
 	tab: "agent" as const,
 	description:
-		"Configure API profiles, local agent CLIs, and official OAuth connections. Configuration never enables a provider automatically.",
+		"Configure API profiles and OAuth connections. Configuration never enables a provider automatically.",
 	searchTerms: [
 		"llm",
 		"api profile",
 		"openai",
 		"anthropic",
 		"claude",
-		"codex",
-		"pi",
 		"oauth",
-		"cli",
 	],
 };
 
@@ -94,12 +91,11 @@ export function apiTypes(
 	return Object.values(types).filter((type) => type.category === "api");
 }
 
-export function integrationTypes(
+export function oauthTypes(
 	types: Record<string, ProviderTypeView>,
-	category: "cli" | "oauth",
 ): ProviderTypeView[] {
 	return Object.values(types).filter(
-		(type) => type.category === category && type.singleton,
+		(type) => type.category === "oauth" && type.singleton,
 	);
 }
 

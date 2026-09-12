@@ -43,6 +43,32 @@ This bounded transport change does not claim those remaining boundaries are
 complete. Existing Databricks-specific transport remains outside this batch.
 No stored endpoint, secret, routing choice, runtime or trading authority changes.
 
+## CLI transport retirement
+
+The same accepted HTTP-only boundary removes Codex, Claude and Pi subprocess
+transports, their shared process harness and Codex device-login owner. Their
+registry entries, constructors, API controls, model discovery and frontend
+activation controls are removed together, without forwarding aliases.
+Operator CLI commands that configure HTTP endpoints are not model transports
+and remain available.
+
+Historical provider configuration remains decodable, but an unsupported type
+cannot construct a provider, probe, authenticate, renew verification, receive
+new routing assignments or make diagnostics report a configured model. Merely
+viewing its configuration or health must not resolve credential references.
+An explicit retired type cannot be reinterpreted as HTTP because its profile
+identifier happens to match a supported adapter. Historical routing references
+remain visible and unavailable until the owner explicitly selects a supported
+endpoint; no automatic rebinding, credential migration or config deletion occurs.
+
+The bounded consumer inventory includes router/verification, settings and
+Codex routes, bootstrap setup detection, doctor credential diagnostics, model
+configuration CLI, settings routing and inference-admission controls. Tests of
+the deleted subprocess implementations are replaced by retirement containment
+and fail-closed tests; HTTP and generic startup/fallback behavior remain covered.
+OAuth and Databricks transports are separate remaining convergence work, not
+implicit exceptions to the accepted final HTTP-only product scope.
+
 Verification uses a real SDK with an in-memory HTTP transport: exact protocol
 paths and payloads, missing optional fields, status/error redaction, no SDK
 retry, cancellation, no environment credential fallback, raw usage preservation

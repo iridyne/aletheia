@@ -19,6 +19,7 @@ submission. Genuine outcomes require verified economic evidence.
 | Live execution | Outside the supported surface; existing explicit owner authority and qualification requirements remain |
 | Ordinary equities and prediction markets | Outside active instrument scope; the separately authorized CN extension remains disabled and is not a runtime support claim |
 | Retired simulator | Archived; no current execution, account, matching, protection, settlement, or qualification capability |
+| Retired subprocess model providers | Codex, Claude and Pi CLI model execution and Codex device login are removed; historical config remains inert and never silently rebinds to an HTTP endpoint. See the [inference boundary](../design/contracts/llm_inference_harness_contract.md). |
 
 Learning and research remain subject to their existing owner admission and
 authority gates. Neither registration, a green focused test, nor an archived

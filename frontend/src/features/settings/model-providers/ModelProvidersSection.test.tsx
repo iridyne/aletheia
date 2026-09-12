@@ -47,13 +47,6 @@ function cleanModelClient(providers: Record<string, unknown> = {}) {
 	});
 	client.setQueryData(["model-provider-types"], {
 		openai_compatible: API_TYPE,
-		codex_cli: {
-			id: "codex_cli",
-			label: "Codex CLI",
-			category: "cli",
-			fields: [],
-			singleton: true,
-		},
 		openai_native: {
 			id: "openai_native",
 			label: "OpenAI OAuth",
@@ -94,6 +87,26 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
+	it("keeps an assigned retired provider visible without an activation control", () => {
+		const client = cleanModelClient({
+			"historical-cli": { ...EXISTING_PROFILE, type: "codex_cli", kind: "unknown", enabled: true, configured: false },
+		});
+		client.setQueryData(["model"], (current: Record<string, unknown>) => ({
+			...current, default_provider: "historical-cli",
+		}));
+		const container = document.createElement("div");
+		container.innerHTML = renderToStaticMarkup(
+			<QueryClientProvider client={client}>
+				<ModelProvidersSection qc={client} />
+			</QueryClientProvider>,
+		);
+		const option = container.querySelector<HTMLOptionElement>('option[value="historical-cli"]');
+		expect(option?.disabled).toBe(true);
+		expect(option?.selected).toBe(true);
+		expect(option?.textContent).toContain("unsupported");
+		expect(container.querySelector('[aria-label="Enable Primary API"]')).toBeNull();
+	});
+
 	it("clears an old API profile error when a retry starts", () => {
 		expect(SOURCE.match(/onMutate: \(\) => setError\(null\)/g)).toHaveLength(2);
 	});
@@ -102,7 +115,7 @@ describe("ModelProvidersSection", () => {
 		const html = renderCleanModelSettings();
 
 		expect(html).toContain("API");
-		expect(html).toContain("CLI");
+		expect(html).not.toContain("CLI");
 		expect(html).toContain("OAUTH");
 		expect(html).toContain("No API profiles configured.");
 		expect(html.match(/Not assigned/g)?.length).toBe(3);

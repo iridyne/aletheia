@@ -853,10 +853,11 @@ def _probe_credentials(report: Report) -> None:
         return
 
     ptype = pcfg.type or provider
-    if ptype in {"codex_cli", "claude_cli"}:
-        report.add("creds.llm", "ok",
-                   f"LLM credentials configured (default={provider}, type={ptype}) "
-                   "— inference not verified here, see llm.inference")
+    from aletheia.model_provider.registry import PROVIDER_TYPES
+    if ptype not in PROVIDER_TYPES:
+        report.add("creds.llm", "warn",
+                   f"unsupported LLM provider (default={provider}, type={ptype})",
+                   "Select a supported HTTP endpoint in Settings -> Model Provider")
         return
 
     secret_ref = pcfg.api_key_secret_ref

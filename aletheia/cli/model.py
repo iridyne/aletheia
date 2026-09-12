@@ -34,7 +34,7 @@ def providers():
 
 @model_app.command(name="set")
 def set_cmd(
-    provider: str = typer.Option(..., "--provider", help="openai_compatible|anthropic_compatible|codex_cli"),
+    provider: str = typer.Option(..., "--provider", help="openai_compatible|anthropic_compatible"),
     base_url: str = typer.Option(None, "--base-url"),
     protocol: str = typer.Option(None, "--protocol", help="chat_completions|responses"),
     model: str = typer.Option(None, "--model"),
@@ -51,13 +51,16 @@ def set_cmd(
         provider_configuration_identity,
     )
 
-    valid = {"openai_compatible", "anthropic_compatible", "codex_cli"}
+    valid = {"openai_compatible", "anthropic_compatible"}
     if provider not in valid:
         typer.echo(f"Invalid provider. Choose from: {sorted(valid)}", err=True)
         raise typer.Exit(1)
 
     cfg = load_config()
     pcfg = cfg.models.providers.get(provider)
+    if pcfg is not None and (pcfg.type or provider) not in valid:
+        typer.echo("Unsupported historical provider; configure a separate HTTP endpoint in Settings.", err=True)
+        raise typer.Exit(1)
     identity_before = (
         provider_configuration_identity(provider, pcfg) if pcfg is not None else None
     )

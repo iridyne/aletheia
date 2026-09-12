@@ -63,7 +63,7 @@ runtime; each grid uses the staged mode and the named Save boundary.
 | same | Market-aware review | staged | `updateTradingConfig`; `Save` |
 | `features/settings/model-providers/ModelProvidersSection.tsx` `ApiProfileEditor` | Enable after verification | staged | `createModelProfile`/`updateModelProfile`; `Verify & Save` or `Cancel` |
 | same `ApiProfiles` | Enable API profile | immediate | `updateModelProfile`; pending/error state in provider panel |
-| same `IntegrationCard` | Enable CLI integration | immediate | `updateModelIntegration`; pending/error state in provider card |
+| same `IntegrationCard` | Enable OAuth integration | immediate | `updateModelIntegration`; pending/error state in provider card |
 | `features/settings/tabs/AgentModelsTab.tsx` Learning | Autonomous learning | immediate | `setAutonomousLearning` |
 | same | Bypass distress gate | immediate | `setBypassDistressGate` |
 | same | Contribution measurement | immediate | `updateLearningConfig` |

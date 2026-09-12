@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 const state = vi.hoisted(() => ({
-  model: { providers: { openai_compatible: { enabled: true, model: 'default' } } } as unknown,
+  model: { providers: { openai_compatible: { kind: 'api', enabled: true, model: 'default' } } } as unknown,
   modelPending: false,
   modelError: false,
   broker: undefined as unknown,
@@ -36,7 +36,7 @@ let root: ReturnType<typeof createRoot>
 afterEach(() => {
   act(() => root?.unmount())
   host?.remove()
-  state.model = { providers: { openai_compatible: { enabled: true, model: 'default' } } }
+  state.model = { providers: { openai_compatible: { kind: 'api', enabled: true, model: 'default' } } }
   state.modelPending = false
   state.modelError = false
   state.broker = undefined
@@ -52,6 +52,13 @@ function renderCard() {
 }
 
 describe('Inference admission read-state contract', () => {
+  it('does not expose inference controls for a retired provider', () => {
+    state.model = { providers: { historical: { kind: 'unknown', enabled: true, model: 'old' } } }
+    renderCard()
+    expect(host.querySelector('input')).toBeNull()
+    expect(host.textContent).toContain('No providers enabled')
+  })
+
   it('keeps initial provider failures unavailable instead of loading forever', () => {
     state.model = undefined
     state.modelError = true

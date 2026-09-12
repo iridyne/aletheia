@@ -10,7 +10,7 @@ import hashlib
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response  # pyright: ignore[reportMissingImports]
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.config.loader import load_config, save_config
 from aletheia.config.secrets import delete_secret, get_secret, set_secret
@@ -19,7 +19,6 @@ from aletheia.model_provider.base import MODEL_HEALTH_STALE_AFTER_SECONDS
 from aletheia.model_provider.databricks import validate_workspace_url
 from aletheia.model_provider.registry import (  # pyright: ignore[reportMissingImports]
     API_PROVIDER_TYPES,
-    CLI_PROVIDER_TYPES,
     PROVIDER_TYPES,
     default_protocol_for_provider_type,
     provider_config_protocol,
@@ -43,7 +42,6 @@ router = APIRouter(prefix="/api", tags=["model"])
 VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
 HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
-CLI_PROVIDERS = set(CLI_PROVIDER_TYPES)
 
 
 class ModelHealthRecord(BaseModel):
@@ -260,9 +258,9 @@ def get_model_config():
             "model": pcfg.model,
             "model_fallback_enabled": getattr(pcfg, "model_fallback_enabled", True),
             "fallback_models": list(getattr(pcfg, "fallback_models", []) or []),
-            "api_key": _key_status(pcfg.api_key_secret_ref),
+            "api_key": _key_status(pcfg.api_key_secret_ref if definition else None),
             "auth_type": pcfg.auth_type,
-            "oauth": _key_status(pcfg.oauth_token_ref),
+            "oauth": _key_status(pcfg.oauth_token_ref if definition else None),
             "inference_max_concurrency": pcfg.inference_max_concurrency,
             "inference_requests_per_minute": pcfg.inference_requests_per_minute,
             "inference_tpm": pcfg.inference_tokens_per_minute,
@@ -277,10 +275,6 @@ def get_model_config():
             entry["workspace_url"] = pcfg.workspace_url
         if ptype == "anthropic_compatible":
             entry["auth_scheme"] = getattr(pcfg, "auth_scheme", "x-api-key")
-        if ptype in CLI_PROVIDERS:
-            entry["command"] = pcfg.command
-            entry["mode"] = pcfg.mode
-            entry["codex_model"] = pcfg.codex_model
         providers[name] = entry
     return {
         "default_provider": cfg.models.default_provider,
@@ -532,8 +526,6 @@ async def detect_models(req: DetectModelsRequest):
 
     cfg = load_config()
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
-    if provider_type in CLI_PROVIDERS:
-        raise HTTPException(400, f"{provider_type} uses CLI introspection, not HTTP detection")
     protocol = (
         _candidate_protocol(provider_type, req.protocol, pcfg)
         if provider_type in API_PROVIDER_TYPES
@@ -626,8 +618,6 @@ async def test_model_candidate(req: TestCandidateRequest):
     cfg = load_config()
     provider_type, pcfg = _resolve_candidate_provider(req.provider, req.type, cfg)
     model = req.model or (pcfg.model if pcfg else "default")
-    if provider_type in CLI_PROVIDERS:
-        raise HTTPException(400, f"{provider_type} uses local auth, not a candidate key")
     protocol = (
         _candidate_protocol(provider_type, req.protocol, pcfg)
         if provider_type in API_PROVIDER_TYPES
@@ -808,67 +798,9 @@ async def test_model_candidate(req: TestCandidateRequest):
         await _close_candidate_provider(provider)
 
 
-# --- Codex subscription provider: web-triggered device-auth login + model listing ---
-
-
-@router.post("/model/codex/login-start")
-async def codex_login_start():
-    """Begin Codex device-auth login. Returns verification URL + code (never a token)."""
-    from aletheia.model_provider import codex_auth
-
-    result = await codex_auth.start_login()
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "codex_login_started",
-            "entity_type": "model_provider",
-            "entity_id": "codex_cli",
-            "message": f"Codex device-auth login start (state={result.get('state')})",
-        }
-    )
-    return result
-
-
-@router.get("/model/codex/login-status")
-async def codex_login_status():
-    """Poll Codex login status (authoritative via `codex login status`). No token."""
-    from aletheia.model_provider import codex_auth
-
-    return await codex_auth.poll_status()
-
-
-@router.post("/model/codex/login-cancel")
-def codex_login_cancel():
-    from aletheia.model_provider import codex_auth
-
-    result = codex_auth.cancel()
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "codex_login_cancelled",
-            "entity_type": "model_provider",
-            "entity_id": "codex_cli",
-            "message": "Codex device-auth login cancelled by user",
-        }
-    )
-    return result
-
-
-@router.get("/model/codex/models")
-async def codex_models():
-    """List available Codex models ([] if codex unavailable). Read-only."""
-    from aletheia.model_provider import router as router_mod
-
-    try:
-        provider = router_mod.get_provider("codex_cli")
-        return await provider.list_models()
-    except Exception:
-        return []
-
-
 class ModelConfigRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     provider: str
     type: str | None = None
     display_name: str | None = None
@@ -876,9 +808,6 @@ class ModelConfigRequest(BaseModel):
     protocol: str | None = None
     model: str | None = None
     enabled: bool | None = None
-    command: str | None = None
-    mode: str | None = None
-    codex_model: str | None = None
     workspace_url: str | None = None
     default: bool | None = None
     set_as_deep: bool | None = None
@@ -1001,10 +930,10 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
 
     cfg = load_config()
     pcfg = cfg.models.providers.get(req.provider)
+    provider_type = _resolve_request_type(req, pcfg)
     identity_before = (
         provider_configuration_identity(req.provider, pcfg) if pcfg is not None else None
     )
-    provider_type = _resolve_request_type(req, pcfg)
     previous_workspace_url = (pcfg.workspace_url or pcfg.base_url) if pcfg is not None else None
     if pcfg is None:
         from aletheia.config.schema import ProviderConfig
@@ -1052,9 +981,6 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
         "protocol",
         "model",
         "enabled",
-        "command",
-        "mode",
-        "codex_model",
         "workspace_url",
         "auth_scheme",
         "model_fallback_enabled",
@@ -1223,7 +1149,7 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
         raise HTTPException(404, f"Unknown model provider profile: {profile_id}")
     provider_type = pcfg.type or profile_id
     if provider_type not in API_PROVIDER_TYPES:
-        raise HTTPException(422, "CLI and OAuth integrations are not editable API profiles")
+        raise HTTPException(422, "Non-API integrations are not editable API profiles")
     payload = req.model_dump(exclude_unset=True)
     verification_fields = {"base_url", "workspace_url", "protocol", "model", "api_key", "auth_scheme"}
     verification = None
@@ -1235,9 +1161,10 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
 
 
 class UpdateModelIntegrationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool | None = None
     model: str | None = None
-    codex_model: str | None = None
     inference_max_concurrency: int | None = Field(default=None, ge=1, le=16)
     inference_requests_per_minute: int | None = Field(default=None, ge=0, le=10_000)
     inference_tpm: int | None = Field(default=None, ge=0, le=100_000_000)
@@ -1255,7 +1182,7 @@ async def update_model_integration(
     if (
         definition is None
         or not definition.singleton
-        or definition.category not in {"cli", "oauth"}
+        or definition.category != "oauth"
         or integration_id not in PROVIDER_REGISTRY
     ):
         raise HTTPException(404, f"Unknown model integration: {integration_id}")
@@ -1272,6 +1199,8 @@ def _update_model_routing_sync(req: ModelRoutingRequest) -> dict:
         value = getattr(req, field_name)
         if value and value not in cfg.models.providers:
             raise HTTPException(404, f"Unknown model provider: {value}")
+        if value and (cfg.models.providers[value].type or value) not in VALID_PROVIDERS:
+            raise HTTPException(422, f"Unsupported model provider: {value}")
         if field_name == "default_provider":
             cfg.models.default_provider = value or ""
         else:
@@ -1309,7 +1238,7 @@ def _delete_model_profile_sync(profile_id: str) -> dict:
     if pcfg is None:
         raise HTTPException(404, f"Unknown model provider profile: {profile_id}")
     if (pcfg.type or profile_id) not in API_PROVIDER_TYPES:
-        raise HTTPException(422, "CLI and OAuth integrations cannot be deleted as API profiles")
+        raise HTTPException(422, "Non-API integrations cannot be deleted as API profiles")
 
     cleared_roles: list[str] = []
     if cfg.models.default_provider == profile_id:

@@ -190,8 +190,6 @@ def _configured_provider_name(provider: Any) -> str:
             "AnthropicCompatibleProvider": "anthropic_compatible",
             "AnthropicNativeProvider": "anthropic_native",
             "OpenAINativeProvider": "openai_native",
-            "CodexCLIProvider": "codex_cli",
-            "ClaudeCLIProvider": "claude_cli",
         }.get(type(provider).__name__)
         provider_model = str(getattr(provider, "model", "") or "")
         provider_base_url = str(getattr(provider, "base_url", "") or "")

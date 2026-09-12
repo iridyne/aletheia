@@ -29,6 +29,16 @@ credential-scrubbing boundary, and cancellation propagates. This bounded
 [transport convergence](../proposals/slim_core_http_model_transport.md) does not
 claim completion of the remaining HTTP-only endpoint/routing retirement work.
 
+Codex, Claude and Pi subprocess model transports and Codex device-login routes
+are retired. Their historical provider configuration and routing references
+remain readable, but unsupported types cannot construct or probe a provider,
+renew verification, resolve credentials for a config/health read, or receive
+new routing assignments. An explicit unsupported type is never reinterpreted
+from its profile ID. Settings shows an assigned retired type as unavailable;
+the owner can clear its role or explicitly select a supported endpoint.
+Operator CLI commands for configuring HTTP endpoints remain distinct from
+retired subprocess model transports.
+
 Every production helper call declares a literal registered `caller` identity.
 An executable AST claim fails when application code omits that identity or
 uses a caller that is absent from `CALLER_SPECS`.
@@ -249,6 +259,8 @@ Proposal may not exist. Historical entry attribution retains its original meanin
 - `tests/test_economic_cli.py`
 - `tests/test_inference_broker.py`
 - `tests/test_model_fallback.py`
+- `tests/test_model_cli_retirement.py`
+- `tests/test_model_profiles.py`
 - `tests/test_context_effectiveness.py`
 
 Research rationale and dated evidence remain non-normative in
