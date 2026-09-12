@@ -183,29 +183,88 @@ async def test_live_unlock_requires_confirm(client):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("venue,mode,execution_mode", (
+    ("bitget", "demo", "bitget_demo"),
+    ("bitget", "live", "bitget_live_limited"),
+    ("binance", "testnet", "binance_testnet"),
+    ("binance", "live", "binance_live_limited"),
+    ("okx", "demo", "okx_demo"),
+    ("okx", "live", "okx_live_limited"),
+))
+@pytest.mark.parametrize("complete", (True, False))
+async def test_stored_exchange_probe_uses_uta_off_request_loop(monkeypatch, venue, mode, execution_mode, complete):
+    import threading
+    from types import SimpleNamespace
+    from aletheia.server.routes import bitget as routes
+    from aletheia.uta import manager
+    from aletheia.uta.models import ReadCompleteness
+
+    calls = []
+    request_thread = threading.get_ident()
+
+    async def query(selected_mode, method, **kwargs):
+        calls.append((selected_mode, method, threading.get_ident() != request_thread))
+        return SimpleNamespace(
+            completeness=ReadCompleteness.COMPLETE if complete else ReadCompleteness.PARTIAL,
+            reason_code=None if complete else "account_read_incomplete",
+        )
+
+    def forbidden_client(*args, **kwargs):
+        raise AssertionError("legacy private client must not be constructed")
+
+    monkeypatch.setattr(manager, "query_uta", query)
+    monkeypatch.setattr(routes, "BitgetClient", forbidden_client, raising=False)
+    monkeypatch.setattr("aletheia.exchanges.binance.client.BinanceClient", forbidden_client)
+    monkeypatch.setattr("aletheia.exchanges.okx.client.OKXClient", forbidden_client)
+    route, request_type = {
+        "bitget": (routes.test_connection, routes.TestConnectionRequest),
+        "binance": (routes.binance_test_connection, routes.BinanceTestRequest),
+        "okx": (routes.okx_test_connection, routes.OkxTestRequest),
+    }[venue]
+    result = await route(request_type(mode=mode))
+    assert calls == [(execution_mode, "get_account", True)]
+    assert result["connected"] is complete
+    assert result["mode"] == mode
+    if not complete:
+        assert result["error"] == "account_read_incomplete"
+
+
+async def test_bitget_stored_probe_defaults_to_configured_mode_and_rejects_invalid_mode(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from aletheia.server.routes import bitget as routes
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(mode="live"))
+    calls = []
+
+    def probe(execution_mode, **kwargs):
+        calls.append((execution_mode, kwargs["cfg"] is cfg))
+        return {"connected": True}
+
+    monkeypatch.setattr(routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(routes, "probe_account_reachable", probe)
+    assert await routes.test_connection() == {"connected": True, "mode": "live"}
+    with pytest.raises(HTTPException) as error:
+        await routes.test_connection(routes.TestConnectionRequest(mode="invalid"))
+    assert error.value.status_code == 400
+    assert calls == [("bitget_live_limited", True)]
+
+
 async def test_okx_test_connection_does_not_leak_exception_string(monkeypatch):
     """A failing OKX test-connection returns the exception CLASS name, never the
     raw message (which CCXT can populate with the request body / credentials)."""
-    import aletheia.exchanges.okx.client as okx_mod
+    from aletheia.uta import manager
     from aletheia.server.routes.bitget import okx_test_connection, OkxTestRequest
 
     SECRET = "okx-secret-DEADBEEF-should-not-leak"
-    closed = []
+    async def failed_read(*args, **kwargs):
+        raise RuntimeError(f"OKX auth failed apiKey=KEY123 secret={SECRET}")
 
-    class _FakeOKX:
-        def __init__(self, mode):
-            pass
-        async def fetch_balance(self):
-            raise RuntimeError(f"OKX auth failed apiKey=KEY123 secret={SECRET}")
-        async def close(self):
-            closed.append(True)
-
-    monkeypatch.setattr(okx_mod, "OKXClient", _FakeOKX)
+    monkeypatch.setattr(manager, "query_uta", failed_read)
     result = await okx_test_connection(OkxTestRequest(mode="demo"))
     assert result["connected"] is False
     assert SECRET not in str(result), f"secret leaked in response: {result}"
     assert result["error"] == "RuntimeError"  # class name only
-    assert closed == [True]
 
 
 async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch):
