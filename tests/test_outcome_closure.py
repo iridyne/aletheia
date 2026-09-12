@@ -696,10 +696,11 @@ def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monke
 def test_verified_exit_normalization_has_no_second_close_writer():
     import ast
     import inspect
-    from aletheia.portfolio import outcome_closure, pnl
+    from aletheia.portfolio import outcome_closure, pnl, broker_funding_settlement
 
     owners = set()
-    for module in (outcome_closure, pnl):
+    settlement_owners = set()
+    for module in (outcome_closure, pnl, broker_funding_settlement):
         tree = ast.parse(inspect.getsource(module))
         for function in tree.body:
             if not isinstance(function, ast.FunctionDef):
@@ -711,10 +712,28 @@ def test_verified_exit_normalization_has_no_second_close_writer():
                 for node in ast.walk(function)
             ):
                 owners.add((module.__name__, function.name))
+            if any(
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "update_closed_position_settlement"
+                for node in ast.walk(function)
+            ):
+                settlement_owners.add((module.__name__, function.name))
     assert owners == {
-        (pnl.__name__, "close_position"),
+        (pnl.__name__, "_commit_close_economics"),
         (outcome_closure.__name__, "close_position_administrative"),
     }
+    assert settlement_owners == {
+        (pnl.__name__, "_commit_close_economics"),
+        (broker_funding_settlement.__name__, "_terminalize_funding_history_expired"),
+    }
+
+
+def test_economic_commit_requires_the_callers_atomic_transaction():
+    from aletheia.portfolio.pnl import _commit_close_economics
+
+    assert not repo.get_db().in_transaction
+    with pytest.raises(RuntimeError, match="writer transaction"):
+        _commit_close_economics({}, {})
 
 
 @pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))

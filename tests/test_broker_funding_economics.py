@@ -320,6 +320,62 @@ def test_deferred_finalization_rejects_matching_invalid_fee_snapshots(tmp_path, 
     assert _broker_funding_state(position_id) == before
 
 
+def test_initial_and_deferred_economics_use_one_commit_owner(tmp_path, monkeypatch):
+    from aletheia.portfolio import pnl, broker_funding_settlement as settlement
+
+    calls = []
+    commit = pnl._commit_close_economics
+
+    def record_commit(current, fields, **kwargs):
+        assert repo.get_db().in_transaction
+        calls.append(current["status"])
+        return commit(current, fields, **kwargs)
+
+    monkeypatch.setattr(pnl, "_commit_close_economics", record_commit)
+    monkeypatch.setattr(settlement, "_commit_close_economics", record_commit)
+    position_id, incomplete, funding, ledger = _seed_pending_broker_funding_close(tmp_path, monkeypatch)
+    assert calls == ["open"]
+    first = settlement.materialize_broker_funding_economics(
+        incomplete, funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence, funding_ledger=ledger,
+    )
+    assert first["status"] == "settled"
+    assert calls == ["open", "closed"]
+    state = _broker_funding_state(position_id)
+    assert len(state["close_events"]) == 1
+    assert state["position"]["realized_pnl"] == state["close_events"][0]["realized_pnl"]
+    assert state["position"]["realized_pnl"] is not None
+    repeated = settlement.materialize_broker_funding_economics(
+        incomplete, funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence, funding_ledger=ledger,
+    )
+    assert repeated["status"] == "already_current"
+    assert calls == ["open", "closed"]
+    assert _broker_funding_state(position_id) == state
+
+
+def test_deferred_commit_rolls_back_money_and_event_if_hook_enrollment_fails(tmp_path, monkeypatch):
+    from aletheia.analytics import outcome_integrity
+    from aletheia.portfolio import outcome_hooks, broker_funding_settlement as settlement
+
+    position_id, incomplete, funding, ledger = _seed_pending_broker_funding_close(tmp_path, monkeypatch)
+    before = _broker_funding_state(position_id)
+    monkeypatch.setattr(outcome_integrity, "outcome_write_eligibility", lambda *a, **kw: (False, "attribution_read_failed"))
+
+    def fail_enrollment(candidate):
+        assert repo.get_db().in_transaction
+        assert repo._select_one("positions", position_id)["realized_pnl"] is not None
+        raise RuntimeError("hook enrollment failed")
+
+    monkeypatch.setattr(outcome_hooks, "enqueue_outcome_hook_jobs", fail_enrollment)
+    with pytest.raises(RuntimeError, match="hook enrollment failed"):
+        settlement.materialize_broker_funding_economics(
+            incomplete, funding_cost=funding.funding_cost,
+            funding_evidence=funding.evidence, funding_ledger=ledger,
+        )
+    assert _broker_funding_state(position_id) == before
+
+
 def test_broker_funding_exact_replay_is_a_noop(tmp_path, monkeypatch):
     position_id, stale, funding, ledger = _seed_pending_broker_funding_close(
         tmp_path, monkeypatch,
