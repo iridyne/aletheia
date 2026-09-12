@@ -58,3 +58,22 @@ These mocked reads grant neither Live authority nor account qualification.
 The unchanged concrete-import allowlist is deliberately not a claim that all
 private I/O is contained: candidate probes and TP/SL recovery remain visible
 above, and package movement alone cannot settle their ownership.
+
+## Startup filesystem repair ownership
+
+At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found
+two callers of `gateway.git_hooks.remove_managed_git_hooks`: backend lifespan
+and explicit `diagnostics.doctor.apply_fixes`. The helper resolves the shared
+Git hooks directory, removes only standalone managed legacy restart hooks and
+their debounce stamp, and preserves foreign/wrapped hooks. This is historical
+filesystem repair, not ordinary runtime reconciliation. The implicit lifespan
+caller is removed under #3134's no-hidden-startup-repair boundary; explicit
+`doctor --fix` retains the existing bounded implementation and the normal
+Doctor probe remains read-only. An architecture regression checks the sole
+production caller, while real temporary-repository tests cover idempotency and
+foreign-hook preservation. No actual user or runtime hook files were changed.
+
+Read-only Fedora inspection during this batch found checkout
+`6749c31b62a36a0497659cf25608025f8ab4218f`, clean, with Gateway active/running
+under PID 106503 and invocation `9f00a439f9964455b6c00f189665083f`. These facts
+prove neither current program deployment nor schema/provider/settlement health.

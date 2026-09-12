@@ -79,6 +79,19 @@ def test_gateway_startup_has_no_bulk_secret_migration():
     )
 
 
+def test_legacy_hook_cleanup_is_explicit_doctor_work_only():
+    callers = set()
+    for path in SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and (
+                isinstance(node.func, ast.Name) and node.func.id == "remove_managed_git_hooks"
+                or isinstance(node.func, ast.Attribute) and node.func.attr == "remove_managed_git_hooks"
+            ):
+                callers.add(str(path.relative_to(SRC)))
+    assert callers == {"diagnostics/doctor.py"}
+
+
 def test_risk_engine_does_not_import_agents():
     """Risk Engine must not depend on agents/ (unidirectional data flow)."""
     imports = _get_imports(SRC / "risk" / "engine.py")
