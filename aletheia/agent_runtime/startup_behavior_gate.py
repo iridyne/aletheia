@@ -37,14 +37,14 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+from aletheia.config.exchanges import DEMO_EXECUTION_MODES
 
 logger = logging.getLogger("aletheia.startup_behavior_gate")
 
 STATE_FILENAME = "startup_gate.json"
 
 # Startup supports the registered external demo/testnet account modes.
-_KNOWN_EXECUTION_MODES = {mode for _, mode in EXCHANGE_UNIFICATION_MAP.values()}
+_KNOWN_EXECUTION_MODES = DEMO_EXECUTION_MODES
 
 _IMMEDIATE_CORE_ENTRY_ORDER_STATES = {"submission_unknown", "materialization_missing"}
 
