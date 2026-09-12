@@ -13,6 +13,8 @@ _ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_str
 
 
 def clone_provider_with_model(provider: "ModelProvider", model: str) -> "ModelProvider":
+    # Cold clones borrow the cached owner's pools before any HTTP client exists.
+    provider.__dict__.setdefault("_http_clients", {})
     clone = copy.copy(provider)
     setattr(clone, "model", model)
     return clone
@@ -709,10 +711,7 @@ class ModelProvider:
         """
 
         loop_key = id(asyncio.get_running_loop())
-        clients = getattr(self, "_http_clients", None)
-        if clients is None:
-            clients = {}
-            self._http_clients = clients
+        clients = self.__dict__.setdefault("_http_clients", {})
         client = clients.get(loop_key)
         if client is None:
             client = factory(timeout=timeout)
