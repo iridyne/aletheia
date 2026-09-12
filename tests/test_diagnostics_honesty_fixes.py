@@ -60,6 +60,53 @@ def test_knowledge_router_lists_only_wired_roles():
     )
 
 
+@pytest.mark.parametrize("failure", [None, "missing", "model", "endpoint", "disabled", "retired", "base_url"])
+def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(monkeypatch, failure):
+    from aletheia.config.schema import AletheiaConfig, ModelSelection, ProviderConfig
+    from aletheia.diagnostics.config_consistency import _check_scheduler_needs_llm
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Configuration consistency must not resolve runtime providers or credentials")
+
+    monkeypatch.setattr("aletheia.model_provider.router.get_provider", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.router.load_config", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret", forbidden)
+    cfg = AletheiaConfig()
+    cfg.runtime.scheduler_enabled = True
+    cfg.models.providers["task"] = ProviderConfig(
+        type="openai_compatible", enabled=True, base_url="http://model.test/v1",
+    )
+    cfg.models.fast = ModelSelection(endpoint_id="task", model_id="small")
+    cfg.models.deep = ModelSelection(endpoint_id="task", model_id="large")
+    if failure is not None:
+        cfg.models.default_provider = "default"
+        cfg.models.providers["default"] = cfg.models.providers["task"].model_copy()
+    if failure == "missing":
+        cfg.models.fast = None
+    elif failure in {"model", "endpoint"}:
+        cfg.models.fast = ModelSelection(
+            endpoint_id="missing" if failure == "endpoint" else "task",
+            model_id=" " if failure == "model" else "small",
+        )
+    elif failure in {"disabled", "retired", "base_url"}:
+        profile = cfg.models.providers["task"]
+        if failure == "disabled":
+            profile.enabled = False
+        elif failure == "retired":
+            profile.type = "codex_cli"
+        else:
+            profile.base_url = ""
+    finding = _check_scheduler_needs_llm(cfg)
+    if failure is None:
+        assert finding is None
+    else:
+        assert finding is not None and finding.severity == "warning"
+        assert "fast" in finding.message and "model" in finding.fix_hint.lower()
+        assert "default_provider" not in finding.fix_hint
+    cfg.runtime.scheduler_enabled = False
+    assert _check_scheduler_needs_llm(cfg) is None
+
+
 # ---------------------------------------------------------------------------
 # #178 — doctor honours all three source severities
 # ---------------------------------------------------------------------------
