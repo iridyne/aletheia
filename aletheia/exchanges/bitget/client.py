@@ -1094,18 +1094,55 @@ class BitgetClient:
         return (data.get("data") or {}).get("list") or []
 
     async def _uta_plan_history(self, symbol, order_id):
-        path = "/api/v3/trade/orders-plan-history?category=USDT-FUTURES"
-        if symbol:
-            path += f"&symbol={symbol}"
-        if order_id:
-            path += f"&orderId={order_id}"
-        headers = self._headers("GET", path)
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(f"{self._base}{path}", headers=headers)
-            data = resp.json()
-        if data.get("code") != "00000":
-            return []
-        return (data.get("data") or {}).get("list") or []
+        """Return UTA strategy children in the classic plan-history shape.
+
+        UTA v3 exposes terminal strategy children through
+        ``strategy-sub-orders``.  The parent strategy id is the scheduler's
+        plan id; a filled ``subOrderId`` is the execution order id used for
+        the existing account-proof and fill-materialization flow.
+        """
+        del symbol  # the v3 child endpoint is keyed by the parent order id
+        order_id = str(order_id or "").strip()
+        if not order_id:
+            raise ValueError("Bitget UTA strategy history requires order_id")
+
+        endpoint = "/api/v3/trade/strategy-sub-orders"
+        cursor: str | None = None
+        rows: list[dict] = []
+        for _ in range(100):
+            params = {"orderId": order_id, "limit": "100"}
+            if cursor:
+                params["cursor"] = cursor
+            path = f"{endpoint}?{urlencode(params)}"
+            headers = self._headers("GET", path)
+            async with httpx_client(timeout=15) as client:
+                resp = await client.get(f"{self._base}{path}", headers=headers)
+                data = resp.json()
+            if data.get("code") != "00000":
+                raise RuntimeError("Bitget UTA strategy sub-order history rejected")
+            payload = data.get("data") or {}
+            page = payload.get("list") if isinstance(payload, dict) else None
+            if not isinstance(page, list):
+                raise ValueError("Bitget UTA strategy sub-order history malformed")
+            for child in page:
+                if not isinstance(child, dict):
+                    continue
+                child_id = str(child.get("subOrderId") or "").strip()
+                status = str(child.get("status") or "").strip().lower()
+                if not child_id:
+                    continue
+                row = dict(child)
+                row["orderId"] = order_id
+                row["executeOrderId"] = child_id if status == "filled" else ""
+                row["planStatus"] = "executed" if status == "filled" else status
+                rows.append(row)
+            if len(page) < 100:
+                return rows
+            next_cursor = str(payload.get("cursor") or "").strip()
+            if not next_cursor or next_cursor == cursor:
+                raise RuntimeError("Bitget UTA strategy sub-order pagination incomplete")
+            cursor = next_cursor
+        raise RuntimeError("Bitget UTA strategy sub-order history incomplete")
 
     async def get_open_orders(self, market_type: str = "spot") -> list[dict]:
         """Get unfilled (open) orders (§19.3)."""
@@ -1512,6 +1549,8 @@ class BitgetClient:
         Exact executed rows expose ``planStatus`` plus ``executeOrderId``. Plan
         prices are trigger metadata, not private Fill economics.
         """
+        if self.profile == "uta_v3":
+            return await self._uta_plan_history(symbol=symbol, order_id=order_id)
         path = "/api/v2/mix/order/orders-plan-history?productType=USDT-FUTURES&planType=profit_loss"
         if symbol:
             path += f"&symbol={symbol}"
