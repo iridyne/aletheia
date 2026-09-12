@@ -1,0 +1,119 @@
+# Slim Core production ownership inventory
+
+Source checkpoint: `a22506fd56771b75010a400e52dd157ba8b28068`, under
+[#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
+current boundaries, not a declaration that compartmentalization or all single
+writers are proven. No runtime/data migration follows from classification here.
+
+## Coverage and entrypoints
+
+The source walk contains 562 Python files: 35 first-level packages and 12 root
+modules. Counts include package initializers, exclude bytecode, and are dated
+observations rather than brittle acceptance thresholds. AST inspection covered
+calls to the named Core persistence APIs below and literal SQL statements for
+the nine authority tables. Dynamic table/SQL construction needs separate review;
+in particular, a clean literal scan does not admit the bundle importer.
+
+| Entrypoint | Current lifecycle / effects | Boundary still requiring proof |
+| --- | --- | --- |
+| `pyproject.toml`: `aletheia` / `ato` → `main._entry_point` | Registers CLI command groups; commands distinguish reads, explicit controls and maintenance. | Deprecation labels are not evidence of inertness. Hidden `flow` alias and old model/permission/secrets/risk groups remain visible to reachability review. |
+| `_gateway_runner.run_supervised` | Owns backend, Frontdoor, collector and optional operator/build-watch subprocesses; PID/route files and bounded process restart. | Process authority and absence-safe children must survive physical moves; no additional supervisor. |
+| `gateway.frontdoor_runner.main` / `frontdoor.app` | Binds selected operator addresses, proxies to the backend and serves failure/static surfaces. | #1884 exact runtime/browser evidence remains distinct from source regressions. |
+| `server.app.lifespan` | Verifies migrations, starts runtime provenance/reconciliation, scheduler/job manager and registered background tasks; stops producers before consumers. | Optional imports still occur in Core startup. Secret bulk migration and implicit Git-hook cleanup are removed; ordinary interrupted-work reconciliation is not historical repair. |
+| `agent_runtime.scheduler.init_scheduler` | One APScheduler owner; registered jobs drive market collection, planning, position/protection/recovery and optional research. | Collector subprocess substitutes cadence for two scheduled collectors; mutually exclusive environment wiring must remain explicit. |
+| `data.collector_runner.main` | Supervised two-minute collection loop plus ten-minute context collection; calls existing scheduler bodies. | It is active network/market-state work, not an inert library. |
+| `server.app.LIFESPAN_TASK_CATALOG` | Read-only catalogue of startup LLM/exchange/behavior gates, PI daemon, Fast Trigger, Telegram, lag monitoring and module-owned rechecks/resume. | The catalogue is observability, not a new scheduler or permission registry. |
+| `operator-shell/src/index.ts` | Starts `OperatorLoop`, signal-driven shutdown; Python `gateway.operator_shell` owns process monitoring. | Optional operational autonomy must not become another trading writer/lifecycle. |
+| `deploy/systemd/aletheia-observer.service` → `aletheia observe run` | Explicit bounded Observation worker; template declares separate checkout and Lab state ownership. | Template claims are not deployed-unit verification or proof of every worker import. |
+| `native/aletheia-host` binaries / `frontend` | Packaged CLI/tray launch and browser operator surface. | Keep bootstrap/control separate from backend trading authority; UI absence/failure cannot fabricate health. |
+| `update`, `backup`, `maintenance`, deployment scripts | Explicit install/update, restore, migration and bounded historical repair entrypoints. | Preserve human deployment/destructive-repair gates; never invoke these merely to complete an inventory. |
+
+## Package disposition map
+
+“Mixed” means moving the entire directory would misclassify current authority.
+Names are existing package paths, not proposed new abstractions. The map covers
+all first-level Python packages; detailed per-consumer independence remains an
+open gate where stated.
+
+| Current package (Python files) | Authority / side-effect surface | Target disposition / open seam |
+| --- | --- | --- |
+| Root modules (12) | CLI/bootstrap, paths, logging, networking, packaged process and runtime-home migration | Thin composition / Core utility / Ops; split by role, not a new application tier. |
+| `agent_runtime` (22) | Scheduler, job queue, runtime session, pause/resume, connectivity and daemon lifecycle | Mixed Core lifecycle and optional agent orchestration. |
+| `agent_shell` (23) | Entry Planner plus operator tools, permissions, context and recommendations | Mixed Core planning and optional operator capability; tools must retain Risk/Gateway boundaries. |
+| `agents` (14) | Model-backed observer/research/learning consumers | Optional enrichment; no separate execution writer. |
+| `analytics` (60) | Shared realized Outcome eligibility plus attribution, read models and counterfactual measurements | Mixed Core eligibility and optional analytical writers; preserve separate economic meanings. |
+| `backup` (4) | Artifact creation, verification and explicit restore | Ops; whole-DB restoration is not ordinary table import. |
+| `cli` (33) | Operator commands, diagnostics and explicit maintenance entrypoints | Mixed minimum Core controls and optional/Ops commands. |
+| `config` (9) | Typed schema, locked atomic mutation, redaction and secret storage | Core configuration plus scoped adapter credential composition; raw secret access not yet compartmentalized. |
+| `counterfactual` (8) | Replay, advisory, calibration and experiment measurements | Optional research state, never authoritative realized trading economics. |
+| `data` (45) | Public venue/network collectors, caches and market facts | Mixed market boundary and optional data enrichment; concrete protocol implementation belongs outside Core. |
+| `diagnostics` (3) | Read-only reports/config checks and explicit Doctor infrastructure repair | Core operator reads / Ops repair; ordinary probe does not authorize fix. |
+| `economics` (11) | Logical inference calls, usage/budgets, pricing references and context measurements | Mixed Core inference provenance and optional reference/analysis work. |
+| `exchanges` (10) | Concrete Bitget/OKX/Binance clients, auth and submission classification | Exchange Extensions; active native exceptions still require consumer-level proof. |
+| `execution` (19) | Gateway/Coordinator, claims, reconciliation, materialization and broker helpers | Mixed Core semantics and concrete normalization; keep one Risk-gated command path. |
+| `files` (5) | JSONL/audit, Markdown, paths and Git filesystem operations | Core audit primitives / Ops or optional artifact work. |
+| `gateway` (22) | Frontdoor, process/PID/service/network control, explicit hook cleanup | Core operator plane / Ops composition. |
+| `infra` (4) | Events and bounded error projections | Core observability; event publication must not grant trading authority. |
+| `knowledge` (10) | Retrieval, guards, seeds, maintenance and recovery | Optional knowledge; learned safety influence remains separately gated. |
+| `learning` (32) | Cohorts, evidence windows, experiments, hypotheses and guarded consumers | Optional; shared Core Outcome eligibility cannot move into this owner. |
+| `maintenance` (9) | Offline retention, accounting and fixed-target recovery | Explicit Ops/historical repair; not ordinary Core runtime writers. |
+| `model_provider` (10) | HTTP SDK transports, endpoint router, inference broker and explicit fallback | Mixed Core Model Port/inference semantics and concrete HTTP Extensions. |
+| `observation_lab` (19) | Lab DB, windows, runner/checkpoints and ownership checks | Optional namespaced Observation; independently prove absent-safe worker imports. |
+| `policies` (3) | `PolicyStore` writes immutable `ps_policy_versions`; lesson reviewer is a current consumer | Optional policy history, not equivalent to retired PS execution tables; do not delete by `ps_` name. |
+| `portfolio` (17) | Position/close/funding reconciliation, PnL and Outcome hooks | Core lifecycle/economics with concrete account seams still to isolate. |
+| `regime` (3) | Regime collection/detection | Optional market enrichment. |
+| `risk` (5) | Canonical evaluation, policy/kill switch and quality gates | Core safety authority; independently persists preflight/authoritative decisions. |
+| `server` (31) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. |
+| `storage` (12) | SQLite/transactions, models, repositories, migrations, event/artifact stores | Mixed canonical operational persistence and namespaced optional schemas; table use must determine ownership. |
+| `sync` (4) | Bundle export/import and conflict handling | Active import allows `trade_proposals` and retired PS runtime tables through dynamic table names; unresolved second-writer/Legacy seam. |
+| `telegram` (2) | Configured notification/polling endpoint | Optional external adapter; no independent execution authority. |
+| `trading` (34) | Typed Entry contracts/compiler/capture/activation plus source publication | Mixed Core Entry semantics and Serenity source orchestration; Candidate creation now uses Core publication. |
+| `trust` (3) | Behavior authority and Live unlock | Core safety boundary; no authority expansion in #3134. |
+| `universe` (37) | Candidate selection/publication, attention and market/scanner consumers | Core Candidate semantics mixed with optional source/scanner implementations. |
+| `update` (11) | Deployment identity/continuity, bootstrap, smoke and source/package update | Ops, explicit deployment authority; never inferred from green tests. |
+| `uta` (14) | Existing normalized contract/models, loop-owned registry, CCXT adapter, venue profiles and credential composition | Mixed Core Exchange Port and Exchange Extensions; reuse this boundary rather than adding another framework. |
+| `utils` (2) | Datetime helper | Core utility; no new wrapper needed. |
+
+## Canonical mutation seams
+
+These are observed API owners and callers, not a blanket claim that each
+logical authority already has exactly one producer. Repository field guards
+are narrower than generic SQL but do not alone prove application ownership.
+
+| Authority | Current persistence boundary and actual caller families | Remaining distinction |
+| --- | --- | --- |
+| Candidate creation | `repositories.publish_candidate_snapshot`; Universe refresh, Serenity publication and isolated preview seed call it | Snapshot/member creation converged; attention/retention writes remain distinct operations. |
+| Generation / EntryPlan | Repository generation claim/bind/defer/complete APIs; `transition_entry_plan`, trigger binding and monitoring | Planner/compiler/watcher ownership and multi-leg aggregation remain Core; complete callback/dynamic-write audit still needed. |
+| Proposal | Repository immutable Proposal helpers and native per-leg construction | `sync.importer` has a dynamic Proposal import path; do not treat helper scans as complete writer proof. |
+| RiskDecision | `risk.engine._persist_risk_result` calls ordinary or authoritative insert; authoritative repository insertion owns deduplication | Preflight and final exact-order decisions are different facts, not interchangeable duplicate implementations. |
+| Order | `insert_order`, `transition_order`, `update_order_metadata`, acknowledgement finalization | Coordinator/Gateway, reconciliation/materialization, observed TP/SL and adopted/administrative evidence producers remain to classify. |
+| Fill | `insert_fill` called by exchange materialization and observed administrative close evidence | Private Fill normalization versus administrative synthetic evidence must not be conflated. `_verify_durable_fills` also validates/amends historical fee-source provenance. |
+| Position entry | `insert_position`: native private-fill materialization or explicit external-position adoption | These represent distinct provenance. Generic compatible-position coalescing needs exact Plan/account audit before changing it. |
+| Position field groups | Repository materialization / exit-plan / observation / closed-settlement field allowlists and status CAS | Producers span materializer, position manager, protection coordinator, reconciler and PnL; field ownership is not proof of one high-level owner. |
+| Close lifecycle | `finalize_position_close`: `pnl._commit_close_economics` or `outcome_closure.close_position_administrative` | Administrative lifecycle closure must remain distinct from cost-complete strategy Outcome admission. |
+| Final PnL / eligibility | Shared `pnl._commit_close_economics` and `analytics.outcome_integrity`; funding recovery and hooks use existing boundaries | Multiple same-Plan Proposals conflict with Learning §11.1's same-Proposal realized ancestry rule; no silent economic eligibility expansion. |
+| Pause / resume | `agent_runtime.pause_ownership` durable leases, lock and config mutation; scheduler pause/resume and resume gates consume it | Separate owner leases coordinate one pause state; optional components may not bypass leases or independently clear authority. |
+| Historical Position repair | Schema migrations, bounded Outcome remediation and fixed-target #3111 overlap repair | The #3111 helper is explicit module CLI only, exact-snapshot/evidence checked and audit-idempotent; no production importer/caller. No repair was executed in this audit. |
+
+## Fitness baseline and next proof
+
+Exact-base focused baseline: 32 passed, 2 failed, 12 spec claims. Failures were
+the omitted fixed-target #3111 repair in the raw-Position-writer inventory and
+the trust policy's missing `spec_pipeline_execution_chain.py` reference. That
+file was deleted in `e684157c89850a83510e19ea9b97fdd997fe0acf` when Paper
+Internal was retired, not replaced by another simulated execution path.
+
+The evidence-only correction records the existing bounded repair and prevents
+production imports of it. The policy keeps all controlled paths unchanged and
+points to current exchange Entry-to-Position plus private-fill materialization
+tests, alongside existing execution specs. No safety requirement is removed.
+Afterward, the combined architecture/ownership/repair/UTA/trust/execution and
+replacement exchange tests pass: 117 tests / 57 claims. These are isolated local
+fixtures, not exchange qualification or proof of the entire #3134 DoD.
+
+Next runnable seams are the dynamic bundle importer, concrete private-account
+callers in the [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), and
+optional lifecycle imports. Logical ownership and absence tests must precede
+Scheme A folder movement. Multi-leg realized admission remains a distinct
+contract-decision boundary; fixed-4h counterfactual learning does not by itself
+authorize admitting a new realized Outcome cohort.

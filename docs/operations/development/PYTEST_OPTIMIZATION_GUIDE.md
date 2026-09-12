@@ -347,7 +347,7 @@ uv run pytest tests/ -q --tb=no --durations=20 2>&1 |
 
 | 规则 | 可执行检查 |
 |---|---|
-| 订单必须经过后端执行网关 | `tests/specs/spec_execution.py`、`tests/specs/spec_pipeline_execution_chain.py` |
+| 订单必须经过后端执行网关 | `tests/specs/spec_execution.py`、`tests/e2e/test_pipeline_exchange_entry_to_position.py`、`tests/specs/spec_pipeline_exchange_materialization.py` |
 | 默认禁止 live trading | `tests/specs/spec_live_unlock.py`、`tests/specs/spec_serenity_live_readiness.py` |
 | GET 接口不能返回密钥值 | `tests/specs/spec_api_reference.py`、`tests/test_secrets.py` |
 | 市场数据不能直接用 Bitget execution client | `tests/specs/spec_data_layer.py` |

@@ -68,6 +68,10 @@ _RAW_POSITION_UPDATE_ALLOWED = {
     # whitelist by close_category + outcome_semantics_version to accommodate a
     # migration-shaped job. Keep the raw statement and the narrower authority.
     "maintenance/outcome_integrity.py",
+    # Owner-approved #3111 fixed-target recovery: exact before-state comparison,
+    # private evidence validation and atomic audit idempotency; never a runtime caller.
+    # Do not widen the ordinary Position field owners for this historical repair.
+    "maintenance/repair_doge_adoption_overlap.py",
 }
 
 
@@ -91,6 +95,19 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
         "storage/repositories.py, or justify an addition to "
         "_RAW_POSITION_UPDATE_ALLOWED in this file."
     )
+
+
+def test_fixed_target_historical_repair_is_not_imported_by_production():
+    import ast
+
+    root = Path(__file__).parents[1] / "aletheia"
+    for source in root.rglob("*.py"):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = [alias.name for alias in node.names]
+                if isinstance(node, ast.ImportFrom) and node.module:
+                    names.append(node.module)
+                assert not any("repair_doge_adoption_overlap" in name for name in names), source
 
 
 def test_known_pre_submission_error_can_be_reclaimed_by_one_new_close_order():

@@ -16,7 +16,7 @@ trust_boundaries:
       - aletheia/execution/**
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
-      - uv run pytest tests/specs/spec_pipeline_execution_chain.py -q
+      - uv run pytest tests/e2e/test_pipeline_exchange_entry_to_position.py tests/specs/spec_pipeline_exchange_materialization.py -q
   - id: bitget_auth
     paths:
       - aletheia/exchanges/bitget/auth.py
