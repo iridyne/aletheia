@@ -480,6 +480,51 @@ def test_position_realized_pnl_view_prefers_terminal_reason_over_incomplete():
     )
 
 
+@pytest.mark.parametrize("direction,gross", [("long", 25.0), ("short", -25.0)])
+def test_known_economics_is_a_read_projection_not_final_authority(direction, gross):
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+    from aletheia.server.routes.data import PositionView
+
+    row = _closed_row(
+        direction=direction, entry_fee=1.0, exit_fee=None, funding_cost=None,
+        funding_source="unavailable", realized_pnl=None, outcome_eligible=False,
+        outcome_exclusion_reason="incomplete_realized_economics", slippage_cost=99.0,
+    )
+    original = row.copy()
+    view = position_realized_pnl_view(row)
+    assert view["known_gross_pnl"] == gross
+    assert view["known_net_before_unresolved_costs"] == gross - 1.0
+    assert set(view["known_economics_missing_components"]) == {"exit_fee", "funding_cost"}
+    assert view["realized_pnl"] is None
+    assert view["realized_pnl_complete"] is False
+    assert view["outcome_eligible"] is False
+    assert row == original
+    assert PositionView.model_validate(view).model_dump()["known_gross_pnl"] == gross
+
+    complete = position_realized_pnl_view({
+        **row, "exit_fee": 2.0, "funding_cost": -3.0, "funding_source": "broker_ledger",
+        "realized_pnl": gross,
+    })
+    assert complete["known_net_before_unresolved_costs"] == gross
+    assert complete["known_economics_missing_components"] == []
+    # Reading complete economics still cannot promote Outcome eligibility.
+    assert complete["outcome_eligible"] is False
+
+
+@pytest.mark.parametrize("overrides", [
+    {"entry_fill_verified": False}, {"exit_fill_verified": False},
+    {"exit_price_source": "unavailable"}, {"quantity": float("nan")},
+    {"entry_price": True}, {"direction": "unknown"},
+])
+def test_known_economics_rejects_unproven_or_invalid_execution(overrides):
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    view = position_realized_pnl_view(_closed_row(**overrides))
+    assert view["known_gross_pnl"] is None
+    assert view["known_net_before_unresolved_costs"] is None
+    assert "verified_entry_exit_economics" in view["known_economics_missing_components"]
+
+
 def test_classify_closure_preserves_funding_permanently_unrecoverable_reason():
     """Q3-4: the terminal reason survives `classify_closure` intact, i.e.
     it is present in the `OUTCOME_EXCLUSION_REASONS` whitelist. If a

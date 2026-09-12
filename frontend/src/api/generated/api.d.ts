@@ -10971,6 +10971,12 @@ export interface components {
             historical_accounting_status?: string | null;
             /** Id */
             id: string;
+            /** Known Economics Missing Components */
+            known_economics_missing_components?: string[] | null;
+            /** Known Gross Pnl */
+            known_gross_pnl?: number | null;
+            /** Known Net Before Unresolved Costs */
+            known_net_before_unresolved_costs?: number | null;
             /** Leverage */
             leverage?: number | null;
             /** Liquidation Price */

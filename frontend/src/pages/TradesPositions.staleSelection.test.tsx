@@ -193,6 +193,9 @@ describe("TradesPositions drawer selection freshness", () => {
 			realized_pnl: null,
 			realized_pnl_complete: false,
 			realized_pnl_unavailable_reason: "incomplete_funding_economics",
+			known_gross_pnl: 10,
+			known_net_before_unresolved_costs: 8,
+			known_economics_missing_components: ["funding_cost"],
 		}]);
 
 		const updated = drawerText(node);
@@ -201,6 +204,10 @@ describe("TradesPositions drawer selection freshness", () => {
 		expect(updated).not.toContain("-0.00");
 		expect(updated).not.toContain("+0.00");
 		expect(updated).toContain("Incomplete Funding Economics");
+		expect(updated).toContain("Known gross PnL");
+		expect(updated).toContain("Known net before unresolved costs (not final)");
+		expect(updated).toContain("Unresolved economic componentsFunding Cost");
+		expect(node.textContent).toContain("Known before unresolved costs: +8.00");
 	});
 
 	it("resolves order status changes and missing rows from current query data", async () => {

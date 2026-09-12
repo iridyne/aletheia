@@ -284,7 +284,8 @@ def test_risk_does_not_use_strategy_or_unverified_realized_pnl():
         "OI-C04", "outcome_integrity", "§11 operator-facing dual reporting", "L2c",
         "Trade stats and equity reporting expose raw event, eligible outcome, excluded outcome, "
         "exclusion reason, and semantics-version fields; judgement defaults to genuine and an "
-        "unavailable cohort is never rendered as zero or healthy.",
+        "unavailable cohort is never rendered as zero or healthy. Known close economics are "
+        "a read-only, explicitly incomplete projection and cannot grant final Outcome authority.",
         status="implemented",
     )
 )
@@ -300,6 +301,21 @@ def test_analytics_routes_expose_raw_and_genuine_cohorts():
     assert "genuine_points" in routes
     assert '"points": genuine_points' in routes
     assert '"total_realized": genuine_total' in routes
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    row = {
+        "status": "closed", "direction": "long", "market_type": "usdt_futures",
+        "execution_mode": "bitget_demo", "entry_price": 100.0, "current_price": 110.0,
+        "quantity": 1.0, "entry_fee": 1.0, "exit_fee": 1.0,
+        "entry_fill_verified": True, "exit_fill_verified": True,
+        "entry_price_source": "broker_fill", "exit_price_source": "broker_fill",
+        "funding_source": "unavailable", "funding_cost": None,
+        "realized_pnl": None, "outcome_eligible": False,
+    }
+    view = position_realized_pnl_view(row)
+    assert view["known_net_before_unresolved_costs"] == 8.0
+    assert view["known_economics_missing_components"] == ["funding_cost"]
+    assert view["realized_pnl"] is None and view["outcome_eligible"] is False
     frontend = _source("frontend/src/charts/PnLChart.tsx")
     # Single verified baseline design: raw/live-mark series removed; check
     # that the verified data source and empty-state are still present.
