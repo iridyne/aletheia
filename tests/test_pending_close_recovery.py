@@ -685,6 +685,49 @@ def test_owner_authorized_release_frees_parked_claim_for_close_retry():
     assert release_events and release_events[0]["actor"] == "human"
 
 
+def test_owner_authorized_release_preserves_cancelled_order_timestamp():
+    """The reason-only cleanup CAS must not rewrite unrelated Order lifecycle fields."""
+    filled_at = _iso(0.25)
+    _seed_order(
+        Order(
+            id="preserve-filled-at",
+            client_order_id="close-preserve-filled-at",
+            position_id="position-preserve-filled-at",
+            close_reason="take_profit",
+            symbol="XRP/USDT",
+            market_type="usdt_futures",
+            direction="short",
+            order_type="market",
+            quantity=9.0,
+            price=1.0,
+            execution_mode="bitget_demo",
+            status="cancelled",
+            source="native",
+            error_reason="trade_too_many_times_cancel",
+            filled_at=filled_at,
+            created_at=_iso(0.5),
+        )
+    )
+    repo.insert_position(
+        _position(
+            id="position-preserve-filled-at",
+            pending_close_order_id="preserve-filled-at",
+            pending_close_status="venue_trade_rate_limited",
+            pending_close_requested_at=_iso(0.5),
+        )
+    )
+
+    result = pcr.release_rate_limited_close_claim(
+        "position-preserve-filled-at",
+        actor="human",
+        reason="owner-authorized cleanup",
+    )
+
+    assert result["released"] is True
+    stored = repo.get_order("preserve-filled-at")
+    assert stored["filled_at"] == filled_at
+
+
 def test_owner_authorized_release_refuses_non_parked_claim():
     _seed_order(
         Order(

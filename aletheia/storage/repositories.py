@@ -2509,6 +2509,23 @@ def update_order_metadata(oid: str, **kwargs: object) -> None:
     _update("orders", oid, kwargs)
 
 
+def replace_order_error_reason(
+    order_id: str,
+    *,
+    expected_status: OrderStatus,
+    expected_reason: str,
+    error_reason: str,
+) -> None:
+    """CAS-update an Order error reason without touching other lifecycle fields."""
+    updated = execute_write(
+        "UPDATE orders SET error_reason=? "
+        "WHERE id=? AND status=? AND error_reason=?",
+        (error_reason, order_id, expected_status, expected_reason),
+    )
+    if updated.rowcount != 1:
+        raise OrderTransitionConflict(f"order_error_reason_conflict:{order_id}")
+
+
 def transition_order(
     order_id: str,
     *,
