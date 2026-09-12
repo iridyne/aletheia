@@ -120,3 +120,16 @@ paths and payloads, missing optional fields, status/error redaction, no SDK
 retry, cancellation, no environment credential fallback, raw usage preservation
 and loop-owned client closure. Existing inference/fallback tests must retain
 their observable behavior; no real inference request is an acceptance fixture.
+
+## Explicit fallback ownership
+
+The accepted ordered-fallback boundary retires live catalogue expansion and
+caller/model-name-driven candidate injection. Discovery is a Settings operation,
+not inference routing authority. An empty configured fallback list means only
+the selected model; an enabled unrelated endpoint is not a fallback candidate.
+Structured output, including trading callers, uses the same explicit order.
+Remove the JSON preference flag and its product-name policy rather than leaving
+a dormant switch or replacement heuristic. Retain explicit cross-endpoint
+entries, bounded attempts, disabled-fallback behavior, cooldown, broker admission,
+budget enforcement, cancellation and structured repair/exclusion semantics.
+This does not reassign stored routes or claim endpoint/model-pair migration.

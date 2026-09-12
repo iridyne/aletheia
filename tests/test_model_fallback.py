@@ -227,7 +227,7 @@ async def test_cross_provider_fallback_uses_target_broker_lane(tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_complete_with_fallback_uses_detected_models_when_config_list_empty(tmp_path, monkeypatch):
+async def test_complete_with_fallback_never_uses_discovery_when_config_list_empty(tmp_path, monkeypatch):
     _setup_config(tmp_path, monkeypatch, fallback_models=[])
     from aletheia.model_provider import fallback
 
@@ -235,13 +235,18 @@ async def test_complete_with_fallback_uses_detected_models_when_config_list_empt
         fail_models={"claude-primary": "502 Bad Gateway"},
         detected=["claude-primary", "claude-detected"],
     )
-    resp = await fallback.complete_with_fallback(
-        ModelRequest(messages=[{"role": "user", "content": "x"}]),
-        provider=provider,
-    )
+    from unittest.mock import AsyncMock
 
-    assert resp.content == "ok:claude-detected"
-    assert provider.calls == ["claude-primary", "claude-detected"]
+    discovery = AsyncMock(return_value=[{"slug": "claude-detected"}])
+    monkeypatch.setattr(fallback.provider_router, "list_models_cached", discovery)
+    with pytest.raises(RuntimeError, match="502 Bad Gateway"):
+        await fallback.complete_with_fallback(
+            ModelRequest(messages=[{"role": "user", "content": "x"}]),
+            provider=provider,
+        )
+
+    assert provider.calls == ["claude-primary"]
+    discovery.assert_not_awaited()
 
 
 @pytest.mark.anyio

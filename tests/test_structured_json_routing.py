@@ -1,4 +1,4 @@
-"""JSON-mode routing for structured trade LLM calls (flash first, glm later)."""
+"""Structured calls preserve explicit routing and bounded schema repair."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class FakeProvider:
         return []
 
 
-def _patch_candidates(monkeypatch, models, *, extra_glm=()):
+def _patch_candidates(monkeypatch, models):
     from aletheia.infra.events import clear_infra_events
     from aletheia.model_provider import fallback
 
@@ -59,7 +59,6 @@ def _patch_candidates(monkeypatch, models, *, extra_glm=()):
         return list(models)
 
     monkeypatch.setattr(fallback, "_candidate_models", fake_candidates)
-    monkeypatch.setattr(fallback, "_enabled_json_preferred_models", lambda: list(extra_glm))
     fallback.reset_model_health()
     clear_infra_events()
 
@@ -70,67 +69,42 @@ class _ObjectSchema:
         return {"type": "object", "properties": {"value": {"type": "integer"}}}
 
 
-def test_prefers_json_reliable_models_only_for_trade_json_callers():
-    from aletheia.agents.helpers import _prefers_json_reliable_models
-
-    assert _prefers_json_reliable_models("risk_critic.review") is True
-    assert _prefers_json_reliable_models("agent_shell.entry_planner") is True
-    assert _prefers_json_reliable_models("news_analyzer.analysis") is False
-    assert _prefers_json_reliable_models("market_observer.market_read") is False
-
-
-def test_order_structured_json_candidates_keeps_flash_first_and_glm_later(monkeypatch):
+@pytest.mark.real_llm
+@pytest.mark.asyncio
+@pytest.mark.parametrize("caller", ["agent_shell.entry_planner", "news_analyzer.analysis"])
+async def test_structured_call_does_not_inject_unconfigured_endpoint(tmp_path, monkeypatch, caller):
+    from aletheia.agents import helpers
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
     from aletheia.model_provider import fallback
-    from aletheia.model_provider.fallback import _json_model_rank, _order_structured_json_candidates
 
-    monkeypatch.setattr(fallback, "_enabled_json_preferred_models", lambda: [])
-    assert _json_model_rank("glm-5.2") < _json_model_rank("deepseek-v4-flash")
-    ordered = _order_structured_json_candidates(
-        [
-            ("sensenova", "deepseek-v4-flash"),
-            ("sensenova", "sensenova-6.8-flash-lite"),
-            ("sensenova_glm", "glm-5.2"),
-            ("openrouter", "cohere/north-mini-code:free"),
-        ]
+    monkeypatch.setenv("ALETHEIA_DATA_DIR", str(tmp_path))
+    cfg = AletheiaConfig()
+    cfg.models.providers = {
+        "selected": ProviderConfig(type="openai_compatible", enabled=True, model="primary"),
+        "unselected": ProviderConfig(type="openai_compatible", enabled=True, model="glm-5.2"),
+    }
+    monkeypatch.setattr(fallback, "load_config", lambda: cfg)
+    fallback.reset_model_health()
+    provider = FakeProvider(model="primary", fail_models={"primary": "429 capacity"})
+    resolved = []
+
+    async def selected(name):
+        assert name == "selected"
+        return provider
+
+    def unconfigured(name):
+        resolved.append(name)
+        raise AssertionError("unconfigured endpoint must not be resolved")
+
+    monkeypatch.setattr(helpers, "get_provider_async", selected)
+    monkeypatch.setattr(fallback.provider_router, "get_provider", unconfigured)
+    data, error = await helpers.llm_structured(
+        "sys", "user", schema=_ObjectSchema, provider="selected", caller=caller,
     )
-    assert ordered[0] == ("sensenova", "deepseek-v4-flash")
-    assert ordered[-2] == ("sensenova_glm", "glm-5.2")
-    assert [item[1] for item in ordered] == [
-        "deepseek-v4-flash",
-        "sensenova-6.8-flash-lite",
-        "glm-5.2",
-        "cohere/north-mini-code:free",
-    ]
-
-
-def test_order_structured_json_candidates_appends_missing_glm_without_promoting(monkeypatch):
-    from aletheia.model_provider import fallback
-    from aletheia.model_provider.fallback import _MAX_MODELS_PER_REQUEST, _order_structured_json_candidates
-
-    monkeypatch.setattr(
-        fallback,
-        "_enabled_json_preferred_models",
-        lambda: [("sensenova_glm", "glm-5.2")],
-    )
-    short = _order_structured_json_candidates(
-        [
-            ("sensenova", "deepseek-v4-flash"),
-            ("sensenova", "sensenova-6.8-flash-lite"),
-        ]
-    )
-    assert short[0] == ("sensenova", "deepseek-v4-flash")
-    assert short[-1] == ("sensenova_glm", "glm-5.2")
-
-    full = [
-        ("sensenova", f"model-{idx}")
-        for idx in range(_MAX_MODELS_PER_REQUEST)
-    ]
-    capped = _order_structured_json_candidates(full)
-    assert capped[0] == ("sensenova", "model-0")
-    assert capped[-1] == ("sensenova_glm", "glm-5.2")
-    assert len(capped) == _MAX_MODELS_PER_REQUEST
-    assert ("sensenova_glm", "glm-5.2") in capped
-    assert capped[0][1] != "glm-5.2"
+    assert data is None
+    assert error.startswith("llm_unavailable:")
+    assert provider.calls == ["primary"]
+    assert resolved == []
 
 
 @pytest.mark.asyncio
@@ -142,7 +116,7 @@ async def test_complete_with_fallback_tries_flash_first_for_trade_json(monkeypat
     resp = await fallback.complete_with_fallback(
         ModelRequest(
             messages=[{"role": "user", "content": "x"}],
-            prefer_json_reliable_models=True,
+            response_format="json_schema",
         ),
         provider=provider,
         provider_name="sensenova",
@@ -154,7 +128,7 @@ async def test_complete_with_fallback_tries_flash_first_for_trade_json(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_complete_with_fallback_keeps_flash_first_without_prefer_flag(monkeypatch):
+async def test_complete_with_fallback_keeps_configured_primary_for_text(monkeypatch):
     _patch_candidates(monkeypatch, ["deepseek-v4-flash", "glm-5.2"])
     from aletheia.model_provider import fallback
 
@@ -200,7 +174,7 @@ async def test_complete_with_fallback_falls_back_to_glm_when_flash_unavailable(m
     resp = await fallback.complete_with_fallback(
         ModelRequest(
             messages=[{"role": "user", "content": "x"}],
-            prefer_json_reliable_models=True,
+            response_format="json_schema",
         ),
         provider=provider,
         provider_name="sensenova",
@@ -208,70 +182,6 @@ async def test_complete_with_fallback_falls_back_to_glm_when_flash_unavailable(m
 
     assert resp.content == "ok:glm-5.2"
     assert provider.calls == ["deepseek-v4-flash", "glm-5.2"]
-
-
-@pytest.mark.asyncio
-async def test_complete_with_fallback_injects_enabled_glm_provider_after_flash(monkeypatch):
-    _patch_candidates(
-        monkeypatch,
-        ["deepseek-v4-flash"],
-        extra_glm=[("sensenova_glm", "glm-5.2")],
-    )
-    from aletheia.model_provider import fallback
-
-    flash = FakeProvider(model="deepseek-v4-flash")
-    glm = FakeProvider(model="glm-5.2")
-
-    def get_provider(name):
-        return {"sensenova": flash, "sensenova_glm": glm}[name]
-
-    monkeypatch.setattr(fallback.provider_router, "get_provider", get_provider)
-    resp = await fallback.complete_with_fallback(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            prefer_json_reliable_models=True,
-        ),
-        provider=flash,
-        provider_name="sensenova",
-    )
-
-    assert resp.content == "ok:deepseek-v4-flash"
-    assert flash.calls == ["deepseek-v4-flash"]
-    assert glm.calls == []
-
-
-@pytest.mark.asyncio
-async def test_complete_with_fallback_uses_injected_glm_after_flash_429(monkeypatch):
-    _patch_candidates(
-        monkeypatch,
-        ["deepseek-v4-flash"],
-        extra_glm=[("sensenova_glm", "glm-5.2")],
-    )
-    from aletheia.model_provider import fallback
-
-    flash = FakeProvider(
-        model="deepseek-v4-flash",
-        fail_models={"deepseek-v4-flash": "429 Too Many Requests"},
-    )
-    glm = FakeProvider(model="glm-5.2")
-
-    def get_provider(name):
-        return {"sensenova": flash, "sensenova_glm": glm}[name]
-
-    monkeypatch.setattr(fallback.provider_router, "get_provider", get_provider)
-    resp = await fallback.complete_with_fallback(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            prefer_json_reliable_models=True,
-        ),
-        provider=flash,
-        provider_name="sensenova",
-    )
-
-    assert resp.content == "ok:glm-5.2"
-    assert flash.calls == ["deepseek-v4-flash"]
-    assert glm.calls == ["glm-5.2"]
-
 
 
 @pytest.mark.asyncio
@@ -296,7 +206,7 @@ async def test_complete_with_fallback_reaches_operator_configured_deepseek_last(
     response = await fallback.complete_with_fallback(
         ModelRequest(
             messages=[{"role": "user", "content": "x"}],
-            prefer_json_reliable_models=True,
+            response_format="json_schema",
         ),
         provider=free,
         provider_name="databricks_free",
@@ -361,7 +271,6 @@ async def test_llm_structured_requests_json_schema_and_skips_all_failed_models(t
         "additionalProperties": False,
         "required": ["value"],
     } for request in captured)
-    assert all(request.prefer_json_reliable_models is True for request in captured)
     assert captured[0].exclude_models == ()
     assert captured[1].exclude_models == ("llama-4-maverick", "qwen35-122b-a10b")
 
