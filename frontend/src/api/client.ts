@@ -1039,8 +1039,8 @@ export const api = {
 	getModelConfig: () =>
 		fetchJson<{
 			default_provider: string;
-			deep_provider: string | null;
-			fast_provider: string | null;
+			deep: { endpoint_id: string; model_id: string } | null;
+			fast: { endpoint_id: string; model_id: string } | null;
 			providers: Record<string, any>;
 		}>("/model"),
 	getModelProviderTypes: () =>
@@ -1231,8 +1231,8 @@ export const api = {
 		),
 	updateModelRouting: (body: {
 		default_provider?: string | null;
-		deep_provider?: string | null;
-		fast_provider?: string | null;
+		deep?: { endpoint_id: string; model_id: string } | null;
+		fast?: { endpoint_id: string; model_id: string } | null;
 	}) => post("/settings/model-routing", body),
 	testModelCandidate: (body: {
 		provider: string;

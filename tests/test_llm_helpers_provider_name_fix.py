@@ -29,6 +29,51 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["complete", "structured", "stream"])
+async def test_helpers_dispatch_selected_model_with_endpoint_provenance(monkeypatch, mode):
+    from types import SimpleNamespace
+    from pydantic import BaseModel
+    from aletheia.agents import helpers
+    from aletheia.config.schema import ModelSelection
+    from aletheia.model_provider.base import ModelResponse, StreamChunk
+
+    class Result(BaseModel):
+        value: int
+
+    selection = ModelSelection(endpoint_id="shared", model_id="large")
+    resolved = []
+    dispatched = []
+
+    async def resolve(value):
+        resolved.append(value)
+        assert value is selection
+        return SimpleNamespace(model=value.model_id)
+
+    async def complete(request, *, provider, provider_name):
+        dispatched.append((provider_name, provider.model, request.inference.requested_provider))
+        return ModelResponse(content='{"value":42}', model=provider.model)
+
+    async def stream(provider_name, provider, request):
+        dispatched.append((provider_name, provider.model, request.inference.requested_provider))
+        yield StreamChunk(content="ok", done=True)
+
+    monkeypatch.setattr(helpers, "get_provider_async", resolve)
+    monkeypatch.setattr(helpers, "complete_with_fallback", complete)
+    monkeypatch.setattr("aletheia.model_provider.broker.brokered_stream", stream)
+    if mode == "complete":
+        result, error = await helpers.llm_complete("sys", "user", provider=selection)
+        assert result == '{"value":42}' and error is None
+    elif mode == "structured":
+        result, error = await helpers.llm_structured("sys", "user", schema=Result, provider=selection)
+        assert result == {"value": 42} and error is None
+    else:
+        chunks = [chunk async for chunk in helpers.llm_stream("sys", "user", provider=selection)]
+        assert [(chunk.content, chunk.done) for chunk in chunks] == [("ok", True)]
+    assert resolved == [selection]
+    assert dispatched == [("shared", "large", "shared")]
+
+
+@pytest.mark.asyncio
 async def test_llm_complete_threads_provider_name_to_complete_with_fallback():
     """#161: caller passes provider="deep_provider_xyz"; helpers must forward
     that exact string as provider_name= to complete_with_fallback (not None)."""

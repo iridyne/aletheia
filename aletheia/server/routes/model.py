@@ -9,9 +9,10 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException  # pyright: ignore[reportMissingImports]
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from aletheia.config.loader import load_config, save_config
+from aletheia.config.loader import load_config, save_config, mutate_config
+from aletheia.config.schema import ModelSelection
 from aletheia.config.secrets import delete_secret, get_secret, set_secret
 from aletheia.files.jsonl import write_audit
 from aletheia.model_provider.base import MODEL_HEALTH_STALE_AFTER_SECONDS
@@ -272,8 +273,8 @@ def get_model_config():
         providers[name] = entry
     return {
         "default_provider": cfg.models.default_provider,
-        "deep_provider": cfg.models.deep_provider,
-        "fast_provider": cfg.models.fast_provider,
+        "deep": cfg.models.deep,
+        "fast": cfg.models.fast,
         "providers": providers,
     }
 
@@ -795,10 +796,22 @@ class ModelProfileMutation(ModelProfileFields):
     type: str | None = None
 
 
+class ModelSelectionRequest(ModelSelection):
+    @field_validator("endpoint_id", "model_id")
+    @classmethod
+    def require_explicit_identity(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Endpoint and model IDs must be nonempty")
+        return value
+
+
 class ModelRoutingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     default_provider: str | None = None
-    deep_provider: str | None = None
-    fast_provider: str | None = None
+    deep: ModelSelectionRequest | None = None
+    fast: ModelSelectionRequest | None = None
 
 
 def _resolve_request_type(req: ModelProfileMutation, pcfg) -> str:
@@ -968,8 +981,8 @@ async def _apply_model_config(req: ModelProfileMutation, verification: dict | No
     return {
         "provider": req.provider,
         "default_provider": cfg.models.default_provider,
-        "deep_provider": cfg.models.deep_provider,
-        "fast_provider": cfg.models.fast_provider,
+        "deep": cfg.models.deep,
+        "fast": cfg.models.fast,
         "api_key": key_status,
         "verification": {
             "verified": pcfg.verification_verified,
@@ -1043,42 +1056,64 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
     )
 
 
-def _update_model_routing_sync(req: ModelRoutingRequest) -> dict:
-    cfg = load_config()
-    changed: dict[str, str | None] = {}
-    for field_name in req.model_fields_set:
-        value = getattr(req, field_name)
-        if value and value not in cfg.models.providers:
-            raise HTTPException(404, f"Unknown model provider: {value}")
-        if value and (cfg.models.providers[value].type or value) not in VALID_PROVIDERS:
-            raise HTTPException(422, f"Unsupported model provider: {value}")
-        if field_name == "default_provider":
-            cfg.models.default_provider = value or ""
-        else:
-            setattr(cfg.models, field_name, value)
-        changed[field_name] = value
-    save_config(cfg)
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "model_routing_changed",
-            "entity_type": "model_routing",
-            "entity_id": "models",
-            "message": "Model routing roles updated",
-            "after": changed,
-        }
-    )
-    return {
-        "default_provider": cfg.models.default_provider,
-        "deep_provider": cfg.models.deep_provider,
-        "fast_provider": cfg.models.fast_provider,
-    }
+def _update_model_routing_sync(req: ModelRoutingRequest, verifications: dict) -> dict:
+    changed = {}
+    result = {}
+
+    def apply(cfg):
+        for field_name in req.model_fields_set:
+            value = getattr(req, field_name)
+            endpoint = value.endpoint_id if isinstance(value, ModelSelection) else value
+            if endpoint and endpoint not in cfg.models.providers:
+                raise HTTPException(404, f"Unknown model provider: {endpoint}")
+            if endpoint:
+                pcfg = cfg.models.providers[endpoint]
+                if (pcfg.type or endpoint) not in VALID_PROVIDERS:
+                    raise HTTPException(422, f"Unsupported model provider: {endpoint}")
+                if isinstance(value, ModelSelection):
+                    identity = provider_configuration_identity(
+                        endpoint, pcfg.model_copy(update={"model": value.model_id}),
+                    )
+                    if identity != verifications[field_name]["identity"]:
+                        raise HTTPException(409, "Model endpoint changed during routing verification")
+            setattr(cfg.models, field_name, (value or "") if field_name == "default_provider" else value)
+            changed[field_name] = value.model_dump() if isinstance(value, ModelSelection) else value
+        result.update(
+            default_provider=cfg.models.default_provider,
+            deep=cfg.models.deep,
+            fast=cfg.models.fast,
+        )
+        return bool(changed)
+
+    mutate_config(apply)
+    if changed:
+        write_audit({
+            "actor": "human", "source": "dashboard", "event_type": "model_routing_changed",
+            "entity_type": "model_routing", "entity_id": "models",
+            "message": "Model routing roles updated", "after": changed,
+            "verification": verifications,
+        })
+    return result
 
 
 @router.post("/settings/model-routing")
 async def update_model_routing(req: ModelRoutingRequest):
-    result = await asyncio.to_thread(_update_model_routing_sync, req)
+    cfg = await asyncio.to_thread(load_config)
+    verifications = {}
+    for tier in ("deep", "fast"):
+        selected = getattr(req, tier)
+        if selected is None:
+            continue
+        pcfg = cfg.models.providers.get(selected.endpoint_id)
+        if pcfg is None:
+            raise HTTPException(404, f"Unknown model provider: {selected.endpoint_id}")
+        provider_type = pcfg.type or selected.endpoint_id
+        if provider_type not in VALID_PROVIDERS:
+            raise HTTPException(422, f"Unsupported model provider: {selected.endpoint_id}")
+        verifications[tier] = await _verify_profile_candidate(
+            selected.endpoint_id, provider_type, {"model": selected.model_id},
+        )
+    result = await asyncio.to_thread(_update_model_routing_sync, req, verifications)
     clear_cache()
     return result
 
@@ -1095,11 +1130,11 @@ def _delete_model_profile_sync(profile_id: str) -> dict:
     if cfg.models.default_provider == profile_id:
         cfg.models.default_provider = ""
         cleared_roles.append("default")
-    if cfg.models.deep_provider == profile_id:
-        cfg.models.deep_provider = None
+    if cfg.models.deep and cfg.models.deep.endpoint_id == profile_id:
+        cfg.models.deep = None
         cleared_roles.append("deep")
-    if cfg.models.fast_provider == profile_id:
-        cfg.models.fast_provider = None
+    if cfg.models.fast and cfg.models.fast.endpoint_id == profile_id:
+        cfg.models.fast = None
         cleared_roles.append("fast")
 
     secret_refs = [pcfg.api_key_secret_ref] if pcfg.api_key_secret_ref else []

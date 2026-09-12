@@ -16,6 +16,7 @@ from aletheia.config.execution_costs import (
     SLIPPAGE_BPS_BOUNDS,
 )
 from aletheia.config.schema import (
+    ModelSelection,
     AgentConfig,
     AppConfig,
     ControllerConfig,
@@ -209,8 +210,8 @@ class SettingsProviderResponse(BaseModel):
 
 class SettingsModelsResponse(BaseModel):
     default_provider: str
-    deep_provider: str | None
-    fast_provider: str | None
+    deep: ModelSelection | None
+    fast: ModelSelection | None
     providers: dict[str, SettingsProviderResponse]
 
 
@@ -413,8 +414,8 @@ def get_settings() -> SettingsResponse:
         "operator": cfg.operator.model_dump(mode="json"),
         "models": {
             "default_provider": cfg.models.default_provider,
-            "deep_provider": cfg.models.deep_provider,
-            "fast_provider": cfg.models.fast_provider,
+            "deep": cfg.models.deep,
+            "fast": cfg.models.fast,
             "providers": providers_safe,
         },
         "risk": cfg.risk.model_dump(mode="json"),

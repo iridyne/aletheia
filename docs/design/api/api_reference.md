@@ -423,7 +423,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/model-profiles` | Create one API profile after server-side verification. Multiple profiles may share the same adapter type; `profile_id` is the stable identity and secret namespace. |
 | PATCH | `/settings/model-profiles/{profile_id}` | Verify and update an API profile. The stable ID and adapter type are immutable; display name, connection fields, key, model, limits, and enabled state may change. |
 | DELETE | `/settings/model-profiles/{profile_id}?confirm=true` | Confirmed API-profile deletion. Clears all Default/Deep/Fast references, deletes its credential, invalidates provider cache/broker state, and audits only sanitized metadata. |
-| POST | `/settings/model-routing` | Independently assign or clear `default_provider`, `deep_provider`, and `fast_provider`. Role assignment does not enable a profile; a disabled assignment is retained but runtime calls fail closed. |
+| POST | `/settings/model-routing` | Independently assign or clear `default_provider` (endpoint ID), `deep`, and `fast` (each `{endpoint_id, model_id}` or null). Tier assignment verifies the exact model and rejects concurrent endpoint identity changes. It does not enable a profile; disabled assignments remain unavailable at runtime. Old provider-only tier fields are rejected. |
 
 ---
 

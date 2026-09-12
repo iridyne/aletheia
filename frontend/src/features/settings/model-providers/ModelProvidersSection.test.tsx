@@ -42,8 +42,8 @@ function cleanModelClient(providers: Record<string, unknown> = {}) {
 	});
 	client.setQueryData(["model"], {
 		default_provider: "",
-		deep_provider: null,
-		fast_provider: null,
+		deep: null,
+		fast: null,
 		providers,
 	});
 	client.setQueryData(["model-provider-types"], {
@@ -88,6 +88,45 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
+	it("preserves a tier draft through refresh and submits its exact endpoint/model pair", async () => {
+		const client = cleanModelClient({ shared: EXISTING_PROFILE });
+		vi.spyOn(api, "getModelConfig").mockImplementation(async () => client.getQueryData(["model"])!);
+		vi.spyOn(api, "getModelHealth").mockResolvedValue([]);
+		const update = vi.spyOn(api, "updateModelRouting").mockResolvedValue({});
+		const onDirty = vi.fn();
+		const container = document.createElement("div");
+		document.body.append(container);
+		const root = createRoot(container);
+		(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+		try {
+			await act(async () => root.render(
+				<QueryClientProvider client={client}><ModelProvidersSection qc={client} onDirty={onDirty} /></QueryClientProvider>,
+			));
+			const fieldset = [...container.querySelectorAll("fieldset")].find(item => item.querySelector("legend")?.textContent === "Fast")!;
+			await act(async () => {
+				const select = fieldset.querySelector("select")!;
+				select.value = "shared";
+				select.dispatchEvent(new Event("change", { bubbles: true }));
+			});
+			await act(async () => changeInput(fieldset.querySelector("input")!, "small-manual"));
+			expect(onDirty).toHaveBeenCalledWith("model-routing-fast", true);
+			await act(async () => {
+				client.setQueryData(["model"], (current: Record<string, unknown>) => ({ ...current, default_provider: "shared" }));
+				await new Promise(resolve => setTimeout(resolve, 0));
+			});
+			expect(fieldset.querySelector("input")!.value).toBe("small-manual");
+			await act(async () => {
+				[...fieldset.querySelectorAll("button")].find(item => item.textContent === "Verify & assign Fast")!.click();
+			});
+			expect(update).toHaveBeenCalledExactlyOnceWith({ fast: { endpoint_id: "shared", model_id: "small-manual" } });
+		} finally {
+			await act(async () => root.unmount());
+			container.remove();
+			client.clear();
+			vi.restoreAllMocks();
+		}
+	});
+
 	it("sends only discovery fields and editable fields to strict HTTP APIs", async () => {
 		const detect = vi.spyOn(api, "detectModels").mockResolvedValue({ models: [] });
 		vi.spyOn(api, "testModelCandidate").mockResolvedValue({ available: true } as Awaited<ReturnType<typeof api.testModelCandidate>>);

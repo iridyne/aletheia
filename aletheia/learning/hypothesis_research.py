@@ -26,7 +26,7 @@ from aletheia.learning.t0_context import (
     assess_t0_foundation,
 )
 from aletheia.learning.t0_coverage import get_t0_coverage_contract
-from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 
 _MISSING_CONTEXT_DIMENSIONS = {
     "regime": ("regime",),
@@ -163,26 +163,29 @@ async def research_learning_hypothesis(
         "counterfactual_checks": [check.model_dump(mode="json") for check in checks],
         "allowed_material_context_keys": allowed_material_keys,
     }
-    payload, error = await llm_structured(
-        system=(
-            "You are the single bounded causal red-team reviewer for a proposed "
-            "paper-trading Learning hypothesis. Use only the supplied exact identities, "
-            "recorded T0 context, and bounded counterfactual checks. Never infer a missing "
-            "fact from later outcomes. Answer: the strongest simpler competing explanation, "
-            "material missing context, the smallest future falsification test, and whether "
-            "the candidate is ready, narrowed, rejected, or insufficient_context. If narrowed, "
-            "select at most three keys only from allowed_material_context_keys and rewrite the "
-            "candidate as a conditional claim. This review is reasoning evidence only and "
-            "cannot grant experiment or trading authority. Return only the schema JSON."
-        ),
-        user=json.dumps(review_payload, sort_keys=True, ensure_ascii=True, default=str),
-        schema=_CausalRedTeamReview,
-        max_tokens=800,
-        provider=get_provider_for_tier("deep"),
-        caller="learning.hypothesis_causal_red_team",
-        reasoning_effort="none",
-        deadline=deadline,
-    )
+    try:
+        payload, error = await llm_structured(
+            system=(
+                "You are the single bounded causal red-team reviewer for a proposed "
+                "paper-trading Learning hypothesis. Use only the supplied exact identities, "
+                "recorded T0 context, and bounded counterfactual checks. Never infer a missing "
+                "fact from later outcomes. Answer: the strongest simpler competing explanation, "
+                "material missing context, the smallest future falsification test, and whether "
+                "the candidate is ready, narrowed, rejected, or insufficient_context. If narrowed, "
+                "select at most three keys only from allowed_material_context_keys and rewrite the "
+                "candidate as a conditional claim. This review is reasoning evidence only and "
+                "cannot grant experiment or trading authority. Return only the schema JSON."
+            ),
+            user=json.dumps(review_payload, sort_keys=True, ensure_ascii=True, default=str),
+            schema=_CausalRedTeamReview,
+            max_tokens=800,
+            provider=get_provider_for_tier("deep"),
+            caller="learning.hypothesis_causal_red_team",
+            reasoning_effort="none",
+            deadline=deadline,
+        )
+    except ProviderNotConfigured as exc:
+        payload, error = None, f"llm_unavailable: {exc}"
     if error or payload is None:
         return _insufficient_evidence(
             observation=observation,

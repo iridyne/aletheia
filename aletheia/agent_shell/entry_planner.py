@@ -11,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import ValidationError
+from aletheia.config.schema import ModelSelection
 
 from aletheia.storage import repositories as repo
 from aletheia.trading.entry_analysis import (
@@ -75,7 +76,7 @@ async def plan_next_candidate(
     *,
     cfg=None,
     owner_token: str | None = None,
-    model_provider: str = "custom_planner",
+    model_provider: str | None = "custom_planner",
     resume_only: bool = False,
 ) -> dict[str, Any]:
     """Claim, reason once, and CAS the result against the current generation."""
@@ -503,7 +504,7 @@ async def plan_next_candidate(
 
 async def system_operator_entry_planner(
     context: dict,
-    provider_name: str | None = None,
+    provider_name: str | ModelSelection | None = None,
 ) -> EntryHypothesis | None:
     """Canonical slow AI producer; all output is validated before persistence."""
 
@@ -594,10 +595,10 @@ async def system_operator_entry_planner(
 async def run_entry_planner_once(
     cfg=None,
     *,
-    provider_name: str | None = None,
+    provider_name: str | ModelSelection | None = None,
     resume_only: bool = False,
 ) -> dict[str, Any]:
-    if provider_name is None:
+    if provider_name is None and not resume_only:
         from aletheia.model_provider.router import get_provider_for_tier
 
         provider_name = get_provider_for_tier("deep")
@@ -605,7 +606,8 @@ async def run_entry_planner_once(
     async def planner(context: dict) -> EntryHypothesis | None:
         return await system_operator_entry_planner(context, provider_name)
 
-    return await plan_next_candidate(planner, cfg=cfg, model_provider=provider_name, resume_only=resume_only)
+    endpoint_id = provider_name.endpoint_id if isinstance(provider_name, ModelSelection) else provider_name
+    return await plan_next_candidate(planner, cfg=cfg, model_provider=endpoint_id, resume_only=resume_only)
 
 
 async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
@@ -616,15 +618,22 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
         InferencePriority,
         inference_broker,
     )
-    from aletheia.model_provider.router import get_provider_for_tier
+    from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 
     cfg = cfg or load_config(persist_migrations=False)
     pending = repo.count_pending_candidate_planning()
-    provider_name = get_provider_for_tier("deep")
-    available = await inference_broker.available_capacity(
-        provider_name,
-        priority=InferencePriority.DEFAULT,
-    )
+    try:
+        selection = get_provider_for_tier("deep")
+    except ProviderNotConfigured:
+        selection = None
+    if selection is None:
+        available = 0
+    else:
+        provider_name = selection.endpoint_id
+        available = await inference_broker.available_capacity(
+            provider_name,
+            priority=InferencePriority.DEFAULT,
+        )
     worker_count = min(
         max(pending, ENTRY_PLANNER_MIN_CONCURRENCY),
         ENTRY_PLANNER_MAX_CONCURRENCY,
@@ -644,7 +653,7 @@ async def run_entry_planner_batch(cfg=None) -> dict[str, Any]:
     tasks: list[asyncio.Task[dict[str, Any]]] = []
     async with asyncio.TaskGroup() as group:
         tasks = [
-            group.create_task(run_entry_planner_once(cfg=cfg, provider_name=provider_name, resume_only=resume_only)) for _ in range(worker_count)
+            group.create_task(run_entry_planner_once(cfg=cfg, provider_name=selection, resume_only=resume_only)) for _ in range(worker_count)
         ]
     results = [task.result() for task in tasks]
     claimed = [result for result in results if result.get("status") != "idle"]

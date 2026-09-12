@@ -28,8 +28,8 @@ export function routingRoles(
 ): RoutingRole[] {
 	const roles: RoutingRole[] = [];
 	if (config.default_provider === providerId) roles.push("default");
-	if (config.deep_provider === providerId) roles.push("deep");
-	if (config.fast_provider === providerId) roles.push("fast");
+	if (config.deep?.endpoint_id === providerId) roles.push("deep");
+	if (config.fast?.endpoint_id === providerId) roles.push("fast");
 	return roles;
 }
 

@@ -522,6 +522,14 @@ class ProviderConfig(BaseModel):
     inference_timeout_sec: float = Field(default=300.0, ge=1.0, le=1_800.0)
 
 
+class ModelSelection(BaseModel):
+    """An endpoint/model pair; blank historical model IDs remain unavailable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    endpoint_id: str
+    model_id: str
+
+
 class ModelsConfig(BaseModel):
     # Fresh installs ship blank: no default provider name, no pre-populated
     # provider stubs. The operator adds providers explicitly via the Settings
@@ -531,12 +539,35 @@ class ModelsConfig(BaseModel):
     # services that were never there. Existing config.yaml files are untouched
     # by this default change (loader merges on top of user-supplied values).
     default_provider: str = ""
-    # Two-tier model routing (MR, 2026-07-01): let top-level decision agents use a
-    # stronger model while bulk data-extraction agents use a cheaper/faster one.
-    # None → fall back to default_provider, so existing configs need no migration.
-    deep_provider: str | None = None   # decision/analysis tier: trading_decision, strategy_designer, risk_critic, …
-    fast_provider: str | None = None   # extraction tier: research_worker bulk LLM calls
+    deep: ModelSelection | None = None
+    fast: ModelSelection | None = None
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def decode_historical_tier_providers(cls, value):
+        if not isinstance(value, dict):
+            return value
+        decoded = dict(value)
+        providers = value.get("providers", {})
+        if not isinstance(providers, dict):
+            raise ValueError("Model providers must be a mapping")
+        for tier in ("deep", "fast"):
+            old_field = f"{tier}_provider"
+            if old_field not in decoded:
+                continue
+            if tier in decoded:
+                raise ValueError("Both historical and current model tier fields are present")
+            old_endpoint = decoded.pop(old_field)
+            if old_endpoint is not None and not isinstance(old_endpoint, str):
+                raise ValueError("Historical tier provider must be a string or null")
+            endpoint = old_endpoint or value.get("default_provider")
+            if endpoint is not None and not isinstance(endpoint, str):
+                raise ValueError("Default model provider must be a string")
+            profile = providers.get(endpoint) if endpoint else None
+            model = profile.get("model", "") if isinstance(profile, dict) else getattr(profile, "model", "")
+            decoded[tier] = {"endpoint_id": endpoint, "model_id": model or ""} if endpoint else None
+        return decoded
 
 
 class StrictRiskPolicyModel(BaseModel):

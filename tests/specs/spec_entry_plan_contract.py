@@ -215,7 +215,7 @@ def test_canonical_hypothesis_and_trigger_registry_expose_complete_authority():
         "entry_plan_contract",
         "Deep-tier provider admission",
         "L2a",
-        "Entry Planner resolves one deep-provider alias and passes it to both capacity admission and inference workers.",
+        "Entry Planner captures one deep endpoint/model pair; capacity uses its endpoint while inference retains the pair.",
         status="implemented",
     )
 )
@@ -224,8 +224,9 @@ def test_entry_planner_batch_captures_one_deep_provider_identity():
 
     source = inspect.getsource(run_entry_planner_batch)
     assert source.count('get_provider_for_tier("deep")') == 1
-    assert "available_capacity(\n        provider_name" in source
-    assert "provider_name=provider_name" in source
+    assert "available_capacity( provider_name," in " ".join(source.split())
+    assert "provider_name = selection.endpoint_id" in source
+    assert "provider_name=selection" in source
 
 
 @spec_claim(

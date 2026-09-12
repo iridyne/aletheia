@@ -414,8 +414,8 @@ def test_fresh_config_has_empty_default_provider():
         "fresh config must not name a default provider; got "
         f"{cfg.models.default_provider!r}"
     )
-    assert cfg.models.deep_provider is None
-    assert cfg.models.fast_provider is None
+    assert cfg.models.deep is None
+    assert cfg.models.fast is None
 
 
 def test_provider_config_defaults_to_disabled():

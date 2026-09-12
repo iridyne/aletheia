@@ -9,11 +9,13 @@ import threading
 import time
 
 from aletheia.config.loader import load_config, mutate_config
+from aletheia.config.schema import ModelSelection
 from aletheia.config.secrets import get_secret
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
     ModelHealth,
     ModelProvider,
+    clone_provider_with_model,
 )
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
@@ -214,8 +216,12 @@ def _resolve_type(name: str, pcfg) -> str:
     raise ValueError(f"Cannot resolve provider type for: {name}")
 
 
-def get_provider(name: str | None = None) -> ModelProvider:
+def get_provider(name: str | ModelSelection | None = None) -> ModelProvider:
     """Get an enabled provider by name, or the configured default."""
+    if isinstance(name, ModelSelection):
+        if not name.endpoint_id.strip() or not name.model_id.strip():
+            raise ProviderNotConfigured(name.endpoint_id)
+        return clone_provider_with_model(get_provider(name.endpoint_id), name.model_id)
     cfg = load_config()
     if name is None:
         name = cfg.models.default_provider
@@ -264,7 +270,7 @@ def get_provider(name: str | None = None) -> ModelProvider:
     return _cache_provider(name, provider)
 
 
-async def get_provider_async(name: str | None = None) -> ModelProvider:
+async def get_provider_async(name: str | ModelSelection | None = None) -> ModelProvider:
     """Resolve through the single constructor owner without blocking the loop."""
     return await asyncio.to_thread(get_provider, name)
 
@@ -388,9 +394,9 @@ def _routing_roles(cfg, provider: str) -> list[str]:
     roles: list[str] = []
     if cfg.models.default_provider == provider:
         roles.append("default")
-    if cfg.models.deep_provider == provider:
+    if cfg.models.deep and cfg.models.deep.endpoint_id == provider:
         roles.append("deep")
-    if cfg.models.fast_provider == provider:
+    if cfg.models.fast and cfg.models.fast.endpoint_id == provider:
         roles.append("fast")
     return roles
 
@@ -649,18 +655,18 @@ async def _safe_healthcheck(name: str) -> ModelHealth:
         )
 
 
-def get_provider_for_tier(tier: str | None) -> str:
-    """Translate a routing tier label to a configured provider name.
-
-    tier="deep"  → cfg.models.deep_provider  (falls back to default_provider if None)
-    tier="fast"  → cfg.models.fast_provider  (falls back to default_provider if None)
-    tier=None    → cfg.models.default_provider
-
-    Unknown tiers fall back to default_provider — never raises.
-    """
+def get_provider_for_tier(tier: str | None) -> ModelSelection:
+    """Resolve one explicit pair, never substituting another tier's endpoint."""
     cfg = load_config()
-    if tier == "deep":
-        return cfg.models.deep_provider or cfg.models.default_provider
-    if tier == "fast":
-        return cfg.models.fast_provider or cfg.models.default_provider
-    return cfg.models.default_provider
+    if tier in {"deep", "fast"}:
+        selected = getattr(cfg.models, tier)
+        if selected is None or not selected.endpoint_id.strip() or not selected.model_id.strip():
+            raise ProviderNotConfigured(str(tier))
+        return selected
+    if tier not in {None, "default"}:
+        raise ValueError(f"Unknown model tier: {tier}")
+    endpoint = cfg.models.default_provider
+    profile = cfg.models.providers.get(endpoint)
+    if profile is None or not profile.model:
+        raise ProviderNotConfigured(endpoint)
+    return ModelSelection(endpoint_id=endpoint, model_id=profile.model)

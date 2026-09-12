@@ -9,7 +9,6 @@ Structured callers may skip models that already returned unusable JSON.
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass, asdict
 import logging
 import threading
@@ -25,6 +24,7 @@ from aletheia.model_provider.base import (
     ModelRequest,
     ModelResponse,
     ProviderResponseError,
+    clone_provider_with_model,
 )
 from aletheia.model_provider.broker import (
     InferenceBrokerClosed,
@@ -114,12 +114,6 @@ def is_transient_model_error(exc: BaseException) -> bool:
             return True
     text = str(exc).lower()
     return any(marker in text for marker in _TRANSIENT_TEXT_MARKERS)
-
-
-def _clone_provider_with_model(provider: ModelProvider, model: str) -> ModelProvider:
-    clone = copy.copy(provider)
-    setattr(clone, "model", model)
-    return clone
 
 
 def _parse_fallback_entry(entry: str, default_provider: str) -> tuple[str, str | None]:
@@ -571,7 +565,7 @@ metadata={
     for idx, (pn, md) in enumerate(to_try):
         attempted.append(md)
         cand_provider = provider if pn == resolved_provider_name else provider_router.get_provider(pn)
-        candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else _clone_provider_with_model(cand_provider, md)
+        candidate = cand_provider if md == str(getattr(cand_provider, "model", "") or "") else clone_provider_with_model(cand_provider, md)
         try:
             response = await brokered_complete(
                 pn,

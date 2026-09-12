@@ -815,6 +815,16 @@ export interface components {
              */
             revision: number;
         };
+        /**
+         * ModelSelection
+         * @description An endpoint/model pair; blank historical model IDs remain unavailable.
+         */
+        ModelSelection: {
+            /** Endpoint Id */
+            endpoint_id: string;
+            /** Model Id */
+            model_id: string;
+        };
         /** NetworkConfig */
         NetworkConfig: {
             /**
@@ -1872,12 +1882,10 @@ export interface components {
         };
         /** SettingsModelsResponse */
         SettingsModelsResponse: {
-            /** Deep Provider */
-            deep_provider: string | null;
+            deep: components["schemas"]["ModelSelection"] | null;
             /** Default Provider */
             default_provider: string;
-            /** Fast Provider */
-            fast_provider: string | null;
+            fast: components["schemas"]["ModelSelection"] | null;
             /** Providers */
             providers: {
                 [key: string]: components["schemas"]["SettingsProviderResponse"];

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, llm_structured, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 from aletheia.knowledge.manager import create_daily_review, create_dreaming_log
 from aletheia.learning.control import (
     advance_learning_job_cursor,
@@ -393,34 +393,37 @@ async def _extract_lessons(
         )
     summaries = "\n".join(case_lines)
 
-    payload, err = await llm_structured(
-        system=(
-            "You are a trading lesson extractor. Given the oldest pending trade case studies "
-            "with quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
-            "close_reason), extract 1-3 actionable lessons grounded in the data. "
-            "Return a JSON object with a lessons array where each object has: "
-            '"summary" (one sentence referencing specific metrics), '
-            '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
-            '"severity" (info|warning|critical), '
-            '"supporting_factor_keys" (only the exact factor_key strings from the input cases that support this lesson), '
-            '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
-            'factor_keys (list of strings), scanner_families (list of strings)), '
-            '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
-            'shadow-evaluation hypothesis; block_* suggestions never become Risk Engine rules and must be one of: '
-            '{"action": "block_scanner", "scanner": "<scanner_family>"}, '
-            '{"action": "block_direction", "direction": "short"|"long"}, '
-            '{"action": "reduce_size", "factor": 0.3-0.8}; '
-            'omit entirely if lesson is general advice without a concrete constraint). '
-            "Return ONLY the JSON object, no other text."
-        ),
-        user=f"Pending trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
-        schema=_LessonExtractionResult,
-        max_tokens=600,
-        provider=get_provider_for_tier("deep"),
-        caller="dreaming.lesson_extraction",
-        reasoning_effort="none",
-        deadline=deadline,
-    )
+    try:
+        payload, err = await llm_structured(
+            system=(
+                "You are a trading lesson extractor. Given the oldest pending trade case studies "
+                "with quantitative metrics (outcome, realized_pnl_pct, factor_key, scanner_family, "
+                "close_reason), extract 1-3 actionable lessons grounded in the data. "
+                "Return a JSON object with a lessons array where each object has: "
+                '"summary" (one sentence referencing specific metrics), '
+                '"category" (one of: risk_sizing, entry_timing, exit_timing, symbol_selection, general), '
+                '"severity" (info|warning|critical), '
+                '"supporting_factor_keys" (only the exact factor_key strings from the input cases that support this lesson), '
+                '"evidence" (object with fields: outcome_counts (dict), avg_pnl_pct (float or null), '
+                'factor_keys (list of strings), scanner_families (list of strings)), '
+                '"recommendation" (optional — include ONLY when evidence strongly supports a specific '
+                'shadow-evaluation hypothesis; block_* suggestions never become Risk Engine rules and must be one of: '
+                '{"action": "block_scanner", "scanner": "<scanner_family>"}, '
+                '{"action": "block_direction", "direction": "short"|"long"}, '
+                '{"action": "reduce_size", "factor": 0.3-0.8}; '
+                'omit entirely if lesson is general advice without a concrete constraint). '
+                "Return ONLY the JSON object, no other text."
+            ),
+            user=f"Pending trade case studies:\n{summaries}\n\nExtract lessons with evidence.",
+            schema=_LessonExtractionResult,
+            max_tokens=600,
+            provider=get_provider_for_tier("deep"),
+            caller="dreaming.lesson_extraction",
+            reasoning_effort="none",
+            deadline=deadline,
+        )
+    except ProviderNotConfigured as exc:
+        payload, err = None, f"llm_unavailable: {exc}"
     log_tool(
         run_id,
         "llm_structured_lessons",
@@ -621,15 +624,18 @@ async def run_dreaming_agent(permission_mode: str = "Observe", run_id: str | Non
     except Exception as e:
         errors.append(f"trading_performance_failed: {e}")
 
-    content, err = await llm_complete(
-        system="You are the system's nightly consolidation process. Given recent agent activity, "
-               "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
-               "(3) one suggested focus for tomorrow. Keep it brief.",
-        user=f"Recent agent activity:\n{activity}{post_mortem_ctx}{trading_block}\n\nWrite the dreaming log.",
-        max_tokens=700,
-        provider=get_provider_for_tier("deep"),
-        caller="dreaming.nightly_consolidation",
-    )
+    try:
+        content, err = await llm_complete(
+            system="You are the system's nightly consolidation process. Given recent agent activity, "
+                   "produce a short markdown 'dreaming log': (1) what happened, (2) one insight or pattern, "
+                   "(3) one suggested focus for tomorrow. Keep it brief.",
+            user=f"Recent agent activity:\n{activity}{post_mortem_ctx}{trading_block}\n\nWrite the dreaming log.",
+            max_tokens=700,
+            provider=get_provider_for_tier("deep"),
+            caller="dreaming.nightly_consolidation",
+        )
+    except ProviderNotConfigured as exc:
+        content, err = None, f"llm_unavailable: {exc}"
     log_tool(run_id, "llm_complete", "observe", True)
     item = None
     if err:
