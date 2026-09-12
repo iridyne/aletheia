@@ -2076,12 +2076,14 @@ async def test_bitget_test_candidate_pass(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_bitget_test_candidate_fail(client, monkeypatch):
-    """Rejected candidate creds return connected=false + bitget error msg, persist nothing."""
+    """Rejected candidate creds never echo an upstream message or candidate secret."""
     import aletheia.server.routes.bitget as bitget_routes
+
+    upstream_secret = "bitget-upstream-secret-CAFEBABE"
 
     class FakeResp:
         def json(self):
-            return {"code": "40012", "msg": "apikey does not match"}
+            return {"code": "40012", "msg": f"apikey does not match secret={upstream_secret}"}
 
     class FakeAsyncClient:
         def __init__(self, *a, **k): pass
@@ -2098,7 +2100,8 @@ async def test_bitget_test_candidate_fail(client, monkeypatch):
     assert resp.status_code == 200
     body = resp.json()
     assert body["connected"] is False
-    assert "apikey" in (body["error"] or "")
+    assert body["error"] == "credential_probe_rejected"
+    assert upstream_secret not in resp.text
     cs = await client.get("/api/bitget/credentials-status")
     assert cs.json()["demo"]["api_key"]["configured"] is False
 
