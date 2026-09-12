@@ -611,6 +611,13 @@ funding worker 直接把完整 Position 交给 UTA funding reader，账户身份
 close event、Outcome eligibility 与 hook 意图；调用方仍在同一 writer transaction 内验证
 各自证据并写审计。该入口不创建事务或执行外部 I/O，已完成的最终金额不得覆盖。
 归因读取失败后的 eligibility-only 重查及 funding 保留期终止不拥有最终金额写入权。
+后续私有 Fill 报告可补齐缺失的退出费用金额或币种，但不得改写原始 Fill 或原始关闭证据。
+`materialize_exchange_close_costs` 在同一事务内重验账户、Order/Fill identity、完整退出数量、
+价格和成交时间；已有非空费用/币种发生冲突则拒绝。新增观测保存在 reconciliation evidence
+及现有 audit outbox，仅尚未完成的 Position/完整 close-event 费用投影可补齐。
+费用已知而 funding 未知时保持最终 PnL unavailable、Outcome ineligible；现有公平队列下一轮
+再读取 funding，不因单轮 I/O 预算为 1 而停滞。第三币种无可证折算仍不可用，缺失入场成本仍
+不得推定；此退出费用补齐路径不授权历史入场费用重建。
 当前所有者及独立校验边界的调查见 [settlement ownership evidence](../proposals/slim_core_settlement_convergence.md)。
 
 当 UTA 的同账户 funding ledger 以稳定 reason

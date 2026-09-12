@@ -21,7 +21,7 @@ lifecycle, cost-completeness, audit and recovery boundaries below.
 | Initial verified close evidence | `portfolio.pnl.close_position` | Open-state CAS, economic snapshot reread, atomic Order/Fill callback and audit surround the shared economic commit. `outcome_closure.close_position_verified` only normalizes evidence and supplies the observed-fill callback. |
 | Initial/deferred economic commit | `pnl._commit_close_economics` | Requires the caller's transaction; writes Position, full-close event, eligibility and hook intent together. Rejects invalid final economics or overwrite of completed economics. No external I/O. |
 | No-fill administrative close | `outcome_closure.close_position_administrative` | Absence evidence is not economic evidence; never generates final PnL or eligible Outcome. |
-| Deferred funding evidence | `broker_funding_settlement.materialize_broker_funding_economics` | Complete scoped stored ledger must reproduce amount, holding window and attribution under the writer lock before the shared commit. Existing final economics cannot be overwritten; identical replay returns already-current. |
+| Deferred cost evidence | `broker_funding_settlement.materialize_exchange_close_costs` | Scoped funding ledger or exact later private Fill observation is revalidated under the writer lock before the shared commit. Original Fill and close evidence are retained; known costs and final economics cannot be overwritten. |
 | Funding retention terminalization | `_terminalize_funding_history_expired` | Stops automatic retry only after a typed UTA retention proof and unchanged closed snapshot; money remains unavailable. This is not successful settlement. |
 | Recovery scheduling | `_select_funding_queue_rows` / `_advance_funding_queue_cursor` | Durable keyset cursor with wrap, separate scan/I/O budgets and cursor CAS prevents a stalled prefix from starving later positions. Cursor does not own Position economics. |
 | Funding audit mirror | `funding_audit.insert_pending_funding_audit` / `reconcile_funding_audits` | SQLite audit enrollment shares the economic transaction. JSONL append/ack has its own stable-ID recovery, independent of financial replay. |
@@ -84,11 +84,33 @@ failure enrolls the same durable hook retry intent on both paths. Attribution-on
 recheck still needs separate ownership analysis. Audit mirror repair must never
 become another reason to execute settlement.
 
-Late missing-fee completion is still absent: the funding queue selects
-`incomplete_funding_economics`, while a missing-fee close carries
-`incomplete_realized_economics`. A future completion path must prove newly
-available costs against exact durable Fill identities, without rewriting known
-history, estimating conversion or resubmitting an external close.
+Late exit-fee completion now uses the existing fair queue and shared economic
+commit. A complete UTA report must match the durable account, Order/Fill identities,
+price, quantity, currency constraints and execution times. The original Fill and
+close evidence remain unchanged; supplementary evidence goes into the existing
+reconciliation document and audit outbox. Fee-only progress leaves final PnL
+unavailable until funding is complete, so a one-query budget can progress over
+successive cycles. Missing entry-fee recovery and unprovable third-currency
+conversion remain unavailable; this batch does not reconstruct them.
+
+Further exact-source investigation at `bb48d678f` establishes the missing seam:
+`_materialize_complete_private_close` returns immediately for a filled Order,
+and `_verify_durable_fills` rejects unknown-to-known fee changes as conflicts.
+The execution contract declares Fill immutable. Therefore completion must retain
+the original Fill and close evidence, attach the later scoped observation to the
+existing reconciliation/audit evidence, and update only incomplete economic
+projections through the shared commit. Updating the original Fill in place would
+contradict the retained-history boundary. UTA `get_fills` already supplies typed
+account/order/instrument/time-scoped observations; a new venue client is not needed.
+The new exit-fee path follows this boundary; its scheduler, replay, partial-cost
+progress, conflict refusal and audit rollback have focused regression coverage.
+This does not prove all cost-recovery cases or runtime qualification.
+
+The observed-close validator also had a proven nonfinite-value hole: three tests
+with same-ID durable Fill price, quantity or fee stored as `NaN` closed the
+Position before repair. The path now reuses `_fill_totals`' existing numeric
+validation before its same-fact comparisons. No alternate numeric validator or
+repair of corrupted historical values is introduced.
 
 No runtime qualification follows from this source inventory. Exact deployment,
 booted identity, health and a natural or otherwise owner-authorized Demo close

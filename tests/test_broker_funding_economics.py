@@ -246,11 +246,11 @@ def test_broker_funding_rejects_stale_position_snapshot(
     force_update_position(position_id, **{field: value})
     before = _broker_funding_state(position_id)
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
     with pytest.raises(ValueError, match="snapshot changed"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             stale,
             funding_cost=funding.funding_cost,
             funding_evidence=funding.evidence,
@@ -288,11 +288,11 @@ def test_broker_funding_rejects_stale_full_close_snapshot(
     repo._update("position_close_events", close_event["id"], {field: value})
     before = _broker_funding_state(position_id)
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
     with pytest.raises(ValueError, match="snapshot changed"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             stale,
             funding_cost=funding.funding_cost,
             funding_evidence=funding.evidence,
@@ -305,7 +305,7 @@ def test_broker_funding_rejects_stale_full_close_snapshot(
 @pytest.mark.parametrize("fee_field", ["entry_fee", "exit_fee"])
 def test_deferred_finalization_rejects_matching_invalid_fee_snapshots(tmp_path, monkeypatch, fee_field):
     position_id, _, funding, ledger = _seed_pending_broker_funding_close(tmp_path, monkeypatch)
-    from aletheia.portfolio.broker_funding_settlement import materialize_broker_funding_economics
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
 
     force_update_position(position_id, **{fee_field: -1.0})
     repo.get_db().execute(
@@ -314,7 +314,7 @@ def test_deferred_finalization_rejects_matching_invalid_fee_snapshots(tmp_path, 
     row = repo.get_position(position_id)
     before = _broker_funding_state(position_id)
     with pytest.raises(ValueError, match="realized economics"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             row, funding_cost=funding.funding_cost, funding_evidence=funding.evidence, funding_ledger=ledger,
         )
     assert _broker_funding_state(position_id) == before
@@ -335,7 +335,7 @@ def test_initial_and_deferred_economics_use_one_commit_owner(tmp_path, monkeypat
     monkeypatch.setattr(settlement, "_commit_close_economics", record_commit)
     position_id, incomplete, funding, ledger = _seed_pending_broker_funding_close(tmp_path, monkeypatch)
     assert calls == ["open"]
-    first = settlement.materialize_broker_funding_economics(
+    first = settlement.materialize_exchange_close_costs(
         incomplete, funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence, funding_ledger=ledger,
     )
@@ -345,7 +345,7 @@ def test_initial_and_deferred_economics_use_one_commit_owner(tmp_path, monkeypat
     assert len(state["close_events"]) == 1
     assert state["position"]["realized_pnl"] == state["close_events"][0]["realized_pnl"]
     assert state["position"]["realized_pnl"] is not None
-    repeated = settlement.materialize_broker_funding_economics(
+    repeated = settlement.materialize_exchange_close_costs(
         incomplete, funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence, funding_ledger=ledger,
     )
@@ -369,7 +369,7 @@ def test_deferred_commit_rolls_back_money_and_event_if_hook_enrollment_fails(tmp
 
     monkeypatch.setattr(outcome_hooks, "enqueue_outcome_hook_jobs", fail_enrollment)
     with pytest.raises(RuntimeError, match="hook enrollment failed"):
-        settlement.materialize_broker_funding_economics(
+        settlement.materialize_exchange_close_costs(
             incomplete, funding_cost=funding.funding_cost,
             funding_evidence=funding.evidence, funding_ledger=ledger,
         )
@@ -381,17 +381,17 @@ def test_broker_funding_exact_replay_is_a_noop(tmp_path, monkeypatch):
         tmp_path, monkeypatch,
     )
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
-    first = materialize_broker_funding_economics(
+    first = materialize_exchange_close_costs(
         stale,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
         funding_ledger=ledger,
     )
     after_first = _broker_funding_state(position_id)
-    second = materialize_broker_funding_economics(
+    second = materialize_exchange_close_costs(
         stale,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
@@ -403,14 +403,14 @@ def test_broker_funding_exact_replay_is_a_noop(tmp_path, monkeypatch):
 
     changed_evidence = {**funding.evidence, "source_endpoint": "/other"}
     with pytest.raises(ValueError, match="cannot be overwritten"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             stale,
             funding_cost=funding.funding_cost,
             funding_evidence=changed_evidence,
             funding_ledger=ledger,
         )
     with pytest.raises(ValueError, match="cannot be overwritten"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             stale,
             funding_cost=funding.funding_cost + 1.0,
             funding_evidence=funding.evidence,
@@ -553,10 +553,10 @@ def test_closed_exchange_position_can_be_recovered_from_broker_funding(
         environment=environment,
     )
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
-    result = materialize_broker_funding_economics(
+    result = materialize_exchange_close_costs(
         incomplete,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
@@ -571,7 +571,7 @@ def test_closed_exchange_position_can_be_recovered_from_broker_funding(
     assert stored["funding_source"] == "broker_ledger"
     assert stored["realized_pnl"] is not None
     assert close_event["realized_pnl"] == stored["realized_pnl"]
-    repeated = materialize_broker_funding_economics(
+    repeated = materialize_exchange_close_costs(
         incomplete,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
@@ -579,7 +579,7 @@ def test_closed_exchange_position_can_be_recovered_from_broker_funding(
     )
     assert repeated["status"] == "already_current"
     with pytest.raises(ValueError, match="cannot be overwritten"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             incomplete,
             funding_cost=funding.funding_cost,
             funding_evidence={
@@ -734,11 +734,11 @@ def test_delayed_funding_revalidates_candidates_inside_writer_transaction(
         opened_at="2026-07-14T00:00:00+00:00",
     ))
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
     with pytest.raises(ValueError, match="broker funding attribution changed"):
-        materialize_broker_funding_economics(
+        materialize_exchange_close_costs(
             row,
             funding_cost=expected.funding_cost,
             funding_evidence=expected.evidence,
@@ -767,14 +767,14 @@ def test_broker_funding_audit_failure_replays_without_reapplying_settlement(
     )
     from aletheia.files import jsonl as jsonl_mod
     from aletheia.portfolio.broker_funding_settlement import (
-        materialize_broker_funding_economics,
+        materialize_exchange_close_costs,
     )
 
     real_writer = jsonl_mod.write_audits_deduplicated
     monkeypatch.setattr(
         jsonl_mod, "write_audits_deduplicated", lambda _events, **_kwargs: set(),
     )
-    first = materialize_broker_funding_economics(
+    first = materialize_exchange_close_costs(
         incomplete,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
@@ -795,7 +795,7 @@ def test_broker_funding_audit_failure_replays_without_reapplying_settlement(
     ).fetchone()[0] == 0
 
     monkeypatch.setattr(jsonl_mod, "write_audits_deduplicated", real_writer)
-    repeated = materialize_broker_funding_economics(
+    repeated = materialize_exchange_close_costs(
         incomplete,
         funding_cost=funding.funding_cost,
         funding_evidence=funding.evidence,
