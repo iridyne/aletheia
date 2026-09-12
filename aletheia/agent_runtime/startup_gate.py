@@ -36,15 +36,19 @@ def _is_dns_error(exc: BaseException) -> bool:
     caller short-circuits retries when EVERY provider fails this way — the
     auto-resume gate re-probes on its own schedule once the network returns.
     """
-    msg = str(exc).lower()
-    if "getaddrinfo" in msg or "name or service not known" in msg:
-        return True
-    # httpx wraps the underlying socket.gaierror in __cause__/__context__.
-    cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
-    if isinstance(cause, _socket.gaierror):
-        return True
-    if isinstance(exc, OSError) and getattr(exc, "errno", None) == 11001:  # WSAHOST_NOT_FOUND
-        return True
+    # HTTPX, official SDKs and the credential-safe adapter can each wrap the
+    # transport failure. Inspect its cause chain without exposing its text.
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        msg = str(exc).lower()
+        if "getaddrinfo" in msg or "name or service not known" in msg:
+            return True
+        if isinstance(exc, _socket.gaierror):
+            return True
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == 11001:  # WSAHOST_NOT_FOUND
+            return True
+        exc = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
     return False
 
 # A real completion can be slow on a cold gateway endpoint; keep the probe short

@@ -134,9 +134,28 @@ async def test_sdk_transport_failure_retains_fallback_or_cancellation_without_re
             await provider.complete(ModelRequest(messages=[]))
         assert calls == 1
         if error is not asyncio.CancelledError:
+            from aletheia.model_provider.router import _classify_health_error
+
+            assert _classify_health_error(str(caught.value)) == "network_failure"
             assert "synthetic-sensitive-detail" not in str(caught.value)
             assert "authorization" not in caught.value.__context__.request.headers
             assert "x-api-key" not in caught.value.__context__.request.headers
+
+
+@pytest.mark.asyncio
+async def test_sdk_dns_failure_remains_classifiable_by_startup_gate(endpoint):
+    from aletheia.agent_runtime.startup_gate import _is_dns_error
+
+    connect, _, _, _ = endpoint
+
+    def handle(request):
+        raise httpx.ConnectError("[Errno 11001] getaddrinfo failed", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as transport:
+        provider = connect(transport, "synthetic-key")
+        with pytest.raises(httpx.ConnectError) as caught:
+            await provider.complete(ModelRequest(messages=[]))
+        assert _is_dns_error(caught.value)
 
 
 @pytest.mark.asyncio
