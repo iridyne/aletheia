@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `992203fa65fb9cb29e8ae1d5246b0aef71d5206f`. This is a bounded evidence
+based on `8965e969fc1276641cd13b2418b88498a3c58796`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -114,6 +114,14 @@ branch, and UTA profile composition/private-I-O boundaries are unchanged. The
 focused local tests (82 architecture/spec and 212 execution/registry/pipeline)
 cover this structural reuse; they do not prove private-account containment,
 deployment, or exchange qualification.
+
+The reconciliation identity seam is also merged at this checkpoint. Reconciliation
+now derives its native Bitget versus non-Bitget UTA/CCXT partitions and live
+subset from the shared execution identity registry. This removes a generic
+mode-list duplicate without moving the documented Bitget native private-I/O
+exception or changing account proof/materialization semantics. The 105-test
+focused local evidence is structural and mocked only; it does not prove private
+account containment, deployment, or exchange qualification.
 
 ## Startup filesystem repair ownership
 
