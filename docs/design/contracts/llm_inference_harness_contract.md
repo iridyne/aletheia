@@ -175,6 +175,13 @@ failure is fail-open for the business call and records no database exception tex
 
 ## Failure and recovery semantics
 
+- Model fallback uses only the selected model and its explicit ordered
+  configuration, within the existing per-request attempt bound. Empty fallback
+  configuration does not discover candidates. Catalogue results and unrelated
+  enabled endpoints never supply implicit candidates; caller IDs and model
+  product names cannot add or promote them, including for structured output.
+  Explicit cross-endpoint fallback, cooldown and structured repair remain
+  subject to the same broker, budget and cancellation boundaries.
 - Measurement writes are best-effort and never authorize or block a trade.
 - Provider/budget/timeout/parse/schema failure finalizes the logical row as
   `error`; it is never relabelled as success because a default object exists.

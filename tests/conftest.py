@@ -349,17 +349,6 @@ def _fast_network_timeout(request, monkeypatch):
 
     monkeypatch.setattr(_httpx, "AsyncClient", _FastAsyncClient)
 
-    # Disable list_models() network discovery in fallback to avoid extra round-trips.
-    # Tests that provide their own LLM mock (real_llm marker) keep full fallback logic.
-    if not request.node.get_closest_marker("real_llm"):
-        import aletheia.model_provider.fallback as _fb
-
-        async def _fast_candidates(provider_name, provider):
-            primary = str(getattr(provider, "model", "") or "")
-            return [primary] if primary else []
-
-        monkeypatch.setattr(_fb, "_candidate_models", _fast_candidates)
-
     # Eliminate retry delays in startup/resume LLM gate (avoids 15s×2 sleeps).
     # Only skips long sleeps (>2s); tests with explicit short delays (1s) still work.
     import aletheia.agent_runtime.startup_gate as _sg

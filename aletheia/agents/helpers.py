@@ -32,16 +32,6 @@ logger = logging.getLogger("aletheia.agents")
 # total across repair attempts so scheduler cancellation never abandons the event loop.
 _LLM_STRUCTURED_WALLCLOCK_BUDGET_SEC = 180.0
 _LAST_INFERENCE_CALL_ID: ContextVar[str | None] = ContextVar("aletheia_last_inference_call_id", default=None)
-# Structured trade JSON: keep glm-5.2 in the later fallback pool, not first.
-# News/research stay on the default chain so glm quota is not spent on every call.
-_TRADE_JSON_CALLER_PREFIXES = (
-    "system_operator.",
-    "risk_critic.",
-    "agent_shell.portfolio_review",
-    "post_trade_reviewer.",
-    "agent_shell.entry_planner",
-)
-
 _PYDANTIC_SCHEMA_ERROR_CODES = {
     "missing": "missing_required",
     "literal_error": "outside_enum",
@@ -54,11 +44,6 @@ def _exception_detail(exc: BaseException) -> str:
     name = type(exc).__name__
     message = str(exc).strip()
     return f"{name}: {message}" if message else name
-
-
-def _prefers_json_reliable_models(caller: str) -> bool:
-    name = str(caller or "")
-    return any(name.startswith(prefix) for prefix in _TRADE_JSON_CALLER_PREFIXES)
 
 
 def _resolve_provider_name(provider: str | None) -> str | None:
@@ -693,9 +678,8 @@ async def llm_structured(
         None so existing providers and callers keep their exact request shape.
         Structured calls request strict ``response_format=json_schema`` with a
         portable schema; providers that do not implement it use their own
-        compatibility fallback. Trade JSON callers keep glm-5.2 as a later
-        fallback (not the primary) and skip a model that already returned
-        unusable JSON for this logical call.
+        compatibility fallback. Structured calls keep the explicit model order
+        and skip a model that already returned unusable JSON for this logical call.
     """
     # #161 fix (mirrors llm_complete): thread the tier's provider name into
     # complete_with_fallback so its fallback/health/cooldown keying matches the
@@ -807,7 +791,6 @@ async def llm_structured(
         last_err = "structured_parse_error: no valid JSON object found in response"
         max_attempts = 2
         failed_models: list[str] = []
-        prefer_json_reliable = _prefers_json_reliable_models(caller)
 
         def _remember_failed_model(resp) -> None:
             known = {name.lower() for name in failed_models}
@@ -855,7 +838,6 @@ async def llm_structured(
                             reasoning_effort=reasoning_effort,
                             response_format="json_schema",
                             structured_schema=portable_schema_dict,
-                            prefer_json_reliable_models=prefer_json_reliable,
                             exclude_models=tuple(failed_models),
                             inference=inference_call,
                             allow_model_fallback=allow_model_fallback,

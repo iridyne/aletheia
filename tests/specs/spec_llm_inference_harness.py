@@ -5,6 +5,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from aletheia.model_provider.inference_contract import (
     CALLER_SPECS,
     caller_matrix_markdown,
@@ -15,6 +17,38 @@ _ROOT = Path(__file__).parent.parent.parent
 _CONTRACT = "llm_inference_harness_contract"
 _CONTRACT_DOC = _ROOT / "docs" / "design" / "contracts" / "llm_inference_harness_contract.md"
 _HELPER_NAMES = {"llm_complete", "llm_structured", "llm_stream"}
+
+
+@pytest.mark.asyncio
+@spec_claim(
+    SpecClaim(
+        "LLMH-S08", _CONTRACT, "§Failure and recovery semantics", "L2a",
+        "Fallback candidates come only from explicit ordered configuration, never discovery.",
+        status="implemented",
+    ),
+)
+async def test_fallback_candidates_are_explicit_and_bounded(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
+    from aletheia.model_provider import fallback
+
+    cfg = AletheiaConfig()
+    pcfg = cfg.models.providers["endpoint"] = ProviderConfig(model="primary")
+    monkeypatch.setattr(fallback, "load_config", lambda: cfg)
+    discovery = AsyncMock(return_value=[{"slug": "unconfigured"}])
+    monkeypatch.setattr(fallback.provider_router, "list_models_cached", discovery)
+    provider = SimpleNamespace(model="primary")
+    assert await fallback._candidate_models("endpoint", provider) == ["primary"]
+    pcfg.fallback_models = ["primary", " m2 ", "m2", "@other:m3", ""]
+    assert await fallback._candidate_models("endpoint", provider) == ["primary", "m2", "@other:m3"]
+    pcfg.fallback_models = [f"m{i}" for i in range(10)]
+    assert await fallback._candidate_models("endpoint", provider) == [
+        "primary", *pcfg.fallback_models[:fallback._MAX_MODELS_PER_REQUEST - 1],
+    ]
+    pcfg.model_fallback_enabled = False
+    assert await fallback._candidate_models("endpoint", provider) == ["primary"]
+    discovery.assert_not_awaited()
 
 
 @spec_claim(

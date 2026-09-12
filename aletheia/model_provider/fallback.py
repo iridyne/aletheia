@@ -3,9 +3,8 @@
 This module does not mutate provider config or secrets. It only retries the
 current request with alternate models when the primary model reports a
 transient failure (400/404/408/429/500/502/503/504, missing chat ``choices``,
-"at capacity", etc.). Structured JSON callers may append JSON-reliable models
-(glm-5.2) later in the chain without promoting them ahead of the configured
-primary, and skip models that already returned unusable JSON for this call.
+"at capacity", etc.). Only explicitly configured candidates are eligible.
+Structured callers may skip models that already returned unusable JSON.
 """
 
 from __future__ import annotations
@@ -63,10 +62,8 @@ _TRANSIENT_TEXT_MARKERS = (
     "bad gateway",
     "gateway timeout",
 )
-# Primary + configured fallbacks; keep headroom for the owner's 7-step SenseNova chain.
+# Bound primary plus explicitly configured fallback attempts.
 _MAX_MODELS_PER_REQUEST = 8
-# Evidence: glm-5.2 keeps Operator JSON but is slow; keep it as a later fallback.
-_JSON_PREFERRED_MODEL_MARKERS = ("glm-5.2",)
 _COOLDOWN_FAILURE_THRESHOLD = 2
 _COOLDOWN_SEC = 300
 _MODEL_HEALTH: dict[tuple[str, str], "ModelHealthState"] = {}
@@ -351,24 +348,8 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
     candidates: list[str] = []
     if primary:
         candidates.append(primary)
-    fb_models: list[str] = []
     if pcfg is not None:
-        fb_models = [str(m).strip() for m in getattr(pcfg, "fallback_models", []) or []]
-        candidates.extend(fb_models)
-
-    # When explicit fallback models are configured we do NOT also append the
-    # provider's full live catalogue. For OpenRouter that catalogue includes
-    # paid and sibling-free models; the user constraint is "OpenRouter only ever
-    # calls free models", so explicit config must win and discovery must be
-    # suppressed to avoid injecting non-free models as fallback candidates.
-    if not fb_models:
-        # Best effort: reuse the existing endpoint/model discovery path so the
-        # runtime learns the live catalogue instead of relying only on static config.
-        try:
-            detected = await provider_router.list_models_cached(provider_name, provider)
-            candidates.extend(str(m.get("slug") or "").strip() for m in detected if isinstance(m, dict))
-        except Exception as exc:  # noqa: BLE001 - detection is advisory only
-            logger.debug("model fallback list_models failed for %s: %s", provider_name, exc)
+        candidates.extend(str(m).strip() for m in pcfg.fallback_models)
 
     seen: set[str] = set()
     ordered: list[str] = []
@@ -380,69 +361,6 @@ async def _candidate_models(provider_name: str, provider: ModelProvider) -> list
         if len(ordered) >= _MAX_MODELS_PER_REQUEST:
             break
     return ordered
-
-
-def _json_model_rank(model: str) -> int:
-    name = str(model or "").strip().lower()
-    for idx, marker in enumerate(_JSON_PREFERRED_MODEL_MARKERS):
-        if marker in name:
-            return idx
-    if "glm" in name:
-        return len(_JSON_PREFERRED_MODEL_MARKERS)
-    return len(_JSON_PREFERRED_MODEL_MARKERS) + 1
-
-
-def _enabled_json_preferred_models() -> list[tuple[str, str]]:
-    """Return enabled providers whose primary model is JSON-reliable.
-
-    Reads model ids only. Does not inspect secrets or mutate owner config.
-    """
-    try:
-        cfg = load_config()
-    except Exception:
-        return []
-    providers = getattr(getattr(cfg, "models", None), "providers", None) or {}
-    found: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for name, pcfg in providers.items():
-        if not getattr(pcfg, "enabled", False):
-            continue
-        model = str(getattr(pcfg, "model", "") or "").strip()
-        if not model or _json_model_rank(model) != 0:
-            continue
-        key = (str(name), model)
-        if key in seen:
-            continue
-        seen.add(key)
-        found.append(key)
-    return found
-
-
-def _order_structured_json_candidates(
-    parsed: list[tuple[str, str]],
-) -> list[tuple[str, str]]:
-    """Keep configured order; append glm-5.2 later if it is missing.
-
-    Does not promote glm ahead of the deep/flash primary. If the capped
-    candidate list already contains glm, the original order is unchanged.
-    """
-    have: set[tuple[str, str]] = set(parsed)
-    already_has_glm = any(_json_model_rank(model) == 0 for _provider, model in parsed)
-    extra: list[tuple[str, str]] = []
-    if not already_has_glm:
-        for key in _enabled_json_preferred_models():
-            if key in have or not key[0] or not key[1]:
-                continue
-            extra.append(key)
-            have.add(key)
-    combined = list(parsed) + extra
-    if len(combined) <= _MAX_MODELS_PER_REQUEST:
-        return combined or list(parsed)
-    if extra and not already_has_glm:
-        # Preserve the configured primary/flash head; keep glm reachable at the tail.
-        head = list(parsed)[: _MAX_MODELS_PER_REQUEST - 1]
-        return head + extra[:1]
-    return combined[:_MAX_MODELS_PER_REQUEST] or list(parsed)
 
 
 def _excluded_model_names(request: ModelRequest) -> set[str]:
@@ -621,9 +539,6 @@ async def complete_with_fallback(
         parsed.append(key)
     if not parsed:
         return await provider.complete(request)
-
-    if getattr(request, "prefer_json_reliable_models", False):
-        parsed = _order_structured_json_candidates(parsed)
 
     requested = parsed[0]
     requested_model = f"{requested[0]}/{requested[1]}"

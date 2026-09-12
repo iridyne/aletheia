@@ -302,8 +302,6 @@ class ModelRequest:
     response_format: Literal["json_object", "json_schema"] | None = None
     structured_schema: dict[str, Any] | None = None
     structured_schema_name: str = "structured_output"
-    # Trade JSON: keep glm-5.2 in the later fallback pool; do not promote it first.
-    prefer_json_reliable_models: bool = False
     exclude_models: tuple[str, ...] = ()
 
 
