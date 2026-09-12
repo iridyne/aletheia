@@ -224,7 +224,7 @@ def classify_verified_exit(
         or fill.price <= 0
         or not math.isfinite(fill.quantity)
         or fill.quantity <= 0
-        or not _usable_fee(fill.fee)
+        or (fill.fee is not None and not _usable_fee(fill.fee))
         or not request.history_start_ms <= fill.filled_at_ms <= request.history_end_ms
         for fill in close_fills
     ):

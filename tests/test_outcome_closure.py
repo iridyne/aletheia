@@ -808,14 +808,14 @@ def test_exit_result_router_never_closes_inconclusive_and_routes_absent_to_admin
     assert repo._select_one("positions", position.id)["realized_pnl"] is None
 
 
-def test_verified_close_rejects_missing_fee_or_quantity_mismatch():
+def test_verified_close_rejects_malformed_fee_or_quantity_mismatch():
     from aletheia.portfolio.outcome_closure import close_position_verified
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     evidence = _verified_result(position)
     bad_fee = replace(
-        evidence, fills=(replace(evidence.fills[0], fee=None), evidence.fills[1]),
+        evidence, fills=(replace(evidence.fills[0], fee=float("nan")), evidence.fills[1]),
     )
     with pytest.raises(ValueError, match="fee"):
         close_position_verified(position.id, bad_fee)
@@ -828,6 +828,40 @@ def test_verified_close_rejects_missing_fee_or_quantity_mismatch():
     with pytest.raises(ValueError, match="quantity"):
         close_position_verified(position.id, bad_quantity)
     assert repo._select_one("positions", position.id)["status"] == "open"
+
+
+@pytest.mark.parametrize("fee,currency", [(None, "USDT"), (0.1, ""), (0.1, "BGB")])
+def test_verified_external_close_preserves_unknown_costs_and_execution(fee, currency):
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
+    from aletheia.portfolio.pnl import position_realized_pnl_view
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    evidence = _verified_result(position)
+    evidence = replace(evidence, fills=(replace(evidence.fills[0], fee=fee, fee_currency=currency), evidence.fills[1]))
+    result = close_position_from_verified_exit(position.id, evidence)
+    stored = repo.get_position(position.id)
+    assert result["closed"] is True
+    assert stored["status"] == "closed"
+    assert stored["exit_fill_verified"] == 1
+    assert stored["exit_fee"] is None
+    assert stored["realized_pnl"] is None
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "incomplete_realized_economics"
+    fills = repo.get_db().execute(
+        "SELECT f.* FROM fills f JOIN orders o ON o.id=f.order_id "
+        "WHERE o.position_id=? AND o.close_reason IS NOT NULL ORDER BY f.filled_at", (position.id,),
+    ).fetchall()
+    assert len(fills) == 2
+    assert fills[0]["fee"] == fee
+    assert fills[0]["fee_currency"] == currency
+    assert fills[0]["fee_source"] == ("unavailable" if fee is None else "reconciled")
+    assert "exit_fee" in position_realized_pnl_view(stored)["known_economics_missing_components"]
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    assert close_position_from_verified_exit(position.id, evidence)["already_closed"] is True
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchone()[0] == 1
 
 
 def test_verified_futures_close_does_not_apply_untrusted_funding_value():

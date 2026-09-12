@@ -295,13 +295,13 @@ def test_verified_exit_without_remote_order_id_is_inconclusive():
         "pipeline_live_disappearance_settlement",
         "§5 usable fee evidence",
         "L2b",
-        "A verified external close requires every private fee to be finite and "
-        "non-negative before any local Order, Fill, Position, or PnL mutation.",
+        "Supplied private fee amounts must be finite and non-negative; an absent "
+        "amount does not invalidate execution proof but cannot become final PnL.",
         status="implemented",
     )
 )
-@pytest.mark.parametrize("invalid_fee", [float("nan"), float("inf"), -0.01])
-def test_verified_exit_rejects_non_finite_or_negative_fee(invalid_fee):
+@pytest.mark.parametrize("invalid_fee", [float("nan"), float("inf"), -0.01, None])
+def test_verified_exit_distinguishes_missing_from_malformed_fee(invalid_fee):
     from aletheia.execution.verified_exit import (
         VerifiedExitFill,
         VerifiedExitRequest,
@@ -341,8 +341,12 @@ def test_verified_exit_rejects_non_finite_or_negative_fee(invalid_fee):
         source_endpoint="private-fill-history",
     )
 
-    assert result.state == "inconclusive"
-    assert result.reason == "malformed_fill_evidence"
+    if invalid_fee is None:
+        assert result.state == "verified_fill"
+        assert result.fills[0].fee is None
+    else:
+        assert result.state == "inconclusive"
+        assert result.reason == "malformed_fill_evidence"
 
 
 @spec_claim(

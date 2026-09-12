@@ -560,6 +560,7 @@ def test_partial_local_chain_adds_only_exchange_delta_and_replay_is_idempotent(t
             fill_price=100.0,
             fill_quantity=0.4,
             fee=0.04,
+            fee_currency="USDT",
             fee_source="reconciled",
             filled_at=datetime.fromtimestamp(
                 1_784_100_000_000 / 1000,

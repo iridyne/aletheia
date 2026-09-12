@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable
 
-from aletheia.data.symbols import to_canonical
+from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.position_enrichment import liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage import repositories as repo
@@ -87,7 +87,7 @@ class PrivateFill:
     client_order_id: str | None
     price: float
     quantity: float
-    fee: float
+    fee: float | None
     fee_currency: str
     filled_at: str
     filled_at_ms: int
@@ -97,7 +97,7 @@ class PrivateFill:
         if (
             not math.isfinite(self.price)
             or not math.isfinite(self.quantity)
-            or not math.isfinite(self.fee)
+            or (self.fee is not None and (not math.isfinite(self.fee) or self.fee < 0))
             or self.price <= 0
             or self.quantity <= 0
             or self.filled_at_ms <= 0
@@ -184,41 +184,49 @@ def _timestamp_ms(value) -> int | None:
     return int(round(parsed.timestamp() * 1000))
 
 
-def _fee_from_row(row: dict) -> tuple[float, str] | None:
-    """Return an actual exchange fee, including a legitimate zero fee."""
+def _fee_from_row(row: dict) -> tuple[float | None, str]:
+    """Keep missing cost distinct from zero; reject malformed supplied amounts."""
     direct = row.get("fee")
     if direct not in (None, ""):
         try:
             fee = abs(float(direct))
-        except (TypeError, ValueError):
-            return None
+        except (TypeError, ValueError) as exc:
+            raise PrivateFillEvidenceInvalid("private fill row has malformed fee") from exc
         if not math.isfinite(fee):
-            return None
-        return fee, str(row.get("feeCoin") or "USDT")
+            raise PrivateFillEvidenceInvalid("private fill row has non-finite fee")
+        return fee, str(row.get("feeCoin") or "")
 
     details = row.get("feeDetail")
     if isinstance(details, dict):
         details = [details]
-    if not isinstance(details, list) or not details:
-        return None
+    if details is None or details == []:
+        return None, str(row.get("feeCoin") or "")
+    if not isinstance(details, list):
+        raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail")
     fees: list[float] = []
-    currency = "USDT"
+    currencies: set[str] = set()
+    missing_amount = False
     for detail in details:
         if not isinstance(detail, dict):
-            return None
+            raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail")
         raw_fee = detail.get("totalFee")
         if raw_fee in (None, ""):
             raw_fee = detail.get("fee")
+        currencies.add(str(detail.get("feeCoin") or "").strip().upper())
+        if raw_fee in (None, ""):
+            missing_amount = True
+            continue
         try:
             fee = abs(float(raw_fee))
-        except (TypeError, ValueError):
-            return None
+        except (TypeError, ValueError) as exc:
+            raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail") from exc
         if not math.isfinite(fee):
-            return None
+            raise PrivateFillEvidenceInvalid("private fill row has non-finite fee")
         fees.append(fee)
-        currency = str(detail.get("feeCoin") or currency)
     total = sum(fees)
-    return (total, currency) if math.isfinite(total) else None
+    if len(currencies) != 1 or not math.isfinite(total):
+        raise PrivateFillEvidenceInvalid("private fill row has ambiguous fee total")
+    return (None if missing_amount else total), currencies.pop()
 
 
 def _coerce_rows(rows) -> list[dict]:
@@ -255,7 +263,6 @@ def parse_bitget_private_fills(rows) -> list[PrivateFill]:
             or not exchange_order_id
             or price is None
             or quantity is None
-            or fee is None
             or timestamp_ms <= 0
         ):
             raise PrivateFillEvidenceInvalid("private fill row is incomplete or non-finite")
@@ -413,45 +420,6 @@ def _tail_delta(evidence: list[PrivateFill], quantity: float) -> list[PrivateFil
     return list(evidence)
 
 
-def _fee_in_quote(
-    *,
-    fee: float,
-    fee_currency: str,
-    fill_price: float,
-    symbol: str,
-) -> float | None:
-    """Convert a directly usable private fee into the instrument quote asset.
-
-    When the fee is denominated in a third currency (e.g. BGB, BNB), the exact
-    conversion is not available from local fill evidence.  Preserve the raw
-    Fill but leave quote-currency economics unavailable.  A numeric zero would
-    fabricate a verified cost.  (#2041)
-    """
-    if not math.isfinite(fee) or not math.isfinite(fill_price):
-        raise MaterializationIntegrityError("private fill quote economics must be finite")
-    if fee == 0:
-        return 0.0
-    canonical = to_canonical(symbol)
-    base, separator, quote = canonical.partition("/")
-    currency = str(fee_currency or quote).upper()
-    if not separator or not base or not quote:
-        raise MaterializationIntegrityError("fee conversion requires a canonical symbol")
-    if currency == quote.upper():
-        return fee
-    if currency == base.upper():
-        return fee * fill_price
-    # Third-currency fee (e.g. BGB, BNB): the raw fee remains auditable, but its
-    # quote-currency conversion is unavailable without attributable market data.
-    import logging as _log
-
-    _log.getLogger(__name__).warning(
-        "private fill fee in unknown currency %r for %s — quote economics unavailable",
-        fee_currency,
-        symbol,
-    )
-    return None
-
-
 def _private_fill_totals(
     evidence: Iterable[PrivateFill], *, symbol: str
 ) -> tuple[float, float, float | None]:
@@ -461,7 +429,7 @@ def _private_fill_totals(
     fee: float | None = 0.0
     for item in evidence:
         item_notional = item.quantity * item.price
-        item_fee = _fee_in_quote(
+        item_fee = fee_in_quote(
             fee=item.fee,
             fee_currency=item.fee_currency,
             fill_price=item.price,
@@ -625,23 +593,21 @@ def _fill_totals(
             row_quantity = float(row["fill_quantity"])
             row_price = float(row["fill_price"])
             raw_fee = row.get("fee")
-            if raw_fee in (None, ""):
-                raise ValueError("missing private Fill fee")
-            row_fee = float(raw_fee)
+            row_fee = None if raw_fee is None else float(raw_fee)
         except (KeyError, TypeError, ValueError) as exc:
             raise MaterializationIntegrityError("durable private Fill economics are incomplete") from exc
         if (
             not math.isfinite(row_quantity)
             or not math.isfinite(row_price)
-            or not math.isfinite(row_fee)
+            or (row_fee is not None and (not math.isfinite(row_fee) or row_fee < 0))
             or row_quantity <= 0
             or row_price <= 0
         ):
             raise MaterializationIntegrityError("durable private Fill economics must be finite")
         row_notional = row_quantity * row_price
-        row_quote_fee = _fee_in_quote(
+        row_quote_fee = fee_in_quote(
             fee=row_fee,
-            fee_currency=str(row.get("fee_currency") or "USDT"),
+            fee_currency=str(row.get("fee_currency") or ""),
             fill_price=row_price,
             symbol=symbol,
         )
@@ -694,17 +660,19 @@ def _verify_durable_fills(
         if (
             abs(float(local["fill_quantity"]) - matched.quantity) > quantity_tolerance
             or abs(float(local["fill_price"]) - matched.price) > max(1e-12, matched.price * 1e-9)
-            or abs(float(local.get("fee") or 0.0) - matched.fee) > max(1e-12, matched.fee * 1e-9)
+            or (local.get("fee") is None) != (matched.fee is None)
+            or (matched.fee is not None and abs(float(local["fee"]) - matched.fee) > max(1e-12, matched.fee * 1e-9))
             or str(local.get("fee_currency") or "").upper() != matched.fee_currency.upper()
             or _timestamp_ms(local.get("filled_at")) != matched.filled_at_ms
         ):
             raise MaterializationIntegrityError(f"durable {lifecycle} Fill conflicts with same-id private evidence")
-        if upgrade_source and local.get("fee_source") != "reconciled":
+        fee_source = "reconciled" if matched.fee is not None else "unavailable"
+        if upgrade_source and local.get("fee_source") != fee_source:
             # Exact identity, economics, and exchange time allow an older row's
             # provenance to be upgraded. Any mismatch above remains fail-closed.
             db.execute(
-                "UPDATE fills SET fee_source='reconciled' WHERE id=?",
-                (local["id"],),
+                "UPDATE fills SET fee_source=? WHERE id=?",
+                (fee_source, local["id"]),
             )
 
 
@@ -749,6 +717,8 @@ def materialize_bitget_entry(
         exchange_order_id, evidence = evidence_for_order(order, rows)
         if exchange_order_id is None or not evidence:
             return MaterializationResult(state="evidence_missing")
+        if any(item.fee is None for item in evidence):
+            raise PrivateFillEvidenceInvalid("private entry fill row is missing fee")
         if not order.get("exchange_order_id"):
             repo.update_order_metadata(order_id, exchange_order_id=exchange_order_id)
             order["exchange_order_id"] = exchange_order_id
@@ -1294,7 +1264,7 @@ def _materialize_complete_private_close(
                     fill_quantity=item.quantity,
                     fee=item.fee,
                     fee_currency=item.fee_currency,
-                    fee_source="reconciled",
+                    fee_source="reconciled" if item.fee is not None else "unavailable",
                     realized_liquidity=item.realized_liquidity,
                     filled_at=item.filled_at,
                 )
@@ -1348,7 +1318,7 @@ def _materialize_complete_private_close(
             "fee_in_quote": total_fee,
             "fee_status": "complete" if total_fee is not None else "unavailable",
             "fee_unavailable_reason": (
-                None if total_fee is not None else "third_currency_conversion_unavailable"
+                None if total_fee is not None else "fee_amount_or_conversion_unavailable"
             ),
             "fills": [
                 {
@@ -1456,7 +1426,7 @@ def materialize_bitget_close(order_id: str, rows, funding_ledger: dict | None = 
                         fill_quantity=item.quantity,
                         fee=item.fee,
                         fee_currency=item.fee_currency,
-                        fee_source="reconciled",
+                        fee_source="reconciled" if item.fee is not None else "unavailable",
                         realized_liquidity=item.realized_liquidity,
                         filled_at=item.filled_at,
                     )
