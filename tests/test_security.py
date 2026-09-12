@@ -117,10 +117,17 @@ def test_agent_has_no_tool_to_change_risk_limits():
 # --- Secrets never in GET responses ---
 
 @pytest.mark.anyio
-async def test_secret_never_in_model_get(client):
+async def test_secret_never_in_model_get(client, monkeypatch):
+    from tests.model_http import mock_model_probe
+
+    mock_model_probe(monkeypatch)
     c, _ = client
     secret = "sk-LEAKCHECK-CONFIDENTIAL-0001"
-    await c.post("/api/settings/model", json={"provider": "openai_compatible", "api_key": secret})
+    created = await c.post("/api/settings/model-profiles", json={
+        "profile_id": "openai_compatible", "type": "openai_compatible", "display_name": "HTTP",
+        "base_url": "http://model.test/v1", "model": "m1", "api_key": secret,
+    })
+    assert created.status_code == 201, created.text
     for path in ["/api/model", "/api/settings", "/api/status"]:
         resp = await c.get(path)
         assert secret not in resp.text, f"secret leaked in {path}"
@@ -138,10 +145,17 @@ async def test_bitget_secret_never_in_get(client):
 # --- Secrets not written to config.yaml or logs ---
 
 @pytest.mark.anyio
-async def test_secret_not_in_config_or_logs(client):
+async def test_secret_not_in_config_or_logs(client, monkeypatch):
+    from tests.model_http import mock_model_probe
+
+    mock_model_probe(monkeypatch)
     c, tmp_path = client
     secret = "sk-NOTINFILES-3333"
-    await c.post("/api/settings/model", json={"provider": "openai_compatible", "api_key": secret})
+    created = await c.post("/api/settings/model-profiles", json={
+        "profile_id": "openai_compatible", "type": "openai_compatible", "display_name": "HTTP",
+        "base_url": "http://model.test/v1", "model": "m1", "api_key": secret,
+    })
+    assert created.status_code == 201, created.text
     cfg_file = tmp_path / "config.yaml"
     if cfg_file.exists():
         assert secret not in cfg_file.read_text(encoding="utf-8")

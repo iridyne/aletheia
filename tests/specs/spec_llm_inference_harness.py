@@ -55,7 +55,7 @@ async def test_fallback_candidates_are_explicit_and_bounded(monkeypatch):
     SpecClaim(
         "LLMH-S07", _CONTRACT, "§Entry points", "L2a",
         "Retired subprocess and proprietary model transports have no implementation, "
-        "registry entry or login route; historical configurations remain inert.",
+        "registry entry or login route; the fixed-provider mutation endpoint is retired.",
         status="implemented",
     ),
 )
@@ -74,6 +74,7 @@ def test_retired_model_transports_have_no_active_entrypoint():
         "/api/settings/model-integrations/",
     )
     assert not any(route.path.startswith(retired_paths) for route in router.routes)
+    assert "/api/settings/model" not in {route.path for route in router.routes}
 
 
 def _production_helper_calls() -> list[tuple[Path, ast.Call]]:

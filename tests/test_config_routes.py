@@ -11,6 +11,17 @@ from httpx import AsyncClient, ASGITransport
 from aletheia.server.app import app
 from aletheia.model_provider.router import clear_cache
 from aletheia.config.schema import AletheiaConfig
+from tests.model_http import mock_model_probe
+
+
+def _seed_model(**fields):
+    """Stored-state fixture for reads/probes, not evidence of API configuration."""
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    cfg = load_config()
+    cfg.models.providers["openai_compatible"] = ProviderConfig(type="openai_compatible", **fields)
+    save_config(cfg)
 
 
 @pytest.fixture
@@ -43,9 +54,7 @@ def _flatten_keys(value, prefix=""):
 
 @pytest.mark.anyio
 async def test_get_model_config(client):
-    # Providers ship empty now; add one via the API (mirrors a fresh install
-    # where the operator configures a provider through Settings).
-    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+    _seed_model()
     resp = await client.get("/api/model")
     assert resp.status_code == 200
     data = resp.json()
@@ -257,13 +266,15 @@ async def test_app_config_bind_host_rejects_invalid(client):
 
 
 @pytest.mark.anyio
-async def test_set_model_provider(client):
-    resp = await client.post("/api/settings/model", json={
-        "provider": "openai_compatible",
+async def test_set_model_provider(client, monkeypatch):
+    mock_model_probe(monkeypatch)
+    resp = await client.post("/api/settings/model-profiles", json={
+        "profile_id": "openai_compatible", "type": "openai_compatible", "display_name": "HTTP",
         "base_url": "http://localhost:9000/v1",
         "model": "my-model",
-        "default": True,
     })
+    assert resp.status_code == 201
+    resp = await client.post("/api/settings/model-routing", json={"default_provider": "openai_compatible"})
     assert resp.status_code == 200
     assert resp.json()["default_provider"] == "openai_compatible"
 
@@ -273,9 +284,11 @@ async def test_set_model_provider(client):
 
 
 @pytest.mark.anyio
-async def test_set_model_inference_limits_are_visible_and_validated(client):
-    response = await client.post("/api/settings/model", json={
-        "provider": "openai_compatible",
+async def test_set_model_inference_limits_are_visible_and_validated(client, monkeypatch):
+    mock_model_probe(monkeypatch)
+    response = await client.post("/api/settings/model-profiles", json={
+        "profile_id": "openai_compatible", "type": "openai_compatible", "display_name": "HTTP",
+        "base_url": "http://model.test/v1", "model": "m1",
         "inference_max_concurrency": 3,
         "inference_requests_per_minute": 40,
         "inference_tpm": 90_000,
@@ -283,7 +296,7 @@ async def test_set_model_inference_limits_are_visible_and_validated(client):
         "inference_reserved_high_priority_slots": 4,
         "inference_timeout_sec": 180,
     })
-    assert response.status_code == 200
+    assert response.status_code == 201
 
     provider = (await client.get("/api/model")).json()["providers"]["openai_compatible"]
     assert provider["inference_max_concurrency"] == 3
@@ -293,8 +306,7 @@ async def test_set_model_inference_limits_are_visible_and_validated(client):
     assert provider["inference_reserved_high_priority_slots"] == 4
     assert provider["inference_timeout_sec"] == 180
 
-    invalid = await client.post("/api/settings/model", json={
-        "provider": "openai_compatible",
+    invalid = await client.patch("/api/settings/model-profiles/openai_compatible", json={
         "inference_queue_capacity": 2,
         "inference_reserved_high_priority_slots": 3,
     })
@@ -302,14 +314,16 @@ async def test_set_model_inference_limits_are_visible_and_validated(client):
 
 
 @pytest.mark.anyio
-async def test_set_model_api_key_is_write_only(client):
+async def test_set_model_api_key_is_write_only(client, monkeypatch):
     """POST accepts an api_key, but GET must never return the raw value."""
+    mock_model_probe(monkeypatch)
     secret = "sk-super-secret-value-9999"
-    resp = await client.post("/api/settings/model", json={
-        "provider": "openai_compatible",
+    resp = await client.post("/api/settings/model-profiles", json={
+        "profile_id": "openai_compatible", "type": "openai_compatible", "display_name": "HTTP",
+        "base_url": "http://model.test/v1", "model": "m1",
         "api_key": secret,
     })
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     body = resp.json()
     # Response reports configured + last4 only
     assert body["api_key"]["configured"] is True
@@ -324,8 +338,10 @@ async def test_set_model_api_key_is_write_only(client):
 
 @pytest.mark.anyio
 async def test_set_model_invalid_provider(client):
-    resp = await client.post("/api/settings/model", json={"provider": "nonexistent"})
-    assert resp.status_code == 400
+    resp = await client.post("/api/settings/model-profiles", json={
+        "profile_id": "http", "type": "nonexistent", "display_name": "HTTP",
+    })
+    assert resp.status_code == 422
 
 
 @pytest.mark.anyio
@@ -369,10 +385,7 @@ async def test_model_health_endpoint(client):
 
 @pytest.mark.anyio
 async def test_model_health_unknown_profile_is_explicit(client):
-    await client.post(
-        "/api/settings/model",
-        json={"provider": "openai_compatible", "enabled": False},
-    )
+    _seed_model(enabled=False)
 
     response = await client.get("/api/model/health")
     assert response.status_code == 200
@@ -469,17 +482,9 @@ async def test_model_health_separates_reachability_and_verification(client, monk
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
 
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
-    saved = await client.post(
-        "/api/settings/model",
-        json={
-            "provider": "openai_compatible",
-            "base_url": "http://model.test/v1",
-            "model": "model-a",
-            "enabled": True,
-            "default": True,
-        },
-    )
-    assert saved.status_code == 200, saved.text
+    _seed_model(base_url="http://model.test/v1", model="model-a", enabled=True)
+    assigned = await client.post("/api/settings/model-routing", json={"default_provider": "openai_compatible"})
+    assert assigned.status_code == 200
 
     response = await client.get("/api/model/health")
     assert response.status_code == 200
@@ -544,18 +549,21 @@ async def test_model_profile_verification_persists_and_config_change_invalidates
     assert entry["verified"] is True
     assert entry["state"] == "verified"
 
-    changed = await client.post(
-        "/api/settings/model",
-        json={"provider": "openai_compatible", "base_url": "http://other.test/v1"},
-    )
-    assert changed.status_code == 200, changed.text
+    # Stored configuration drift is not a verified Settings update. Preserve
+    # the old verification record to prove the read side rejects its identity.
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.models.providers["openai_compatible"].base_url = "http://other.test/v1"
+    save_config(cfg)
+    clear_cache()
     after_change = await client.get("/api/model/health")
     changed_entry = next(
         item for item in after_change.json() if item["provider"] == "openai_compatible"
     )
     assert changed_entry["reachable"] is True
     assert changed_entry["verified"] is None
-    assert changed_entry["verification_invalidated"] is False
+    assert changed_entry["verification_invalidated"] is True
     assert changed_entry["state"] == "reachable"
 
 
@@ -1930,7 +1938,7 @@ async def test_model_test_candidate_pass(client, monkeypatch):
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
 
     # Seed the provider (no key) so we can prove the probe adds none.
-    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+    _seed_model()
 
     secret = "sk-candidate-not-saved-7777"
     resp = await client.post("/api/model/test-candidate", json={
@@ -1964,7 +1972,7 @@ async def test_model_test_candidate_probe_succeeds_without_model_catalogue(clien
 
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", unavailable_catalogue)
     monkeypatch.setattr(broker, "brokered_complete", successful_inference)
-    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+    _seed_model()
 
     resp = await client.post("/api/model/test-candidate", json={
         "provider": "openai_compatible",
@@ -1988,7 +1996,7 @@ async def test_model_test_candidate_fail(client, monkeypatch):
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", fake_health)
 
     # Seed the provider (no key) so we can prove the probe adds none.
-    await client.post("/api/settings/model", json={"provider": "openai_compatible"})
+    _seed_model()
 
     resp = await client.post("/api/model/test-candidate", json={
         "provider": "openai_compatible",

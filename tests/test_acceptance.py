@@ -140,12 +140,19 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
 
 # #6 HTTP model provider layer (OpenAI/Anthropic)
 @pytest.mark.anyio
-async def test_ac06_model_providers(client):
+async def test_ac06_model_providers(client, monkeypatch):
+    from tests.model_http import mock_model_probe
+
+    mock_model_probe(monkeypatch)
     c, _ = client
     # Providers ship empty now; the model layer supports these types on demand —
     # register them via the API (as a fresh-install operator would through Settings).
     for provider in ("openai_compatible", "anthropic_compatible"):
-        await c.post("/api/settings/model", json={"provider": provider})
+        created = await c.post("/api/settings/model-profiles", json={
+            "profile_id": provider, "type": provider, "display_name": provider,
+            "base_url": "http://model.test", "model": "m1",
+        })
+        assert created.status_code == 201, created.text
     data = (await c.get("/api/model")).json()
     assert set(["openai_compatible", "anthropic_compatible"]).issubset(data["providers"].keys())
 

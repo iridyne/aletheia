@@ -17,19 +17,9 @@ async def client(tmp_path, monkeypatch):
     monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: None)
     monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
 
-    from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from tests.model_http import mock_model_probe
 
-    async def healthy(provider):
-        return ModelHealth(provider=provider.name, available=True, model=provider.model, models=[provider.model])
-
-    async def complete(_provider_name, provider, _request, **_kwargs):
-        return ModelResponse(content="OK", model=provider.model, usage={})
-
-    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
-    monkeypatch.setattr(AnthropicCompatibleProvider, "healthcheck", healthy)
-    monkeypatch.setattr("aletheia.model_provider.broker.brokered_complete", complete)
+    mock_model_probe(monkeypatch)
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
     clear_cache()
     transport = ASGITransport(app=app)
@@ -109,7 +99,7 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     for role in ("default_provider", "deep_provider", "fast_provider"):
         response = await http.post("/api/settings/model-routing", json={role: "historical-cli"})
         assert response.status_code == 422
-    for path in ("/api/model/detect-models", "/api/model/test-candidate", "/api/settings/model"):
+    for path in ("/api/model/detect-models", "/api/model/test-candidate"):
         response = await http.post(path, json={"provider": "historical-cli"})
         assert response.status_code == 400
     response = await http.patch(
@@ -123,11 +113,13 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("field", ["command", "mode", "codex_model"])
-async def test_removed_cli_settings_fields_are_rejected(client, field):
+@pytest.mark.parametrize("field", ["command", "mode", "codex_model", "default", "set_as_deep", "set_as_fast"])
+async def test_retired_settings_fields_are_rejected(client, field):
     http, _ = client
     response = await http.post(
-        "/api/settings/model", json={"provider": "openai_compatible", field: "retired"}
+        "/api/settings/model-profiles", json={
+            "profile_id": "http", "display_name": "HTTP", "type": "openai_compatible", field: "retired",
+        }
     )
     assert response.status_code == 422
     response = await http.patch(
@@ -199,7 +191,6 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
 @pytest.mark.parametrize("method,path", [
     ("POST", "/api/model/detect-models"),
     ("POST", "/api/model/test-candidate"),
-    ("POST", "/api/settings/model"),
     ("POST", "/api/settings/model-profiles"),
     ("PATCH", "/api/settings/model-profiles/http"),
 ])
@@ -219,7 +210,7 @@ async def test_workspace_fields_are_rejected_on_http_requests(client, monkeypatc
     if path == "/api/settings/model-profiles":
         body.update(profile_id="new-http", display_name="HTTP", type="openai_compatible", base_url="https://example.invalid/v1")
     elif method == "POST":
-        body["provider"] = "openai_compatible" if path == "/api/settings/model" else "http"
+        body["provider"] = "http"
     response = await client[0].request(method, path, json=body)
     assert response.status_code == 422
 
@@ -792,17 +783,27 @@ async def test_profile_ids_are_validated_and_cannot_collide(client):
 
 
 @pytest.mark.anyio
-async def test_legacy_model_mutation_declares_deprecation(client):
+async def test_legacy_model_mutation_is_absent_and_cannot_write(client, monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.server.routes import model as model_routes
+
     http, _ = client
+    before = load_config().models.model_dump()
+    writes = []
+    monkeypatch.setattr(model_routes, "set_secret", lambda *args: writes.append(args))
 
     response = await http.post(
         "/api/settings/model",
         json={
             "provider": "openai_compatible",
             "model": "legacy-model",
+            "api_key": "synthetic-retired-route-key",
+            "default": True,
+            "set_as_deep": True,
+            "set_as_fast": True,
         },
     )
 
-    assert response.status_code == 200
-    assert response.headers["Deprecation"] == "true"
-    assert "model-provider-profiles-and-access-methods" in response.headers["Link"]
+    assert response.status_code == 404
+    assert load_config().models.model_dump() == before
+    assert writes == []
