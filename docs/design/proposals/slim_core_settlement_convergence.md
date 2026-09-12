@@ -90,6 +90,23 @@ Late missing-fee completion is still absent: the funding queue selects
 available costs against exact durable Fill identities, without rewriting known
 history, estimating conversion or resubmitting an external close.
 
+Further exact-source investigation at `bb48d678f` establishes the missing seam:
+`_materialize_complete_private_close` returns immediately for a filled Order,
+and `_verify_durable_fills` rejects unknown-to-known fee changes as conflicts.
+The execution contract declares Fill immutable. Therefore completion must retain
+the original Fill and close evidence, attach the later scoped observation to the
+existing reconciliation/audit evidence, and update only incomplete economic
+projections through the shared commit. Updating the original Fill in place would
+contradict the retained-history boundary. UTA `get_fills` already supplies typed
+account/order/instrument/time-scoped observations; a new venue client is not needed.
+This is an implementation direction, not evidence that completion is implemented.
+
+The observed-close validator also had a proven nonfinite-value hole: three tests
+with same-ID durable Fill price, quantity or fee stored as `NaN` closed the
+Position before repair. The path now reuses `_fill_totals`' existing numeric
+validation before its same-fact comparisons. No alternate numeric validator or
+repair of corrupted historical values is introduced.
+
 No runtime qualification follows from this source inventory. Exact deployment,
 booted identity, health and a natural or otherwise owner-authorized Demo close
 remain separate evidence gates. Strategy, Risk and exit policy must not be tuned

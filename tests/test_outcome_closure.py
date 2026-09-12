@@ -693,6 +693,34 @@ def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monke
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 
 
+@pytest.mark.parametrize("field", ("fill_price", "fill_quantity", "fee"))
+def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
+    from aletheia.execution.exchange_materialization import MaterializationIntegrityError
+    from aletheia.portfolio.outcome_closure import (
+        _materialize_observed_close_chain, close_position_from_verified_exit,
+    )
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    evidence = _verified_result(position)
+    with repo.transaction(immediate=True):
+        order_ids = _materialize_observed_close_chain(
+            repo.get_position(position.id), evidence, reason="verified_exit",
+        )
+        # SQLite can retain nonnumeric text in these historical REAL columns.
+        repo.get_db().execute(
+            f"UPDATE fills SET {field}='NaN' WHERE order_id=?", (order_ids[0],),
+        )
+    before = repo.get_position(position.id)
+    with pytest.raises(MaterializationIntegrityError, match="durable.*Fill"):
+        close_position_from_verified_exit(position.id, evidence)
+    assert repo.get_position(position.id) == before
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchone()[0] == 0
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
 def test_verified_exit_normalization_has_no_second_close_writer():
     import ast
     import inspect

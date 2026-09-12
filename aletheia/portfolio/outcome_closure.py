@@ -60,7 +60,7 @@ def _materialize_observed_close_chain(
     identity.  Any conflicting local row aborts the whole Position close.
     """
     from aletheia.execution.exchange_materialization import (
-        durable_private_fill_id,
+        durable_private_fill_id, _fill_totals,
     )
 
     grouped: dict[str, list] = {}
@@ -145,6 +145,7 @@ def _materialize_observed_close_chain(
             ).isoformat()
             if existing_rows:
                 existing = dict(existing_rows[0])
+                _fill_totals([existing], symbol=str(position["symbol"]))
                 price_tolerance = max(1e-12, float(item.price) * 1e-9)
                 fee_tolerance = max(1e-12, abs(item.fee) * 1e-9) if item.fee is not None else 0.0
                 if (
