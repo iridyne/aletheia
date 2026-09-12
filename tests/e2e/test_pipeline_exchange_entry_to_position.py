@@ -5,7 +5,7 @@ account identity, acknowledgements, partial fills, replay and database reconnect
 The final Risk cases exercise the real gate; routing cases supply a Risk decision.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -128,9 +128,14 @@ def _wire_venue(monkeypatch, *, evidence=None, reason_code=None, venue_order_id=
 
     adapter = _ExchangeAdapter(submit, _MODE)
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: adapter)
+
+    def normalize(mode, symbol, market, qty, price, *, allow_increase=True):
+        assert allow_increase is False, "Entry Plan quantity must never be increased"
+        return qty
+
     monkeypatch.setattr(
         "aletheia.execution.order_constraints.prepare_exchange_quantity",
-        lambda mode, symbol, market, qty, price: qty,
+        normalize,
     )
     return submitted, _identity
 
@@ -164,18 +169,51 @@ def _approving_risk(monkeypatch):
 
 
 def _drive_entry(plan):
+    from aletheia.data.symbols import InstrumentId
     from aletheia.execution.entry_plan_execution import execute_entry_plan
+    from aletheia.universe.fast_stream import FastMarketEvent
     from tests.test_entry_plan_execution import _execution_receipt_kwargs
 
     now = datetime.now(timezone.utc)
+    facts = _execution_receipt_kwargs(now, depth=False)
+    quote = FastMarketEvent(
+        event_type="quote", instrument=InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type),
+        sequence=facts["quote_sequence"], exchange_timestamp_ms=int(now.timestamp() * 1000),
+        received_timestamp_ms=int(now.timestamp() * 1000),
+        stream_generation_id=facts["stream_generation_id"],
+        subscription_generation_id=facts["subscription_generation_id"], bid=100, ask=100.05,
+    )
+    if plan.execution_mode == "TRIGGERED":
+        from aletheia.trading.entry_activation import build_entry_trigger_activation
+        from tests.test_entry_activation import _observed_activation
+
+        # Reuse real trigger-engine events, not an activation-gate bypass.
+        _, ready, now = _observed_activation(plan.order_tactic)
+        activation = build_entry_trigger_activation(plan, ready, now=now)
+        repo.record_entry_plan_monitoring(plan.plan_id, {
+            "state": "ready", "stream_generation_id": ready.stream_generation_id,
+            "subscription_generation_id": ready.subscription_generation_id,
+        })
+        assert repo.bind_entry_trigger_activation(activation, expected_activation_id=None, now=now)
+        quote = ready.activation_events[-1]
+        facts = dict(
+            stream_generation_id=ready.stream_generation_id,
+            subscription_generation_id=ready.subscription_generation_id,
+            quote_sequence=ready.quote_sequence, required_channels=("quote", "trade", "depth", "candle"),
+            depth_bids=ready.depth_bids, depth_asks=ready.depth_asks,
+            depth_exchange_timestamp_ms=ready.depth_exchange_timestamp_ms,
+            depth_received_timestamp_ms=ready.depth_received_timestamp_ms, depth_sequence=ready.depth_sequence,
+            trigger_activation_id=activation.activation_id, trigger_activation_hash=activation.activation_hash,
+        )
     return execute_entry_plan(
         plan.plan_id,
-        bid=100,
-        ask=100.05,
+        bid=quote.bid,
+        ask=quote.ask,
         observed_at=now.isoformat(),
         source_observed_at=now.isoformat(),
         now=now,
-        **_execution_receipt_kwargs(now, depth=True),
+        current_market=lambda: (quote, {"state": "ready"}),
+        **facts,
     )
 
 
@@ -190,7 +228,8 @@ def _seeded_plan_with(plan_updates):
         account_mode=_MODE,
         mode="TRIGGERED",
         tactic="OPPOSING_BBO_IOC",
-        plan_updates=plan_updates,
+        plan_updates={"approved_at": (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(),
+                      **(plan_updates or {})},
     )
 
 
@@ -210,49 +249,10 @@ def _private_entry_fill(order: dict, *, quantity=None, fee="0.02", fee_coin="USD
 def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     e2e_db, monkeypatch
 ):
-    from aletheia.execution import gateway
-    from aletheia.execution.entry_plan_execution import execute_entry_plan
-    from aletheia.storage.models import RiskDecision
-    from types import SimpleNamespace
-    from tests.test_entry_plan_execution import (
-        _execution_receipt_kwargs,
-        _persist_waiting_plan,
-    )
-
     submitted, identity_of = _wire_venue(monkeypatch)
-    plan = _persist_waiting_plan(account_mode=_MODE, mode="TRIGGERED",
-                                 tactic="OPPOSING_BBO_IOC")
-
-    def approve(proposal, *, decision_role, execution_receipt=None):
-        decision = RiskDecision(
-            proposal_id=proposal.id,
-            approved=True,
-            allowed_execution_mode=_MODE,
-            decision_role=decision_role,
-            evaluated_quantity=proposal.quantity,
-            proposal_commit_hash=proposal.commit_hash,
-            proposal_execution_mode=proposal.execution_mode,
-        )
-        repo.insert_risk_decision(decision)
-        return SimpleNamespace(
-            approved=True,
-            allowed_execution_mode=_MODE,
-            decision_id=decision.id,
-            decision_role=decision_role,
-        )
-
-    monkeypatch.setattr(gateway, "evaluate_proposal", approve)
-
-    now = datetime.now(timezone.utc)
-    result = execute_entry_plan(
-        plan.plan_id,
-        bid=100,
-        ask=100.05,
-        observed_at=now.isoformat(),
-        source_observed_at=now.isoformat(),
-        now=now,
-        **_execution_receipt_kwargs(now, depth=True),
-    )
+    _approving_risk(monkeypatch)
+    plan = _seeded_plan()
+    result = _drive_entry(plan)
 
     # An acknowledgement alone must not create a Fill or Position.
     assert result["status"] == "submitted", result

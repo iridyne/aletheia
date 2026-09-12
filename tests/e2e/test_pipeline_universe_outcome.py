@@ -3,8 +3,6 @@
 The shared ancestry/closure/read-cohort and consumer code is never mocked.
 Account/fill/funding transport qualification remains owned by its existing suites.
 """
-from datetime import datetime, timezone
-
 import pytest
 
 from aletheia.storage import repositories as repo
@@ -13,12 +11,11 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 @pytest.fixture
 def universe_position(monkeypatch, request):
-    from aletheia.execution.entry_plan_execution import execute_entry_plan
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
     from tests.e2e.test_pipeline_exchange_entry_to_position import (
-        _approving_risk, _private_entry_fill, _wire_venue,
+        _approving_risk, _drive_entry, _private_entry_fill, _wire_venue,
     )
-    from tests.test_entry_plan_execution import _execution_receipt_kwargs, _persist_waiting_plan
+    from tests.test_entry_plan_execution import _persist_waiting_plan
 
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda p: None)
     _approving_risk(monkeypatch)
@@ -32,12 +29,8 @@ def universe_position(monkeypatch, request):
         mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT",
         plan_updates=updates,
     )
-    now = datetime.now(timezone.utc)
-    result = execute_entry_plan(
-        plan.plan_id, bid=100, ask=100.05, observed_at=now.isoformat(),
-        source_observed_at=now.isoformat(), now=now, **_execution_receipt_kwargs(now, depth=False),
-    )
-    assert result["status"] == "submitted"
+    result = _drive_entry(plan)
+    assert result["status"] == "submitted", result
     order = repo.get_order(result["order_id"])
     materialized = materialize_bitget_entry(order["id"], [_private_entry_fill(order)])
     assert materialized.state == "filled"
@@ -74,6 +67,8 @@ def test_universe_close_reaches_shared_outcome_and_consumers(universe_position, 
     from aletheia.portfolio import outcome_hooks
 
     plan, position = universe_position
+    assert repo.get_entry_plan(plan.plan_id)["order_id"] is None
+    assert repo.get_order(position["order_id"])["entry_plan_id"] == plan.plan_id
     assert attribution_chain_complete(position)
     closed = _close(monkeypatch, position)
     assert closed["outcome_eligible"] == 1
@@ -91,7 +86,7 @@ def test_universe_close_reaches_shared_outcome_and_consumers(universe_position, 
     assert outcome_hooks.process_outcome_hook_jobs(position_id=position["id"])["claimed"] == 0
 
 
-@pytest.mark.parametrize("broken_link", ["order", "proposal", "generation", "candidate", "source"])
+@pytest.mark.parametrize("broken_link", ["order", "order_plan", "proposal", "generation", "candidate", "source"])
 def test_broken_universe_chain_is_excluded_by_writer_and_snapshot(
     universe_position, monkeypatch, e2e_db, broken_link,
 ):
@@ -105,6 +100,10 @@ def test_broken_universe_chain_is_excluded_by_writer_and_snapshot(
     assert closed["outcome_eligible"] == 1
     if broken_link == "order":
         repo.update_order_metadata(position["order_id"], position_id=None)
+    elif broken_link == "order_plan":
+        # An obsolete reverse cache cannot authorize a wrong current Order link.
+        e2e_db.execute("UPDATE entry_plans SET order_id=? WHERE id=?", (position["order_id"], plan.plan_id))
+        e2e_db.execute("UPDATE orders SET entry_plan_id='unrelated-plan' WHERE id=?", (position["order_id"],))
     elif broken_link == "proposal":
         force_update_position(position["id"], proposal_id="missing-proposal")
     elif broken_link == "generation":

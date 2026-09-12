@@ -547,6 +547,9 @@ base 费用可按该 Fill 的成交价直接折算。数量/identity 不符或�
 原生平仓与 verified disappearance 经 `portfolio.pnl.close_position` 验证关闭证据，
 再由 `pnl._commit_close_economics` 统一提交经济关闭；
 `close_position_verified` 仅验证/归一化 disappearance 证据并提供事务内 Order/Fill materialization。
+Universe Outcome 归因沿当前 `Order.entry_plan_id = Proposal.entry_plan_id` 验证 Plan，
+不要求已退役的 `EntryPlan.order_id` 反向执行缓存被回写；错误或缺失的当前 Order→Plan 关系
+不能用旧缓存补成有效链。Generation/Candidate/source 与 Position/Proposal/Order 的其他精确关系仍须成立。
 Position、per-close event、Outcome eligibility、hook job 与数据库 audit 在同一 writer transaction
 提交；外部观察关闭仍为 administrative/ineligible。无成交证据的 administrative close 保持独立，
 不得借用经济关闭入口生成收益；历史记录不因所有者收敛而被改写。
