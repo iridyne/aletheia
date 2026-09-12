@@ -10,7 +10,7 @@ import SWITCH from "./Switch.tsx?raw";
  *
  * The fix lives entirely in these two files: the row publishes its label id, the
  * switch adopts it when it has no name of its own. That is what makes it worth
- * asserting here — 65 call sites depend on this pairing holding, and none of
+ * asserting here — unnamed call sites depend on this pairing holding, and none of
  * them mention it. Delete either half and every unnamed switch silently goes
  * back to being anonymous, with no visual change to notice.
  *

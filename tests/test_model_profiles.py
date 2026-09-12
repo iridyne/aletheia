@@ -63,7 +63,7 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli"])
+@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native"])
 async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     client, monkeypatch, provider_type
 ):
@@ -133,7 +133,66 @@ async def test_removed_cli_settings_fields_are_rejected(client, field):
     response = await http.patch(
         "/api/settings/model-integrations/openai_native", json={field: "retired"}
     )
-    assert response.status_code == 422
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/model/openai-oauth/start"),
+    ("GET", "/model/openai-oauth/status"),
+    ("POST", "/model/openai-oauth/finalize"),
+    ("POST", "/model/openai-oauth/cancel"),
+    ("POST", "/model/openai-oauth/disconnect"),
+    ("POST", "/model/claude-oauth/start"),
+    ("POST", "/model/claude-oauth/complete"),
+    ("GET", "/model/claude-oauth/status"),
+    ("POST", "/model/claude-oauth/cancel"),
+    ("POST", "/model/claude-oauth/disconnect"),
+])
+async def test_retired_oauth_routes_are_absent(client, method, path):
+    response = await client[0].request(method, f"/api{path}")
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(client, monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider import router as model_router
+    from aletheia.server.routes import model as model_routes, ui
+
+    http, _ = client
+    cfg = load_config()
+    profile = ProviderConfig(
+        type="openai_compatible", enabled=True, base_url="https://example.invalid/v1",
+        api_key_secret_ref="current-api-key", oauth_token_ref="historical-access",
+        oauth_refresh_ref="historical-refresh",
+    )
+    cfg.models.providers["http-profile"] = profile
+    save_config(cfg)
+    reads, deletes = [], []
+
+    def read(ref):
+        assert ref == "current-api-key"
+        reads.append(ref)
+        return "synthetic-api-key"
+
+    def delete(ref):
+        assert ref == "current-api-key"
+        deletes.append(ref)
+
+    for module in (model_router, model_routes, ui):
+        monkeypatch.setattr(module, "get_secret", read)
+    monkeypatch.setattr(model_routes, "delete_secret", delete)
+    assert model_router.provider_configuration_identity("http-profile", profile)
+    assert ui._model_provider_usable(cfg)
+    response = await http.get("/api/model")
+    assert response.status_code == 200
+    assert response.json()["providers"]["http-profile"]["oauth"]["configured"] is False
+    response = await http.delete("/api/settings/model-profiles/http-profile", params={"confirm": "true"})
+    assert response.status_code == 200
+    assert reads and deletes == ["current-api-key"]
+    assert "http-profile" not in load_config().models.providers
 
 
 @pytest.mark.anyio
@@ -571,7 +630,7 @@ async def test_confirmed_delete_clears_roles_and_provider_owned_secret(client):
 @pytest.mark.anyio
 async def test_delete_failure_restores_prior_secret_and_keeps_profile(client, monkeypatch):
     from aletheia.config.loader import load_config, save_config
-    from aletheia.config.secrets import delete_secret as real_delete_secret, set_secret
+    from aletheia.config.secrets import set_secret
 
     http, _ = client
     await http.post(
@@ -591,17 +650,11 @@ async def test_delete_failure_restores_prior_secret_and_keeps_profile(client, mo
     save_config(cfg)
     set_secret(profile.oauth_token_ref, "secondary-secret")
 
-    calls = 0
+    def fail_save(_cfg):
+        raise RuntimeError("simulated configuration-store failure")
 
-    def fail_second_delete(ref):
-        nonlocal calls
-        calls += 1
-        if calls == 2:
-            raise RuntimeError("simulated second-store failure")
-        real_delete_secret(ref)
-
-    monkeypatch.setattr("aletheia.server.routes.model.delete_secret", fail_second_delete)
-    with pytest.raises(RuntimeError, match="second-store failure"):
+    monkeypatch.setattr("aletheia.server.routes.model.save_config", fail_save)
+    with pytest.raises(RuntimeError, match="configuration-store failure"):
         await http.delete(
             "/api/settings/model-profiles/retry-delete-api",
             params={"confirm": "true"},
@@ -649,7 +702,7 @@ async def test_candidate_probe_resolves_adapter_from_profile_identity(client, mo
 
 
 @pytest.mark.anyio
-async def test_singleton_integration_update_uses_canonical_endpoint(client):
+async def test_retired_singleton_integration_has_no_mutation_endpoint(client):
     http, _ = client
 
     response = await http.patch(
@@ -661,12 +714,9 @@ async def test_singleton_integration_update_uses_canonical_endpoint(client):
         },
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 404
     model = (await http.get("/api/model")).json()
-    assert model["providers"]["openai_native"]["kind"] == "oauth"
-    assert model["providers"]["openai_native"]["enabled"]
-    assert model["providers"]["openai_native"]["model"] == "gpt-5.5"
-    assert model["providers"]["openai_native"]["inference_max_concurrency"] == 3
+    assert model["providers"] == {}
 
 
 @pytest.mark.anyio

@@ -1,6 +1,6 @@
 import type { ModelProviderHealth } from "../../../api/client";
 
-export type ProviderCategory = "api" | "oauth";
+export type ProviderCategory = "api";
 export type RoutingRole = "default" | "deep" | "fast";
 
 export interface KeyStatus {

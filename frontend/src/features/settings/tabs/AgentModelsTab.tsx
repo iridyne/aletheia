@@ -20,8 +20,6 @@ const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'API',
   databricks: 'Databricks',
-  anthropic_native: 'Claude OAuth (Experimental)',
-  openai_native: 'OpenAI OAuth (Experimental)',
 }
 
 export const PERMISSION_SECTION = {
@@ -704,7 +702,7 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   if (!data) return <DataStateMessage state="unavailable" message="Provider list unavailable." />
 
   const providers = Object.entries(data.providers ?? {})
-  const enabled = providers.filter(([, cfg]) => cfg?.enabled === true && (cfg.kind === 'api' || cfg.kind === 'oauth'))
+  const enabled = providers.filter(([, cfg]) => cfg?.enabled === true && cfg.kind === 'api')
 
   if (enabled.length === 0) {
     return (
@@ -817,9 +815,7 @@ function InferenceLimitsForm({ name, config, metrics, qc, onDirty }: {
         inference_reserved_high_priority_slots: Number(reservedSlots),
         inference_timeout_sec: Number(timeoutSec),
       }
-      return config?.kind === 'api'
-        ? api.updateModelProfile(name, payload)
-        : api.updateModelIntegration(name, payload)
+      return api.updateModelProfile(name, payload)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model'] })

@@ -87,9 +87,9 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
-	it("keeps an assigned retired provider visible without an activation control", () => {
+	it.each(["codex_cli", "openai_native", "anthropic_native"])("keeps assigned retired %s visible without an activation control", (providerType) => {
 		const client = cleanModelClient({
-			"historical-cli": { ...EXISTING_PROFILE, type: "codex_cli", kind: "unknown", enabled: true, configured: false },
+			"historical-cli": { ...EXISTING_PROFILE, type: providerType, kind: "unknown", enabled: true, configured: false },
 		});
 		client.setQueryData(["model"], (current: Record<string, unknown>) => ({
 			...current, default_provider: "historical-cli",
@@ -116,7 +116,7 @@ describe("ModelProvidersSection", () => {
 
 		expect(html).toContain("API");
 		expect(html).not.toContain("CLI");
-		expect(html).toContain("OAUTH");
+		expect(html).not.toContain("OAUTH");
 		expect(html).toContain("No API profiles configured.");
 		expect(html.match(/Not assigned/g)?.length).toBe(3);
 		expect(html).toContain(

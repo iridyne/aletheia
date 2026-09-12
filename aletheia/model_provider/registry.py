@@ -57,27 +57,10 @@ PROVIDER_TYPES: dict[str, ProviderTypeDefinition] = {
             "anthropic_messages",
         ),
     ),
-    "anthropic_native": ProviderTypeDefinition(
-        id="anthropic_native",
-        label="Anthropic OAuth",
-        category="oauth",
-        fields=("model", "oauth"),
-        singleton=True,
-    ),
-    "openai_native": ProviderTypeDefinition(
-        id="openai_native",
-        label="OpenAI OAuth",
-        category="oauth",
-        fields=("model", "oauth"),
-        singleton=True,
-    ),
 }
 
 API_PROVIDER_TYPES = frozenset(
     provider_type for provider_type, definition in PROVIDER_TYPES.items() if definition.category == "api"
-)
-OAUTH_PROVIDER_TYPES = frozenset(
-    provider_type for provider_type, definition in PROVIDER_TYPES.items() if definition.category == "oauth"
 )
 
 

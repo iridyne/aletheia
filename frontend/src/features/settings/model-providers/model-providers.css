@@ -48,38 +48,11 @@
 }
 
 .model-routing-grid label,
-.model-editor-grid label,
-.model-integration-body label {
+.model-editor-grid label {
 	display: grid;
 	gap: 0.25rem;
 	color: var(--muted);
 	font-size: 0.72rem;
-}
-
-.model-category-tabs {
-	display: grid;
-	grid-template-columns: repeat(3, 1fr);
-	border: 1px solid var(--border);
-	border-radius: var(--r);
-	overflow: hidden;
-}
-
-.model-category-tabs button {
-	border: 0;
-	border-radius: 0;
-	background: transparent;
-	color: var(--muted);
-	font-family: var(--display);
-	letter-spacing: 0.08em;
-}
-
-.model-category-tabs button + button {
-	border-left: 1px solid var(--border);
-}
-
-.model-category-tabs button.active {
-	background: var(--accent-dim);
-	color: var(--text);
 }
 
 .model-category-panel {
@@ -91,9 +64,7 @@
 .model-card-footer,
 .model-card-controls,
 .model-card-title,
-.model-editor-actions,
-.model-integration-body,
-.model-auth-flow {
+.model-editor-actions {
 	display: flex;
 	align-items: center;
 	gap: 0.55rem;
@@ -181,8 +152,7 @@
 }
 
 .model-role-actions button,
-.model-card-footer button,
-.model-integration-body button {
+.model-card-footer button {
 	font-size: 0.7rem;
 	padding: 0.3rem 0.5rem;
 }
@@ -250,23 +220,6 @@ button.danger {
 	color: var(--muted);
 	padding: 1rem;
 	text-align: center;
-}
-
-.model-integration-body {
-	border-top: 1px solid var(--border);
-	padding: 0.65rem 0.85rem;
-	flex-wrap: wrap;
-}
-
-.model-integration-body label {
-	min-width: min(260px, 100%);
-	flex: 1;
-}
-
-.model-auth-flow {
-	flex-wrap: wrap;
-	color: var(--muted);
-	font-size: 0.75rem;
 }
 
 /* .save-err-banner moved to index.css: it is rendered by the shared

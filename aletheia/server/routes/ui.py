@@ -192,7 +192,6 @@ def _model_provider_usable(cfg) -> bool:
             continue
         for secret_ref in (
             getattr(provider, "api_key_secret_ref", None),
-            getattr(provider, "oauth_token_ref", None),
         ):
             if secret_ref and get_secret(secret_ref):
                 return True

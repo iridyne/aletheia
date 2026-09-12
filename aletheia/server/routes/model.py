@@ -41,8 +41,6 @@ router = APIRouter(prefix="/api", tags=["model"])
 
 VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
 
-HTTP_PROVIDERS = {"openai_compatible", "anthropic_compatible", "databricks", "anthropic_native", "openai_native"}
-
 
 class ModelHealthRecord(BaseModel):
     """Canonical provider health observation returned to UI/API consumers."""
@@ -260,7 +258,7 @@ def get_model_config():
             "fallback_models": list(getattr(pcfg, "fallback_models", []) or []),
             "api_key": _key_status(pcfg.api_key_secret_ref if definition else None),
             "auth_type": pcfg.auth_type,
-            "oauth": _key_status(pcfg.oauth_token_ref if definition else None),
+            "oauth": _key_status(None),
             "inference_max_concurrency": pcfg.inference_max_concurrency,
             "inference_requests_per_minute": pcfg.inference_requests_per_minute,
             "inference_tpm": pcfg.inference_tokens_per_minute,
@@ -268,7 +266,7 @@ def get_model_config():
             "inference_reserved_high_priority_slots": pcfg.inference_reserved_high_priority_slots,
             "inference_timeout_sec": pcfg.inference_timeout_sec,
         }
-        if ptype in HTTP_PROVIDERS:
+        if ptype in API_PROVIDER_TYPES:
             entry["base_url"] = pcfg.base_url
             entry["protocol"] = pcfg.protocol
         if ptype == "databricks":
@@ -519,8 +517,6 @@ async def detect_models(req: DetectModelsRequest):
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.model_provider.databricks import DatabricksProvider
-    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-    from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -574,10 +570,6 @@ async def detect_models(req: DetectModelsRequest):
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-    elif provider_type == "anthropic_native":
-        provider = AnthropicNativeProvider(model="default", api_key=api_key)
-    elif provider_type == "openai_native":
-        provider = OpenAINativeProvider(model="default", api_key=api_key)
     else:
         raise HTTPException(400, f"No detect-models support for {provider_type}")
 
@@ -610,8 +602,6 @@ async def test_model_candidate(req: TestCandidateRequest):
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.model_provider.databricks import DatabricksProvider
-    from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-    from aletheia.model_provider.openai_native import OpenAINativeProvider
     from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
@@ -663,10 +653,6 @@ async def test_model_candidate(req: TestCandidateRequest):
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-    elif provider_type == "anthropic_native":
-        provider = AnthropicNativeProvider(model=model, api_key=api_key)
-    elif provider_type == "openai_native":
-        provider = OpenAINativeProvider(model=model, api_key=api_key)
     else:
         raise HTTPException(400, f"No test-candidate support for {provider_type}")
 
@@ -1160,38 +1146,6 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
     )
 
 
-class UpdateModelIntegrationRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool | None = None
-    model: str | None = None
-    inference_max_concurrency: int | None = Field(default=None, ge=1, le=16)
-    inference_requests_per_minute: int | None = Field(default=None, ge=0, le=10_000)
-    inference_tpm: int | None = Field(default=None, ge=0, le=100_000_000)
-    inference_queue_capacity: int | None = Field(default=None, ge=1, le=1_000)
-    inference_reserved_high_priority_slots: int | None = Field(default=None, ge=0, le=1_000)
-    inference_timeout_sec: float | None = Field(default=None, ge=1, le=1_800)
-
-
-@router.patch("/settings/model-integrations/{integration_id}")
-async def update_model_integration(
-    integration_id: str,
-    req: UpdateModelIntegrationRequest,
-):
-    definition = PROVIDER_TYPES.get(integration_id)
-    if (
-        definition is None
-        or not definition.singleton
-        or definition.category != "oauth"
-        or integration_id not in PROVIDER_REGISTRY
-    ):
-        raise HTTPException(404, f"Unknown model integration: {integration_id}")
-    payload = req.model_dump(exclude_unset=True)
-    payload["type"] = integration_id
-    payload["display_name"] = definition.label
-    return await _apply_model_config(ModelConfigRequest(provider=integration_id, **payload))
-
-
 def _update_model_routing_sync(req: ModelRoutingRequest) -> dict:
     cfg = load_config()
     changed: dict[str, str | None] = {}
@@ -1251,15 +1205,7 @@ def _delete_model_profile_sync(profile_id: str) -> dict:
         cfg.models.fast_provider = None
         cleared_roles.append("fast")
 
-    secret_refs = [
-        ref
-        for ref in (
-            pcfg.api_key_secret_ref,
-            pcfg.oauth_token_ref,
-            pcfg.oauth_refresh_ref,
-        )
-        if ref
-    ]
+    secret_refs = [pcfg.api_key_secret_ref] if pcfg.api_key_secret_ref else []
     secret_values = {ref: get_secret(ref) for ref in secret_refs}
     try:
         for ref in secret_refs:
@@ -1301,248 +1247,3 @@ async def delete_model_profile(profile_id: str, confirm: bool = False):
 
     await inference_broker.invalidate_provider(profile_id)
     return result
-
-
-# --- OpenAI subscription OAuth ---
-
-
-@router.post("/model/openai-oauth/start")
-async def openai_oauth_start():
-    """Begin OpenAI OAuth PKCE flow. Returns {auth_url} for frontend to open."""
-    from aletheia.model_provider import openai_oauth
-
-    result = await openai_oauth.start_login()
-    return result
-
-
-@router.get("/model/openai-oauth/status")
-def openai_oauth_status():
-    """Poll OpenAI OAuth login status. No tokens exposed, no side-effects."""
-    from aletheia.model_provider import openai_oauth
-
-    return openai_oauth.get_status()
-
-
-@router.post("/model/openai-oauth/finalize")
-def openai_oauth_finalize():
-    """Persist completed OpenAI OAuth tokens. Idempotent — safe to call multiple times."""
-    from aletheia.model_provider import openai_oauth
-    from aletheia.config.secrets import get_secret
-
-    status = openai_oauth.get_status()
-    if status["state"] != "completed":
-        raise HTTPException(400, "OAuth flow not completed yet")
-
-    cfg = load_config()
-    pcfg = cfg.models.providers.get("openai_native")
-    if pcfg and pcfg.oauth_token_ref and get_secret(pcfg.oauth_token_ref):
-        return {"persisted": False, "reason": "already_persisted"}
-
-    tokens = openai_oauth.get_tokens()
-    if not tokens:
-        raise HTTPException(400, "No tokens available from completed flow")
-
-    _persist_openai_oauth(tokens)
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "openai_oauth_finalized",
-            "entity_type": "model_provider",
-            "entity_id": "openai_native",
-            "message": "OpenAI OAuth tokens persisted to config",
-        }
-    )
-    return {"persisted": True}
-
-
-@router.post("/model/openai-oauth/cancel")
-async def openai_oauth_cancel():
-    from aletheia.model_provider import openai_oauth
-
-    return await openai_oauth.cancel()
-
-
-@router.post("/model/openai-oauth/disconnect")
-def openai_oauth_disconnect():
-    """Disconnect OpenAI OAuth — clear tokens, revert to api_key auth."""
-    from aletheia.config.secrets import set_secret
-
-    cfg = load_config()
-    pcfg = cfg.models.providers.get("openai_native")
-    if not pcfg:
-        raise HTTPException(400, "openai_native provider not configured")
-
-    if pcfg.oauth_token_ref:
-        set_secret(pcfg.oauth_token_ref, "")
-        pcfg.oauth_token_ref = None
-    if pcfg.oauth_refresh_ref:
-        set_secret(pcfg.oauth_refresh_ref, "")
-        pcfg.oauth_refresh_ref = None
-    pcfg.oauth_expires_at = None
-    pcfg.auth_type = "api_key"
-    clear_provider_verification(pcfg)
-
-    save_config(cfg)
-    clear_cache()
-
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "oauth_disconnected",
-            "entity_type": "model_provider",
-            "entity_id": "openai_native",
-            "message": "OpenAI OAuth disconnected, reverted to api_key auth",
-        }
-    )
-    return {"disconnected": True}
-
-
-def _persist_openai_oauth(tokens: dict) -> None:
-    """Save OpenAI OAuth tokens to secrets + update config."""
-    cfg = load_config()
-    pcfg = cfg.models.providers.get("openai_native")
-    if pcfg is None:
-        from aletheia.config.schema import ProviderConfig
-
-        pcfg = ProviderConfig(type="openai_native")
-        cfg.models.providers["openai_native"] = pcfg
-
-    pcfg.auth_type = "oauth"
-
-    if not pcfg.model or pcfg.model == "default":
-        pcfg.model = "gpt-4o"
-
-    if tokens.get("api_key"):
-        ref = "model.openai_native.oauth_token"
-        set_secret(ref, tokens["api_key"])
-        pcfg.oauth_token_ref = ref
-
-    if tokens.get("refresh_token"):
-        ref = "model.openai_native.oauth_refresh"
-        set_secret(ref, tokens["refresh_token"])
-        pcfg.oauth_refresh_ref = ref
-
-    if tokens.get("expires_at"):
-        pcfg.oauth_expires_at = tokens["expires_at"]
-
-    clear_provider_verification(pcfg)
-
-    save_config(cfg)
-    clear_cache()
-
-
-# --- Claude subscription OAuth ---
-
-
-@router.post("/model/claude-oauth/start")
-async def claude_oauth_start():
-    """Begin Claude OAuth PKCE flow. Returns {auth_url} for frontend to open."""
-    from aletheia.model_provider import claude_oauth
-
-    result = await claude_oauth.start_login()
-    return result
-
-
-class ClaudeOAuthCompleteRequest(BaseModel):
-    code: str
-
-
-@router.post("/model/claude-oauth/complete")
-async def claude_oauth_complete(req: ClaudeOAuthCompleteRequest):
-    """Complete Claude OAuth by exchanging user-provided code."""
-    from aletheia.model_provider import claude_oauth
-
-    result = await claude_oauth.complete_login(req.code)
-    # If completed, persist tokens
-    if result.get("state") == "completed":
-        tokens = claude_oauth.get_tokens()
-        if tokens:
-            _persist_claude_oauth(tokens)
-    return result
-
-
-@router.get("/model/claude-oauth/status")
-def claude_oauth_status():
-    """Poll Claude OAuth login status."""
-    from aletheia.model_provider import claude_oauth
-
-    return claude_oauth.get_status()
-
-
-@router.post("/model/claude-oauth/cancel")
-def claude_oauth_cancel():
-    from aletheia.model_provider import claude_oauth
-
-    return claude_oauth.cancel()
-
-
-@router.post("/model/claude-oauth/disconnect")
-def claude_oauth_disconnect():
-    """Disconnect Claude OAuth — clear tokens, revert to api_key auth."""
-    from aletheia.config.secrets import set_secret
-
-    cfg = load_config()
-    pcfg = cfg.models.providers.get("anthropic_native")
-    if not pcfg:
-        raise HTTPException(400, "anthropic_native provider not configured")
-
-    if pcfg.oauth_token_ref:
-        set_secret(pcfg.oauth_token_ref, "")
-        pcfg.oauth_token_ref = None
-    if pcfg.oauth_refresh_ref:
-        set_secret(pcfg.oauth_refresh_ref, "")
-        pcfg.oauth_refresh_ref = None
-    pcfg.oauth_expires_at = None
-    pcfg.auth_type = "api_key"
-    clear_provider_verification(pcfg)
-
-    save_config(cfg)
-    clear_cache()
-
-    write_audit(
-        {
-            "actor": "human",
-            "source": "dashboard",
-            "event_type": "oauth_disconnected",
-            "entity_type": "model_provider",
-            "entity_id": "anthropic_native",
-            "message": "Claude OAuth disconnected, reverted to api_key auth",
-        }
-    )
-    return {"disconnected": True}
-
-
-def _persist_claude_oauth(tokens: dict) -> None:
-    """Save Claude OAuth tokens to secrets + update config."""
-    cfg = load_config()
-    pcfg = cfg.models.providers.get("anthropic_native")
-    if pcfg is None:
-        from aletheia.config.schema import ProviderConfig
-
-        pcfg = ProviderConfig(type="anthropic_native")
-        cfg.models.providers["anthropic_native"] = pcfg
-
-    pcfg.auth_type = "oauth"
-
-    if not pcfg.model or pcfg.model == "default":
-        pcfg.model = "claude-sonnet-4-6"
-
-    if tokens.get("access_token"):
-        ref = "model.anthropic_native.oauth_token"
-        set_secret(ref, tokens["access_token"])
-        pcfg.oauth_token_ref = ref
-
-    if tokens.get("refresh_token"):
-        ref = "model.anthropic_native.oauth_refresh"
-        set_secret(ref, tokens["refresh_token"])
-        pcfg.oauth_refresh_ref = ref
-
-    if tokens.get("expires_at"):
-        pcfg.oauth_expires_at = tokens["expires_at"]
-
-    clear_provider_verification(pcfg)
-
-    save_config(cfg)
-    clear_cache()

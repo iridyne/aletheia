@@ -2013,103 +2013,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/model/claude-oauth/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Claude Oauth Cancel */
-        post: operations["claude_oauth_cancel_api_model_claude_oauth_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/claude-oauth/complete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Claude Oauth Complete
-         * @description Complete Claude OAuth by exchanging user-provided code.
-         */
-        post: operations["claude_oauth_complete_api_model_claude_oauth_complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/claude-oauth/disconnect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Claude Oauth Disconnect
-         * @description Disconnect Claude OAuth — clear tokens, revert to api_key auth.
-         */
-        post: operations["claude_oauth_disconnect_api_model_claude_oauth_disconnect_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/claude-oauth/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Claude Oauth Start
-         * @description Begin Claude OAuth PKCE flow. Returns {auth_url} for frontend to open.
-         */
-        post: operations["claude_oauth_start_api_model_claude_oauth_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/claude-oauth/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Claude Oauth Status
-         * @description Poll Claude OAuth login status.
-         */
-        get: operations["claude_oauth_status_api_model_claude_oauth_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/model/detect-models": {
         parameters: {
             query?: never;
@@ -2139,103 +2042,6 @@ export interface paths {
         };
         /** Get Model Health */
         get: operations["get_model_health_api_model_health_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/openai-oauth/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Openai Oauth Cancel */
-        post: operations["openai_oauth_cancel_api_model_openai_oauth_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/openai-oauth/disconnect": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Openai Oauth Disconnect
-         * @description Disconnect OpenAI OAuth — clear tokens, revert to api_key auth.
-         */
-        post: operations["openai_oauth_disconnect_api_model_openai_oauth_disconnect_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/openai-oauth/finalize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Openai Oauth Finalize
-         * @description Persist completed OpenAI OAuth tokens. Idempotent — safe to call multiple times.
-         */
-        post: operations["openai_oauth_finalize_api_model_openai_oauth_finalize_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/openai-oauth/start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Openai Oauth Start
-         * @description Begin OpenAI OAuth PKCE flow. Returns {auth_url} for frontend to open.
-         */
-        post: operations["openai_oauth_start_api_model_openai_oauth_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/openai-oauth/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Openai Oauth Status
-         * @description Poll OpenAI OAuth login status. No tokens exposed, no side-effects.
-         */
-        get: operations["openai_oauth_status_api_model_openai_oauth_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5205,23 +5011,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/model-integrations/{integration_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update Model Integration */
-        patch: operations["update_model_integration_api_settings_model_integrations__integration_id__patch"];
-        trace?: never;
-    };
     "/api/settings/model-profiles": {
         parameters: {
             query?: never;
@@ -7423,11 +7212,6 @@ export interface components {
              * @default
              */
             note: string;
-        };
-        /** ClaudeOAuthCompleteRequest */
-        ClaudeOAuthCompleteRequest: {
-            /** Code */
-            code: string;
         };
         /** CommandRequest */
         CommandRequest: {
@@ -13688,25 +13472,6 @@ export interface components {
             /** Enabled */
             enabled?: boolean | null;
         };
-        /** UpdateModelIntegrationRequest */
-        UpdateModelIntegrationRequest: {
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Inference Max Concurrency */
-            inference_max_concurrency?: number | null;
-            /** Inference Queue Capacity */
-            inference_queue_capacity?: number | null;
-            /** Inference Requests Per Minute */
-            inference_requests_per_minute?: number | null;
-            /** Inference Reserved High Priority Slots */
-            inference_reserved_high_priority_slots?: number | null;
-            /** Inference Timeout Sec */
-            inference_timeout_sec?: number | null;
-            /** Inference Tpm */
-            inference_tpm?: number | null;
-            /** Model */
-            model?: string | null;
-        };
         /** UpdateModelProfileRequest */
         UpdateModelProfileRequest: {
             /** Api Key */
@@ -16393,119 +16158,6 @@ export interface operations {
             };
         };
     };
-    claude_oauth_cancel_api_model_claude_oauth_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    claude_oauth_complete_api_model_claude_oauth_complete_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaudeOAuthCompleteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    claude_oauth_disconnect_api_model_claude_oauth_disconnect_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    claude_oauth_start_api_model_claude_oauth_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    claude_oauth_status_api_model_claude_oauth_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     detect_models_api_model_detect_models_post: {
         parameters: {
             query?: never;
@@ -16555,106 +16207,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelHealthRecord"][];
-                };
-            };
-        };
-    };
-    openai_oauth_cancel_api_model_openai_oauth_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    openai_oauth_disconnect_api_model_openai_oauth_disconnect_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    openai_oauth_finalize_api_model_openai_oauth_finalize_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    openai_oauth_start_api_model_openai_oauth_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    openai_oauth_status_api_model_openai_oauth_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
         };
@@ -21708,41 +21260,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ModelConfigRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_model_integration_api_settings_model_integrations__integration_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                integration_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateModelIntegrationRequest"];
             };
         };
         responses: {

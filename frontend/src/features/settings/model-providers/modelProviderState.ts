@@ -12,14 +12,13 @@ export const MODEL_PROVIDERS_SECTION = {
 	title: "AI Model Providers",
 	tab: "agent" as const,
 	description:
-		"Configure API profiles and OAuth connections. Configuration never enables a provider automatically.",
+		"Configure HTTP API profiles. Configuration never enables a provider automatically.",
 	searchTerms: [
 		"llm",
 		"api profile",
 		"openai",
 		"anthropic",
 		"claude",
-		"oauth",
 	],
 };
 
@@ -44,9 +43,6 @@ export function providerStatus(
 		(!config && !health)
 	)
 		return { tone: "muted", label: "disabled" };
-	if (config?.kind === "oauth" && !config.oauth.configured) {
-		return { tone: "yellow", label: "authentication required" };
-	}
 	if (
 		health?.configured === false ||
 		(config?.configured === false && config.enabled)
@@ -89,14 +85,6 @@ export function apiTypes(
 	types: Record<string, ProviderTypeView>,
 ): ProviderTypeView[] {
 	return Object.values(types).filter((type) => type.category === "api");
-}
-
-export function oauthTypes(
-	types: Record<string, ProviderTypeView>,
-): ProviderTypeView[] {
-	return Object.values(types).filter(
-		(type) => type.category === "oauth" && type.singleton,
-	);
 }
 
 export function blankApiProfile(

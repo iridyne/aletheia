@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useMutation, useQuery, type QueryClient } from "@tanstack/react-query";
 import { api } from "../../../api/client";
 import { Switch, useConfirm } from "../../../components/ui";
@@ -9,7 +9,6 @@ import {
 	apiTypes,
 	blankApiProfile,
 	draftFromProfile,
-	oauthTypes,
 	providerStatus,
 	routingRoles,
 } from "./modelProviderState";
@@ -126,9 +125,9 @@ function RoutingBoard({
 							>
 								<option value="">Not assigned</option>
 								{providers.map(([providerId, provider]) => (
-									<option key={providerId} value={providerId} disabled={provider.kind !== "api" && provider.kind !== "oauth"}>
+									<option key={providerId} value={providerId} disabled={provider.kind !== "api"}>
 										{provider.display_name || providerId}
-										{provider.kind !== "api" && provider.kind !== "oauth" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
+										{provider.kind !== "api" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
 									</option>
 								))}
 							</select>
@@ -586,285 +585,7 @@ function ApiProfiles({
 	);
 }
 
-function IntegrationCard({
-	definition,
-	config,
-	health,
-	model,
-	qc,
-	onDirty,
-	children,
-}: {
-	definition: ProviderTypeView;
-	config?: ProviderConfigView;
-	health?: ModelHealthView;
-	model: ModelConfigView;
-	qc: QueryClient;
-	onDirty?: (id: string, isDirty: boolean) => void;
-	children?: React.ReactNode;
-}) {
-	const [modelValue, setModelValue] = useState(
-		config?.model || "",
-	);
-	const invalidate = createModelInvalidator(qc);
-	const serverModelValue = config?.model || "";
-	const dirty = modelValue !== serverModelValue;
-	useSettingsDraftLifecycle({
-		id: `model-integration-${definition.id}`,
-		dirty,
-		onDirty,
-		serverKey: serverModelValue,
-		adoptServer: () => setModelValue(serverModelValue),
-	});
-	const update = useMutation({
-		mutationFn: (body: Record<string, unknown>) =>
-			api.updateModelIntegration(definition.id, body),
-		onSuccess: invalidate,
-		meta: { errorSurface: "inline" },
-	});
-	const roles = routingRoles(model, definition.id);
-	return (
-		<article className="model-provider-card">
-			<header>
-				<div>
-					<div className="model-card-title">
-						<strong>{definition.label}</strong>
-						{roles.map((role) => (
-							<span key={role} className="provider-role-badge">
-								{ROLE_LABELS[role]}
-							</span>
-						))}
-					</div>
-					<div className="model-card-meta">
-						Local credentials remain owned by the integration.
-					</div>
-				</div>
-				<div className="model-card-controls">
-					<Status config={config} health={health} />
-					<Switch
-						checked={config?.enabled === true}
-						persistence="immediate"
-						aria-label={`Enable ${definition.label}`}
-						onCheckedChange={(enabled) => update.mutate({ enabled })}
-						disabled={update.isPending}
-					/>
-				</div>
-			</header>
-			<div className="model-integration-body">
-				<label>
-					<span>Model</span>
-					<input
-						value={modelValue === "default" ? "" : modelValue}
-						placeholder="integration default"
-						onChange={(event) => setModelValue(event.target.value)}
-					/>
-				</label>
-				<button
-					type="button"
-					className="secondary"
-					onClick={() =>
-						update.mutate({ model: modelValue || "default" })
-					}
-				>
-					Save model
-				</button>
-				{children}
-			</div>
-			{config && (
-				<div className="model-card-footer">
-					<RoleButtons providerId={definition.id} model={model} qc={qc} />
-				</div>
-			)}
-			{update.isError && (
-				<div className="model-inline-message error">
-					{mutationMessage(update.error)}
-				</div>
-			)}
-		</article>
-	);
-}
-
-function OAuthAction({
-	providerId,
-	qc,
-	onDirty,
-}: {
-	providerId: string;
-	qc: QueryClient;
-	onDirty?: (id: string, isDirty: boolean) => void;
-}) {
-	const [state, setState] = useState<{
-		state: string;
-		auth_url?: string | null;
-		error?: string | null;
-	} | null>(null);
-	const [code, setCode] = useState("");
-	const isOpenAI = providerId === "openai_native";
-	const status = useQuery({
-		queryKey: ["provider-oauth-status", providerId],
-		queryFn: isOpenAI ? api.openaiOAuthStatus : api.claudeOAuthStatus,
-		enabled: isOpenAI && state?.state === "awaiting",
-		refetchInterval: 2000,
-	});
-	const finalize = useMutation({ mutationFn: api.openaiOAuthFinalize });
-	useSettingsDraftLifecycle({
-		id: `oauth-${providerId}`,
-		dirty: code !== "",
-		onDirty,
-		serverKey: undefined,
-		adoptServer: () => undefined,
-	});
-	useEffect(() => {
-		if (
-			isOpenAI &&
-			status.data?.state === "completed" &&
-			state?.state !== "completed"
-		) {
-			setState(status.data);
-			finalize.mutate(undefined, {
-				onSuccess: () => {
-					qc.invalidateQueries({ queryKey: ["model"] });
-					qc.invalidateQueries({ queryKey: ["model-health"] });
-					setCode("");
-				},
-			});
-		}
-	}, [isOpenAI, status.data, state?.state, finalize, qc]);
-	const start = useMutation({
-		mutationFn: isOpenAI ? api.openaiOAuthStart : api.claudeOAuthStart,
-		onSuccess: (result) => {
-			setState(result);
-			if (result.auth_url)
-				window.open(result.auth_url, "_blank", "noopener,noreferrer");
-		},
-	});
-	const complete = useMutation({
-		mutationFn: () => api.claudeOAuthComplete({ code: code.trim() }),
-		onSuccess: (result) => {
-			setState(result);
-			setCode("");
-			qc.invalidateQueries({ queryKey: ["model"] });
-			qc.invalidateQueries({ queryKey: ["model-health"] });
-		},
-	});
-	const cancel = useMutation({
-		mutationFn: isOpenAI ? api.openaiOAuthCancel : api.claudeOAuthCancel,
-		onSuccess: () => { setState(null); setCode("") },
-	});
-	if (state?.state === "awaiting" || state?.state === "awaiting_code") {
-		return (
-			<div className="model-auth-flow">
-				<span>Complete authorization in the provider browser page.</span>
-				{!isOpenAI && (
-					<input
-						value={code}
-						placeholder="Paste authorization code"
-						onChange={(event) => setCode(event.target.value)}
-					/>
-				)}
-				{!isOpenAI && (
-					<button
-						type="button"
-						onClick={() => complete.mutate()}
-						disabled={!code.trim()}
-					>
-						Submit code
-					</button>
-				)}
-				<button
-					type="button"
-					className="secondary"
-					onClick={() => cancel.mutate()}
-				>
-					Cancel
-				</button>
-			</div>
-		);
-	}
-	return (
-		<button
-			type="button"
-			onClick={() => start.mutate()}
-			disabled={start.isPending}
-		>
-			Connect
-		</button>
-	);
-}
-
-function OAuthConnections({
-	model,
-	types,
-	health,
-	qc,
-	onDirty,
-}: {
-	model: ModelConfigView;
-	types: Record<string, ProviderTypeView>;
-	health: ModelHealthView[];
-	qc: QueryClient;
-	onDirty?: (id: string, isDirty: boolean) => void;
-}) {
-	const confirm = useConfirm();
-	const invalidate = createModelInvalidator(qc);
-	const disconnect = useMutation({
-		mutationFn: (providerId: string) =>
-			providerId === "openai_native"
-				? api.openaiOAuthDisconnect()
-				: api.claudeOAuthDisconnect(),
-		onSuccess: invalidate,
-	});
-	return (
-		<div className="model-category-panel">
-			<div className="model-category-toolbar">
-				<div>
-					<strong>Official OAuth connections</strong>
-					<p>
-						One connection per provider. Tokens are write-only and refreshed by
-						Aletheia.
-					</p>
-				</div>
-			</div>
-			<div className="model-provider-list">
-				{oauthTypes(types).map((definition) => {
-					const config = model.providers[definition.id];
-					return (
-						<IntegrationCard
-							key={definition.id}
-							definition={definition}
-							config={config}
-							health={health.find((item) => item.provider === definition.id)}
-							model={model}
-							qc={qc}
-							onDirty={onDirty}
-						>
-							{config?.oauth.configured ? (
-									<button
-										type="button"
-										className="secondary danger"
-										onClick={async () => {
-										if (await confirm({
-											title: `Disconnect ${definition.label}?`,
-											confirmLabel: "Disconnect",
-											variant: "danger",
-										})) disconnect.mutate(definition.id)
-									}}
-								>
-									Disconnect
-								</button>
-							) : (
-								<OAuthAction providerId={definition.id} qc={qc} onDirty={onDirty} />
-							)}
-						</IntegrationCard>
-					);
-				})}
-			</div>
-		</div>
-	);
-}
-
 export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
-	const [category, setCategory] = useState<"api" | "oauth">("api");
 	const modelQuery = useQuery({
 		queryKey: ["model"],
 		queryFn: api.getModelConfig,
@@ -895,36 +616,7 @@ export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirt
 			{model && types && (
 				<div className="model-providers-feature">
 					<RoutingBoard model={model} qc={qc} />
-					<div
-						className="model-category-tabs"
-						role="tablist"
-						aria-label="Model access method"
-					>
-						{(["api", "oauth"] as const).map((item) => (
-							<button
-								key={item}
-								type="button"
-								role="tab"
-								aria-selected={category === item}
-								className={category === item ? "active" : ""}
-								onClick={() => setCategory(item)}
-							>
-								{item.toUpperCase()}
-							</button>
-						))}
-					</div>
-					{category === "api" && (
-						<ApiProfiles model={model} types={types} health={health} qc={qc} onDirty={onDirty} />
-					)}
-					{category === "oauth" && (
-						<OAuthConnections
-							model={model}
-							types={types}
-							health={health}
-							qc={qc}
-							onDirty={onDirty}
-						/>
-					)}
+					<ApiProfiles model={model} types={types} health={health} qc={qc} onDirty={onDirty} />
 				</div>
 			)}
 		</SettingsFeatureSection>

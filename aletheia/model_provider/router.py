@@ -5,11 +5,10 @@ from concurrent.futures import Future
 from datetime import datetime, timezone
 import hashlib
 import json
-import logging
 import threading
 import time
 
-from aletheia.config.loader import load_config, mutate_config, save_config
+from aletheia.config.loader import load_config, mutate_config
 from aletheia.config.secrets import get_secret
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
@@ -20,17 +19,11 @@ from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.registry import provider_config_protocol
-from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
-from aletheia.model_provider.openai_native import OpenAINativeProvider
-
-logger = logging.getLogger("aletheia.model_provider.router")
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "anthropic_compatible": AnthropicCompatibleProvider,
     "databricks": DatabricksProvider,
-    "anthropic_native": AnthropicNativeProvider,
-    "openai_native": OpenAINativeProvider,
 }
 
 _cache: dict[str, ModelProvider] = {}
@@ -38,8 +31,8 @@ _cache: dict[str, ModelProvider] = {}
 
 def _cache_provider(name: str, provider: ModelProvider) -> ModelProvider:
     setattr(provider, "_aletheia_provider_name", name)
-    _cache[name] = provider
-    return provider
+    # ponytail: cold lookups may build spare pool-free instances; serialize if construction becomes costly.
+    return _cache.setdefault(name, provider)
 
 
 _MODEL_DIRECTORY_TTL_SEC = 15 * 60
@@ -50,10 +43,6 @@ _HEALTH_TTL_SEC = MODEL_HEALTH_STALE_AFTER_SECONDS
 _health_cache: tuple[float, list[ModelHealth]] | None = None
 _health_inflight: Future[list[ModelHealth]] | None = None
 _health_lock = threading.Lock()
-
-_REFRESH_MARGIN_MS = 5 * 60 * 1000  # refresh 5 min before expiry
-_oauth_refresh_inflight: dict[str, Future[str | None]] = {}
-_oauth_refresh_lock = threading.Lock()
 
 _HTTP_PROVIDER_TYPES = {
     "openai_compatible",
@@ -100,12 +89,6 @@ def provider_is_configured(name: str, pcfg) -> bool:
             or ""
         ).strip()
         return bool(endpoint)
-    if provider_type in {"anthropic_native", "openai_native"}:
-        credential_refs = (
-            getattr(pcfg, "api_key_secret_ref", None),
-            getattr(pcfg, "oauth_token_ref", None),
-        )
-        return any(get_secret(ref) for ref in credential_refs if ref)
     return False
 
 
@@ -125,8 +108,6 @@ def provider_configuration_identity(
     provider_type = str(getattr(pcfg, "type", "") or name)
     refs = (
         getattr(pcfg, "api_key_secret_ref", None),
-        getattr(pcfg, "oauth_token_ref", None),
-        getattr(pcfg, "oauth_refresh_ref", None),
     ) if provider_type in PROVIDER_REGISTRY else ()
     credential_fingerprints: list[dict[str, str | None]] = []
     for ref in refs:
@@ -233,200 +214,6 @@ def persist_provider_verification(
     return persisted
 
 
-def _claim_oauth_refresh(name: str) -> tuple[Future[str | None], bool]:
-    with _oauth_refresh_lock:
-        existing = _oauth_refresh_inflight.get(name)
-        if existing is not None:
-            return existing, False
-        future: Future[str | None] = Future()
-        _oauth_refresh_inflight[name] = future
-        return future, True
-
-
-def _release_oauth_refresh(name: str, future: Future[str | None]) -> None:
-    with _oauth_refresh_lock:
-        if _oauth_refresh_inflight.get(name) is future:
-            del _oauth_refresh_inflight[name]
-
-
-def _refresh_oauth_singleflight(name: str) -> str | None:
-    future, owner = _claim_oauth_refresh(name)
-    if not owner:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-        if loop and loop.is_running():
-            return None
-        return future.result()
-    try:
-        from aletheia.config.secrets import get_secret
-
-        fresh = load_config().models.providers.get(name)
-        if fresh is None or fresh.auth_type != "oauth" or not fresh.oauth_token_ref:
-            result = None
-        elif not fresh.oauth_expires_at or int(time.time() * 1000) <= (fresh.oauth_expires_at - _REFRESH_MARGIN_MS):
-            result = get_secret(fresh.oauth_token_ref)
-        else:
-            refresh_val = get_secret(fresh.oauth_refresh_ref) if fresh.oauth_refresh_ref else None
-            result = _do_refresh(name, fresh, refresh_val) if refresh_val else None
-        future.set_result(result)
-        return result
-    except BaseException as exc:
-        future.set_exception(exc)
-        raise
-    finally:
-        _release_oauth_refresh(name, future)
-
-
-async def _refresh_oauth_singleflight_async(name: str) -> str | None:
-    future, owner = _claim_oauth_refresh(name)
-    if not owner:
-        return await asyncio.shield(asyncio.wrap_future(future))
-    try:
-        from aletheia.config.secrets import get_secret
-
-        fresh = await asyncio.to_thread(lambda: load_config().models.providers.get(name))
-        if fresh is None or fresh.auth_type != "oauth" or not fresh.oauth_token_ref:
-            result = None
-        elif not fresh.oauth_expires_at or int(time.time() * 1000) <= (fresh.oauth_expires_at - _REFRESH_MARGIN_MS):
-            result = await asyncio.to_thread(get_secret, fresh.oauth_token_ref)
-        else:
-            refresh_val = await asyncio.to_thread(get_secret, fresh.oauth_refresh_ref) if fresh.oauth_refresh_ref else None
-            result = await _do_refresh_async(name, fresh, refresh_val) if refresh_val else None
-        future.set_result(result)
-        return result
-    except asyncio.CancelledError:
-        future.cancel()
-        raise
-    except BaseException as exc:
-        future.set_exception(exc)
-        raise
-    finally:
-        _release_oauth_refresh(name, future)
-
-
-def _resolve_oauth_token(name: str, pcfg) -> str | None:
-    """Load OAuth token from secrets, auto-refreshing if near expiry."""
-    if pcfg.auth_type != "oauth" or not pcfg.oauth_token_ref:
-        return None
-
-    from aletheia.config.secrets import get_secret
-
-    token = get_secret(pcfg.oauth_token_ref)
-    if not token:
-        return None
-
-    # Check expiry — refresh proactively
-    now_ms = int(time.time() * 1000)
-    if pcfg.oauth_expires_at and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS):
-        try:
-            new_token = _refresh_oauth_singleflight(name)
-            if new_token:
-                token = new_token
-        except Exception as e:
-            logger.warning("OAuth token refresh failed for %s: %s", name, e)
-    return token
-
-
-def _do_refresh(name: str, pcfg, refresh_val: str) -> str | None:
-    """Synchronously run async refresh (called from get_provider hot path)."""
-    import asyncio
-    from aletheia.config.secrets import set_secret
-
-    loop = None
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        pass
-
-    # If we're already in an async context, can't block — return stale token
-    if loop and loop.is_running():
-        logger.debug("Skipping sync refresh for %s (in async context)", name)
-        return None
-
-    if name == "openai_native":
-        from aletheia.model_provider.openai_oauth import refresh_openai_tokens
-        result = asyncio.run(refresh_openai_tokens(refresh_val))
-        new_token = result.get("api_key")
-    elif name == "anthropic_native":
-        from aletheia.model_provider.claude_oauth import refresh_claude_tokens
-        result = asyncio.run(refresh_claude_tokens(refresh_val))
-        new_token = result.get("access_token")
-    else:
-        return None
-
-    if new_token:
-        set_secret(pcfg.oauth_token_ref, new_token)
-        if result.get("refresh_token") and pcfg.oauth_refresh_ref:
-            set_secret(pcfg.oauth_refresh_ref, result["refresh_token"])
-        if result.get("expires_at"):
-            pcfg.oauth_expires_at = result["expires_at"]
-            cfg = load_config()
-            if name in cfg.models.providers:
-                cfg.models.providers[name].oauth_expires_at = result["expires_at"]
-                save_config(cfg)
-        return new_token
-    return None
-
-
-async def _resolve_oauth_token_async(name: str, pcfg) -> str | None:
-    """Async version of _resolve_oauth_token — can actually refresh in async context."""
-    if pcfg.auth_type != "oauth" or not pcfg.oauth_token_ref:
-        return None
-
-    from aletheia.config.secrets import get_secret
-
-    token = get_secret(pcfg.oauth_token_ref)
-    if not token:
-        return None
-
-    now_ms = int(time.time() * 1000)
-    if pcfg.oauth_expires_at and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS):
-        try:
-            new_token = await _refresh_oauth_singleflight_async(name)
-            if new_token:
-                token = new_token
-        except Exception as e:
-            logger.warning("Async OAuth token refresh failed for %s: %s", name, e)
-    return token
-
-
-async def _do_refresh_async(name: str, pcfg, refresh_val: str) -> str | None:
-    """Actually refresh OAuth token asynchronously."""
-    from aletheia.config.secrets import set_secret
-
-    if name == "openai_native":
-        from aletheia.model_provider.openai_oauth import refresh_openai_tokens
-        result = await refresh_openai_tokens(refresh_val)
-        new_token = result.get("api_key")
-    elif name == "anthropic_native":
-        from aletheia.model_provider.claude_oauth import refresh_claude_tokens
-        result = await refresh_claude_tokens(refresh_val)
-        new_token = result.get("access_token")
-    else:
-        return None
-
-    if new_token:
-        set_secret(pcfg.oauth_token_ref, new_token)
-        if result.get("refresh_token") and pcfg.oauth_refresh_ref:
-            set_secret(pcfg.oauth_refresh_ref, result["refresh_token"])
-        if result.get("expires_at"):
-            pcfg.oauth_expires_at = result["expires_at"]
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _persist_oauth_expiry, name, result["expires_at"])
-        return new_token
-    return None
-
-
-def _persist_oauth_expiry(name: str, expires_at: int) -> None:
-    """Persist OAuth expiry to config (runs in executor to avoid blocking loop)."""
-    cfg = load_config()
-    if name in cfg.models.providers:
-        cfg.models.providers[name].oauth_expires_at = expires_at
-        save_config(cfg)
-
-
 def _resolve_type(name: str, pcfg) -> str:
     """Decode an omitted historical type, never reinterpret an explicit type."""
     provider_type = pcfg.type or name
@@ -487,12 +274,6 @@ def get_provider(name: str | None = None) -> ModelProvider:
             protocol=protocol,
             api_key=api_key,
         )
-    elif ptype == "anthropic_native":
-        oauth_token = _resolve_oauth_token(name, pcfg)
-        provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
-    elif ptype == "openai_native":
-        oauth_token = _resolve_oauth_token(name, pcfg)
-        provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 
@@ -500,113 +281,8 @@ def get_provider(name: str | None = None) -> ModelProvider:
 
 
 async def get_provider_async(name: str | None = None) -> ModelProvider:
-    """Async variant of get_provider — uses async OAuth refresh path."""
-    cfg = load_config()
-    if name is None:
-        name = cfg.models.default_provider
-
-    if not name:
-        raise ValueError(
-            "No LLM provider configured. Add and enable one under Settings → AI Model Providers before running agents."
-        )
-
-    pcfg = cfg.models.providers.get(name)
-    if pcfg is None:
-        raise ValueError(f"Unknown provider: {name}")
-    if not pcfg.enabled:
-        raise ValueError(f"Model provider is disabled: {name}")
-    await asyncio.to_thread(_require_provider_configured, name, pcfg)
-
-    # For a cached OAuth-native provider, verify the token is still current.
-    # The sync get_provider path cannot refresh inside a running event loop, so this
-    # check is the only place where cached credentials can be renewed.
-    if name in _cache:
-        cached = _cache[name]
-        ptype = _resolve_type(name, pcfg)
-        if ptype in ("openai_native", "anthropic_native") and pcfg.auth_type == "oauth":
-            now_ms = int(time.time() * 1000)
-            in_refresh_window = bool(
-                pcfg.oauth_expires_at
-                and now_ms > (pcfg.oauth_expires_at - _REFRESH_MARGIN_MS)
-            )
-            hard_expired = bool(
-                pcfg.oauth_expires_at and now_ms > pcfg.oauth_expires_at
-            )
-            if in_refresh_window:
-                try:
-                    fresh_token = await _resolve_oauth_token_async(name, pcfg)
-                except Exception as e:
-                    if hard_expired:
-                        _cache.pop(name, None)
-                        raise ValueError(
-                            f"OAuth token for {name} has expired and refresh failed: {e}"
-                        ) from e
-                    logger.warning(
-                        "OAuth refresh failed for %s (token not yet expired): %s", name, e
-                    )
-                    return cached
-                if fresh_token:
-                    ak = get_secret(pcfg.api_key_secret_ref) if pcfg.api_key_secret_ref else None
-                    if ptype == "openai_native":
-                        fresh_provider: ModelProvider = OpenAINativeProvider(
-                            model=pcfg.model, api_key=ak, oauth_token=fresh_token
-                        )
-                    else:
-                        fresh_provider = AnthropicNativeProvider(
-                            model=pcfg.model, api_key=ak, oauth_token=fresh_token
-                        )
-                    return _cache_provider(name, fresh_provider)
-                # Refresh returned no token
-                if hard_expired:
-                    _cache.pop(name, None)
-                    raise ValueError(
-                        f"OAuth token for {name} has expired and refresh returned no token. "
-                        "Reconfigure the provider or check network connectivity."
-                    )
-                # Still in proactive margin — continue with cached provider until hard expiry
-        return cached
-
-    api_key = None
-    if pcfg.api_key_secret_ref:
-        api_key = get_secret(pcfg.api_key_secret_ref)
-
-    ptype = _resolve_type(name, pcfg)
-
-    if ptype == "openai_compatible":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = OpenAICompatibleProvider(
-            base_url=pcfg.base_url,
-            model=pcfg.model,
-            protocol=protocol,
-            api_key=api_key,
-        )
-    elif ptype == "anthropic_compatible":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = AnthropicCompatibleProvider(
-            base_url=pcfg.base_url,
-            model=pcfg.model,
-            api_key=api_key,
-            auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
-            protocol=protocol,
-        )
-    elif ptype == "databricks":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = DatabricksProvider(
-            workspace_url=pcfg.workspace_url or pcfg.base_url,
-            model=pcfg.model,
-            protocol=protocol,
-            api_key=api_key,
-        )
-    elif ptype == "anthropic_native":
-        oauth_token = await _resolve_oauth_token_async(name, pcfg)
-        provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
-    elif ptype == "openai_native":
-        oauth_token = await _resolve_oauth_token_async(name, pcfg)
-        provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
-    else:
-        raise ValueError(f"Unknown provider type: {ptype}")
-
-    return _cache_provider(name, provider)
+    """Resolve through the single constructor owner without blocking the loop."""
+    return await asyncio.to_thread(get_provider, name)
 
 
 def invalidate_model_directory(name: str | None = None) -> None:
