@@ -256,20 +256,28 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
             row.get("info", row) if isinstance(row, dict) else {} for row in rows
         )
 
-    async def fetch_funding_rows(self, exchange, since, limit, history_params_fn):
+    async def fetch_funding_rows(
+        self,
+        exchange,
+        since,
+        limit,
+        history_params_fn,
+        *,
+        venue_symbol: str | None = None,
+    ):
         """Bitget classic_v2 uses fetch_funding_history per symbol.
 
         fetch_ledger("USDT", ...) always raises code 40020 on classic_v2 accounts;
-        fetch_funding_history per swap symbol returns the same billId/businessType/coin
-        rows that normalize_bitget_funding_rows expects.
+        fetch_funding_history returns billId/businessType/coin/amount rows that
+        normalize_bitget_funding_rows already handles.
+        venue_symbol is required by the Bitget CCXT adapter.
         """
+        if not venue_symbol:
+            raise RuntimeError("private funding ledger unavailable")
         rows = []
         history_bound_reached = False
         try:
-            # Collect all USDT-FUTURES positions' funding rows.
-            # We pass the symbol of this specific query via the exchange positions cache;
-            # since the symbol is not available here, we use None (CCXT fetches all).
-            page = await exchange.fetch_funding_history(None, since, limit)
+            page = await exchange.fetch_funding_history(venue_symbol, since, limit)
             if not isinstance(page, list):
                 raise ValueError("invalid CCXT funding history")
             history_bound_reached = len(page) >= limit

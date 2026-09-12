@@ -782,6 +782,11 @@ class CCXTUTAAdapter:
                 since,
                 page_limit,
                 lambda p: self._history_params(p),
+                venue_symbol=(
+                    query.scope.instrument.venue_symbol
+                    if query.scope.instrument is not None
+                    else None
+                ),
             )
             events = self._profile.funding_events(rows)
             entries = []

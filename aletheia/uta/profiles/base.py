@@ -137,11 +137,14 @@ class CCXTProfile:
         since: int | None,
         limit: int,
         history_params_fn,
+        *,
+        venue_symbol: str | None = None,
     ) -> tuple[list[dict], bool]:
         """Fetch raw funding rows via fetch_ledger; returns (rows, history_bound_reached).
 
         Profiles that cannot use fetch_ledger (e.g. Bitget classic_v2) override
         this method to use the appropriate exchange API instead.
+        venue_symbol is passed for profiles that need a per-symbol endpoint.
         """
         ledger_requests = self.ledger_requests
         rows: list[dict] = []
