@@ -113,6 +113,53 @@ def test_execution_gateway_does_not_import_agent_shell():
     assert violations == [], f"ARCH VIOLATION: gateway.py imports agent_shell/: {violations}"
 
 
+def test_core_account_environment_uses_registered_execution_identity():
+    """Core safety/economic consumers must not infer account class from suffixes."""
+    from aletheia.config.exchanges import (
+        DEMO_EXECUTION_MODES,
+        EXECUTION_MODE_ENVIRONMENTS,
+        LIVE_EXECUTION_MODE_SET,
+    )
+    from aletheia.risk.policy import (
+        DEMO_EXECUTION_MODES as RISK_DEMO_EXECUTION_MODES,
+        LIVE_EXECUTION_MODES as RISK_LIVE_EXECUTION_MODES,
+    )
+
+    assert RISK_DEMO_EXECUTION_MODES is DEMO_EXECUTION_MODES
+    assert RISK_LIVE_EXECUTION_MODES is LIVE_EXECUTION_MODE_SET
+    assert set(EXECUTION_MODE_ENVIRONMENTS) >= {
+        "paper_internal",
+        "binance_testnet",
+        "okx_demo",
+        "bitget_demo",
+        "binance_live_limited",
+        "okx_live_limited",
+        "bitget_live_limited",
+    }
+
+    core_paths = (
+        SRC / "server" / "routes" / "data.py",
+        SRC / "portfolio" / "position_manager.py",
+        SRC / "portfolio" / "pnl.py",
+        SRC / "maintenance" / "repair_administrative_close.py",
+        SRC / "agent_runtime" / "scheduler.py",
+        SRC / "risk" / "engine.py",
+    )
+    for path in core_paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        suffix_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "endswith"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value in {"_demo", "_live_limited"}
+        ]
+        assert suffix_calls == [], f"{path.relative_to(PROJECT_ROOT)} infers account class from a suffix"
+
+
 def test_agent_shell_does_not_import_exchange_auth():
     """agent_shell cannot directly import exchange auth or secrets."""
     forbidden = {"aletheia.exchanges.bitget.auth", "aletheia.config.secrets"}

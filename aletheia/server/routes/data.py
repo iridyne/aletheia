@@ -1356,7 +1356,9 @@ async def manual_close_position(position_id: str, req: ManualCloseRequest):
         raise HTTPException(404, {"code": "position_not_found_or_not_open", "position_id": position_id})
 
     exec_mode = pos.get("execution_mode", "")
-    if exec_mode.endswith("_live_limited"):
+    from aletheia.config.exchanges import is_live_execution_mode
+
+    if is_live_execution_mode(exec_mode):
         raise HTTPException(
             409,
             {

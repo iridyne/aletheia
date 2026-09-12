@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Mapping
 
+from aletheia.config.exchanges import EXECUTION_MODE_ENVIRONMENTS
 from aletheia.data.symbols import to_canonical
 
 
@@ -30,14 +31,7 @@ class BrokerFundingComputation:
     evidence: dict
 
 
-_MODE_ENVIRONMENTS = {
-    "bitget_demo": "demo",
-    "bitget_live_limited": "live",
-    "okx_demo": "demo",
-    "okx_live_limited": "live",
-    "binance_testnet": "testnet",
-    "binance_live_limited": "live",
-}
+_MODE_ENVIRONMENTS = EXECUTION_MODE_ENVIRONMENTS
 _MAX_BROKER_FUNDING_CANDIDATES = 1000
 
 

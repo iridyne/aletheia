@@ -24,6 +24,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+from aletheia.config.exchanges import execution_mode_environment
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 
@@ -240,6 +241,11 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
         )
 
     execution_mode = str(pos.get("execution_mode") or "")
+    account_environment = execution_mode_environment(execution_mode)
+    if account_environment not in {"demo", "testnet", "live"}:
+        raise ValueError(
+            "administrative close repair requires a registered external execution mode"
+        )
     fill = _query_exchange_fill(
         str(order["exchange_order_id"]),
         str(pos["symbol"]),
@@ -262,7 +268,7 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
         "source": "bitget_private_close_fills",
         "source_endpoint": "private_fills",
         "broker_id": execution_mode,
-        "account_environment": "demo" if execution_mode.endswith("_demo") else "live",
+        "account_environment": account_environment,
         "execution_mode": execution_mode,
         "exchange_order_id": str(order["exchange_order_id"]),
         **fill,

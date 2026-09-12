@@ -12,6 +12,7 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 
+from aletheia.config.exchanges import DEMO_EXECUTION_MODES, is_live_execution_mode
 from aletheia.config.loader import load_config
 from aletheia.data.price_feed import (
     get_fresh_mark_for_protective_close,
@@ -31,7 +32,7 @@ from aletheia.portfolio.exit_plan import ExitPlan, effective_exit_plan, load_exi
 from aletheia.portfolio.pnl import build_exit_reasoning, close_position
 logger = logging.getLogger("aletheia.position_manager")
 
-_DEMO_MODES = {"bitget_demo", "binance_testnet", "okx_demo"}
+_DEMO_MODES = DEMO_EXECUTION_MODES
 _OPEN_CLOSE_STATES = set(CLOSE_CLAIM_STATES)
 _PENDING_CLOSE_STALE_HOURS = PENDING_CLOSE_STALE_HOURS
 
@@ -90,7 +91,7 @@ def close_position_routed(
 
     row = _select_one("positions", position_id)
     mode = (row or {}).get("execution_mode")
-    if mode and mode.endswith("_live_limited") and not allow_live:
+    if mode and is_live_execution_mode(mode) and not allow_live:
         raise RuntimeError(
             f"refusing to autonomously close live position {position_id} "
             f"(mode={mode}); live closes are human-only (pass allow_live=True to override)"
@@ -1707,7 +1708,7 @@ def proactive_exit(
         # can ever execute it.  Reject limit exits on live-limited positions so the
         # operator knows they must use market or close from the exchange UI.
         exec_mode = pos.get("execution_mode", "")
-        if exec_mode.endswith("_live_limited"):
+        if is_live_execution_mode(exec_mode):
             return {
                 "error": "limit_exit_not_supported_for_live",
                 "position_id": position_id,

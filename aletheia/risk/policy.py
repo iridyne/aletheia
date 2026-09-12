@@ -8,18 +8,14 @@ from dataclasses import dataclass
 from typing import Literal
 
 from aletheia.config.schema import ModeRiskPolicy
+from aletheia.config.exchanges import (
+    DEMO_EXECUTION_MODES,
+    LIVE_EXECUTION_MODE_SET,
+)
 
-
-DEMO_EXECUTION_MODES = frozenset({
-    "bitget_demo",
-    "binance_testnet",
-    "okx_demo",
-})
-LIVE_EXECUTION_MODES = frozenset({
-    "bitget_live_limited",
-    "binance_live_limited",
-    "okx_live_limited",
-})
+# Preserve the existing public name while making the exchange registry the
+# sole source of the live execution identities.
+LIVE_EXECUTION_MODES = LIVE_EXECUTION_MODE_SET
 
 
 class UnknownRiskExecutionMode(ValueError):

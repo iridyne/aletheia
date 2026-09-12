@@ -11,6 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from aletheia.config.exchanges import is_live_execution_mode
 from aletheia.config.loader import load_config
 from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
@@ -395,7 +396,7 @@ class _PreOrderEntryReservation:
 
 
 def _is_live(execution_mode: str) -> bool:
-    return execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited")
+    return is_live_execution_mode(execution_mode)
 
 
 def _unresolved_entry_reservations() -> list[_UnresolvedEntryReservation]:

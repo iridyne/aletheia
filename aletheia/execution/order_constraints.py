@@ -17,15 +17,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
+from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
-_VENUES = {
-    "bitget_demo": "bitget",
-    "bitget_live_limited": "bitget",
-    "okx_demo": "okx",
-    "okx_live_limited": "okx",
-    "binance_testnet": "binance",
-    "binance_live_limited": "binance",
-}
+_VENUES = EXECUTION_MODE_VENUES
 _CACHE_TTL_SECONDS = 300
 _cache: dict[tuple[str, str, str], tuple["OrderConstraints", float]] = {}
 _cache_lock = threading.Lock()

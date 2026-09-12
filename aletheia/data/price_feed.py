@@ -106,13 +106,9 @@ def _protective_market_type(market_type: str | None) -> str | None:
 
 def protective_price_venue(execution_mode: str | None) -> str | None:
     """Resolve the venue encoded by a supported external execution mode."""
-    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP, LIVE_EXECUTION_MODES
+    from aletheia.config.exchanges import execution_mode_venue
 
-    mode = str(execution_mode or "").strip().lower()
-    for venue, (_, demo_mode) in EXCHANGE_UNIFICATION_MAP.items():
-        if mode in {demo_mode, LIVE_EXECUTION_MODES[venue]}:
-            return venue
-    return None
+    return execution_mode_venue(execution_mode)
 
 
 def _valid_fresh_mark(
