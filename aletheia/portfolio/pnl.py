@@ -15,7 +15,6 @@ from aletheia.storage.repositories import (
     list_all_open_positions,
     insert_portfolio_snapshot,
     update_closed_position_settlement,
-    update_open_position_materialization,
     update_open_position_observation,
     list_market_snapshots,
 )
@@ -1186,114 +1185,6 @@ def _closed_today(execution_mode: str | None = None) -> list[dict]:
             continue
         matched.append(r)
     return matched
-
-
-def reduce_position(
-    position_id: str,
-    reduce_qty: float,
-    exit_price: float,
-    reason: str = "operator_reduce",
-) -> dict:
-    """Partially close a position (reduce-in-place, exit-intent R1 Stage 3).
-
-    Realizes PnL on ``reduce_qty`` at ``exit_price``, writes ONE partial close event
-    (is_partial=1) to the per-close ledger, shrinks the position's quantity, prorates its
-    stored entry_fee onto the reduced portion, and keeps the position OPEN with its
-    average entry frozen. The realized PnL reaches the daily-loss breaker via the Stage-2
-    partial-close term; the open position's own realized_pnl is left untouched (the ledger
-    is the source of truth for partials, so a later full close never double-counts).
-
-    Use close_position for a full exit — reduce_qty must be a strict fraction of the open
-    quantity. Returns a result dict; {"error": ...} on invalid input.
-
-    The active product router exposes full closes only.
-    """
-    from aletheia.storage import repositories as repo
-    from aletheia.storage.models import new_id
-    from aletheia.files.jsonl import write_audit
-
-    row = repo._select_one("positions", position_id)
-    if row is None:
-        return {"error": "position_not_found", "position_id": position_id}
-    if row.get("status") != "open":
-        return {"error": "position_not_open", "position_id": position_id}
-    # Product boundary (2026-07): the active product has no authorized partial-reduce
-    # entry in any execution mode. This accounting primitive remains for the isolated
-    # OKX reference helper and focused tests, but the production router fails closed.
-    if row.get("execution_mode") not in UTA_EXECUTION_MODES:
-        return {
-            "error": "unsupported_position_execution_mode",
-            "position_id": position_id,
-            "hint": ("active product supports full closes only; partial reduce is not production-authorized"),
-        }
-    qty = float(row["quantity"])
-    reduce_qty = float(reduce_qty)
-    if reduce_qty <= 0:
-        return {"error": "reduce_qty_must_be_positive", "position_id": position_id}
-    if reduce_qty >= qty:
-        return {
-            "error": "reduce_qty_not_less_than_position",
-            "position_id": position_id,
-            "hint": "use close_position for a full exit",
-        }
-
-    fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
-    gross = _realized_pnl(row["direction"], row["entry_price"], exit_price, reduce_qty)
-    entry_fee_total = row.get("entry_fee")
-    if entry_fee_total is None:
-        entry_fee_total = row["entry_price"] * qty * fee_rate
-    entry_fee_portion = float(entry_fee_total) * reduce_qty / qty
-    exit_fee = exit_price * reduce_qty * fee_rate
-    realized = round(gross - entry_fee_portion - exit_fee, 8)
-
-    new_qty = round(qty - reduce_qty, 10)
-    remaining_entry_fee = round(float(entry_fee_total) - entry_fee_portion, 8)
-    closed_at = datetime.now(timezone.utc).isoformat()
-
-    # Shrink quantity + prorate the entry fee to the remainder; entry_price (avg) frozen;
-    # position stays OPEN. Both writes in one transaction so a crash cannot leave the
-    # position shrunk with no close event (or a close event with a stale quantity).
-    with repo.transaction():
-        update_open_position_materialization(
-            position_id, quantity=new_qty, entry_fee=remaining_entry_fee
-        )
-        repo.insert_position_close_event(
-            {
-                "id": new_id(),
-                "position_id": position_id,
-                "symbol": row.get("symbol"),
-                "direction": row.get("direction"),
-                "execution_mode": row.get("execution_mode"),
-                "close_reason": reason,
-                "exit_price": exit_price,
-                "closed_qty": reduce_qty,
-                "realized_pnl": realized,
-                "entry_fee": round(entry_fee_portion, 8),
-                "exit_fee": round(exit_fee, 8),
-                "is_partial": 1,
-                "closed_at": closed_at,
-            }
-        )
-    write_audit(
-        {
-            "actor": "system",
-            "source": "position_lifecycle",
-            "event_type": "position_reduced",
-            "entity_type": "position",
-            "entity_id": position_id,
-            "before": {"quantity": qty},
-            "after": {"quantity": new_qty, "reduced_qty": reduce_qty, "realized_pnl": realized, "reason": reason},
-            "message": f"Position {row.get('symbol')} reduced {reduce_qty}@{exit_price} ({reason}); realized={realized}",
-        }
-    )
-    return {
-        "reduced": True,
-        "position_id": position_id,
-        "reduced_qty": reduce_qty,
-        "remaining_qty": new_qty,
-        "realized_pnl": realized,
-        "exit_price": exit_price,
-    }
 
 
 def _finite_number(value) -> float | None:

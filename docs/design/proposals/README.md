@@ -51,6 +51,9 @@ Proposal as stable decision history.
 - [Slim Core legacy Gateway retirement](slim_core_legacy_gateway_retirement.md):
   remove the dormant PS recovery/write graph and its startup authority while
   preserving historical data and canonical Core reconciliation gates.
+- [Slim Core partial-reduce retirement](slim_core_partial_reduce_retirement.md):
+  delete the unused estimated-fee writer; preserve verified partial Fill
+  materialization and historical ledger readers.
 - [Learning evolution](learning_evolution.md): governed learning changes.
 - [Learning observability](learning_observability.md): learning measurement and
   operator visibility.

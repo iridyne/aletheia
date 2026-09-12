@@ -4,6 +4,12 @@
 import aletheia.portfolio.position_manager as pm
 
 
+def test_unverified_partial_accounting_writer_is_retired():
+    from aletheia.portfolio import pnl
+
+    assert not hasattr(pnl, "reduce_position")
+
+
 def _insert(db, pid, *, mode, qty=2.0, entry=100.0, entry_fee=0.1):
     db.execute(
         "INSERT INTO positions (id,symbol,market_type,direction,quantity,entry_price,"
@@ -14,11 +20,14 @@ def _insert(db, pid, *, mode, qty=2.0, entry=100.0, entry_fee=0.1):
 
 
 def test_router_rejects_paper_internal():
+    from aletheia.storage.repositories import _select_one, list_position_close_events
     from aletheia.storage.sqlite import get_db
     _insert(get_db(), "pi", mode="paper_internal")
     res = pm.reduce_position_routed("pi", 0.5)
     assert res.get("error") == "partial_reduce_not_production_authorized"
     assert "Proposal" in res.get("hint", "")
+    assert _select_one("positions", "pi")["quantity"] == 2.0
+    assert list_position_close_events(position_id="pi") == []
 
 
 def test_router_full_exit_delegates_to_close(monkeypatch):
