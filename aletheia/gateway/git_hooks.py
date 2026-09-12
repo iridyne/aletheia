@@ -1,8 +1,8 @@
 """Detect and remove legacy Aletheia auto-restart git hooks.
 
 Gateway lifecycle is owner-controlled. Git operations must never restart the
-runtime implicitly. Older checkouts installed three managed hooks, so startup
-and ``doctor --fix`` use this module only as a narrow migration cleanup.
+runtime implicitly. Older checkouts installed three managed hooks; explicit
+``doctor --fix`` owns their narrow cleanup. Startup never removes hook files.
 
 Foreign hooks are never changed. A file is removable only when it is the
 standalone Aletheia-managed script, with the managed block immediately after

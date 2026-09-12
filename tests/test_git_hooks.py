@@ -94,6 +94,6 @@ def test_not_a_git_repo_is_a_quiet_noop(tmp_path: Path):
 
 
 def test_cleanup_never_raises_on_bad_repo_dir():
-    # A non-existent path must degrade to [] / error, never blow up startup.
+    # A non-existent path must degrade to [] / error, never break explicit cleanup.
     bad = Path("/nonexistent-aletheia-xyz-123")
     assert git_hooks.remove_managed_git_hooks(repo_dir=bad) == []

@@ -452,16 +452,6 @@ async def lifespan(app: FastAPI):
         from aletheia.agent_runtime.build_info import record_boot_commit
 
         record_boot_commit()
-        # Migrate legacy checkouts away from implicit git-triggered restarts.
-        # Lifecycle is owner-controlled; cleanup is idempotent and never touches
-        # foreign hooks.
-        try:
-            from aletheia.gateway.git_hooks import remove_managed_git_hooks
-
-            for action in remove_managed_git_hooks():
-                logger.info("git-hook: %s", action)
-        except Exception as e:
-            logger.warning("git-hook cleanup skipped (non-fatal): %s", e)
     stage_started = _log_startup_stage("runtime_context", stage_started, startup_started)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
