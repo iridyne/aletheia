@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `5fd22d818e2c03319256471a2e22c1d76f10dfc2`. This is a bounded evidence
+based on `dad7cbe4d17884ee78d0e8809f9e69546fa97ec2`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -98,6 +98,13 @@ guards and return an explicit unavailable advisory projection; Telegram adapter
 import/configuration failure is non-blocking for lifespan startup. The focused
 absence regressions (88 tests) and architecture fitness tests (19 tests) pass;
 they do not grant account, exchange, deployment, or qualification authority.
+
+The architecture-map seam is also merged at this checkpoint. The maintained
+guide, map, Agent Contracts, and README D2 source/rendered pairs now identify
+Candidate Planning Generations and immutable Entry Plans as the current entry
+mainline, while retired Ranker/PaperTrader and learning evaluator/catch-up/
+lifecycle jobs remain historical or absent. This changes no private-I/O owner
+and is not runtime or exchange qualification evidence.
 
 ## Startup filesystem repair ownership
 

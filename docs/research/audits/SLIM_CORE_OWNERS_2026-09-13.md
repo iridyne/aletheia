@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `5fd22d818e2c03319256471a2e22c1d76f10dfc2`, under
+Source checkpoint: `dad7cbe4d17884ee78d0e8809f9e69546fa97ec2`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -165,3 +165,12 @@ Logical ownership and absence tests must precede Scheme A folder movement.
 Multi-leg realized admission remains a distinct contract-decision boundary;
 fixed-4h counterfactual learning does not by itself authorize admitting a new
 realized Outcome cohort.
+
+The architecture-map seam is now merged at this checkpoint. The maintained
+architecture guide, System Map, Agent Contracts, and three README D2 diagrams
+describe the current Candidate → Planning Generation → Entry Plan mainline;
+retired PaperTrader/Ranker and learning evaluator/catch-up/lifecycle jobs are
+explicitly historical or absent from the Scheduler. The Position Manager
+cadence is documented as 30 seconds. This is documentation and comment
+conformance only; it does not prove deployment, exchange qualification, or
+runtime health.
