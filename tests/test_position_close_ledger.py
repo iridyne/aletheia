@@ -43,9 +43,9 @@ def test_ledger_sum_equals_positions_sum_for_full_closes():
     _insert_open(db, "a", entry=100.0, qty=1.0)
     _insert_open(db, "b", entry=200.0, qty=0.5)
     # bitget_demo usdt_futures requires explicit funding to compute realized_pnl
-    close_position("a", exit_price=90.0, reason="stop_loss",
+    close_position("a", exit_price=90.0, reason="stop_loss", actual_exit_fee=0.054,
                    funding_cost=0.0, funding_source="broker_ledger")
-    close_position("b", exit_price=220.0, reason="take_profit",
+    close_position("b", exit_price=220.0, reason="take_profit", actual_exit_fee=0.066,
                    funding_cost=0.0, funding_source="broker_ledger")
 
     ledger_sum = round(sum(e["realized_pnl"] for e in list_position_close_events()

@@ -85,6 +85,7 @@ def test_close_rejects_averaging_change_then_succeeds_with_fresh_snapshot(
             position.id,
             exit_price=110.0,
             reason="take_profit",
+            actual_exit_fee=0.132,
         )
         assert stale_snapshot_read.wait(timeout=10)
         force_update_position(
@@ -112,9 +113,9 @@ def test_close_rejects_averaging_change_then_succeeds_with_fresh_snapshot(
         for event in repo.list_audit_events(limit=20)
     )
 
-    retried = close_position(position.id, exit_price=110.0, reason="take_profit")
+    retried = close_position(position.id, exit_price=110.0, reason="take_profit", actual_exit_fee=0.132)
 
-    # gross=(110-105)*2=10; stored entry fee=0.2; demo exit fee=110*2*0.0006.
+    # gross=(110-105)*2=10; stored entry fee=0.2; explicitly supplied exit fee=0.132.
     assert retried["realized_pnl"] == pytest.approx(9.668)
     closed = repo._select_one("positions", position.id)
     assert closed["status"] == "closed"
