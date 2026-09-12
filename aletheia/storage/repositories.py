@@ -2937,6 +2937,7 @@ def update_open_position_observation(position_id: str, **fields: object) -> None
 
 
 _POSITION_SETTLEMENT_FIELDS = frozenset({
+    "exit_fee",
     "realized_pnl", "funding_cost", "funding_source", "exit_reasoning",
     "exit_price_source", "exit_fill_verified", "outcome_eligible",
     "outcome_exclusion_reason", "reconciliation_evidence",

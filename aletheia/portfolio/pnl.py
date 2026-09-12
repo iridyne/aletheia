@@ -686,6 +686,8 @@ def _close_event_matches_position(event: dict, position: dict) -> bool:
         ("entry_fee", "entry_fee"),
         ("exit_fee", "exit_fee"),
     ):
+        if event_field in {"entry_fee", "exit_fee"} and event.get(event_field) is None and position.get(position_field) is None:
+            continue
         try:
             if not math.isclose(
                 float(event[event_field]),
@@ -723,6 +725,8 @@ def _commit_close_economics(current: dict, fields: dict, *, close_event: dict | 
     if closing and close_event is not None:
         raise ValueError("initial close cannot overwrite an existing close event")
     fields = dict(fields)
+    if not closing and "exit_fee" in fields and current.get("exit_fee") is not None and fields["exit_fee"] != current["exit_fee"]:
+        raise ValueError("known exit fee cannot be overwritten")
     candidate = {**current, **fields}
     if candidate.get("status") != "closed":
         raise ValueError("economic settlement requires closed lifecycle")
@@ -755,8 +759,8 @@ def _commit_close_economics(current: dict, fields: dict, *, close_event: dict | 
     else:
         repo.update_closed_position_settlement(position_id, **fields)
         updated = db.execute(
-            "UPDATE position_close_events SET realized_pnl=? WHERE id=? AND realized_pnl IS NULL",
-            (candidate.get("realized_pnl"), close_event["id"]),
+            "UPDATE position_close_events SET realized_pnl=?, exit_fee=? WHERE id=? AND realized_pnl IS NULL",
+            (candidate.get("realized_pnl"), candidate.get("exit_fee"), close_event["id"]),
         )
         if updated.rowcount != 1:
             raise ValueError("full-close economics snapshot changed")

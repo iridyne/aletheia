@@ -721,6 +721,247 @@ def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 
 
+def _seed_late_exit_fee(*, funding_complete=True, strategy_close=True, missing_component="amount"):
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
+    from aletheia.uta.compat import scope_from_local
+    from aletheia.uta.models import UTAAccountIdentity, FillListReport, FillReport
+
+    position = _position()
+    if not funding_complete:
+        position = position.model_copy(update={
+            "funding_cost": None, "funding_source": "unavailable",
+            "opened_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        })
+    repo.insert_position(position)
+    identity = UTAAccountIdentity(
+        account_id="fee-test-account", execution_mode="bitget_demo", venue="bitget",
+        environment="demo", profile="uta_v3", credential_generation=1,
+        adapter_implementation="ccxt", adapter_version="test",
+    )
+    repo.update_order_metadata(position.order_id, uta_account_identity_json=identity.model_dump_json())
+    evidence = _verified_result(position)
+    incomplete_evidence = replace(
+        evidence, fills=tuple(
+            replace(fill, fee=None) if missing_component == "amount" else replace(fill, fee_currency=None)
+            for fill in evidence.fills
+        ),
+    )
+    if strategy_close:
+        from aletheia.portfolio.outcome_closure import _materialize_observed_close_chain
+
+        with repo.transaction(immediate=True):
+            _materialize_observed_close_chain(repo.get_position(position.id), incomplete_evidence, reason="take_profit")
+    close_position_from_verified_exit(position.id, incomplete_evidence,
+        verified_strategy_reason="take_profit" if strategy_close else None)
+    times = [datetime.fromtimestamp(fill.filled_at_ms / 1000, tz=timezone.utc) for fill in evidence.fills]
+    scope = scope_from_local(position.symbol, position.market_type, start_at=min(times), end_at=max(times))
+    report = FillListReport(
+        identity=identity, completeness="complete", scope=scope,
+        received_at=datetime.now(timezone.utc), profile_version="test-fee-v1",
+        fills=tuple(FillReport(
+            identity=identity, instrument=scope.instrument,
+            venue_fill_id=fill.fill_id, venue_order_id=fill.order_id, side="sell",
+            price=str(fill.price), quantity=str(fill.quantity), fee=str(fill.fee),
+            fee_currency=fill.fee_currency, executed_at=at,
+            received_at=datetime.now(timezone.utc),
+        ) for fill, at in zip(evidence.fills, times)),
+    )
+    return position, report
+
+
+@pytest.mark.parametrize("strategy_close", (True, False))
+@pytest.mark.parametrize("missing_component", ("amount", "currency"))
+def test_late_fee_scheduler_completes_once_without_rewriting_fill(monkeypatch, strategy_close, missing_component):
+    import asyncio
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    position, report = _seed_late_exit_fee(strategy_close=strategy_close, missing_component=missing_component)
+    original_fills = repo.list_fills(limit=100)
+    original_evidence = json.loads(repo.get_position(position.id)["reconciliation_evidence"])
+    calls = []
+
+    async def query(mode, method, query, *, expected_account):
+        assert mode == position.execution_mode and method == "get_fills"
+        assert expected_account == report.identity
+        assert query.scope == report.scope
+        calls.append(method)
+        return report
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query)
+    result = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
+    assert result["settled"] == 1 and result["broker_io_attempted"] == 1, result
+    assert calls == ["get_fills"]
+    closed = repo.get_position(position.id)
+    assert closed["realized_pnl"] == pytest.approx(21.6)
+    assert closed["exit_fee"] == pytest.approx(0.2)
+    assert bool(closed["outcome_eligible"]) is strategy_close
+    assert repo.list_fills(limit=100) == original_fills
+    evidence = json.loads(closed["reconciliation_evidence"])
+    assert {key: evidence[key] for key in original_evidence} == original_evidence
+    assert len(evidence["fee_completion"]["fills"]) == 2
+    events = repo.get_db().execute(
+        "SELECT * FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchall()
+    assert len(events) == 1 and events[0]["exit_fee"] == pytest.approx(0.2)
+    assert events[0]["realized_pnl"] == pytest.approx(21.6)
+    assert asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))["checked"] == 0
+    assert settlement.materialize_exchange_close_costs(closed, fee_report=report)["status"] == "already_current"
+    assert repo.get_position(position.id) == closed
+    assert len([row for row in repo.list_audit_events(limit=100) if row["event_type"] == "exchange_position_fee_completed"]) == 1
+
+
+def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch):
+    import asyncio
+    from aletheia.execution.broker_funding import make_complete_ledger
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    position, report = _seed_late_exit_fee(funding_complete=False)
+    calls = []
+
+    async def query(*args, **kwargs):
+        calls.append("fills")
+        return report
+
+    async def ledger(row, start_ms, end_ms):
+        calls.append("funding")
+        result = make_complete_ledger(
+            broker_id=row["execution_mode"], account_environment="demo", source_endpoint="uta_v1",
+            history_start_ms=start_ms, history_end_ms=end_ms, events=[],
+        )
+        # The second observation is after the existing private-ledger publication lag.
+        result["observed_at_ms"] = end_ms + 60_000
+        return result
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", query)
+    monkeypatch.setattr(settlement, "_uta_funding_ledger", ledger)
+    first = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
+    assert first["broker_io_attempted"] == 1 and first["still_pending"] == 1, first
+    pending = repo.get_position(position.id)
+    assert pending["exit_fee"] == pytest.approx(0.2)
+    assert pending["realized_pnl"] is None and pending["funding_cost"] is None
+    assert pending["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    second = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
+    assert second["settled"] == 1 and second["broker_io_attempted"] == 1, second
+    assert calls == ["fills", "funding"]
+    assert repo.get_position(position.id)["realized_pnl"] == pytest.approx(21.6)
+    assert asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))["checked"] == 0
+
+
+def test_late_fee_audit_failure_rolls_back_fee_and_final_economics(monkeypatch):
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
+
+    position, report = _seed_late_exit_fee()
+    before = repo.get_position(position.id)
+    events = [dict(row) for row in repo.get_db().execute("SELECT * FROM position_close_events").fetchall()]
+
+    def fail_audit(event):
+        assert repo.get_position(position.id)["exit_fee"] == pytest.approx(0.2)
+        raise RuntimeError("audit enrollment failed")
+
+    monkeypatch.setattr("aletheia.portfolio.funding_audit.insert_pending_funding_audit", fail_audit)
+    with pytest.raises(RuntimeError, match="audit enrollment failed"):
+        materialize_exchange_close_costs(before, fee_report=report)
+    assert repo.get_position(position.id) == before
+    assert [dict(row) for row in repo.get_db().execute("SELECT * FROM position_close_events").fetchall()] == events
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
+def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
+    from aletheia.execution.broker_funding import make_complete_ledger, compute_stored_broker_funding
+    from aletheia.execution.exchange_materialization import materialize_bitget_close
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
+    from aletheia.uta.compat import scope_from_local
+    from aletheia.uta.models import UTAAccountIdentity, FillListReport, FillReport
+    from tests.specs.spec_pipeline_exchange_materialization import _seed_pending_close, _private_fill
+
+    _, entry, position, close = _seed_pending_close(exchange_order_id="native-late-fee", market_type="usdt_futures")
+    at_ms = 1_784_400_000_000
+    raw = _private_fill(close.exchange_order_id, "native-fee-fill", price=110.0, quantity=1.0, fee=None, filled_at_ms=at_ms)
+    assert materialize_bitget_close(close.id, [raw]).state == "filled"
+    original = repo.list_fills(order_id=close.id)
+    assert len(original) == 1 and original[0]["fee"] is None
+    pending = repo.get_position(position.id)
+    assert pending["status"] == "closed" and pending["realized_pnl"] is None
+    at = datetime.fromtimestamp(at_ms / 1000, tz=timezone.utc)
+    scope = scope_from_local(position.symbol, position.market_type, start_at=at, end_at=at)
+    identity = UTAAccountIdentity.model_validate_json(repo.get_order(entry.id)["uta_account_identity_json"])
+    report = FillListReport(
+        identity=identity, completeness="complete", scope=scope,
+        received_at=datetime.now(timezone.utc), profile_version="native-fee-test",
+        fills=(FillReport(
+            identity=identity, instrument=scope.instrument, venue_order_id=close.exchange_order_id,
+            venue_fill_id="native-fee-fill", side="sell", quantity="1", price="110",
+            fee="0.2", fee_currency="USDT", executed_at=at, received_at=datetime.now(timezone.utc),
+        ),),
+    )
+    assert materialize_exchange_close_costs(pending, fee_report=report)["status"] == "cost_pending"
+    pending = repo.get_position(position.id)
+    ledger = make_complete_ledger(
+        broker_id=position.execution_mode, account_environment="live", source_endpoint="uta_v1",
+        history_start_ms=int(datetime.fromisoformat(position.opened_at).timestamp() * 1000),
+        history_end_ms=at_ms, events=[],
+    )
+    funding = compute_stored_broker_funding(repo.get_db(), position=pending, closed_at=pending["closed_at"], ledger=ledger)
+    result = materialize_exchange_close_costs(pending, funding_cost=funding.funding_cost,
+        funding_evidence=funding.evidence, funding_ledger=ledger)
+    assert result["status"] == "settled" and result["realized_pnl"] == pytest.approx(9.74)
+    assert repo.list_fills(order_id=close.id) == original
+    assert materialize_bitget_close(close.id, [{**raw, "fee": "0.2"}]).state == "filled"
+    assert repo.list_fills(order_id=close.id) == original
+
+
+@pytest.mark.parametrize("field,value", (
+    ("price", 999), ("quantity", 3), ("venue_fill_id", "other"),
+    ("venue_order_id", "other"), ("fee", None), ("fee", "-0.1"),
+    ("fee_currency", "BGB"),
+))
+def test_late_fee_rejects_conflicting_or_incomplete_observation(field, value):
+    from decimal import Decimal
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
+
+    position, report = _seed_late_exit_fee()
+    before = repo.get_position(position.id)
+    if field in {"price", "quantity", "fee"} and value is not None:
+        value = Decimal(str(value))
+    report = report.model_copy(update={"fills": (
+        report.fills[0].model_copy(update={field: value}), report.fills[1],
+    )})
+    with pytest.raises(ValueError):
+        materialize_exchange_close_costs(before, fee_report=report)
+    assert repo.get_position(position.id) == before
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
+@pytest.mark.parametrize("fault", ("account", "scope", "partial", "time", "duplicate", "known_fee"))
+def test_late_fee_preserves_account_scope_and_original_known_cost(fault):
+    from decimal import Decimal
+    from aletheia.portfolio.broker_funding_settlement import materialize_exchange_close_costs
+    from aletheia.uta.models import ReadCompleteness
+
+    position, report = _seed_late_exit_fee(missing_component="currency" if fault == "known_fee" else "amount")
+    before = repo.get_position(position.id)
+    if fault == "account":
+        identity = report.identity.model_copy(update={"account_id": "other-account"})
+        report = report.model_copy(update={
+            "identity": identity,
+            "fills": tuple(fill.model_copy(update={"identity": identity}) for fill in report.fills),
+        })
+    elif fault == "scope":
+        report = report.model_copy(update={"scope": report.scope.model_copy(update={"instrument": None})})
+    elif fault == "partial":
+        report = report.model_copy(update={"completeness": ReadCompleteness.PARTIAL, "reason_code": "private_fill_surface_partial"})
+    elif fault == "duplicate":
+        report = report.model_copy(update={"fills": (*report.fills, report.fills[0])})
+    else:
+        change = {"fee": Decimal("0.2")} if fault == "known_fee" else {"executed_at": report.fills[0].executed_at + timedelta(milliseconds=1)}
+        report = report.model_copy(update={"fills": (report.fills[0].model_copy(update=change), report.fills[1])})
+    with pytest.raises(ValueError):
+        materialize_exchange_close_costs(before, fee_report=report)
+    assert repo.get_position(position.id) == before
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
 def test_verified_exit_normalization_has_no_second_close_writer():
     import ast
     import inspect
