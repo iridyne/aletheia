@@ -28,8 +28,17 @@ verified against its [published dependency metadata](https://pypi.org/pypi/opena
 OpenAI 3.x uses HTTPX2; changing the application's shared network stack is not
 part of this batch. Do not introduce a parallel SDK-owned network-policy stack.
 
-The accepted program still requires Anthropic SDK convergence, retirement of
-CLI/OAuth/native proprietary transports, and explicit endpoint/model routing.
+The next bounded change applies the same transport boundary to generic
+Anthropic Messages and its catalogue using official Anthropic 0.125.0, the
+HTTPX-compatible release line below 1.0, as verified by its
+[published dependency metadata](https://pypi.org/pypi/anthropic/0.125.0/json).
+Explicit x-api-key or bearer selection remains unchanged, including the existing
+bearer endpoint temperature omission. SDK credential/profile auto-discovery,
+ambient headers, retries and content debug logs must not become new authorities.
+The provider continues borrowing the existing loop-owned HTTP client.
+
+The accepted program still requires retirement of
+CLI/OAuth/native proprietary transports and explicit endpoint/model routing.
 This bounded transport change does not claim those remaining boundaries are
 complete. Existing Databricks-specific transport remains outside this batch.
 No stored endpoint, secret, routing choice, runtime or trading authority changes.

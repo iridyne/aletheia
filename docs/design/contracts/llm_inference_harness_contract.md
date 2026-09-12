@@ -17,10 +17,13 @@ Application inference enters through `llm_complete()`, `llm_structured()`, or
 connectivity probes enter the same logical-call contract before using the
 broker directly. Provider adapters remain the physical network boundary.
 
-Generic OpenAI Chat Completions and Responses dispatch and model discovery use
-the official OpenAI SDK over the existing loop-owned HTTP client. SDK automatic
+Generic OpenAI Chat Completions / Responses and Anthropic Messages dispatch and
+model discovery use their official SDKs over the existing loop-owned HTTP client. SDK automatic
 retries and ambient credential/header inheritance are disabled; the existing
 explicit optional-field and model fallback policies remain authoritative.
+Anthropic profile/federation credential resolution is not an alternative to the
+explicit endpoint credential. Its x-api-key/bearer choice and current bearer
+temperature omission remain adapter-owned.
 SDK content-bearing debug logs are disabled, status failures retain the shared
 credential-scrubbing boundary, and cancellation propagates. This bounded
 [transport convergence](../proposals/slim_core_http_model_transport.md) does not
