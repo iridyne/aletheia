@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `a22506fd56771b75010a400e52dd157ba8b28068`, under
+Source checkpoint: `2fc29fb75fb4c4f2d8ed391bc3653c42583dfb33`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -11,8 +11,8 @@ The source walk contains 562 Python files: 35 first-level packages and 12 root
 modules. Counts include package initializers, exclude bytecode, and are dated
 observations rather than brittle acceptance thresholds. AST inspection covered
 calls to the named Core persistence APIs below and literal SQL statements for
-the nine authority tables. Dynamic table/SQL construction needs separate review;
-in particular, a clean literal scan does not admit the bundle importer.
+the nine authority tables. Dynamic table/SQL construction is reviewed separately;
+the bundle importer is allowlisted and preflights all payloads before mutation.
 
 | Entrypoint | Current lifecycle / effects | Boundary still requiring proof |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ open gate where stated.
 | `risk` (5) | Canonical evaluation, policy/kill switch and quality gates | Core safety authority; independently persists preflight/authoritative decisions. |
 | `server` (31) | FastAPI lifespan, middleware and route composition | Mixed minimum Core API and optional route surfaces. |
 | `storage` (12) | SQLite/transactions, models, repositories, migrations, event/artifact stores | Mixed canonical operational persistence and namespaced optional schemas; table use must determine ownership. |
-| `sync` (4) | Bundle export/import and conflict handling | Active import allows `trade_proposals` and retired PS runtime tables through dynamic table names; unresolved second-writer/Legacy seam. |
+| `sync` (4) | Bundle export/import and conflict handling | Import is restricted to six namespaced research tables; Core Proposal and retired PS runtime rows are rejected before mutation. Artifact-category and whole-payload preflight remain separate restore/atomicity boundaries. |
 | `telegram` (2) | Configured notification/polling endpoint | Optional external adapter; no independent execution authority. |
 | `trading` (34) | Typed Entry contracts/compiler/capture/activation plus source publication | Mixed Core Entry semantics and Serenity source orchestration; Candidate creation now uses Core publication. |
 | `trust` (3) | Behavior authority and Live unlock | Core safety boundary; no authority expansion in #3134. |
@@ -84,7 +84,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | --- | --- | --- |
 | Candidate creation | `repositories.publish_candidate_snapshot`; Universe refresh, Serenity publication and isolated preview seed call it | Snapshot/member creation converged; attention/retention writes remain distinct operations. |
 | Generation / EntryPlan | Repository generation claim/bind/defer/complete APIs; `transition_entry_plan`, trigger binding and monitoring | Planner/compiler/watcher ownership and multi-leg aggregation remain Core; complete callback/dynamic-write audit still needed. |
-| Proposal | Repository immutable Proposal helpers and native per-leg construction | `sync.importer` has a dynamic Proposal import path; do not treat helper scans as complete writer proof. |
+| Proposal | Repository immutable Proposal helpers and native per-leg construction | Research-bundle import rejects Proposal rows; complete callback and dynamic-write audit remain separate from the importer boundary. |
 | RiskDecision | `risk.engine._persist_risk_result` calls ordinary or authoritative insert; authoritative repository insertion owns deduplication | Preflight and final exact-order decisions are different facts, not interchangeable duplicate implementations. |
 | Order | `insert_order`, `transition_order`, `update_order_metadata`, acknowledgement finalization | Coordinator/Gateway, reconciliation/materialization, observed TP/SL and adopted/administrative evidence producers remain to classify. |
 | Fill | `insert_fill` called by exchange materialization and observed administrative close evidence | Private Fill normalization versus administrative synthetic evidence must not be conflated. `_verify_durable_fills` also validates/amends historical fee-source provenance. |
@@ -111,9 +111,12 @@ Afterward, the combined architecture/ownership/repair/UTA/trust/execution and
 replacement exchange tests pass: 117 tests / 57 claims. These are isolated local
 fixtures, not exchange qualification or proof of the entire #3134 DoD.
 
-Next runnable seams are the dynamic bundle importer, concrete private-account
-callers in the [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), and
-optional lifecycle imports. Logical ownership and absence tests must precede
-Scheme A folder movement. Multi-leg realized admission remains a distinct
-contract-decision boundary; fixed-4h counterfactual learning does not by itself
-authorize admitting a new realized Outcome cohort.
+Next runnable seams are concrete private-account callers in the
+[private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), optional lifecycle
+imports, and the remaining per-consumer single-writer evidence. The bundle
+importer seam is closed for current Core Proposal/retired-PS writes, while
+research artifact overwrite and full restore remain separate Ops boundaries.
+Logical ownership and absence tests must precede Scheme A folder movement.
+Multi-leg realized admission remains a distinct contract-decision boundary;
+fixed-4h counterfactual learning does not by itself authorize admitting a new
+realized Outcome cohort.
