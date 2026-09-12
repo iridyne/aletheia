@@ -554,18 +554,18 @@ class ModelsConfig(BaseModel):
             raise ValueError("Model providers must be a mapping")
         for tier in ("deep", "fast"):
             old_field = f"{tier}_provider"
-            if old_field not in decoded:
-                continue
             if tier in decoded:
-                raise ValueError("Both historical and current model tier fields are present")
-            old_endpoint = decoded.pop(old_field)
+                if old_field in decoded:
+                    raise ValueError("Both historical and current model tier fields are present")
+                continue
+            old_endpoint = decoded.pop(old_field, None)
             if old_endpoint is not None and not isinstance(old_endpoint, str):
                 raise ValueError("Historical tier provider must be a string or null")
             endpoint = old_endpoint or value.get("default_provider")
             if endpoint is not None and not isinstance(endpoint, str):
                 raise ValueError("Default model provider must be a string")
             profile = providers.get(endpoint) if endpoint else None
-            model = profile.get("model", "") if isinstance(profile, dict) else getattr(profile, "model", "")
+            model = profile.get("model", ProviderConfig.model_fields["model"].default) if isinstance(profile, dict) else getattr(profile, "model", "")
             decoded[tier] = {"endpoint_id": endpoint, "model_id": model or ""} if endpoint else None
         return decoded
 
