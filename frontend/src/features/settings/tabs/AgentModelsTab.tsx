@@ -22,8 +22,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   databricks: 'Databricks',
   anthropic_native: 'Claude OAuth (Experimental)',
   openai_native: 'OpenAI OAuth (Experimental)',
-  codex_cli: 'Codex CLI',
-  claude_cli: 'Claude Code CLI',
 }
 
 export const PERMISSION_SECTION = {
@@ -706,7 +704,7 @@ export function InferenceAdmissionCard({ qc, onDirty }: { qc: SettingsProps['qc'
   if (!data) return <DataStateMessage state="unavailable" message="Provider list unavailable." />
 
   const providers = Object.entries(data.providers ?? {})
-  const enabled = providers.filter(([, cfg]) => cfg?.enabled === true)
+  const enabled = providers.filter(([, cfg]) => cfg?.enabled === true && (cfg.kind === 'api' || cfg.kind === 'oauth'))
 
   if (enabled.length === 0) {
     return (

@@ -60,9 +60,10 @@ Proposal as stable decision history.
 - [Universe continuous scoring safety](universe_continuous_scoring_safety.md):
   bounded continuous curves plus raw-evidence, missingness, reversible-feedback,
   and pessimistic-promotion safeguards.
-- [Model provider profiles and access methods](model_provider_profiles_and_access_methods.md):
-  API profile instances, CLI harness integrations, OAuth connections, and the
-  staged retirement of the legacy model-settings mutation path.
+- [Official HTTP model transport](slim_core_http_model_transport.md):
+  accepted SDK transport and HTTP-only model endpoint convergence; the former
+  [three-category design](../history/model_provider_profiles_and_access_methods.md)
+  is historical.
 - [OHLCV Provider Observation/Result](ohlcv_provider_observation_result.md):
   exact-timeframe and real-OHLCV result semantics, source/venue identity, and
   explicit rejection of coarse or field-incomplete fallback data.

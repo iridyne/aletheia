@@ -138,16 +138,16 @@ async def test_strategy_summary_endpoint_supports_operator_shell(client):
     assert data["needs_operator_live_limited_enablement_strategy_ids"] == ["live-candidate"]
 
 
-# #6 Model provider layer (OpenAI/Anthropic/Codex)
+# #6 HTTP model provider layer (OpenAI/Anthropic)
 @pytest.mark.anyio
 async def test_ac06_model_providers(client):
     c, _ = client
     # Providers ship empty now; the model layer supports these types on demand —
     # register them via the API (as a fresh-install operator would through Settings).
-    for provider in ("openai_compatible", "anthropic_compatible", "codex_cli"):
+    for provider in ("openai_compatible", "anthropic_compatible"):
         await c.post("/api/settings/model", json={"provider": provider})
     data = (await c.get("/api/model")).json()
-    assert set(["openai_compatible", "anthropic_compatible", "codex_cli"]).issubset(data["providers"].keys())
+    assert set(["openai_compatible", "anthropic_compatible"]).issubset(data["providers"].keys())
 
 
 # #7 Agent runtime creates research notes + opportunities

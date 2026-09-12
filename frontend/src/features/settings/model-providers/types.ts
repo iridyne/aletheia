@@ -1,6 +1,6 @@
 import type { ModelProviderHealth } from "../../../api/client";
 
-export type ProviderCategory = "api" | "cli" | "oauth";
+export type ProviderCategory = "api" | "oauth";
 export type RoutingRole = "default" | "deep" | "fast";
 
 export interface KeyStatus {
@@ -10,7 +10,7 @@ export interface KeyStatus {
 
 export interface ProviderConfigView {
 	type: string;
-	kind: ProviderCategory;
+	kind: ProviderCategory | "unknown";
 	configured: boolean;
 	display_name: string;
 	enabled: boolean;
@@ -19,7 +19,6 @@ export interface ProviderConfigView {
 	workspace_url?: string | null;
 	protocol?: string;
 	auth_scheme?: string;
-	codex_model?: string | null;
 	api_key: KeyStatus;
 	oauth: KeyStatus;
 }

@@ -1,13 +1,18 @@
 ---
 id: model-provider-profiles-and-access-methods
-status: accepted
+status: superseded
 related_contracts:
   - docs/design/contracts/agent_contracts.md
   - docs/design/api/api_reference.md
-supersedes: []
+superseded_by: ../proposals/slim_core_http_model_transport.md
 ---
 
 # Model provider profiles and access methods
+
+Historical design, superseded by the accepted #3134 HTTP-only target. Its
+three-category support and CLI harness are not current product authority.
+Retained text records the original design; current boundaries are defined by
+the [inference Contract](../contracts/llm_inference_harness_contract.md).
 
 ## Summary
 

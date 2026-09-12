@@ -1256,7 +1256,6 @@ export const api = {
 		set_as_deep?: boolean;
 		set_as_fast?: boolean;
 		api_key?: string;
-		codex_model?: string;
 		workspace_url?: string;
 		auth_scheme?: string;
 		inference_max_concurrency?: number;
@@ -1304,25 +1303,6 @@ export const api = {
 		post<{
 			models: { slug: string; display_name: string; ready_state?: string }[];
 		}>("/model/detect-models", body),
-
-	// Codex subscription provider: web-triggered device-auth login + model listing
-	codexLoginStart: () =>
-		post<{
-			state: string;
-			verification_uri: string | null;
-			user_code: string | null;
-			error: string | null;
-		}>("/model/codex/login-start"),
-	codexLoginStatus: () =>
-		fetchJson<{
-			state: string;
-			verification_uri: string | null;
-			user_code: string | null;
-			error: string | null;
-		}>("/model/codex/login-status"),
-	codexLoginCancel: () => post("/model/codex/login-cancel"),
-	getCodexModels: () =>
-		fetchJson<{ slug: string; display_name: string }[]>("/model/codex/models"),
 
 	// OpenAI subscription OAuth (ChatGPT Plus/Pro)
 	openaiOAuthStart: () =>

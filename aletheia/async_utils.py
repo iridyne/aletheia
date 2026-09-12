@@ -17,13 +17,6 @@ anthropic_compatible HTTP provider are all pure socket I/O, fully compatible
 with SelectorEventLoop. (net.py already uses aiohttp's ThreadedResolver, which
 is the correct Windows-Selector DNS approach.)
 
-⚠️ FUTURE CONSTRAINT — read before enabling a CLI provider:
-SelectorEventLoop on Windows does NOT support asyncio subprocess. If
-claude_cli or codex_cli providers are ever re-enabled (both are
-enabled=false in config.yaml today), their asyncio.create_subprocess_exec()
-calls will raise NotImplementedError. The 8 call sites live in
-model_provider/{claude_cli,codex_cli,codex_auth}.py and must first be
-rewritten to run subprocess work in a thread via synchronous subprocess.run.
 """
 
 import asyncio

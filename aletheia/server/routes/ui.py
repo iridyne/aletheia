@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import shutil
 import time
 from typing import Any
 
@@ -184,21 +183,18 @@ def _risk_snapshot(cfg) -> dict:
 
 
 def _model_provider_usable(cfg) -> bool:
-    """Return whether at least one configured provider can actually serve work."""
-    from aletheia.model_provider.registry import CLI_PROVIDER_TYPES
+    """Check stored credential presence, not inference usability."""
+    from aletheia.model_provider.registry import PROVIDER_TYPES
 
-    default_commands = {"codex_cli": "codex", "claude_cli": "claude", "pi_cli": "pi"}
     for name, provider in cfg.models.providers.items():
         provider_type = getattr(provider, "type", "") or name
+        if provider_type not in PROVIDER_TYPES:
+            continue
         for secret_ref in (
             getattr(provider, "api_key_secret_ref", None),
             getattr(provider, "oauth_token_ref", None),
         ):
             if secret_ref and get_secret(secret_ref):
-                return True
-        if provider_type in CLI_PROVIDER_TYPES:
-            command = getattr(provider, "command", "") or default_commands.get(provider_type, provider_type)
-            if shutil.which(command):
                 return True
     return False
 

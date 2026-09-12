@@ -2110,83 +2110,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/model/codex/login-cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Codex Login Cancel */
-        post: operations["codex_login_cancel_api_model_codex_login_cancel_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/codex/login-start": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Codex Login Start
-         * @description Begin Codex device-auth login. Returns verification URL + code (never a token).
-         */
-        post: operations["codex_login_start_api_model_codex_login_start_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/codex/login-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Codex Login Status
-         * @description Poll Codex login status (authoritative via `codex login status`). No token.
-         */
-        get: operations["codex_login_status_api_model_codex_login_status_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/model/codex/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Codex Models
-         * @description List available Codex models ([] if codex unavailable). Read-only.
-         */
-        get: operations["codex_models_api_model_codex_models_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/model/detect-models": {
         parameters: {
             query?: never;
@@ -3316,7 +3239,7 @@ export interface paths {
         };
         /**
          * Get Gateway Status
-         * @description PS recovery status is unavailable until its lifecycle is wired.
+         * @description Retired PS recovery has no current runtime status or activation path.
          */
         get: operations["get_gateway_status_api_persistence_gateway_status_get"];
         put?: never;
@@ -9629,10 +9552,6 @@ export interface components {
             auth_scheme?: string | null;
             /** Base Url */
             base_url?: string | null;
-            /** Codex Model */
-            codex_model?: string | null;
-            /** Command */
-            command?: string | null;
             /** Default */
             default?: boolean | null;
             /** Display Name */
@@ -9653,8 +9572,6 @@ export interface components {
             inference_timeout_sec?: number | null;
             /** Inference Tpm */
             inference_tpm?: number | null;
-            /** Mode */
-            mode?: string | null;
             /** Model */
             model?: string | null;
             /** Model Fallback Enabled */
@@ -13773,8 +13690,6 @@ export interface components {
         };
         /** UpdateModelIntegrationRequest */
         UpdateModelIntegrationRequest: {
-            /** Codex Model */
-            codex_model?: string | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Inference Max Concurrency */
@@ -16572,86 +16487,6 @@ export interface operations {
         };
     };
     claude_oauth_status_api_model_claude_oauth_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    codex_login_cancel_api_model_codex_login_cancel_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    codex_login_start_api_model_codex_login_start_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    codex_login_status_api_model_codex_login_status_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    codex_models_api_model_codex_models_get: {
         parameters: {
             query?: never;
             header?: never;

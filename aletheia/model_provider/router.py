@@ -22,9 +22,6 @@ from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.registry import provider_config_protocol
 from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.openai_native import OpenAINativeProvider
-from aletheia.model_provider.codex_cli import CodexCLIProvider
-from aletheia.model_provider.claude_cli import ClaudeCLIProvider
-from aletheia.model_provider.pi_cli import PiCLIProvider
 
 logger = logging.getLogger("aletheia.model_provider.router")
 
@@ -34,9 +31,6 @@ PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "databricks": DatabricksProvider,
     "anthropic_native": AnthropicNativeProvider,
     "openai_native": OpenAINativeProvider,
-    "codex_cli": CodexCLIProvider,
-    "claude_cli": ClaudeCLIProvider,
-    "pi_cli": PiCLIProvider,
 }
 
 _cache: dict[str, ModelProvider] = {}
@@ -112,9 +106,7 @@ def provider_is_configured(name: str, pcfg) -> bool:
             getattr(pcfg, "oauth_token_ref", None),
         )
         return any(get_secret(ref) for ref in credential_refs if ref)
-    # CLI integrations own their credentials outside Aletheia.  An entry in
-    # ModelsConfig is the explicit integration configuration boundary.
-    return True
+    return False
 
 
 def _require_provider_configured(name: str, pcfg) -> None:
@@ -130,11 +122,12 @@ def provider_configuration_identity(
 ) -> str:
     """Fingerprint probe-relevant config without persisting raw credentials."""
 
+    provider_type = str(getattr(pcfg, "type", "") or name)
     refs = (
         getattr(pcfg, "api_key_secret_ref", None),
         getattr(pcfg, "oauth_token_ref", None),
         getattr(pcfg, "oauth_refresh_ref", None),
-    )
+    ) if provider_type in PROVIDER_REGISTRY else ()
     credential_fingerprints: list[dict[str, str | None]] = []
     for ref in refs:
         if not ref:
@@ -160,6 +153,7 @@ def provider_configuration_identity(
         "model": str(getattr(pcfg, "model", "") or ""),
         "auth_scheme": str(getattr(pcfg, "auth_scheme", "") or ""),
         "auth_type": str(getattr(pcfg, "auth_type", "") or ""),
+        # Historical identity inputs only; no transport consumes these fields.
         "command": str(getattr(pcfg, "command", "") or ""),
         "mode": str(getattr(pcfg, "mode", "") or ""),
         "codex_model": str(getattr(pcfg, "codex_model", "") or ""),
@@ -175,7 +169,7 @@ def provider_configuration_identity(
 def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
     """Return current-identity verification facts, failing closed on mismatch."""
 
-    if pcfg is None:
+    if pcfg is None or str(getattr(pcfg, "type", "") or name) not in PROVIDER_REGISTRY:
         return {
             "verified": None,
             "verified_at": None,
@@ -216,7 +210,11 @@ def persist_provider_verification(
 
     def apply(cfg) -> bool:
         pcfg = cfg.models.providers.get(name)
-        if pcfg is None or provider_configuration_identity(name, pcfg) != identity:
+        if (
+            pcfg is None
+            or str(getattr(pcfg, "type", "") or name) not in PROVIDER_REGISTRY
+            or provider_configuration_identity(name, pcfg) != identity
+        ):
             return False
         pcfg.verification_identity = identity
         pcfg.verification_verified = verified
@@ -430,11 +428,10 @@ def _persist_oauth_expiry(name: str, expires_at: int) -> None:
 
 
 def _resolve_type(name: str, pcfg) -> str:
-    """Resolve provider type from config. Falls back to key name for backward compat."""
-    if pcfg.type and pcfg.type in PROVIDER_REGISTRY:
-        return pcfg.type
-    if name in PROVIDER_REGISTRY:
-        return name
+    """Decode an omitted historical type, never reinterpret an explicit type."""
+    provider_type = pcfg.type or name
+    if provider_type in PROVIDER_REGISTRY:
+        return provider_type
     raise ValueError(f"Cannot resolve provider type for: {name}")
 
 
@@ -490,32 +487,12 @@ def get_provider(name: str | None = None) -> ModelProvider:
             protocol=protocol,
             api_key=api_key,
         )
-    elif ptype == "codex_cli":
-        provider = CodexCLIProvider(
-            command=pcfg.command,
-            mode=pcfg.mode,
-            enabled=pcfg.enabled,
-            model=pcfg.codex_model,
-        )
     elif ptype == "anthropic_native":
         oauth_token = _resolve_oauth_token(name, pcfg)
         provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     elif ptype == "openai_native":
         oauth_token = _resolve_oauth_token(name, pcfg)
         provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
-    elif ptype == "claude_cli":
-        provider = ClaudeCLIProvider(
-            command=pcfg.command or "claude",
-            mode=pcfg.mode or "print",
-            enabled=pcfg.enabled,
-            model=pcfg.model if pcfg.model != "default" else None,
-        )
-    elif ptype == "pi_cli":
-        provider = PiCLIProvider(
-            command=pcfg.command or "pi",
-            enabled=pcfg.enabled,
-            model=pcfg.model if pcfg.model != "default" else None,
-        )
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 
@@ -620,32 +597,12 @@ async def get_provider_async(name: str | None = None) -> ModelProvider:
             protocol=protocol,
             api_key=api_key,
         )
-    elif ptype == "codex_cli":
-        provider = CodexCLIProvider(
-            command=pcfg.command,
-            mode=pcfg.mode,
-            enabled=pcfg.enabled,
-            model=pcfg.codex_model,
-        )
     elif ptype == "anthropic_native":
         oauth_token = await _resolve_oauth_token_async(name, pcfg)
         provider = AnthropicNativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
     elif ptype == "openai_native":
         oauth_token = await _resolve_oauth_token_async(name, pcfg)
         provider = OpenAINativeProvider(model=pcfg.model, api_key=api_key, oauth_token=oauth_token)
-    elif ptype == "claude_cli":
-        provider = ClaudeCLIProvider(
-            command=pcfg.command or "claude",
-            mode=pcfg.mode or "print",
-            enabled=pcfg.enabled,
-            model=pcfg.model if pcfg.model != "default" else None,
-        )
-    elif ptype == "pi_cli":
-        provider = PiCLIProvider(
-            command=pcfg.command or "pi",
-            enabled=pcfg.enabled,
-            model=pcfg.model if pcfg.model != "default" else None,
-        )
     else:
         raise ValueError(f"Unknown provider type: {ptype}")
 

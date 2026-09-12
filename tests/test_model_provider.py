@@ -13,7 +13,6 @@ from aletheia.model_provider.openai_compatible import (
 )
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
-from aletheia.model_provider.codex_cli import CodexCLIProvider
 from aletheia.model_provider.router import (
     clear_cache,
     healthcheck_all,
@@ -265,24 +264,6 @@ def test_openai_provider_rejects_unknown_protocol_before_chat_fallback():
         )
 
 
-def test_router_returns_codex(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.config.schema import ProviderConfig
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    clear_cache()
-    cfg = load_config()
-    cfg.models.providers["codex_cli"] = ProviderConfig(type="codex_cli", enabled=True)
-    save_config(cfg)
-    clear_cache()
-    provider = get_provider("codex_cli")
-    assert isinstance(provider, CodexCLIProvider)
-    assert provider.enabled is True
-    clear_cache()
-
-
 def test_router_raises_clear_error_when_no_provider_configured(tmp_path, monkeypatch):
     """Fresh install ships blank (default_provider=''). get_provider() must raise a
     human-actionable error, not a confusing 'Unknown provider: ' with an empty name."""
@@ -412,14 +393,6 @@ async def test_healthcheck_all_probes_enabled_keyless_local_provider(tmp_path, m
     assert results[0].available is True
     assert results[0].observed_at is not None
     clear_cache()
-
-
-@pytest.mark.anyio
-async def test_codex_healthcheck_disabled():
-    provider = CodexCLIProvider(enabled=False)
-    health = await provider.healthcheck()
-    assert health.available is False
-    assert "disabled" in (health.error or "")
 
 
 @pytest.mark.anyio

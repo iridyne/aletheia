@@ -57,27 +57,6 @@ PROVIDER_TYPES: dict[str, ProviderTypeDefinition] = {
             "anthropic_messages",
         ),
     ),
-    "codex_cli": ProviderTypeDefinition(
-        id="codex_cli",
-        label="Codex CLI",
-        category="cli",
-        fields=("codex_model",),
-        singleton=True,
-    ),
-    "claude_cli": ProviderTypeDefinition(
-        id="claude_cli",
-        label="Claude Code CLI",
-        category="cli",
-        fields=("model",),
-        singleton=True,
-    ),
-    "pi_cli": ProviderTypeDefinition(
-        id="pi_cli",
-        label="Pi Agent CLI",
-        category="cli",
-        fields=("model",),
-        singleton=True,
-    ),
     "anthropic_native": ProviderTypeDefinition(
         id="anthropic_native",
         label="Anthropic OAuth",
@@ -96,9 +75,6 @@ PROVIDER_TYPES: dict[str, ProviderTypeDefinition] = {
 
 API_PROVIDER_TYPES = frozenset(
     provider_type for provider_type, definition in PROVIDER_TYPES.items() if definition.category == "api"
-)
-CLI_PROVIDER_TYPES = frozenset(
-    provider_type for provider_type, definition in PROVIDER_TYPES.items() if definition.category == "cli"
 )
 OAUTH_PROVIDER_TYPES = frozenset(
     provider_type for provider_type, definition in PROVIDER_TYPES.items() if definition.category == "oauth"

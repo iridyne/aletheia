@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	apiTypes,
 	blankApiProfile,
-	integrationTypes,
+	oauthTypes,
 	providerStatus,
 	routingRoles,
 } from "./modelProviderState";
@@ -123,13 +123,6 @@ describe("model provider settings state", () => {
 				fields: [],
 				singleton: false,
 			},
-			codex_cli: {
-				id: "codex_cli",
-				label: "Codex",
-				category: "cli",
-				fields: [],
-				singleton: true,
-			},
 			openai_native: {
 				id: "openai_native",
 				label: "OpenAI",
@@ -141,10 +134,7 @@ describe("model provider settings state", () => {
 		expect(apiTypes(types).map((type) => type.id)).toEqual([
 			"openai_compatible",
 		]);
-		expect(integrationTypes(types, "cli").map((type) => type.id)).toEqual([
-			"codex_cli",
-		]);
-		expect(integrationTypes(types, "oauth").map((type) => type.id)).toEqual([
+		expect(oauthTypes(types).map((type) => type.id)).toEqual([
 			"openai_native",
 		]);
 	});

@@ -63,6 +63,80 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli"])
+async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
+    client, monkeypatch, provider_type
+):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider import router as model_router
+    from aletheia.server.routes import model as model_routes, ui
+
+    http, _ = client
+    cfg = load_config()
+    cfg.models.providers["historical-cli"] = ProviderConfig(
+        type=provider_type,
+        enabled=True,
+        api_key_secret_ref="historical-api-reference",
+        oauth_token_ref="historical-oauth-reference",
+        command="must-not-execute",
+        codex_model="historical-model",
+        verification_verified=True,
+        verification_identity="historical-identity",
+    )
+    cfg.models.default_provider = "historical-cli"
+    save_config(cfg)
+    before = load_config().models.model_dump()
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("retired provider must not resolve a credential or execute")
+
+    monkeypatch.setattr(model_router, "get_secret", forbidden)
+    monkeypatch.setattr(model_routes, "get_secret", forbidden)
+    monkeypatch.setattr(ui, "get_secret", forbidden)
+    assert not ui._model_provider_usable(cfg)
+    view = (await http.get("/api/model")).json()
+    assert view["default_provider"] == "historical-cli"
+    row = view["providers"]["historical-cli"]
+    assert row["kind"] == "unknown"
+    assert row["configured"] is False
+    assert row["api_key"] == row["oauth"] == {"configured": False, "last4": None}
+    assert "command" not in row and "codex_model" not in row
+    ping = await http.post("/api/model/ping")
+    assert ping.status_code == 200
+    assert ping.json()["ok"] is False
+    assert ping.json()["verification_persisted"] is False
+    for role in ("default_provider", "deep_provider", "fast_provider"):
+        response = await http.post("/api/settings/model-routing", json={role: "historical-cli"})
+        assert response.status_code == 422
+    for path in ("/api/model/detect-models", "/api/model/test-candidate", "/api/settings/model"):
+        response = await http.post(path, json={"provider": "historical-cli"})
+        assert response.status_code == 400
+    response = await http.patch(
+        f"/api/settings/model-integrations/{provider_type}", json={"enabled": True}
+    )
+    assert response.status_code == 404
+    assert load_config().models.model_dump() == before
+    response = await http.post("/api/settings/model-routing", json={"default_provider": None})
+    assert response.status_code == 200
+    assert load_config().models.default_provider == ""
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("field", ["command", "mode", "codex_model"])
+async def test_removed_cli_settings_fields_are_rejected(client, field):
+    http, _ = client
+    response = await http.post(
+        "/api/settings/model", json={"provider": "openai_compatible", field: "retired"}
+    )
+    assert response.status_code == 422
+    response = await http.patch(
+        "/api/settings/model-integrations/openai_native", json={field: "retired"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.anyio
 async def test_failed_profile_verification_does_not_persist_config_or_secret(client, monkeypatch):
     from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
@@ -579,20 +653,20 @@ async def test_singleton_integration_update_uses_canonical_endpoint(client):
     http, _ = client
 
     response = await http.patch(
-        "/api/settings/model-integrations/codex_cli",
+        "/api/settings/model-integrations/openai_native",
         json={
             "enabled": True,
-            "codex_model": "gpt-5.5",
+            "model": "gpt-5.5",
             "inference_max_concurrency": 3,
         },
     )
 
     assert response.status_code == 200
     model = (await http.get("/api/model")).json()
-    assert model["providers"]["codex_cli"]["kind"] == "cli"
-    assert model["providers"]["codex_cli"]["enabled"]
-    assert model["providers"]["codex_cli"]["codex_model"] == "gpt-5.5"
-    assert model["providers"]["codex_cli"]["inference_max_concurrency"] == 3
+    assert model["providers"]["openai_native"]["kind"] == "oauth"
+    assert model["providers"]["openai_native"]["enabled"]
+    assert model["providers"]["openai_native"]["model"] == "gpt-5.5"
+    assert model["providers"]["openai_native"]["inference_max_concurrency"] == 3
 
 
 @pytest.mark.anyio

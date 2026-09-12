@@ -9,7 +9,7 @@ import {
 	apiTypes,
 	blankApiProfile,
 	draftFromProfile,
-	integrationTypes,
+	oauthTypes,
 	providerStatus,
 	routingRoles,
 } from "./modelProviderState";
@@ -126,9 +126,9 @@ function RoutingBoard({
 							>
 								<option value="">Not assigned</option>
 								{providers.map(([providerId, provider]) => (
-									<option key={providerId} value={providerId}>
+									<option key={providerId} value={providerId} disabled={provider.kind !== "api" && provider.kind !== "oauth"}>
 										{provider.display_name || providerId}
-										{provider.enabled ? "" : " (disabled)"}
+										{provider.kind !== "api" && provider.kind !== "oauth" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
 									</option>
 								))}
 							</select>
@@ -586,70 +586,6 @@ function ApiProfiles({
 	);
 }
 
-function CodexLogin({ qc }: { qc: QueryClient }) {
-	const [login, setLogin] = useState<{
-		state: string;
-		verification_uri: string | null;
-		user_code: string | null;
-		error: string | null;
-	} | null>(null);
-	const status = useQuery({
-		queryKey: ["codex-login-status"],
-		queryFn: api.codexLoginStatus,
-		enabled: login?.state === "awaiting_authorization",
-		refetchInterval: 3000,
-	});
-	useEffect(() => {
-		if (status.data?.state === "completed") {
-			qc.invalidateQueries({ queryKey: ["model-health"] });
-			setLogin(status.data);
-		}
-	}, [status.data, qc]);
-	const start = useMutation({
-		mutationFn: api.codexLoginStart,
-		onSuccess: setLogin,
-	});
-	const cancel = useMutation({
-		mutationFn: api.codexLoginCancel,
-		onSuccess: () => setLogin(null),
-	});
-	if (login?.state === "awaiting_authorization") {
-		return (
-			<div className="model-auth-flow">
-				<span>{login.verification_uri}</span>
-				<button
-					type="button"
-					className="secondary"
-					onClick={() =>
-						login.verification_uri &&
-						window.open(login.verification_uri, "_blank", "noopener,noreferrer")
-					}
-				>
-					Open verification page
-				</button>
-				<strong>Code: {login.user_code}</strong>
-				<button
-					type="button"
-					className="secondary"
-					onClick={() => cancel.mutate()}
-				>
-					Cancel
-				</button>
-			</div>
-		);
-	}
-	return (
-		<button
-			type="button"
-			className="secondary"
-			onClick={() => start.mutate()}
-			disabled={start.isPending}
-		>
-			Connect Codex
-		</button>
-	);
-}
-
 function IntegrationCard({
 	definition,
 	config,
@@ -668,10 +604,10 @@ function IntegrationCard({
 	children?: React.ReactNode;
 }) {
 	const [modelValue, setModelValue] = useState(
-		config?.codex_model || config?.model || "",
+		config?.model || "",
 	);
 	const invalidate = createModelInvalidator(qc);
-	const serverModelValue = config?.codex_model || config?.model || "";
+	const serverModelValue = config?.model || "";
 	const dirty = modelValue !== serverModelValue;
 	useSettingsDraftLifecycle({
 		id: `model-integration-${definition.id}`,
@@ -727,11 +663,7 @@ function IntegrationCard({
 					type="button"
 					className="secondary"
 					onClick={() =>
-						update.mutate(
-							definition.id === "codex_cli"
-								? { codex_model: modelValue || null }
-								: { model: modelValue || "default" },
-						)
+						update.mutate({ model: modelValue || "default" })
 					}
 				>
 					Save model
@@ -749,56 +681,6 @@ function IntegrationCard({
 				</div>
 			)}
 		</article>
-	);
-}
-
-function CliIntegrations({
-	model,
-	types,
-	health,
-	qc,
-	onDirty,
-}: {
-	model: ModelConfigView;
-	types: Record<string, ProviderTypeView>;
-	health: ModelHealthView[];
-	qc: QueryClient;
-	onDirty?: (id: string, isDirty: boolean) => void;
-}) {
-	return (
-		<div className="model-category-panel">
-			<div className="model-category-toolbar">
-				<div>
-					<strong>Local CLI agents</strong>
-					<p>
-						One installation per integration. Aletheia uses a no-shell harness
-						and disables agent tools for model calls.
-					</p>
-				</div>
-			</div>
-			<div className="model-provider-list">
-				{integrationTypes(types, "cli").map((definition) => (
-					<IntegrationCard
-						key={definition.id}
-						definition={definition}
-						config={model.providers[definition.id]}
-						health={health.find((item) => item.provider === definition.id)}
-						model={model}
-						qc={qc}
-						onDirty={onDirty}
-					>
-						{definition.id === "codex_cli" ? (
-							<CodexLogin qc={qc} />
-						) : (
-							<span className="model-integration-hint">
-								Authenticate from the {definition.label} terminal before
-								enabling it here.
-							</span>
-						)}
-					</IntegrationCard>
-				))}
-			</div>
-		</div>
 	);
 }
 
@@ -944,7 +826,7 @@ function OAuthConnections({
 				</div>
 			</div>
 			<div className="model-provider-list">
-				{integrationTypes(types, "oauth").map((definition) => {
+				{oauthTypes(types).map((definition) => {
 					const config = model.providers[definition.id];
 					return (
 						<IntegrationCard
@@ -982,7 +864,7 @@ function OAuthConnections({
 }
 
 export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirty?: (id: string, isDirty: boolean) => void }) {
-	const [category, setCategory] = useState<"api" | "cli" | "oauth">("api");
+	const [category, setCategory] = useState<"api" | "oauth">("api");
 	const modelQuery = useQuery({
 		queryKey: ["model"],
 		queryFn: api.getModelConfig,
@@ -1018,7 +900,7 @@ export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirt
 						role="tablist"
 						aria-label="Model access method"
 					>
-						{(["api", "cli", "oauth"] as const).map((item) => (
+						{(["api", "oauth"] as const).map((item) => (
 							<button
 								key={item}
 								type="button"
@@ -1033,15 +915,6 @@ export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirt
 					</div>
 					{category === "api" && (
 						<ApiProfiles model={model} types={types} health={health} qc={qc} onDirty={onDirty} />
-					)}
-					{category === "cli" && (
-						<CliIntegrations
-							model={model}
-							types={types}
-							health={health}
-							qc={qc}
-							onDirty={onDirty}
-						/>
 					)}
 					{category === "oauth" && (
 						<OAuthConnections

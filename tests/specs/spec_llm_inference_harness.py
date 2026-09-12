@@ -17,6 +17,27 @@ _CONTRACT_DOC = _ROOT / "docs" / "design" / "contracts" / "llm_inference_harness
 _HELPER_NAMES = {"llm_complete", "llm_structured", "llm_stream"}
 
 
+@spec_claim(
+    SpecClaim(
+        "LLMH-S07", _CONTRACT, "§Entry points", "L2a",
+        "Retired subprocess model transports have no implementation, registry "
+        "entry or Codex login route; historical configurations remain inert.",
+        status="implemented",
+    ),
+)
+def test_subprocess_model_transports_have_no_active_entrypoint():
+    from aletheia.model_provider.registry import PROVIDER_TYPES
+    from aletheia.model_provider.router import PROVIDER_REGISTRY
+    from aletheia.server.routes.model import router
+
+    retired = {"codex_cli", "claude_cli", "pi_cli"}
+    assert retired.isdisjoint(PROVIDER_TYPES)
+    assert retired.isdisjoint(PROVIDER_REGISTRY)
+    for module in retired | {"cli_harness", "codex_auth"}:
+        assert not (_ROOT / "aletheia" / "model_provider" / f"{module}.py").exists()
+    assert not any(route.path.startswith("/api/model/codex/") for route in router.routes)
+
+
 def _production_helper_calls() -> list[tuple[Path, ast.Call]]:
     calls: list[tuple[Path, ast.Call]] = []
     for path in (_ROOT / "aletheia").rglob("*.py"):
