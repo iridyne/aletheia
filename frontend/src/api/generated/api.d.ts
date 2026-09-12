@@ -4991,26 +4991,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/model": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Set Model
-         * @description Deprecated fixed-provider mutation path retained during profile migration.
-         */
-        post: operations["set_model_api_settings_model_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/settings/model-profiles": {
         parameters: {
             query?: never;
@@ -9323,49 +9303,6 @@ export interface components {
              * @default 1
              */
             revision: number;
-        };
-        /** ModelConfigRequest */
-        ModelConfigRequest: {
-            /** Api Key */
-            api_key?: string | null;
-            /** Auth Scheme */
-            auth_scheme?: string | null;
-            /** Base Url */
-            base_url?: string | null;
-            /** Default */
-            default?: boolean | null;
-            /** Display Name */
-            display_name?: string | null;
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Fallback Models */
-            fallback_models?: string[] | null;
-            /** Inference Max Concurrency */
-            inference_max_concurrency?: number | null;
-            /** Inference Queue Capacity */
-            inference_queue_capacity?: number | null;
-            /** Inference Requests Per Minute */
-            inference_requests_per_minute?: number | null;
-            /** Inference Reserved High Priority Slots */
-            inference_reserved_high_priority_slots?: number | null;
-            /** Inference Timeout Sec */
-            inference_timeout_sec?: number | null;
-            /** Inference Tpm */
-            inference_tpm?: number | null;
-            /** Model */
-            model?: string | null;
-            /** Model Fallback Enabled */
-            model_fallback_enabled?: boolean | null;
-            /** Protocol */
-            protocol?: string | null;
-            /** Provider */
-            provider: string;
-            /** Set As Deep */
-            set_as_deep?: boolean | null;
-            /** Set As Fast */
-            set_as_fast?: boolean | null;
-            /** Type */
-            type?: string | null;
         };
         /**
          * ModelHealthRecord
@@ -21217,39 +21154,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["MarketDataConfigUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_model_api_settings_model_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ModelConfigRequest"];
             };
         };
         responses: {

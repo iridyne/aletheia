@@ -7,6 +7,23 @@ from unittest.mock import patch
 import httpx
 
 
+def mock_model_probe(monkeypatch):
+    """Replace only model side effects; keep Settings verification/persistence real."""
+    from aletheia.model_provider.base import ModelHealth, ModelResponse
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+
+    async def healthy(provider):
+        return ModelHealth(provider=provider.name, available=True, model=provider.model, models=[provider.model])
+
+    async def complete(_provider_name, provider, _request, **_kwargs):
+        return ModelResponse(content="OK", model=provider.model, usage={})
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthy)
+    monkeypatch.setattr(AnthropicCompatibleProvider, "healthcheck", healthy)
+    monkeypatch.setattr("aletheia.model_provider.broker.brokered_complete", complete)
+
+
 @contextmanager
 def model_http(*, provider="openai_compatible", post=None, get=None):
     async def handle(request):

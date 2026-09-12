@@ -133,3 +133,15 @@ a dormant switch or replacement heuristic. Retain explicit cross-endpoint
 entries, bounded attempts, disabled-fallback behavior, cooldown, broker admission,
 budget enforcement, cancellation and structured repair/exclusion semantics.
 This does not reassign stored routes or claim endpoint/model-pair migration.
+
+## Current configuration entrypoint convergence
+
+Retire the fixed-provider `POST /settings/model` migration endpoint and its
+unused frontend client method. Current Settings uses profile create/update and
+the separate routing endpoint. The retired endpoint must not bypass bounded
+verification or assign routing roles while writing a profile. Remove its
+role-assignment request flags and reuse the existing profile-field validation
+for the shared internal mutation function. Preserve current verification,
+credential rollback, cache/broker invalidation and redacted audit behavior.
+Historical configuration remains readable; there is no forwarding endpoint or
+automatic mutation. Endpoint/model-pair routing remains a separate convergence.

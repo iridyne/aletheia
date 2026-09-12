@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Response  # pyright: ignore[reportMissingImports]
+from fastapi import APIRouter, HTTPException  # pyright: ignore[reportMissingImports]
 from pydantic import BaseModel, ConfigDict, Field
 
 from aletheia.config.loader import load_config, save_config
@@ -744,31 +744,6 @@ async def test_model_candidate(req: TestCandidateRequest):
         await _close_candidate_provider(provider)
 
 
-class ModelConfigRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    provider: str
-    type: str | None = None
-    display_name: str | None = None
-    base_url: str | None = None
-    protocol: str | None = None
-    model: str | None = None
-    enabled: bool | None = None
-    default: bool | None = None
-    set_as_deep: bool | None = None
-    set_as_fast: bool | None = None
-    api_key: str | None = None
-    auth_scheme: str | None = None
-    model_fallback_enabled: bool | None = None
-    fallback_models: list[str] | None = None
-    inference_max_concurrency: int | None = Field(default=None, ge=1, le=16)
-    inference_requests_per_minute: int | None = Field(default=None, ge=0, le=10_000)
-    inference_tpm: int | None = Field(default=None, ge=0, le=100_000_000)
-    inference_queue_capacity: int | None = Field(default=None, ge=1, le=1_000)
-    inference_reserved_high_priority_slots: int | None = Field(default=None, ge=0, le=1_000)
-    inference_timeout_sec: float | None = Field(default=None, ge=1, le=1_800)
-
-
 class ModelProfileFields(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -815,13 +790,18 @@ class UpdateModelProfileRequest(ModelProfileFields):
     pass
 
 
+class ModelProfileMutation(ModelProfileFields):
+    provider: str
+    type: str | None = None
+
+
 class ModelRoutingRequest(BaseModel):
     default_provider: str | None = None
     deep_provider: str | None = None
     fast_provider: str | None = None
 
 
-def _resolve_request_type(req: ModelConfigRequest, pcfg) -> str:
+def _resolve_request_type(req: ModelProfileMutation, pcfg) -> str:
     existing_type = (pcfg.type or req.provider) if pcfg is not None else None
     provider_type = req.type or existing_type or (req.provider if req.provider in VALID_PROVIDERS else None)
     if provider_type not in VALID_PROVIDERS:
@@ -865,7 +845,7 @@ def _candidate_configuration_identity(
     )
 
 
-def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None = None):
+def _apply_model_config_sync(req: ModelProfileMutation, verification: dict | None = None):
     if req.api_key is not None:
         req.api_key = req.api_key.strip() or None
 
@@ -924,13 +904,6 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
             422,
             "inference_reserved_high_priority_slots cannot exceed inference_queue_capacity",
         )
-    if req.default:
-        cfg.models.default_provider = req.provider
-    if req.set_as_deep:
-        cfg.models.deep_provider = req.provider
-    if req.set_as_fast:
-        cfg.models.fast_provider = req.provider
-
     written_secret_ref = None
     previous_secret = None
     secret_override = None
@@ -985,7 +958,7 @@ def _apply_model_config_sync(req: ModelConfigRequest, verification: dict | None 
     return cfg, pcfg
 
 
-async def _apply_model_config(req: ModelConfigRequest, verification: dict | None = None) -> dict:
+async def _apply_model_config(req: ModelProfileMutation, verification: dict | None = None) -> dict:
     cfg, pcfg = await asyncio.to_thread(_apply_model_config_sync, req, verification)
     await clear_cache_async()
     from aletheia.model_provider.broker import inference_broker
@@ -1005,16 +978,6 @@ async def _apply_model_config(req: ModelConfigRequest, verification: dict | None
             "source": pcfg.verification_source,
         },
     }
-
-
-@router.post("/settings/model")
-async def set_model(req: ModelConfigRequest, response: Response):
-    """Deprecated fixed-provider mutation path retained during profile migration."""
-    if req.provider not in VALID_PROVIDERS:
-        raise HTTPException(400, f"Invalid provider. Choose from: {sorted(VALID_PROVIDERS)}")
-    response.headers["Deprecation"] = "true"
-    response.headers["Link"] = '</docs/design/proposals/model-provider-profiles-and-access-methods>; rel="deprecation"'
-    return await _apply_model_config(req)
 
 
 async def _verify_profile_candidate(profile_id: str, provider_type: str, payload: dict) -> dict:
@@ -1057,7 +1020,7 @@ async def create_model_profile(req: CreateModelProfileRequest):
     payload = req.model_dump(exclude={"profile_id"})
     verification = await _verify_profile_candidate(req.profile_id, req.type, payload)
     return await _apply_model_config(
-        ModelConfigRequest(provider=req.profile_id, **payload), verification
+        ModelProfileMutation(provider=req.profile_id, **payload), verification
     )
 
 
@@ -1076,7 +1039,7 @@ async def update_model_profile(profile_id: str, req: UpdateModelProfileRequest):
     if verification_fields.intersection(payload) or bool(payload.get("enabled")):
         verification = await _verify_profile_candidate(profile_id, provider_type, payload)
     return await _apply_model_config(
-        ModelConfigRequest(provider=profile_id, **payload), verification
+        ModelProfileMutation(provider=profile_id, **payload), verification
     )
 
 

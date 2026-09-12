@@ -1234,24 +1234,6 @@ export const api = {
 		deep_provider?: string | null;
 		fast_provider?: string | null;
 	}) => post("/settings/model-routing", body),
-	setModelProvider: (body: {
-		provider: string;
-		base_url?: string;
-		protocol?: string;
-		model?: string;
-		enabled?: boolean;
-		default?: boolean;
-		set_as_deep?: boolean;
-		set_as_fast?: boolean;
-		api_key?: string;
-		auth_scheme?: string;
-		inference_max_concurrency?: number;
-		inference_requests_per_minute?: number;
-		inference_tpm?: number;
-		inference_queue_capacity?: number;
-		inference_reserved_high_priority_slots?: number;
-		inference_timeout_sec?: number;
-	}) => post("/settings/model", body),
 	testModelCandidate: (body: {
 		provider: string;
 		type?: string;

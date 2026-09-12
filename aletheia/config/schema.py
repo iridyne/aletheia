@@ -525,7 +525,7 @@ class ProviderConfig(BaseModel):
 class ModelsConfig(BaseModel):
     # Fresh installs ship blank: no default provider name, no pre-populated
     # provider stubs. The operator adds providers explicitly via the Settings
-    # page (POST /settings/model) — see routes/model.py. Historically we seeded
+    # page (POST /settings/model-profiles) — see routes/model.py. Historically we seeded
     # openai_compatible → localhost:8000 and anthropic_compatible → localhost:8001,
     # which meant every fresh clone tripped the boot-time LLM probe against
     # services that were never there. Existing config.yaml files are untouched

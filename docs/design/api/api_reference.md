@@ -356,7 +356,6 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/runtime` | Scheduler intervals, timeouts |
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
-| POST | `/settings/model` | **Deprecated compatibility adapter** for legacy model/provider settings. The canonical write surface is `/settings/model-profiles`, `/settings/model-integrations`, and `/settings/model-routing`; responses include deprecation and successor-link headers. |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
 | POST | `/settings/guard` | Guard / lesson-promotion config (`auto_promote_enabled`, thresholds) |
 | POST | `/settings/operator` | Operator loop config |
@@ -425,7 +424,6 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | PATCH | `/settings/model-profiles/{profile_id}` | Verify and update an API profile. The stable ID and adapter type are immutable; display name, connection fields, key, model, limits, and enabled state may change. |
 | DELETE | `/settings/model-profiles/{profile_id}?confirm=true` | Confirmed API-profile deletion. Clears all Default/Deep/Fast references, deletes its credential, invalidates provider cache/broker state, and audits only sanitized metadata. |
 | POST | `/settings/model-routing` | Independently assign or clear `default_provider`, `deep_provider`, and `fast_provider`. Role assignment does not enable a profile; a disabled assignment is retained but runtime calls fail closed. |
-| POST | `/settings/model` | Deprecated compatibility adapter. It remains during the dual-surface phase and emits `Deprecation` and successor `Link` headers; no new caller should use it. |
 
 ---
 

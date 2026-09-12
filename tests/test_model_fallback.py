@@ -537,15 +537,19 @@ async def test_exhausted_transient_fallback_emits_safe_typed_event(tmp_path, mon
 
 
 @pytest.mark.anyio
-async def test_settings_model_persists_fallback_models_without_key_echo(client):
+async def test_settings_model_persists_fallback_models_without_key_echo(client, monkeypatch):
+    from tests.model_http import mock_model_probe
+
+    mock_model_probe(monkeypatch)
     secret = "sk-secret-should-not-echo"
-    resp = await client.post("/api/settings/model", json={
-        "provider": "anthropic_compatible",
+    resp = await client.post("/api/settings/model-profiles", json={
+        "profile_id": "anthropic_compatible", "type": "anthropic_compatible", "display_name": "HTTP",
+        "base_url": "http://model.test", "model": "m1",
         "model_fallback_enabled": True,
         "fallback_models": ["claude-b", " claude-b ", "claude-c"],
         "api_key": secret,
     })
-    assert resp.status_code == 200
+    assert resp.status_code == 201
     assert secret not in resp.text
 
     cfg = await client.get("/api/model")

@@ -44,6 +44,12 @@ Current model configuration/probe requests reject obsolete workspace fields;
 only an explicit HTTP base URL configures a current endpoint. Historical workspace
 identity fields remain decode/read provenance, never routing or credential scope.
 
+Settings creates or updates HTTP profiles through `/settings/model-profiles`
+and assigns roles separately through `/settings/model-routing`. The fixed-provider
+`POST /settings/model` compatibility endpoint and combined role-assignment flags
+are retired, with no forwarding alias. Profile writes retain the existing bounded
+verification, secret rollback, cache/broker invalidation and redacted audit path.
+
 Every production helper call declares a literal registered `caller` identity.
 An executable AST claim fails when application code omits that identity or
 uses a caller that is absent from `CALLER_SPECS`.
