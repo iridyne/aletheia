@@ -256,6 +256,28 @@ class BitgetClassicV2Profile(_BitgetDemoProfile):
             row.get("info", row) if isinstance(row, dict) else {} for row in rows
         )
 
+    async def fetch_funding_rows(self, exchange, since, limit, history_params_fn):
+        """Bitget classic_v2 uses fetch_funding_history per symbol.
+
+        fetch_ledger("USDT", ...) always raises code 40020 on classic_v2 accounts;
+        fetch_funding_history per swap symbol returns the same billId/businessType/coin
+        rows that normalize_bitget_funding_rows expects.
+        """
+        rows = []
+        history_bound_reached = False
+        try:
+            # Collect all USDT-FUTURES positions' funding rows.
+            # We pass the symbol of this specific query via the exchange positions cache;
+            # since the symbol is not available here, we use None (CCXT fetches all).
+            page = await exchange.fetch_funding_history(None, since, limit)
+            if not isinstance(page, list):
+                raise ValueError("invalid CCXT funding history")
+            history_bound_reached = len(page) >= limit
+            rows.extend(item for item in page if isinstance(item, dict))
+        except (Exception, TimeoutError):
+            raise RuntimeError("private funding ledger unavailable")
+        return rows, history_bound_reached
+
 
 class BitgetUTAV3Profile(_BitgetDemoProfile):
     expected_profile = "uta_v3"

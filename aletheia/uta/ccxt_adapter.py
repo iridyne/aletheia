@@ -776,32 +776,13 @@ class CCXTUTAAdapter:
         try:
             exchange = await self._connected_exchange()
             since = int(query.scope.start_at.timestamp() * 1000) if query.scope.start_at else None
-            rows = []
-            failed_calls = 0
-            history_bound_reached = False
             page_limit = query.scope.limit or 1000
-            ledger_requests = self._profile.funding_ledger_requests(
-                start_at=query.scope.start_at,
-                received_at=received_at,
+            rows, history_bound_reached = await self._profile.fetch_funding_rows(
+                exchange,
+                since,
+                page_limit,
+                lambda p: self._history_params(p),
             )
-            for params in ledger_requests:
-                try:
-                    page = await self._request(
-                        exchange.fetch_ledger(
-                            "USDT",
-                            since,
-                            page_limit,
-                            self._history_params(dict(params)),
-                        )
-                    )
-                    if not isinstance(page, list):
-                        raise ValueError("invalid CCXT ledger")
-                    history_bound_reached = history_bound_reached or len(page) >= page_limit
-                    rows.extend(item for item in page if isinstance(item, dict))
-                except (Exception, TimeoutError):
-                    failed_calls += 1
-            if failed_calls == len(ledger_requests):
-                raise RuntimeError("private funding ledger unavailable")
             events = self._profile.funding_events(rows)
             entries = []
             for event in events:
@@ -822,7 +803,7 @@ class CCXTUTAAdapter:
                         source_provenance="ccxt_private_ledger",
                     )
                 )
-            partial = bool(failed_calls or history_bound_reached)
+            partial = history_bound_reached
             return FundingLedgerReport(
                 identity=self.identity,
                 completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),

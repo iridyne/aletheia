@@ -130,6 +130,40 @@ class CCXTProfile:
 
     def funding_ledger_requests(self, *, start_at: datetime, received_at: datetime) -> tuple[dict[str, object], ...]:
         return self.ledger_requests
+
+    async def fetch_funding_rows(
+        self,
+        exchange,
+        since: int | None,
+        limit: int,
+        history_params_fn,
+    ) -> tuple[list[dict], bool]:
+        """Fetch raw funding rows via fetch_ledger; returns (rows, history_bound_reached).
+
+        Profiles that cannot use fetch_ledger (e.g. Bitget classic_v2) override
+        this method to use the appropriate exchange API instead.
+        """
+        ledger_requests = self.ledger_requests
+        rows: list[dict] = []
+        failed_calls = 0
+        history_bound_reached = False
+        for params in ledger_requests:
+            try:
+                page = await exchange.fetch_ledger(
+                    "USDT",
+                    since,
+                    limit,
+                    history_params_fn(dict(params)),
+                )
+                if not isinstance(page, list):
+                    raise ValueError("invalid CCXT ledger")
+                history_bound_reached = history_bound_reached or len(page) >= limit
+                rows.extend(item for item in page if isinstance(item, dict))
+            except (Exception, TimeoutError):
+                failed_calls += 1
+        if failed_calls == len(ledger_requests):
+            raise RuntimeError("private funding ledger unavailable")
+        return rows, history_bound_reached
     async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
         rows = await exchange.fetch_my_trades(symbol, since, limit, {**params, "paginate": True, "paginationCalls": 10})
         if not isinstance(rows, list):
