@@ -618,12 +618,15 @@ close event、Outcome eligibility 与 hook 意图；调用方仍在同一 writer
 费用已知而 funding 未知时保持最终 PnL unavailable、Outcome ineligible；现有公平队列下一轮
 再读取 funding，不因单轮 I/O 预算为 1 而停滞。第三币种无可证折算仍不可用，缺失入场成本仍
 不得推定；此退出费用补齐路径不授权历史入场费用重建。
+恢复队列与待恢复计数共用实际成本缺口及已验证 broker-fill 证据条件，不以 Outcome 排除标签
+作为成本恢复许可。已验证的外部关闭即使为 `administrative_close`，仍可补齐账户净经济结果，
+但不因此获得策略 Outcome 资格；无成交证据的行政关闭不得进入此队列。
 当前所有者及独立校验边界的调查见 [settlement ownership evidence](../proposals/slim_core_settlement_convergence.md)。
 
 当 UTA 的同账户 funding ledger 以稳定 reason
 `funding_history_retention_expired` 证明查询起点早于该 profile 的私有历史保留边界时，
 `broker_funding_settler` 可在一个 immediate transaction 中把同一条仍为 closed、verified、
-`NULL` economics 且 reason 为 `incomplete_funding_economics` 的 Position 改为
+`NULL` economics、funding unavailable 且尚未终止重试的 Position 改为
 `broker_funding_history_expired`。该 terminal 状态只停止自动重试：`funding_cost` 与
 `realized_pnl` 继续为 `NULL`、`funding_source='unavailable'`、`outcome_eligible=false`，
 Order、Fill、Position、full-close event 与 Outcome/Learning authority 都不得改变。
