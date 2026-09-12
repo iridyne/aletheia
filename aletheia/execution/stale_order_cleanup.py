@@ -29,6 +29,7 @@ import json
 import logging
 
 from aletheia.storage import repositories as repo
+from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
@@ -48,10 +49,7 @@ _OPEN_LOCAL_STATES = (
 # incomplete or unavailable evidence remains unresolved regardless of age.
 _STALE_ORDER_SOFT_HOURS = 48
 
-_UTA_ACCOUNT_MODES = frozenset({
-    "bitget_live_limited", "bitget_demo", "okx_live_limited", "okx_demo",
-    "binance_live_limited", "binance_testnet",
-})
+_UTA_ACCOUNT_MODES = EXTERNAL_EXECUTION_MODES
 
 
 def _run_coro(coro):

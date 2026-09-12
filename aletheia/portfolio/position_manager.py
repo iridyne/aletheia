@@ -12,7 +12,11 @@ import math
 import sqlite3
 from datetime import datetime, timezone
 
-from aletheia.config.exchanges import DEMO_EXECUTION_MODES, is_live_execution_mode
+from aletheia.config.exchanges import (
+    DEMO_EXECUTION_MODES,
+    EXTERNAL_EXECUTION_MODES,
+    is_live_execution_mode,
+)
 from aletheia.config.loader import load_config
 from aletheia.data.price_feed import (
     get_fresh_mark_for_protective_close,
@@ -119,14 +123,7 @@ def close_position_routed(
             separators=(",", ":"),
             allow_nan=False,
         )
-    if mode in (
-        "bitget_demo",
-        "bitget_live_limited",
-        "binance_testnet",
-        "binance_live_limited",
-        "okx_demo",
-        "okx_live_limited",
-    ):
+    if mode in EXTERNAL_EXECUTION_MODES:
         from aletheia.execution.gateway import close_exchange_position
         result = close_exchange_position(
             position_id,

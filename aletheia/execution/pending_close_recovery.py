@@ -33,6 +33,7 @@ import json
 import logging
 
 from aletheia.utils.dt import parse_utc
+from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -119,10 +120,8 @@ _RECOVERABLE_ORDER_STATES = (
     "materialization_missing",
 )
 
-_UTA_ACCOUNT_MODES = frozenset({
-    "bitget_live_limited", "bitget_demo", "okx_live_limited", "okx_demo",
-    "binance_live_limited", "binance_testnet",
-})
+# Every external execution identity is backed by the UTA account boundary.
+_UTA_ACCOUNT_MODES = EXTERNAL_EXECUTION_MODES
 
 
 def _run_coro(coro):

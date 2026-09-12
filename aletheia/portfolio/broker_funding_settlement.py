@@ -12,6 +12,7 @@ from aletheia.execution.broker_funding import (
     compute_stored_broker_funding,
     funding_query_window,
 )
+from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
@@ -24,14 +25,8 @@ from aletheia.portfolio.pnl import (
 
 logger = logging.getLogger("aletheia.broker_funding_settlement")
 
-_EXCHANGE_FUNDING_MODES = (
-    "bitget_demo",
-    "bitget_live_limited",
-    "okx_demo",
-    "okx_live_limited",
-    "binance_testnet",
-    "binance_live_limited",
-)
+# Funding settlement applies to every external UTA-backed execution identity.
+_EXCHANGE_FUNDING_MODES = tuple(sorted(EXTERNAL_EXECUTION_MODES))
 
 BROKER_FUNDING_HISTORY_EXPIRED = "broker_funding_history_expired"
 _FUNDING_QUEUE_ID = "exchange_funding"
