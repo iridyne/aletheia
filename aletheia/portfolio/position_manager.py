@@ -157,9 +157,9 @@ def close_position_routed(
 def reduce_position_routed(position_id: str, reduce_qty: float, reason: str = "operator_reduce") -> dict:
     """Fail closed for partial reduce; retain full-exit delegation.
 
-    The isolated OKX helper is a mock-tested reference, not an authorized product
-    path. It has no active Operator trigger, attributable Proposal/RiskDecision
-    chain, venue-confirmed partial-fill contract, or TP/SL bracket resync.
+    Discretionary partial reduction has no authorized Operator trigger,
+    attributable Proposal/RiskDecision chain or TP/SL bracket resync. Actual
+    partial fills of a full-close attempt use the canonical materializer.
     """
     from aletheia.storage.repositories import _select_one
 

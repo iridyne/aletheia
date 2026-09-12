@@ -387,6 +387,7 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
 - 六种外部 execution_mode 均经 Gateway → Coordinator → UTA。资格不满足时拒绝，不回退旧 broker。
 - **live 守卫(不变式)**:`live_limited` 模式且 `allow_live=False` → `RaiseError`,阻止自动循环误平**真实资金**持仓(`position_manager.py:59`)。守卫在中枢层,不分散到各调用方。
 - 交易所腿不可跳过：demo 模式仍走真实交易所 close。
+- **部分平仓写入唯一性**：严格的自主 partial-reduce 命令仍不获授权；未被生产调用、仅凭传入价格和估算费率写入 Position/close event 的 `pnl.reduce_position` 已退役，不保留别名。授权全平请求产生的真实部分 Fill 仍由 `exchange_materialization` 物化，保留数量、费用分摊、未完整 funding 与重放幂等语义；历史 partial event 和 daily-loss 读取不变。
 - **保护触发价格不可伪造**：只使用 Position 精确 `exchange + symbol + market_type` 的新鲜 mark。venue 由六种已注册 execution mode 确定。内存 exact-instrument cache 必须小于 90 秒；SQLite 只接受同 venue、同 `spot/perp` 且不超过 120 秒的 snapshot。不得用 `Position.current_price`、symbol-only、跨 venue、跨市场或过期价格触发退出；退出成交价格由 private Fill 决定。
 - **逐仓失败必须可见**：一个仓位的 mark 查询、market-aware 评估或 close 异常不得中止其余仓位；`evaluate_open_positions()` 返回稳定的 per-position `errors`，close 异常另计入 `failed_close_count`。`closed=0` 且 close 全失败不能被调度层当作健康空跑。
 - **交易所报告无仓位不能触发重发或伪造成交**：任一 adapter 仅在明确 venue code / typed response
