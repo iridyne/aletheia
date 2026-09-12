@@ -560,6 +560,15 @@ PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strate
 Operator、KPI、Risk、API/UI 等行为消费者已迁移并由 `OI-C02~C04` 的枚举式架构测试约束；
 新增消费者仍必须显式选择这三种读取口径之一。
 
+仓位 API 的 `position_realized_pnl_view()` 另提供只读的已知经济分量：
+`known_gross_pnl` 来自已验证且价格来源为 `broker_fill` 的入场/退出价格与精确数量；
+`known_net_before_unresolved_costs` 仅扣除已有证据支持的手续费和 funding，
+`known_economics_missing_components` 明列未解决项。未知成本不被补成零，价格、数量或
+成交证据不足时金额保持 unavailable。实际成交价已经含滑点，不重复扣除诊断性 slippage。
+这些字段不写回 Position，不改变 `realized_pnl`、`outcome_eligible` 或下游资格；即使已知
+分量可计算，最终净 PnL 仍由原有完整性检查决定。仓位列表和详情将该金额明确标为
+“已知、未扣除尚未解决成本、非最终”，而不是最终 realized PnL。对应 `OI-C04`。
+
 ### 11.5 持久事故断路器（OI-B04/C01 implemented）
 
 当前语义版本下的 administrative/maintenance close 之后，若同一完整账户与 instrument identity

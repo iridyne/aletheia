@@ -1072,6 +1072,9 @@ class PositionView(BaseModel):
     realized_pnl: float | None = None
     realized_pnl_complete: bool | None = None
     realized_pnl_unavailable_reason: str | None = None
+    known_gross_pnl: float | None = None
+    known_net_before_unresolved_costs: float | None = None
+    known_economics_missing_components: list[str] | None = None
     execution_mode: str = "paper"
     strategy_id: str | None = None
     proposal_id: str | None = None

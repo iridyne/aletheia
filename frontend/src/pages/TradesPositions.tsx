@@ -297,6 +297,9 @@ const closedColumns = [
 			return (
 				<span>
 					<FlashPnLCell value={p.realized_pnl} />
+					{p.realized_pnl_complete === false && p.known_net_before_unresolved_costs != null && (
+						<><br /><span className="text-muted text-sm">Known before unresolved costs: {fmtSigned(p.known_net_before_unresolved_costs)}</span></>
+					)}
 					{statusNode && <><br />{statusNode}</>}
 				</span>
 			)
@@ -1111,6 +1114,18 @@ function PositionDetail({
 					value={pnlSourceBadge(position.unrealized_pnl_source)}
 				/>
 				<DrawerField label="Realized" value={position.realized_pnl} mono />
+				{position.status === "closed" && (
+					<>
+						<DrawerField label="Known gross PnL" value={position.known_gross_pnl} mono />
+						<DrawerField label="Known net before unresolved costs (not final)" value={position.known_net_before_unresolved_costs} mono />
+						<DrawerField
+							label="Unresolved economic components"
+							value={position.known_economics_missing_components == null
+								? 'Not available'
+								: position.known_economics_missing_components.map((item) => humanize(item)).join(', ') || 'None reported'}
+						/>
+					</>
+				)}
 				{position.realized_pnl_complete === false && (
 					<DrawerField
 						label="Realized status"

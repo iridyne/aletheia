@@ -1287,6 +1287,44 @@ def _funding_economics_view(row: dict) -> dict:
     }
 
 
+def _known_close_economics(row: dict, funding_cost: float | None) -> dict:
+    """Display proven components, never publish final PnL or Outcome authority."""
+    entry_verified = row.get("entry_fill_verified") in (True, 1) and row.get("entry_price_source") == "broker_fill"
+    exit_verified = row.get("exit_fill_verified") in (True, 1) and row.get("exit_price_source") == "broker_fill"
+    entry, exit_price, quantity = (
+        _finite_number(row.get(field)) if not isinstance(row.get(field), bool) else None
+        for field in ("entry_price", "current_price", "quantity")
+    )
+    direction = str(row.get("direction") or "").lower()
+    gross = None
+    if (
+        entry_verified and exit_verified
+        and all(value is not None and value > 0 for value in (entry, exit_price, quantity))
+        and direction in {"long", "buy", "short", "sell"}
+    ):
+        gross = _finite_number(_realized_pnl(
+            "long" if direction in {"long", "buy"} else "short", entry, exit_price, quantity,
+        ))
+    costs = {"funding_cost": funding_cost}
+    for field, verified in (("entry_fee", entry_verified), ("exit_fee", exit_verified)):
+        fee = _finite_number(row.get(field)) if not isinstance(row.get(field), bool) else None
+        costs[field] = fee if verified and fee is not None and fee >= 0 else None
+    missing = [field for field, value in costs.items() if value is None]
+    if gross is None:
+        missing.insert(0, "verified_entry_exit_economics")
+    # Fill prices already include execution slippage; deducting the diagnostic
+    # slippage field here would count it twice. Unknown costs stay listed above.
+    known_net = (
+        _finite_number(gross - sum(value for value in costs.values() if value is not None))
+        if gross is not None else None
+    )
+    return {
+        "known_gross_pnl": gross,
+        "known_net_before_unresolved_costs": known_net,
+        "known_economics_missing_components": missing,
+    }
+
+
 def position_realized_pnl_view(row: dict) -> dict:
     """Return one display/export row without trusting legacy numeric PnL.
 
@@ -1304,6 +1342,7 @@ def position_realized_pnl_view(row: dict) -> dict:
     view.update(_funding_economics_view(row))
     if str(row.get("status") or "") != "closed":
         return view
+    view.update(_known_close_economics(row, view["funding_cost"]))
 
     # A historical local-paper reconstruction is an audit layer, never a
     # substitute for current verified realized PnL.  Keep the fields distinct
