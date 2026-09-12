@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `2fc29fb75fb4c4f2d8ed391bc3653c42583dfb33`, under
+Source checkpoint: `878e1accd5661867fb156c2ecbe25a1a190a8ff7`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -44,7 +44,7 @@ open gate where stated.
 | `analytics` (60) | Shared realized Outcome eligibility plus attribution, read models and counterfactual measurements | Mixed Core eligibility and optional analytical writers; preserve separate economic meanings. |
 | `backup` (4) | Artifact creation, verification and explicit restore | Ops; whole-DB restoration is not ordinary table import. |
 | `cli` (33) | Operator commands, diagnostics and explicit maintenance entrypoints | Mixed minimum Core controls and optional/Ops commands. |
-| `config` (9) | Typed schema, locked atomic mutation, redaction and secret storage | Core configuration plus scoped adapter credential composition; raw secret access not yet compartmentalized. |
+| `config` (9) | Typed schema, locked atomic mutation, redaction, secret storage, and the execution-identity environment/venue registry | Core configuration plus scoped adapter credential composition; raw secret access not yet compartmentalized. Generic Core callers consume the registry; profile/native capability exceptions remain scoped to their extension boundaries. |
 | `counterfactual` (8) | Replay, advisory, calibration and experiment measurements | Optional research state, never authoritative realized trading economics. |
 | `data` (45) | Public venue/network collectors, caches and market facts | Mixed market boundary and optional data enrichment; concrete protocol implementation belongs outside Core. |
 | `diagnostics` (3) | Read-only reports/config checks and explicit Doctor infrastructure repair | Core operator reads / Ops repair; ordinary probe does not authorize fix. |
@@ -93,6 +93,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Close lifecycle | `finalize_position_close`: `pnl._commit_close_economics` or `outcome_closure.close_position_administrative` | Administrative lifecycle closure must remain distinct from cost-complete strategy Outcome admission. |
 | Final PnL / eligibility | Shared `pnl._commit_close_economics` and `analytics.outcome_integrity`; funding recovery and hooks use existing boundaries | Multiple same-Plan Proposals conflict with Learning §11.1's same-Proposal realized ancestry rule; no silent economic eligibility expansion. |
 | Pause / resume | `agent_runtime.pause_ownership` durable leases, lock and config mutation; scheduler pause/resume and resume gates consume it | Separate owner leases coordinate one pause state; optional components may not bypass leases or independently clear authority. |
+| Execution identity | `config.exchanges.EXECUTION_MODE_ENVIRONMENTS`, `EXECUTION_MODE_VENUES`, and derived Demo/Live/External sets; Gateway, Risk, lifecycle cleanup, startup scope and reconciliation consume these helpers/sets | UTA profile composition and venue-native capability/recovery branches remain explicit exceptions; unknown identities stay unavailable. |
 | Historical Position repair | Schema migrations, bounded Outcome remediation and fixed-target #3111 overlap repair | The #3111 helper is explicit module CLI only, exact-snapshot/evidence checked and audit-idempotent; no production importer/caller. No repair was executed in this audit. |
 
 ## Fitness baseline and next proof
@@ -110,6 +111,12 @@ tests, alongside existing execution specs. No safety requirement is removed.
 Afterward, the combined architecture/ownership/repair/UTA/trust/execution and
 replacement exchange tests pass: 117 tests / 57 claims. These are isolated local
 fixtures, not exchange qualification or proof of the entire #3134 DoD.
+
+The current-head identity audit also removes repeated external-mode enumerations
+from generic Gateway/position routing, pending/stale cleanup, broker funding
+settlement, Demo Risk freshness, startup scope, and account-mode reconciliation.
+This is structural reuse only: it does not broaden the supported account set or
+change a venue-native branch. Unknown execution identities remain unavailable.
 
 Next runnable seams are concrete private-account callers in the
 [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), optional lifecycle
