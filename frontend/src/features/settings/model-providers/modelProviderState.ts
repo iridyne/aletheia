@@ -91,14 +91,12 @@ export function blankApiProfile(
 	providerType = "openai_compatible",
 ): ApiProfileDraft {
 	let protocol = "chat_completions";
-	if (providerType === "databricks") protocol = "serving_endpoint";
 	if (providerType === "anthropic_compatible") protocol = "anthropic_messages";
 	return {
 		profile_id: "",
 		display_name: "",
 		type: providerType,
 		base_url: "",
-		workspace_url: "",
 		protocol,
 		auth_scheme: "x-api-key",
 		model: "",
@@ -116,7 +114,6 @@ export function draftFromProfile(
 		display_name: config.display_name || providerId,
 		type: config.type,
 		base_url: config.base_url || "",
-		workspace_url: config.workspace_url || "",
 		protocol:
 			config.protocol ||
 			(config.type === "anthropic_compatible"

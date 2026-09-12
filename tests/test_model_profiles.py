@@ -63,7 +63,7 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native"])
+@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native", "databricks"])
 async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     client, monkeypatch, provider_type
 ):
@@ -193,6 +193,35 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
     assert response.status_code == 200
     assert reads and deletes == ["current-api-key"]
     assert "http-profile" not in load_config().models.providers
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method,path", [
+    ("POST", "/api/model/detect-models"),
+    ("POST", "/api/model/test-candidate"),
+    ("POST", "/api/settings/model"),
+    ("POST", "/api/settings/model-profiles"),
+    ("PATCH", "/api/settings/model-profiles/http"),
+])
+async def test_workspace_fields_are_rejected_on_http_requests(client, monkeypatch, method, path):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+
+    async def catalogue(_self):
+        return []
+
+    monkeypatch.setattr(OpenAICompatibleProvider, "list_models", catalogue)
+    cfg = load_config()
+    cfg.models.providers["http"] = ProviderConfig(type="openai_compatible", base_url="https://example.invalid/v1")
+    save_config(cfg)
+    body = {"workspace_url": "https://retired-workspace.invalid"}
+    if path == "/api/settings/model-profiles":
+        body.update(profile_id="new-http", display_name="HTTP", type="openai_compatible", base_url="https://example.invalid/v1")
+    elif method == "POST":
+        body["provider"] = "openai_compatible" if path == "/api/settings/model" else "http"
+    response = await client[0].request(method, path, json=body)
+    assert response.status_code == 422
 
 
 @pytest.mark.anyio

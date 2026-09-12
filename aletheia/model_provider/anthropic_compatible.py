@@ -73,7 +73,7 @@ class AnthropicCompatibleProvider(ModelProvider):
         # Databricks-hosted models (e.g. claude-opus-4-8) hard-reject temperature
         # with HTTP 400 ("temperature is deprecated for this model"), and Aletheia
         # agents request temperature=0 for deterministic structured output — which
-        # would fail every call. Mirrors the same omission in databricks.py. Native
+        # would fail every call. Direct
         # Anthropic (x-api-key) still honours temperature.
         if self.auth_scheme != "bearer":
             payload["temperature"] = request.temperature

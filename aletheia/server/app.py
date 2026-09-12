@@ -355,7 +355,7 @@ async def _llm_startup_gate(cfg) -> None:
         attempts = result.get("attempts", 1)
         notify_operator(
             "Aletheia Gateway Paused",
-            f"LLM unavailable ({result['checked']} providers, {attempts} retries). Check Databricks/network.",
+            f"LLM unavailable ({result['checked']} providers, {attempts} retries). Check configured HTTP endpoints/network.",
             source="startup_gate",
             event_type=None,
             audit=False,

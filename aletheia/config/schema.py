@@ -488,7 +488,7 @@ class ProviderConfig(BaseModel):
     mode: str = ""
     api_key_secret_ref: str | None = None
     codex_model: str | None = None
-    workspace_url: str | None = None
+    workspace_url: str | None = None  # Historical workspace provenance; not an HTTP endpoint.
     # Auth header for anthropic_compatible: "x-api-key" (native Anthropic, default)
     # or "bearer" (gateway-fronted endpoints e.g. Databricks AI Gateway).
     auth_scheme: str = "x-api-key"

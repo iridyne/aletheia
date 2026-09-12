@@ -96,6 +96,25 @@ HTTP streaming/usage and historical economic-attribution tests; remove only
 tests of the deleted native/OAuth producers. Databricks and explicit endpoint
 model-pair routing remain separate approved convergence work.
 
+## Proprietary workspace transport retirement
+
+The current Databricks adapter independently constructs workspace serving URLs,
+catalogue responses and OpenAI/Anthropic wire payloads. Its consumers are the
+model router, settings/probe routes and provider forms; no Core caller requires
+this concrete type. Retire the adapter, registry/constructor branches, workspace
+mutation fields and dormant standalone form alongside their producer-only tests.
+Do not recreate serving-endpoint routing as a generic protocol or forwarding shim.
+
+Historical Databricks configuration and credential references remain inert and
+are not migrated, deleted or automatically rebound. A manually configured HTTP
+endpoint uses an explicit base URL, one supported protocol and an owner-supplied
+credential; no model, URL or credential is inferred from a workspace. Workspace
+fields cannot supply a missing HTTP base URL or be silently accepted by current
+configuration/probe requests. Config decoding/read provenance remains available.
+Existing HTTP discovery, manual model IDs, bounded verification, cache ownership
+and inference/fallback behavior remain covered. Endpoint/model-pair assignments
+and the final provider-neutral credential boundary remain separate program work.
+
 Verification uses a real SDK with an in-memory HTTP transport: exact protocol
 paths and payloads, missing optional fields, status/error redaction, no SDK
 retry, cancellation, no environment credential fallback, raw usage preservation

@@ -19,7 +19,6 @@ import type { SettingsDirtyProps, SettingsProps, SettingsStatusProps } from '../
 const PERMISSION_MODES = ['Observe', 'Paper', 'Full']
 const PROVIDER_LABELS: Record<string, string> = {
   openai_compatible: 'API',
-  databricks: 'Databricks',
 }
 
 export const PERMISSION_SECTION = {

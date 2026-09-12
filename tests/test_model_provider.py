@@ -12,7 +12,6 @@ from aletheia.model_provider.openai_compatible import (
     _extract_chat_completion_text,
 )
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider, _normalize_workspace_url
 from aletheia.model_provider.router import (
     clear_cache,
     healthcheck_all,
@@ -628,59 +627,6 @@ async def test_anthropic_complete_mock():
         assert resp.content == "Bonjour"
 
 
-# ── Databricks provider ──────────────────────────────────────────────────────
-# Regression coverage for the "HTTP 404 — not saved" Verify & Save failure: users
-# paste the AI-Gateway URL (…/ai-gateway/anthropic) into the Workspace URL field,
-# but the provider builds its own /serving-endpoints and /api/2.0 paths, so the
-# extra path segment must be stripped to the host root or every request 404s.
-
-
-def test_databricks_normalizes_gateway_url_to_workspace_root():
-    root = "https://adb-123.azuredatabricks.net"
-    assert _normalize_workspace_url(f"{root}/ai-gateway/anthropic") == root
-    assert _normalize_workspace_url(root) == root
-    assert _normalize_workspace_url(f"{root}/") == root
-    assert _normalize_workspace_url(f"{root}/serving-endpoints/m/invocations") == root
-
-
-def test_databricks_builds_invocations_url_from_normalized_root():
-    p = DatabricksProvider(
-        workspace_url="https://adb-123.azuredatabricks.net/ai-gateway/anthropic",
-        model="databricks-claude-opus-4-8",
-    )
-    assert p.workspace_url == "https://adb-123.azuredatabricks.net"
-    assert p.base_url == (
-        "https://adb-123.azuredatabricks.net/serving-endpoints/databricks-claude-opus-4-8/invocations"
-    )
-
-
-@pytest.mark.anyio
-async def test_databricks_complete_omits_temperature():
-    """claude-opus-4-8 on Databricks hard-rejects `temperature` with HTTP 400, so the
-    invocations payload must not include it. No caller overrides the default anyway."""
-    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
-    sent = {}
-
-    class FakeResponse:
-        status_code = 200
-        is_success = True
-
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"choices": [{"message": {"content": "OK"}}], "model": "m", "usage": {}}
-
-    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
-        sent["payload"] = json
-        return FakeResponse()
-
-    with patch("httpx.AsyncClient.post", new=fake_post):
-        resp = await p.complete(ModelRequest(messages=[{"role": "user", "content": "hi"}], temperature=0.9))
-    assert resp.content == "OK"
-    assert "temperature" not in sent["payload"]
-
-
 # ── list_models tests ───────────────────────────────────────────────────────
 
 
@@ -820,72 +766,6 @@ async def test_anthropic_list_models_returns_empty_on_failure():
 
 
 @pytest.mark.anyio
-async def test_databricks_list_models_parses_endpoints():
-    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
-
-    class FakeResp:
-        status_code = 200
-
-        def json(self):
-            return {
-                "endpoints": [
-                    {"name": "databricks-claude-opus-4-8", "state": {"ready": "READY"}},
-                    {"name": "databricks-meta-llama-3", "state": {"ready": "NOT_READY"}},
-                ]
-            }
-
-    class FakeClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url, headers=None):
-            return FakeResp()
-
-    with patch("httpx.AsyncClient", FakeClient):
-        models = await p.list_models()
-    assert len(models) == 2
-    assert models[0] == {
-        "slug": "databricks-claude-opus-4-8",
-        "display_name": "databricks-claude-opus-4-8",
-        "ready_state": "READY",
-    }
-    assert models[1] == {
-        "slug": "databricks-meta-llama-3",
-        "display_name": "databricks-meta-llama-3 (not_ready)",
-        "ready_state": "NOT_READY",
-    }
-
-
-@pytest.mark.anyio
-async def test_databricks_list_models_returns_empty_on_failure():
-    import httpx  # pyright: ignore[reportMissingImports]
-
-    class FailClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def get(self, url, **k):
-            raise httpx.ConnectError("refused")
-
-    p = DatabricksProvider(workspace_url="https://adb-123.azuredatabricks.net", model="m")
-    with patch("httpx.AsyncClient", FailClient):
-        models = await p.list_models()
-    assert models == []
-
-
-@pytest.mark.anyio
 async def test_base_stream_fallback():
     """Base ModelProvider.stream() falls back to complete() and yields one chunk."""
     from aletheia.model_provider.base import ModelProvider, ModelResponse as MR
@@ -902,136 +782,6 @@ async def test_base_stream_fallback():
     assert chunks[0].content == "full response"
     assert chunks[0].done is True
     assert chunks[0].usage == {"total": 10}
-
-
-def test_router_returns_databricks_with_workspace_protocol(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    from aletheia.config.loader import load_config, save_config
-    from aletheia.config.schema import ProviderConfig
-
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    clear_cache()
-    cfg = load_config()
-    cfg.models.providers["databricks"] = ProviderConfig(
-        type="databricks",
-        workspace_url="https://adb-123.azuredatabricks.net/ai-gateway/openai",
-        protocol="responses",
-        model="research-model",
-        enabled=True,
-    )
-    save_config(cfg)
-
-    provider = get_provider("databricks")
-    assert isinstance(provider, DatabricksProvider)
-    assert provider.workspace_url == "https://adb-123.azuredatabricks.net"
-    assert provider.databricks_protocol == "responses"
-    assert provider.model == "research-model"
-    clear_cache()
-
-
-@pytest.mark.anyio
-async def test_databricks_ai_gateway_anthropic_request_shape():
-    p = DatabricksProvider(
-        workspace_url="https://adb-123.azuredatabricks.net",
-        model="claude-sonnet",
-        protocol="anthropic_messages",
-        api_key="dapi-test",
-    )
-    sent = {}
-
-    class FakeResponse:
-        status_code = 200
-        is_success = True
-
-        def json(self):
-            return {
-                "content": [{"type": "text", "text": "OK"}],
-                "model": "claude-sonnet",
-                "usage": {"input_tokens": 3, "output_tokens": 1},
-            }
-
-    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
-        sent.update(url=url, payload=json, headers=headers)
-        return FakeResponse()
-
-    with patch("httpx.AsyncClient.post", new=fake_post):
-        response = await p.complete(
-            ModelRequest(
-                messages=[{"role": "user", "content": "hi"}],
-                system="be concise",
-            )
-        )
-
-    assert response.content == "OK"
-    assert sent["url"].endswith("/ai-gateway/anthropic/v1/messages")
-    assert sent["headers"]["Authorization"] == "Bearer dapi-test"
-    assert sent["headers"]["anthropic-version"] == "2023-06-01"
-    assert sent["payload"]["system"] == "be concise"
-    assert "temperature" not in sent["payload"]
-
-
-@pytest.mark.anyio
-async def test_databricks_ai_gateway_responses_omits_temperature():
-    p = DatabricksProvider(
-        workspace_url="https://adb-123.azuredatabricks.net",
-        model="gpt-model",
-        protocol="responses",
-    )
-    sent = {}
-
-    class FakeResponse:
-        status_code = 200
-        is_success = True
-
-        def json(self):
-            return {"output_text": "OK", "model": "gpt-model", "usage": {}}
-
-    async def fake_post(self, url, json=None, headers=None):  # noqa: F811
-        sent.update(url=url, payload=json)
-        return FakeResponse()
-
-    with patch("httpx.AsyncClient.post", new=fake_post):
-        response = await p.complete(
-            ModelRequest(
-                messages=[{"role": "user", "content": "hi"}],
-                temperature=0.9,
-            )
-        )
-
-    assert response.content == "OK"
-    assert sent["url"].endswith("/ai-gateway/openai/v1/responses")
-    assert "temperature" not in sent["payload"]
-
-
-@pytest.mark.anyio
-async def test_databricks_health_is_honest_when_configured_endpoint_is_missing(monkeypatch):
-    provider = DatabricksProvider(
-        workspace_url="https://adb-123.azuredatabricks.net",
-        model="missing-endpoint",
-    )
-
-    async def catalogue():
-        return [{"slug": "other-endpoint", "display_name": "other-endpoint", "ready_state": "READY"}]
-
-    monkeypatch.setattr(provider, "list_models", catalogue)
-    health = await provider.healthcheck()
-    assert health.available is False
-    assert health.error == "configured serving endpoint not found"
-
-
-def test_databricks_rejects_plaintext_remote_workspace_but_allows_loopback():
-    with pytest.raises(ValueError, match="must use HTTPS"):
-        DatabricksProvider(
-            workspace_url="http://adb-123.azuredatabricks.net",
-            model="endpoint",
-        )
-
-    provider = DatabricksProvider(
-        workspace_url="http://127.0.0.1:9000",
-        model="endpoint",
-    )
-    assert provider.workspace_url == "http://127.0.0.1:9000"
 
 
 # ── Responses protocol payload contract ─────────────────────────────────────

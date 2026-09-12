@@ -44,19 +44,6 @@ PROVIDER_TYPES: dict[str, ProviderTypeDefinition] = {
         singleton=False,
         protocols=("anthropic_messages",),
     ),
-    "databricks": ProviderTypeDefinition(
-        id="databricks",
-        label="Databricks",
-        category="api",
-        fields=("workspace_url", "model", "protocol", "api_key"),
-        singleton=False,
-        protocols=(
-            "serving_endpoint",
-            "chat_completions",
-            "responses",
-            "anthropic_messages",
-        ),
-    ),
 }
 
 API_PROVIDER_TYPES = frozenset(

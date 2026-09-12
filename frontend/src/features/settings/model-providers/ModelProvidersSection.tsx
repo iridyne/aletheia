@@ -209,9 +209,7 @@ export function ApiProfileEditor({
 	const candidate = () => ({
 		provider: draft.profile_id,
 		type: draft.type,
-		...(draft.type === "databricks"
-			? { workspace_url: draft.workspace_url }
-			: { base_url: draft.base_url }),
+		base_url: draft.base_url,
 		protocol: draft.protocol,
 		model: draft.model || undefined,
 		api_key: draft.api_key || undefined,
@@ -219,7 +217,10 @@ export function ApiProfileEditor({
 	});
 
 	const detect = useMutation({
-		mutationFn: () => api.detectModels(candidate()),
+		mutationFn: () => {
+			const { model: _model, ...discovery } = candidate();
+			return api.detectModels(discovery);
+		},
 		onSuccess: (result) => {
 			setModels(result.models || []);
 			setMessage(
@@ -243,11 +244,8 @@ export function ApiProfileEditor({
 				throw new Error(test.error || "Provider verification failed.");
 			const body = {
 				display_name: draft.display_name,
-				type: draft.type,
 				enabled: draft.enabled,
-				...(draft.type === "databricks"
-					? { workspace_url: draft.workspace_url }
-					: { base_url: draft.base_url }),
+				base_url: draft.base_url,
 				protocol: draft.protocol,
 				model: draft.model || "default",
 				auth_scheme: draft.auth_scheme,
@@ -255,7 +253,7 @@ export function ApiProfileEditor({
 			};
 			return existing
 				? api.updateModelProfile(draft.profile_id, body)
-				: api.createModelProfile({ profile_id: draft.profile_id, ...body });
+				: api.createModelProfile({ profile_id: draft.profile_id, type: draft.type, ...body });
 		},
 		onSuccess: () => {
 			invalidate();
@@ -312,24 +310,14 @@ export function ApiProfileEditor({
 						))}
 					</select>
 				</label>
-				{draft.type === "databricks" ? (
-					<label className="wide">
-						<span>Workspace URL</span>
-						<input
-							value={draft.workspace_url}
-							onChange={(event) => set("workspace_url", event.target.value)}
-						/>
-					</label>
-				) : (
-					<label className="wide">
-						<span>Base URL</span>
-						<input
-							value={draft.base_url}
-							placeholder="https://provider.example/v1"
-							onChange={(event) => set("base_url", event.target.value)}
-						/>
-					</label>
-				)}
+				<label className="wide">
+					<span>Base URL</span>
+					<input
+						value={draft.base_url}
+						placeholder="https://provider.example/v1"
+						onChange={(event) => set("base_url", event.target.value)}
+					/>
+				</label>
 				<label>
 					<span>Protocol</span>
 					<select
