@@ -43,6 +43,23 @@ def test_scheduler_startup_skips_filter_controller_observe_when_worker_owns():
         assert is_main_owner() is False
 
 
+def test_scheduler_treats_missing_observation_owner_as_unavailable(monkeypatch):
+    """A missing optional Lab package cannot grant Main ownership."""
+    import builtins
+
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    real_import = builtins.__import__
+
+    def missing_owner(name, *args, **kwargs):
+        if name == "aletheia.observation_lab.execution_owner":
+            raise ModuleNotFoundError(name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_owner)
+    assert scheduler_module._observation_execution_owner() == "unknown"
+
+
 # ─── (2) settings reconciliation cannot re-add the job in worker mode ────────
 
 
@@ -115,6 +132,27 @@ def test_reconcile_leaves_missing_job_missing_in_worker_mode(monkeypatch):
 
     assert ok is True
     assert add_calls == []  # neither added nor removed
+
+
+def test_reconcile_removes_job_when_observation_owner_is_unavailable(monkeypatch):
+    """Uncertain optional ownership fails closed and removes a stale job."""
+    import aletheia.agent_runtime.scheduler as scheduler_module
+
+    remove_calls: list[str] = []
+
+    class _FakeScheduler:
+        def get_job(self, job_id):
+            return object()
+
+        def remove_job(self, job_id):
+            remove_calls.append(job_id)
+
+    monkeypatch.setattr(scheduler_module, "_scheduler", _FakeScheduler())
+    monkeypatch.setattr(scheduler_module, "_selectively_paused_jobs", set())
+    monkeypatch.setattr(scheduler_module, "_observation_execution_owner", lambda: "unknown")
+
+    assert scheduler_module.reconcile_filter_controller(True, 6) is True
+    assert remove_calls == ["filter_controller_observe"]
 
 
 # ─── (3) main owner remains backward compatible ──────────────────────────────

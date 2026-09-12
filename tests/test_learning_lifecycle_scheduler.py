@@ -1,5 +1,7 @@
 """Lab-only scheduling and durable shared job health."""
 
+import builtins
+
 import pytest
 
 @pytest.mark.parametrize("authority", ["legacy", "lab", "missing"])
@@ -27,6 +29,31 @@ def test_scheduler_never_registers_retired_learning_jobs(monkeypatch, authority)
         assert "observation_lab_bridge" in jobs
         assert "funding_audit_reconciler" in jobs
         assert "universe_scanner_audit_reconciler" in jobs
+    finally:
+        scheduler.stop_scheduler()
+
+
+def test_scheduler_starts_when_observation_package_is_missing(monkeypatch):
+    """Optional Observation imports cannot leave a half-initialized scheduler."""
+    from aletheia.agent_runtime import scheduler
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(scheduler, "load_config", AletheiaConfig)
+    monkeypatch.setattr(scheduler, "_recover_interrupted_serenity_run", lambda: [])
+    monkeypatch.setattr(scheduler, "_scheduler", None)
+    real_import = builtins.__import__
+
+    def missing_owner(name, *args, **kwargs):
+        if name == "aletheia.observation_lab.execution_owner":
+            raise ModuleNotFoundError(name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_owner)
+    started = scheduler.init_scheduler()
+    try:
+        job_ids = {job.id for job in started.get_jobs()}
+        assert "observation_lab_bridge" in job_ids
+        assert "filter_controller_observe" not in job_ids
     finally:
         scheduler.stop_scheduler()
 

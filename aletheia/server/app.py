@@ -678,18 +678,24 @@ async def lifespan(app: FastAPI):
     telegram_bot = None
     telegram_task = None
     if background_services_enabled:
-        from aletheia.telegram.bot import TelegramBot
+        try:
+            from aletheia.telegram.bot import TelegramBot
 
-        telegram_bot = TelegramBot()
-        if telegram_bot.configure():
-            if telegram_bot.allowed_chat_ids:
-                try:
-                    telegram_task = asyncio.create_task(telegram_bot.run(), name="telegram_polling")
-                except Exception as e:
-                    logger.warning("Telegram polling startup failed: %s", e)
-                    telegram_task = None
-            else:
-                logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
+            telegram_bot = TelegramBot()
+            if telegram_bot.configure():
+                if telegram_bot.allowed_chat_ids:
+                    try:
+                        telegram_task = asyncio.create_task(telegram_bot.run(), name="telegram_polling")
+                    except Exception as e:
+                        logger.warning("Telegram polling startup failed: %s", type(e).__name__)
+                        telegram_task = None
+                else:
+                    logger.warning("Telegram enabled but no allowed_chat_ids configured; skipping Telegram polling.")
+        except Exception as exc:
+            # Telegram is an optional notification adapter; its absence or
+            # configuration failure must not prevent the Core Gateway startup.
+            logger.info("Telegram optional adapter unavailable: %s", type(exc).__name__)
+            telegram_bot = None
     app.state.telegram_bot = telegram_bot
     app.state.telegram_task = telegram_task
     # Mount static files AFTER scheduler init — by this point Vite watch (if running)

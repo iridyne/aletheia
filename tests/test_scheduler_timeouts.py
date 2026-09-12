@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -162,6 +163,21 @@ def test_scheduler_startup_recovery_is_not_repeated_for_current_process(monkeypa
         "SELECT status FROM universe_scanner_runs WHERE id = ?",
         ("current-process-run",),
     ).fetchone()["status"] == "running"
+
+
+def test_core_job_guard_runs_when_learning_extension_is_missing(monkeypatch):
+    """Learning health hooks are optional and cannot stop a Core scheduler job."""
+    from aletheia.agent_runtime import scheduler
+
+    real_import = builtins.__import__
+
+    def missing_learning(name, *args, **kwargs):
+        if name == "aletheia.learning.control":
+            raise ModuleNotFoundError(name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_learning)
+    assert scheduler._run_job_guarded("core_health_probe", lambda: "ok") == "ok"
 
 
 def test_scheduler_startup_retries_failed_recovery_with_original_cutoff(monkeypatch):

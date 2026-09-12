@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 
 from aletheia.config.loader import load_config
-from aletheia.learning.lessons import LessonStore
 from aletheia.agent_shell.operator_store import (
     get_latest_heartbeat,
     get_session,
@@ -108,6 +107,20 @@ def _curated_learning_context() -> dict:
     Operator's read-only diagnosis path.
     """
     now = datetime.now(timezone.utc)
+    try:
+        from aletheia.learning.lessons import LessonStore
+    except ImportError:
+        return {
+            "advisory_only": True,
+            "lessons": [],
+            "availability": {"available": False, "reason": "learning_extension_unavailable"},
+            "manifest": {
+                "manifest_version": "operator_diagnostic_learning:v1",
+                "source": "learning_extension_unavailable",
+                "lesson_ids": [],
+                "generated_at": now.isoformat(),
+            },
+        }
     lessons = []
     for lesson in LessonStore().list_all(status="applied", limit=30):
         if not _lesson_is_current(getattr(lesson, "expires_at", None), now):
