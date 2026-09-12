@@ -16,6 +16,7 @@ import json
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
+from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
 from aletheia.data.symbols import to_bitget
 from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
@@ -33,7 +34,7 @@ from aletheia.storage.repositories import transition_order, update_order_metadat
 from aletheia.storage.sqlite import get_db
 from aletheia.files.jsonl import write_audit
 from aletheia.uta.compat import instrument_from_local, scope_from_local
-from aletheia.uta.manager import build_uta_registry, query_uta
+from aletheia.uta.manager import UTA_EXECUTION_MODES, build_uta_registry, query_uta
 from aletheia.uta.models import (
     UTAAccountIdentity,
     FillQuery,
@@ -47,16 +48,20 @@ logger = logging.getLogger("aletheia.reconciliation")
 
 # Each execution mode selects its own account explicitly; using the current
 # config mode could reconcile a live Order against a demo/testnet account after
-# an operator configuration change.
+# an operator configuration change. The identity registry supplies the venue
+# partition; Bitget's native recovery path remains the only explicit exception.
 _BITGET_ACCOUNT_MODES = {
-    "bitget_live_limited": "live",
-    "bitget_demo": "demo",
+    mode: execution_mode_environment(mode)
+    for mode in UTA_EXECUTION_MODES
+    if execution_mode_venue(mode) == "bitget"
+    and execution_mode_environment(mode) in {"demo", "live"}
 }
-_MULTIBROKER_ACCOUNT_MODES = (
-    "okx_demo",
-    "okx_live_limited",
-    "binance_testnet",
-    "binance_live_limited",
+_MULTIBROKER_ACCOUNT_MODES = tuple(
+    sorted(
+        mode
+        for mode in UTA_EXECUTION_MODES
+        if execution_mode_venue(mode) not in {None, "bitget"}
+    )
 )
 # ``partial`` is retained only for rows written by older builds.  Brokers now
 # persist the exchange-normalized ``partially_filled`` spelling.
@@ -612,8 +617,13 @@ def _filled_quantity_by_order(rows) -> dict[str, float]:
         key = str(order_id)
         quantities[key] = quantities.get(key, 0.0) + max(quantity, 0.0)
     return quantities
-_LIVE_MODE = "bitget_live_limited"
-_CCXT_LIVE_MODES = ("okx_live_limited", "binance_live_limited")
+_CCXT_LIVE_MODES = tuple(
+    sorted(
+        mode
+        for mode in _MULTIBROKER_ACCOUNT_MODES
+        if execution_mode_environment(mode) == "live"
+    )
+)
 
 def resolve_orders_missing_from_exchange(
     local_orders: list[dict],
