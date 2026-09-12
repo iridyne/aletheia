@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `124b5598fde7187f12875d9d42cdc2eca07ef00f`, under
+Source checkpoint: `786d06e8517cb22a43e185c9d52641070b271feb`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -121,9 +121,17 @@ change a venue-native branch. Unknown execution identities remain unavailable.
 The dynamic-SQL pass found no remaining direct generic Order lifecycle write in
 `pending_close_recovery`: its owner-authorized reason replacement now uses
 `repositories.replace_order_error_reason`, with an exact status/reason CAS and
-no collateral field rewrite. Explicit historical repair and exchange
-materialization writes remain separate owner boundaries and are not folded into
-the ordinary Order lifecycle writer.
+no collateral field rewrite. A second AST/literal-DML pass over production
+modules found no other generic writer for the authority tables enumerated above.
+The remaining direct statements are bounded owner exceptions:
+`exchange_materialization` upgrades `fills.fee_source` while verifying its own
+durable Fill, `pnl._commit_close_economics` completes the matching close-event
+snapshot inside the same accounting transaction, and the two `maintenance/`
+Position statements are explicit, fixed-target historical repairs with no
+runtime caller. Namespaced settings, Observation, Learning, audit-mirror and
+research tables retain their own owners and are not Core lifecycle writers.
+These exceptions are therefore not folded into the ordinary Order/Position
+lifecycle APIs or treated as a second producer.
 
 Next runnable seams are concrete private-account callers in the
 [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), optional lifecycle

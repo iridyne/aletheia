@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `124b5598fde7187f12875d9d42cdc2eca07ef00f`. This is a bounded evidence
+based on `786d06e8517cb22a43e185c9d52641070b271feb`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -71,6 +71,16 @@ The single-writer pass also removed the pending-close cleanup's direct
 `orders.error_reason` SQL mutation. The owner-authorized release now calls a
 repository CAS helper that changes only the expected cancelled Order reason;
 the exchange/private-I-O boundaries above remain unchanged.
+
+The follow-up production AST/literal-DML scan found no additional direct write
+to a Core lifecycle table outside its documented owner. The only remaining
+non-repository statements touching those facts are the materializer's
+`fills.fee_source` provenance upgrade, the accounting owner's close-event
+completion in `_commit_close_economics`, and two fixed-target historical Position
+repairs. Their callers and predicates are explicit and bounded; no scheduler,
+importer, optional Extension or UI path reaches them. Writes to settings,
+Observation/Learning namespaces and audit-mirror metadata remain separate
+owners, not alternate Order/Fill/Position lifecycle paths.
 
 ## Startup filesystem repair ownership
 
