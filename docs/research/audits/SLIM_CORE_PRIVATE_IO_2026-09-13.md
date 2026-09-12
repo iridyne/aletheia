@@ -1,0 +1,47 @@
+# Slim Core private-I/O reachability evidence
+
+Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
+based on `05ee05eb59e7446262b0a665d01f82bc96b61706` and the stored-credential
+probe cutover in this change. This is a bounded evidence inventory, not a complete
+production subsystem inventory, a support promise, or runtime qualification.
+The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
+and current Issue define the target; the older
+[consumer matrix](uta_consumer_port_matrix_2026-08-27.md) is historical evidence.
+
+## Remaining concrete-client reachability
+
+`UTA-S07` scans production imports outside `uta/` and `exchanges/`. Its three
+remaining importing modules do not perform interchangeable work:
+
+| Entrypoint / consumer | Actual read and downstream authority | Containment consequence |
+| --- | --- | --- |
+| `server.routes.bitget` stored-credential connection endpoints, called by `ExecutionTab` | Previously three native clients read account/positions. They now call existing `uta.manager.probe_account_reachable` off the HTTP event loop. It accepts only complete account evidence, classifies errors without raw messages, and uses `query_uta` teardown. UI consumes `connected` / `error`; it does not consume the old Binance position count. | One existing account-probe owner; no separate route client or probe executor. Endpoint mode identifies the configured account, not trading permission. |
+| Same module's candidate-credential endpoints | Bitget still signs a candidate account-info request with `build_headers` and imports the legacy client's `BASE_URL`; Binance/OKX construct temporary CCXT balance probes. These requests do not persist candidate credentials. Credential-status/write routes are separate from the stored-account probe. | The module remains on the concrete-import allowlist. This cutover does not claim adapter-only credential ownership or remove candidate-probe side channels. |
+| `agent_runtime.scheduler._tpsl_fill_check_body` | Native Bitget plan history discovers `executeOrderId`; a UTA exact Order read proves account membership before `_claim_observed_tpsl_close`. Native exact order fills then feed `materialize_bitget_close`, with another configured-identity check. | This is an active recovery/economic-evidence path, not inert history. Its parent-trigger to execution-order relationship is not represented in current `OrderQuery` / `OrderStatusReport`; ordinary `get_order` cannot simply replace discovery. |
+| `execution.venue_capabilities.fetch_venue_capabilities` | Calls `OKXClient.load_demo_markets` for public sandbox listing facts. Cached consumers distinguish unavailable from a successfully loaded empty symbol set. | Importing a private-capable class does not make this read private. Preserve actual public listing/failure semantics when extracting it; do not replace it with account balance or an empty default. |
+
+## Independently necessary evidence boundaries
+
+The scheduler's UTA membership check precedes the durable pending-close claim:
+rejecting a foreign execution Order only after claiming would wedge an open
+Position. Plan status and trigger prices are not private Fill economics. Exact
+Fill identity, quantity, price, fees and immutable materialization remain required.
+The raw client's per-request credential resolution is distinct from UTA's
+account-identity proof; moving only its import would not converge that authority.
+
+Installed CCXT `bitget.fetch_order` selects ordinary spot/mix/UTA order-detail
+endpoints. `fetch_closed_orders` has a trigger-history option, but its normalized
+parent/child evidence and both Bitget profiles still need validation before the
+scheduler can switch. The native client's public `get_plan_order_history` uses
+the v2 plan-history endpoint; a separately defined `_uta_plan_history` does not
+by itself prove that the scheduler dispatches to it.
+
+## Verification boundary
+
+Stored-probe regression covers six account modes, complete versus partial
+reports, execution off the request loop, refusal to construct native clients,
+and sanitized failure output. Manager tests retain identity-mismatch teardown.
+These mocked reads grant neither Live authority nor account qualification.
+The unchanged concrete-import allowlist is deliberately not a claim that all
+private I/O is contained: candidate probes and TP/SL recovery remain visible
+above, and package movement alone cannot settle their ownership.

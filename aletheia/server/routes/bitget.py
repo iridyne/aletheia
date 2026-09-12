@@ -14,8 +14,9 @@ from aletheia.config.loader import load_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
 from aletheia.exchanges.bitget.auth import build_headers
-from aletheia.exchanges.bitget.client import BitgetClient, BASE_URL
+from aletheia.exchanges.bitget.client import BASE_URL
 from aletheia.trust.live_unlock import active_live_profile_conflict
+from aletheia.uta.manager import probe_account_reachable
 
 router = APIRouter(prefix="/api", tags=["bitget"])
 
@@ -78,13 +79,13 @@ class TestConnectionRequest(BaseModel):
 
 @router.post("/bitget/test-connection")
 async def test_connection(req: TestConnectionRequest | None = None):
-    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
-
     cfg = load_config()
     mode = (req.mode if req and req.mode else cfg.exchange.mode)
-    client = BitgetClient(mode=mode, profile=configured_bitget_profile())
-    result = await client.test_connection()
-    return result
+    if mode not in ("demo", "live"):
+        raise HTTPException(400, "mode must be 'demo' or 'live'")
+    execution_mode = "bitget_demo" if mode == "demo" else "bitget_live_limited"
+    result = await asyncio.to_thread(probe_account_reachable, execution_mode, cfg=cfg)
+    return {**result, "mode": mode}
 
 
 class TestCandidateCredsRequest(BaseModel):
@@ -201,28 +202,9 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
     """Test Binance Futures connectivity with stored credentials."""
     if req.mode not in ("testnet", "live"):
         raise HTTPException(400, "mode must be 'testnet' or 'live'")
-    client = None
-    try:
-        from aletheia.exchanges.binance.client import BinanceClient
-        client = BinanceClient(mode=req.mode)
-        positions = await client.get_positions()
-        return {"connected": True, "mode": req.mode, "positions_count": len(positions)}
-    except Exception as e:
-        err_msg = str(e)
-        if "not configured" in err_msg.lower():
-            return {"connected": False, "error": "credentials_not_configured"}
-        if "timeout" in err_msg.lower():
-            return {"connected": False, "error": "connection_timeout"}
-        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
-        # request (incl. candidate api_key/secret) or internal URLs. The categorised
-        # cases above cover the actionable ones; fall back to the exception class name.
-        return {"connected": False, "error": type(e).__name__}
-    finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception:
-                pass
+    execution_mode = "binance_testnet" if req.mode == "testnet" else "binance_live_limited"
+    result = await asyncio.to_thread(probe_account_reachable, execution_mode)
+    return {**result, "mode": req.mode}
 
 
 # Legacy endpoint
@@ -334,28 +316,9 @@ async def okx_test_connection(req: OkxTestRequest = OkxTestRequest()):
     """Test OKX connectivity with stored credentials."""
     if req.mode not in ("demo", "live"):
         raise HTTPException(400, "mode must be 'demo' or 'live'")
-    client = None
-    try:
-        from aletheia.exchanges.okx.client import OKXClient
-        client = OKXClient(mode=req.mode)
-        await client.fetch_balance()
-        return {"connected": True, "mode": req.mode}
-    except Exception as e:
-        err_msg = str(e)
-        if "not configured" in err_msg.lower():
-            return {"connected": False, "error": "credentials_not_configured"}
-        if "timeout" in err_msg.lower():
-            return {"connected": False, "error": "connection_timeout"}
-        # error-leak 2.4: never echo raw str(e) — a CCXT/exchange error can carry the
-        # request (incl. candidate api_key/secret) or internal URLs. The categorised
-        # cases above cover the actionable ones; fall back to the exception class name.
-        return {"connected": False, "error": type(e).__name__}
-    finally:
-        if client is not None:
-            try:
-                await client.close()
-            except Exception:
-                pass
+    execution_mode = "okx_demo" if req.mode == "demo" else "okx_live_limited"
+    result = await asyncio.to_thread(probe_account_reachable, execution_mode)
+    return {**result, "mode": req.mode}
 
 
 class OkxCandidateRequest(BaseModel):

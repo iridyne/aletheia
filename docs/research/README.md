@@ -19,6 +19,10 @@ Research files are evidence, audits, and explorations. They can guide work but d
 
 ## Current audit entry points
 
+- [Slim Core private-I/O reachability — 2026-09-13](audits/SLIM_CORE_PRIVATE_IO_2026-09-13.md)
+  distinguishes stored-account probes, candidate credentials, TP/SL recovery and
+  public listing reads at the remaining concrete-client imports. It is bounded
+  source evidence, not whole-product ownership or runtime qualification.
 - [OKX order-book continuity audit — 2026-08-17](audits/OKX_ORDERBOOK_CONTINUITY_AUDIT_2026-08-17.md)
   records the #1002 repository-wide scope check against OKX's checksum
   deprecation and the active REST-only snapshot boundary.
