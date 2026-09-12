@@ -31,6 +31,9 @@ def setup_env(tmp_path, monkeypatch):
     # mirroring what the orchestrator does before invoking any agent.
     from aletheia.agent_runtime.tool_registry import init_tool_registry
     init_tool_registry()
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr("aletheia.agents.dreaming_agent.get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
 
 
 def _mock_llm_unavailable(monkeypatch):
@@ -662,6 +665,25 @@ async def test_dreaming_review_not_available_when_no_trades(tmp_path, monkeypatc
     result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
     assert any(o.startswith("daily_review:") for o in result["outputs"]), result
     assert "NOT_AVAILABLE" in captured["content"], captured["content"]
+
+
+async def test_unassigned_deep_keeps_deterministic_review_without_inference(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.agents import dreaming_agent
+    from aletheia.model_provider.router import ProviderNotConfigured
+
+    def unassigned(_tier):
+        raise ProviderNotConfigured("deep")
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("Unassigned tier must not invoke another model")
+
+    monkeypatch.setattr(dreaming_agent, "get_provider_for_tier", unassigned)
+    monkeypatch.setattr(dreaming_agent, "llm_complete", forbidden)
+    monkeypatch.setattr(dreaming_agent, "llm_structured", forbidden)
+    result = await dreaming_agent.run_dreaming_agent(permission_mode="Observe")
+    assert any(item.startswith("daily_review:") for item in result["outputs"])
+    assert any("not_configured: deep" in item for item in result["errors"])
 
 
 async def test_dreaming_review_profit_day_verdict(tmp_path, monkeypatch):

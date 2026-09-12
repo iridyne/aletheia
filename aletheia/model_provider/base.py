@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncIterator
 import asyncio
+import copy
 import json
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -9,6 +10,12 @@ from typing import Any, Literal
 
 _ACTIVE_STRUCTURED_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_structured_cost_request", default=None)
 _ACTIVE_STREAM_REQUEST: ContextVar[Any | None] = ContextVar("aletheia_active_stream_cost_request", default=None)
+
+
+def clone_provider_with_model(provider: "ModelProvider", model: str) -> "ModelProvider":
+    clone = copy.copy(provider)
+    setattr(clone, "model", model)
+    return clone
 
 
 async def _record_llm_attempt_async(**kwargs: Any) -> None:

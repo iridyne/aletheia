@@ -90,6 +90,9 @@ async def test_observer_preserves_scanner_valid_until(tmp_path, monkeypatch):
         }, None)
 
     monkeypatch.setattr(observer, "llm_structured", read)
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr(observer, "get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
     monkeypatch.setattr(observer, "record_step", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(observer, "log_tool", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

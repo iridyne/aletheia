@@ -20,6 +20,7 @@ submission. Genuine outcomes require verified economic evidence.
 | Ordinary equities and prediction markets | Outside active instrument scope; the separately authorized CN extension remains disabled and is not a runtime support claim |
 | Retired simulator | Archived; no current execution, account, matching, protection, settlement, or qualification capability |
 | Retired CLI/native/OAuth/workspace model providers | Codex, Claude and Pi model subprocesses, fixed-origin native adapters, Databricks workspace/serving transport, subscription OAuth and Codex device login are removed; historical config remains inert and never silently rebinds to an HTTP endpoint. See the [inference boundary](../design/contracts/llm_inference_harness_contract.md). |
+| HTTP task-tier model selection | Fast and Deep select explicit endpoint/model pairs, including different models on one endpoint. Settings verifies the selected pair before assignment; unassigned tiers remain unavailable without borrowing Default. Historical provider-only roles are read-only decoded, not runtime aliases. Local deterministic checks do not prove a deployed endpoint or successful remote model call. |
 
 Learning and research remain subject to their existing owner admission and
 authority gates. Neither registration, a green focused test, nor an archived

@@ -24,9 +24,14 @@ export interface ProviderConfigView {
 
 export interface ModelConfigView {
 	default_provider: string;
-	deep_provider: string | null;
-	fast_provider: string | null;
+	deep: ModelSelection | null;
+	fast: ModelSelection | null;
 	providers: Record<string, ProviderConfigView>;
+}
+
+export interface ModelSelection {
+	endpoint_id: string;
+	model_id: string;
 }
 
 export interface ProviderTypeView {

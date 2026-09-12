@@ -289,7 +289,7 @@ def check_would_block(
     if tier:
         try:
             from aletheia.model_provider.router import get_provider_for_tier
-            resolved_tier_provider = get_provider_for_tier(tier)
+            resolved_tier_provider = get_provider_for_tier(tier).endpoint_id
         except Exception:
             resolved_tier_provider = None
 

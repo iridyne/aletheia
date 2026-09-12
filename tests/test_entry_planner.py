@@ -1161,6 +1161,9 @@ def test_entry_hypothesis_portable_schema_requires_every_strict_property():
 
 
 def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
+    from aletheia.config.schema import ModelSelection
+
+    selection = ModelSelection(endpoint_id="deep-paid", model_id="large")
     active = 0
     peak = 0
     calls = 0
@@ -1174,7 +1177,8 @@ def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
         peak = max(peak, active)
         await asyncio.sleep(0)
         active -= 1
-        provider_names.append(provider_name)
+        assert provider_name is selection
+        provider_names.append(provider_name.endpoint_id)
         return {"status": "no_plan", "model_invoked": True}
 
     async def capacity(provider_name, **_kwargs):
@@ -1190,7 +1194,7 @@ def test_entry_planner_batch_uses_bounded_parallel_workers(monkeypatch):
     )
     monkeypatch.setattr(
         "aletheia.model_provider.router.get_provider_for_tier",
-        lambda _tier: "deep-paid",
+        lambda _tier: selection,
     )
     monkeypatch.setattr(
         "aletheia.model_provider.broker.inference_broker.available_capacity",
@@ -1230,6 +1234,12 @@ def test_ineligible_candidate_cannot_complete_claimed_entry_plan():
 
 
 def test_entry_planner_batch_cancels_and_awaits_siblings_on_fatal_failure(monkeypatch):
+    from aletheia.config.schema import ModelSelection
+
+    monkeypatch.setattr(
+        "aletheia.model_provider.router.get_provider_for_tier",
+        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"),
+    )
     started = 0
     all_started = asyncio.Event()
     cancelled = 0

@@ -220,6 +220,19 @@ def test_check_would_block_scopes_by_provider():
     assert obs_other == []
 
 
+def test_tier_budget_uses_selected_endpoint_not_pair_or_model(monkeypatch):
+    from aletheia.config.schema import ModelSelection
+
+    monkeypatch.setattr("aletheia.model_provider.router.get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="shared", model_id="large"))
+    add_budget(scope="provider_tier", subject="deep", usd_cap=1.0, window="daily")
+    _seed_cost(event_id="shared-tier", cost=0.9, provider="shared")
+    _seed_cost(event_id="other-tier", cost=100, provider="other")
+    observations = check_would_block(estimated_cost_usd=0.2, tier="deep")
+    assert len(observations) == 1
+    assert observations[0]["subject"] == "shared"
+
+
 def test_check_would_block_ignores_disabled_policies():
     row = add_budget(
         scope="system",

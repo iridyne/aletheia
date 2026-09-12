@@ -5,7 +5,7 @@ import time
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_complete, log_tool
 from aletheia.agent_runtime.permissions import is_tool_permitted
-from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 from aletheia.knowledge.manager import create_research_note
 from aletheia.storage.repositories import list_trade_proposals, list_risk_decisions
 
@@ -44,15 +44,18 @@ async def run_risk_critic(permission_mode: str = "Observe", run_id: str | None =
         f"Rejection details:\n{rejection_detail}"
     )
 
-    content, err = await llm_complete(
-        system="You are a risk critic. Given recent proposal/risk-decision stats, identify risk "
-               "patterns or lessons and recommend guardrails. You cannot change hard limits — only advise. "
-               "Keep under 200 words.",
-        user=f"{ctx}\n\nWrite a risk lesson note.",
-        max_tokens=600,
-        provider=get_provider_for_tier("deep"),
-        caller="risk_critic.review",
-    )
+    try:
+        content, err = await llm_complete(
+            system="You are a risk critic. Given recent proposal/risk-decision stats, identify risk "
+                   "patterns or lessons and recommend guardrails. You cannot change hard limits — only advise. "
+                   "Keep under 200 words.",
+            user=f"{ctx}\n\nWrite a risk lesson note.",
+            max_tokens=600,
+            provider=get_provider_for_tier("deep"),
+            caller="risk_critic.review",
+        )
+    except ProviderNotConfigured as exc:
+        content, err = None, f"llm_unavailable: {exc}"
     log_tool(run_id, "llm_complete", "observe", True)
     if err:
         errors.append(err)

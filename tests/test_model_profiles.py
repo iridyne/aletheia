@@ -38,6 +38,185 @@ def test_clean_model_state_is_not_a_default_provider_inconsistency():
 
 
 @pytest.mark.anyio
+async def test_tiers_select_distinct_models_on_one_endpoint_without_rebinding_it(client, monkeypatch):
+    from aletheia.config.loader import load_config
+    from aletheia.model_provider.base import ModelResponse
+
+    http, _ = client
+    created = await http.post("/api/settings/model-profiles", json={
+        "profile_id": "shared", "display_name": "Shared HTTP", "type": "openai_compatible",
+        "base_url": "http://model.test/v1", "model": "preferred", "enabled": True,
+    })
+    assert created.status_code == 201
+    probed = []
+
+    async def probe(endpoint, provider, request, **kwargs):
+        probed.append((endpoint, provider.model))
+        return ModelResponse(content="OK", model=provider.model)
+
+    monkeypatch.setattr("aletheia.model_provider.broker.brokered_complete", probe)
+    pairs = {
+        "fast": {"endpoint_id": "shared", "model_id": "small"},
+        "deep": {"endpoint_id": "shared", "model_id": "large"},
+    }
+    assigned = await http.post("/api/settings/model-routing", json=pairs)
+    assert assigned.status_code == 200, assigned.text
+    view = (await http.get("/api/model")).json()
+    assert {tier: view.get(tier) for tier in pairs} == pairs
+    assert sorted(probed) == [("shared", "large"), ("shared", "small")]
+    assert load_config().models.providers["shared"].model == "preferred"
+
+
+def test_current_missing_or_unknown_tier_does_not_use_default(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
+    from aletheia.model_provider import router
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "default"
+    cfg.models.providers["default"] = ProviderConfig(model="preferred")
+    monkeypatch.setattr(router, "load_config", lambda: cfg)
+    for tier in ("fast", "deep", "typo"):
+        with pytest.raises(ValueError):
+            router.get_provider_for_tier(tier)
+
+
+def test_historical_tier_decode_binds_old_resolved_model_without_mutating_input():
+    import copy
+    from aletheia.config.schema import ModelsConfig
+
+    raw = {
+        "default_provider": "default", "deep_provider": "deep", "fast_provider": None,
+        "providers": {"default": {"model": "small"}, "deep": {"model": "large"}},
+    }
+    original = copy.deepcopy(raw)
+    parsed = ModelsConfig.model_validate(raw).model_dump()
+    assert parsed.get("fast") == {"endpoint_id": "default", "model_id": "small"}
+    assert parsed.get("deep") == {"endpoint_id": "deep", "model_id": "large"}
+    assert "fast_provider" not in parsed and "deep_provider" not in parsed
+    assert raw == original
+
+
+@pytest.mark.parametrize("models", [
+    {"providers": [], "deep_provider": "old"},
+    {"deep_provider": []},
+    {"deep_provider": False},
+    {"deep_provider": "old", "deep": None},
+])
+def test_malformed_or_ambiguous_historical_tiers_fail_validation(models):
+    from pydantic import ValidationError
+    from aletheia.config.schema import ModelsConfig
+
+    with pytest.raises(ValidationError):
+        ModelsConfig.model_validate(models)
+
+
+@pytest.mark.anyio
+async def test_historical_tier_loading_never_writes_or_reads_credentials(client, monkeypatch):
+    import yaml
+    import aletheia.config.loader as loader
+    from aletheia.config.schema import ProviderConfig
+
+    _, directory = client
+    cfg = loader.load_config()
+    cfg.models.default_provider = "shared"
+    cfg.models.providers["shared"] = ProviderConfig(
+        type="openai_compatible", model="preferred", base_url="http://model.test/v1",
+        api_key_secret_ref="test-reference",
+    )
+    loader.save_config(cfg)
+    path = directory / "config.yaml"
+    raw = yaml.safe_load(path.read_text())
+    raw["models"].pop("deep")
+    raw["models"].pop("fast")
+    raw["models"].update(deep_provider="shared", fast_provider=None)
+    path.write_text(yaml.safe_dump(raw))
+    original = path.read_bytes()
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Historical tier decode must not write config or resolve credentials")
+
+    monkeypatch.setattr(loader, "save_config", forbidden)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret", forbidden)
+    parsed = loader.load_config(use_cache=False)
+    assert parsed.models.fast == parsed.models.deep
+    assert parsed.models.fast.model_id == "preferred"
+    assert path.read_bytes() == original
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["probe", "identity_drift"])
+async def test_tier_assignment_failure_preserves_roles_and_preferred_model(client, monkeypatch, failure):
+    from aletheia.config.loader import load_config, mutate_config
+    from aletheia.model_provider.base import ModelResponse
+
+    http, _ = client
+    created = await http.post("/api/settings/model-profiles", json={
+        "profile_id": "shared", "display_name": "Shared HTTP", "type": "openai_compatible",
+        "base_url": "http://model.test/v1", "model": "preferred", "enabled": True,
+    })
+    assert created.status_code == 201
+    before = load_config().models.model_dump()
+
+    async def probe(endpoint, provider, request, **kwargs):
+        if provider.model == "small":
+            if failure == "probe":
+                raise RuntimeError("test probe failure")
+            def change(cfg):
+                cfg.models.providers[endpoint].base_url = "http://changed.test/v1"
+                return True
+            mutate_config(change)
+        return ModelResponse(content="OK", model=provider.model)
+
+    monkeypatch.setattr("aletheia.model_provider.broker.brokered_complete", probe)
+    response = await http.post("/api/settings/model-routing", json={
+        "deep": {"endpoint_id": "shared", "model_id": "large"},
+        "fast": {"endpoint_id": "shared", "model_id": "small"},
+    })
+    assert response.status_code == (422 if failure == "probe" else 409), response.text
+    after = load_config().models.model_dump()
+    assert after["deep"] == before["deep"] is None
+    assert after["fast"] == before["fast"] is None
+    assert after["providers"]["shared"]["model"] == "preferred"
+    if failure == "probe":
+        assert after == before
+    else:
+        assert after["providers"]["shared"]["base_url"] == "http://changed.test/v1"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("payload", [
+    {"deep_provider": "shared"},
+    {"fast": {"endpoint_id": "shared", "model_id": " "}},
+    {"fast": {"endpoint_id": " ", "model_id": "small"}},
+    {"deep": {"endpoint_id": "shared", "model_id": "large", "command": "unused"}},
+])
+async def test_current_tier_requests_reject_legacy_and_incomplete_identity(client, payload):
+    http, _ = client
+    response = await http.post("/api/settings/model-routing", json=payload)
+    assert response.status_code == 422
+
+
+def test_tier_provider_clones_keep_independent_models_and_shared_endpoint(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.config.schema import AletheiaConfig, ModelSelection, ProviderConfig
+    from aletheia.model_provider import router
+
+    cfg = AletheiaConfig()
+    cfg.models.providers["shared"] = ProviderConfig(
+        type="openai_compatible", base_url="http://model.test/v1", model="preferred", enabled=True,
+    )
+    cached = SimpleNamespace(model="preferred", base_url="http://model.test/v1")
+    monkeypatch.setattr(router, "load_config", lambda: cfg)
+    monkeypatch.setattr(router, "_cache", {"shared": cached})
+    small = router.get_provider(ModelSelection(endpoint_id="shared", model_id="small"))
+    large = router.get_provider(ModelSelection(endpoint_id="shared", model_id="large"))
+    assert small is not large and small is not cached and large is not cached
+    assert (small.model, large.model, cached.model) == ("small", "large", "preferred")
+    assert small.base_url == large.base_url == cached.base_url
+
+
+@pytest.mark.anyio
 async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client):
     http, _ = client
 
@@ -46,8 +225,8 @@ async def test_clean_model_state_has_no_enabled_provider_or_routing_role(client)
     assert response.status_code == 200
     assert response.json() == {
         "default_provider": "",
-        "deep_provider": None,
-        "fast_provider": None,
+        "deep": None,
+        "fast": None,
         "providers": {},
     }
 
@@ -96,8 +275,9 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     assert ping.status_code == 200
     assert ping.json()["ok"] is False
     assert ping.json()["verification_persisted"] is False
-    for role in ("default_provider", "deep_provider", "fast_provider"):
-        response = await http.post("/api/settings/model-routing", json={role: "historical-cli"})
+    for role in ("default_provider", "deep", "fast"):
+        target = "historical-cli" if role == "default_provider" else {"endpoint_id": "historical-cli", "model_id": "m1"}
+        response = await http.post("/api/settings/model-routing", json={role: target})
         assert response.status_code == 422
     for path in ("/api/model/detect-models", "/api/model/test-candidate"):
         response = await http.post(path, json={"provider": "historical-cli"})
@@ -544,8 +724,8 @@ async def test_role_assignment_does_not_enable_profile(client):
         "/api/settings/model-routing",
         json={
             "default_provider": "configured-off",
-            "deep_provider": "configured-off",
-            "fast_provider": None,
+            "deep": {"endpoint_id": "configured-off", "model_id": "test-model"},
+            "fast": None,
         },
     )
 
@@ -553,8 +733,8 @@ async def test_role_assignment_does_not_enable_profile(client):
     model = (await http.get("/api/model")).json()
     assert not model["providers"]["configured-off"]["enabled"]
     assert model["default_provider"] == "configured-off"
-    assert model["deep_provider"] == "configured-off"
-    assert isinstance(model["fast_provider"], type(None))
+    assert model["deep"] == {"endpoint_id": "configured-off", "model_id": "test-model"}
+    assert model["fast"] is None
     with pytest.raises(ValueError, match="disabled"):
         get_provider("configured-off")
 
@@ -622,8 +802,8 @@ async def test_confirmed_delete_clears_roles_and_provider_owned_secret(client):
         "/api/settings/model-routing",
         json={
             "default_provider": "active-api",
-            "deep_provider": "active-api",
-            "fast_provider": "active-api",
+            "deep": {"endpoint_id": "active-api", "model_id": "active-model"},
+            "fast": {"endpoint_id": "active-api", "model_id": "active-model"},
         },
     )
     secret_ref = "model.profile.active-api.api_key"
@@ -641,8 +821,8 @@ async def test_confirmed_delete_clears_roles_and_provider_owned_secret(client):
     model = (await http.get("/api/model")).json()
     assert model["providers"] == {}
     assert model["default_provider"] == ""
-    assert model["deep_provider"] is None
-    assert model["fast_provider"] is None
+    assert model["deep"] is None
+    assert model["fast"] is None
     assert get_secret(secret_ref) is None
     assert secret not in deleted.text
 

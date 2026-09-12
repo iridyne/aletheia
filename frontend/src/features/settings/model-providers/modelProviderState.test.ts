@@ -14,8 +14,8 @@ import type {
 
 const clean: ModelConfigView = {
 	default_provider: "",
-	deep_provider: null,
-	fast_provider: null,
+	deep: null,
+	fast: null,
 	providers: {},
 };
 
@@ -105,8 +105,8 @@ describe("model provider settings state", () => {
 		const configured = {
 			...clean,
 			default_provider: "main",
-			deep_provider: "deep",
-			fast_provider: "fast",
+			deep: { endpoint_id: "deep", model_id: "large" },
+			fast: { endpoint_id: "fast", model_id: "small" },
 		};
 		expect(routingRoles(configured, "main")).toEqual(["default"]);
 		expect(routingRoles(configured, "deep")).toEqual(["deep"]);

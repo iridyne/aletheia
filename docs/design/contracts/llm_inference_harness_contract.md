@@ -56,6 +56,35 @@ uses a caller that is absent from `CALLER_SPECS`.
 Application-level physical `ModelRequest` construction is checked separately;
 each such request must carry the logical envelope into provider tracing.
 
+## Endpoint/model routing
+
+Fast and Deep each own an explicit `(endpoint_id, model_id)` selection. They may
+select different models on one HTTP endpoint without changing that endpoint's
+preferred model, credentials, activation, or another tier. A missing selection
+does not borrow Default; unknown tiers fail closed. Default and explicit untiered
+endpoint overrides retain their existing preferred-model semantics.
+
+Historical `fast_provider` / `deep_provider` fields decode into the pair the old
+configuration resolved, without modifying the input or writing a migration.
+Unresolved historical identities remain unavailable. These fields are not current
+runtime aliases and are rejected by routing requests. Mixed old/new tier fields
+are invalid. Clearing a current selection leaves it empty.
+
+Assignment verifies the exact endpoint/model through the existing bounded probe,
+then rechecks its identity under the existing configuration mutation lock. Probe
+failure or identity drift cannot partially assign roles or change the endpoint's
+preferred model. Endpoint verification for a different preferred model is not
+proof of the selected model; successful routing probes retain their own audit
+metadata. Discovery supplies suggestions, never an implicit assignment.
+
+Helpers preserve the selected model through dispatch while broker admission,
+fallback configuration and budget attribution retain the endpoint identity.
+Per-call model selection never mutates the cached preferred-model provider.
+Missing inference configuration cannot authorize new planning; recovery of an
+already validated hypothesis remains compilation-only and needs no model slot.
+Caller-owned unavailable outcomes remain intact: no inferred lessons or market
+reads are fabricated, and the deterministic daily review needs no model call.
+
 ## Logical call envelope
 
 One `InferenceCall` is created before provider admission and remains stable

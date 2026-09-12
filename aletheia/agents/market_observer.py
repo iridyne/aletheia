@@ -20,7 +20,7 @@ from aletheia.agents.helpers import (
 )
 from aletheia.agent_runtime.permissions import is_tool_permitted
 from aletheia.data.freshness import fresh_row
-from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 from aletheia.storage.repositories import (
     find_opportunity_by_symbol_snapshot,
     update_open_opportunity,
@@ -1637,19 +1637,22 @@ async def _analyze_symbol(
         len(context),
         scanner_family or "none",
     )
-    read, err = await llm_structured(
-        system=_SYSTEM_PROMPT,
-        user=f"/no_think\nMarket data for {symbol}:\n{context}{sym_memory}{scanner_hint}\n\nReturn the market read JSON.",
-        schema=MarketRead,
-        max_tokens=2048,
-        provider=get_provider_for_tier("deep"),
-        caller="market_observer.market_read",
-        context_adapter=technical_adapter,
-        context_artifacts=context_artifacts,
-        context_symbol=symbol,
-        deadline=llm_deadline,
-        reasoning_effort="none",
-    )
+    try:
+        read, err = await llm_structured(
+            system=_SYSTEM_PROMPT,
+            user=f"/no_think\nMarket data for {symbol}:\n{context}{sym_memory}{scanner_hint}\n\nReturn the market read JSON.",
+            schema=MarketRead,
+            max_tokens=2048,
+            provider=get_provider_for_tier("deep"),
+            caller="market_observer.market_read",
+            context_adapter=technical_adapter,
+            context_artifacts=context_artifacts,
+            context_symbol=symbol,
+            deadline=llm_deadline,
+            reasoning_effort="none",
+        )
+    except ProviderNotConfigured as exc:
+        read, err = None, f"llm_unavailable: {exc}"
     _llm_duration = _time.monotonic() - _t0
     _step_times["llm_structured"] = _llm_duration
     assessment_inference_call_id = current_inference_call_id()

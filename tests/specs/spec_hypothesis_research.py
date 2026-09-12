@@ -193,6 +193,9 @@ async def test_missing_t0_context_fails_closed_without_research_or_authority(mon
         )],
     )
     monkeypatch.setattr(hypothesis_research, "llm_structured", narrowed_review)
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr(hypothesis_research, "get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
     partial = await hypothesis_research.research_learning_hypothesis(
         candidate_explanation="A broad momentum block may improve 4h net utility.",
         source_artifact_ids=["case-1", "case-2"],
@@ -578,6 +581,9 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
         }, None
 
     monkeypatch.setattr(hypothesis_research, "llm_structured", ready_review)
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr(hypothesis_research, "get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
     wired = await guard_routing.route_automatic_block_recommendation(
         {"action": "block_scanner", "scanner": "momentum"},
         evidence=evidence,

@@ -145,3 +145,33 @@ for the shared internal mutation function. Preserve current verification,
 credential rollback, cache/broker invalidation and redacted audit behavior.
 Historical configuration remains readable; there is no forwarding endpoint or
 automatic mutation. Endpoint/model-pair routing remains a separate convergence.
+
+## Explicit task-tier model selection
+
+Replace the provider-only fast/deep fields with explicit endpoint/model pairs.
+The existing Default role and explicit endpoint calls retain their current
+preferred-model behavior; neither supplies a fallback for an unassigned current
+fast/deep tier. Unknown tiers fail rather than selecting Default. Historical
+provider-only tier configuration is decoded deterministically to the endpoint
+and model it previously resolved, without network, credential reads or an
+automatic config rewrite. Missing/retired historical targets remain visible
+and unavailable; current empty assignments stay empty. No runtime alias for the
+old fields remains.
+
+The router reuses its existing endpoint instance/cache and the existing
+request-local model clone behavior. Selecting two models on one endpoint must
+not mutate that shared instance. Helpers preserve the selected pair through
+dispatch while broker capacity, budget lookup and Planner provider provenance
+continue to identify the endpoint. Existing explicit endpoint fallback lists,
+timeouts, structured repair and physical-attempt accounting remain unchanged.
+
+Settings exposes endpoint and model selection together, with manual model IDs
+and optional existing catalogue discovery. Assigning a nonempty tier performs
+the existing bounded usability probe for that exact model and rechecks its
+configuration identity against the latest committed config before a targeted
+role write. Probe failure cannot change roles or the endpoint's preferred model.
+Successful assignment audits the pair and probe identity; it does not claim that
+the endpoint's preferred-model verification proves a different model. Existing
+probe persistence may update endpoint verification only on an exact identity
+match. Clearing a role and deleting its endpoint leave the tier unassigned;
+assignment never enables an endpoint or changes credential scope.

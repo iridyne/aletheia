@@ -21,6 +21,7 @@ from aletheia.model_provider.base import (
     portable_json_schema_payload,
 )
 from aletheia.model_provider.inference_contract import InferenceCall, build_inference_call
+from aletheia.config.schema import ModelSelection
 from aletheia.model_provider.router import get_provider_async, get_provider
 from aletheia.model_provider.fallback import BudgetExceededError, complete_with_fallback
 
@@ -46,8 +47,10 @@ def _exception_detail(exc: BaseException) -> str:
     return f"{name}: {message}" if message else name
 
 
-def _resolve_provider_name(provider: str | None) -> str | None:
+def _resolve_provider_name(provider: str | ModelSelection | None) -> str | None:
     """Capture the default role before resolving its provider object."""
+    if isinstance(provider, ModelSelection):
+        return provider.endpoint_id
     if provider is not None:
         return provider
     try:
@@ -276,7 +279,7 @@ async def llm_complete(
     user: str,
     *,
     max_tokens: int = 800,
-    provider: str | None = None,
+    provider: str | ModelSelection | None = None,
     include_harness_header: bool | None = None,
     context_adapter: ContextAdapter | str | None = None,
     caller: str = "unregistered",
@@ -290,16 +293,9 @@ async def llm_complete(
 
     Never raises — on any failure returns (None, error_message) so the agent can
     record a clean error and still complete its run.
-    provider: explicit provider name (or None → use default_provider).
+    provider: explicit endpoint/model pair or endpoint name; None uses Default.
     """
-    # #161 fix: preserve the provider NAME so complete_with_fallback keys health
-    # tracking + cooldown + candidate-model resolution against the tier the
-    # caller actually asked for (e.g. get_provider_for_tier("deep") →
-    # "anthropic"), not cfg.models.default_provider. Without this, a tier
-    # provider's cooldown state was being tracked under default_provider's
-    # name, so a deep-tier failure would (a) never trip its own model's
-    # cooldown, and (b) fall back through default_provider's candidate list —
-    # not the tier's.
+    # Preserve endpoint identity for accounting, cooldown and explicit fallbacks.
     provider_name = _resolve_provider_name(provider)
     rendered_system, adapter_id, context_manifest = _prepare_context_adapter(
         system,
@@ -323,7 +319,7 @@ async def llm_complete(
     )
     _record_call_started(inference_call, context_artifacts, context_symbol)
     try:
-        provider_instance = await get_provider_async(provider_name)
+        provider_instance = await get_provider_async(provider if isinstance(provider, ModelSelection) else provider_name)
         resp = await complete_with_fallback(
             ModelRequest(
                 messages=messages,
@@ -646,7 +642,7 @@ async def llm_structured(
     *,
     schema,
     max_tokens: int = 2048,
-    provider: str | None = None,
+    provider: str | ModelSelection | None = None,
     fallback_to_defaults: bool = False,
     include_harness_header: bool | None = None,
     context_adapter: ContextAdapter | str | None = None,
@@ -753,7 +749,7 @@ async def llm_structured(
         return None, error
 
     try:
-        provider_instance = await get_provider_async(provider_name)
+        provider_instance = await get_provider_async(provider if isinstance(provider, ModelSelection) else provider_name)
         schema_dict = model_json_schema_payload(schema)
         portable_schema_dict = portable_json_schema_payload(schema)
         base_messages = [{"role": "user", "content": user}]
@@ -1053,7 +1049,7 @@ async def llm_stream(
     user: str,
     *,
     max_tokens: int = 800,
-    provider: str | None = None,
+    provider: str | ModelSelection | None = None,
     include_harness_header: bool | None = None,
     context_adapter: ContextAdapter | str | None = None,
     caller: str = "unregistered.stream",
@@ -1088,7 +1084,7 @@ async def llm_stream(
     )
     _record_call_started(inference_call, context_artifacts, context_symbol)
     try:
-        provider_instance = await get_provider_async(provider_name)
+        provider_instance = await get_provider_async(provider if isinstance(provider, ModelSelection) else provider_name)
         from aletheia.model_provider.broker import brokered_stream
 
         async for chunk in brokered_stream(

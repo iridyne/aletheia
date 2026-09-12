@@ -16,6 +16,7 @@ import type {
 	ApiProfileDraft,
 	ModelConfigView,
 	ModelHealthView,
+	ModelSelection,
 	ProviderConfigView,
 	ProviderTypeView,
 	RoutingRole,
@@ -41,102 +42,115 @@ function createModelInvalidator(qc: QueryClient) {
 	};
 }
 
-function RoleButtons({
-	providerId,
-	model,
-	qc,
+const EMPTY_SELECTION: ModelSelection = { endpoint_id: "", model_id: "" };
+
+function TierRouting({
+    tier, model, qc, onDirty,
 }: {
-	providerId: string;
-	model: ModelConfigView;
-	qc: QueryClient;
+    tier: "deep" | "fast";
+    model: ModelConfigView;
+    qc: QueryClient;
+    onDirty?: (id: string, dirty: boolean) => void;
 }) {
-	const invalidate = createModelInvalidator(qc);
-	const mutation = useMutation({
-		mutationFn: (role: RoutingRole) =>
-			api.updateModelRouting({
-				[`${role}_provider`]: providerId,
-			}),
-		onSuccess: invalidate,
-	});
-	const roles = routingRoles(model, providerId);
-	return (
-		<div className="model-role-actions" aria-label="Routing roles">
-			{(Object.keys(ROLE_LABELS) as RoutingRole[]).map((role) => (
-				<button
-					key={role}
-					type="button"
-					className={roles.includes(role) ? "active" : "secondary"}
-					onClick={() => mutation.mutate(role)}
-					disabled={mutation.isPending}
-				>
-					{ROLE_LABELS[role]}
-				</button>
-			))}
-		</div>
-	);
+    const current = model[tier] ?? EMPTY_SELECTION;
+    const [draft, setDraft] = useState(current);
+    const listId = useId();
+    const dirty = JSON.stringify(draft) !== JSON.stringify(current);
+    useSettingsDraftLifecycle({
+        id: `model-routing-${tier}`, dirty, onDirty,
+        serverKey: JSON.stringify(current), adoptServer: () => setDraft(current),
+    });
+    const catalogue = useQuery({
+        queryKey: ["model-catalogue", draft.endpoint_id],
+        queryFn: () => api.detectModels({ provider: draft.endpoint_id }),
+        enabled: false,
+        retry: false,
+    });
+    const mutation = useMutation({
+        mutationFn: (selection: ModelSelection | null) => api.updateModelRouting({ [tier]: selection }),
+        onSuccess: (_result, selection) => {
+            qc.setQueryData(["model"], (previous: ModelConfigView | undefined) =>
+                previous ? { ...previous, [tier]: selection } : previous);
+            setDraft(selection ?? EMPTY_SELECTION);
+            createModelInvalidator(qc)();
+        },
+    });
+    return (
+        <fieldset disabled={mutation.isPending}>
+            <legend>{ROLE_LABELS[tier]}</legend>
+            <label>
+                <span>{ROLE_LABELS[tier]} endpoint</span>
+                <select value={draft.endpoint_id} onChange={(event) =>
+                    setDraft({ endpoint_id: event.target.value, model_id: "" })}>
+                    <option value="">Not assigned</option>
+                    {Object.entries(model.providers).map(([id, provider]) => (
+                        <option key={id} value={id} disabled={provider.kind !== "api"}>
+                            {provider.display_name || id}{provider.kind !== "api" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
+                        </option>
+                    ))}
+                    {draft.endpoint_id && !model.providers[draft.endpoint_id] && (
+                        <option value={draft.endpoint_id} disabled>{draft.endpoint_id} (missing)</option>
+                    )}
+                </select>
+            </label>
+            <label>
+                <span>{ROLE_LABELS[tier]} model ID</span>
+                <input value={draft.model_id} list={listId} disabled={!draft.endpoint_id}
+                    onChange={(event) => setDraft({ ...draft, model_id: event.target.value })} />
+                <datalist id={listId}>
+                    {(catalogue.data?.models ?? []).map((item) => <option key={item.slug} value={item.slug}>{item.display_name}</option>)}
+                </datalist>
+            </label>
+            <button type="button" className="secondary" disabled={!draft.endpoint_id || catalogue.isFetching}
+                onClick={() => { void catalogue.refetch(); }}>Detect {ROLE_LABELS[tier]} models</button>
+            <button type="button" disabled={!!draft.endpoint_id && !draft.model_id.trim()}
+                onClick={() => mutation.mutate(draft.endpoint_id
+                    ? { endpoint_id: draft.endpoint_id, model_id: draft.model_id.trim() } : null)}>
+                {draft.endpoint_id ? `Verify & assign ${ROLE_LABELS[tier]}` : `Clear ${ROLE_LABELS[tier]}`}
+            </button>
+            {dirty && <button type="button" className="secondary" onClick={() => setDraft(current)}>Discard</button>}
+            {(mutation.error || catalogue.error) && <div role="alert">{mutationMessage(mutation.error || catalogue.error)}</div>}
+        </fieldset>
+    );
 }
 
 function RoutingBoard({
-	model,
-	qc,
+    model, qc, onDirty,
 }: {
-	model: ModelConfigView;
-	qc: QueryClient;
+    model: ModelConfigView;
+    qc: QueryClient;
+    onDirty?: (id: string, dirty: boolean) => void;
 }) {
-	const invalidate = createModelInvalidator(qc);
-	const mutation = useMutation({
-		mutationFn: ({ role, value }: { role: RoutingRole; value: string }) =>
-			api.updateModelRouting({
-				[`${role}_provider`]: value || null,
-			}),
-		onSuccess: invalidate,
-	});
-	const providers = Object.entries(model.providers).sort((left, right) =>
-		(left[1].display_name || left[0]).localeCompare(
-			right[1].display_name || right[0],
-		),
-	);
-	return (
-		<div className="model-routing-board">
-			<div>
-				<strong>Routing roles</strong>
-				<p>
-					Roles and activation are independent. Assigning a role never turns a
-					provider on.
-				</p>
-			</div>
-			<div className="model-routing-grid">
-				{(Object.keys(ROLE_LABELS) as RoutingRole[]).map((role) => {
-					const value =
-						role === "default"
-							? model.default_provider
-							: role === "deep"
-								? model.deep_provider || ""
-								: model.fast_provider || "";
-					return (
-						<label key={role}>
-							<span>{ROLE_LABELS[role]}</span>
-							<select
-								value={value}
-								onChange={(event) =>
-									mutation.mutate({ role, value: event.target.value })
-								}
-								disabled={mutation.isPending}
-							>
-								<option value="">Not assigned</option>
-								{providers.map(([providerId, provider]) => (
-									<option key={providerId} value={providerId} disabled={provider.kind !== "api"}>
-										{provider.display_name || providerId}
-										{provider.kind !== "api" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
-									</option>
-								))}
-							</select>
-						</label>
-					);
-				})}
-			</div>
-		</div>
-	);
+    const mutation = useMutation({
+        mutationFn: (value: string) => api.updateModelRouting({ default_provider: value || null }),
+        onSuccess: createModelInvalidator(qc),
+    });
+    return (
+        <div className="model-routing-board">
+            <div>
+                <strong>Routing roles</strong>
+                <p>Fast and Deep select an explicit endpoint and model. Unassigned tiers are unavailable.
+                    Default uses the endpoint's preferred model for untiered calls. Assignment never enables an endpoint.</p>
+            </div>
+            <div className="model-routing-grid">
+                <label>
+                    <span>Default</span>
+                    <select value={model.default_provider} onChange={(event) => mutation.mutate(event.target.value)}
+                        disabled={mutation.isPending}>
+                        <option value="">Not assigned</option>
+                        {Object.entries(model.providers).map(([id, provider]) => (
+                            <option key={id} value={id} disabled={provider.kind !== "api"}>
+                                {provider.display_name || id}{provider.kind !== "api" ? " (unsupported)" : provider.enabled ? "" : " (disabled)"}
+                            </option>
+                        ))}
+                    </select>
+                    {mutation.error && <span role="alert">{mutationMessage(mutation.error)}</span>}
+                </label>
+                <TierRouting tier="deep" model={model} qc={qc} onDirty={onDirty} />
+                <TierRouting tier="fast" model={model} qc={qc} onDirty={onDirty} />
+            </div>
+        </div>
+    );
 }
 
 function Status({
@@ -525,7 +539,6 @@ function ApiProfiles({
 								</div>
 							</header>
 							<div className="model-card-footer">
-								<RoleButtons providerId={providerId} model={model} qc={qc} />
 								<div>
 									<button
 										type="button"
@@ -603,7 +616,7 @@ export function ModelProvidersSection({ qc, onDirty }: { qc: QueryClient; onDirt
 		>
 			{model && types && (
 				<div className="model-providers-feature">
-					<RoutingBoard model={model} qc={qc} />
+					<RoutingBoard model={model} qc={qc} onDirty={onDirty} />
 					<ApiProfiles model={model} types={types} health={health} qc={qc} onDirty={onDirty} />
 				</div>
 			)}

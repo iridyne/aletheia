@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 from aletheia.agents import register_agent
 from aletheia.agents.helpers import elapsed_ms, llm_structured, log_tool
-from aletheia.model_provider.router import get_provider_for_tier
+from aletheia.model_provider.router import ProviderNotConfigured, get_provider_for_tier
 
 logger = logging.getLogger("aletheia.agents.lesson_reviewer")
 
@@ -242,28 +242,31 @@ async def _judge(lesson, evidence: dict, run_id: str | None) -> tuple[str, str, 
 
     decision ∈ {accept, reject, defer}; defaults to 'defer' on any failure.
     """
-    payload, err = await llm_structured(
-        system=(
-            "You are a skeptical trading-lesson evaluator. Decide whether a proposed "
-            "lesson is supported by the recent settled-outcome evidence provided. "
-            "Be conservative: default to 'defer' unless the evidence clearly supports "
-            "the lesson; choose 'reject' if the evidence contradicts it; choose "
-            "'accept' only when the numbers back it. Do NOT accept on plausibility "
-            "alone. Return ONLY a JSON object: "
-            '{"decision": "accept"|"reject"|"defer", "reasoning": "<=200 chars"}.'
-        ),
-        user=(
-            f"Lesson: {lesson.summary}\n"
-            f"Category: {lesson.category}, Severity: {lesson.severity}\n\n"
-            f"{_evidence_block(evidence)}\n\n"
-            "Is this lesson empirically supported? Return the JSON."
-        ),
-        max_tokens=200,
-        provider=get_provider_for_tier("deep"),
-        caller="lesson_reviewer.judge",
-        schema=_LessonJudgment,
-        reasoning_effort="none",
-    )
+    try:
+        payload, err = await llm_structured(
+            system=(
+                "You are a skeptical trading-lesson evaluator. Decide whether a proposed "
+                "lesson is supported by the recent settled-outcome evidence provided. "
+                "Be conservative: default to 'defer' unless the evidence clearly supports "
+                "the lesson; choose 'reject' if the evidence contradicts it; choose "
+                "'accept' only when the numbers back it. Do NOT accept on plausibility "
+                "alone. Return ONLY a JSON object: "
+                '{"decision": "accept"|"reject"|"defer", "reasoning": "<=200 chars"}.'
+            ),
+            user=(
+                f"Lesson: {lesson.summary}\n"
+                f"Category: {lesson.category}, Severity: {lesson.severity}\n\n"
+                f"{_evidence_block(evidence)}\n\n"
+                "Is this lesson empirically supported? Return the JSON."
+            ),
+            max_tokens=200,
+            provider=get_provider_for_tier("deep"),
+            caller="lesson_reviewer.judge",
+            schema=_LessonJudgment,
+            reasoning_effort="none",
+        )
+    except ProviderNotConfigured as exc:
+        payload, err = None, f"llm_unavailable: {exc}"
     log_tool(run_id, "llm_judge_lesson", "observe", err is None)
     if err or payload is None:
         return "defer", str(err or "empty_payload")[:200], True

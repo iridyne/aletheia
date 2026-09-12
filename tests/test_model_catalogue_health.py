@@ -60,8 +60,8 @@ def test_fresh_catalogue_mismatch_survives_historical_verification(monkeypatch):
     cfg = type("Config", (), {
         "models": type("Models", (), {
             "default_provider": "openai_compatible",
-            "deep_provider": None,
-            "fast_provider": None,
+            "deep": None,
+            "fast": None,
         })(),
     })()
     pcfg = type("ProviderConfig", (), {"enabled": True})()
