@@ -603,12 +603,16 @@ def release_rate_limited_close_claim(
             return {"released": False, "code": "claim_not_parked"}
 
         next_oid = next_close_client_oid(position_id)
-        db.execute(
-            "UPDATE orders SET error_reason=? "
-            "WHERE id=? AND status='cancelled' AND error_reason=?",
-            ("operator_authorized_cleanup_trade_rate_limited",
-             order_id, TRADE_RATE_LIMIT_CANCEL_REASON),
-        )
+        if (
+            str(fresh_order["status"] or "") == "cancelled"
+            and str(fresh_order["error_reason"] or "") == TRADE_RATE_LIMIT_CANCEL_REASON
+        ):
+            repo.replace_order_error_reason(
+                order_id,
+                expected_status="cancelled",
+                expected_reason=TRADE_RATE_LIMIT_CANCEL_REASON,
+                error_reason="operator_authorized_cleanup_trade_rate_limited",
+            )
         repo.release_position_close_claim(position_id, order_id=order_id)
         repo.insert_audit_event(
             AuditEvent(
