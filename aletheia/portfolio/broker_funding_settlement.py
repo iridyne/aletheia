@@ -35,6 +35,10 @@ _EXCHANGE_FUNDING_MODES = (
 
 BROKER_FUNDING_HISTORY_EXPIRED = "broker_funding_history_expired"
 _FUNDING_QUEUE_ID = "exchange_funding"
+_PENDING_COST_SQL = """status='closed' AND realized_pnl IS NULL
+    AND exit_fill_verified=1 AND exit_price_source='broker_fill'
+    AND COALESCE(outcome_exclusion_reason,'') != 'broker_funding_history_expired'
+    AND (exit_fee IS NULL OR (entry_fee IS NOT NULL AND funding_cost IS NULL))"""
 
 
 class FundingHistoryRetentionExpired(Exception):
@@ -76,11 +80,9 @@ def _select_funding_queue_rows(
     )
     placeholders = ",".join("?" for _ in _EXCHANGE_FUNDING_MODES)
     base = f"""SELECT rowid AS funding_queue_rowid, * FROM positions
-        WHERE status='closed' AND market_type='usdt_futures'
+        WHERE market_type='usdt_futures'
           AND execution_mode IN ({placeholders})
-          AND realized_pnl IS NULL
-          AND (outcome_exclusion_reason='incomplete_funding_economics'
-               OR (outcome_exclusion_reason='incomplete_realized_economics' AND exit_fee IS NULL))"""
+          AND {_PENDING_COST_SQL}"""
 
     def page(clause: str, params: tuple[object, ...], page_limit: int) -> list[dict]:
         return [
@@ -113,28 +115,18 @@ def _select_funding_queue_rows(
 def funding_recovery_state_counts() -> dict[str, int]:
     """Count durable unresolved and terminal exchange funding states."""
     placeholders = ",".join("?" for _ in _EXCHANGE_FUNDING_MODES)
-    rows = get_db().execute(
-        f"""SELECT outcome_exclusion_reason, COUNT(*) AS count
+    row = get_db().execute(
+        f"""SELECT
+            SUM(CASE WHEN {_PENDING_COST_SQL} THEN 1 ELSE 0 END) AS retry_pending,
+            SUM(CASE WHEN status='closed' AND realized_pnl IS NULL
+                AND outcome_exclusion_reason=? THEN 1 ELSE 0 END) AS terminal
             FROM positions
-            WHERE status='closed' AND market_type='usdt_futures'
-              AND execution_mode IN ({placeholders})
-              AND realized_pnl IS NULL
-              AND outcome_exclusion_reason IN (
-                  'incomplete_funding_economics',
-                  'incomplete_realized_economics',
-                  'broker_funding_history_expired'
-              )
-              AND (outcome_exclusion_reason != 'incomplete_realized_economics' OR exit_fee IS NULL)
-            GROUP BY outcome_exclusion_reason""",
-        _EXCHANGE_FUNDING_MODES,
-    ).fetchall()
-    counts = {
-        str(row["outcome_exclusion_reason"]): int(row["count"])
-        for row in rows
-    }
+            WHERE market_type='usdt_futures' AND execution_mode IN ({placeholders})""",
+        (BROKER_FUNDING_HISTORY_EXPIRED, *_EXCHANGE_FUNDING_MODES),
+    ).fetchone()
     return {
-        "retry_pending": counts.get("incomplete_funding_economics", 0) + counts.get("incomplete_realized_economics", 0),
-        "terminal": counts.get(BROKER_FUNDING_HISTORY_EXPIRED, 0),
+        "retry_pending": int(row["retry_pending"] or 0),
+        "terminal": int(row["terminal"] or 0),
     }
 
 
@@ -552,7 +544,7 @@ def _terminalize_funding_history_expired(
         "funding_cost": None,
         "funding_source": "unavailable",
         "outcome_eligible": False,
-        "outcome_exclusion_reason": "incomplete_funding_economics",
+        "outcome_exclusion_reason": row.get("outcome_exclusion_reason"),
     }
     after = {
         **before,
@@ -595,8 +587,8 @@ def _terminalize_funding_history_expired(
             or current.get("funding_cost") is not None
             or current.get("funding_source") != "unavailable"
             or bool(current.get("outcome_eligible"))
-            or current.get("outcome_exclusion_reason")
-            != "incomplete_funding_economics"
+            or current.get("exit_price_source") != "broker_fill"
+            or current.get("outcome_exclusion_reason") == BROKER_FUNDING_HISTORY_EXPIRED
         ):
             return {"status": "stale_noop", "audit_event_id": None}
 

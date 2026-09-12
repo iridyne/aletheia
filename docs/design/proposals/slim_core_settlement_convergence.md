@@ -106,6 +106,15 @@ The new exit-fee path follows this boundary; its scheduler, replay, partial-cost
 progress, conflict refusal and audit rollback have focused regression coverage.
 This does not prove all cost-recovery cases or runtime qualification.
 
+The follow-up queue audit found an Outcome/cost coupling: a verified external
+close with known fees but unknown funding had `administrative_close`, so the
+old reason-based selector omitted it. A two-cycle regression reproduced that
+fee completion stopped further funding recovery. Queue selection and pending
+counts now share actual cost-gap and broker-fill proof conditions. Strategy
+eligibility is still decided independently; unverified administrative closure
+is excluded. Retention terminalization preserves the actual prior exclusion
+reason in audit rather than inventing `incomplete_funding_economics`.
+
 The observed-close validator also had a proven nonfinite-value hole: three tests
 with same-ID durable Fill price, quantity or fee stored as `NaN` closed the
 Position before repair. The path now reuses `_fill_totals`' existing numeric

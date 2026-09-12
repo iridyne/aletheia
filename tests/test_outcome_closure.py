@@ -810,12 +810,13 @@ def test_late_fee_scheduler_completes_once_without_rewriting_fill(monkeypatch, s
     assert len([row for row in repo.list_audit_events(limit=100) if row["event_type"] == "exchange_position_fee_completed"]) == 1
 
 
-def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch):
+@pytest.mark.parametrize("strategy_close", (True, False))
+def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch, strategy_close):
     import asyncio
     from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.portfolio import broker_funding_settlement as settlement
 
-    position, report = _seed_late_exit_fee(funding_complete=False)
+    position, report = _seed_late_exit_fee(funding_complete=False, strategy_close=strategy_close)
     calls = []
 
     async def query(*args, **kwargs):
@@ -839,12 +840,13 @@ def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch):
     pending = repo.get_position(position.id)
     assert pending["exit_fee"] == pytest.approx(0.2)
     assert pending["realized_pnl"] is None and pending["funding_cost"] is None
-    assert pending["outcome_exclusion_reason"] == "incomplete_funding_economics"
+    assert pending["outcome_exclusion_reason"] == ("incomplete_funding_economics" if strategy_close else "administrative_close")
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
     second = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
     assert second["settled"] == 1 and second["broker_io_attempted"] == 1, second
     assert calls == ["fills", "funding"]
     assert repo.get_position(position.id)["realized_pnl"] == pytest.approx(21.6)
+    assert bool(repo.get_position(position.id)["outcome_eligible"]) is strategy_close
     assert asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))["checked"] == 0
 
 
@@ -864,6 +866,48 @@ def test_late_fee_audit_failure_rolls_back_fee_and_final_economics(monkeypatch):
         materialize_exchange_close_costs(before, fee_report=report)
     assert repo.get_position(position.id) == before
     assert [dict(row) for row in repo.get_db().execute("SELECT * FROM position_close_events").fetchall()] == events
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
+@pytest.mark.parametrize("field,value", (
+    ("exit_fill_verified", 0), ("exit_price_source", "unavailable"),
+    ("status", "open"), ("realized_pnl", 1),
+    ("outcome_exclusion_reason", "broker_funding_history_expired"),
+))
+def test_cost_queue_and_counts_use_same_evidence_boundary(field, value):
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    position, report = _seed_late_exit_fee(funding_complete=False, strategy_close=False)
+    settlement.materialize_exchange_close_costs(repo.get_position(position.id), fee_report=report)
+    assert settlement.funding_recovery_state_counts()["retry_pending"] == 1
+    rows, _ = settlement._select_funding_queue_rows(10)
+    assert [row["id"] for row in rows] == [position.id]
+    force_update_position(position.id, **{field: value})
+    assert settlement._select_funding_queue_rows(10)[0] == []
+    assert settlement.funding_recovery_state_counts()["retry_pending"] == 0
+
+
+def test_verified_external_funding_expiry_preserves_actual_audit_reason(monkeypatch):
+    import asyncio
+    from aletheia.portfolio import broker_funding_settlement as settlement
+
+    position, report = _seed_late_exit_fee(funding_complete=False, strategy_close=False)
+    settlement.materialize_exchange_close_costs(repo.get_position(position.id), fee_report=report)
+    force_update_position(position.id, opened_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat())
+    monkeypatch.setattr("aletheia.uta.manager.funding_history_retention_contract", lambda *a, **kw: (1, "test-retention"))
+
+    async def unexpected_query(*args, **kwargs):
+        pytest.fail("proven expired history must not query the broker")
+
+    monkeypatch.setattr("aletheia.uta.manager.query_uta", unexpected_query)
+    result = asyncio.run(settlement.settle_unsettled_exchange_closes(limit=1))
+    assert result["history_expired"] == 1 and result["broker_io_attempted"] == 0, result
+    current = repo.get_position(position.id)
+    assert current["realized_pnl"] is None and current["funding_cost"] is None
+    assert current["outcome_eligible"] == 0 and current["close_category"] == "administrative"
+    assert settlement.funding_recovery_state_counts() == {"retry_pending": 0, "terminal": 1}
+    audit = next(row for row in repo.list_audit_events(limit=100) if row["event_type"] == "exchange_position_funding_history_expired")
+    assert json.loads(audit["before_state"])["outcome_exclusion_reason"] == "administrative_close"
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 
 
