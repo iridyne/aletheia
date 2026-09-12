@@ -430,8 +430,9 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   `close_convergence_state`、`close_convergence_owner_status`、claim age 与
   `close_convergence_requires_reconciliation`；缺失/过期时间戳和 stale claim fail-closed 为
   `manual attention required`。
-- **启动准入必须读取权威 Position 主账**：Startup Behavior Gate 的 `pending_closes` 检查不能只读取
-  遗留 `ps_positions.status=unknown` 投影；它还必须读取 open `positions.pending_close_status`。
+- **启动准入必须读取权威主账**：Startup Behavior Gate 的 `pending_orders` / `pending_closes`
+  只使用当前 Core Order、open `positions.pending_close_status` 与 reconciliation incident。
+  遗留 `ps_*` intent、Order、Position 状态仅供历史读取，不再授予或阻挡启动/交易权限。
   `submission_unknown`、`submission_rejected`、`materialization_missing`、`position_absence_unverified`、
   `overfilled` 立即阻挡新的
   AI decision/trading loop；普通 `pending` / `submitted` / partial 状态只在超过 Position Manager 既有

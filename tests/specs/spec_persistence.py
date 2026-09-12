@@ -1,9 +1,8 @@
-"""Spec: current Persistence Contract and dormant recovery boundary.
+"""Spec: current Persistence Contract and retired recovery boundary.
 
 The current Contract covers durable stores and deterministic order identity.
-Recovery components exist but are not wired into Gateway startup; PR-C01 keeps
-that absence explicit while the future design lives in the Gateway Recovery
-Proposal.
+The legacy PS recovery producer is retired; historical tables/readers remain.
+PR-S01 / PR-C01 prevent its write graph and startup authority from returning.
 
 Contract: persistence_recovery_contract
 Claim prefix: PR
@@ -11,6 +10,7 @@ Claim prefix: PR
 
 import ast
 import asyncio
+import re
 import sqlite3
 from pathlib import Path
 
@@ -27,21 +27,31 @@ _ROOT = Path(__file__).parents[2]
 @spec_claim(
     SpecClaim(
         "PR-S01", "persistence_recovery_contract",
-        "Failure semantics — dormant recovery component", "L2a",
-        "GatewayStatus enum carries the recovery states (STARTING/RECOVERY_MODE/RUNNING/"
-        "SAFE_FREEZE) and GatewayStateMachine + FreezeBlockedError exist",
+        "Invariants — retired PS recovery graph", "L2a",
+        "The retired PS Gateway writer, recovery, exchange, session and lock modules "
+        "are absent; no second execution/settlement implementation remains there.",
     ),
 )
-def test_gateway_state_machine_surface():
-    from aletheia.gateway.state_machine import (
-        GatewayStatus, GatewayStateMachine, FreezeBlockedError,
-    )
-
-    names = {s.name for s in GatewayStatus}
-    for required in ("STARTING", "RECOVERY_MODE", "RUNNING", "SAFE_FREEZE"):
-        assert required in names, f"GatewayStatus missing {required} (persistence §4)"
-    assert isinstance(GatewayStateMachine, type)
-    assert issubclass(FreezeBlockedError, Exception)
+def test_legacy_gateway_write_graph_is_removed():
+    retired = {"state_machine", "state_store", "recovery", "reconciliation", "session", "locks", "exchange_adapter"}
+    assert not [name for name in retired if (_ROOT / "aletheia" / "gateway" / f"{name}.py").exists()]
+    tables = {"ps_execution_intents", "ps_order_intents", "ps_orders", "ps_fills", "ps_positions",
+              "ps_gateway_sessions", "ps_gateway_locks", "ps_reconciliation_reports"}
+    writes = re.compile(r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+(?:"
+                        + "|".join(sorted(tables)) + r")\b", re.IGNORECASE)
+    violations = []
+    for path in (_ROOT / "aletheia").rglob("*.py"):
+        relative = path.relative_to(_ROOT / "aletheia").as_posix()
+        if relative in {"storage/migrations.py", "sync/importer.py"}:
+            continue  # Historical schema/archive ingestion is not runtime authority.
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and writes.search(node.value):
+                violations.append(f"{relative}:{node.lineno}")
+            if isinstance(node, ast.Call):
+                name = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+                if name in {"_insert", "_update"} and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in tables:
+                    violations.append(f"{relative}:{node.lineno}")
+    assert not violations, violations
 
 
 @spec_claim(
@@ -84,35 +94,26 @@ def test_event_and_artifact_stores_exist():
 
 
 # ---------------------------------------------------------------------------
-# L2c — Honesty tripwire: recovery FSM is NOT wired into startup (documented gap)
+# L2c — Legacy history cannot regain current startup authority
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
         "PR-C01", "persistence_recovery_contract",
-        "Failure semantics — recovery is not a current guarantee", "L2c",
-        "Current boundary: gateway/lifecycle.py does NOT yet drive the recovery "
-        "FSM (no RECOVERY_MODE / GatewayRecoveryService reference). When this is wired, "
-        "this test FAILS — that is the signal to verify the Proposal and promote "
-        "proved behavior into the current Contract.",
+        "Invariants — Legacy is not startup authority", "L2c",
+        "Startup and process lifecycle do not import the retired PS state owners or "
+        "use historical PS tables as current admission evidence.",
         status="implemented",
     ),
 )
-def test_recovery_fsm_not_yet_wired_into_lifecycle():
-    """Self-correcting gap marker. Passing = gap still open (gateway does not enter
-    recovery on startup). Failing = someone wired it → update the contract."""
-    lifecycle = _ROOT / "aletheia" / "gateway" / "lifecycle.py"
-    if not lifecycle.exists():
-        return  # lifecycle moved — re-confirm wiring manually
-    text = lifecycle.read_text(encoding="utf-8")
-    wired_markers = ("RECOVERY_MODE", "GatewayRecoveryService", "GatewayStateMachine")
-    found = [m for m in wired_markers if m in text]
-    assert not found, (
-        f"gateway/lifecycle.py now references {found} — the recovery FSM appears WIRED. "
-        "Verify gateway_recovery.md, add executable recovery acceptance, and update "
-        "the current persistence Contract before claiming the safety net is active."
-    )
+def test_legacy_recovery_does_not_control_startup():
+    for relative in ("gateway/lifecycle.py", "agent_runtime/startup_behavior_gate.py"):
+        text = (_ROOT / "aletheia" / relative).read_text(encoding="utf-8")
+        assert not any(marker in text for marker in (
+            "GatewayRecoveryService", "GatewayStateMachine", "GatewayStateStore",
+            "ps_order_intents", "ps_orders", "ps_positions",
+        )), relative
 
 
 def test_gateway_status_does_not_invent_dormant_recovery_state():
@@ -122,6 +123,22 @@ def test_gateway_status_does_not_invent_dormant_recovery_state():
         "status": "not_available",
         "freeze_reason": None,
     }
+
+
+def test_retired_gateway_history_remains_readable_without_lifecycle_writes():
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import PSGatewaySession, PSReconciliationReport
+    from aletheia.server.routes.persistence import list_gateway_sessions, list_reconciliation_reports
+
+    session = PSGatewaySession(gateway_id="historical", mode="paper", status="SAFE_FREEZE")
+    report = PSReconciliationReport(gateway_session_id=session.gateway_session_id, status="frozen")
+    repo._insert("ps_gateway_sessions", session.model_dump())
+    repo._insert("ps_reconciliation_reports", report.model_dump())
+    assert list_gateway_sessions(limit=10) == [session.model_dump()]
+    assert list_reconciliation_reports(limit=10) == [report.model_dump()]
+    assert repo.get_db().execute("SELECT count(*) FROM ps_orders").fetchone()[0] == 0
+    assert repo.get_db().execute("SELECT count(*) FROM ps_fills").fetchone()[0] == 0
+    assert repo.get_db().execute("SELECT count(*) FROM ps_positions").fetchone()[0] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -129,14 +129,13 @@ observer/ranker/Operator/sizing consumers + owner-facing API/UI projection。
 
 ## D8 · 持久化·同步·恢复
 
-**Scope**：`gateway/`(state_machine/state_store/locks/session/reconciliation/recovery) + `storage/`(event_store/artifact_store) + `agents/checkpoints` + `sync/` + `backup/` + `policies/`。
+**Scope**：`storage/`(event_store/artifact_store) + `sync/` + `backup/` + `policies/`；旧 PS Gateway 恢复/写入模块已退役，历史表与读取保留。
 
-- **当前契约与未来设计**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 仅覆盖当前持久化行为 · [`gateway_recovery`](../proposals/gateway_recovery.md) 保存未接通恢复设计 · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界
+- **当前契约与退役边界**：[`persistence_recovery_contract`](../contracts/persistence_recovery_contract.md) 覆盖当前持久化行为 · [`Slim Core 退役决定`](../proposals/slim_core_legacy_gateway_retirement.md) 保留历史数据并删除旧写入/准入权 · `audit_chain_contract` / `execution_contract §6` 覆盖相邻信任边界。
 - **历史实施证据**：归档的
   [`Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN`](../../archive/legacy/plans/engineering/Aletheia_Persistence_Sync_Recovery_IMPLEMENTATION_PLAN.md)
-  保存早期总体设计；当前行为看 `persistence_recovery_contract`，尚未接通的安全目标看
-  `gateway_recovery`，不得从旧计划的模块清单推断完成。
-- **当前状态**：⛔ 底层(SQLite/JSONL/reconcile)实际在跑，但上层协调(RECOVERY_MODE 状态机/SAFE_FREEZE 禁开仓/Checkpoint 跨机迁移/Policy versioning)**未接进 gateway**，需显式授权。"文档比代码雄心大"。
+  保存早期总体设计；[旧 Gateway Recovery 提案](../history/gateway_recovery.md) 仅为历史，不得从旧模块清单推断当前能力或恢复其双写设计。
+- **保证边界**：SQLite/JSONL/Artifact 持久化不等于自动启动对账；当前 Core 未决订单、平仓与 pause owner 仍由 execution/startup 约定治理，不存在另一个 PS `SAFE_FREEZE` 权威。
 
 ## D9 · 运行时与稳定性
 
