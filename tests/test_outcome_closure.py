@@ -572,7 +572,7 @@ def test_administrative_close_converges_state_without_economic_side_effects(monk
     position = _position()
     repo.insert_position(position)
     monkeypatch.setattr(
-        outcome_closure, "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("administrative close must not run outcome hooks")
         ),
@@ -628,7 +628,7 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     repo.insert_position(position)
     hook_calls = []
     monkeypatch.setattr(
-        outcome_closure, "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda row, realized, reason: hook_calls.append(
             (row["id"], realized, reason, row["closed_at"])
         ),
@@ -666,6 +666,55 @@ def test_verified_close_uses_exact_fill_fees_and_settles_once(monkeypatch):
     assert repeated["already_closed"] is True
     assert len(hook_calls) == 1
     assert repo.get_db().execute("SELECT COUNT(*) FROM paper_account_events").fetchone()[0] == 0
+    events = repo.get_db().execute(
+        "SELECT * FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchall()
+    assert len(events) == 1
+    assert events[0]["realized_pnl"] == pytest.approx(21.6)
+
+
+def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monkeypatch):
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
+
+    position = _position(execution_mode="bitget_demo")
+    repo.insert_position(position)
+    before_orders = repo.get_db().execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    before_fills = repo.get_db().execute("SELECT COUNT(*) FROM fills").fetchone()[0]
+
+    def fail_event(_event):
+        raise RuntimeError("close event storage failed")
+
+    monkeypatch.setattr(repo, "insert_position_close_event", fail_event)
+    with pytest.raises(RuntimeError, match="close event storage failed"):
+        close_position_from_verified_exit(position.id, _verified_result(position))
+    assert repo.get_position(position.id)["status"] == "open"
+    assert repo.get_db().execute("SELECT COUNT(*) FROM orders").fetchone()[0] == before_orders
+    assert repo.get_db().execute("SELECT COUNT(*) FROM fills").fetchone()[0] == before_fills
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
+def test_verified_exit_normalization_has_no_second_close_writer():
+    import ast
+    import inspect
+    from aletheia.portfolio import outcome_closure, pnl
+
+    owners = set()
+    for module in (outcome_closure, pnl):
+        tree = ast.parse(inspect.getsource(module))
+        for function in tree.body:
+            if not isinstance(function, ast.FunctionDef):
+                continue
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "finalize_position_close"
+                for node in ast.walk(function)
+            ):
+                owners.add((module.__name__, function.name))
+    assert owners == {
+        (pnl.__name__, "close_position"),
+        (outcome_closure.__name__, "close_position_administrative"),
+    }
 
 
 @pytest.mark.parametrize("bad_fee", (-1.0, float("inf")), ids=("negative", "infinite"))
@@ -718,6 +767,9 @@ def test_verified_external_close_converges_with_unknown_entry_fee():
     ).fetchone()
     assert close_order is not None
     assert close_order["source"] == "adopted"
+    recorded = json.loads(stored["reconciliation_evidence"])
+    assert recorded["materialized_close_order_ids"] == [close_order["id"]]
+    assert json.loads(stored["reconciliation_identity"])["account_scope"] == evidence.account_scope
     assert db.execute(
         "SELECT COUNT(*) FROM fills WHERE order_id=?", (close_order["id"],)
     ).fetchone()[0] == 2
@@ -821,8 +873,7 @@ def test_verified_close_applies_clean_window_before_running_outcome_hooks(monkey
     )
     hook_calls = []
     monkeypatch.setattr(
-        outcome_closure,
-        "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda row, realized, reason: hook_calls.append(row["id"]),
     )
 

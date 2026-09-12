@@ -414,7 +414,8 @@ def test_producer_rejects_pre_clean_close_before_persisting_or_running_hooks(
         "§10 atomic verified close claim",
         "L2c",
         "Concurrent verified close attempts claim the open Position with BEGIN IMMEDIATE "
-        "and an in-transaction reread, producing one close, one audit, and one hook.",
+        "and an in-transaction reread through the shared economic-close owner, "
+        "producing one close event, one audit, and one hook.",
         status="implemented",
     )
 )
@@ -442,8 +443,7 @@ def test_concurrent_verified_close_claims_position_once(tmp_path, monkeypatch):
     hook_calls = []
     monkeypatch.setattr(outcome_closure, "_load_open", synchronized_pre_read)
     monkeypatch.setattr(
-        outcome_closure,
-        "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda row, realized, reason: hook_calls.append(row["id"]),
     )
 
@@ -462,6 +462,9 @@ def test_concurrent_verified_close_claims_position_once(tmp_path, monkeypatch):
     assert sorted(result["already_closed"] for result in results) == [False, True]
     assert hook_calls == [position.id]
     assert len(repo.list_outcome_hook_jobs(position_id=position.id)) == 1
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchone()[0] == 1
     assert len([
         row for row in repo.list_audit_events(limit=20)
         if row["event_type"] == "position_verified_closed"
@@ -550,7 +553,7 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
     force_update_position(
         position.id,
@@ -689,7 +692,7 @@ def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypa
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
 
     hook_calls = []
@@ -737,7 +740,7 @@ def test_proven_missing_attribution_is_permanently_skipped(tmp_path, monkeypatch
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
     repo.update_order_metadata(str(position.order_id), position_id=None)
 
@@ -786,7 +789,7 @@ def test_concurrent_replay_workers_invoke_hook_once(tmp_path, monkeypatch):
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
 
     entered = threading.Event()
@@ -889,7 +892,7 @@ def test_serenity_replay_after_completion_gap_is_durably_idempotent(
         trade_school="serenity",
     )
     repo.insert_position(position)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
 
     original_complete = repo.mark_outcome_hook_job_completed
@@ -1017,7 +1020,7 @@ def test_partial_shadow_resolution_fails_job_then_resumes_remaining_rows(
     )
     repo.insert_shadow_trade(counterfactual)
     repo.insert_shadow_trade(selected)
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(position.id, _verified_result(position))
 
     monkeypatch.setattr(

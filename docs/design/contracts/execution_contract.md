@@ -539,6 +539,12 @@ identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加�
 错币种、数量不符或 identity 不符都保持 open。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
 删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
 
+原生平仓与 verified disappearance 的经济关闭由 `portfolio.pnl.close_position` 单点写入；
+`close_position_verified` 仅验证/归一化 disappearance 证据并提供事务内 Order/Fill materialization。
+Position、per-close event、Outcome eligibility、hook job 与数据库 audit 在同一 writer transaction
+提交；外部观察关闭仍为 administrative/ineligible。无成交证据的 administrative close 保持独立，
+不得借用经济关闭入口生成收益；历史记录不因所有者收敛而被改写。
+
 PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strategy_pnl()`；旧
 `today_realized_pnl()` 暂保留 raw 兼容入口，但当天任一关闭缺少净经济结果时返回 unavailable，
 不能把该行按 0 相加。Risk 已由 RG-T09 迁移到独立

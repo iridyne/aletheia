@@ -25,7 +25,7 @@ def test_verified_exchange_close_flows_once_to_risk_reporting_and_learning(monke
     repo.insert_position(position)
     hooks: list[tuple[str, float, str]] = []
     monkeypatch.setattr(
-        outcome_closure, "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda row, realized, reason: hooks.append((row["id"], realized, reason)),
     )
 
@@ -84,7 +84,7 @@ def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_los
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     monkeypatch.setattr(
-        outcome_closure, "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("administrative close cannot trigger outcome hooks")
         ),
