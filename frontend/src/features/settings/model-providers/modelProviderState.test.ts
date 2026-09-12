@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
 	apiTypes,
 	blankApiProfile,
-	oauthTypes,
 	providerStatus,
 	routingRoles,
 } from "./modelProviderState";
@@ -30,20 +29,20 @@ describe("model provider settings state", () => {
 		expect(blankApiProfile().enabled).toBe(false);
 	});
 
-	it("shows disconnected enabled OAuth as authentication required", () => {
+	it("shows retired enabled native profiles as not configured", () => {
 		const oauth: ProviderConfigView = {
 			type: "openai_native",
-			kind: "oauth",
+			kind: "unknown",
 			configured: false,
-			display_name: "OpenAI OAuth",
+			display_name: "Historical profile",
 			enabled: true,
 			model: "default",
 			api_key: { configured: false, last4: null },
 			oauth: { configured: false, last4: null },
 		};
 		expect(providerStatus(oauth, undefined)).toEqual({
-			tone: "yellow",
-			label: "authentication required",
+			tone: "muted",
+			label: "not configured",
 		});
 	});
 
@@ -114,7 +113,7 @@ describe("model provider settings state", () => {
 		expect(routingRoles(configured, "fast")).toEqual(["fast"]);
 	});
 
-	it("groups type metadata by access method instead of vendor", () => {
+	it("returns HTTP API profile metadata", () => {
 		const types: Record<string, ProviderTypeView> = {
 			openai_compatible: {
 				id: "openai_compatible",
@@ -123,19 +122,9 @@ describe("model provider settings state", () => {
 				fields: [],
 				singleton: false,
 			},
-			openai_native: {
-				id: "openai_native",
-				label: "OpenAI",
-				category: "oauth",
-				fields: [],
-				singleton: true,
-			},
 		};
 		expect(apiTypes(types).map((type) => type.id)).toEqual([
 			"openai_compatible",
-		]);
-		expect(oauthTypes(types).map((type) => type.id)).toEqual([
-			"openai_native",
 		]);
 	});
 });

@@ -44,7 +44,7 @@ failed mirrors remain unavailable and are retried rather than shown as truth.
 
 ## Checked-in inventory
 
-The table maps all 65 static `Switch`/`Toggle` JSX sites in `frontend/src`.
+The table maps all 63 static `Switch`/`Toggle` JSX sites in `frontend/src`.
 `SwitchGrid` is one shared primitive site and expands the listed field arrays at
 runtime; each grid uses the staged mode and the named Save boundary.
 
@@ -63,7 +63,6 @@ runtime; each grid uses the staged mode and the named Save boundary.
 | same | Market-aware review | staged | `updateTradingConfig`; `Save` |
 | `features/settings/model-providers/ModelProvidersSection.tsx` `ApiProfileEditor` | Enable after verification | staged | `createModelProfile`/`updateModelProfile`; `Verify & Save` or `Cancel` |
 | same `ApiProfiles` | Enable API profile | immediate | `updateModelProfile`; pending/error state in provider panel |
-| same `IntegrationCard` | Enable OAuth integration | immediate | `updateModelIntegration`; pending/error state in provider card |
 | `features/settings/tabs/AgentModelsTab.tsx` Learning | Autonomous learning | immediate | `setAutonomousLearning` |
 | same | Bypass distress gate | immediate | `setBypassDistressGate` |
 | same | Contribution measurement | immediate | `updateLearningConfig` |
@@ -127,6 +126,6 @@ These are the dynamic controls expanded by the shared site and are all staged:
 - Risk policy: Allow short selling, Correlation guard, Catastrophic stop, Auto-trip mode brake on daily loss → `Save demo/live policy`.
 - Legacy risk limits: Kill switch auto-trigger (live), Kill switch auto-trigger (demo), Allow short selling (live), Allow short selling (demo), Correlation guard → `Save risk limits`.
 
-The source-level frontend test keeps the 65-site count and rejects any site
+The source-level frontend test keeps the 63-site count and rejects any site
 that omits the explicit `persistence` prop. The shared primitive test also
 asserts that staged controls do not render the immediate switch track.

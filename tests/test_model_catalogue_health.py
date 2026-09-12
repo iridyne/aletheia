@@ -1,15 +1,11 @@
 """Selected model health must reflect the current provider catalogue."""
 
-from unittest.mock import patch
-
 import pytest
 
 from aletheia.model_provider.base import ModelHealth
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.anthropic_native import AnthropicNativeProvider
 from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-from aletheia.model_provider.openai_native import OpenAINativeProvider
 from aletheia.model_provider import router
 
 
@@ -19,15 +15,13 @@ from aletheia.model_provider import router
     [
         OpenAICompatibleProvider(base_url="http://gateway", model="removed-model"),
         AnthropicCompatibleProvider(base_url="http://gateway", model="removed-model"),
-        OpenAINativeProvider(model="removed-model"),
-        AnthropicNativeProvider(model="removed-model"),
         DatabricksProvider(
             workspace_url="https://adb-123.azuredatabricks.net",
             model="removed-model",
             protocol="responses",
         ),
     ],
-    ids=["openai-compatible", "anthropic-compatible", "openai-native", "anthropic-native", "databricks"],
+    ids=["openai-compatible", "anthropic-compatible", "databricks"],
 )
 async def test_missing_selected_model_is_unavailable(provider, monkeypatch):
     async def catalogue():
@@ -40,36 +34,6 @@ async def test_missing_selected_model_is_unavailable(provider, monkeypatch):
     assert health.reason_code == "provider_rejection"
     assert health.model == "removed-model"
     assert health.models == ["current-model"]
-
-
-@pytest.mark.anyio
-async def test_openai_native_healthcheck_keeps_current_gpt5_model():
-    provider = OpenAINativeProvider(model="gpt-5.1", api_key="sk-test")
-
-    class FakeResponse:
-        status_code = 200
-
-        def json(self):
-            return {"data": [{"id": "gpt-5.1"}, {"id": "gpt-4o"}]}
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def get(self, url, headers=None):
-            return FakeResponse()
-
-    with patch("httpx.AsyncClient", FakeClient):
-        health = await provider.healthcheck()
-
-    assert health.available is True
-    assert "gpt-5.1" in health.models
 
 
 @pytest.mark.anyio

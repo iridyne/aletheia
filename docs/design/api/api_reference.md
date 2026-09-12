@@ -418,25 +418,14 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/model/health` | Canonical per-profile fact projection. Rows are emitted for configured profiles and registry-backed unconfigured provider types, so clients never infer state from omission. `configured`, `enabled`, and `routing_roles` are independent facts; `reachable` is the latest probe result (`null` when unobserved), while `verified` is only set by an explicit inference verification persisted for the current `verification_identity`. `state` is one of `not_configured`, `disabled`, `unknown`, `stale`, `unavailable`, `reachable`, or `verified`; `reason_code` is stable (`missing_configuration`, `disabled`, `no_observation`, `verification_invalidated`, `reachable`, `verified`, `authentication_failure`, `network_failure`, `provider_rejection`, `cooldown`, `not_installed`, or `probe_failure`) and `error` retains diagnostic detail. `observed_at`, `age_seconds`, `freshness` (`fresh`/`stale`/`unknown`), `cached`, and server-owned `stale_after_seconds` (currently 30) remain available. The legacy `available` field aliases `reachable` for migration and must not be used as verification evidence. |
 | GET | `/model/broker` | Provider admission policy plus sanitized queue/concurrency/wait metrics. |
 | POST | `/model/ping` | Explicitly verify the current default profile with a bounded inference call; records a timestamped identity-bound success or failure without exposing credentials. |
-| GET | `/model/provider-types` | Registry-backed API and OAuth integration definitions, supported protocols, and singleton metadata. Retired CLI types are absent. |
+| GET | `/model/provider-types` | Registry-backed HTTP API definitions and supported protocols. Retired CLI, native and subscription OAuth types are absent. |
 | POST | `/model/detect-models` | Detect models for a saved profile or an unsaved API candidate. Candidate credentials are write-only. |
 | POST | `/model/test-candidate` | Test an unsaved API-profile candidate before saving it. Passive checks report reachability; `probe=true` records identity-bound explicit verification only when it matches a saved profile. Candidate credentials are write-only. |
 | POST | `/settings/model-profiles` | Create one API profile after server-side verification. Multiple profiles may share the same adapter type; `profile_id` is the stable identity and secret namespace. |
 | PATCH | `/settings/model-profiles/{profile_id}` | Verify and update an API profile. The stable ID and adapter type are immutable; display name, connection fields, key, model, limits, and enabled state may change. |
 | DELETE | `/settings/model-profiles/{profile_id}?confirm=true` | Confirmed API-profile deletion. Clears all Default/Deep/Fast references, deletes its credential, invalidates provider cache/broker state, and audits only sanitized metadata. |
-| PATCH | `/settings/model-integrations/{integration_id}` | Configure or enable/disable one registry-approved singleton OAuth integration. Retired CLI integration IDs return 404. |
 | POST | `/settings/model-routing` | Independently assign or clear `default_provider`, `deep_provider`, and `fast_provider`. Role assignment does not enable a profile; a disabled assignment is retained but runtime calls fail closed. |
 | POST | `/settings/model` | Deprecated compatibility adapter. It remains during the dual-surface phase and emits `Deprecation` and successor `Link` headers; no new caller should use it. |
-| POST | `/model/openai-oauth/start` | Start OpenAI OAuth flow |
-| GET | `/model/openai-oauth/status` | OpenAI OAuth status |
-| POST | `/model/openai-oauth/finalize` | Finalize OpenAI OAuth flow |
-| POST | `/model/openai-oauth/cancel` | Cancel OpenAI OAuth flow |
-| POST | `/model/openai-oauth/disconnect` | Disconnect OpenAI OAuth credentials |
-| POST | `/model/claude-oauth/start` | Start Claude OAuth flow |
-| POST | `/model/claude-oauth/complete` | Complete Claude OAuth flow |
-| GET | `/model/claude-oauth/status` | Claude OAuth status |
-| POST | `/model/claude-oauth/cancel` | Cancel Claude OAuth flow |
-| POST | `/model/claude-oauth/disconnect` | Disconnect Claude OAuth credentials |
 
 ---
 

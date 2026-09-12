@@ -1,4 +1,4 @@
-"""Retired subprocess model configurations have no execution authority."""
+"""Retired model configurations have no execution or credential authority."""
 
 import pytest
 
@@ -6,7 +6,7 @@ from aletheia.config.schema import AletheiaConfig, ProviderConfig
 from aletheia.model_provider import router
 
 
-@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli"])
+@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native"])
 @pytest.mark.parametrize("name", ["historical-cli", "openai_compatible"])
 @pytest.mark.anyio
 async def test_retired_model_type_cannot_probe_or_resolve_credentials(
@@ -47,13 +47,14 @@ async def test_retired_model_type_cannot_probe_or_resolve_credentials(
 
 
 @pytest.mark.parametrize("name", ["codex_cli", "claude_cli", "pi_cli", "openai_compatible"])
-def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name):
+@pytest.mark.parametrize("provider_type", ["codex_cli", "openai_native", "anthropic_native"])
+def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name, provider_type):
     from typer.testing import CliRunner
     from aletheia.cli.model import model_app
     import aletheia.config.loader as loader
 
     cfg = AletheiaConfig()
-    cfg.models.providers[name] = ProviderConfig(type="codex_cli", enabled=False)
+    cfg.models.providers[name] = ProviderConfig(type=provider_type, enabled=False)
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
 
     def forbidden(*_args, **_kwargs):

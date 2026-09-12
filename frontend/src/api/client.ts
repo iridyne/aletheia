@@ -1050,7 +1050,7 @@ export const api = {
 				{
 					id: string;
 					label: string;
-					category: "api" | "cli" | "oauth";
+					category: "api";
 					fields: string[];
 					singleton: boolean;
 					protocols?: string[];
@@ -1229,18 +1229,6 @@ export const api = {
 				method: "DELETE",
 			},
 		),
-	updateModelIntegration: (
-		integrationId: string,
-		body: Record<string, unknown>,
-	) =>
-		fetchJson(
-			`/settings/model-integrations/${encodeURIComponent(integrationId)}`,
-			{
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body),
-			},
-		),
 	updateModelRouting: (body: {
 		default_provider?: string | null;
 		deep_provider?: string | null;
@@ -1303,41 +1291,6 @@ export const api = {
 		post<{
 			models: { slug: string; display_name: string; ready_state?: string }[];
 		}>("/model/detect-models", body),
-
-	// OpenAI subscription OAuth (ChatGPT Plus/Pro)
-	openaiOAuthStart: () =>
-		post<{ state: string; auth_url: string | null; error: string | null }>(
-			"/model/openai-oauth/start",
-		),
-	openaiOAuthStatus: () =>
-		fetchJson<{ state: string; auth_url: string | null; error: string | null }>(
-			"/model/openai-oauth/status",
-		),
-	openaiOAuthFinalize: () =>
-		post<{ persisted: boolean; reason?: string }>(
-			"/model/openai-oauth/finalize",
-		),
-	openaiOAuthCancel: () => post("/model/openai-oauth/cancel"),
-	openaiOAuthDisconnect: () =>
-		post<{ disconnected: boolean }>("/model/openai-oauth/disconnect"),
-
-	// Claude subscription OAuth (Claude Max/Pro)
-	claudeOAuthStart: () =>
-		post<{ state: string; auth_url: string | null; error: string | null }>(
-			"/model/claude-oauth/start",
-		),
-	claudeOAuthComplete: (body: { code: string }) =>
-		post<{ state: string; error: string | null }>(
-			"/model/claude-oauth/complete",
-			body,
-		),
-	claudeOAuthStatus: () =>
-		fetchJson<{ state: string; auth_url: string | null; error: string | null }>(
-			"/model/claude-oauth/status",
-		),
-	claudeOAuthCancel: () => post("/model/claude-oauth/cancel"),
-	claudeOAuthDisconnect: () =>
-		post<{ disconnected: boolean }>("/model/claude-oauth/disconnect"),
 
 	// Exchange credentials — unified per-exchange APIs
 	getBitgetCredStatus: () =>

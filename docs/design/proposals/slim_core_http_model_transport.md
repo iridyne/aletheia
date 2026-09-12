@@ -69,6 +69,33 @@ and fail-closed tests; HTTP and generic startup/fallback behavior remain covered
 OAuth and Databricks transports are separate remaining convergence work, not
 implicit exceptions to the accepted final HTTP-only product scope.
 
+## Native and subscription transport retirement
+
+Remove the fixed-origin OpenAI/Anthropic native adapters, subscription login
+managers, shared PKCE/token/callback server and router token-refresh owner.
+Model calls retain the existing generic HTTP adapters and official SDK boundary;
+there is no automatic conversion of a subscription identity to an API endpoint.
+The async router uses the same constructor/cache owner off the event loop;
+there is no async token-refresh constructor branch. Existing non-secret identity
+inputs remain stable; historical OAuth credential fingerprints are no longer
+resolved, so verification that depended on them fails closed on identity mismatch.
+Native-only catalogue heuristics and SSE parsers are retired with their owner;
+the existing generic ModelProvider streaming envelope remains unchanged.
+
+Remove OAuth API/UI controls, including singleton integration mutation. Config
+and health reads do not resolve historical OAuth references, even if such a
+reference is attached to an HTTP profile. HTTP credential deletion is bounded
+to its configured API credential; historical subscription tokens are neither
+read nor deleted. Stored fields remain decode/read provenance, not refresh,
+login, fallback or activation authority. This narrows access and performs no
+credential migration, storage change or runtime mutation.
+
+Reuse the unsupported-type retirement guards for native configurations and
+extend containment tests to login, callback and refresh owners. Retain generic
+HTTP streaming/usage and historical economic-attribution tests; remove only
+tests of the deleted native/OAuth producers. Databricks and explicit endpoint
+model-pair routing remain separate approved convergence work.
+
 Verification uses a real SDK with an in-memory HTTP transport: exact protocol
 paths and payloads, missing optional fields, status/error redaction, no SDK
 retry, cancellation, no environment credential fallback, raw usage preservation
