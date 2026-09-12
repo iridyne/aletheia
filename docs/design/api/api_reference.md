@@ -394,7 +394,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | GET | `/bitget/credentials-status` | Bitget API key status (masked) |
 | POST | `/settings/exchange-credentials` | Save Bitget credentials |
 | POST | `/bitget/test-connection` | Test Bitget API connectivity |
-| POST | `/bitget/test-candidate` | Test candidate credentials before saving |
+| POST | `/bitget/test-candidate` | Test candidate credentials before saving; rejected probes return a stable secret-safe error code |
 | GET | `/binance/credentials-status` | Binance credentials status |
 | POST | `/settings/binance-credentials` | Save Binance credentials |
 | POST | `/binance/test-connection` | Test Binance connectivity |

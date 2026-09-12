@@ -113,7 +113,11 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
             data = resp.json()
         if data.get("code") == "00000":
             return {"connected": True, "profile": req.profile}
-        return {"connected": False, "profile": req.profile, "error": data.get("msg", "unknown")}
+        return {
+            "connected": False,
+            "profile": req.profile,
+            "error": "credential_probe_rejected",
+        }
     except Exception as e:
         err_msg = type(e).__name__
         if "timeout" in str(e).lower():
