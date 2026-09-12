@@ -11,6 +11,8 @@ prove the uta_v3 profile is end-to-end functional for demo qualification:
   raise ClosePositionAbsentError on the v3 path.
 - get_positions under uta_v3 reads /api/v3/position/current-position and maps
   exchange identity fields (posId/cTime) for reconciler fingerprints.
+- get_plan_order_history under uta_v3 reads strategy sub-orders and maps a
+  filled subOrderId to the existing executeOrderId bridge.
 - get_mix_account stays classic_v2-only.
 - _is_unified short-circuits on the configured profile (no doomed detection
   roundtrip, no cross-family fallback when the UTA wallet is momentarily empty).
@@ -268,6 +270,78 @@ def test_get_positions_uta_v3_routes_to_current_position(monkeypatch):
 def test_get_mix_account_still_blocked_on_uta_v3():
     with pytest.raises(ProfileContractError, match="classic_v2"):
         asyncio.run(_client("uta_v3").get_mix_account())
+
+
+def test_get_plan_order_history_uta_v3_uses_strategy_children(monkeypatch):
+    http = _FakeHttp(
+        get_payload={
+            "code": "00000",
+            "data": {
+                "list": [
+                    {
+                        "subOrderId": "SUB-7",
+                        "status": "filled",
+                        "symbol": "BTCUSDT",
+                    }
+                ],
+                "cursor": "ignored-on-short-page",
+            },
+        }
+    )
+    monkeypatch.setattr(bg, "httpx_client", http)
+    result = asyncio.run(
+        _client("uta_v3").get_plan_order_history(
+            symbol="BTCUSDT", order_id="PLAN-7"
+        )
+    )
+
+    assert http.get_paths[-1].startswith(
+        "https://api.bitget.com/api/v3/trade/strategy-sub-orders?"
+    )
+    assert "orderId=PLAN-7" in http.get_paths[-1]
+    assert "limit=100" in http.get_paths[-1]
+    assert result[0]["orderId"] == "PLAN-7"
+    assert result[0]["executeOrderId"] == "SUB-7"
+    assert result[0]["planStatus"] == "executed"
+
+
+def test_get_plan_order_history_uta_v3_requires_parent_order_id():
+    with pytest.raises(ValueError, match="requires order_id"):
+        asyncio.run(_client("uta_v3").get_plan_order_history())
+
+
+def test_get_plan_order_history_uta_v3_paginates_strategy_children(monkeypatch):
+    class _PagedHttp(_FakeHttp):
+        def __init__(self):
+            super().__init__()
+            self.page = 0
+
+        async def get(self, url, headers=None):
+            self.get_paths.append(url)
+            self.page += 1
+            if self.page == 1:
+                children = [
+                    {"subOrderId": f"SUB-{index}", "status": "cancelled"}
+                    for index in range(100)
+                ]
+                return _Resp({
+                    "code": "00000",
+                    "data": {"list": children, "cursor": "SUB-99"},
+                })
+            return _Resp({
+                "code": "00000",
+                "data": {"list": [{"subOrderId": "SUB-100", "status": "filled"}]},
+            })
+
+    http = _PagedHttp()
+    monkeypatch.setattr(bg, "httpx_client", http)
+    result = asyncio.run(
+        _client("uta_v3").get_plan_order_history(order_id="PLAN-PAGED")
+    )
+
+    assert len(result) == 101
+    assert result[-1]["executeOrderId"] == "SUB-100"
+    assert "cursor=SUB-99" in http.get_paths[-1]
 
 
 # ─── _is_unified short-circuit ────────────────────────────────────────────────
