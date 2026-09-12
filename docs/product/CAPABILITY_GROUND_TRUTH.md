@@ -21,6 +21,7 @@ submission. Genuine outcomes require verified economic evidence.
 | Retired simulator | Archived; no current execution, account, matching, protection, settlement, or qualification capability |
 | Retired CLI/native/OAuth/workspace model providers | Codex, Claude and Pi model subprocesses, fixed-origin native adapters, Databricks workspace/serving transport, subscription OAuth and Codex device login are removed; historical config remains inert and never silently rebinds to an HTTP endpoint. See the [inference boundary](../design/contracts/llm_inference_harness_contract.md). |
 | HTTP task-tier model selection | Fast and Deep select explicit endpoint/model pairs, including different models on one endpoint. Settings verifies the selected pair before assignment; unassigned tiers remain unavailable without borrowing Default. Historical provider-only roles are read-only decoded, not runtime aliases. Local deterministic checks do not prove a deployed endpoint or successful remote model call. |
+| Bundle import | Namespaced research only; Core Proposal and retired PS runtime tables cannot be merged from an archive. Historical export/read remains distinct from import permission; full managed backup/restore has its own explicit verification boundary. See [Persistence](../design/contracts/persistence_recovery_contract.md). |
 
 Learning and research remain subject to their existing owner admission and
 authority gates. Neither registration, a green focused test, nor an archived

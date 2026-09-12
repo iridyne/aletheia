@@ -12,9 +12,9 @@ from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.repositories import transaction as _db_transaction
 
-# Tables the importer is allowed to write — exactly the set emitted by the
-# supported exporter modes (research-pack, proposal-pack, runtime-snapshot).
-# full-backup restores the whole app.db directly and does not use this path.
+# Only namespaced research is mergeable. Diagnostic/history exports do not
+# authorize a second Core writer or restore retired PS runtime state.
+# Managed full-backup restoration is a separate explicit Ops workflow.
 _IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
     # research-pack
     "serenity_themes",
@@ -23,15 +23,6 @@ _IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
     "serenity_opportunities",
     "ps_lessons",
     "ps_skills",
-    # proposal-pack (trade_proposals + serenity chain)
-    "trade_proposals",
-    # runtime-snapshot
-    "ps_orders",
-    "ps_fills",
-    "ps_positions",
-    "ps_gateway_sessions",
-    "ps_order_intents",
-    "ps_execution_intents",
 })
 
 
@@ -117,13 +108,27 @@ class ImportService:
             if result.errors:
                 return result
 
-            # Import DB tables
+            # Admit the whole payload before any table write. Full-backup SQLite
+            # files and non-research artifacts belong to explicit Ops restore.
             db_dir = bundle_dir / "db"
+            for payload in db_dir.rglob("*"):
+                if payload.is_file() and (payload.parent != db_dir or payload.suffix != ".jsonl"):
+                    result.errors.append(f"Import rejected: unsupported DB payload {payload.relative_to(db_dir)}")
+            artifacts_dir = bundle_dir / "artifacts"
+            research_categories = {"evidence", "claims", "analyses", "lessons", "skills"}
+            for payload in artifacts_dir.iterdir() if artifacts_dir.exists() else ():
+                if payload.name not in research_categories or not payload.is_dir():
+                    result.errors.append(f"Import rejected: non-research artifact category {payload.name!r}")
+            if result.errors:
+                return result
+
+            # Import DB tables
             if db_dir.exists():
                 self._import_db_tables(db_dir, result, commit)
+            if result.errors:
+                return result
 
             # Import artifacts
-            artifacts_dir = bundle_dir / "artifacts"
             if artifacts_dir.exists() and commit:
                 self._import_artifacts(artifacts_dir)
 
@@ -362,20 +367,10 @@ class ImportService:
 
     def _find_pk(self, table_name: str, row: dict) -> str | None:
         """Guess the primary key column name for a table."""
-        # Convention: ps_* tables use specific pk names
+        # The two admitted research stores use specific primary-key names.
         pk_map = {
-            "ps_event_log": "event_id",
-            "ps_gateway_sessions": "gateway_session_id",
-            "ps_reconciliation_reports": "reconciliation_report_id",
-            "ps_execution_intents": "execution_intent_id",
-            "ps_order_intents": "intent_id",
-            "ps_orders": "order_id",
-            "ps_fills": "fill_id",
-            "ps_positions": "position_id",
-            "ps_checkpoints": "checkpoint_id",
             "ps_lessons": "lesson_id",
             "ps_skills": "skill_id",
-            "ps_policy_versions": "policy_version_id",
         }
         if table_name in pk_map:
             return pk_map[table_name]
