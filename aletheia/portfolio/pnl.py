@@ -721,7 +721,6 @@ def close_position(
             raise ValueError("closed_at must include an explicit timezone")
         closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
-    gross_pnl = _realized_pnl(row["direction"], row["entry_price"], exit_price, row["quantity"])
     private_exchange_fill = verified_exit_evidence is not None
     # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
     fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
@@ -777,9 +776,14 @@ def close_position(
     # gross-minus-fees here used to silently treat unknown funding as zero,
     # publish a reassuring PnL number, and move local-paper cash by that invented
     # amount.  Keep the lifecycle closed while leaving the net result unavailable.
-    realized: float | None = None
-    if funding_cost is not None and entry_fee is not None and exit_fee is not None:
-        realized = gross_pnl - entry_fee - exit_fee - funding_cost
+    realized = calculated_realized_pnl({
+        **row,
+        "current_price": exit_price,
+        "entry_fee": entry_fee,
+        "exit_fee": exit_fee,
+        "funding_cost": funding_cost,
+        "funding_source": funding_source,
+    })
 
     # BTC benchmark at exit for alpha/beta separation. Explicitly non-crypto
     # entries carry no applicable benchmark pair.
@@ -1242,18 +1246,8 @@ def _finite_number(value) -> float | None:
     return parsed if math.isfinite(parsed) else None
 
 
-def _realized_economics_value(row: dict) -> float | None:
-    """Return reproducible net PnL, or ``None`` for incomplete economics.
-
-    This deliberately re-checks stored inputs instead of trusting that a
-    numeric ``realized_pnl`` is complete. Older releases wrote futures PnL
-    after treating missing funding as zero, so NULL-only detection would keep
-    publishing those historical false numbers.
-
-    Missing historical economics remains unavailable, including terminal funding
-    failures. This read predicate does not imply that recovery is still running.
-    """
-    pnl = _finite_number(row.get("realized_pnl"))
+def calculated_realized_pnl(row: dict) -> float | None:
+    """One cost-complete calculation for initial close, recovery and verification."""
     entry = _finite_number(row.get("entry_price"))
     exit_price = _finite_number(
         row.get("current_price") if row.get("current_price") is not None else row.get("exit_price")
@@ -1262,8 +1256,7 @@ def _realized_economics_value(row: dict) -> float | None:
     entry_fee = _finite_number(row.get("entry_fee"))
     exit_fee = _finite_number(row.get("exit_fee"))
     if (
-        pnl is None
-        or entry is None
+        entry is None
         or exit_price is None
         or quantity is None
         or entry_fee is None
@@ -1294,6 +1287,17 @@ def _realized_economics_value(row: dict) -> float | None:
     else:
         return None
     expected = gross - entry_fee - exit_fee - funding_cost
+    return expected if math.isfinite(expected) else None
+
+
+def _realized_economics_value(row: dict) -> float | None:
+    """Verify persisted PnL against complete inputs, not just a non-NULL number."""
+    pnl = _finite_number(row.get("realized_pnl"))
+    expected = calculated_realized_pnl(row)
+    if pnl is None or expected is None:
+        return None
+    entry = float(row["entry_price"])
+    quantity = float(row["quantity"])
     tolerance = max(1e-8, abs(expected) * 1e-8, entry * quantity * 1e-10)
     return pnl if abs(pnl - expected) <= tolerance else None
 

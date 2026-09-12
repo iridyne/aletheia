@@ -248,19 +248,10 @@ _PROCESS_REPLAY = textwrap.dedent(
         )
 
 
-    class FixtureFundingClient:
-        def __init__(self, mode):
-            self.mode = mode
-
-        async def get_funding_ledger(
-            self, *, broker_id, symbol, start_time_ms, end_time_ms
-        ):
-            assert broker_id == self.mode
-            assert symbol == "BTC/USDT"
-            return ledger_for(self.mode, start_time_ms, end_time_ms)
-
-        async def close(self):
-            return None
+    async def fixture_funding_ledger(position, start_ms, end_ms):
+        assert position["symbol"] == "BTC/USDT"
+        assert position["order_id"]
+        return ledger_for(position["execution_mode"], start_ms, end_ms)
 
 
     def database_snapshot(replay_result=None):
@@ -325,7 +316,7 @@ _PROCESS_REPLAY = textwrap.dedent(
     elif phase in {"settle", "verify"}:
         from aletheia.portfolio import broker_funding_settlement as settlement
 
-        settlement._client_for_mode = lambda mode, **_kw: FixtureFundingClient(mode)
+        settlement._uta_funding_ledger = fixture_funding_ledger
         result = asyncio.run(settlement.settle_unsettled_exchange_closes())
         print(json.dumps(database_snapshot(result), sort_keys=True))
     else:

@@ -602,6 +602,12 @@ stable ID 去重恢复，成功状态单调为 `mirrored`。历史无共享 ID �
 
 exchange-backed futures 仍只接受对应账户私有账单的 `broker_ledger`；公开费率不得替代真实扣款。
 
+funding worker 直接把完整 Position 交给 UTA funding reader，账户身份从其持久化 entry Order
+取得；不保留旧 venue client factory/兼容壳或无资源的 close 生命周期。
+初始关闭、延迟结算和读取校验共用完整成本计算；Position 与 close event 金额一致不能替代
+正价/正数量、非负手续费及可信 funding 来源校验。非法成本不得写为最终 realized PnL。
+当前所有者及独立校验边界的调查见 [settlement ownership evidence](../proposals/slim_core_settlement_convergence.md)。
+
 当 UTA 的同账户 funding ledger 以稳定 reason
 `funding_history_retention_expired` 证明查询起点早于该 profile 的私有历史保留边界时，
 `broker_funding_settler` 可在一个 immediate transaction 中把同一条仍为 closed、verified、

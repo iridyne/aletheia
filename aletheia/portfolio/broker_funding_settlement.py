@@ -16,6 +16,7 @@ from aletheia.execution.broker_funding import (
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
+from aletheia.portfolio.pnl import calculated_realized_pnl
 
 logger = logging.getLogger("aletheia.broker_funding_settlement")
 
@@ -168,25 +169,6 @@ def _fingerprint(evidence: dict) -> str:
     ).hexdigest()
 
 
-def _realized(row: dict, funding_cost: float) -> float:
-    entry = float(row["entry_price"])
-    exit_price = float(row["current_price"])
-    quantity = float(row["quantity"])
-    entry_fee = float(row["entry_fee"])
-    exit_fee = float(row["exit_fee"])
-    direction = str(row.get("direction") or "").lower()
-    if direction in {"long", "buy"}:
-        gross = (exit_price - entry) * quantity
-    elif direction in {"short", "sell"}:
-        gross = (entry - exit_price) * quantity
-    else:
-        raise ValueError(f"invalid direction {direction!r}")
-    value = round(gross - entry_fee - exit_fee - funding_cost, 8)
-    if not math.isfinite(value):
-        raise ValueError("non-finite realized_pnl")
-    return value
-
-
 def _close_event_matches_position(event: dict, position: dict) -> bool:
     if any(
         event.get(event_field) != position.get(position_field)
@@ -301,7 +283,12 @@ def materialize_broker_funding_economics(
         else:
             evidence_root = {}
 
-        realized = _realized(current, float(funding_cost))
+        realized = calculated_realized_pnl({
+            **current, "funding_cost": funding_cost, "funding_source": "broker_ledger",
+        })
+        if realized is None:
+            raise ValueError("incomplete or invalid realized economics")
+        realized = round(realized, 8)
         if current.get("realized_pnl") is not None:
             same = (
                 current.get("funding_source") == "broker_ledger"
@@ -662,44 +649,6 @@ async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dic
     )
 
 
-class _UTAFundingProjection:
-    """Phase-3 compatibility seam over normalized UTA funding reports."""
-
-    def __init__(self, execution_mode: str, *, order_id: str | None = None) -> None:
-        self.execution_mode = execution_mode
-        self._order_id = order_id
-
-    async def get_funding_ledger(
-        self,
-        *,
-        broker_id: str,
-        symbol: str,
-        start_time_ms: int,
-        end_time_ms: int,
-        market_type: str = "usdt_futures",
-    ) -> dict:
-        return await _uta_funding_ledger(
-            {
-                "execution_mode": self.execution_mode,
-                "symbol": symbol,
-                "market_type": market_type,
-                "order_id": self._order_id,
-            },
-            start_time_ms,
-            end_time_ms,
-        )
-
-    async def close(self) -> None:
-        return None
-
-
-def _client_for_mode(execution_mode: str, *, order_id: str | None = None):
-    """Temporary test/rollback seam; production implementation is UTA-only."""
-    if execution_mode not in _EXCHANGE_FUNDING_MODES:
-        raise ValueError(f"unsupported exchange funding mode: {execution_mode}")
-    return _UTAFundingProjection(execution_mode, order_id=order_id)
-
-
 async def settle_unsettled_exchange_closes(
     limit: int = 50,
     *,
@@ -733,7 +682,6 @@ async def settle_unsettled_exchange_closes(
             break
         checked += 1
         position_id = str(row.get("id") or "")
-        client = None
         try:
             start_ms, end_ms = funding_query_window(row, row.get("closed_at"))
             execution_mode = str(row["execution_mode"])
@@ -757,14 +705,8 @@ async def settle_unsettled_exchange_closes(
                 )
             else:
                 broker_io_attempted += 1
-                client = _client_for_mode(execution_mode, order_id=str(row.get("order_id") or ""))
                 try:
-                    ledger = await client.get_funding_ledger(
-                        broker_id=execution_mode,
-                        symbol=str(row["symbol"]),
-                        start_time_ms=start_ms,
-                        end_time_ms=end_ms,
-                    )
+                    ledger = await _uta_funding_ledger(row, start_ms, end_ms)
                 except FundingHistoryRetentionExpired as exc:
                     expiry = exc
 
@@ -811,11 +753,6 @@ async def settle_unsettled_exchange_closes(
             errors.append(f"{position_id}: {type(exc).__name__}")
             still_pending += 1
         finally:
-            if client is not None:
-                try:
-                    await client.close()
-                except Exception:
-                    pass
             if _advance_funding_queue_cursor(cursor, row):
                 cursor = _cursor_key(row)
                 cursor_advanced = True
