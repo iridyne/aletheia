@@ -1709,6 +1709,7 @@ async def test_uta_profile_change_advances_account_generation(client):
     assert response.status_code == 200
     current = load_config().exchange
     assert current.uta_account_config_generation_for("bitget_demo") == 1
+    assert current.uta_account_config_generation_for("bitget_live_limited") == 1
 
 
 @pytest.mark.anyio

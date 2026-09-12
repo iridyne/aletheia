@@ -614,7 +614,14 @@ def set_exchange_markets(req: ExchangeMarketsRequest):
         if req.bitget_profile is not None:
             if req.bitget_profile != cfg.exchange.bitget_profile:
                 generations = dict(cfg.exchange.uta_account_config_generations)
-                generations["bitget_demo"] = generations.get("bitget_demo", 0) + 1
+                # The profile is shared by both registered Bitget account
+                # identities. Advance each generation so cached UTA evidence
+                # for demo and live cannot survive a profile change.
+                from aletheia.config.exchanges import EXECUTION_MODE_VENUES
+
+                for execution_mode, venue in EXECUTION_MODE_VENUES.items():
+                    if venue == "bitget":
+                        generations[execution_mode] = generations.get(execution_mode, 0) + 1
                 cfg.exchange.uta_account_config_generations = generations
             cfg.exchange.bitget_profile = req.bitget_profile
         changed = old != cfg.exchange.model_dump(mode="json")
