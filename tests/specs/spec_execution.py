@@ -504,11 +504,12 @@ def test_fill_model_defaults_fee_source_estimated():
     SpecClaim(
         "EX-S07", "execution_contract", "§3.2 symbol filter", "L2a",
         "_check_symbol_availability and _load_registry_symbols are callable in gateway; "
-        "_EXECUTION_MODE_TO_VENUE maps all real exchange modes (okx_live_limited, bitget, binance)",
+        "the shared execution-mode venue registry maps all real exchange modes",
     ),
 )
 def test_symbol_availability_check_structure():
     from aletheia.execution import gateway
+    from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
     assert callable(gateway._check_symbol_availability)
     assert callable(gateway._load_registry_symbols)
@@ -518,9 +519,9 @@ def test_symbol_availability_check_structure():
         "bitget_demo", "bitget_live_limited",
         "binance_testnet", "binance_live_limited",
     }
-    assert required_modes <= set(gateway._EXECUTION_MODE_TO_VENUE), (
-        f"Missing modes in _EXECUTION_MODE_TO_VENUE: "
-        f"{required_modes - set(gateway._EXECUTION_MODE_TO_VENUE)}"
+    assert required_modes <= set(EXECUTION_MODE_VENUES), (
+        f"Missing modes in EXECUTION_MODE_VENUES: "
+        f"{required_modes - set(EXECUTION_MODE_VENUES)}"
     )
 
 

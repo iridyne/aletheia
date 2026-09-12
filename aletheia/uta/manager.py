@@ -33,11 +33,9 @@ DEFAULT_UNIFIED_EXECUTION_MODES = (
 )
 
 # Every execution mode UTA can build an adapter for — the authoritative list of
-# real-exchange account identities. `EXECUTION_MODE_TO_VENUE` in
-# execution/venue_capabilities.py is deliberately NOT this list: it names only the
-# modes whose symbol availability is checked against `universe_registry`, and
-# `okx_demo` is absent there on purpose because it uses the dedicated CCXT sandbox
-# capability seam instead.
+# real-exchange account identities. Physical venue lookup belongs to the shared
+# `config.exchanges.EXECUTION_MODE_VENUES` registry; the OKX demo capability seam
+# is a specialized consumer, not a second identity map.
 UTA_EXECUTION_MODES: tuple[str, ...] = (
     "binance_testnet",
     "okx_demo",

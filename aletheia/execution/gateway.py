@@ -10,6 +10,7 @@ from aletheia.config.exchanges import (
     DEMO_EXECUTION_MODES,
     EXTERNAL_EXECUTION_MODES,
     LIVE_EXECUTION_MODE_SET,
+    execution_mode_venue,
 )
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
@@ -701,7 +702,6 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     return replace_protective_stop(position_id, new_stop_price)
 
 
-_EXECUTION_MODE_TO_VENUE = _venue_capabilities.EXECUTION_MODE_TO_VENUE
 # Compatibility alias retained for existing execution specs that clear the
 # authoritative shared cache between cases.
 _registry_symbol_cache = _venue_capabilities._registry_symbol_cache
@@ -734,7 +734,7 @@ def _check_symbol_availability(symbol: str, execution_mode: str, market_type: st
         return None
 
     # All other real-exchange modes: check universe_registry, market-type-aware.
-    venue = _EXECUTION_MODE_TO_VENUE.get(execution_mode)
+    venue = execution_mode_venue(execution_mode)
     if venue is None:
         return None  # unknown/future mode — fail-open
 

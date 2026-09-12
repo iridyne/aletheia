@@ -7,17 +7,9 @@ import threading
 import time
 
 from aletheia.async_utils import run_coro_from_sync
+
 logger = logging.getLogger("aletheia.execution.venue_capabilities")
 
-# Execution modes are policy names; this map only identifies the physical venue
-# whose already-persisted listing is authoritative for the final pre-order check.
-EXECUTION_MODE_TO_VENUE: dict[str, str] = {
-    "okx_live_limited": "okx",
-    "bitget_demo": "bitget",
-    "bitget_live_limited": "bitget",
-    "binance_testnet": "binance",
-    "binance_live_limited": "binance",
-}
 
 def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
     """Resolve the durable execution mode for a venue under the configured mode.
@@ -28,10 +20,9 @@ def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
     * the non-live suffix is NOT uniform — Binance's is `binance_testnet`, not
       `binance_demo` — so composition yields a mode no registry, profile, or Risk
       pool recognizes;
-    * `EXECUTION_MODE_TO_VENUE` above is not the list of valid modes. It names only
-      the modes whose symbol availability is checked against `universe_registry`,
-      and `okx_demo` is intentionally absent because it uses the dedicated CCXT
-      sandbox capability seam (see `gateway._symbol_unavailable_reason`).
+    * `config.exchanges.EXECUTION_MODE_VENUES` is the single registered identity
+      list. `okx_demo` still uses the dedicated CCXT sandbox capability seam
+      below, but it shares the same physical venue identity.
     """
     from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
     from aletheia.uta.manager import UTA_EXECUTION_MODES
@@ -182,7 +173,9 @@ def load_venue_capabilities(execution_mode: str) -> dict | None:
             return None
         return {"swap": swap, "spot": spot}
 
-    venue = EXECUTION_MODE_TO_VENUE.get(execution_mode)
+    from aletheia.config.exchanges import execution_mode_venue
+
+    venue = execution_mode_venue(execution_mode)
     if venue is None:
         return None
     return load_registry_symbols(venue)
