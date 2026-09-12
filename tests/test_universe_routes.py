@@ -262,8 +262,8 @@ def test_current_candidate_repository_left_joins_optional_planning_facts():
         risk_flags='["fast_market_data_venue_unavailable"]',
     )
     repo.insert_universe_asset(asset)
-    repo.insert_universe_snapshot(snapshot)
-    repo.insert_universe_member(candidate)
+    repo._insert("universe_snapshots", snapshot.model_dump())
+    repo._insert("universe_members", candidate.model_dump())
 
     [row] = repo.list_current_candidate_workbench(snapshot.id)
 
@@ -351,13 +351,13 @@ def test_candidate_reads_hide_retired_scores_without_rewriting_history(client):
     asset = UniverseAsset(id="asset", venue="bitget", market_type="perp", symbol="BTC/USDT")
     snapshot = UniverseSnapshot(id="snapshot", expires_at="2099-01-01T00:00:00+00:00")
     repo.insert_universe_asset(asset)
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     for rank, policy in enumerate(("candidate_selection_utility_v1", "legacy_total_score_v1"), 1):
-        repo.insert_universe_member(UniverseMember(
+        repo._insert("universe_members", UniverseMember(
             id=policy, snapshot_id=snapshot.id, asset_id=asset.id, symbol=asset.symbol,
             market_type=asset.market_type, rank=rank, total_score=90, liquidity_score=75,
             expires_at=snapshot.expires_at,
-        ))
+        ).model_dump())
     # Reproduce stored pre-decoupling score fields; this exercises the read
     # projection, not the current Candidate writer's Context validation.
     get_db().execute(

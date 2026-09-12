@@ -646,7 +646,7 @@ def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, 
 
     now = datetime.now(timezone.utc)
     snap = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(snap)
+    repo._insert("universe_snapshots", snap.model_dump())
     candidate = UniverseMember(
         snapshot_id=snap.id,
         asset_id="asset-eth",
@@ -660,7 +660,7 @@ def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, 
         execution_eligible=False,
         expires_at="2099-01-01T00:00:00+00:00",
     )
-    repo.insert_candidate(candidate)
+    repo._insert("universe_members", candidate.model_dump())
 
     selected, created, count = _ensure_planning_generations(
         [candidate], soft_lease_sec=900, max_attention_age_sec=3600, now=now

@@ -56,6 +56,14 @@ source-scoped refresh 不可终结另一来源的 attention，同一 exact venue
 仍只有一个 current owner。跨来源 active attention/Plan/未决执行冲突为 `instrument_owned`。
 Serenity 的研究证据只授权来源，真实 PA/compatible Profile 仍须通过；不冒充 Universe Utility。
 
+当前 Snapshot/Candidate 创建只经 Core repository 的 `publish_candidate_snapshot`：
+一次接收来源 snapshot 与对应 members，验证 snapshot identity，并在共享事务/嵌套
+savepoint 中原子持久化。分离的 snapshot/member 插入 API 与 `insert_candidate` alias
+已删除。Universe refresh 与 Serenity 来源编排保留各自准入和外层原子范围；前者可保留
+不可规划的分析 members，后者仍要求整批 theme 回滚。PlanningGeneration 仍只有原有
+exact-instrument owner，不因持久化入口收敛而新增执行权限。边界见
+[Candidate publication Proposal](../proposals/slim_core_candidate_publication.md)。
+
 具体来源准入、不可变 source 与 timing/holding 分离见
 [Entry Plan contract](entry-plan-contract.md) 与 [Serenity contract](serenity_contract.md)。
 Universe 当前 selection 见 [Candidate selection contract](candidate_selection_utility_contract.md)；
@@ -212,7 +220,7 @@ opportunity_id 穿透到 Position 和关仓反馈。90 天研究可用 24h 择�
 
 | 接缝 | writer | consumer | 关键不变量 | 守卫/spec |
 |------|--------|----------|-----------|-----------|
-| Candidate publication | Universe / Serenity repository publication | current PlanningGeneration | source/hash 出生冻结、exact instrument 单一 owner、原子 publication | entry-plan-contract / Serenity §7 |
+| Candidate publication | Core `publish_candidate_snapshot`；Universe / Serenity 来源编排 | current PlanningGeneration | source/hash 出生冻结、exact instrument 单一 owner、原子 publication | entry-plan-contract / Serenity §7 |
 | Planning→Plan | Entry Planner / Compiler | Plan execution / watcher | immutable input、CAS、typed unavailable/no-plan、真实 Profile | entry-plan-contract |
 | Plan→Proposal | canonical entry_plan_execution | Risk / Gateway | source/school/holding 一致、唯一 Plan lineage、不可复活旧 pending | entry-plan-contract |
 | 提案→风控 | `gateway.py` | `risk/engine.py:67` | `_eval_lock` 串行;每提案恰评估一次;`approved=False` 不执行 | risk_engine_contract / spec_pipeline_risk_gate |

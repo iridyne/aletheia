@@ -2902,6 +2902,8 @@ def post_serenity_theme_deep_dive(theme_id: str, body: dict):
 @router.post("/serenity/themes/{theme_id}/promote")
 def promote_serenity_theme(theme_id: str):
     """Publish the theme through the canonical Candidate planning path."""
+    from aletheia.trading.serenity_publication import publish_serenity_candidates
+
     _ensure_db()
     theme = repo.get_serenity_theme(theme_id)
     if not theme:
@@ -2921,7 +2923,7 @@ def promote_serenity_theme(theme_id: str):
         )
 
     try:
-        candidate_ids = repo.publish_serenity_candidates(
+        candidate_ids = publish_serenity_candidates(
             theme_id, [str(opp["id"]) for opp in opps],
         )
     except ValueError as exc:

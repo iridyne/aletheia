@@ -13,17 +13,22 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
         "decision_lifecycle_contract",
         "§2.1a durable Candidate planning",
         "L2a",
-        "Universe publication creates durable Candidate Planning Generations and does not emit a parallel executable Opportunity.",
+        "Universe and Serenity share the Core snapshot/member writer and PlanningGeneration owner without a parallel executable Opportunity.",
         status="implemented",
     )
 )
 def test_universe_publication_has_one_entry_planning_owner():
     from aletheia.universe.service import UniverseService, _ensure_planning_generations
+    from aletheia.trading.serenity_publication import publish_serenity_candidates
 
     source = inspect.getsource(UniverseService.refresh)
     helper_source = inspect.getsource(_ensure_planning_generations)
     assert "_ensure_planning_generations" in source
     assert "ensure_candidate_planning_generation" in helper_source
+    serenity_source = inspect.getsource(publish_serenity_candidates)
+    assert "repo.publish_candidate_snapshot(" in source
+    assert "repo.publish_candidate_snapshot(" in serenity_source
+    assert "repo.ensure_candidate_planning_generation(" in serenity_source
     assert "emit_deterministic_opportunities" not in source
 
 

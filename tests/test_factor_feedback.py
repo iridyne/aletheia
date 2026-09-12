@@ -46,12 +46,12 @@ def _eligible_factor_row(
         ))
     snapshot_id = f"factor-snapshot-{position_id}"
     member_id = f"factor-member-{position_id}"
-    repo.insert_universe_snapshot(UniverseSnapshot(
+    repo._insert("universe_snapshots", UniverseSnapshot(
         id=snapshot_id,
         created_at=opened.isoformat(),
         market_type="crypto",
-    ))
-    repo.insert_universe_member(UniverseMember(
+    ).model_dump())
+    repo._insert("universe_members", UniverseMember(
         id=member_id,
         snapshot_id=snapshot_id,
         asset_id=asset_id,
@@ -62,7 +62,7 @@ def _eligible_factor_row(
         late_entry_penalty=late_entry_penalty,
         scanner_family="momentum",
         scanner_direction=direction,
-    ))
+    ).model_dump())
     _insert_closed_position_via_producer(
         position_id=position_id,
         symbol=symbol,

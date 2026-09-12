@@ -45,7 +45,7 @@ def _typed_candidate(
     snapshot = UniverseSnapshot(
         created_at=source_at, expires_at="2099-01-01T00:00:00+00:00"
     )
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     candidate = UniverseMember(
         id=candidate_id, snapshot_id=snapshot.id, asset_id="asset-btc",
         venue="bitget", symbol="BTC/USDT", market_type="perp", rank=1,
@@ -61,7 +61,7 @@ def _typed_candidate(
         candidate_opportunity_context_json=context.model_dump_json(),
         candidate_opportunity_context_hash=context.context_hash,
     )
-    repo.insert_candidate(candidate)
+    repo._insert("universe_members", candidate.model_dump())
     # Historical projections can be NULL while the frozen context retains its clock.
     repo.execute_write(
         "UPDATE universe_members SET opportunity_source_cutoff_at=NULL WHERE id=?",
@@ -540,7 +540,7 @@ def _legacy_structure_candidate(source_at, *, price=100, rank=1):
     from aletheia.universe.candidate_opportunity import legacy_candidate_opportunity_context
 
     snapshot = UniverseSnapshot(created_at=source_at, expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     member = UniverseMember(snapshot_id=snapshot.id, asset_id="asset-btc", venue="bitget",
         symbol="BTC/USDT", market_type="perp", rank=rank, total_score=90-rank,
         scanner_family="momentum", scanner_direction="long", entry_price_usd=price,
@@ -549,7 +549,7 @@ def _legacy_structure_candidate(source_at, *, price=100, rank=1):
         candidate=member.model_dump(), detected_at=source_at)
     member.candidate_opportunity_context_json = context.model_dump_json()
     member.candidate_opportunity_context_hash = context.context_hash
-    repo.insert_candidate(member)
+    repo._insert("universe_members", member.model_dump())
     return member
 
 

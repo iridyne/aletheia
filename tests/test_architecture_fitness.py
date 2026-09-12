@@ -31,6 +31,37 @@ def _get_imports(path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def test_candidate_snapshot_creation_has_one_core_owner():
+    import re
+    from aletheia.storage import repositories as repo
+
+    retired = {"insert_universe_snapshot", "insert_universe_member", "insert_universe_members_batch",
+               "insert_candidate", "publish_serenity_candidates"}
+    assert not retired.intersection(vars(repo))
+    writes = set()
+    for path in SRC.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                assert not re.search(r"\b(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+(?:universe_members|universe_snapshots)\b", node.value, re.I), (path, node.lineno)
+            if not isinstance(node, ast.Call) or not node.args:
+                continue
+            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
+            table = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
+            if name not in {"_insert", "_insert_many"} or table not in {"universe_members", "universe_snapshots"}:
+                continue
+            parent = parents.get(node)
+            while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                parent = parents.get(parent)
+            writes.add((str(path.relative_to(SRC)), parent.name if parent else None, table))
+    assert writes == {
+        ("storage/repositories.py", "publish_candidate_snapshot", "universe_snapshots"),
+        ("storage/repositories.py", "publish_candidate_snapshot", "universe_members"),
+    }
+    assert "aletheia.trading.serenity_publication" not in _get_imports(SRC / "storage" / "repositories.py")
+
+
 def test_gateway_startup_has_no_bulk_secret_migration():
     """Startup must not enumerate credentials or hide a historical repair."""
     app_tree = ast.parse((SRC / "server" / "app.py").read_text(encoding="utf-8"))

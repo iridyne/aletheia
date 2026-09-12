@@ -4,9 +4,9 @@ Contract Delta (2026-09-07, serenity_contract.md §7): the legacy
 `signal_pending` PiDecision queue is RETIRED. Both promotion paths — manual
 `routes/data.py:promote_serenity_theme` and automatic
 `research_worker._auto_promote_serenity_opportunities` — now go through one
-repository function:
+source orchestration function in `trading.serenity_publication`:
 
-    repo.publish_serenity_candidates(theme_id, opportunity_ids, *,
+    publish_serenity_candidates(theme_id, opportunity_ids, *,
                                      min_score_for_pi=None,
                                      new_candidates_only=False) -> list[str]
 
@@ -129,7 +129,7 @@ def test_promote_does_not_write_draft_strategy_record():
     SpecClaim(
         "SP-S03", _CONTRACT, "§promote publishes durable Candidates", "L2a",
         "promote_serenity_theme delegates the all-or-nothing publication to the "
-        "repository's publish_serenity_candidates and wakes the canonical Planner only "
+        "source's publish_serenity_candidates and wakes the canonical Planner only "
         "after it commits. "
         "Contract Delta (2026-09-07): the signal_pending PiDecision queue is retired; "
         "enqueue_serenity_theme_for_pi no longer exists.",
@@ -253,7 +253,7 @@ def _seed_theme_with_opportunities(n: int = 2):
     import math
     from datetime import datetime, timezone
 
-    from aletheia.config.loader import load_config
+    from aletheia.config.loader import load_config, save_config
     from aletheia.data.providers import Candle
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import (
@@ -266,7 +266,12 @@ def _seed_theme_with_opportunities(n: int = 2):
 
     assert n <= len(_PUBLISHABLE_SYMBOLS), "extend _PUBLISHABLE_SYMBOLS"
     now = datetime.now(timezone.utc)
-    venue = load_config().market_data.ccxt_exchange
+    cfg = load_config()
+    cfg.exchange.name = "bitget"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    venue = "bitget"
+    cfg.market_data.ccxt_exchange = venue
+    save_config(cfg)
 
     theme = SerenityTheme(name="Test industrial chain — semis", status="active")
     repo.insert_serenity_theme(theme)
@@ -455,17 +460,17 @@ def test_promote_publication_rolls_back_and_remains_retryable(monkeypatch):
 
     _switch_to_filebacked_db()
     theme_id, opp_ids = _seed_theme_with_opportunities(n=2)
-    real_insert = repo.insert_candidate
+    real_insert = repo.publish_candidate_snapshot
     calls = 0
 
-    def fail_second_insert(member):
+    def fail_second_insert(snapshot, members):
         nonlocal calls
         calls += 1
         if calls == 2:
             raise RuntimeError("deterministic publication failure")
-        return real_insert(member)
+        return real_insert(snapshot, members)
 
-    monkeypatch.setattr(repo, "insert_candidate", fail_second_insert)
+    monkeypatch.setattr(repo, "publish_candidate_snapshot", fail_second_insert)
     client = _make_test_client()
     failed = client.post(f"/api/serenity/themes/{theme_id}/promote")
 
@@ -479,7 +484,7 @@ def test_promote_publication_rolls_back_and_remains_retryable(monkeypatch):
         "a partial publication left a durable Candidate behind"
     )
 
-    monkeypatch.setattr(repo, "insert_candidate", real_insert)
+    monkeypatch.setattr(repo, "publish_candidate_snapshot", real_insert)
     retried = client.post(f"/api/serenity/themes/{theme_id}/promote")
     assert retried.status_code == 200, f"retry failed: {retried.text}"
     assert retried.json()["candidate_count"] == 2
@@ -535,14 +540,14 @@ _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
     SpecClaim(
         "SP-S06", _CONTRACT, "§auto_promote pipeline integration", "L2a",
         "When auto_promote=True and score≥min_score_for_pi, research_worker publishes "
-        "through the SAME repository function as manual promotion after pipeline stage 4 "
+        "through the SAME source function as manual promotion after pipeline stage 4 "
         "— one publication path, so automatic and manual promotion cannot diverge.",
     ),
 )
 def test_research_worker_auto_promote_block_exists():
     src = _RESEARCH_WORKER.read_text(encoding="utf-8")
-    repo_src = (
-        _ROOT / "aletheia" / "storage" / "repositories.py"
+    publication_src = (
+        _ROOT / "aletheia" / "trading" / "serenity_publication.py"
     ).read_text(encoding="utf-8")
     assert "auto_promote" in src, (
         "research_worker.py has no auto_promote reference — the D5 switch is dead"
@@ -550,7 +555,7 @@ def test_research_worker_auto_promote_block_exists():
     assert "min_score_for_pi=cfg.serenity.min_score_for_pi" in src, (
         "research_worker does not pass the configured score gate into the publication"
     )
-    assert "score_serenity_opportunity" in repo_src, (
+    assert "score_serenity_opportunity" in publication_src, (
         "atomic Serenity publication does not re-score current evidence and gates"
     )
     assert "publish_serenity_candidates" in src, (

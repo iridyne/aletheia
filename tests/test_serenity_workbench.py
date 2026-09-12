@@ -48,6 +48,13 @@ async def client(tmp_path, monkeypatch):
 
 # --- Status Endpoint ---
 
+
+@pytest.fixture
+def fast_tier(monkeypatch):
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr("aletheia.model_provider.router.get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
+
 @pytest.mark.anyio
 async def test_status_no_runs(client):
     resp = await client.get("/api/serenity/status")
@@ -471,7 +478,7 @@ async def test_deep_dive(client):
 # --- Research Worker ---
 
 @pytest.mark.anyio
-async def test_research_worker_success(tmp_path, monkeypatch):
+async def test_research_worker_success(tmp_path, monkeypatch, fast_tier):
     """Test the worker pipeline processes a run to completion."""
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -525,7 +532,7 @@ async def test_research_worker_success(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_research_worker_rate_limit(tmp_path, monkeypatch):
+async def test_research_worker_rate_limit(tmp_path, monkeypatch, fast_tier):
     """Test the worker handles 429 rate limit errors."""
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -559,7 +566,7 @@ async def test_research_worker_rate_limit(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_research_worker_generic_failure(tmp_path, monkeypatch):
+async def test_research_worker_generic_failure(tmp_path, monkeypatch, fast_tier):
     """Test the worker handles generic failures."""
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -1159,7 +1166,7 @@ async def test_run_artifacts_endpoint(client):
 # --- Pipeline Stage Tests (mocked LLM) ---
 
 @pytest.mark.anyio
-async def test_pipeline_full_stages(tmp_path, monkeypatch):
+async def test_pipeline_full_stages(tmp_path, monkeypatch, fast_tier):
     """Test multi-stage pipeline produces themes, claims, evidence with mocked LLM."""
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -1237,7 +1244,7 @@ async def test_pipeline_full_stages(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_research_worker_fails_run_on_required_theme_persistence_error(db, monkeypatch):
+async def test_research_worker_fails_run_on_required_theme_persistence_error(db, monkeypatch, fast_tier):
     run = SerenityResearchRun(trigger_type="manual", mode="standard", status="queued")
     repo.insert_serenity_research_run(run)
 
