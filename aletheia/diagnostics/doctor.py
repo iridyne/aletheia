@@ -756,11 +756,13 @@ def _probe_config_gates(report: Report) -> None:
                f"live.state={cfg.live.state}, exchange.mode={cfg.exchange.mode}, "
                f"paper_execution_mode={getattr(cfg.exchange, 'paper_execution_mode', '?')}")
 
+    from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+
     demo_cap = getattr(cfg.risk, "max_demo_position_margin_usdt", None)
     paper_mode = getattr(cfg.exchange, "paper_execution_mode", "")
     if (
         cfg.exchange.mode == "demo"
-        and paper_mode in {"bitget_demo", "okx_demo", "binance_testnet"}
+        and paper_mode in DEMO_EXECUTION_MODES
         and demo_cap is not None
         and float(demo_cap) <= 0
     ):
