@@ -108,15 +108,27 @@ class ImportService:
             if result.errors:
                 return result
 
-            # Import DB tables
+            # Admit the whole payload before any table write. Full-backup SQLite
+            # files and non-research artifacts belong to explicit Ops restore.
             db_dir = bundle_dir / "db"
+            for payload in db_dir.rglob("*"):
+                if payload.is_file() and (payload.parent != db_dir or payload.suffix != ".jsonl"):
+                    result.errors.append(f"Import rejected: unsupported DB payload {payload.relative_to(db_dir)}")
+            artifacts_dir = bundle_dir / "artifacts"
+            research_categories = {"evidence", "claims", "analyses", "lessons", "skills"}
+            for payload in artifacts_dir.iterdir() if artifacts_dir.exists() else ():
+                if payload.name not in research_categories or not payload.is_dir():
+                    result.errors.append(f"Import rejected: non-research artifact category {payload.name!r}")
+            if result.errors:
+                return result
+
+            # Import DB tables
             if db_dir.exists():
                 self._import_db_tables(db_dir, result, commit)
             if result.errors:
                 return result
 
             # Import artifacts
-            artifacts_dir = bundle_dir / "artifacts"
             if artifacts_dir.exists() and commit:
                 self._import_artifacts(artifacts_dir)
 

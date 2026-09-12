@@ -28,7 +28,10 @@ outer importer returns its errors before copying artifacts. Existing checksum,
 safe extraction, primary-key/column checks, conflict handling, transaction and
 isolated staging behavior remain; no new importer framework or database schema.
 
-Research artifacts remain under the existing research transport behavior. This
+Before table mutation, reject non-JSONL or nested DB payloads (including full
+backup SQLite files), and artifact categories outside the existing research
+export surface: evidence, claims, analyses, lessons and skills. Checksums do not
+grant restore authority. Research artifacts retain their existing transport behavior. This
 change does not claim a cross-filesystem/database atomic restore, change normal
 ArtifactStore ownership or widen permissible archive paths. Managed full backup
 and isolated restore remain their separate explicit Ops workflow.

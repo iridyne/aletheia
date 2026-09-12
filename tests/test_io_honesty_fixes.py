@@ -699,6 +699,31 @@ def test_import_rejects_core_and_retired_runtime_tables(tmp_path, monkeypatch, t
     assert not (tmp_path / "artifacts/evidence/rejected.txt").exists()
 
 
+@pytest.mark.parametrize("payload", [
+    "db/app.db", "db/nested/ps_lessons.jsonl", "artifacts/proposals/current.json",
+    "artifacts/runtime/current.json",
+])
+@pytest.mark.parametrize("commit", [False, True])
+def test_import_rejects_non_research_payload_before_mutation(tmp_path, monkeypatch, payload, commit):
+    _setup_env(tmp_path, monkeypatch)
+    artifact = tmp_path / "artifacts/evidence/current.txt"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("current", encoding="utf-8")
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "payload", extra_files={
+            payload: "historical",
+            "artifacts/evidence/current.txt": "replacement",
+        },
+    )
+    from aletheia.sync.importer import ImportService
+    service = ImportService(data_dir=tmp_path)
+    result = service.merge(archive) if commit else service.dry_run(archive)
+    assert any("rejected" in error.lower() for error in result.errors)
+    assert result.new_rows == {}
+    assert _count_lessons(tmp_path, "lesson-payload") == 0
+    assert artifact.read_text(encoding="utf-8") == "current"
+
+
 def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monkeypatch):
     """#273: a bundle with one valid + one unauthorized table must write neither."""
     from aletheia.storage.hashing import sha256_file
