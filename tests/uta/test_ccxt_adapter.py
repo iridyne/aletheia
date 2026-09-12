@@ -1000,6 +1000,45 @@ async def test_bitget_hedge_close_normalizes_same_side_leg(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("profile_type", (BinanceTestnetProfile, BinanceLiveProfile))
+@pytest.mark.parametrize("fill_count", (0, 1, 2))
+async def test_binance_single_timestamp_fill_window_requires_real_read(monkeypatch, profile_type, fill_count):
+    profile = profile_type(api_key="isolated", secret="isolated")
+    exchange = FakeExchange()
+    at = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(seconds=1)
+    timestamp = int(at.timestamp() * 1000)
+    exchange.trades = [{
+        "id": str(index + 1), "order": "closed-order", "symbol": "BTC/USDT:USDT",
+        "side": "sell", "amount": "1", "price": "60000", "timestamp": timestamp,
+        "fee": {"cost": "0.1", "currency": "USDT"},
+    } for index in range(fill_count)]
+    exchange.trades.append({
+        "id": "999", "order": "later-order", "symbol": "BTC/USDT:USDT",
+        "side": "sell", "amount": "1", "price": "60000", "timestamp": timestamp + 1,
+        "fee": {"cost": "0.2", "currency": "USDT"},
+    })
+    read = exchange.fetch_my_trades
+
+    async def read_once(*args, **kwargs):
+        assert not any(event[0] == "fetch_my_trades" for event in exchange.events)
+        return await read(*args, **kwargs)
+
+    exchange.fetch_my_trades = read_once
+    _install(monkeypatch, exchange)
+    identity = _identity(profile).model_copy(update={"execution_mode": profile.expected_execution_mode})
+    adapter = CCXTUTAAdapter(identity, profile)
+    try:
+        report = await adapter.get_fills(FillQuery(scope=QueryScope(start_at=at, end_at=at)))
+    finally:
+        await adapter.close()
+    assert report.completeness is ReadCompleteness.COMPLETE
+    assert len(report.fills) == fill_count
+    assert [event for event in exchange.events if event[0] == "fetch_my_trades"] == [
+        ("fetch_my_trades", {"startTime": timestamp, "endTime": timestamp + 1}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_private_history_bound_is_partial(monkeypatch):
     profile = _profile("binance")
     exchange = FakeExchange()

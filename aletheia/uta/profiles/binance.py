@@ -35,11 +35,12 @@ class BinanceTestnetProfile(CCXTProfile):
         # Binance forbids fromId with time bounds; empty windows do not end history.
         rows = []
         window_start = since
-        while window_start < end_ms:
+        while window_start <= end_ms:
             window_end = min(window_start + 7 * 86400 * 1000, end_ms)
             from_id = None
             for _ in range(100):
-                request = {**params, "startTime": window_start, "endTime": window_end} if from_id is None else {**params, "fromId": from_id}
+                # A point query still reads; keep returned evidence bounded by window_end.
+                request = {**params, "startTime": window_start, "endTime": max(window_start + 1, window_end)} if from_id is None else {**params, "fromId": from_id}
                 page = await exchange.fetch_my_trades(symbol, None, limit, request)
                 if not isinstance(page, list):
                     raise ValueError("Binance private trade history malformed")
@@ -55,6 +56,8 @@ class BinanceTestnetProfile(CCXTProfile):
                 from_id = next_id
             else:
                 return rows, True
+            if window_end == end_ms:
+                break
             window_start = window_end
         return rows, False
 
