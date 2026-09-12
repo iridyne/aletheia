@@ -185,7 +185,7 @@ class OpenAICompatibleProvider(ModelProvider):
         except APIConnectionError as exc:
             exc.request.headers.clear()
             error_type = httpx.ReadTimeout if isinstance(exc, APITimeoutError) else httpx.ConnectError
-            raise error_type("model endpoint request failed") from None
+            raise error_type("model endpoint network request failed") from None
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         if self.protocol == "responses":

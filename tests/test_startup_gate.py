@@ -606,6 +606,14 @@ def test_resume_gate_keeps_real_reconciliation_incident_paused(tmp_path, monkeyp
 
 # --- 9. DNS failure short-circuits the retry loop ---
 
+def test_dns_classification_terminates_on_cyclic_non_dns_exception():
+    from aletheia.agent_runtime.startup_gate import _is_dns_error
+
+    error = RuntimeError("unrelated transport failure")
+    error.__cause__ = error
+    assert _is_dns_error(error) is False
+
+
 def test_dns_failure_short_circuits_retries(tmp_path, monkeypatch):
     """When ALL providers fail with DNS-class errors, retries are skipped.
 
