@@ -11,6 +11,7 @@ from aletheia.config.exchanges import (
     execution_mode_venue,
     is_live_execution_mode,
 )
+from aletheia.risk.demo_entry_quality import EXCHANGE_DEMO_MODES
 
 
 @pytest.mark.parametrize(
@@ -35,6 +36,7 @@ def test_unknown_execution_mode_is_unavailable():
     assert execution_mode_environment("venue_live_limited_typo") is None
     assert execution_mode_venue("venue_live_limited_typo") is None
     assert not is_live_execution_mode("venue_live_limited_typo")
+    assert EXCHANGE_DEMO_MODES is DEMO_EXECUTION_MODES
     assert DEMO_EXECUTION_MODES == {"binance_testnet", "okx_demo", "bitget_demo"}
     assert LIVE_EXECUTION_MODE_SET == {
         "binance_live_limited",

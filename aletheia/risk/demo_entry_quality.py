@@ -23,11 +23,7 @@ import math
 
 from aletheia.risk.policy import DEMO_EXECUTION_MODES
 
-EXCHANGE_DEMO_MODES = frozenset({
-    "bitget_demo",
-    "okx_demo",
-    "binance_testnet",
-})
+EXCHANGE_DEMO_MODES = DEMO_EXECUTION_MODES
 
 REGIME_CONFIDENCE_STANDDOWN = "regime_confidence_standdown"
 REGIME_SIDEWAYS_STANDDOWN = "regime_sideways_standdown"
@@ -49,7 +45,7 @@ _RANK_SKIP_PREFIXES = (
 
 def applies_to_execution_mode(execution_mode: str | None) -> bool:
     mode = str(execution_mode or "")
-    return mode in EXCHANGE_DEMO_MODES and mode in DEMO_EXECUTION_MODES
+    return mode in EXCHANGE_DEMO_MODES
 
 
 def evaluate_demo_entry_quality(
