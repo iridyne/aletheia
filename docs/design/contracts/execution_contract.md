@@ -135,7 +135,7 @@ exchange client 或 `*_broker`。Gateway 仍是下单前最后一道权威检查
 `uta/` 负责唯一私有账户读取与规范化执行。
 
 **新交易所接入方式**（e.g. Hyperliquid）：
-1. 往 `execution.venue_capabilities.EXECUTION_MODE_TO_VENUE` 加 `"hyperliquid_demo": "hyperliquid"`
+1. 在 `config.exchanges` 的执行模式、环境和 venue 注册表中登记 `"hyperliquid_demo": "hyperliquid"`
 2. 确保 `sync_universe_registry()` 已写入 `venue="hyperliquid"` 行
 
 **Spec claims**：`EX-S07`（结构）/ `EX-B11`（OKX demo）/ `EX-B12`（registry 模式 + fail-open）。`gateway.py:85-165`。
