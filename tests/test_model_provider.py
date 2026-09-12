@@ -336,6 +336,47 @@ async def test_http_provider_reuses_loop_owned_client(monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("provider_type", [OpenAICompatibleProvider, AnthropicCompatibleProvider])
+async def test_cold_model_clones_share_owner_pool_and_keep_loop_isolation(provider_type):
+    from aletheia.model_provider.base import clone_provider_with_model
+
+    class Client:
+        closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    made = []
+
+    def factory(**_kwargs):
+        client = Client()
+        made.append(client)
+        return client
+
+    owner = provider_type(base_url="http://model.test/v1", model="preferred")
+    small = clone_provider_with_model(owner, "small")
+    large = clone_provider_with_model(owner, "large")
+    main_client = small._get_http_client(factory)
+    assert large._get_http_client(factory) is main_client
+    assert owner._get_http_client(factory) is main_client
+    assert len(made) == 1
+    assert (owner.model, small.model, large.model) == ("preferred", "small", "large")
+
+    async def other_loop():
+        other = clone_provider_with_model(owner, "other")
+        other_client = other._get_http_client(factory)
+        assert other_client is not main_client
+        await owner.aclose()
+        assert other_client.closed
+
+    await asyncio.to_thread(lambda: asyncio.run(other_loop()))
+    assert len(made) == 2 and not main_client.closed
+    await owner.aclose()
+    assert main_client.closed
+    assert owner._http_clients == small._http_clients == large._http_clients == {}
+
+
+@pytest.mark.anyio
 async def test_model_health_cache_is_single_flight(monkeypatch):
     calls = 0
 
