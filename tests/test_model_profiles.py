@@ -80,18 +80,29 @@ def test_current_missing_or_unknown_tier_does_not_use_default(monkeypatch):
             router.get_provider_for_tier(tier)
 
 
-def test_historical_tier_decode_binds_old_resolved_model_without_mutating_input():
+@pytest.mark.parametrize("tiers", [
+    {"deep_provider": "deep", "fast_provider": None},
+    {"deep_provider": "deep"},
+    {},
+    {"deep": None},
+    {"fast": None},
+    {"deep": {"endpoint_id": "deep", "model_id": "explicit"}, "fast": None},
+])
+@pytest.mark.parametrize("default_profile", [{"model": "small"}, {}])
+def test_historical_tier_decode_binds_old_resolved_model_without_mutating_input(tiers, default_profile):
     import copy
-    from aletheia.config.schema import ModelsConfig
+    from aletheia.config.schema import ModelsConfig, ProviderConfig
 
     raw = {
-        "default_provider": "default", "deep_provider": "deep", "fast_provider": None,
-        "providers": {"default": {"model": "small"}, "deep": {"model": "large"}},
+        "default_provider": "default", **tiers,
+        "providers": {"default": default_profile, "deep": {"model": "large"}},
     }
     original = copy.deepcopy(raw)
     parsed = ModelsConfig.model_validate(raw).model_dump()
-    assert parsed.get("fast") == {"endpoint_id": "default", "model_id": "small"}
-    assert parsed.get("deep") == {"endpoint_id": "deep", "model_id": "large"}
+    for tier in ("fast", "deep"):
+        endpoint = tiers.get(f"{tier}_provider") or "default"
+        expected = {"endpoint_id": endpoint, "model_id": ProviderConfig(**raw["providers"][endpoint]).model}
+        assert parsed.get(tier) == (tiers[tier] if tier in tiers else expected)
     assert "fast_provider" not in parsed and "deep_provider" not in parsed
     assert raw == original
 
@@ -111,7 +122,8 @@ def test_malformed_or_ambiguous_historical_tiers_fail_validation(models):
 
 
 @pytest.mark.anyio
-async def test_historical_tier_loading_never_writes_or_reads_credentials(client, monkeypatch):
+@pytest.mark.parametrize("tiers", [{"deep_provider": "shared", "fast_provider": None}, {}])
+async def test_historical_tier_loading_never_writes_or_reads_credentials(client, monkeypatch, tiers):
     import yaml
     import aletheia.config.loader as loader
     from aletheia.config.schema import ProviderConfig
@@ -128,7 +140,7 @@ async def test_historical_tier_loading_never_writes_or_reads_credentials(client,
     raw = yaml.safe_load(path.read_text())
     raw["models"].pop("deep")
     raw["models"].pop("fast")
-    raw["models"].update(deep_provider="shared", fast_provider=None)
+    raw["models"].update(tiers)
     path.write_text(yaml.safe_dump(raw))
     original = path.read_bytes()
 
