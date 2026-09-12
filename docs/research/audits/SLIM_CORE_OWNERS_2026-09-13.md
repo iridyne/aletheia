@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `878e1accd5661867fb156c2ecbe25a1a190a8ff7`, under
+Source checkpoint: `124b5598fde7187f12875d9d42cdc2eca07ef00f`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -86,7 +86,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Generation / EntryPlan | Repository generation claim/bind/defer/complete APIs; `transition_entry_plan`, trigger binding and monitoring | Planner/compiler/watcher ownership and multi-leg aggregation remain Core; complete callback/dynamic-write audit still needed. |
 | Proposal | Repository immutable Proposal helpers and native per-leg construction | Research-bundle import rejects Proposal rows; complete callback and dynamic-write audit remain separate from the importer boundary. |
 | RiskDecision | `risk.engine._persist_risk_result` calls ordinary or authoritative insert; authoritative repository insertion owns deduplication | Preflight and final exact-order decisions are different facts, not interchangeable duplicate implementations. |
-| Order | `insert_order`, `transition_order`, `update_order_metadata`, acknowledgement finalization | Coordinator/Gateway, reconciliation/materialization, observed TP/SL and adopted/administrative evidence producers remain to classify. |
+| Order | `insert_order`, `transition_order`, `update_order_metadata`, `replace_order_error_reason`, acknowledgement finalization | Coordinator/Gateway, reconciliation/materialization, observed TP/SL and adopted/administrative evidence producers remain to classify; pending-close reason-only cleanup now uses the repository CAS writer. |
 | Fill | `insert_fill` called by exchange materialization and observed administrative close evidence | Private Fill normalization versus administrative synthetic evidence must not be conflated. `_verify_durable_fills` also validates/amends historical fee-source provenance. |
 | Position entry | `insert_position`: native private-fill materialization or explicit external-position adoption | These represent distinct provenance. Generic compatible-position coalescing needs exact Plan/account audit before changing it. |
 | Position field groups | Repository materialization / exit-plan / observation / closed-settlement field allowlists and status CAS | Producers span materializer, position manager, protection coordinator, reconciler and PnL; field ownership is not proof of one high-level owner. |
@@ -117,6 +117,13 @@ from generic Gateway/position routing, pending/stale cleanup, broker funding
 settlement, Demo Risk freshness, startup scope, and account-mode reconciliation.
 This is structural reuse only: it does not broaden the supported account set or
 change a venue-native branch. Unknown execution identities remain unavailable.
+
+The dynamic-SQL pass found no remaining direct generic Order lifecycle write in
+`pending_close_recovery`: its owner-authorized reason replacement now uses
+`repositories.replace_order_error_reason`, with an exact status/reason CAS and
+no collateral field rewrite. Explicit historical repair and exchange
+materialization writes remain separate owner boundaries and are not folded into
+the ordinary Order lifecycle writer.
 
 Next runnable seams are concrete private-account callers in the
 [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), optional lifecycle
