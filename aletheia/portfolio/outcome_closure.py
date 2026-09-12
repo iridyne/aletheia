@@ -5,24 +5,17 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
-import logging
 import math
 from typing import Any
 
 from aletheia.analytics.outcome_integrity import (
     OUTCOME_SEMANTICS_VERSION,
-    outcome_write_eligibility,
-    validated_fee,
-    validated_funding_economics,
 )
 from aletheia.data.symbols import to_canonical
 from aletheia.execution.verified_exit import VerifiedExitResult
 from aletheia.portfolio.pnl import build_exit_reasoning
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Order
-
-
-logger = logging.getLogger("aletheia.portfolio.outcome_closure")
 
 
 def _json(value: object) -> str:
@@ -302,193 +295,83 @@ def close_position_verified(
     reconciliation_context: dict[str, Any] | None = None,
     closure_type: str = "verified_strategy",
 ) -> dict:
-    """Settle exact fill/fee economics once after broker evidence is verified."""
+    """Normalize disappearance evidence into the single economic-close owner."""
+    from aletheia.portfolio.pnl import PositionNotOpenError, close_position
 
     if closure_type not in {"verified_strategy", "verified_external"}:
         raise ValueError("unsupported verified closure type")
-    strategy_outcome = closure_type == "verified_strategy"
-
     row, already = _load_open(position_id)
     _validate_verified_evidence(row, evidence)
     if already is not None:
         return already
 
-    # Claim the SQLite writer slot before the authoritative reread.  This is the
-    # compare-and-set boundary: only the worker that still sees status=open may
-    # persist economics, audit the close, or publish hooks.
-    with repo.transaction(immediate=True):
+    fill_quantity = sum(fill.quantity for fill in evidence.fills)
+    exit_price = sum(fill.price * fill.quantity for fill in evidence.fills) / fill_quantity
+    exit_fee = sum(float(fill.fee) for fill in evidence.fills)
+    closed_at = datetime.fromtimestamp(
+        max(fill.filled_at_ms for fill in evidence.fills) / 1000,
+        tz=timezone.utc,
+    ).isoformat()
+    identity = {
+        "broker_id": evidence.broker_id,
+        "account_environment": evidence.account_environment,
+        "account_scope": evidence.account_scope,
+        "account_fingerprint": evidence.account_scope,
+        "execution_mode": evidence.execution_mode,
+        "position_id": evidence.position_id,
+        "symbol": evidence.symbol,
+        "market_type": evidence.market_type,
+        "direction": evidence.direction,
+    }
+    materialized_order_ids: list[str] = []
+    private_evidence = {
+        **(reconciliation_context or {}),
+        "source": source,
+        "verified_exit": asdict(evidence),
+        "fill_ids": [fill.fill_id for fill in evidence.fills],
+        "fill_quantity": fill_quantity,
+        "fee_in_quote": exit_fee,
+        "fee_status": "complete",
+        "materialized_close_order_ids": materialized_order_ids,
+    }
+
+    def materialize() -> None:
         current = repo._select_one("positions", position_id)
         if current is None:
             raise ValueError(f"position not found: {position_id}")
-        if current.get("status") != "open":
-            return _already_closed_result(position_id, current)
         _validate_verified_evidence(current, evidence)
-        entry_fee = validated_fee(current.get("entry_fee"), field="entry_fee")
-        materialized_close_order_ids = (
-            []
-            if strategy_outcome
-            else _materialize_observed_close_chain(
-                current,
-                evidence,
-                reason=reason,
+        if closure_type == "verified_external":
+            materialized_order_ids.extend(
+                _materialize_observed_close_chain(current, evidence, reason=reason)
             )
-        )
 
-        fill_quantity = sum(fill.quantity for fill in evidence.fills)
-        exit_price = sum(
-            fill.price * fill.quantity for fill in evidence.fills
-        ) / fill_quantity
-        exit_fee = sum(
-            float(fill.fee) for fill in evidence.fills if fill.fee is not None
-        )
-        gross = _realized_pnl(
-            str(current["direction"]),
-            float(current["entry_price"]),
+    try:
+        result = close_position(
+            position_id,
             exit_price,
-            float(current["quantity"]),
-        )
-        market_type = str(current.get("market_type") or "")
-        funding_cost, funding_source = validated_funding_economics(
-            market_type=market_type,
-            execution_mode=current.get("execution_mode"),
-            funding_cost=(
-                0.0 if market_type == "spot" else current.get("funding_cost")
-            ),
-            funding_source=(
-                "not_applicable"
-                if market_type == "spot"
-                else current.get("funding_source")
-            ),
-        )
-        # A verified exit Fill closes the execution lifecycle, but unknown
-        # futures funding still makes net realized economics unavailable.  Do
-        # not convert that missing ledger fact into a zero-cost assumption.
-        realized: float | None = None
-        if funding_cost is not None and entry_fee is not None:
-            realized = gross - float(entry_fee) - exit_fee - funding_cost
-        closed_at = datetime.fromtimestamp(
-            max(fill.filled_at_ms for fill in evidence.fills) / 1000,
-            tz=timezone.utc,
-        ).isoformat()
-        price_source = "broker_fill"
-        identity = {
-            "broker_id": evidence.broker_id,
-            "account_environment": evidence.account_environment,
-            "account_scope": evidence.account_scope,
-            "account_fingerprint": evidence.account_scope,
-            "execution_mode": evidence.execution_mode,
-            "position_id": evidence.position_id,
-            "symbol": evidence.symbol,
-            "market_type": evidence.market_type,
-            "direction": evidence.direction,
-        }
-        updates = {
-            "status": "closed",
-            "current_price": exit_price,
-            "unrealized_pnl": 0.0,
-            "realized_pnl": realized,
-            "close_reason": reason,
-            "closed_at": closed_at,
-            "pending_close_order_id": None,
-            "pending_close_status": None,
-            "pending_close_requested_at": None,
-            "entry_fee": float(entry_fee) if entry_fee is not None else None,
-            "exit_fee": exit_fee,
-            "funding_cost": funding_cost,
-            "funding_source": funding_source,
-            # No reliable decision/arrival reference exists in VerifiedExitResult.
-            # Unknown is honest; config-derived slippage would be fabricated here.
-            "slippage_cost": None,
-            "close_category": (
-                "strategy" if strategy_outcome else "administrative"
-            ),
-            "exit_price_source": price_source,
-            "exit_fill_verified": True,
-            "reconciliation_identity": _json(identity),
-            "reconciliation_evidence": _json({
-                "verified_exit": asdict(evidence),
-                "materialized_close_order_ids": materialized_close_order_ids,
-                **(reconciliation_context or {}),
-            }),
-            "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
-            "exit_reasoning": _json(build_exit_reasoning(
-                current,
-                exit_price=exit_price,
-                reason=reason,
-                actor=actor,
-                source=source,
-                is_ai_judgment=False,
-                trigger={
-                    "closure_type": closure_type,
-                    "fill_count": len(evidence.fills),
-                },
-            )),
-        }
-        if entry_fee is None or exit_fee is None:
-            outcome_eligible = False
-            outcome_reason = "incomplete_realized_economics"
-        elif strategy_outcome and funding_cost is None:
-            outcome_eligible = False
-            outcome_reason = "incomplete_funding_economics"
-        elif strategy_outcome:
-            outcome_eligible, outcome_reason = outcome_write_eligibility(
-                {**current, **updates},
-                exit_fill_verified=True,
-            )
-        else:
-            outcome_eligible, outcome_reason = False, "administrative_close"
-        updates.update({
-            "outcome_eligible": outcome_eligible,
-            "outcome_exclusion_reason": outcome_reason,
-        })
-        updates.update(_close_provenance())
-        closed_row = {**current, **updates}
-        repo.finalize_position_close(position_id, updates)
-        if outcome_eligible or outcome_reason == "attribution_read_failed":
-            from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
-
-            enqueue_outcome_hook_jobs(closed_row)
-        repo.insert_audit_event(AuditEvent(
+            reason,
+            actual_exit_fee=exit_fee,
+            closed_at=closed_at,
+            verified_exit_evidence=private_evidence,
+            materialize_close=materialize,
             actor=actor,
             source=source,
-            event_type=(
-                "position_verified_closed"
-                if strategy_outcome
-                else "position_verified_external_closed"
-            ),
-            entity_type="position",
-            entity_id=position_id,
-            before_state=_json({"status": current.get("status")}),
-            after_state=_json({
-                "status": "closed",
-                "close_category": updates["close_category"],
-                "exit_fill_verified": True, "fill_ids": [
-                    fill.fill_id for fill in evidence.fills
-                ],
-                "candidate_id": (reconciliation_context or {}).get("candidate_id"),
-                "realized_pnl": realized,
-                "outcome_eligible": outcome_eligible,
-                "outcome_exclusion_reason": outcome_reason,
-            }),
-            message=(
-                "Position settled from verified private fill evidence; "
-                f"outcome={outcome_reason}"
-            ),
-        ))
-    if outcome_eligible or outcome_reason == "attribution_read_failed":
-        _run_outcome_hooks(closed_row, realized, reason)
-    return {
-        "position_id": position_id,
-        "closed": True,
-        "already_closed": False,
-        "closure_type": closure_type,
-        "reason": reason,
-        "realized_pnl": realized,
-        "exit_price": exit_price,
-        "exit_fee": exit_fee,
-        "outcome_eligible": outcome_eligible,
-        "outcome_exclusion_reason": outcome_reason,
-    }
+            close_category=("strategy" if closure_type == "verified_strategy" else "administrative"),
+            reconciliation_identity=identity,
+            close_reasoning={
+                "actor": actor,
+                "source": source,
+                "reason": reason,
+                "is_ai_judgment": False,
+                "trigger": {"closure_type": closure_type, "fill_count": len(evidence.fills)},
+            },
+        )
+    except PositionNotOpenError:
+        current = repo._select_one("positions", position_id)
+        if current is None or current.get("status") != "closed":
+            raise
+        return _already_closed_result(position_id, current)
+    return {**result, "closed": True, "already_closed": False, "closure_type": closure_type}
 
 
 def close_position_from_verified_exit(
@@ -612,26 +495,3 @@ def _validate_administrative_identity(
         for key in ("broker_id", "account_environment", "account_scope")
     ):
         raise ValueError("administrative closure identity mismatch")
-
-
-def _realized_pnl(direction: str, entry: float, exit_price: float, qty: float) -> float:
-    return (
-        (exit_price - entry) * qty
-        if direction in {"long", "buy"}
-        else (entry - exit_price) * qty
-    )
-
-
-def _run_outcome_hooks(row: dict, realized: float, reason: str) -> None:
-    """Attempt committed hook jobs; failures remain durable for replay."""
-
-    try:
-        from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
-
-        process_outcome_hook_jobs(position_id=str(row["id"]))
-    except Exception as exc:
-        logger.warning(
-            "post-commit Outcome hook dispatch failed for %s: %s",
-            row.get("id"),
-            exc,
-        )

@@ -56,7 +56,7 @@ def test_partial_shadow_retry_reuses_first_price_and_close_time(
     repo.insert_shadow_trade(counterfactual)
 
     # Commit the close + outbox intent without delivering it immediately.
-    monkeypatch.setattr(outcome_closure, "_run_outcome_hooks", lambda *_args: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl._run_outcome_hooks", lambda *_args: None)
     outcome_closure.close_position_verified(
         position.id,
         _verified_result(position),

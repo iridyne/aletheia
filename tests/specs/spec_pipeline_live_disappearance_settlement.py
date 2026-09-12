@@ -93,8 +93,7 @@ def test_live_disappearance_materializes_observed_order_fill_and_position(
     monkeypatch.setattr(disappearance_settlement, "_run_query", fake_run_query)
     monkeypatch.setattr(disappearance_settlement, "_direct_positions_present", lambda *a: False)
     monkeypatch.setattr(
-        outcome_closure,
-        "_run_outcome_hooks",
+        "aletheia.portfolio.pnl._run_outcome_hooks",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("verified external close must not enter feedback")
         ),

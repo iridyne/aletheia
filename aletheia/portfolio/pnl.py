@@ -21,6 +21,10 @@ from aletheia.storage.repositories import (
 )
 
 
+class PositionNotOpenError(ValueError):
+    """The close lost its open-state claim; never repeat external execution."""
+
+
 _CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
     "symbol",
     "market_type",
@@ -656,6 +660,8 @@ def close_position(
     funding_cost: float | None = None,
     funding_source: str | None = None,
     funding_evidence: dict | None = None,
+    close_category: str = "strategy",
+    reconciliation_identity: dict | None = None,
 ) -> dict:
     """Persist an exchange close and its supplied private evidence atomically.
 
@@ -666,6 +672,10 @@ def close_position(
 
     if is_synthetic_close(reason):
         raise ValueError("administrative close reasons must use close_position_administrative")
+    if close_category not in {"strategy", "administrative"}:
+        raise ValueError("unsupported economic close category")
+    if close_category == "administrative" and verified_exit_evidence is None:
+        raise ValueError("external economic close requires verified evidence")
     from aletheia.storage import repositories as repo
     from aletheia.files.jsonl import write_audit
 
@@ -673,7 +683,7 @@ def close_position(
     if row is None:
         raise ValueError(f"position not found: {position_id}")
     if row.get("status") != "open":
-        raise ValueError(f"position is not open: {position_id}")
+        raise PositionNotOpenError(f"position is not open: {position_id}")
 
     if row.get("execution_mode") not in UTA_EXECUTION_MODES:
         raise ValueError("unsupported position execution mode")
@@ -794,7 +804,7 @@ def close_position(
         account_environment=account_environment,
         execution_mode=execution_mode,
     )
-    reconciliation_identity = {
+    default_identity = {
         "broker_id": execution_mode,
         "account_environment": account_environment,
         "account_fingerprint": account_fingerprint,
@@ -804,6 +814,18 @@ def close_position(
         "market_type": row.get("market_type"),
         "direction": row.get("direction"),
     }
+    if reconciliation_identity is None:
+        reconciliation_identity = default_identity
+    if not isinstance(reconciliation_identity, dict) or any(
+        not str(reconciliation_identity.get(field) or "").strip()
+        for field in ("broker_id", "account_environment", "account_fingerprint")
+    ):
+        raise ValueError("economic close requires scoped reconciliation identity")
+    if any(
+        reconciliation_identity.get(field) != row.get(field)
+        for field in ("execution_mode", "symbol", "market_type", "direction")
+    ) or reconciliation_identity.get("position_id") != position_id:
+        raise ValueError("economic close reconciliation identity mismatch")
     if private_exchange_fill:
         outcome_evidence = dict(verified_exit_evidence or {})
     else:
@@ -853,7 +875,10 @@ def close_position(
         "funding_source": funding_source,
         "slippage_cost": None,
         "exit_reasoning": json.dumps(exit_reasoning, sort_keys=True),
-        "close_category": "strategy",
+        "close_category": close_category,
+        "pending_close_order_id": None,
+        "pending_close_status": None,
+        "pending_close_requested_at": None,
         "exit_price_source": (
             "broker_fill" if private_exchange_fill else "unavailable"
         ),
@@ -863,54 +888,15 @@ def close_position(
             sort_keys=True,
             separators=(",", ":"),
         ),
-        "reconciliation_evidence": json.dumps(
-            outcome_evidence,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ),
         "outcome_semantics_version": OUTCOME_SEMANTICS_VERSION,
     }
-    if exit_fill_verified and (entry_fee is None or exit_fee is None):
-        outcome_eligible = False
-        outcome_exclusion_reason = "incomplete_realized_economics"
-    elif exit_fill_verified and funding_cost is None:
-        outcome_eligible = False
-        outcome_exclusion_reason = "incomplete_funding_economics"
-    else:
-        outcome_eligible, outcome_exclusion_reason = outcome_write_eligibility(
-            {**row, **update_fields},
-            exit_fill_verified=exit_fill_verified,
-        )
-    update_fields.update(
-        {
-            "outcome_eligible": outcome_eligible,
-            "outcome_exclusion_reason": outcome_exclusion_reason,
-        }
-    )
-    update_fields.update(_close_provenance())
-    audit_before = {
-        "status": row.get("status"),
-        "unrealized_pnl": row.get("unrealized_pnl"),
-    }
-    audit_after = {
-        "status": "closed",
-        "realized_pnl": realized,
-        "close_reason": reason,
-        "outcome_eligible": outcome_eligible,
-        "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
-    }
-    audit_message = (
-        f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
-        f"realized={realized}; outcome={update_fields['outcome_exclusion_reason']}"
-    )
     # Re-read under the writer claim before committing the close and outcome hooks.
     with repo.transaction(immediate=True):
         current = repo._select_one("positions", position_id)
         if current is None:
             raise ValueError(f"position not found: {position_id}")
         if current.get("status") != "open":
-            raise ValueError(f"position is not open: {position_id}")
+            raise PositionNotOpenError(f"position is not open: {position_id}")
         changed_fields = [
             field
             for field in _CLOSE_ECONOMIC_SNAPSHOT_FIELDS
@@ -922,6 +908,52 @@ def close_position(
             )
         if materialize_close is not None:
             materialize_close()
+        update_fields["reconciliation_evidence"] = json.dumps(
+            outcome_evidence, sort_keys=True, separators=(",", ":"), default=str,
+        )
+        row = current
+        if exit_fill_verified and (entry_fee is None or exit_fee is None):
+            outcome_eligible = False
+            outcome_exclusion_reason = "incomplete_realized_economics"
+        elif close_category == "administrative":
+            outcome_eligible = False
+            outcome_exclusion_reason = "administrative_close"
+        elif exit_fill_verified and funding_cost is None:
+            outcome_eligible = False
+            outcome_exclusion_reason = "incomplete_funding_economics"
+        else:
+            outcome_eligible, outcome_exclusion_reason = outcome_write_eligibility(
+                {**row, **update_fields},
+                exit_fill_verified=exit_fill_verified,
+            )
+        update_fields.update(
+            {
+                "outcome_eligible": outcome_eligible,
+                "outcome_exclusion_reason": outcome_exclusion_reason,
+            }
+        )
+        update_fields.update(_close_provenance())
+        audit_before = {
+            "status": row.get("status"),
+            "unrealized_pnl": row.get("unrealized_pnl"),
+        }
+        audit_after = {
+            "status": "closed",
+            "realized_pnl": realized,
+            "close_reason": reason,
+            "outcome_eligible": outcome_eligible,
+            "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
+        }
+        audit_message = (
+            f"Position {row.get('symbol')} closed @ {exit_price} ({reason}); "
+            f"realized={realized}; outcome={update_fields['outcome_exclusion_reason']}"
+        )
+        event_type = "position_closed"
+        if "verified_exit" in outcome_evidence:
+            event_type = (
+                "position_verified_closed" if close_category == "strategy"
+                else "position_verified_external_closed"
+            )
         repo.finalize_position_close(position_id, update_fields)
         if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
             from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
@@ -953,7 +985,7 @@ def close_position(
             AuditEvent(
                 actor=actor,
                 source=source,
-                event_type="position_closed",
+                event_type=event_type,
                 entity_type="position",
                 entity_id=position_id,
                 before_state=json.dumps(audit_before, sort_keys=True),
@@ -966,7 +998,7 @@ def close_position(
     audit_payload = {
         "actor": actor,
         "source": source,
-        "event_type": "position_closed",
+        "event_type": event_type,
         "entity_type": "position",
         "entity_id": position_id,
         "before": audit_before,
@@ -1014,26 +1046,29 @@ def close_position(
     except Exception:
         pass
     if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
-        try:
-            from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
-
-            process_outcome_hook_jobs(position_id=position_id)
-        except Exception as exc:
-            # The durable jobs were committed with the Position. A later worker
-            # will recover them even if the immediate delivery attempt itself fails.
-            logger.warning(
-                "post-commit Outcome hook dispatch failed for %s: %s",
-                position_id,
-                exc,
-            )
+        _run_outcome_hooks({**row, **update_fields}, realized, reason)
     return {
         "position_id": position_id,
         "realized_pnl": realized,
         "exit_price": exit_price,
         "reason": reason,
+        "exit_fee": exit_fee,
         "outcome_eligible": outcome_eligible,
         "outcome_exclusion_reason": update_fields["outcome_exclusion_reason"],
     }
+
+
+def _run_outcome_hooks(row: dict, realized: float | None, reason: str) -> None:
+    """Attempt committed jobs; a delivery failure remains durable for replay."""
+    try:
+        from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
+
+        process_outcome_hook_jobs(position_id=str(row["id"]))
+    except Exception as exc:
+        logger.warning(
+            "post-commit Outcome hook dispatch failed for %s: %s",
+            row["id"], type(exc).__name__,
+        )
 
 
 def _all_closed_positions(execution_mode: str | None = None) -> list[dict]:
