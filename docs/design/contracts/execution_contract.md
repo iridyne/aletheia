@@ -542,7 +542,8 @@ base 费用可按该 Fill 的成交价直接折算。数量/identity 不符或�
 入场与历史补链的既有完整证据门槛不由此放宽。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
 删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
 
-原生平仓与 verified disappearance 的经济关闭由 `portfolio.pnl.close_position` 单点写入；
+原生平仓与 verified disappearance 经 `portfolio.pnl.close_position` 验证关闭证据，
+再由 `pnl._commit_close_economics` 统一提交经济关闭；
 `close_position_verified` 仅验证/归一化 disappearance 证据并提供事务内 Order/Fill materialization。
 Position、per-close event、Outcome eligibility、hook job 与数据库 audit 在同一 writer transaction
 提交；外部观察关闭仍为 administrative/ineligible。无成交证据的 administrative close 保持独立，
@@ -606,6 +607,10 @@ funding worker 直接把完整 Position 交给 UTA funding reader，账户身份
 取得；不保留旧 venue client factory/兼容壳或无资源的 close 生命周期。
 初始关闭、延迟结算和读取校验共用完整成本计算；Position 与 close event 金额一致不能替代
 正价/正数量、非负手续费及可信 funding 来源校验。非法成本不得写为最终 realized PnL。
+初始关闭与延迟 funding 补齐共用 `pnl._commit_close_economics`，统一写入 Position、完整
+close event、Outcome eligibility 与 hook 意图；调用方仍在同一 writer transaction 内验证
+各自证据并写审计。该入口不创建事务或执行外部 I/O，已完成的最终金额不得覆盖。
+归因读取失败后的 eligibility-only 重查及 funding 保留期终止不拥有最终金额写入权。
 当前所有者及独立校验边界的调查见 [settlement ownership evidence](../proposals/slim_core_settlement_convergence.md)。
 
 当 UTA 的同账户 funding ledger 以稳定 reason

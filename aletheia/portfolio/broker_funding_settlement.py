@@ -8,7 +8,6 @@ import logging
 import math
 from datetime import datetime, timezone
 
-from aletheia.analytics.outcome_integrity import outcome_write_eligibility
 from aletheia.execution.broker_funding import (
     compute_stored_broker_funding,
     funding_query_window,
@@ -16,7 +15,12 @@ from aletheia.execution.broker_funding import (
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent
 from aletheia.storage.sqlite import get_db
-from aletheia.portfolio.pnl import calculated_realized_pnl
+from aletheia.portfolio.pnl import (
+    calculated_realized_pnl,
+    _close_event_matches_position,
+    _commit_close_economics,
+    _run_outcome_hooks,
+)
 
 logger = logging.getLogger("aletheia.broker_funding_settlement")
 
@@ -169,38 +173,6 @@ def _fingerprint(evidence: dict) -> str:
     ).hexdigest()
 
 
-def _close_event_matches_position(event: dict, position: dict) -> bool:
-    if any(
-        event.get(event_field) != position.get(position_field)
-        for event_field, position_field in (
-            ("position_id", "id"),
-            ("symbol", "symbol"),
-            ("direction", "direction"),
-            ("execution_mode", "execution_mode"),
-            ("close_reason", "close_reason"),
-            ("closed_at", "closed_at"),
-        )
-    ):
-        return False
-    for event_field, position_field in (
-        ("exit_price", "current_price"),
-        ("closed_qty", "quantity"),
-        ("entry_fee", "entry_fee"),
-        ("exit_fee", "exit_fee"),
-    ):
-        try:
-            if not math.isclose(
-                float(event[event_field]),
-                float(position[position_field]),
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            ):
-                return False
-        except (KeyError, TypeError, ValueError):
-            return False
-    return int(event.get("is_partial") or 0) == 0
-
-
 def materialize_broker_funding_economics(
     row: dict,
     *,
@@ -214,7 +186,6 @@ def materialize_broker_funding_economics(
         insert_pending_funding_audit,
         reconcile_position_funding_audits,
     )
-    from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
 
     position_id = str(row.get("id") or "")
     if (
@@ -335,52 +306,25 @@ def materialize_broker_funding_economics(
             raise ValueError(
                 "broker funding attribution changed before settlement commit"
             )
-        candidate = {
-            **current,
-            "realized_pnl": realized,
-            "funding_cost": float(funding_cost),
-            "funding_source": "broker_ledger",
-            "exit_fill_verified": True,
-        }
-        outcome_eligible, outcome_reason = outcome_write_eligibility(
-            candidate, exit_fill_verified=True,
-        )
         evidence_root.update({
             "funding": funding_evidence,
             "funding_economics_fingerprint": fingerprint,
             "funding_accounting_version": "broker-funding-v1",
         })
 
-        repo.update_closed_position_settlement(
-            position_id,
-            realized_pnl=realized,
-            funding_cost=float(funding_cost),
-            funding_source="broker_ledger",
-            outcome_eligible=outcome_eligible,
-            outcome_exclusion_reason=outcome_reason,
-            reconciliation_evidence=json.dumps(
+        fields = _commit_close_economics(current, {
+            "realized_pnl": realized,
+            "funding_cost": float(funding_cost),
+            "funding_source": "broker_ledger",
+            "reconciliation_evidence": json.dumps(
                 evidence_root,
                 sort_keys=True,
                 separators=(",", ":"),
                 default=str,
             ),
-        )
-        updated = get_db().execute(
-            """UPDATE position_close_events SET realized_pnl=?
-               WHERE id=? AND realized_pnl IS NULL""",
-            (realized, close_events[0]["id"]),
-        )
-        if updated.rowcount != 1:
-            raise ValueError("broker funding settlement snapshot changed")
-        if outcome_eligible:
-            enqueue_outcome_hook_jobs({
-                **current,
-                "realized_pnl": realized,
-                "funding_cost": float(funding_cost),
-                "funding_source": "broker_ledger",
-                "outcome_eligible": True,
-                "outcome_exclusion_reason": outcome_reason,
-            })
+        }, close_event=close_events[0])
+        outcome_eligible = fields["outcome_eligible"]
+        outcome_reason = fields["outcome_exclusion_reason"]
         before = {
             "realized_pnl": current.get("realized_pnl"),
             "funding_cost": current.get("funding_cost"),
@@ -431,16 +375,8 @@ def materialize_broker_funding_economics(
                 "broker funding audit reconcile failed (%s)", type(exc).__name__,
             )
             audit_mirror_status = "pending"
-    if outcome_eligible:
-        try:
-            from aletheia.portfolio.outcome_hooks import process_outcome_hook_jobs
-
-            process_outcome_hook_jobs(position_id=position_id)
-        except Exception as exc:
-            logger.warning(
-                "broker funding outcome hook dispatch failed for %s (%s)",
-                position_id, type(exc).__name__,
-            )
+    if outcome_eligible or outcome_reason == "attribution_read_failed":
+        _run_outcome_hooks({**current, **fields}, realized, str(current.get("close_reason") or ""))
     return {
         "position_id": position_id,
         "status": "settled",

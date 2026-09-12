@@ -667,6 +667,104 @@ def _exit_fee_rate(execution_mode: str) -> float:
     return _EXIT_FEE_BY_MODE.get(execution_mode or "", 0.0006)
 
 
+def _close_event_matches_position(event: dict, position: dict) -> bool:
+    if any(
+        event.get(event_field) != position.get(position_field)
+        for event_field, position_field in (
+            ("position_id", "id"),
+            ("symbol", "symbol"),
+            ("direction", "direction"),
+            ("execution_mode", "execution_mode"),
+            ("close_reason", "close_reason"),
+            ("closed_at", "closed_at"),
+        )
+    ):
+        return False
+    for event_field, position_field in (
+        ("exit_price", "current_price"),
+        ("closed_qty", "quantity"),
+        ("entry_fee", "entry_fee"),
+        ("exit_fee", "exit_fee"),
+    ):
+        try:
+            if not math.isclose(
+                float(event[event_field]),
+                float(position[position_field]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                return False
+        except (KeyError, TypeError, ValueError):
+            return False
+    return int(event.get("is_partial") or 0) == 0
+
+
+def _commit_close_economics(current: dict, fields: dict, *, close_event: dict | None = None) -> dict:
+    """Own the atomic full-close economics/eligibility/event/hook write boundary.
+
+    Callers prove execution or newly complete costs and retain their audit in the
+    same transaction. No external I/O, transaction creation or retry lives here.
+    """
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import new_id
+    from aletheia.analytics.outcome_integrity import outcome_write_eligibility
+    from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
+
+    db = repo.get_db()
+    if not db.in_transaction:
+        raise RuntimeError("close economics must share the caller's writer transaction")
+    closing = current.get("status") == "open"
+    if not closing and (
+        current.get("status") != "closed" or current.get("realized_pnl") is not None
+        or close_event is None or close_event.get("realized_pnl") is not None
+        or not _close_event_matches_position(close_event, current)
+    ):
+        raise ValueError("final economics require an unchanged incomplete full close")
+    if closing and close_event is not None:
+        raise ValueError("initial close cannot overwrite an existing close event")
+    fields = dict(fields)
+    candidate = {**current, **fields}
+    if candidate.get("status") != "closed":
+        raise ValueError("economic settlement requires closed lifecycle")
+    if candidate.get("realized_pnl") is not None and _realized_economics_value(candidate) is None:
+        raise ValueError("incomplete or invalid realized economics")
+    verified = bool(candidate.get("exit_fill_verified"))
+    if verified and (candidate.get("entry_fee") is None or candidate.get("exit_fee") is None):
+        eligible, exclusion = False, "incomplete_realized_economics"
+    elif candidate.get("close_category") == "administrative":
+        eligible, exclusion = False, "administrative_close"
+    elif verified and candidate.get("funding_cost") is None:
+        eligible, exclusion = False, "incomplete_funding_economics"
+    else:
+        eligible, exclusion = outcome_write_eligibility(candidate, exit_fill_verified=verified)
+    fields.update(outcome_eligible=eligible, outcome_exclusion_reason=exclusion)
+    candidate.update(fields)
+    position_id = str(current["id"])
+    if closing:
+        repo.finalize_position_close(position_id, fields)
+        repo.insert_position_close_event({
+            "id": new_id(), "position_id": position_id,
+            "symbol": candidate.get("symbol"), "direction": candidate.get("direction"),
+            "execution_mode": candidate.get("execution_mode"),
+            "close_reason": candidate.get("close_reason"),
+            "exit_price": candidate.get("current_price"), "closed_qty": candidate["quantity"],
+            "realized_pnl": candidate.get("realized_pnl"),
+            "entry_fee": candidate.get("entry_fee"), "exit_fee": candidate.get("exit_fee"),
+            "is_partial": 0, "closed_at": candidate.get("closed_at"),
+        })
+    else:
+        repo.update_closed_position_settlement(position_id, **fields)
+        updated = db.execute(
+            "UPDATE position_close_events SET realized_pnl=? WHERE id=? AND realized_pnl IS NULL",
+            (candidate.get("realized_pnl"), close_event["id"]),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("full-close economics snapshot changed")
+    if eligible or exclusion == "attribution_read_failed":
+        enqueue_outcome_hook_jobs(candidate)
+    return fields
+
+
 def close_position(
     position_id: str,
     exit_price: float,
@@ -818,7 +916,6 @@ def close_position(
     exit_fill_verified = private_exchange_fill
     from aletheia.analytics.outcome_integrity import (
         OUTCOME_SEMANTICS_VERSION,
-        outcome_write_eligibility,
     )
     from aletheia.portfolio.disappearance_confirmation import (
         logical_account_fingerprint,
@@ -938,27 +1035,10 @@ def close_position(
             outcome_evidence, sort_keys=True, separators=(",", ":"), default=str,
         )
         row = current
-        if exit_fill_verified and (entry_fee is None or exit_fee is None):
-            outcome_eligible = False
-            outcome_exclusion_reason = "incomplete_realized_economics"
-        elif close_category == "administrative":
-            outcome_eligible = False
-            outcome_exclusion_reason = "administrative_close"
-        elif exit_fill_verified and funding_cost is None:
-            outcome_eligible = False
-            outcome_exclusion_reason = "incomplete_funding_economics"
-        else:
-            outcome_eligible, outcome_exclusion_reason = outcome_write_eligibility(
-                {**row, **update_fields},
-                exit_fill_verified=exit_fill_verified,
-            )
-        update_fields.update(
-            {
-                "outcome_eligible": outcome_eligible,
-                "outcome_exclusion_reason": outcome_exclusion_reason,
-            }
-        )
         update_fields.update(_close_provenance())
+        update_fields = _commit_close_economics(current, update_fields)
+        outcome_eligible = update_fields["outcome_eligible"]
+        outcome_exclusion_reason = update_fields["outcome_exclusion_reason"]
         audit_before = {
             "status": row.get("status"),
             "unrealized_pnl": row.get("unrealized_pnl"),
@@ -980,33 +1060,7 @@ def close_position(
                 "position_verified_closed" if close_category == "strategy"
                 else "position_verified_external_closed"
             )
-        repo.finalize_position_close(position_id, update_fields)
-        if outcome_eligible or outcome_exclusion_reason == "attribution_read_failed":
-            from aletheia.portfolio.outcome_hooks import enqueue_outcome_hook_jobs
-
-            enqueue_outcome_hook_jobs({**row, **update_fields})
-        from aletheia.storage.models import AuditEvent, new_id
-
-        # Per-close ledger (exit-intent R1): committed atomically with the Position
-        # close so a crash between COMMIT and the ledger write cannot leave a closed
-        # Position with no close event. is_partial=0 for a full close.
-        repo.insert_position_close_event(
-            {
-                "id": new_id(),
-                "position_id": position_id,
-                "symbol": row.get("symbol"),
-                "direction": row.get("direction"),
-                "execution_mode": row.get("execution_mode"),
-                "close_reason": reason,
-                "exit_price": exit_price,
-                "closed_qty": row["quantity"],
-                "realized_pnl": realized,
-                "entry_fee": round(entry_fee, 8) if entry_fee is not None else None,
-                "exit_fee": round(exit_fee, 8) if exit_fee is not None else None,
-                "is_partial": 0,
-                "closed_at": closed_at,
-            }
-        )
+        from aletheia.storage.models import AuditEvent
         repo.insert_audit_event(
             AuditEvent(
                 actor=actor,

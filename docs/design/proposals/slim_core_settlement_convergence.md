@@ -10,7 +10,7 @@ supersedes: []
 
 Scope: #3134 / #3135. This is a bounded investigation record, not a new Contract,
 phase gate, or proof that the whole production ownership inventory is complete.
-Source baseline: `6e7919398e70e498efb8a90caa9bdaa5cc653c59` (2026-09-12).
+Source baseline: `726939babaf113823390411317965f3610fcc691` plus the shared-commit change (2026-09-12).
 The accepted [execution contract](../contracts/execution_contract.md) governs the
 lifecycle, cost-completeness, audit and recovery boundaries below.
 
@@ -18,20 +18,20 @@ lifecycle, cost-completeness, audit and recovery boundaries below.
 
 | Fact / mutation | Current owner | Independently necessary boundary |
 | --- | --- | --- |
-| Initial verified economic close | `portfolio.pnl.close_position` | Open-state CAS, economic snapshot reread, atomic Order/Fill callback, Position/close-event/audit/hook commit. `outcome_closure.close_position_verified` only normalizes evidence and supplies the observed-fill callback. |
+| Initial verified close evidence | `portfolio.pnl.close_position` | Open-state CAS, economic snapshot reread, atomic Order/Fill callback and audit surround the shared economic commit. `outcome_closure.close_position_verified` only normalizes evidence and supplies the observed-fill callback. |
+| Initial/deferred economic commit | `pnl._commit_close_economics` | Requires the caller's transaction; writes Position, full-close event, eligibility and hook intent together. Rejects invalid final economics or overwrite of completed economics. No external I/O. |
 | No-fill administrative close | `outcome_closure.close_position_administrative` | Absence evidence is not economic evidence; never generates final PnL or eligible Outcome. |
-| Deferred funding completion | `broker_funding_settlement.materialize_broker_funding_economics` | Complete scoped stored ledger must reproduce amount, holding window and attribution under the writer lock. Existing final economics cannot be overwritten; identical replay returns already-current. |
+| Deferred funding evidence | `broker_funding_settlement.materialize_broker_funding_economics` | Complete scoped stored ledger must reproduce amount, holding window and attribution under the writer lock before the shared commit. Existing final economics cannot be overwritten; identical replay returns already-current. |
 | Funding retention terminalization | `_terminalize_funding_history_expired` | Stops automatic retry only after a typed UTA retention proof and unchanged closed snapshot; money remains unavailable. This is not successful settlement. |
 | Recovery scheduling | `_select_funding_queue_rows` / `_advance_funding_queue_cursor` | Durable keyset cursor with wrap, separate scan/I/O budgets and cursor CAS prevents a stalled prefix from starving later positions. Cursor does not own Position economics. |
 | Funding audit mirror | `funding_audit.insert_pending_funding_audit` / `reconcile_funding_audits` | SQLite audit enrollment shares the economic transaction. JSONL append/ack has its own stable-ID recovery, independent of financial replay. |
 | Outcome delivery | `outcome_hooks.process_outcome_hook_jobs` | Durable leases, replay and invalidation fence protect downstream writes. Attribution-read-failed recheck changes eligibility only, not monetary values. |
 | Operator economics | `pnl.position_realized_pnl_view` | Derived known components remain distinct from reproducible final PnL. Unknown costs cannot be promoted by a display consumer. |
 
-The later funding finalizer is still distinct from the initial close writer;
-there is not yet a proven single final-economics mutation path across both.
-The attribution recheck is also a separate eligibility mutation path. Merely
-routing both through repository field whitelists is not sufficient proof of
-semantic single ownership.
+Initial close and deferred funding now share one economic commit path, with a
+behavioral regression observing both calls under a transaction and exact replay
+without another commit. The attribution recheck remains a separate eligibility-only
+mutation path. This bounded convergence is not a whole-repository writer inventory.
 
 ### What the close-event field means
 
@@ -78,11 +78,11 @@ costs. Initial close, deferred settlement and read verification now share
 predicate; deferred settlement refuses an unavailable calculation before writes.
 Matching snapshots alone are not evidence that monetary values are valid.
 
-Next convergence must address the final eligibility decision and the
-initial-versus-deferred final-economic write boundary while
-retaining the independently proven guards above. Audit mirror repair must never
-become another reason to execute settlement. Moving functions between files or
-renaming the two owners does not satisfy that requirement.
+The shared commit replaces both callers' direct monetary/event/eligibility/hook
+writes while retaining the independently proven guards above. Attribution-read
+failure enrolls the same durable hook retry intent on both paths. Attribution-only
+recheck still needs separate ownership analysis. Audit mirror repair must never
+become another reason to execute settlement.
 
 Late missing-fee completion is still absent: the funding queue selects
 `incomplete_funding_economics`, while a missing-fee close carries
