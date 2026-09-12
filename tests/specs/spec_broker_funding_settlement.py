@@ -62,7 +62,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
         "process_outcome_hook_jobs",
         lambda *_args, **_kwargs: side_effect_calls.append("dispatch"),
     )
-    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode: Client())
+    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode, **_kw: Client())
     task = asyncio.create_task(settlement.settle_unsettled_exchange_closes(limit=1))
     await reader_started.wait()
     force_update_position(position_id, current_price=999.0)
@@ -81,3 +81,94 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     assert after["close_events"][0]["realized_pnl"] is None
     assert side_effect_calls == []
     assert stale["current_price"] == 110.0
+
+
+@spec_claim(
+    SpecClaim(
+        "EX-B20",
+        "execution_contract",
+        "§11.6 UTA identity resolved from position order_id",
+        "L2b",
+        "The broker funding settler passes order_id from the position row into "
+        "_uta_funding_ledger so the UTA identity lookup never fails with "
+        "uta_account_identity_unavailable for a position that has a bound order.",
+        status="implemented",
+    )
+)
+@pytest.mark.asyncio
+async def test_broker_funding_settler_resolves_uta_identity_via_order_id(
+    tmp_path, monkeypatch,
+):
+    """Regression: _UTAFundingProjection previously passed a position stub that
+    omitted order_id, causing uta_account_identity_unavailable for every real
+    exchange close and making funding economics permanently stuck as pending."""
+    from aletheia.execution.broker_funding import make_complete_ledger
+    from aletheia.portfolio import broker_funding_settlement as settlement
+    from aletheia.portfolio.pnl import close_position
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position
+    from tests.test_demo_trading import _demo_config, _fresh_snapshot, setup_env
+    from tests.uta.test_execution_coordinator import _insert_bound_position
+
+    setup_env(tmp_path, monkeypatch)
+    _demo_config(monkeypatch)
+    _fresh_snapshot(price=110.0)
+
+    position = Position(
+        symbol="BTC/USDT",
+        market_type="usdt_futures",
+        direction="long",
+        quantity=1.0,
+        entry_price=100.0,
+        entry_fee=0.05,
+        current_price=110.0,
+        execution_mode="bitget_demo",
+        opened_at="2026-07-14T00:00:00+00:00",
+    )
+    _insert_bound_position(position)
+
+    close_position(
+        position.id,
+        exit_price=110.0,
+        actual_exit_fee=0.1,
+        closed_at="2026-07-14T12:00:00+00:00",
+        verified_exit_evidence={
+            "source": "private_fills",
+            "fill_ids": ["fill-1"],
+            "fill_quantity": 1.0,
+        },
+    )
+    assert repo._select_one("positions", position.id)["realized_pnl"] is None
+
+    ledger = make_complete_ledger(
+        broker_id="bitget_demo",
+        account_environment="demo",
+        source_endpoint="uta_v1",
+        history_start_ms=1783987200000,
+        history_end_ms=1784073600000,
+        events=[],
+    )
+
+    # Intercept at _uta_funding_ledger to capture the position stub received;
+    # this is the exact point where order_id was previously missing.
+    received_positions: list[dict] = []
+
+    async def fake_uta_funding_ledger(pos, start_ms, end_ms):
+        received_positions.append(dict(pos))
+        return ledger
+
+    monkeypatch.setattr(settlement, "_uta_funding_ledger", fake_uta_funding_ledger)
+
+    result = await settlement.settle_unsettled_exchange_closes(limit=1)
+
+    assert result["settled"] == 1, f"expected settled=1, got {result}"
+    assert result["still_pending"] == 0
+    assert result["errors"] == []
+    # order_id must be present in the position stub passed to _uta_funding_ledger
+    assert len(received_positions) == 1
+    assert received_positions[0].get("order_id") == position.order_id
+
+    settled = repo._select_one("positions", position.id)
+    assert settled["realized_pnl"] is not None
+    assert settled["funding_cost"] == 0.0
+    assert settled["funding_source"] == "broker_ledger"

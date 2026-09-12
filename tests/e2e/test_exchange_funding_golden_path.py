@@ -325,7 +325,7 @@ _PROCESS_REPLAY = textwrap.dedent(
     elif phase in {"settle", "verify"}:
         from aletheia.portfolio import broker_funding_settlement as settlement
 
-        settlement._client_for_mode = lambda mode: FixtureFundingClient(mode)
+        settlement._client_for_mode = lambda mode, **_kw: FixtureFundingClient(mode)
         result = asyncio.run(settlement.settle_unsettled_exchange_closes())
         print(json.dumps(database_snapshot(result), sort_keys=True))
     else:

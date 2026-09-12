@@ -665,8 +665,9 @@ async def _uta_funding_ledger(position: dict, start_ms: int, end_ms: int) -> dic
 class _UTAFundingProjection:
     """Phase-3 compatibility seam over normalized UTA funding reports."""
 
-    def __init__(self, execution_mode: str) -> None:
+    def __init__(self, execution_mode: str, *, order_id: str | None = None) -> None:
         self.execution_mode = execution_mode
+        self._order_id = order_id
 
     async def get_funding_ledger(
         self,
@@ -682,6 +683,7 @@ class _UTAFundingProjection:
                 "execution_mode": self.execution_mode,
                 "symbol": symbol,
                 "market_type": market_type,
+                "order_id": self._order_id,
             },
             start_time_ms,
             end_time_ms,
@@ -691,11 +693,11 @@ class _UTAFundingProjection:
         return None
 
 
-def _client_for_mode(execution_mode: str):
+def _client_for_mode(execution_mode: str, *, order_id: str | None = None):
     """Temporary test/rollback seam; production implementation is UTA-only."""
     if execution_mode not in _EXCHANGE_FUNDING_MODES:
         raise ValueError(f"unsupported exchange funding mode: {execution_mode}")
-    return _UTAFundingProjection(execution_mode)
+    return _UTAFundingProjection(execution_mode, order_id=order_id)
 
 
 async def settle_unsettled_exchange_closes(
@@ -755,7 +757,7 @@ async def settle_unsettled_exchange_closes(
                 )
             else:
                 broker_io_attempted += 1
-                client = _client_for_mode(execution_mode)
+                client = _client_for_mode(execution_mode, order_id=str(row.get("order_id") or ""))
                 try:
                     ledger = await client.get_funding_ledger(
                         broker_id=execution_mode,

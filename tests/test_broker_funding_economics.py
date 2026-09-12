@@ -581,7 +581,7 @@ def test_delayed_funding_settlement_rejects_alternate_symbol_double_claim(
 
     from aletheia.portfolio import broker_funding_settlement as settlement
 
-    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode: Client())
+    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode, **_kw: Client())
     result = asyncio.run(settlement.settle_unsettled_exchange_closes())
 
     assert result["checked"] == 2
@@ -1114,7 +1114,7 @@ async def test_expired_funding_prefix_does_not_starve_recoverable_close(
     monkeypatch.setattr(
         settlement,
         "_client_for_mode",
-        lambda _mode: FundingClient(),
+        lambda _mode, **_kw: FundingClient(),
     )
     result = await settlement.settle_unsettled_exchange_closes()
 
@@ -1228,7 +1228,7 @@ async def test_funding_cursor_progress_survives_connection_reopen(
     monkeypatch.setattr(
         settlement,
         "_client_for_mode",
-        lambda _mode: FundingClient(),
+        lambda _mode, **_kw: FundingClient(),
     )
     first = await settlement.settle_unsettled_exchange_closes(scan_limit=3)
     assert (first["checked"], first["history_expired"], first["settled"]) == (
@@ -1312,7 +1312,7 @@ async def test_funding_terminal_audit_retries_after_connection_reopen(
     monkeypatch.setattr(
         settlement,
         "_client_for_mode",
-        lambda _mode: FundingClient(),
+        lambda _mode, **_kw: FundingClient(),
     )
     result = await settlement.settle_unsettled_exchange_closes()
 
