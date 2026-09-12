@@ -650,22 +650,6 @@ def persist_exit_reasoning(
     return True
 
 
-# Exit fee rate per execution mode. Must match the open-leg constants in each broker
-# file so realized PnL is internally consistent regardless of which path opened it.
-_EXIT_FEE_BY_MODE: dict[str, float] = {
-    "bitget_demo": 0.0006,  # bitget_broker._DEMO_FEE_RATE
-    "bitget_live_limited": 0.0006,  # bitget_broker._LIVE_FEE_RATE
-    "okx_demo": 0.0005,  # okx_broker._OKX_FEE_RATE
-    "okx_live_limited": 0.0005,
-    "binance_testnet": 0.0004,  # binance_broker._TESTNET_FEE_RATE
-    "binance_live_limited": 0.0004,
-}
-
-
-def _exit_fee_rate(execution_mode: str) -> float:
-    return _EXIT_FEE_BY_MODE.get(execution_mode or "", 0.0006)
-
-
 def _close_event_matches_position(event: dict, position: dict) -> bool:
     if any(
         event.get(event_field) != position.get(position_field)
@@ -823,19 +807,9 @@ def close_position(
         closed_at = parsed_closed_at.astimezone(timezone.utc).isoformat()
 
     private_exchange_fill = verified_exit_evidence is not None
-    # Deduct round-trip fees; prefer stored entry_fee (precise) over re-derivation.
-    fee_rate = _exit_fee_rate(row.get("execution_mode", ""))
-    # Sprint B (QR-2026-07-01-02): entry_fee=0.0 is a legitimate stored value (zero-cost
-    # paper fills). Only fall back to re-deriving from the fee schedule when the field is
-    # genuinely missing (NULL from pre-Sprint-B positions). Truthiness "or 0" had been
-    # recomputing fees on legible zeros and inflating realized PnL.
+    # Recorded zero is valid; missing fees remain unknown on every close path.
     entry_fee = validated_fee(row.get("entry_fee"), field="entry_fee")
-    if entry_fee is None and not private_exchange_fill:
-        entry_fee = row["entry_price"] * row["quantity"] * fee_rate
-    if actual_exit_fee is None:
-        exit_fee = None if private_exchange_fill else exit_price * row["quantity"] * fee_rate
-    else:
-        exit_fee = validated_fee(actual_exit_fee, field="actual_exit_fee")
+    exit_fee = validated_fee(actual_exit_fee, field="actual_exit_fee")
     # Spot has no funding leg. Futures funding is part of realized economics,
     # but only when it came from a durable broker/local ledger.  An unknown or
     # malformed funding value must not be guessed from current configuration:

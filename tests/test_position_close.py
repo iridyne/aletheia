@@ -47,6 +47,32 @@ def test_close_with_entry_fee_zero_keeps_zero_no_fallback(tmp_path, monkeypatch)
     assert closed["entry_fee"] == 0.0  # not overwritten by re-derived value
 
 
+@pytest.mark.parametrize("mode", [
+    "bitget_demo", "bitget_live_limited", "okx_demo", "okx_live_limited",
+    "binance_testnet", "binance_live_limited",
+])
+@pytest.mark.parametrize("entry_fee,exit_fee", [(None, 0.0), (0.0, None), (None, None)])
+def test_missing_close_fees_are_not_estimated(tmp_path, monkeypatch, mode, entry_fee, exit_fee):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio.pnl import close_position
+
+    position = Position(
+        symbol="BTC/USDT", market_type="spot", direction="long",
+        quantity=1.0, entry_price=100.0, execution_mode=mode, entry_fee=entry_fee,
+    )
+    repo.insert_position(position)
+    result = close_position(position.id, exit_price=110.0, actual_exit_fee=exit_fee)
+    closed = repo._select_one("positions", position.id)
+    event, = repo.list_position_close_events(position_id=position.id)
+    assert result["realized_pnl"] is None
+    assert closed["status"] == "closed"
+    assert closed["outcome_eligible"] == 0
+    for row in (closed, event):
+        assert row["entry_fee"] == entry_fee
+        assert row["exit_fee"] == exit_fee
+        assert row["realized_pnl"] is None
+
+
 def test_close_long_position_realizes_profit(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.pnl import close_position
