@@ -677,6 +677,28 @@ def test_import_rejects_unauthorized_table(tmp_path, monkeypatch):
     assert count == 0, "unauthorized table row must not be inserted"
 
 
+@pytest.mark.parametrize("table", [
+    "trade_proposals", "ps_orders", "ps_fills", "ps_positions",
+    "ps_gateway_sessions", "ps_order_intents", "ps_execution_intents",
+])
+@pytest.mark.parametrize("commit", [False, True])
+def test_import_rejects_core_and_retired_runtime_tables(tmp_path, monkeypatch, table, commit):
+    _setup_env(tmp_path, monkeypatch)
+    archive = _build_bundle_with_db_row_and_checksums(
+        tmp_path, "trading", extra_files={
+            f"db/{table}.jsonl": "",
+            "artifacts/evidence/rejected.txt": "must not be copied",
+        },
+    )
+    from aletheia.sync.importer import ImportService
+    service = ImportService(data_dir=tmp_path)
+    result = service.merge(archive) if commit else service.dry_run(archive)
+    assert any(table in error and "authorized" in error for error in result.errors)
+    assert result.new_rows == {}
+    assert _count_lessons(tmp_path, "lesson-trading") == 0
+    assert not (tmp_path / "artifacts/evidence/rejected.txt").exists()
+
+
 def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monkeypatch):
     """#273: a bundle with one valid + one unauthorized table must write neither."""
     from aletheia.storage.hashing import sha256_file
@@ -700,10 +722,14 @@ def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monk
     bad_file = db_dir / "settings.jsonl"
     good_file.write_text(json.dumps(good_row) + "\n", encoding="utf-8")
     bad_file.write_text(json.dumps(bad_row) + "\n", encoding="utf-8")
+    artifact = staging / "artifacts/evidence/rejected.txt"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("must not be copied", encoding="utf-8")
 
     lines = [
         f"{sha256_file(good_file)}  db/ps_lessons.jsonl",
         f"{sha256_file(bad_file)}  db/settings.jsonl",
+        f"{sha256_file(artifact)}  artifacts/evidence/rejected.txt",
     ]
     (staging / "checksums.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -718,6 +744,7 @@ def test_import_mixed_bundle_writes_nothing_on_unauthorized_table(tmp_path, monk
     assert _count_lessons(tmp_path, "lesson-mixed-ok") == 0, (
         "valid-table rows must not be inserted when a sibling table is unauthorized"
     )
+    assert not (tmp_path / "artifacts/evidence/rejected.txt").exists()
 
 
 def test_import_rejects_row_with_unknown_column(tmp_path, monkeypatch):

@@ -12,9 +12,9 @@ from aletheia.storage.hashing import sha256_file
 from aletheia.storage.sqlite import get_db
 from aletheia.storage.repositories import transaction as _db_transaction
 
-# Tables the importer is allowed to write — exactly the set emitted by the
-# supported exporter modes (research-pack, proposal-pack, runtime-snapshot).
-# full-backup restores the whole app.db directly and does not use this path.
+# Only namespaced research is mergeable. Diagnostic/history exports do not
+# authorize a second Core writer or restore retired PS runtime state.
+# Managed full-backup restoration is a separate explicit Ops workflow.
 _IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
     # research-pack
     "serenity_themes",
@@ -23,15 +23,6 @@ _IMPORT_ALLOWED_TABLES: frozenset[str] = frozenset({
     "serenity_opportunities",
     "ps_lessons",
     "ps_skills",
-    # proposal-pack (trade_proposals + serenity chain)
-    "trade_proposals",
-    # runtime-snapshot
-    "ps_orders",
-    "ps_fills",
-    "ps_positions",
-    "ps_gateway_sessions",
-    "ps_order_intents",
-    "ps_execution_intents",
 })
 
 
@@ -121,6 +112,8 @@ class ImportService:
             db_dir = bundle_dir / "db"
             if db_dir.exists():
                 self._import_db_tables(db_dir, result, commit)
+            if result.errors:
+                return result
 
             # Import artifacts
             artifacts_dir = bundle_dir / "artifacts"
@@ -362,20 +355,10 @@ class ImportService:
 
     def _find_pk(self, table_name: str, row: dict) -> str | None:
         """Guess the primary key column name for a table."""
-        # Convention: ps_* tables use specific pk names
+        # The two admitted research stores use specific primary-key names.
         pk_map = {
-            "ps_event_log": "event_id",
-            "ps_gateway_sessions": "gateway_session_id",
-            "ps_reconciliation_reports": "reconciliation_report_id",
-            "ps_execution_intents": "execution_intent_id",
-            "ps_order_intents": "intent_id",
-            "ps_orders": "order_id",
-            "ps_fills": "fill_id",
-            "ps_positions": "position_id",
-            "ps_checkpoints": "checkpoint_id",
             "ps_lessons": "lesson_id",
             "ps_skills": "skill_id",
-            "ps_policy_versions": "policy_version_id",
         }
         if table_name in pk_map:
             return pk_map[table_name]

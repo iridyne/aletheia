@@ -29,10 +29,16 @@ _ROOT = Path(__file__).parents[2]
         "PR-S01", "persistence_recovery_contract",
         "Invariants — retired PS recovery graph", "L2a",
         "The retired PS Gateway writer, recovery, exchange, session and lock modules "
-        "are absent; no second execution/settlement implementation remains there.",
+        "are absent; archive imports cannot recreate their state or Core trading authority.",
     ),
 )
 def test_legacy_gateway_write_graph_is_removed():
+    from aletheia.sync.importer import _IMPORT_ALLOWED_TABLES
+
+    assert _IMPORT_ALLOWED_TABLES == {
+        "serenity_themes", "serenity_evidence", "serenity_claims",
+        "serenity_opportunities", "ps_lessons", "ps_skills",
+    }
     retired = {"state_machine", "state_store", "recovery", "reconciliation", "session", "locks", "exchange_adapter"}
     assert not [name for name in retired if (_ROOT / "aletheia" / "gateway" / f"{name}.py").exists()]
     tables = {"ps_execution_intents", "ps_order_intents", "ps_orders", "ps_fills", "ps_positions",
@@ -42,8 +48,8 @@ def test_legacy_gateway_write_graph_is_removed():
     violations = []
     for path in (_ROOT / "aletheia").rglob("*.py"):
         relative = path.relative_to(_ROOT / "aletheia").as_posix()
-        if relative in {"storage/migrations.py", "sync/importer.py"}:
-            continue  # Historical schema/archive ingestion is not runtime authority.
+        if relative == "storage/migrations.py":
+            continue  # Historical schema migration is not runtime authority.
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and writes.search(node.value):
                 violations.append(f"{relative}:{node.lineno}")

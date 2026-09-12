@@ -100,6 +100,22 @@ audit head, and a derived checkpoint identity in `manifest.yaml`. Restore paths
 used for update rollback reject an online, legacy, malformed, or mismatched
 checkpoint instead of combining independently valid stores.
 
+## Bundle imports do not create trading authority
+
+Under the accepted [research bundle boundary](../proposals/slim_core_research_bundle_import.md),
+`POST /api/persistence/import` admits only namespaced research: Serenity themes,
+evidence, claims and opportunities, plus `ps_lessons` and `ps_skills`. Both
+preview and merge reject Core trading tables and retired PS runtime tables;
+checksums are integrity evidence, never permission to create Proposal, Order,
+Fill, Position or recovery authority. Failed table preflight or transactional
+insertion returns before copying bundle artifacts.
+
+Historical Proposal and PS runtime snapshot exports/readers remain available,
+without reciprocal import permission. Existing rows are not rewritten or
+deleted. Research conflict/duplicate handling and safe staging remain; this
+merge service is not an atomic filesystem/database restore. Full managed
+backup/restore retains its separate explicit, isolated-verification workflow.
+
 ## CSV export is diagnostic, not migration
 
 `/api/export` exposes two bounded CSV presets:

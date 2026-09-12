@@ -294,7 +294,10 @@ class ImportRequest(BaseModel):
 
 @router.post("/import")
 def import_bundle(req: ImportRequest):
-    """Import an export bundle. Set dry_run=false to actually merge.
+    """Import namespaced research only. Set dry_run=false to actually merge.
+
+    Proposal and retired runtime snapshots are export/read-only, not mergeable
+    trading state. Managed backup/restore is a separate explicit workflow.
 
     Only accepts paths inside the managed archive roots (data_dir/backups or
     data_dir/exports) — see #66 fix in `_resolve_archive_path`.

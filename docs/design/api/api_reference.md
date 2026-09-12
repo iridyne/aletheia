@@ -674,7 +674,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/persistence/backups` | Create backup |
 | POST | `/persistence/backups/verify` | Verify backup integrity |
 | POST | `/persistence/export` | Export data |
-| POST | `/persistence/import` | Import data |
+| POST | `/persistence/import` | Preview or merge namespaced research only; Core trading and retired PS runtime tables are rejected before writes, including artifact copying. Proposal/runtime snapshot exports are not restore inputs. |
 | GET | `/persistence/lessons` | List lessons (LessonStore) |
 | GET | `/persistence/lessons/{id}` | Get lesson detail |
 | POST | `/persistence/lessons/{id}/accept` | Accept a proposed lesson and stamp dry-run/expiry timestamps; requires `X-Aletheia-Token` when tunnel is enabled |
