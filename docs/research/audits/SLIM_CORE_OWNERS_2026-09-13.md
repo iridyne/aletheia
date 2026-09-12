@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `786d06e8517cb22a43e185c9d52641070b271feb`, under
+Source checkpoint: `0f5fe5a9184ef4fdb080f865b5bc4dba146999b5`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -19,7 +19,7 @@ the bundle importer is allowlisted and preflights all payloads before mutation.
 | `pyproject.toml`: `aletheia` / `ato` → `main._entry_point` | Registers CLI command groups; commands distinguish reads, explicit controls and maintenance. | Deprecation labels are not evidence of inertness. Hidden `flow` alias and old model/permission/secrets/risk groups remain visible to reachability review. |
 | `_gateway_runner.run_supervised` | Owns backend, Frontdoor, collector and optional operator/build-watch subprocesses; PID/route files and bounded process restart. | Process authority and absence-safe children must survive physical moves; no additional supervisor. |
 | `gateway.frontdoor_runner.main` / `frontdoor.app` | Binds selected operator addresses, proxies to the backend and serves failure/static surfaces. | #1884 exact runtime/browser evidence remains distinct from source regressions. |
-| `server.app.lifespan` | Verifies migrations, starts runtime provenance/reconciliation, scheduler/job manager and registered background tasks; stops producers before consumers. | Optional imports still occur in Core startup. Secret bulk migration and implicit Git-hook cleanup are removed; ordinary interrupted-work reconciliation is not historical repair. |
+| `server.app.lifespan` | Verifies migrations, starts runtime provenance/reconciliation, scheduler/job manager and registered background tasks; stops producers before consumers. Optional Telegram adapter import/configuration is absence-safe. | Remaining top-level imports still need reachability review. Secret bulk migration and implicit Git-hook cleanup are removed; ordinary interrupted-work reconciliation is not historical repair. |
 | `agent_runtime.scheduler.init_scheduler` | One APScheduler owner; registered jobs drive market collection, planning, position/protection/recovery and optional research. | Collector subprocess substitutes cadence for two scheduled collectors; mutually exclusive environment wiring must remain explicit. |
 | `data.collector_runner.main` | Supervised two-minute collection loop plus ten-minute context collection; calls existing scheduler bodies. | It is active network/market-state work, not an inert library. |
 | `server.app.LIFESPAN_TASK_CATALOG` | Read-only catalogue of startup LLM/exchange/behavior gates, PI daemon, Fast Trigger, Telegram, lag monitoring and module-owned rechecks/resume. | The catalogue is observability, not a new scheduler or permission registry. |
@@ -58,7 +58,7 @@ open gate where stated.
 | `learning` (32) | Cohorts, evidence windows, experiments, hypotheses and guarded consumers | Optional; shared Core Outcome eligibility cannot move into this owner. |
 | `maintenance` (9) | Offline retention, accounting and fixed-target recovery | Explicit Ops/historical repair; not ordinary Core runtime writers. |
 | `model_provider` (10) | HTTP SDK transports, endpoint router, inference broker and explicit fallback | Mixed Core Model Port/inference semantics and concrete HTTP Extensions. |
-| `observation_lab` (19) | Lab DB, windows, runner/checkpoints and ownership checks | Optional namespaced Observation; independently prove absent-safe worker imports. |
+| `observation_lab` (19) | Lab DB, windows, runner/checkpoints and ownership checks | Optional namespaced Observation; owner import absence is fail-closed and covered by startup/reconciliation tests. |
 | `policies` (3) | `PolicyStore` writes immutable `ps_policy_versions`; lesson reviewer is a current consumer | Optional policy history, not equivalent to retired PS execution tables; do not delete by `ps_` name. |
 | `portfolio` (17) | Position/close/funding reconciliation, PnL and Outcome hooks | Core lifecycle/economics with concrete account seams still to isolate. |
 | `regime` (3) | Regime collection/detection | Optional market enrichment. |
@@ -133,9 +133,21 @@ research tables retain their own owners and are not Core lifecycle writers.
 These exceptions are therefore not folded into the ordinary Order/Position
 lifecycle APIs or treated as a second producer.
 
+The optional-extension absence pass is now merged at this checkpoint. Scheduler
+owner loading catches a missing Observation package as `unknown`; startup skips
+the optional cycle without leaving a half-initialized Scheduler, and settings
+reconciliation removes stale registrations for worker, unknown, or unavailable
+owners. Missing Learning hooks no longer stop Core job guards or failure
+accounting, while the Agent Shell diagnostic projection reports an unavailable
+advisory context. Telegram import/configuration failures are likewise logged by
+type and do not abort the Core lifespan. Focused regression evidence is 88
+scheduler/Observation/lifespan tests plus 19 architecture tests; this is source
+and mocked absence evidence, not runtime deployment or qualification.
+
 Next runnable seams are concrete private-account callers in the
 [private-I/O audit](SLIM_CORE_PRIVATE_IO_2026-09-13.md), optional lifecycle
-imports, and the remaining per-consumer single-writer evidence. The bundle
+reachability already covered above, and the remaining per-consumer single-writer
+evidence. The bundle
 importer seam is closed for current Core Proposal/retired-PS writes, while
 research artifact overwrite and full restore remain separate Ops boundaries.
 Logical ownership and absence tests must precede Scheme A folder movement.

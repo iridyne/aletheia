@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `786d06e8517cb22a43e185c9d52641070b271feb`. This is a bounded evidence
+based on `0f5fe5a9184ef4fdb080f865b5bc4dba146999b5`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -81,6 +81,15 @@ repairs. Their callers and predicates are explicit and bounded; no scheduler,
 importer, optional Extension or UI path reaches them. Writes to settings,
 Observation/Learning namespaces and audit-mirror metadata remain separate
 owners, not alternate Order/Fill/Position lifecycle paths.
+
+The merged optional-lifecycle repair closes the startup absence boundary without
+moving private I/O. A missing Observation owner module resolves to `unknown`,
+so Scheduler startup omits that optional cycle and reconciliation removes any
+stale registration. Missing Learning control/lesson modules preserve Core job
+guards and return an explicit unavailable advisory projection; Telegram adapter
+import/configuration failure is non-blocking for lifespan startup. The focused
+absence regressions (88 tests) and architecture fitness tests (19 tests) pass;
+they do not grant account, exchange, deployment, or qualification authority.
 
 ## Startup filesystem repair ownership
 
