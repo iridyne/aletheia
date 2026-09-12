@@ -48,8 +48,9 @@ Proposal as stable decision history.
 - [Gateway service lifecycle](gateway_service_lifecycle.md): cross-platform
   install, enablement, runtime control, and optional Windows machine-service
   design.
-- [Gateway recovery](gateway_recovery.md): restart reconciliation and safe
-  freeze behavior.
+- [Slim Core legacy Gateway retirement](slim_core_legacy_gateway_retirement.md):
+  remove the dormant PS recovery/write graph and its startup authority while
+  preserving historical data and canonical Core reconciliation gates.
 - [Learning evolution](learning_evolution.md): governed learning changes.
 - [Learning observability](learning_observability.md): learning measurement and
   operator visibility.

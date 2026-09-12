@@ -16,8 +16,12 @@ Schema v12 retains both immutable `ufc-fixed-look/v1` plans and the current
 `learning_inference_decisions` under a savepoint, preserves its rows and storage
 guards, and grants no Learning or trading authority.
 
-The future safety design is
-[`gateway_recovery.md`](../proposals/gateway_recovery.md).
+The former PS recovery design is
+[historical](../history/gateway_recovery.md), superseded by the accepted
+[Slim Core retirement](../proposals/slim_core_legacy_gateway_retirement.md).
+Its executable writer, recovery, mock-exchange, session and leader-lock modules
+are removed. The corresponding `ps_*` rows and read-only history endpoints remain;
+their old lifecycle states do not grant or deny current startup/trading authority.
 
 ## Entry points
 
@@ -57,7 +61,10 @@ Explicitly written protection rows survive restart without being inferred or rep
 - Secrets and dirty runtime state are excluded from sync/export artifacts.
 - Archived simulation evidence retains its immutable storage and original identity;
   readers do not restore its retired execution or settlement authority.
-- A recovery class with no production caller is not a recovery guarantee.
+- Historical PS Order/Fill/Position, intent, session, lock and reconciliation
+  tables have no active producer or recovery/authorization lifecycle. Startup
+  readiness requires the canonical Core tables and evaluates current `orders`,
+  `positions` and reconciliation incidents, not archived PS status values.
 - Backup evidence has three distinct levels: archive created, archive integrity
   verified, and an isolated restore successfully opened and passed the relevant
   application checks. Only the third level proves recoverability. A checksum or
@@ -68,15 +75,15 @@ Explicitly written protection rows survive restart without being inferred or rep
 Storage failures must remain visible to their caller and must not be converted
 into a successful write. Current startup does not enter a mandatory
 `RECOVERY_MODE`, does not guarantee exchange reconciliation before new work,
-and does not enforce `SAFE_FREEZE` from the dormant recovery state machine.
+and does not enforce `SAFE_FREEZE` from the retired PS state machine.
 
 Schema migration never initializes old Positions or invents historical trigger
 evidence. Archived protection and experiment records are read without resuming
 their former consumers.
 
-Those absent guarantees are a product gap, not current Contract behavior. Their
-approved target and rollback boundary are recorded in the Gateway Recovery
-Proposal.
+This retirement does not claim those additional guarantees. Current ambiguous
+submissions and unresolved close claims retain the canonical Core reconciliation
+and pause rules in the [execution contract](execution_contract.md).
 
 Managed SQLite backup/restore must be used for a live WAL database. Copying an
 active `app.db` file is not a supported backup or restore path. Restore rehearsal
@@ -131,8 +138,8 @@ must not be shared blindly even though configuration credentials are redacted.
 ## Executable evidence
 
 `tests/specs/spec_persistence.py` verifies the current stores, deterministic
-identities, wired adapter behavior, and negative tripwires that prevent dormant
-recovery components from being presented as active runtime guarantees.
+identities, wired adapter behavior, and negative containment checks preventing
+retired recovery writers or Legacy startup authority from returning.
 
 `tests/test_export_routes.py` verifies the removed migration claim, Agent-trace
 closure, versioned manifest, row counts/checksums, explicit exclusion classes,

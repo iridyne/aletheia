@@ -1,6 +1,6 @@
 ---
 id: gateway-recovery
-status: accepted
+status: superseded
 related_contracts:
   - ../contracts/persistence_recovery_contract.md
   - ../contracts/execution_contract.md
@@ -9,6 +9,12 @@ supersedes: []
 ---
 
 # Gateway Recovery Proposal
+
+Historical design, superseded by the owner-approved
+[Slim Core legacy Gateway retirement](../proposals/slim_core_legacy_gateway_retirement.md).
+The dormant PS write/recovery graph is retired; its tables remain historical
+data. The original text below records the earlier proposal and is not an
+instruction to enable dual writes, a second Gateway lifecycle, or Live authority.
 
 > **Proposal status**: accepted safety target, not implemented.
 > **角色**：定义未来 Gateway / Agent / Worker 重启后的恢复与冻结目标。

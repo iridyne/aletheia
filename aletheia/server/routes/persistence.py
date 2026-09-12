@@ -71,7 +71,7 @@ def _path_is_within(candidate: Path, root: Path) -> bool:
 
 @router.get("/gateway/status")
 def get_gateway_status():
-    """PS recovery status is unavailable until its lifecycle is wired."""
+    """Retired PS recovery has no current runtime status or activation path."""
     return {"status": "not_available", "freeze_reason": None}
 
 

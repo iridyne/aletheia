@@ -1864,7 +1864,7 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         pending_close_requested_at=datetime.now(timezone.utc).isoformat(),
     ))
 
-    allowed, detail = _check_pending_closes(None, None)
+    allowed, detail = _check_pending_closes(None)
     assert allowed is True, detail
 
     repo.insert_position(Position(
@@ -1893,7 +1893,7 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         ).isoformat(),
     ))
 
-    allowed, detail = _check_pending_closes(None, None)
+    allowed, detail = _check_pending_closes(None)
     assert allowed is False
     assert "position_absence_unverified=1" in detail
     assert "stale:submitted=1" in detail
@@ -1910,7 +1910,7 @@ def test_startup_gate_reads_core_pending_close_truth(tmp_path, monkeypatch):
         execution_mode="bitget_demo",
         pending_close_order_id="close-without-status",
     ))
-    allowed, detail = _check_pending_closes(None, None)
+    allowed, detail = _check_pending_closes(None)
     assert allowed is False
     assert "unknown=1" in detail
 

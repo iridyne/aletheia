@@ -157,13 +157,6 @@ def test_sqlite_integrity_failure_blocks(tmp_path, monkeypatch):
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
 
-    # Pre-import state_store so its `get_db` binding captures the real function
-    # BEFORE we patch sq.get_db below.  evaluate_startup_gate() lazily imports
-    # state_store on first call; if that import happens while the patch is active,
-    # state_store.get_db permanently binds to the lambda and leaks into subsequent
-    # tests running on the same worker, causing "closed database" errors.
-    import aletheia.gateway.state_store as _ss  # noqa: F401
-
     # Force integrity_check to report corruption by wrapping the connection
     # (setattr on a C sqlite3.Connection is unreliable, so wrap get_db instead).
     import aletheia.storage.sqlite as sq
@@ -247,24 +240,45 @@ def test_active_reconciliation_incident_blocks(tmp_path, monkeypatch):
 # 5. Unexplained pending order / pending close → block
 # --------------------------------------------------------------------------- #
 
-def test_unresolved_order_intent_blocks(tmp_path, monkeypatch):
+def test_legacy_unresolved_orders_are_history_not_startup_authority(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
-    from aletheia.gateway.state_store import GatewayStateStore
+    from aletheia.storage import repositories as repo
     from aletheia.storage.models import PSOrderIntent
 
-    store = GatewayStateStore()
-    store.create_order_intent(
+    repo._insert("ps_order_intents",
         PSOrderIntent(
             proposal_id="p1", strategy_id="s1", mode="demo", venue="bitget_demo",
             symbol="BTC/USDT", side="buy", order_type="market", quantity="1",
             status="created", client_order_id="c1", idempotency_key="k1",
-        )
+        ).model_dump()
     )
+    repo.get_db().execute(
+        "INSERT INTO ps_orders (order_id,intent_id,mode,venue,client_order_id,symbol,side,order_type,quantity,status,updated_at) "
+        "VALUES ('legacy-order',(SELECT intent_id FROM ps_order_intents LIMIT 1),'demo','bitget','legacy-client',"
+        "'BTC/USDT','buy','market','1','unknown','2026-01-01T00:00:00Z')"
+    )
+    repo.get_db().commit()
     verdict = gate.evaluate_startup_gate()
-    assert verdict["passed"] is False
-    assert "pending_orders" in verdict["blockers"]
+    assert verdict["passed"] is True, verdict
+    assert "pending_orders" not in verdict["blockers"]
+    assert repo.get_db().execute("SELECT status FROM ps_order_intents").fetchone()[0] == "created"
+    assert repo.get_db().execute("SELECT status FROM ps_orders").fetchone()[0] == "unknown"
+
+
+@pytest.mark.parametrize("missing_core_table", (None, "orders"))
+def test_startup_schema_readiness_requires_core_not_ps_tables(monkeypatch, missing_core_table):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    names = {"orders", "fills", "positions", "trade_proposals", "risk_decisions",
+             "candidate_planning_generations", "entry_plans", "reconciliation_integrity_incidents"}
+    names.discard(missing_core_table)
+    connection = SimpleNamespace(execute=lambda _sql: SimpleNamespace(fetchall=lambda: [(name,) for name in names]))
+    monkeypatch.setattr("aletheia.storage.sqlite.get_db", lambda: connection)
+    allowed, detail = gate._check_migrations_applied(None)
+    assert allowed is (missing_core_table is None), detail
 
 
 @pytest.mark.parametrize("status", ["submission_unknown", "materialization_missing"])
@@ -365,14 +379,13 @@ def test_core_entry_order_recheck_resumes_after_reconciliation(
     assert _mock_scheduler["resume"] == 1
 
 
-def test_unknown_status_position_blocks_as_pending_close(tmp_path, monkeypatch):
+def test_legacy_unknown_position_is_history_not_startup_authority(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _healthy_cfg()
     from aletheia.agent_runtime import startup_behavior_gate as gate
     from aletheia.storage.sqlite import get_db
 
-    # Insert a position stuck in 'unknown' (reconciliation could not confirm) —
-    # an unexplained pending close.
+    # Legacy ambiguity remains readable but cannot govern the current ledger.
     db = get_db()
     db.execute(
         "INSERT INTO ps_positions (position_id, mode, strategy_id, venue, symbol, "
@@ -382,8 +395,9 @@ def test_unknown_status_position_blocks_as_pending_close(tmp_path, monkeypatch):
     db.commit()
 
     verdict = gate.evaluate_startup_gate()
-    assert verdict["passed"] is False
-    assert "pending_closes" in verdict["blockers"]
+    assert verdict["passed"] is True, verdict
+    assert "pending_closes" not in verdict["blockers"]
+    assert db.execute("SELECT status FROM ps_positions WHERE position_id='pos1'").fetchone()[0] == "unknown"
 
 
 def test_core_pending_close_claim_blocks_startup_behavior(tmp_path, monkeypatch):

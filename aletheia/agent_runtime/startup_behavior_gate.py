@@ -148,8 +148,8 @@ def _check_migrations_applied(cfg) -> tuple[bool, str]:
     """Core tables created by run_migrations() must exist."""
     from aletheia.storage import sqlite as _sqlite
 
-    required = {"ps_orders", "ps_positions", "ps_order_intents",
-                "reconciliation_integrity_incidents"}
+    required = {"orders", "fills", "positions", "trade_proposals", "risk_decisions",
+                "candidate_planning_generations", "entry_plans", "reconciliation_integrity_incidents"}
     try:
         rows = _sqlite.get_db().execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
@@ -231,28 +231,17 @@ def _check_exchange_sync(cfg) -> tuple[bool, str]:
         return False, f"exchange sync status check failed: {e}"
 
 
-def _check_pending_orders(cfg, state_store) -> tuple[bool, str]:
-    """No unexplained pending orders: no order intent stuck in created/submitted,
-    no order left in the reconciliation-anomalous 'unknown' status, and no
-    authoritative core entry Order that must reconcile before retry/resume."""
-    from aletheia.storage import sqlite as _sqlite
+def _check_pending_orders(cfg) -> tuple[bool, str]:
+    """Block authoritative entry Orders that must reconcile before retry/resume."""
     from aletheia.storage.repositories import list_unresolved_native_entry_orders_for_risk
 
     try:
-        unresolved = state_store.get_unresolved_intents()
-        unknown = _sqlite.get_db().execute(
-            "SELECT count(*) FROM ps_orders WHERE status='unknown'"
-        ).fetchone()[0]
         core_state_counts: dict[str, int] = {}
         for order in list_unresolved_native_entry_orders_for_risk():
             status = str(order.get("status") or "")
             if status in _IMMEDIATE_CORE_ENTRY_ORDER_STATES:
                 core_state_counts[status] = core_state_counts.get(status, 0) + 1
         problems = []
-        if unresolved:
-            problems.append(f"{len(unresolved)} unresolved order intent(s)")
-        if unknown:
-            problems.append(f"{unknown} order(s) in 'unknown' status")
         if core_state_counts:
             state_summary = ", ".join(
                 f"{state}={core_state_counts[state]}"
@@ -266,11 +255,10 @@ def _check_pending_orders(cfg, state_store) -> tuple[bool, str]:
         return False, f"pending-order check failed: {e}"
 
 
-def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
+def _check_pending_closes(cfg) -> tuple[bool, str]:
     """Block unexplained core close claims without treating normal flight as failure.
 
-    The legacy persistence projection still uses ps_positions.status=unknown.
-    The authoritative trading ledger instead keeps an open Position plus
+    The authoritative trading ledger keeps an open Position plus
     pending_close_status. Reconciliation-required states block immediately;
     ordinary pending/submitted/partial states block only after Position Manager's
     existing stale threshold.
@@ -287,9 +275,6 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
         from aletheia.storage import sqlite as _sqlite
 
         db = _sqlite.get_db()
-        unknown = db.execute(
-            "SELECT count(*) FROM ps_positions WHERE status='unknown'"
-        ).fetchone()[0]
         placeholders = ",".join("?" for _ in _OPEN_CLOSE_STATES)
         core_rows = db.execute(
             f"""
@@ -327,10 +312,6 @@ def _check_pending_closes(cfg, state_store) -> tuple[bool, str]:
             core_problems[label] = core_problems.get(label, 0) + 1
 
         problems = []
-        if unknown:
-            problems.append(
-                f"{unknown} legacy position(s) in 'unknown' status"
-            )
         if core_problems:
             detail = ", ".join(
                 f"{status}={count}"
@@ -391,9 +372,8 @@ def _check_learning_influence(cfg) -> tuple[bool, str]:
     return True, f"influence enabled over {len(learning.paper_influence_paths)} path(s)"
 
 
-# Ordered list of (name, callable) for the blocking system checks. `pending_orders`
-# and `pending_closes` receive the state store; the rest receive only cfg.
-def _run_checks(cfg, state_store) -> list[dict]:
+# Ordered blocking checks over current Core state.
+def _run_checks(cfg) -> list[dict]:
     checks: list[dict] = []
 
     def add(name: str, ok: bool, detail: str) -> None:
@@ -404,8 +384,8 @@ def _run_checks(cfg, state_store) -> list[dict]:
     ok, detail = _check_foreign_keys(cfg); add("foreign_keys", ok, detail)
     ok, detail = _check_active_runtime_scope(cfg); add("active_runtime_scope", ok, detail)
     ok, detail = _check_exchange_sync(cfg); add("exchange_sync", ok, detail)
-    ok, detail = _check_pending_orders(cfg, state_store); add("pending_orders", ok, detail)
-    ok, detail = _check_pending_closes(cfg, state_store); add("pending_closes", ok, detail)
+    ok, detail = _check_pending_orders(cfg); add("pending_orders", ok, detail)
+    ok, detail = _check_pending_closes(cfg); add("pending_closes", ok, detail)
     ok, detail = _check_reconciliation_incident(cfg); add("reconciliation_incident", ok, detail)
     ok, detail = _check_learning_influence(cfg); add("learning_influence", ok, detail)
     # Non-blocking: validates bitget_profile is known and warns if uta_v3 is active.
@@ -449,7 +429,7 @@ def _user_block(cfg) -> str | None:
     return None
 
 
-def evaluate_startup_gate(cfg=None, *, state_store=None) -> dict:
+def evaluate_startup_gate(cfg=None) -> dict:
     """Pure diagnosis of whether the gateway may run its AI/trading loop.
 
     Never raises. Returns:
@@ -465,12 +445,7 @@ def evaluate_startup_gate(cfg=None, *, state_store=None) -> dict:
         from aletheia.config.loader import load_config
 
         cfg = load_config()
-    if state_store is None:
-        from aletheia.gateway.state_store import GatewayStateStore
-
-        state_store = GatewayStateStore()
-
-    checks = _run_checks(cfg, state_store)
+    checks = _run_checks(cfg)
     blockers = [c["name"] for c in checks if c["blocking"] and not c["ok"]]
     user_block_reason = _user_block(cfg)
     return {
