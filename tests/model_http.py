@@ -1,4 +1,4 @@
-"""In-memory HTTP boundary for real OpenAI SDK adapter tests."""
+"""In-memory HTTP boundary for real model SDK adapter tests."""
 
 import json
 from contextlib import contextmanager
@@ -8,7 +8,7 @@ import httpx
 
 
 @contextmanager
-def openai_http(*, post=None, get=None):
+def model_http(*, provider="openai_compatible", post=None, get=None):
     async def handle(request):
         if request.method == "POST" and post is not None:
             response = await post(
@@ -21,5 +21,5 @@ def openai_http(*, post=None, get=None):
         return httpx.Response(response.status_code, json=response.json(), request=request)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handle), timeout=300)
-    with patch("aletheia.model_provider.openai_compatible.httpx_client", return_value=client):
+    with patch(f"aletheia.model_provider.{provider}.httpx_client", return_value=client):
         yield client

@@ -4,7 +4,7 @@ import asyncio
 import threading
 import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
-from tests.model_http import openai_http
+from tests.model_http import model_http
 
 from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
 from aletheia.model_provider.openai_compatible import (
@@ -443,7 +443,7 @@ async def test_openai_healthcheck_no_server():
             raise httpx.ConnectError("refused")
 
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="test")
-    with openai_http(get=FailClient().get):
+    with model_http(get=FailClient().get):
         health = await provider.healthcheck()
     assert health.available is False
 
@@ -475,7 +475,7 @@ async def test_inline_candidate_key_used_in_healthcheck():
             seen["headers"] = headers or {}
             return FakeResp()
 
-    with openai_http(get=FakeClient().get):
+    with model_http(get=FakeClient().get):
         health = await provider.healthcheck()
     assert health.available is True
     assert seen["headers"].get("Authorization") == "Bearer sk-candidate-xyz"
@@ -500,7 +500,7 @@ async def test_openai_complete_mock():
         def json(self):
             return mock_response
 
-    with openai_http(post=AsyncMock(return_value=FakeResponse())):
+    with model_http(post=AsyncMock(return_value=FakeResponse())):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
         resp = await provider.complete(req)
         assert resp.content == "Hello world"
@@ -565,7 +565,7 @@ async def test_openai_complete_missing_choices_raises_provider_response_error():
         def json(self):
             return {"id": "cmpl-glm"}
 
-    with openai_http(post=AsyncMock(return_value=FakeResponse())):
+    with model_http(post=AsyncMock(return_value=FakeResponse())):
         with pytest.raises(ProviderResponseError, match="openai_chat_missing_choices"):
             await provider.complete(ModelRequest(messages=[{"role": "user", "content": "hi"}]))
 
@@ -586,7 +586,7 @@ async def test_openai_complete_sends_explicit_reasoning_effort_only_when_request
             return mock_response
 
     post = AsyncMock(return_value=FakeResponse())
-    with openai_http(post=post):
+    with model_http(post=post):
         await provider.complete(
             ModelRequest(
                 messages=[{"role": "user", "content": "return json"}],
@@ -622,7 +622,7 @@ async def test_openai_complete_retries_once_without_unsupported_reasoning_effort
     )
     post = AsyncMock(side_effect=[unsupported, success])
 
-    with openai_http(post=post):
+    with model_http(post=post):
         response = await provider.complete(
             ModelRequest(
                 messages=[{"role": "user", "content": "return json"}],
@@ -648,7 +648,7 @@ async def test_openai_complete_does_not_retry_unrelated_bad_request():
     )
     post = AsyncMock(return_value=bad_request)
 
-    with openai_http(post=post):
+    with model_http(post=post):
         with pytest.raises(httpx.HTTPStatusError):
             await provider.complete(
                 ModelRequest(
@@ -679,7 +679,7 @@ async def test_anthropic_complete_mock():
         def json(self):
             return mock_response
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=FakeResponse()):
+    with model_http(provider="anthropic_compatible", post=AsyncMock(return_value=FakeResponse())):
         req = ModelRequest(messages=[{"role": "user", "content": "hi"}])
         resp = await provider.complete(req)
         assert resp.content == "Bonjour"
@@ -764,7 +764,7 @@ async def test_openai_list_models_parses_data_array():
         async def get(self, url, headers=None):
             return FakeResp()
 
-    with openai_http(get=FakeClient().get):
+    with model_http(get=FakeClient().get):
         models = await provider.list_models()
     assert len(models) == 2
     assert models[0] == {"slug": "gpt-4o", "display_name": "gpt-4o"}
@@ -789,7 +789,7 @@ async def test_openai_list_models_returns_empty_on_failure():
             raise httpx.ConnectError("refused")
 
     provider = OpenAICompatibleProvider(base_url="http://localhost:19999/v1", model="m")
-    with openai_http(get=FailClient().get):
+    with model_http(get=FailClient().get):
         models = await provider.list_models()
     assert models == []
 
@@ -817,7 +817,7 @@ async def test_anthropic_list_models_parses_data_array():
         async def get(self, url, headers=None):
             return FakeResp()
 
-    with patch("httpx.AsyncClient", FakeClient):
+    with model_http(provider="anthropic_compatible", get=FakeClient().get):
         models = await provider.list_models()
     assert len(models) == 2
     assert models[0]["slug"] == "claude-sonnet-4-20250514"
@@ -847,7 +847,7 @@ async def test_anthropic_list_models_handles_plain_list():
         async def get(self, url, headers=None):
             return FakeResp()
 
-    with patch("httpx.AsyncClient", FakeClient):
+    with model_http(provider="anthropic_compatible", get=FakeClient().get):
         models = await provider.list_models()
     assert len(models) == 2
     assert models[0] == {"slug": "claude-opus-4", "display_name": "claude-opus-4"}
@@ -871,7 +871,7 @@ async def test_anthropic_list_models_returns_empty_on_failure():
             raise httpx.ConnectError("refused")
 
     provider = AnthropicCompatibleProvider(base_url="http://localhost:19999", model="m")
-    with patch("httpx.AsyncClient", FailClient):
+    with model_http(provider="anthropic_compatible", get=FailClient().get):
         models = await provider.list_models()
     assert models == []
 
@@ -1871,7 +1871,7 @@ async def test_responses_protocol_sends_strict_json_schema_in_text_format():
         "required": ["ok"],
         "additionalProperties": False,
     }
-    with openai_http(post=fake_post):
+    with model_http(post=fake_post):
         await provider.complete(
             ModelRequest(
                 messages=[{"role": "user", "content": "go"}],
@@ -1910,7 +1910,7 @@ async def test_responses_protocol_maps_reasoning_effort_to_reasoning_object():
         sent.update(url=url, payload=json)
         return FakeResponse()
 
-    with openai_http(post=fake_post):
+    with model_http(post=fake_post):
         await provider.complete(
             ModelRequest(
                 messages=[{"role": "user", "content": "go"}],
@@ -1956,7 +1956,7 @@ async def test_responses_protocol_retries_without_reasoning_preserving_schema(re
     )
     post = AsyncMock(side_effect=[rejected, success])
 
-    with openai_http(post=post):
+    with model_http(post=post):
         response = await provider.complete(
             ModelRequest(
                 messages=[{"role": "user", "content": "go"}],

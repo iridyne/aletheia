@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from tests.model_http import openai_http
+from tests.model_http import model_http
 from pydantic import BaseModel
 
 from aletheia.model_provider.base import (
@@ -573,7 +573,7 @@ async def test_openai_compatible_sends_json_object_response_format(monkeypatch):
         async def aclose(self):
             return None
 
-    with openai_http(post=FakeClient().post):
+    with model_http(post=FakeClient().post):
         provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="glm-5.2")
         resp = await provider.complete(
             ModelRequest(
@@ -612,7 +612,7 @@ async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
         async def aclose(self):
             return None
 
-    with openai_http(post=FakeClient().post):
+    with model_http(post=FakeClient().post):
         provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
         await provider.complete(
             ModelRequest(
@@ -666,7 +666,7 @@ async def test_openai_compatible_responses_preserves_strict_json_schema(monkeypa
         "required": ["decision"],
         "additionalProperties": False,
     }
-    with openai_http(post=FakeClient().post):
+    with model_http(post=FakeClient().post):
         provider = OpenAICompatibleProvider(
             base_url="http://model.test/v1",
             model="m1",
@@ -719,22 +719,19 @@ async def test_anthropic_compatible_sends_strict_json_schema(monkeypatch):
         async def aclose(self):
             return None
 
-    monkeypatch.setattr(
-        "aletheia.model_provider.anthropic_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = AnthropicCompatibleProvider(base_url="http://model.test", model="claude")
-    await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_schema",
-            structured_schema=schema,
+    with model_http(provider="anthropic_compatible", post=FakeClient().post):
+        provider = AnthropicCompatibleProvider(base_url="http://model.test", model="claude")
+        await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_schema",
+                structured_schema=schema,
+            )
         )
-    )
 
-    assert payloads[0]["output_config"] == {
-        "format": {"type": "json_schema", "schema": schema}
-    }
+        assert payloads[0]["output_config"] == {
+            "format": {"type": "json_schema", "schema": schema}
+        }
 
 
 @pytest.mark.asyncio
@@ -768,7 +765,7 @@ async def test_openai_compatible_retries_without_json_object_when_unsupported(mo
         async def aclose(self):
             return None
 
-    with openai_http(post=FakeClient().post):
+    with model_http(post=FakeClient().post):
         provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
         resp = await provider.complete(
             ModelRequest(
@@ -818,7 +815,7 @@ async def test_openai_compatible_retries_without_json_schema_when_unsupported(mo
         async def aclose(self):
             return None
 
-    with openai_http(post=FakeClient().post):
+    with model_http(post=FakeClient().post):
         provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
         resp = await provider.complete(
             ModelRequest(

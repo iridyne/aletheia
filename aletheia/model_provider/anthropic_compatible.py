@@ -1,6 +1,10 @@
 """Anthropic-compatible model provider."""
 
 import asyncio
+import logging
+
+import httpx
+from anthropic import APIConnectionError, APIStatusError, APITimeoutError, AsyncAnthropic, Omit
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
@@ -13,6 +17,9 @@ from aletheia.model_provider.base import (
     structured_via_complete,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
+
+# SDK debug request logs contain prompts; the harness owns content-free telemetry.
+logging.getLogger("anthropic._base_client").setLevel(logging.WARNING)
 
 
 class AnthropicCompatibleProvider(ModelProvider):
@@ -38,14 +45,23 @@ class AnthropicCompatibleProvider(ModelProvider):
         # x-api-key with 401. Make the scheme selectable; default preserves native.
         self.auth_scheme = auth_scheme
 
-    def _headers(self) -> dict:
-        h = {"Content-Type": "application/json", "anthropic-version": "2023-06-01"}
-        if self.api_key:
-            if self.auth_scheme == "bearer":
-                h["Authorization"] = f"Bearer {self.api_key}"
-            else:
-                h["x-api-key"] = self.api_key
-        return h
+    def _sdk_client(self) -> AsyncAnthropic:
+        # Explicit empty credentials disable SDK environment/profile resolution;
+        # Omit below prevents empty or fabricated authentication headers.
+        client = AsyncAnthropic(
+            base_url=self.base_url,
+            api_key=self.api_key if self.auth_scheme != "bearer" and self.api_key else "",
+            auth_token=self.api_key if self.auth_scheme == "bearer" and self.api_key else "",
+            webhook_key="",
+            max_retries=0,
+            http_client=self._get_http_client(httpx_client),
+        )
+        # SDK 0.x merges ANTHROPIC_CUSTOM_HEADERS despite explicit defaults.
+        client._custom_headers = {
+            "Authorization": f"Bearer {self.api_key}" if self.auth_scheme == "bearer" and self.api_key else Omit(),
+            "X-Api-Key": self.api_key if self.auth_scheme != "bearer" and self.api_key else Omit(),
+        }
+        return client
 
     async def complete(self, request: ModelRequest) -> ModelResponse:
         payload: dict = {
@@ -70,8 +86,17 @@ class AnthropicCompatibleProvider(ModelProvider):
                     "schema": request.structured_schema,
                 }
             }
-        client = self._get_http_client(httpx_client)
-        resp = await client.post(f"{self.base_url}/v1/messages", json=payload, headers=self._headers())
+        client = self._sdk_client()
+        try:
+            resp = (await client.messages.with_raw_response.create(
+                **payload, extra_headers=client._custom_headers,
+            )).http_response
+        except APIStatusError as exc:
+            resp = exc.response
+        except APIConnectionError as exc:
+            exc.request.headers.clear()
+            error_type = httpx.ReadTimeout if isinstance(exc, APITimeoutError) else httpx.ConnectError
+            raise error_type("model endpoint request failed") from None
         raise_for_status_without_secrets(resp)
         data = resp.json()
         content = ""
@@ -91,9 +116,9 @@ class AnthropicCompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the gateway's /v1/models endpoint."""
         try:
-            client = self._get_http_client(httpx_client)
+            client = self._sdk_client()
             async with asyncio.timeout(4):
-                resp = await client.get(f"{self.base_url}/v1/models", headers=self._headers())
+                resp = (await client.models.with_raw_response.list(extra_headers=client._custom_headers)).http_response
             if resp.status_code != 200:
                 return []
             data = resp.json()
