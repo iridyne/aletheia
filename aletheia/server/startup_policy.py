@@ -2,7 +2,6 @@
 
 STARTUP_FAILURE_POLICY = (
     {"stage": "bootstrap", "on_failure": "fail_startup", "readiness_effect": "interface_not_ready"},
-    {"stage": "secret_migration", "on_failure": "warn_continue", "readiness_effect": "none"},
     {"stage": "database_migration_verification", "on_failure": "fail_startup", "readiness_effect": "interface_not_ready"},
     {"stage": "runtime_reconciliation", "on_failure": "warn_continue", "readiness_effect": "none"},
     {"stage": "tool_registry_and_job_manager", "on_failure": "fail_startup", "readiness_effect": "interface_not_ready"},

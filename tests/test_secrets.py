@@ -9,7 +9,6 @@ from aletheia.config.secrets import (
     get_credential_generation,
     get_secret,
     is_secret_key,
-    migrate_keyring_to_file,
     redact,
     set_secret,
 )
@@ -201,8 +200,22 @@ def test_stale_keyring_cannot_override_generation_bound_file_value(tmp_path):
 
         assert get_secret("bitget.demo.api_key") == "new-file-value"
         assert get_credential_generation("bitget.demo") == 1
-        assert migrate_keyring_to_file() == 0
-        assert get_secret("bitget.demo.api_key") == "new-file-value"
+
+
+def test_keyring_only_reference_read_does_not_migrate_storage(tmp_path, monkeypatch):
+    reads = []
+
+    class Keyring:
+        def get_password(self, _service, key):
+            reads.append(key)
+            return "synthetic-keyring-only-value"
+
+    monkeypatch.setattr("aletheia.config.secrets.get_data_dir", lambda: tmp_path)
+    monkeypatch.setattr("aletheia.config.secrets._get_keyring", lambda: Keyring())
+    assert get_secret("selected-reference") == "synthetic-keyring-only-value"
+    assert reads == ["selected-reference"]
+    assert not (tmp_path / "secrets.enc").exists()
+    assert not (tmp_path / ".secret.key").exists()
 
 
 def test_preview_mode_never_reads_or_writes_secrets(monkeypatch):
