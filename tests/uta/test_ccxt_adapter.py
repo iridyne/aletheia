@@ -469,6 +469,37 @@ async def test_private_request_timeout_is_cooperative_and_unavailable(monkeypatc
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ("okx", "classic_v2"))
+async def test_funding_private_request_uses_adapter_deadline(monkeypatch, kind):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    cancelled = False
+
+    async def stalled_read(*args, **kwargs):
+        nonlocal cancelled
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        return []
+
+    method = "fetch_funding_history" if kind == "classic_v2" else "fetch_ledger"
+    monkeypatch.setattr(exchange, method, stalled_read, raising=False)
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile, request_timeout=0.001)
+    try:
+        report = await adapter.get_funding_ledger(FundingLedgerQuery(
+            scope=_funding_scope(datetime.now(timezone.utc), age_days=2)
+        ))
+    finally:
+        await adapter.close()
+    assert cancelled
+    assert report.completeness is ReadCompleteness.UNAVAILABLE
+    assert report.reason_code == "private_funding_ledger_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_total_read_failure_and_raw_object_are_never_complete_empty(monkeypatch):
     profile = _profile("binance")
     exchange = FakeExchange()
@@ -738,6 +769,38 @@ async def test_okx_recent_funding_window_uses_only_recent_surface(monkeypatch):
     assert report.completeness is ReadCompleteness.COMPLETE
     assert [event[1].get("method") for event in exchange.events
             if event[0] == "fetch_ledger"] == [None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", (1, 1000))
+async def test_classic_funding_keeps_symbol_bound_read_and_completeness(monkeypatch, limit):
+    profile = _profile("classic_v2")
+    exchange = FakeExchange()
+    now = datetime.now(timezone.utc)
+    scope = _funding_scope(now, age_days=2).model_copy(update={"limit": limit})
+    calls = []
+
+    async def funding_history(symbol, since, requested_limit):
+        calls.append((symbol, since, requested_limit))
+        return [{"info": {
+            "billId": "funding-1", "symbol": "BTCUSDT", "amount": "-0.02",
+            "coin": "USDT", "businessType": "contract_settle_fee",
+            "cTime": int((now - timedelta(days=1)).timestamp() * 1000),
+        }}]
+
+    monkeypatch.setattr(exchange, "fetch_funding_history", funding_history, raising=False)
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.get_funding_ledger(FundingLedgerQuery(scope=scope))
+    finally:
+        await adapter.close()
+    assert calls == [("BTC/USDT:USDT", int(scope.start_at.timestamp() * 1000), limit)]
+    assert [(entry.venue_ledger_id, entry.amount) for entry in report.entries] == [
+        ("funding-1", Decimal("-0.02")),
+    ]
+    assert report.completeness is (ReadCompleteness.PARTIAL if limit == 1 else ReadCompleteness.COMPLETE)
+    assert report.reason_code == ("funding_history_bound_reached" if limit == 1 else None)
 
 
 

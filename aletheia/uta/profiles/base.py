@@ -138,26 +138,27 @@ class CCXTProfile:
         limit: int,
         history_params_fn,
         *,
+        request,
+        ledger_requests: tuple[dict[str, object], ...],
         venue_symbol: str | None = None,
-    ) -> tuple[list[dict], bool]:
-        """Fetch raw funding rows via fetch_ledger; returns (rows, history_bound_reached).
+    ) -> tuple[list[dict], str | None]:
+        """Execute the window-aware ledger plan; return rows and any incomplete reason.
 
         Profiles that cannot use fetch_ledger (e.g. Bitget classic_v2) override
         this method to use the appropriate exchange API instead.
         venue_symbol is passed for profiles that need a per-symbol endpoint.
         """
-        ledger_requests = self.ledger_requests
         rows: list[dict] = []
         failed_calls = 0
         history_bound_reached = False
         for params in ledger_requests:
             try:
-                page = await exchange.fetch_ledger(
+                page = await request(exchange.fetch_ledger(
                     "USDT",
                     since,
                     limit,
                     history_params_fn(dict(params)),
-                )
+                ))
                 if not isinstance(page, list):
                     raise ValueError("invalid CCXT ledger")
                 history_bound_reached = history_bound_reached or len(page) >= limit
@@ -166,7 +167,11 @@ class CCXTProfile:
                 failed_calls += 1
         if failed_calls == len(ledger_requests):
             raise RuntimeError("private funding ledger unavailable")
-        return rows, history_bound_reached
+        reason = (
+            "funding_history_bound_reached" if history_bound_reached
+            else "funding_ledger_partial" if failed_calls else None
+        )
+        return rows, reason
     async def fetch_fills(self, exchange, symbol, since, limit, params, end_ms):
         rows = await exchange.fetch_my_trades(symbol, since, limit, {**params, "paginate": True, "paginationCalls": 10})
         if not isinstance(rows, list):

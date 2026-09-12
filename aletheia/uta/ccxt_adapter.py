@@ -777,11 +777,15 @@ class CCXTUTAAdapter:
             exchange = await self._connected_exchange()
             since = int(query.scope.start_at.timestamp() * 1000) if query.scope.start_at else None
             page_limit = query.scope.limit or 1000
-            rows, history_bound_reached = await self._profile.fetch_funding_rows(
+            rows, incomplete_reason = await self._profile.fetch_funding_rows(
                 exchange,
                 since,
                 page_limit,
                 lambda p: self._history_params(p),
+                request=self._request,
+                ledger_requests=self._profile.funding_ledger_requests(
+                    start_at=query.scope.start_at, received_at=received_at,
+                ),
                 venue_symbol=(
                     query.scope.instrument.venue_symbol
                     if query.scope.instrument is not None
@@ -808,19 +812,12 @@ class CCXTUTAAdapter:
                         source_provenance="ccxt_private_ledger",
                     )
                 )
-            partial = history_bound_reached
             return FundingLedgerReport(
                 identity=self.identity,
-                completeness=(ReadCompleteness.PARTIAL if partial else ReadCompleteness.COMPLETE),
+                completeness=(ReadCompleteness.PARTIAL if incomplete_reason else ReadCompleteness.COMPLETE),
                 scope=query.scope,
                 received_at=received_at,
-                reason_code=(
-                    "funding_history_bound_reached"
-                    if history_bound_reached
-                    else "funding_ledger_partial"
-                    if partial
-                    else None
-                ),
+                reason_code=incomplete_reason,
                 profile_version=self._profile_version,
                 entries=tuple(entries),
             )
