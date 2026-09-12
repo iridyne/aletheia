@@ -358,10 +358,8 @@ def _stub_creds(monkeypatch):
 
 
 
-def test_broker_funding_settlement_uses_uta_account_mode(tmp_path, monkeypatch):
-    from aletheia.portfolio.broker_funding_settlement import _client_for_mode
+def test_funding_recovery_has_no_venue_client_compatibility_layer():
+    from aletheia.portfolio import broker_funding_settlement as settlement
 
-    _use_profile(tmp_path, monkeypatch, "uta_v3")
-    _stub_creds(monkeypatch)
-    client = _client_for_mode("bitget_demo")
-    assert client.execution_mode == "bitget_demo"
+    assert not hasattr(settlement, "_client_for_mode")
+    assert not hasattr(settlement, "_UTAFundingProjection")

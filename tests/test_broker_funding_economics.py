@@ -302,6 +302,24 @@ def test_broker_funding_rejects_stale_full_close_snapshot(
     assert _broker_funding_state(position_id) == before
 
 
+@pytest.mark.parametrize("fee_field", ["entry_fee", "exit_fee"])
+def test_deferred_finalization_rejects_matching_invalid_fee_snapshots(tmp_path, monkeypatch, fee_field):
+    position_id, _, funding, ledger = _seed_pending_broker_funding_close(tmp_path, monkeypatch)
+    from aletheia.portfolio.broker_funding_settlement import materialize_broker_funding_economics
+
+    force_update_position(position_id, **{fee_field: -1.0})
+    repo.get_db().execute(
+        f"UPDATE position_close_events SET {fee_field}=? WHERE position_id=?", (-1.0, position_id),
+    )
+    row = repo.get_position(position_id)
+    before = _broker_funding_state(position_id)
+    with pytest.raises(ValueError, match="realized economics"):
+        materialize_broker_funding_economics(
+            row, funding_cost=funding.funding_cost, funding_evidence=funding.evidence, funding_ledger=ledger,
+        )
+    assert _broker_funding_state(position_id) == before
+
+
 def test_broker_funding_exact_replay_is_a_noop(tmp_path, monkeypatch):
     position_id, stale, funding, ledger = _seed_pending_broker_funding_close(
         tmp_path, monkeypatch,
@@ -563,25 +581,20 @@ def test_delayed_funding_settlement_rejects_alternate_symbol_double_claim(
         "cTime": "1784030400000",
     }])[0]
 
-    class Client:
-        async def get_funding_ledger(
-            self, *, broker_id, start_time_ms, end_time_ms, **_kwargs
-        ):
-            return make_complete_ledger(
-                broker_id=broker_id,
-                account_environment="demo",
-                source_endpoint="/private/funding",
-                history_start_ms=start_time_ms,
-                history_end_ms=end_time_ms,
-                events=[event],
-            )
-
-        async def close(self):
-            pass
+    async def funding_ledger(row, start_time_ms, end_time_ms):
+        broker_id = row["execution_mode"]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment="demo",
+            source_endpoint="/private/funding",
+            history_start_ms=start_time_ms,
+            history_end_ms=end_time_ms,
+            events=[event],
+        )
 
     from aletheia.portfolio import broker_funding_settlement as settlement
 
-    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode, **_kw: Client())
+    monkeypatch.setattr(settlement, "_uta_funding_ledger", funding_ledger)
     result = asyncio.run(settlement.settle_unsettled_exchange_closes())
 
     assert result["checked"] == 2
@@ -1082,39 +1095,29 @@ async def test_expired_funding_prefix_does_not_starve_recoverable_close(
 
     network_calls: list[tuple[str, str]] = []
 
-    class FundingClient:
-        async def get_funding_ledger(
-            self,
-            *,
-            broker_id,
-            symbol,
-            start_time_ms,
-            end_time_ms,
-            **_kwargs,
-        ):
-            network_calls.append((broker_id, symbol))
-            if symbol == "ETH/USDT":
-                raise TimeoutError("transient fixture")
-            return make_complete_ledger(
-                broker_id=broker_id,
-                account_environment=(
-                    "testnet" if broker_id == "binance_testnet" else "demo"
-                ),
-                source_endpoint="/fixture/private/funding",
-                history_start_ms=start_time_ms,
-                history_end_ms=end_time_ms,
-                events=[],
-            )
-
-        async def close(self):
-            return None
+    async def funding_ledger(row, start_time_ms, end_time_ms):
+        broker_id = row["execution_mode"]
+        symbol = row["symbol"]
+        network_calls.append((broker_id, symbol))
+        if symbol == "ETH/USDT":
+            raise TimeoutError("transient fixture")
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment=(
+                "testnet" if broker_id == "binance_testnet" else "demo"
+            ),
+            source_endpoint="/fixture/private/funding",
+            history_start_ms=start_time_ms,
+            history_end_ms=end_time_ms,
+            events=[],
+        )
 
     from aletheia.portfolio import broker_funding_settlement as settlement
 
     monkeypatch.setattr(
         settlement,
-        "_client_for_mode",
-        lambda _mode, **_kw: FundingClient(),
+        "_uta_funding_ledger",
+        funding_ledger,
     )
     result = await settlement.settle_unsettled_exchange_closes()
 
@@ -1206,29 +1209,24 @@ async def test_funding_cursor_progress_survives_connection_reopen(
         closed_at=now - timedelta(hours=1),
     )
 
-    class FundingClient:
-        async def get_funding_ledger(
-            self, *, broker_id, start_time_ms, end_time_ms, **_kwargs
-        ):
-            return make_complete_ledger(
-                broker_id=broker_id,
-                account_environment="demo",
-                source_endpoint="/fixture/private/funding",
-                history_start_ms=start_time_ms,
-                history_end_ms=end_time_ms,
-                events=[],
-            )
-
-        async def close(self):
-            return None
+    async def funding_ledger(row, start_time_ms, end_time_ms):
+        broker_id = row["execution_mode"]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment="demo",
+            source_endpoint="/fixture/private/funding",
+            history_start_ms=start_time_ms,
+            history_end_ms=end_time_ms,
+            events=[],
+        )
 
     from aletheia.portfolio import broker_funding_settlement as settlement
     from aletheia.storage.sqlite import close_db
 
     monkeypatch.setattr(
         settlement,
-        "_client_for_mode",
-        lambda _mode, **_kw: FundingClient(),
+        "_uta_funding_ledger",
+        funding_ledger,
     )
     first = await settlement.settle_unsettled_exchange_closes(scan_limit=3)
     assert (first["checked"], first["history_expired"], first["settled"]) == (
@@ -1279,21 +1277,16 @@ async def test_funding_terminal_audit_retries_after_connection_reopen(
         closed_at=now - timedelta(minutes=1),
     )
 
-    class FundingClient:
-        async def get_funding_ledger(
-            self, *, broker_id, start_time_ms, end_time_ms, **_kwargs
-        ):
-            return make_complete_ledger(
-                broker_id=broker_id,
-                account_environment="demo",
-                source_endpoint="/fixture/private/funding",
-                history_start_ms=start_time_ms,
-                history_end_ms=end_time_ms,
-                events=[],
-            )
-
-        async def close(self):
-            return None
+    async def funding_ledger(row, start_time_ms, end_time_ms):
+        broker_id = row["execution_mode"]
+        return make_complete_ledger(
+            broker_id=broker_id,
+            account_environment="demo",
+            source_endpoint="/fixture/private/funding",
+            history_start_ms=start_time_ms,
+            history_end_ms=end_time_ms,
+            events=[],
+        )
 
     from aletheia.files import jsonl as jsonl_mod
     from aletheia.portfolio import broker_funding_settlement as settlement
@@ -1311,8 +1304,8 @@ async def test_funding_terminal_audit_retries_after_connection_reopen(
     )
     monkeypatch.setattr(
         settlement,
-        "_client_for_mode",
-        lambda _mode, **_kw: FundingClient(),
+        "_uta_funding_ledger",
+        funding_ledger,
     )
     result = await settlement.settle_unsettled_exchange_closes()
 

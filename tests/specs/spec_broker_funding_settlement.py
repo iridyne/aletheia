@@ -39,14 +39,10 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     reader_started = asyncio.Event()
     release_reader = asyncio.Event()
 
-    class Client:
-        async def get_funding_ledger(self, **_kwargs):
-            reader_started.set()
-            await release_reader.wait()
-            return ledger
-
-        async def close(self):
-            return None
+    async def funding_ledger(_row, _start_ms, _end_ms):
+        reader_started.set()
+        await release_reader.wait()
+        return ledger
 
     side_effect_calls = []
     monkeypatch.setattr(
@@ -62,7 +58,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
         "process_outcome_hook_jobs",
         lambda *_args, **_kwargs: side_effect_calls.append("dispatch"),
     )
-    monkeypatch.setattr(settlement, "_client_for_mode", lambda _mode, **_kw: Client())
+    monkeypatch.setattr(settlement, "_uta_funding_ledger", funding_ledger)
     task = asyncio.create_task(settlement.settle_unsettled_exchange_closes(limit=1))
     await reader_started.wait()
     force_update_position(position_id, current_price=999.0)
@@ -99,9 +95,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
 async def test_broker_funding_settler_resolves_uta_identity_via_order_id(
     tmp_path, monkeypatch,
 ):
-    """Regression: _UTAFundingProjection previously passed a position stub that
-    omitted order_id, causing uta_account_identity_unavailable for every real
-    exchange close and making funding economics permanently stuck as pending."""
+    """The direct UTA reader receives the whole Position, including its bound order."""
     from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.portfolio import broker_funding_settlement as settlement
     from aletheia.portfolio.pnl import close_position
@@ -149,8 +143,7 @@ async def test_broker_funding_settler_resolves_uta_identity_via_order_id(
         events=[],
     )
 
-    # Intercept at _uta_funding_ledger to capture the position stub received;
-    # this is the exact point where order_id was previously missing.
+    # Capture the exact Position handoff, not a reconstructed account stub.
     received_positions: list[dict] = []
 
     async def fake_uta_funding_ledger(pos, start_ms, end_ms):
@@ -164,9 +157,10 @@ async def test_broker_funding_settler_resolves_uta_identity_via_order_id(
     assert result["settled"] == 1, f"expected settled=1, got {result}"
     assert result["still_pending"] == 0
     assert result["errors"] == []
-    # order_id must be present in the position stub passed to _uta_funding_ledger
     assert len(received_positions) == 1
     assert received_positions[0].get("order_id") == position.order_id
+    assert received_positions[0]["id"] == position.id
+    assert received_positions[0]["market_type"] == position.market_type
 
     settled = repo._select_one("positions", position.id)
     assert settled["realized_pnl"] is not None
