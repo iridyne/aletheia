@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `878e1accd5661867fb156c2ecbe25a1a190a8ff7`. This is a bounded evidence
+based on `124b5598fde7187f12875d9d42cdc2eca07ef00f`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -66,6 +66,11 @@ Those consumers now reuse `config.exchanges` identity classifications. The
 remaining direct mode branches are the documented UTA profile composition or
 venue-native capability/recovery exceptions above; this change does not claim
 that those concrete clients have moved out of Core reachability.
+
+The single-writer pass also removed the pending-close cleanup's direct
+`orders.error_reason` SQL mutation. The owner-authorized release now calls a
+repository CAS helper that changes only the expected cancelled Order reason;
+the exchange/private-I-O boundaries above remain unchanged.
 
 ## Startup filesystem repair ownership
 
