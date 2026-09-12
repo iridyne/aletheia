@@ -14,6 +14,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
+from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES
+
 OUTCOME_SEMANTICS_VERSION = "oi-v1"
 
 ClosureCategory = Literal["strategy", "administrative", "maintenance", "unknown"]
@@ -58,14 +60,7 @@ OUTCOME_EXCLUSION_REASONS = frozenset({
 })
 
 _VERIFIED_EXIT_PRICE_SOURCES = frozenset({"broker_fill", "local_fill"})
-_BROKER_LEDGER_EXECUTION_MODES = frozenset({
-    "bitget_demo",
-    "bitget_live_limited",
-    "okx_demo",
-    "okx_live_limited",
-    "binance_testnet",
-    "binance_live_limited",
-})
+_BROKER_LEDGER_EXECUTION_MODES = EXTERNAL_EXECUTION_MODES
 _STRUCTURED_KEYS = frozenset({
     "close_category",
     "entry_price_source",

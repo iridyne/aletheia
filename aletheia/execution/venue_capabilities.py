@@ -33,12 +33,14 @@ def venue_execution_mode(venue: str, configured_exchange_mode: str) -> str:
       and `okx_demo` is intentionally absent because it uses the dedicated CCXT
       sandbox capability seam (see `gateway._symbol_unavailable_reason`).
     """
+    from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
     from aletheia.uta.manager import UTA_EXECUTION_MODES
 
     live = configured_exchange_mode == "live"
     candidates = sorted(
         mode for mode in UTA_EXECUTION_MODES
-        if mode.startswith(f"{venue}_") and (mode.endswith("_live_limited") is live)
+        if execution_mode_venue(mode) == venue
+        and (execution_mode_environment(mode) == "live") is live
     )
     if not candidates:
         raise ValueError(

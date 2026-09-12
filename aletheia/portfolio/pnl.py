@@ -7,6 +7,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from aletheia.analytics.outcome_integrity import validated_fee, validated_funding_economics
+from aletheia.config.exchanges import execution_mode_environment, is_live_execution_mode
 from aletheia.storage.models import PortfolioSnapshot
 from aletheia.uta.manager import UTA_EXECUTION_MODES
 
@@ -188,15 +189,7 @@ def _close_provenance() -> dict:
 
 
 def _account_environment(execution_mode: str) -> str:
-    if execution_mode == "paper_internal":
-        return "local"
-    if execution_mode == "binance_testnet":
-        return "testnet"
-    if execution_mode.endswith("_demo"):
-        return "demo"
-    if execution_mode.endswith("_live_limited"):
-        return "live"
-    return "unknown"
+    return execution_mode_environment(execution_mode) or "unknown"
 
 
 _UPNL_DERIVATIVE_MARKET_TYPES = frozenset({
@@ -1495,7 +1488,7 @@ def _compute_portfolio(
 
             cached = (
                 exchange_sync.get_unified_cached_state(execution_modes=(execution_mode,))
-                if execution_mode and execution_mode.endswith("_live_limited")
+                if execution_mode and is_live_execution_mode(execution_mode)
                 else exchange_sync.get_unified_cached_state()
             )
             sync_status = exchange_sync.status_for(cached)

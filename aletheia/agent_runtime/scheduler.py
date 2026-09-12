@@ -20,6 +20,7 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from aletheia.config.exchanges import is_live_execution_mode
 from aletheia.config.loader import load_config
 
 logger = logging.getLogger("aletheia.scheduler")
@@ -2261,7 +2262,7 @@ def _run_exchange_sync():
         scopes = [None] + [
             (identity.execution_mode,)
             for identity in build_uta_registry().configured_identities()
-            if identity.execution_mode.endswith("_live_limited")
+            if is_live_execution_mode(identity.execution_mode)
         ]
         failed = False
         for scope in scopes:
