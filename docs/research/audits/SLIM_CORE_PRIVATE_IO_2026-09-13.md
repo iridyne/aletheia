@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `0f5fe5a9184ef4fdb080f865b5bc4dba146999b5`. This is a bounded evidence
+based on `5fd22d818e2c03319256471a2e22c1d76f10dfc2`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -66,6 +66,14 @@ Those consumers now reuse `config.exchanges` identity classifications. The
 remaining direct mode branches are the documented UTA profile composition or
 venue-native capability/recovery exceptions above; this change does not claim
 that those concrete clients have moved out of Core reachability.
+
+The subsequent Entry identity pass also removes the generic consumers' direct
+current-route comparisons. A small lookup over the existing
+`ENTRY_EXECUTION_MINIMUM_PERMISSION` registry is shared by Entry authority,
+compiler, Entry execution, Gateway and same-Plan Risk handling; demo account
+matching and live exposure use the existing registered identity helpers. This
+keeps the current Bitget Demo-only Entry policy while making any future route
+admission an explicit registry change with its own Planner/Risk/Gateway tests.
 
 The single-writer pass also removed the pending-close cleanup's direct
 `orders.error_reason` SQL mutation. The owner-authorized release now calls a

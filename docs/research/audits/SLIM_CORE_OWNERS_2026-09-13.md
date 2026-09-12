@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `0f5fe5a9184ef4fdb080f865b5bc4dba146999b5`, under
+Source checkpoint: `5fd22d818e2c03319256471a2e22c1d76f10dfc2`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -117,6 +117,17 @@ from generic Gateway/position routing, pending/stale cleanup, broker funding
 settlement, Demo Risk freshness, startup scope, and account-mode reconciliation.
 This is structural reuse only: it does not broaden the supported account set or
 change a venue-native branch. Unknown execution identities remain unavailable.
+
+The following Entry-route pass removes the last repeated current-route predicate
+from generic Entry/Risk consumers. Compiler, runtime authority, Entry execution,
+Gateway deferral/tactic checks and same-Plan Risk handling now consult the single
+`ENTRY_EXECUTION_MINIMUM_PERMISSION` capability registry; Risk demo account
+matching uses the registered execution environment and live exposure uses the
+registered live-mode set. The current Bitget Demo + Full policy is unchanged,
+and the architecture fitness test rejects a future hard-coded `bitget_demo`
+comparison in these consumers. UTA profile composition, OKX sandbox loading,
+Bitget TPSL/recovery and self-contained account allowlists remain explicit
+extension/profile exceptions rather than generic Core route gates.
 
 The dynamic-SQL pass found no remaining direct generic Order lifecycle write in
 `pending_close_recovery`: its owner-authorized reason replacement now uses
