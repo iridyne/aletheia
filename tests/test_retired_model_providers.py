@@ -6,7 +6,14 @@ from aletheia.config.schema import AletheiaConfig, ProviderConfig
 from aletheia.model_provider import router
 
 
-@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native"])
+def test_historical_workspace_cannot_configure_an_http_endpoint():
+    profile = ProviderConfig(
+        type="openai_compatible", enabled=True, workspace_url="https://retired-workspace.invalid",
+    )
+    assert not router.provider_is_configured("http", profile)
+
+
+@pytest.mark.parametrize("provider_type", ["codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native", "databricks"])
 @pytest.mark.parametrize("name", ["historical-cli", "openai_compatible"])
 @pytest.mark.anyio
 async def test_retired_model_type_cannot_probe_or_resolve_credentials(
@@ -47,7 +54,7 @@ async def test_retired_model_type_cannot_probe_or_resolve_credentials(
 
 
 @pytest.mark.parametrize("name", ["codex_cli", "claude_cli", "pi_cli", "openai_compatible"])
-@pytest.mark.parametrize("provider_type", ["codex_cli", "openai_native", "anthropic_native"])
+@pytest.mark.parametrize("provider_type", ["codex_cli", "openai_native", "anthropic_native", "databricks"])
 def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name, provider_type):
     from typer.testing import CliRunner
     from aletheia.cli.model import model_app

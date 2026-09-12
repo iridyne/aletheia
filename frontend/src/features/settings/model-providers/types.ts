@@ -16,7 +16,6 @@ export interface ProviderConfigView {
 	enabled: boolean;
 	model: string;
 	base_url?: string;
-	workspace_url?: string | null;
 	protocol?: string;
 	auth_scheme?: string;
 	api_key: KeyStatus;
@@ -46,7 +45,6 @@ export interface ApiProfileDraft {
 	display_name: string;
 	type: string;
 	base_url: string;
-	workspace_url: string;
 	protocol: string;
 	auth_scheme: string;
 	model: string;

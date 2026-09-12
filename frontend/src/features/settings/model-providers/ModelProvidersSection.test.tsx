@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../../../api/client";
 import {
 	ApiProfileEditor,
 	ModelProvidersSection,
@@ -87,7 +88,44 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
-	it.each(["codex_cli", "openai_native", "anthropic_native"])("keeps assigned retired %s visible without an activation control", (providerType) => {
+	it("sends only discovery fields and editable fields to strict HTTP APIs", async () => {
+		const detect = vi.spyOn(api, "detectModels").mockResolvedValue({ models: [] });
+		vi.spyOn(api, "testModelCandidate").mockResolvedValue({ available: true } as Awaited<ReturnType<typeof api.testModelCandidate>>);
+		const update = vi.spyOn(api, "updateModelProfile").mockResolvedValue({});
+		const client = new QueryClient();
+		const container = document.createElement("div");
+		document.body.append(container);
+		const root = createRoot(container);
+		(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+		try {
+			await act(async () => root.render(
+				<QueryClientProvider client={client}>
+					<ApiProfileEditor initial={draftFromProfile("primary-api", EXISTING_PROFILE)} existing={EXISTING_PROFILE} providerTypes={[API_TYPE]} qc={client} onClose={() => undefined} />
+				</QueryClientProvider>,
+			));
+			for (const label of ["Detect models", "Verify & Save"]) {
+				await act(async () => {
+					const button = [...container.querySelectorAll("button")].find(item => item.textContent === label);
+					expect(button).toBeDefined();
+					button!.click();
+				});
+			}
+			expect(detect).toHaveBeenCalledOnce();
+			expect(detect.mock.calls[0][0]).not.toHaveProperty("model");
+			expect(detect.mock.calls[0][0]).not.toHaveProperty("workspace_url");
+			expect(update).toHaveBeenCalledOnce();
+			expect(update.mock.calls[0][0]).toBe("primary-api");
+			expect(update.mock.calls[0][1]).not.toHaveProperty("type");
+			expect(update.mock.calls[0][1]).not.toHaveProperty("workspace_url");
+		} finally {
+			await act(async () => root.unmount());
+			container.remove();
+			client.clear();
+			vi.restoreAllMocks();
+		}
+	});
+
+	it.each(["codex_cli", "openai_native", "anthropic_native", "databricks"])("keeps assigned retired %s visible without an activation control", (providerType) => {
 		const client = cleanModelClient({
 			"historical-cli": { ...EXISTING_PROFILE, type: providerType, kind: "unknown", enabled: true, configured: false },
 		});

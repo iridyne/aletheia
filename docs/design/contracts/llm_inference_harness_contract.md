@@ -30,7 +30,8 @@ credential-scrubbing boundary, and cancellation propagates. This bounded
 claim completion of the remaining HTTP-only endpoint/routing retirement work.
 
 Codex, Claude and Pi subprocess model transports, fixed-origin native adapters,
-subscription OAuth and Codex device-login routes are retired. Their historical provider configuration and routing references
+Databricks workspace/serving transport, subscription OAuth and Codex device-login
+routes are retired. Their historical provider configuration and routing references
 remain readable, but unsupported types cannot construct or probe a provider,
 renew verification, resolve credentials for a config/health read, or receive
 new routing assignments. An explicit unsupported type is never reinterpreted
@@ -39,6 +40,9 @@ the owner can clear its role or explicitly select a supported endpoint.
 Operator CLI commands for configuring HTTP endpoints remain distinct from
 retired subprocess model transports. HTTP config/health reads and profile deletion
 never resolve or delete historical OAuth credentials, even on an HTTP profile.
+Current model configuration/probe requests reject obsolete workspace fields;
+only an explicit HTTP base URL configures a current endpoint. Historical workspace
+identity fields remain decode/read provenance, never routing or credential scope.
 
 Every production helper call declares a literal registered `caller` identity.
 An executable AST claim fails when application code omits that identity or

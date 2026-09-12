@@ -17,13 +17,11 @@ from aletheia.model_provider.base import (
 )
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.registry import provider_config_protocol
 
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     "openai_compatible": OpenAICompatibleProvider,
     "anthropic_compatible": AnthropicCompatibleProvider,
-    "databricks": DatabricksProvider,
 }
 
 _cache: dict[str, ModelProvider] = {}
@@ -44,11 +42,6 @@ _health_cache: tuple[float, list[ModelHealth]] | None = None
 _health_inflight: Future[list[ModelHealth]] | None = None
 _health_lock = threading.Lock()
 
-_HTTP_PROVIDER_TYPES = {
-    "openai_compatible",
-    "anthropic_compatible",
-    "databricks",
-}
 _VERIFICATION_FIELDS = (
     "verification_identity",
     "verification_verified",
@@ -82,10 +75,9 @@ def provider_is_configured(name: str, pcfg) -> bool:
     if pcfg is None:
         return False
     provider_type = str(getattr(pcfg, "type", "") or name)
-    if provider_type in _HTTP_PROVIDER_TYPES:
+    if provider_type in PROVIDER_REGISTRY:
         endpoint = str(
-            getattr(pcfg, "workspace_url", None)
-            or getattr(pcfg, "base_url", None)
+            getattr(pcfg, "base_url", None)
             or ""
         ).strip()
         return bool(endpoint)
@@ -265,14 +257,6 @@ def get_provider(name: str | None = None) -> ModelProvider:
             api_key=api_key,
             auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
             protocol=protocol,
-        )
-    elif ptype == "databricks":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = DatabricksProvider(
-            workspace_url=pcfg.workspace_url or pcfg.base_url,
-            model=pcfg.model,
-            protocol=protocol,
-            api_key=api_key,
         )
     else:
         raise ValueError(f"Unknown provider type: {ptype}")

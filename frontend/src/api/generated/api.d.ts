@@ -7421,8 +7421,6 @@ export interface components {
             protocol?: string | null;
             /** Type */
             type: string;
-            /** Workspace Url */
-            workspace_url?: string | null;
         };
         /** CreateNewsRequest */
         CreateNewsRequest: {
@@ -7528,8 +7526,6 @@ export interface components {
             provider: string;
             /** Type */
             type?: string | null;
-            /** Workspace Url */
-            workspace_url?: string | null;
         };
         /** DirectionStats */
         DirectionStats: {
@@ -9370,8 +9366,6 @@ export interface components {
             set_as_fast?: boolean | null;
             /** Type */
             type?: string | null;
-            /** Workspace Url */
-            workspace_url?: string | null;
         };
         /**
          * ModelHealthRecord
@@ -12673,8 +12667,6 @@ export interface components {
             provider: string;
             /** Type */
             type?: string | null;
-            /** Workspace Url */
-            workspace_url?: string | null;
         };
         /** TestConnectionRequest */
         TestConnectionRequest: {
@@ -13504,8 +13496,6 @@ export interface components {
             model_fallback_enabled?: boolean | null;
             /** Protocol */
             protocol?: string | null;
-            /** Workspace Url */
-            workspace_url?: string | null;
         };
         /** ValidationError */
         ValidationError: {

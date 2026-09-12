@@ -4,7 +4,6 @@ import pytest
 
 from aletheia.model_provider.base import ModelHealth
 from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.databricks import DatabricksProvider
 from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider import router
 
@@ -15,13 +14,8 @@ from aletheia.model_provider import router
     [
         OpenAICompatibleProvider(base_url="http://gateway", model="removed-model"),
         AnthropicCompatibleProvider(base_url="http://gateway", model="removed-model"),
-        DatabricksProvider(
-            workspace_url="https://adb-123.azuredatabricks.net",
-            model="removed-model",
-            protocol="responses",
-        ),
     ],
-    ids=["openai-compatible", "anthropic-compatible", "databricks"],
+    ids=["openai-compatible", "anthropic-compatible"],
 )
 async def test_missing_selected_model_is_unavailable(provider, monkeypatch):
     async def catalogue():

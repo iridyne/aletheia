@@ -872,7 +872,7 @@ def _probe_credentials(report: Report) -> None:
                        "Settings -> Model Provider, or set the configured model secret")
         return
 
-    endpoint = pcfg.workspace_url or pcfg.base_url
+    endpoint = pcfg.base_url
     if _is_local_model_endpoint(endpoint):
         report.add("creds.llm", "ok",
                    f"LLM credentials configured, no API key needed (default={provider}, "

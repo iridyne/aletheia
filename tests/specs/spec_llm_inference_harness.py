@@ -20,7 +20,7 @@ _HELPER_NAMES = {"llm_complete", "llm_structured", "llm_stream"}
 @spec_claim(
     SpecClaim(
         "LLMH-S07", _CONTRACT, "§Entry points", "L2a",
-        "Retired subprocess and native model transports have no implementation, "
+        "Retired subprocess and proprietary model transports have no implementation, "
         "registry entry or login route; historical configurations remain inert.",
         status="implemented",
     ),
@@ -30,7 +30,7 @@ def test_retired_model_transports_have_no_active_entrypoint():
     from aletheia.model_provider.router import PROVIDER_REGISTRY
     from aletheia.server.routes.model import router
 
-    retired = {"codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native"}
+    retired = {"codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native", "databricks"}
     assert retired.isdisjoint(PROVIDER_TYPES)
     assert retired.isdisjoint(PROVIDER_REGISTRY)
     for module in retired | {"cli_harness", "codex_auth", "oauth", "openai_oauth", "claude_oauth"}:

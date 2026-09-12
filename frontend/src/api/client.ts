@@ -1244,7 +1244,6 @@ export const api = {
 		set_as_deep?: boolean;
 		set_as_fast?: boolean;
 		api_key?: string;
-		workspace_url?: string;
 		auth_scheme?: string;
 		inference_max_concurrency?: number;
 		inference_requests_per_minute?: number;
@@ -1257,7 +1256,6 @@ export const api = {
 		provider: string;
 		type?: string;
 		base_url?: string;
-		workspace_url?: string;
 		protocol?: string;
 		model?: string;
 		api_key?: string;
@@ -1283,7 +1281,6 @@ export const api = {
 		provider: string;
 		type?: string;
 		base_url?: string;
-		workspace_url?: string;
 		protocol?: string;
 		api_key?: string;
 		auth_scheme?: string;

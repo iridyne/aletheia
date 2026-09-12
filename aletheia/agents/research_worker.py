@@ -462,7 +462,7 @@ _LENS_EQUITY_CHAIN_SYSTEM = (
 # Registry of all standard research lenses. Order matters: technical first for
 # price anchoring, then flow (derivatives context), sentiment (narrative), macro (cycle).
 # equity_chain lens runs last (longest context, most LLM budget).
-# Lenses are run sequentially to stay within Databricks token-per-minute rate limits.
+# Lenses are run sequentially to stay within the configured endpoint's token budget.
 # equity_chain is appended only when equity tickers are configured (see _run_pipeline_inner).
 RESEARCH_LENSES = [
     ("technical", _LENS_TECHNICAL_SYSTEM),
