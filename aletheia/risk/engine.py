@@ -11,7 +11,11 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES, is_live_execution_mode
+from aletheia.config.exchanges import (
+    DEMO_EXECUTION_MODES,
+    EXTERNAL_EXECUTION_MODES,
+    is_live_execution_mode,
+)
 from aletheia.config.loader import load_config
 from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
@@ -1339,11 +1343,7 @@ def _evaluate_proposal_locked(
                 violations.append(f"exceeds_demo_single_trade_risk:{demo_risk_amount}>{demo_max_risk}")
 
         # Demo orders require fresh venue data (see _MAX_DEMO_DATA_AGE_SECONDS).
-        if proposal.execution_mode in (
-            "bitget_demo",
-            "okx_demo",
-            "binance_testnet",
-        ):
+        if proposal.execution_mode in DEMO_EXECUTION_MODES:
             demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")

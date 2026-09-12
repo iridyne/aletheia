@@ -6,6 +6,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import is_preview_mode, load_config
+from aletheia.config.exchanges import (
+    DEMO_EXECUTION_MODES,
+    EXTERNAL_EXECUTION_MODES,
+    LIVE_EXECUTION_MODE_SET,
+)
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
 from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
@@ -213,11 +218,7 @@ def submit_proposal(
     # compare against. Fail-closed instead of persisting a live Proposal with
     # no authorization provenance.
     live_authorization_ref: str | None = None
-    if execution_mode in {
-        "okx_live_limited",
-        "bitget_live_limited",
-        "binance_live_limited",
-    }:
+    if execution_mode in LIVE_EXECUTION_MODE_SET:
         from aletheia.trust.live_unlock import current_authorization_ref
 
         live_authorization_ref = current_authorization_ref(load_config())
@@ -549,7 +550,7 @@ def cancel_entry_plan_order(plan_id: str, *, reason: str) -> dict:
 
     if not order.get("exchange_order_id"):
         return {"status": "not_cancellable", "entry_plan_id": plan_id}
-    if order.get("execution_mode") not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
+    if order.get("execution_mode") not in EXTERNAL_EXECUTION_MODES:
         return {"status": "capability_unavailable", "entry_plan_id": plan_id}
 
     if fully_filled(order):
@@ -673,7 +674,7 @@ def close_exchange_position(position_id: str, reason: str, *, close_reasoning: s
     row = repo.get_position(position_id)
     if row is None:
         raise ValueError(f"position not found: {position_id}")
-    if row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
+    if row["execution_mode"] not in EXTERNAL_EXECUTION_MODES:
         raise ValueError(f"Gateway close route does not support mode {row['execution_mode']!r}")
     return close_position(position_id, reason=reason, close_reasoning=close_reasoning)
 
@@ -684,7 +685,7 @@ def place_exchange_protection(position_id: str) -> dict:
     from aletheia.storage import repositories as repo
 
     row = repo.get_position(position_id)
-    if row is None or row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
+    if row is None or row["execution_mode"] not in EXTERNAL_EXECUTION_MODES:
         raise ValueError(f"Gateway protection route does not support position {position_id!r}")
     return place_protection(position_id)
 
@@ -695,7 +696,7 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
     from aletheia.storage import repositories as repo
 
     row = repo.get_position(position_id)
-    if row is None or row["execution_mode"] not in {"binance_testnet", "okx_demo", "bitget_demo", "binance_live_limited", "okx_live_limited", "bitget_live_limited"}:
+    if row is None or row["execution_mode"] not in EXTERNAL_EXECUTION_MODES:
         return False
     return replace_protective_stop(position_id, new_stop_price)
 
@@ -1593,7 +1594,7 @@ def _execute_proposal(
         _entry_execution_stage(proposal, execution_receipt, "broker_submission_started")
 
     try:
-        if allowed_mode in ("bitget_demo", "binance_testnet", "okx_demo"):
+        if allowed_mode in DEMO_EXECUTION_MODES:
             # Real exchange demo/testnet order — exchange-side record, no live guard
             # (live_disabled gates real funds only; demo/testnet is risk-free). On any
             # failure we mark the proposal error and audit; we NEVER fall back to a
@@ -1699,7 +1700,7 @@ def _execute_proposal(
                 channel="demo",
             )
 
-        elif allowed_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
+        elif allowed_mode in LIVE_EXECUTION_MODE_SET:
             # Defense in depth: risk engine already checked live_disabled, but re-check here.
             # The quantity-only execution snapshot likewise preserves
             # trade_school=proposal.trade_school on this live dispatch path.
