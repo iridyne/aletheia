@@ -16,7 +16,8 @@ import json
 import logging
 import math
 from concurrent.futures import ThreadPoolExecutor
-from aletheia.data.symbols import to_bitget, to_canonical
+from aletheia.data.symbols import to_bitget
+from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.execution.broker_funding import make_complete_ledger
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
@@ -254,6 +255,7 @@ def _complete_exact_gap_evidence(order: dict, rows) -> bool:
     if any(
         not math.isfinite(item.price)
         or not math.isfinite(item.quantity)
+        or item.fee is None
         or not math.isfinite(item.fee)
         or item.price <= 0
         or item.quantity <= 0
@@ -295,26 +297,6 @@ def _stored_money_matches(left: float, right: float) -> bool:
     # writer, while reconciliation evidence retains the raw private sum.
     tolerance = max(5e-9, max(abs(left), abs(right)) * 1e-9)
     return abs(left - right) <= tolerance
-
-
-def _evidence_fee_in_quote(
-    *,
-    fee: float,
-    fee_currency: str,
-    fill_price: float,
-    symbol: str,
-) -> float | None:
-    """Recompute the quote fee using the materializer's direct-fill rules."""
-    canonical = to_canonical(symbol)
-    base, separator, quote = canonical.partition("/")
-    currency = str(fee_currency or "").upper()
-    if not separator or not base or not quote or not currency:
-        return None
-    if currency == quote.upper():
-        return fee
-    if currency == base.upper():
-        return fee * fill_price
-    return None
 
 
 def _timestamp_ms(value) -> int | None:
@@ -469,19 +451,19 @@ def _closed_pending_chain_complete(
             or item_time_ms != local_time_ms
         ):
             return False
-        fee_in_quote = _evidence_fee_in_quote(
+        quote_fee = fee_in_quote(
             fee=item_fee,
             fee_currency=item_fee_currency,
             fill_price=item_price,
             symbol=str(order.get("symbol") or ""),
         )
-        if fee_in_quote is None:
+        if quote_fee is None:
             return False
         expected_remote_ids.append(remote_fill_id)
         expected_durable_ids.append(durable_fill_id)
         total_quantity += item_quantity
         total_notional += item_quantity * item_price
-        total_fee_in_quote += fee_in_quote
+        total_fee_in_quote += quote_fee
         latest_fill_ms = max(latest_fill_ms or item_time_ms, item_time_ms)
 
     if (

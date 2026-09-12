@@ -659,8 +659,8 @@ class Fill(_Provenanced):
     order_id: str
     fill_price: float
     fill_quantity: float
-    fee: float = 0.0
-    fee_currency: str = "USDT"
+    fee: float | None = None
+    fee_currency: str = ""
     # Provenance of the fee figure: "estimated" (flat-rate taker fee computed by the
     # broker at fill time — paper + all exchange brokers do this) or "reconciled"
     # (reconciliation backfilled the exchange's real fillId fee). Defaults estimated

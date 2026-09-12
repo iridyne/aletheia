@@ -535,8 +535,11 @@ administrative-unverified close 不得：
 它必须保留 causal ids、actor/source、确认依据和审计事件。原始历史值永久保留，新增结构化字段只描述
 其 provenance 和 eligibility。当前实现把 realized PnL、exit fee、slippage 留为 unavailable，不改
 current/entry price，不触发 shadow/Serenity outcome hook。verified close 要求完整 scoped
-identity、精确数量、quote-currency fee 和 `verified_fill`，用成交加权价与实际 exit fee 结算一次；缺 fee、
-错币种、数量不符或 identity 不符都保持 open。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
+identity、精确数量与 `verified_fill`。已证实的退出成交关闭 exposure/lifecycle；缺失费用金额、币种或
+第三币种无可归因折算时，原始 Fill 费用/币种如实保存，quote exit fee 与最终 realized PnL 保持
+unavailable，Outcome 不得 eligible。NULL 费用不等于零，缺失币种不推定为 quote；实际零费用是有效事实，
+base 费用可按该 Fill 的成交价直接折算。数量/identity 不符或非有限、负数等畸形归一化证据仍 fail-closed。
+入场与历史补链的既有完整证据门槛不由此放宽。旧 `reconcile_close_orphan` 与 Bitget-only TPSL fallback 已
 删除，旧 `close_position` 也拒绝 synthetic reason。对应 `OI-B01~B04`、`OI-C03`。
 
 原生平仓与 verified disappearance 的经济关闭由 `portfolio.pnl.close_position` 单点写入；

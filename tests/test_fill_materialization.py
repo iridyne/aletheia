@@ -9,11 +9,11 @@ import pytest
 
 from aletheia.execution.exchange_materialization import (
     MaterializationIntegrityError,
-    _fee_in_quote,
     _fill_totals,
     _positive_float,
     evidence_for_order,
 )
+from aletheia.portfolio.pnl import fee_in_quote
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ def test_nonfinite_durable_private_fill_is_rejected_on_replay(field, value):
 
 def test_fee_in_quote_bgb_is_unavailable():
     """BGB fee (not base/quote) cannot become a fabricated quote zero."""
-    result = _fee_in_quote(
+    result = fee_in_quote(
         fee=0.5, fee_currency="BGB", fill_price=2000.0, symbol="ETH/USDT"
     )
     assert result is None
@@ -115,7 +115,7 @@ def test_fee_in_quote_bgb_is_unavailable():
 
 def test_fee_in_quote_bnb_is_unavailable():
     """BNB fee on BTC/USDT cannot become a fabricated quote zero."""
-    result = _fee_in_quote(
+    result = fee_in_quote(
         fee=0.001, fee_currency="BNB", fill_price=50000.0, symbol="BTC/USDT"
     )
     assert result is None
@@ -136,7 +136,7 @@ def test_third_currency_fee_keeps_aggregate_quote_cost_unavailable():
 
 def test_fee_in_quote_usdt_passes_through():
     """USDT fee on ETH/USDT passes through unchanged."""
-    result = _fee_in_quote(
+    result = fee_in_quote(
         fee=1.5, fee_currency="USDT", fill_price=2000.0, symbol="ETH/USDT"
     )
     assert result == pytest.approx(1.5)
@@ -144,10 +144,45 @@ def test_fee_in_quote_usdt_passes_through():
 
 def test_fee_in_quote_base_asset_converted():
     """Base-asset fee (ETH fee on ETH/USDT) converted via fill price."""
-    result = _fee_in_quote(
+    result = fee_in_quote(
         fee=0.001, fee_currency="ETH", fill_price=2000.0, symbol="ETH/USDT"
     )
     assert result == pytest.approx(2.0)  # 0.001 * 2000
+
+
+@pytest.mark.parametrize("fee,currency,expected", [(None, "USDT", None), (0.5, "", None), (0.0, "", 0.0)])
+def test_unknown_fee_is_not_zero_or_assumed_quote(fee, currency, expected):
+    assert fee_in_quote(fee=fee, fee_currency=currency, fill_price=2000.0, symbol="ETH/USDT") == expected
+    assert _fill_totals([
+        {"fill_price": 2000.0, "fill_quantity": 0.5, "fee": fee, "fee_currency": currency},
+    ], symbol="ETH/USDT") == (0.5, 1000.0, expected)
+
+
+def test_private_fee_parser_preserves_missing_and_rejects_mixed_amounts():
+    from aletheia.execution.exchange_materialization import _fee_from_row
+
+    assert _fee_from_row({"feeCoin": "USDT"}) == (None, "USDT")
+    assert _fee_from_row({"fee": "0.1"}) == (0.1, "")
+    assert _fee_from_row({"feeDetail": [{"feeCoin": "USDT"}]}) == (None, "USDT")
+    assert _fee_from_row({"feeDetail": [{"totalFee": "0.0", "feeCoin": "USDT"}]}) == (0.0, "USDT")
+    with pytest.raises(MaterializationIntegrityError, match="ambiguous fee total"):
+        _fee_from_row({"feeDetail": [
+            {"totalFee": "1", "feeCoin": "USDT"}, {"totalFee": "2", "feeCoin": "BGB"},
+        ]})
+
+
+def test_durable_unknown_fee_replay_cannot_be_substituted_with_zero():
+    from aletheia.execution.exchange_materialization import PrivateFill, _verify_durable_fills
+
+    evidence = PrivateFill("fill", "order", None, 100.0, 1.0, None, "USDT", "2026-09-12T00:00:00+00:00", 1789171200000)
+    local = {"id": "fill", "fill_quantity": 1.0, "fill_price": 100.0, "fee": None,
+             "fee_currency": "USDT", "filled_at": evidence.filled_at}
+    _verify_durable_fills(None, [local], [evidence], quantity_tolerance=1e-9,
+                          lifecycle="close", execution_mode="bitget_demo", upgrade_source=False)
+    local["fee"] = 0.0
+    with pytest.raises(MaterializationIntegrityError, match="conflicts"):
+        _verify_durable_fills(None, [local], [evidence], quantity_tolerance=1e-9,
+                              lifecycle="close", execution_mode="bitget_demo", upgrade_source=False)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

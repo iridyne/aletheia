@@ -13,7 +13,7 @@ from aletheia.analytics.outcome_integrity import (
 )
 from aletheia.data.symbols import to_canonical
 from aletheia.execution.verified_exit import VerifiedExitResult
-from aletheia.portfolio.pnl import build_exit_reasoning
+from aletheia.portfolio.pnl import build_exit_reasoning, fee_in_quote
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Order
 
@@ -146,15 +146,15 @@ def _materialize_observed_close_chain(
             if existing_rows:
                 existing = dict(existing_rows[0])
                 price_tolerance = max(1e-12, float(item.price) * 1e-9)
-                fee_tolerance = max(1e-12, abs(float(item.fee or 0.0)) * 1e-9)
+                fee_tolerance = max(1e-12, abs(item.fee) * 1e-9) if item.fee is not None else 0.0
                 if (
                     str(existing.get("order_id") or "") != local_order_id
                     or abs(float(existing.get("fill_price") or 0.0) - item.price)
                     > price_tolerance
                     or abs(float(existing.get("fill_quantity") or 0.0) - item.quantity)
                     > quantity_tolerance
-                    or abs(float(existing.get("fee") or 0.0) - float(item.fee or 0.0))
-                    > fee_tolerance
+                    or (existing.get("fee") is None) != (item.fee is None)
+                    or (item.fee is not None and abs(float(existing["fee"]) - item.fee) > fee_tolerance)
                     or str(existing.get("fee_currency") or "").upper()
                     != str(item.fee_currency or "").upper()
                     or str(existing.get("filled_at") or "") != filled_at
@@ -166,9 +166,9 @@ def _materialize_observed_close_chain(
                 order_id=local_order_id,
                 fill_price=float(item.price),
                 fill_quantity=float(item.quantity),
-                fee=float(item.fee or 0.0),
+                fee=item.fee,
                 fee_currency=str(item.fee_currency or ""),
-                fee_source="reconciled",
+                fee_source="reconciled" if item.fee is not None else "unavailable",
                 filled_at=filled_at,
             ))
 
@@ -307,7 +307,11 @@ def close_position_verified(
 
     fill_quantity = sum(fill.quantity for fill in evidence.fills)
     exit_price = sum(fill.price * fill.quantity for fill in evidence.fills) / fill_quantity
-    exit_fee = sum(float(fill.fee) for fill in evidence.fills)
+    quote_fees = [
+        fee_in_quote(fee=fill.fee, fee_currency=fill.fee_currency, fill_price=fill.price, symbol=evidence.symbol)
+        for fill in evidence.fills
+    ]
+    exit_fee = sum(quote_fees) if all(fee is not None for fee in quote_fees) else None
     closed_at = datetime.fromtimestamp(
         max(fill.filled_at_ms for fill in evidence.fills) / 1000,
         tz=timezone.utc,
@@ -331,7 +335,7 @@ def close_position_verified(
         "fill_ids": [fill.fill_id for fill in evidence.fills],
         "fill_quantity": fill_quantity,
         "fee_in_quote": exit_fee,
-        "fee_status": "complete",
+        "fee_status": "complete" if exit_fee is not None else "unavailable",
         "materialized_close_order_ids": materialized_order_ids,
     }
 
@@ -453,24 +457,25 @@ def _validate_verified_evidence(row: dict, evidence: VerifiedExitResult) -> None
     }
     if actual != expected:
         raise ValueError("verified closure identity mismatch")
+    fill_ids = [fill.fill_id for fill in evidence.fills]
+    if not fill_ids or len(fill_ids) != len(set(fill_ids)) or any(
+        not fill.fill_id or not math.isfinite(fill.price) or fill.price <= 0
+        or not math.isfinite(fill.quantity) or fill.quantity <= 0
+        for fill in evidence.fills
+    ):
+        raise ValueError("verified closure requires exact fill identity, price and quantity")
     fill_quantity = sum(fill.quantity for fill in evidence.fills)
     quantity = float(row["quantity"])
     if abs(fill_quantity - quantity) > max(1e-10, quantity * 1e-8):
         raise ValueError("verified closure fill quantity mismatch")
-    _, _, quote = evidence.symbol.partition("/")
     try:
-        fees = [float(fill.fee) for fill in evidence.fills]
+        fees = [float(fill.fee) for fill in evidence.fills if fill.fee is not None]
     except (TypeError, ValueError):
-        fees = []
-    if (
-        len(fees) != len(evidence.fills)
-        or any(not math.isfinite(fee) or fee < 0 for fee in fees)
-    ):
-        raise ValueError("verified closure requires exact exit fee")
+        raise ValueError("verified closure has malformed exit fee") from None
+    if any(not math.isfinite(fee) or fee < 0 for fee in fees):
+        raise ValueError("verified closure has malformed exit fee")
     if any(not str(fill.order_id or "").strip() for fill in evidence.fills):
         raise ValueError("verified closure requires exact remote Order identity")
-    if any((fill.fee_currency or "").upper() != quote.upper() for fill in evidence.fills):
-        raise ValueError("verified closure fee currency is not economically usable")
 
 
 def _validate_administrative_identity(

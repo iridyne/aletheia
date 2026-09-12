@@ -25,6 +25,28 @@ class PositionNotOpenError(ValueError):
     """The close lost its open-state claim; never repeat external execution."""
 
 
+def fee_in_quote(
+    *, fee: float | None, fee_currency: object, fill_price: float, symbol: str,
+) -> float | None:
+    """Use only the recorded fee and directly observable base/quote conversion."""
+    from aletheia.data.symbols import to_canonical
+
+    if fee is None or not math.isfinite(fee) or fee < 0:
+        return None
+    if fee == 0:
+        return 0.0
+    base, separator, quote = to_canonical(symbol).partition("/")
+    currency = str(fee_currency or "").strip().upper()
+    if not separator or not base or not quote or not currency:
+        return None
+    if currency == quote.upper():
+        return fee
+    if currency == base.upper() and math.isfinite(fill_price) and fill_price > 0:
+        converted = fee * fill_price
+        return converted if math.isfinite(converted) else None
+    return None
+
+
 _CLOSE_ECONOMIC_SNAPSHOT_FIELDS = (
     "symbol",
     "market_type",

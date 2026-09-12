@@ -484,32 +484,14 @@ def test_venue_rejected_close_records_the_rejection_and_keeps_the_position(
     ("fee", "fee_coin"),
     (
         pytest.param(None, "USDT", id="fee-absent"),
-        pytest.param(
-            "0.01",
-            "BGB",
-            id="fee-third-currency",
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason=(
-                    "#3008: materialize_bitget_close settles a close whose exit fee "
-                    "has no quote-currency conversion, against execution_contract "
-                    "§11.3 (错币种 keeps the Position open). Strict so a fix cannot "
-                    "leave this marker behind."
-                ),
-            ),
-        ),
+        pytest.param("0.01", "BGB", id="fee-third-currency"),
+        pytest.param("0.01", "", id="fee-currency-absent"),
     ),
 )
 def test_close_with_uncostable_fee_is_not_settled_as_complete(
     e2e_db, monkeypatch, fee, fee_coin
 ):
-    """An exit whose fee cannot be expressed in the quote currency stays unsettled.
-
-    `execution_contract.md` §11.3 is explicit: 缺 fee、错币种 keeps the Position
-    open. A base-currency fee is deliberately not among these — it converts at the
-    fill price, which is arithmetic — so the cases here are an absent fee and a
-    third currency with no attributable conversion.
-    """
+    """Accepted #3135: verified execution closes; unresolved costs are not final PnL."""
     from aletheia.execution.exchange_materialization import materialize_bitget_close
 
     _, submitted, private_fill, _ = _prepare_venue(monkeypatch, fill_price=97.5)
@@ -531,18 +513,25 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
     else:
         row["fee"] = fee
 
-    try:
-        result = materialize_bitget_close(claim_id, [row])
-    except Exception:
-        assert repo.get_position(position.id)["status"] == "open"
-        return
-
-    # §11.3 is not "settle but leave the fee blank" — it is 缺 fee、错币种 keeps
-    # the Position open. Accepting a settled Position with a null exit_fee would
-    # bless a financially incomplete close, which is the opposite of the rule this
-    # test cites.
+    result = materialize_bitget_close(claim_id, [row])
     stored = repo.get_position(position.id)
-    assert result.state != "filled", result
-    assert stored["status"] == "open", dict(stored)
-    assert stored["closed_at"] is None
-    assert stored["exit_fill_verified"] in (0, None)
+    assert result.state == "filled"
+    assert stored["status"] == "closed"
+    assert stored["closed_at"] is not None
+    assert stored["exit_fill_verified"] == 1
+    assert stored["pending_close_order_id"] is None
+    assert stored["exit_fee"] is None
+    assert stored["realized_pnl"] is None
+    assert stored["outcome_eligible"] == 0
+    assert stored["outcome_exclusion_reason"] == "incomplete_realized_economics"
+    [fill] = repo.list_fills(order_id=claim_id)
+    assert fill["fee"] == (float(fee) if fee is not None else None)
+    assert fill["fee_currency"] == fee_coin
+    assert fill["fee_source"] == ("reconciled" if fee is not None else "unavailable")
+    assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+    repeated = materialize_bitget_close(claim_id, [row])
+    assert repeated.new_fill_count == 0
+    assert len(repo.list_fills(order_id=claim_id)) == 1
+    assert repo.get_db().execute(
+        "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
+    ).fetchone()[0] == 1

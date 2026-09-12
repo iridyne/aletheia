@@ -17,6 +17,7 @@ from typing import Any, cast
 from aletheia.data.price_feed import protective_price_venue
 from aletheia.data.providers import Candle, MarketDataProvider
 from aletheia.data.symbols import InstrumentId, to_canonical
+from aletheia.portfolio.pnl import fee_in_quote
 from aletheia.storage import repositories as repo
 from aletheia.storage.repositories import insert_position_path_observation
 
@@ -47,29 +48,6 @@ def _finite(value: object) -> float | None:
     except (TypeError, ValueError, OverflowError):
         return None
     return number if math.isfinite(number) else None
-def _fee_in_quote(
-    *,
-    fee: float | None,
-    fee_currency: object,
-    fill_price: float,
-    symbol: str,
-) -> float | None:
-    """Convert a directly observable Fill fee into the instrument quote asset."""
-    if fee is None:
-        return None
-    if fee == 0:
-        return 0.0
-    canonical = to_canonical(symbol)
-    base, separator, quote = canonical.partition("/")
-    currency = str(fee_currency or quote).strip().upper()
-    if not separator or not base or not quote or not currency:
-        return None
-    if currency == quote.upper():
-        return fee
-    if currency == base.upper():
-        return fee * fill_price
-    return None
-
 
 
 def _normalize_direction(value: object) -> str | None:
@@ -347,7 +325,7 @@ def _project_position_state_as_of(
                         )
                     )
                     continue
-                fee = _fee_in_quote(
+                fee = fee_in_quote(
                     fee=_finite(fill.get("fee")),
                     fee_currency=fill.get("fee_currency"),
                     fill_price=price,
