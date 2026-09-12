@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `dad7cbe4d17884ee78d0e8809f9e69546fa97ec2`, under
+Source checkpoint: `992203fa65fb9cb29e8ae1d5246b0aef71d5206f`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -174,3 +174,13 @@ explicitly historical or absent from the Scheduler. The Position Manager
 cadence is documented as 30 seconds. This is documentation and comment
 conformance only; it does not prove deployment, exchange qualification, or
 runtime health.
+
+The execution-identity seam is now merged at this checkpoint. The duplicate
+`execution.venue_capabilities.EXECUTION_MODE_TO_VENUE` map was removed; Gateway
+and normalized capability loading use the existing
+`config.exchanges.EXECUTION_MODE_VENUES` registry, including the registered OKX
+Demo identity. OKX Demo's CCXT sandbox capability loading remains a specialized
+venue-native consumer, while the registry is the sole generic mode-to-venue
+identity source. Focused local evidence is 82 architecture/spec tests and 212
+execution/registry/pipeline tests; no venue, permission, route, or deployment
+authority changed.

@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `dad7cbe4d17884ee78d0e8809f9e69546fa97ec2`. This is a bounded evidence
+based on `992203fa65fb9cb29e8ae1d5246b0aef71d5206f`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -105,6 +105,15 @@ Candidate Planning Generations and immutable Entry Plans as the current entry
 mainline, while retired Ranker/PaperTrader and learning evaluator/catch-up/
 lifecycle jobs remain historical or absent. This changes no private-I/O owner
 and is not runtime or exchange qualification evidence.
+
+The execution-identity seam is also merged at this checkpoint. Generic Gateway
+and capability consumers no longer import or maintain a second
+mode-to-venue dictionary; they read `config.exchanges.EXECUTION_MODE_VENUES`.
+The OKX Demo public sandbox loader remains the only specialized capability
+branch, and UTA profile composition/private-I-O boundaries are unchanged. The
+focused local tests (82 architecture/spec and 212 execution/registry/pipeline)
+cover this structural reuse; they do not prove private-account containment,
+deployment, or exchange qualification.
 
 ## Startup filesystem repair ownership
 
