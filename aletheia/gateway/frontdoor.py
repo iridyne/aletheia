@@ -23,10 +23,10 @@ from pathlib import Path
 from typing import AsyncIterator, Iterable
 
 import httpx
+import anyio
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.background import BackgroundTask
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aletheia import __version__
@@ -153,6 +153,7 @@ def _filtered_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
 
 _proxy_client: httpx.AsyncClient | None = None
 _PROXY_CONNECT_TIMEOUT = 5.0  # seconds — monkeypatched to 0.05 in tests via conftest
+_PROXY_MAX_CONNECTIONS = 20
 
 
 def _get_proxy_client() -> httpx.AsyncClient:
@@ -161,7 +162,7 @@ def _get_proxy_client() -> httpx.AsyncClient:
         _proxy_client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=_PROXY_CONNECT_TIMEOUT, read=120.0, write=10.0, pool=10.0),
             trust_env=False,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            limits=httpx.Limits(max_connections=_PROXY_MAX_CONNECTIONS, max_keepalive_connections=10),
         )
     return _proxy_client
 
@@ -189,8 +190,24 @@ def _websocket_forward_headers(headers: Iterable[tuple[str, str]]) -> dict[str, 
     }
 
 
-async def _close_proxy_response(upstream: httpx.Response) -> None:
-    await upstream.aclose()
+class _ProxyResponse(StreamingResponse):
+    """The downstream ASGI lifetime owns the upstream response, including cancellation."""
+
+    def __init__(self, upstream, holders, request_id, **kwargs):
+        super().__init__(**kwargs)
+        self.upstream = upstream
+        self.holders = holders
+        self.request_id = request_id
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                with anyio.CancelScope(shield=True):
+                    await self.upstream.aclose()
+            finally:
+                self.holders.pop(self.request_id, None)
 
 
 async def _guarded_aiter_raw(
@@ -208,8 +225,7 @@ async def _guarded_aiter_raw(
     frontend disconnect). `content-length` is stripped by _filtered_headers
     (it is in _HOP_BY_HOP_HEADERS), so a truncated body causes no length mismatch.
 
-    The caller still passes `upstream` to BackgroundTask(_close_proxy_response),
-    so the underlying connection is released regardless of how this generator ends.
+    The downstream response owns upstream cleanup even on cancellation.
     """
     try:
         async for chunk in upstream.aiter_raw():
@@ -225,7 +241,7 @@ async def _guarded_aiter_raw(
             metadata={
                 "path": f"/api/{path}",
                 "backend_base_url": backend_url,
-                "error": f"{type(exc).__name__}: {exc}",
+                "error": type(exc).__name__,
             },
             dedupe_sec=5,
         )
@@ -234,31 +250,39 @@ async def _guarded_aiter_raw(
 
 
 def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exception) -> JSONResponse:
-    error = f"{type(exc).__name__}: {exc}"
+    capacity = isinstance(exc, httpx.PoolTimeout)
+    reason = "frontdoor_pool_exhausted" if capacity else "backend_unavailable"
+    message = (
+        "Frontdoor upstream connection capacity is exhausted"
+        if capacity else "Aletheia backend worker is restarting or unreachable"
+    )
+    action = "retry_later" if capacity else "gateway_recovering"
+    # Transport exceptions can contain the original URL, including query secrets.
+    error = type(exc).__name__
     emit_infra_event(
         severity="critical",
         source="frontdoor",
-        code="backend_unavailable",
+        code=reason,
         entity_id=backend_url,
-        message=f"API proxy failed for /api/{path}; backend is unreachable",
-        action="gateway_recovering",
+        message=message,
+        action=action,
         metadata={"path": f"/api/{path}", "backend_base_url": backend_url, "error": error},
         dedupe_sec=10,
     )
     payload = {
         "ok": False,
-        "error": "backend_unavailable",
-        "reason": "backend_unavailable",
-        "message": "Aletheia backend worker is restarting or unreachable",
-        "action": "gateway_recovering",
+        "error": reason,
+        "reason": reason,
+        "message": message,
+        "action": action,
         "path": f"/api/{path}",
         "backend_base_url": backend_url,
         "backend_route": route,
         "last_seen_at": _last_backend_ready_at,
         "retry_after_sec": 3,
         "detail": {
-            "reason": "backend_unavailable",
-            "message": "Aletheia backend worker is restarting or unreachable",
+            "reason": reason,
+            "message": message,
             "path": f"/api/{path}",
             "backend_base_url": backend_url,
             "backend_route": route,
@@ -273,7 +297,7 @@ def _proxy_unavailable(path: str, backend_url: str, route: dict | None, exc: Exc
         headers={
             "Cache-Control": "no-store",
             "Retry-After": "3",
-            "X-Aletheia-Degraded": "backend_unavailable",
+            "X-Aletheia-Degraded": reason,
         },
     )
 
@@ -288,6 +312,70 @@ def create_app(
     effective_static_dir = static_dir or dashboard_static_dir()
     configured_backend_url = backend_url.rstrip("/") if backend_url else None
     use_route_file = route_path is not None or configured_backend_url is None
+    holders: dict[int, dict] = {}
+    request_sequence = 0
+
+    def capacity_snapshot() -> dict:
+        now = time.monotonic()
+        rows = [
+            {**row, "age_sec": round(now - row["started_monotonic"], 3)}
+            for row in holders.values()
+        ]
+        return {
+            "max_connections": _PROXY_MAX_CONNECTIONS,
+            "pending_headers": sum(not row["headers_received"] for row in rows),
+            "streaming": sum(row["response_class"] == "sse" for row in rows),
+            "non_sse": sum(row["response_class"] == "non_sse" for row in rows),
+            # Pending headers includes both pool wait and backend header wait;
+            # httpx's public API does not distinguish those connection states.
+            "requests": rows[:100],
+            "active_requests": len(rows),
+            "truncated": len(rows) > 100,
+        }
+
+    async def proxy_http(request: Request, path: str, backend: str, target: httpx.URL):
+        nonlocal request_sequence
+        body = await request.body()
+        client = _get_proxy_client()
+        request_sequence += 1
+        request_id = request_sequence
+        # Fixed diagnostic categories only: dynamic path segments, headers,
+        # queries and bodies must never become telemetry.
+        category = path.split("/", 1)[0]
+        if category not in {"status", "ready", "ui", "market", "operator", "runtime", "events", "dev", "_infra"}:
+            category = "other"
+        holder = {
+            "category": category,
+            "started_at_unix": time.time(),
+            "started_monotonic": time.monotonic(),
+            "headers_received": False,
+            "requested_sse": "text/event-stream" in request.headers.get("accept", "").lower(),
+            "response_class": "unknown",
+        }
+        holders[request_id] = holder
+        try:
+            upstream = await client.send(
+                client.build_request(request.method, target, headers=_filtered_headers(request.headers.items()), content=body),
+                stream=True,
+            )
+        except BaseException as exc:
+            holders.pop(request_id, None)
+            if not isinstance(exc, Exception):
+                raise
+            return _proxy_unavailable(category, backend, _backend_route(), exc)
+        holder["headers_received"] = True
+        holder["response_class"] = (
+            "sse" if upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() == "text/event-stream"
+            else "non_sse"
+        )
+        response_headers = _filtered_headers(upstream.headers.items())
+        response_headers["X-Aletheia-Frontdoor"] = "1"
+        return _ProxyResponse(
+            upstream, holders, request_id,
+            content=_guarded_aiter_raw(upstream, category, backend),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
 
     def _backend_url() -> str:
         if use_route_file:
@@ -323,6 +411,7 @@ def create_app(
             route=_backend_route(),
         )
         payload["backend"] = await _probe_backend(_backend_url())
+        payload["proxy_capacity"] = capacity_snapshot()
         payload["events"] = list_infra_events(limit=10, min_severity="warning")
         return JSONResponse(status_code=200 if payload["static_index"] else 503, content=payload)
 
@@ -333,47 +422,14 @@ def create_app(
         backend = _backend_url()
         query = request.url.query.encode("utf-8") if request.url.query else None
         target = httpx.URL(f"{backend}/_infra/doctor", query=query)
-        headers = _filtered_headers(request.headers.items())
-        client = _get_proxy_client()
-        try:
-            upstream = await client.send(client.build_request("GET", target, headers=headers), stream=True)
-        except Exception as exc:
-            return _proxy_unavailable("_infra/doctor", backend, _backend_route(), exc)
-        response_headers = _filtered_headers(upstream.headers.items())
-        return StreamingResponse(
-            _guarded_aiter_raw(upstream, "_infra/doctor", backend),
-            status_code=upstream.status_code,
-            headers=response_headers,
-            background=BackgroundTask(_close_proxy_response, upstream),
-        )
+        return await proxy_http(request, "_infra/doctor", backend, target)
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     async def proxy_api(path: str, request: Request):
         backend = _backend_url()
         query = request.url.query.encode("utf-8") if request.url.query else None
         target = httpx.URL(f"{backend}/api/{path}", query=query)
-        body = await request.body()
-        headers = _filtered_headers(request.headers.items())
-        client = _get_proxy_client()
-        try:
-            upstream_request = client.build_request(
-                request.method,
-                target,
-                headers=headers,
-                content=body,
-            )
-            upstream = await client.send(upstream_request, stream=True)
-        except Exception as exc:  # noqa: BLE001 - must fail loud as HTTP 503
-            return _proxy_unavailable(path, backend, _backend_route(), exc)
-
-        response_headers = _filtered_headers(upstream.headers.items())
-        response_headers["X-Aletheia-Frontdoor"] = "1"
-        return StreamingResponse(
-            _guarded_aiter_raw(upstream, path, backend),
-            status_code=upstream.status_code,
-            headers=response_headers,
-            background=BackgroundTask(_close_proxy_response, upstream),
-        )
+        return await proxy_http(request, path, backend, target)
 
     @app.websocket("/api/{path:path}")
     async def proxy_api_websocket(path: str, websocket: WebSocket):

@@ -33,6 +33,103 @@ def _compressed_static_fixture(tmp_path: Path) -> Path:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/api/status", "/_infra/doctor"])
+@pytest.mark.parametrize("failure,reason", [("PoolTimeout", "frontdoor_pool_exhausted"), ("ConnectError", "backend_unavailable")])
+async def test_proxy_capacity_failure_is_not_backend_outage(tmp_path, monkeypatch, path, failure, reason):
+    import httpx
+    from aletheia.gateway import frontdoor
+
+    class FakeClient:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, **kwargs):
+            raise getattr(httpx, failure)("https://example.invalid/?token=do-not-expose")
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        response = await client.get(path + "?token=do-not-expose")
+        status = await client.get("/_infra/status")
+        ready = await client.get("/_infra/readyz")
+    assert response.status_code == 503
+    assert response.json()["reason"] == reason
+    assert response.headers["X-Aletheia-Degraded"] == reason
+    assert response.headers["Retry-After"] == "3"
+    assert "do-not-expose" not in response.text + status.text
+    assert status.json()["proxy_capacity"]["active_requests"] == 0
+    assert ready.status_code == 200
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("cancel_at", ["headers", "body"])
+async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, monkeypatch, cancel_at):
+    import asyncio
+    import httpx
+    from aletheia.gateway import frontdoor
+
+    entered = asyncio.Event()
+    closed = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = httpx.Headers({"content-type": "text/event-stream"})
+
+        async def aiter_raw(self):
+            entered.set()
+            await asyncio.Event().wait()
+            yield b"unreachable"
+
+        async def aclose(self):
+            closed.append(True)
+
+    class FakeClient:
+        def build_request(self, method, url, **kwargs):
+            return httpx.Request(method, url)
+
+        async def send(self, request, **kwargs):
+            if cancel_at == "headers":
+                entered.set()
+                await asyncio.Event().wait()
+            return FakeResponse()
+
+    async def healthy_backend(_url):
+        return {"ready": True}
+
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: FakeClient())
+    monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+    monkeypatch.setattr(frontdoor, "_remote_auth_check", lambda request: None)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        task = asyncio.create_task(client.get(
+            "/api/operator/private-identifier?token=do-not-expose",
+            headers={"Accept": "text/event-stream", "Authorization": "do-not-expose"},
+        ))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=2)
+            status = await client.get("/_infra/status")
+            snapshot = status.json()["proxy_capacity"]
+            assert snapshot["active_requests"] == 1
+            assert snapshot["pending_headers"] == (cancel_at == "headers")
+            assert snapshot["streaming"] == (cancel_at == "body")
+            assert snapshot["requests"][0]["category"] == "operator"
+            assert snapshot["requests"][0]["requested_sse"] is True
+            assert "private-identifier" not in status.text
+            assert "do-not-expose" not in status.text
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert closed == ([True] if cancel_at == "body" else [])
+        assert (await client.get("/_infra/status")).json()["proxy_capacity"]["active_requests"] == 0
+
+
+@pytest.mark.anyio
 async def test_frontdoor_negotiates_gzip_and_keeps_hashed_asset_cache_contract(tmp_path):
     from aletheia.gateway.frontdoor import create_app
 
