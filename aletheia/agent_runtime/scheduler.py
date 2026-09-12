@@ -42,6 +42,20 @@ def _publish_scheduler(candidate: BackgroundScheduler) -> None:
     global _scheduler
     _scheduler = candidate
 
+
+def _observation_execution_owner() -> str:
+    """Read the optional Observation owner without blocking Core startup."""
+    try:
+        from aletheia.observation_lab.execution_owner import get_execution_owner
+    except ImportError as exc:
+        logger.info(
+            "Observation Lab owner unavailable; optional cycle disabled (%s)",
+            type(exc).__name__,
+        )
+        return "unknown"
+    return get_execution_owner()
+
+
 # Jobs that continue running during a layered pause (no LLM dependency).
 # These are pure data-collection / infrastructure jobs whose output is valuable
 # even when AI-dependent decision-making is offline.
@@ -480,16 +494,20 @@ def _record_job_success(job_id: str) -> None:
 def _record_job_failure(job_id: str, error: str, error_class: str | None = None) -> None:
     _JOB_RUN_STATE.failure_recorded = True
     _consecutive_failures[job_id] = _consecutive_failures.get(job_id, 0) + 1
-    from aletheia.learning.control import record_learning_job_failure
-    if job_id == "lesson_reviewer":
-        record_learning_job_failure(
-            job_id,
-            error,
-            error_class=error_class,
-            attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
-        )
-    else:
-        record_learning_job_failure(job_id, error)
+    try:
+        from aletheia.learning.control import record_learning_job_failure
+    except ImportError:
+        record_learning_job_failure = None
+    if record_learning_job_failure is not None:
+        if job_id == "lesson_reviewer":
+            record_learning_job_failure(
+                job_id,
+                error,
+                error_class=error_class,
+                attempt_id=getattr(_JOB_RUN_STATE, "learning_attempt_id", None),
+            )
+        else:
+            record_learning_job_failure(job_id, error)
     count = _consecutive_failures[job_id]
     if count >= _FAILURE_ALERT_THRESHOLD:
         from aletheia.infra.events import emit_infra_event
@@ -577,13 +595,22 @@ def _run_job_guarded(job_id: str, fn):
     _JOB_RUN_STATE.job_id = job_id
     _JOB_RUN_STATE.failure_recorded = False
     try:
-        from aletheia.learning.control import (
-            is_autonomous_learning_job,
-            learning_job_gate_reason,
-            record_learning_job_skipped,
-            record_learning_job_started,
-            record_learning_job_success,
-        )
+        try:
+            from aletheia.learning.control import (
+                is_autonomous_learning_job,
+                learning_job_gate_reason,
+                record_learning_job_skipped,
+                record_learning_job_started,
+                record_learning_job_success,
+            )
+        except ImportError:
+            # Learning is an optional evidence consumer. Its absence must not
+            # prevent Core scheduler jobs from running or completing.
+            is_autonomous_learning_job = lambda _job_id: False
+            learning_job_gate_reason = lambda _job_id: None
+            record_learning_job_skipped = lambda *_args, **_kwargs: None
+            record_learning_job_started = lambda *_args, **_kwargs: None
+            record_learning_job_success = lambda *_args, **_kwargs: None
         if is_autonomous_learning_job(job_id):
             gate_reason = learning_job_gate_reason(job_id)
             if gate_reason is not None:
@@ -1350,9 +1377,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     # ``aletheia-observer`` checkout owns this cycle via its own systemd
     # timer + ``aletheia observe run``. Main Scheduler MUST NOT register the
     # job in that mode — the ownership contract is exclusive.
-    from aletheia.observation_lab.execution_owner import is_main_owner as _obs_is_main_owner
-    _observation_owned_by_main = _obs_is_main_owner()
-    if _observation_owned_by_main:
+    _observation_owner = _observation_execution_owner()
+    if _observation_owner == "main":
         _scheduler.add_job(
             _guarded("filter_controller_observe", _run_filter_controller_observe), "interval",
             hours=max(1, int(cfg.controller.observe_interval_hours)),
@@ -1362,7 +1388,8 @@ def init_scheduler() -> BackgroundScheduler | None:
     else:
         logger.info(
             "filter_controller_observe: skipped registration — "
-            "observation.execution_owner=worker (sibling aletheia-observer owns cycle)"
+            "observation.execution_owner=%s (optional cycle unavailable or Worker-owned)",
+            _observation_owner,
         )
     # News RSS feed collector — fetches enabled feeds every N minutes (default 15).
     _scheduler.add_job(
@@ -1857,16 +1884,16 @@ def reconcile_filter_controller(shadow_enabled: bool, observe_interval_hours: fl
     if _scheduler is None:
         return False
     try:
-        from aletheia.observation_lab.execution_owner import is_worker_owner as _obs_is_worker_owner
+        observation_owner = _observation_execution_owner()
         with _SCHEDULER_JOB_LOCK:
             existing = _scheduler.get_job("filter_controller_observe")
-            if _obs_is_worker_owner():
+            if observation_owner != "main":
                 if existing is not None:
                     _scheduler.remove_job("filter_controller_observe")
                     _selectively_paused_jobs.discard("filter_controller_observe")
                     logger.info(
                         "Removed filter_controller_observe job "
-                        "(observation.execution_owner=worker)"
+                        "(observation.execution_owner=%s)", observation_owner,
                     )
                 return True
             interval_h = max(1, int(observe_interval_hours))

@@ -1654,7 +1654,7 @@ def test_context_summary_text():
 
 
 @patch("aletheia.agent_shell.context.load_config")
-@patch("aletheia.agent_shell.context.LessonStore")
+@patch("aletheia.learning.lessons.LessonStore")
 def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, mock_cfg):
     """The live Operator receives reviewed Learning facts, never raw proposals."""
     from types import SimpleNamespace
@@ -1699,6 +1699,29 @@ def test_learning_context_exposes_only_applied_unexpired_lessons(mock_lessons, m
         }
     ]
     assert ctx["learning"]["manifest"]["lesson_ids"] == ["applied-current"]
+
+
+def test_learning_context_is_unavailable_when_learning_extension_is_missing(monkeypatch):
+    import builtins
+
+    from aletheia.agent_shell.context import build_app_context
+
+    real_import = builtins.__import__
+
+    def missing_learning(name, *args, **kwargs):
+        if name == "aletheia.learning.lessons":
+            raise ModuleNotFoundError(name=name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_learning)
+    learning = build_app_context(["learning"])["learning"]
+
+    assert learning["advisory_only"] is True
+    assert learning["lessons"] == []
+    assert learning["availability"] == {
+        "available": False,
+        "reason": "learning_extension_unavailable",
+    }
 
 
 def test_repair_context_includes_doctor_section():
