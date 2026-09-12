@@ -160,6 +160,30 @@ def test_core_account_environment_uses_registered_execution_identity():
         assert suffix_calls == [], f"{path.relative_to(PROJECT_ROOT)} infers account class from a suffix"
 
 
+def test_entry_route_gates_use_registered_capabilities():
+    """Generic Entry consumers must not hard-code the current venue route."""
+    route = "bitget_demo"
+    consumers = (
+        SRC / "trading" / "entry_plan_compiler.py",
+        SRC / "trading" / "entry_authority.py",
+        SRC / "execution" / "entry_plan_execution.py",
+        SRC / "execution" / "gateway.py",
+        SRC / "risk" / "engine.py",
+    )
+    for path in consumers:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        hardcoded = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Compare)
+            and any(
+                isinstance(value, ast.Constant) and value.value == route
+                for value in ast.walk(node)
+            )
+        ]
+        assert hardcoded == [], f"{path.relative_to(PROJECT_ROOT)} hard-codes {route} in a route gate"
+
+
 def test_agent_shell_does_not_import_exchange_auth():
     """agent_shell cannot directly import exchange auth or secrets."""
     forbidden = {"aletheia.exchanges.bitget.auth", "aletheia.config.secrets"}

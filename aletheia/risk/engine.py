@@ -14,11 +14,14 @@ from datetime import datetime, timezone
 from aletheia.config.exchanges import (
     DEMO_EXECUTION_MODES,
     EXTERNAL_EXECUTION_MODES,
+    LIVE_EXECUTION_MODE_SET,
+    execution_mode_environment,
     is_live_execution_mode,
 )
 from aletheia.config.loader import load_config
 from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
+from aletheia.execution.venue_capabilities import entry_execution_minimum_permission
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
 from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
@@ -95,7 +98,7 @@ def _physical_market_type(value: str | None) -> str | None:
 
 def _confirmed_entry_remainder_order(proposal: TradeProposal) -> dict | None:
     """The accepted second leg is completion of one Plan, never pyramiding."""
-    if proposal.entry_leg_index != 1 or not proposal.entry_plan_id or proposal.execution_mode != "bitget_demo":
+    if proposal.entry_leg_index != 1 or not proposal.entry_plan_id or entry_execution_minimum_permission(proposal.execution_mode) is None:
         return None
     owner = get_entry_plan(proposal.entry_plan_id)
     if owner is None or owner["status"] != "active":
@@ -851,7 +854,7 @@ def evaluate_proposal(
                     stored = get_trade_proposal(proposal.id)
                     if (
                         not _receipt_only_rejection(result.violations)
-                        and not (proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and result.disposition == "DEFER")
+                        and not (proposal.entry_plan_id and entry_execution_minimum_permission(proposal.execution_mode) is not None and result.disposition == "DEFER")
                         and stored is not None
                         and str(stored.get("status") or "")
                         in {"pending", "approved"}
@@ -1257,7 +1260,7 @@ def _evaluate_proposal_locked(
         #    through the demo path (trust-boundary hole).
         if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
             violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
-        if proposal.execution_mode == "bitget_demo" and cfg.exchange.mode != "demo":
+        if execution_mode_environment(proposal.execution_mode) == "demo" and cfg.exchange.mode != "demo":
             violations.append(f"account_mode_mismatch:order=demo,exchange={cfg.exchange.mode}")
 
     # 10. Max leverage (futures). Per-asset-tier caps + account-level flat cap.
@@ -1972,8 +1975,9 @@ def _current_live_exposure(
     pre_order_entries: list[_PreOrderEntryReservation] | None = None,
 ) -> float:
     """Backward-compatible live-pool exposure projection."""
+    live_mode = next(iter(sorted(LIVE_EXECUTION_MODE_SET)))
     return _current_account_exposure(
-        "bitget_live_limited",
+        live_mode,
         unresolved_entries,
         pre_order_entries,
     )

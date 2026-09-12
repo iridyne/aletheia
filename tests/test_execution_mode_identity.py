@@ -45,3 +45,14 @@ def test_unknown_execution_mode_is_unavailable():
     }
     assert EXECUTION_MODE_VENUES["binance_testnet"] == "binance"
     assert EXECUTION_MODE_VENUES["bitget_live_limited"] == "bitget"
+
+
+def test_entry_permission_uses_registered_capability_identity(monkeypatch):
+    from aletheia.execution import venue_capabilities
+
+    assert venue_capabilities.entry_execution_minimum_permission("bitget_demo") == "Full"
+    assert venue_capabilities.entry_execution_minimum_permission(" bitget_demo ") == "Full"
+    assert venue_capabilities.entry_execution_minimum_permission("okx_demo") is None
+
+    monkeypatch.setitem(venue_capabilities.ENTRY_EXECUTION_MINIMUM_PERMISSION, "okx_demo", "Full")
+    assert venue_capabilities.entry_execution_minimum_permission("okx_demo") == "Full"

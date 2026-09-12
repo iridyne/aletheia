@@ -131,7 +131,8 @@ def _compile_bounded_risk_envelope(
             resolved_policy = resolve_risk_policy(cfg, execution_account_mode)
         except UnknownRiskExecutionMode as exc:
             raise PlanIntentError("RISK_POLICY_UNKNOWN") from exc
-        if execution_account_mode != "bitget_demo":
+        from aletheia.execution.venue_capabilities import entry_execution_minimum_permission
+        if entry_execution_minimum_permission(execution_account_mode) is None:
             raise PlanIntentError("RISK_POLICY_UNKNOWN")
         policy = resolved_policy.policy
 
