@@ -123,7 +123,7 @@ def _typed_candidate(
         context={"regime": regime},
     )
     snapshot = UniverseSnapshot(created_at=source_at, expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     candidate = UniverseMember(
         id=candidate_id,
         snapshot_id=snapshot.id,
@@ -152,7 +152,7 @@ def _typed_candidate(
         candidate_opportunity_context_json=context.model_dump_json(),
         candidate_opportunity_context_hash=context.context_hash,
     )
-    repo.insert_candidate(candidate)
+    repo._insert("universe_members", candidate.model_dump())
     return candidate
 
 
@@ -353,14 +353,14 @@ def test_current_planning_requires_typed_candidate_and_uses_machine_identity():
     old_snapshot = UniverseSnapshot(
         created_at="2026-09-02T00:59:59+00:00", expires_at="2099-01-01T00:00:00+00:00"
     )
-    repo.insert_universe_snapshot(old_snapshot)
+    repo._insert("universe_snapshots", old_snapshot.model_dump())
     old = UniverseMember(
         snapshot_id=old_snapshot.id, asset_id="asset-old", venue="bitget",
         symbol="OLD/USDT", market_type="perp", rank=1, total_score=90,
         scanner_family="momentum", scanner_direction="long", entry_price_usd=100,
         expires_at="2099-01-01T00:00:00+00:00",
     )
-    repo.insert_candidate(old)
+    repo._insert("universe_members", old.model_dump())
     with pytest.raises(ValueError, match="candidate_opportunity_context_missing"):
         repo.ensure_candidate_planning_generation(old.id)
 

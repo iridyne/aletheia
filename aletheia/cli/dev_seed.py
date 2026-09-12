@@ -191,7 +191,6 @@ def _seed_universe(symbols: Iterable[SeedSymbol]) -> tuple[str, int]:
     _clear("universe_snapshots")
 
     snapshot = UniverseSnapshot(market_type="crypto", policy_id=None, status="active", summary=json.dumps({"seed": "medium"}))
-    repo.insert_universe_snapshot(snapshot)
 
     members: list[UniverseMember] = []
     rank = 0
@@ -242,7 +241,7 @@ def _seed_universe(symbols: Iterable[SeedSymbol]) -> tuple[str, int]:
                 entry_price_usd=symbol.base_price,
             )
         )
-    inserted = repo.insert_universe_members_batch(members)
+    inserted = repo.publish_candidate_snapshot(snapshot, members)
     return snapshot.id, inserted
 
 

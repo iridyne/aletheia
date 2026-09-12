@@ -1,3 +1,4 @@
+from aletheia.trading.serenity_publication import publish_serenity_candidates
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -146,7 +147,7 @@ def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, reque
         from aletheia.storage.models import UniverseMember
         theme, opportunity = _serenity_publication_source()
         research_id = opportunity.id
-        [candidate_id] = repo.publish_serenity_candidates(theme.id, [research_id])
+        [candidate_id] = publish_serenity_candidates(theme.id, [research_id])
         candidate = UniverseMember.model_validate(repo.get_candidate(candidate_id))
     else:
         candidate = _controlled_admitted_target_candidate(cfg, monkeypatch, mechanism=mechanism, direction=direction, market_type=market_type)
@@ -890,7 +891,7 @@ def _persist_waiting_plan(
         )
     )
     snapshot = UniverseSnapshot(expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     detected_at = datetime.now(timezone.utc).isoformat()
     mechanism = "reversal" if candidate_family == "mean_reversion" else "continuation"
     opportunity = CandidateOpportunityContextV1(
@@ -946,7 +947,7 @@ def _persist_waiting_plan(
         candidate_opportunity_context_json=opportunity.model_dump_json(),
         candidate_opportunity_context_hash=opportunity.context_hash,
     )
-    repo.insert_candidate(candidate)
+    repo._insert("universe_members", candidate.model_dump())
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
     repo.claim_next_candidate_planning("owner")
     plan = _plan(account_mode=account_mode, mode=mode, tactic=tactic).model_copy(

@@ -19,6 +19,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 @pytest.mark.parametrize("writer", [
+    "publish_candidate_snapshot",
     "ensure_candidate_planning_generation",
     "insert_forward_outcomes_batch",
     "insert_filter_candidate_outcomes_batch",
@@ -420,7 +421,7 @@ def test_all_scores_persists_round_trip(tmp_path, monkeypatch):
         rank=1, total_score=42.0, scanner_family="momentum",
         all_scores=json.dumps(scores),
     )
-    repo.insert_universe_member(member)
+    repo._insert("universe_members", member.model_dump())
 
     row = conn.execute(
         "SELECT all_scores FROM universe_members WHERE id=?", (member.id,)
@@ -609,7 +610,7 @@ def test_universe_member_regime_tag_persists_and_refresh_assigns(tmp_path, monke
         rank=1, total_score=42.0, scanner_family="momentum",
         regime_tag="sideways",
     )
-    repo.insert_universe_member(member)
+    repo._insert("universe_members", member.model_dump())
 
     row = conn.execute(
         "SELECT regime_tag FROM universe_members WHERE id=?", (member.id,)
@@ -876,7 +877,7 @@ def test_learning_candidate_key_persists_round_trip(tmp_path, monkeypatch):
         rank=1, total_score=75.0, scanner_family="momentum",
         learning_candidate_key=candidate_key,
     )
-    repo.insert_universe_member(member)
+    repo._insert("universe_members", member.model_dump())
 
     row = conn.execute(
         "SELECT learning_candidate_key FROM universe_members WHERE id=?", (member.id,)

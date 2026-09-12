@@ -97,6 +97,8 @@ def _auto_promote_serenity_opportunities(
     run_id: str | None = None,
 ) -> int:
     """Atomically publish score-qualified Serenity Candidates by theme."""
+    from aletheia.trading.serenity_publication import publish_serenity_candidates
+
     theme_ids: set[str] = set()
     for opportunity_id in opportunity_ids:
         opp = repo.get_serenity_opportunity(opportunity_id)
@@ -115,7 +117,7 @@ def _auto_promote_serenity_opportunities(
     newly_queued_themes: set[str] = set()
     for theme_id, active_ids in active_ids_by_theme.items():
         try:
-            queued_ids = repo.publish_serenity_candidates(
+            queued_ids = publish_serenity_candidates(
                 theme_id,
                 active_ids,
                 min_score_for_pi=cfg.serenity.min_score_for_pi,

@@ -1052,8 +1052,7 @@ class UniverseService:
                     outcomes=candidate_selection_authority_bundle.outcomes,
                     min_interval_sec=0,
                 )
-                repo.insert_universe_snapshot(snap)
-                repo.insert_universe_members_batch(member_models)
+                repo.publish_candidate_snapshot(snap, member_models)
 
                 selected_generation_ids, new_generation_ids, planning_generations_created = (
                     _ensure_planning_generations(

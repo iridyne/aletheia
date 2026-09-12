@@ -574,7 +574,7 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
         expires_at=(now + timedelta(hours=1)).isoformat(),
         universe_size=2,
     )
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     opportunity = CandidateOpportunityContextV1(
         candidate_id="bitget-planning-candidate",
         candidate_selection={
@@ -642,8 +642,8 @@ def test_bitget_candidate_enters_planning_while_unsupported_candidate_stays_visi
         risk_flags='["fast_market_data_venue_unavailable"]',
         expires_at=snapshot.expires_at,
     )
-    repo.insert_universe_member(bitget)
-    repo.insert_universe_member(unsupported)
+    repo._insert("universe_members", bitget.model_dump())
+    repo._insert("universe_members", unsupported.model_dump())
 
     selected, _created, count = _ensure_planning_generations(
         [bitget, unsupported],

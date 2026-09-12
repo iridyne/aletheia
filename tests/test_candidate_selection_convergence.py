@@ -436,8 +436,8 @@ def test_typed_mechanism_survives_target_projection_and_member_model():
         candidate_opportunity_context_hash=context.context_hash,
     )
     assert member.model_dump()["opportunity_source_component"] == "momentum"
-    repo.insert_universe_snapshot(UniverseSnapshot(id="snapshot"))
-    repo.insert_universe_member(member)
+    repo._insert("universe_snapshots", UniverseSnapshot(id="snapshot").model_dump())
+    repo._insert("universe_members", member.model_dump())
     persisted = repo.get_universe_member(member.id)
     assert persisted["opportunity_mechanism"] == "continuation"
     assert persisted["opportunity_source_component"] == "momentum"

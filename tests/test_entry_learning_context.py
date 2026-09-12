@@ -19,7 +19,7 @@ from aletheia.universe.candidate_opportunity import CandidateOpportunityContextV
 def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
     candidate_id = uuid4().hex[:12]
     snapshot = UniverseSnapshot(created_at=created_at, expires_at="2099-01-01T00:00:00+00:00")
-    repo.insert_universe_snapshot(snapshot)
+    repo._insert("universe_snapshots", snapshot.model_dump())
     context = CandidateOpportunityContextV1(
         candidate_id=candidate_id,
         candidate_selection={
@@ -51,7 +51,7 @@ def _candidate(*, created_at: str, symbol: str = "BTC/USDT") -> UniverseMember:
         candidate_opportunity_context_json=context.model_dump_json(),
         candidate_opportunity_context_hash=context.context_hash,
     )
-    repo.insert_candidate(candidate)
+    repo._insert("universe_members", candidate.model_dump())
     return candidate
 
 

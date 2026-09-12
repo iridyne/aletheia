@@ -182,9 +182,12 @@ Universe 使用其真实 member ID 与 short_term；不复制一份来源注册�
 
 手工 `routes/data.py:promote_serenity_theme` 与自动
 `research_worker._auto_promote_serenity_opportunities` 使用同一
-`publish_serenity_candidates(theme_id, opportunity_ids, *, min_score_for_pi=None,
+`trading.serenity_publication.publish_serenity_candidates(theme_id, opportunity_ids, *, min_score_for_pi=None,
 new_candidates_only=False) -> list[str]`。返回按请求去重顺序的 durable Candidate IDs；
 `new_candidates_only=True` 只计新建。空请求拒绝；同 source+material 幂等复用，不再叫 pending。
+此来源编排不再定义于通用 repository，也不保留 repository 转发别名。Snapshot/member
+创建经 Core `publish_candidate_snapshot`，与 Universe 共用唯一持久化入口；来源评分、
+完整证据 hash、PA 与 theme 状态仍由本编排管理，不能把来源差异搬进 Core writer。
 
 发布前在 writer 事务外准备研究证据、exact registry instrument、当前真实 feature/行情、
 共享 PA evaluator 与 `prepare_candidate_requalification`。研究方向不得冒充机制或反转 PA；

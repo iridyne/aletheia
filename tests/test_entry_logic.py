@@ -70,13 +70,13 @@ def _seed_admitted_opportunity(
         market_type=market_type,
         symbol=symbol,
     ))
-    repo.insert_universe_snapshot(UniverseSnapshot(
+    repo._insert("universe_snapshots", UniverseSnapshot(
         id=snapshot_id,
         market_type="crypto",
         status="active",
         expires_at=expires_at,
-    ))
-    repo.insert_universe_member(UniverseMember(
+    ).model_dump())
+    repo._insert("universe_members", UniverseMember(
         id=member_id,
         snapshot_id=snapshot_id,
         asset_id=f"entry-logic-asset-{market_type}",
@@ -88,7 +88,7 @@ def _seed_admitted_opportunity(
         scanner_direction=direction,
         expires_at=expires_at,
         entry_price_usd=60_000.0,
-    ))
+    ).model_dump())
     from aletheia.data.symbols import instrument_analysis_context
     background = crypto_background(
         symbol, market_type, cfg.market_data.ccxt_exchange
@@ -183,6 +183,9 @@ async def test_observer_writes_structured_direction(tmp_path, monkeypatch):
         }, None
 
     monkeypatch.setattr("aletheia.agents.market_observer.llm_structured", fake_structured)
+    from aletheia.config.schema import ModelSelection
+    monkeypatch.setattr("aletheia.agents.market_observer.get_provider_for_tier",
+                        lambda _tier: ModelSelection(endpoint_id="test", model_id="test-model"))
     monkeypatch.setattr("aletheia.agents.market_observer._has_sufficient_signal", lambda ctx: True)
     result = await run_agent("market_observer", trigger_type="manual")
     opps = repo.list_opportunities()
