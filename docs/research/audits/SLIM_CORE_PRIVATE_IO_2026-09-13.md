@@ -38,6 +38,19 @@ by itself prove that the scheduler dispatches to it.
 
 ## Verification boundary
 
+The additional startup inventory was bound to
+`d1bac0e7e8a9da039a498c56577af3a4f2569cf6`. `server.app.lifespan` was the sole
+production caller of `config.secrets.migrate_keyring_to_file`; it enumerated
+Windows Credential Manager (or a broad fixed key list) and copied missing values
+into the encrypted store before runtime initialization. This hidden historical
+repair conflicts with #3134's startup/migration and bounded credential rules.
+The caller, bulk migration function and advertised startup stage are removed.
+Per-reference encrypted-file-first reads, keyring fallback, explicit writes,
+credential generations and cross-process locking are unchanged. No operational
+credential store is read, migrated or deleted by this source repair. Architecture
+and startup-policy checks prevent restoration of the removed authority; scoped
+keyring-only reads remain covered without materializing an encrypted store.
+
 Stored-probe regression covers six account modes, complete versus partial
 reports, execution off the request loop, refusal to construct native clients,
 and sanitized failure output. Manager tests retain identity-mismatch teardown.

@@ -1,4 +1,4 @@
-"""Secrets handling: OS keyring first, encrypted file fallback. Never logs secrets."""
+"""Encrypted file authority with per-reference OS keyring fallback. Never logs secrets."""
 
 import os
 import stat as _stat
@@ -364,71 +364,6 @@ def _file_delete(key: str, *, force_generation: bool = False) -> None:
                 tmp.unlink(missing_ok=True)
         finally:
             _release_file_lock(fd)
-
-
-def migrate_keyring_to_file() -> int:
-    """Copy all secrets from the OS keyring into the encrypted file store.
-
-    Called once at gateway startup so that secrets saved via the Web UI
-    (which runs inside the gateway's interactive Windows session and can
-    reach the keyring) are also available to CLI / service processes that
-    run under a different logon session (WinError 1312) and can only reach
-    the file store.  Returns the number of secrets migrated.
-    """
-    if is_preview_mode():
-        return 0
-    import json
-    kr = _get_keyring()
-    if kr is None:
-        return 0
-    try:
-        # Windows Credential Manager exposes enumerate via win32cred;
-        # fall back to a known-key list when enumeration is unavailable.
-        import keyring.backends.Windows as _wb  # pyright: ignore[reportMissingImports]
-        import win32cred  # type: ignore[import]
-        creds = win32cred.CredEnumerate(None, 0) or []
-        our_creds = [
-            c for c in creds
-            if c.get("TargetName", "").startswith(_SERVICE_NAME + "/")
-        ]
-        pairs = [
-            (c["TargetName"].removeprefix(_SERVICE_NAME + "/"),
-             c["CredentialBlob"].decode("utf-16-le").rstrip("\x00"))
-            for c in our_creds
-            if c.get("CredentialBlob")
-        ]
-    except Exception:
-        # Enumeration unavailable — read using known key list instead.
-        _KNOWN_KEYS = [
-            "bitget.api_key", "bitget.api_secret", "bitget.passphrase",
-            "bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase",
-            "bitget.live.api_key", "bitget.live.api_secret", "bitget.live.passphrase",
-            "binance.api_key", "binance.api_secret",
-            "binance.testnet.api_key", "binance.testnet.api_secret",
-            "okx.api_key", "okx.api_secret", "okx.passphrase",
-            "okx.demo.api_key", "okx.demo.api_secret", "okx.demo.passphrase",
-            "model.databricks.api_key", "model.anthropic.api_key",
-            "model.openai.api_key", "coinalyze_api_key",
-        ]
-        pairs = []
-        for k in _KNOWN_KEYS:
-            try:
-                v = kr.get_password(_SERVICE_NAME, k)
-                if v:
-                    pairs.append((k, v))
-            except Exception:
-                pass
-
-    migrated = 0
-    for key, value in pairs:
-        if not value:
-            continue
-        # The encrypted file is the read authority. Migration only fills a
-        # missing value; a stale keyring copy must never overwrite it.
-        if _file_get(key) is None:
-            _file_set(key, value)
-            migrated += 1
-    return migrated
 
 
 def redact(value: str | None) -> str:

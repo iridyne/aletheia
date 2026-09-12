@@ -31,6 +31,23 @@ def _get_imports(path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 
 
+def test_gateway_startup_has_no_bulk_secret_migration():
+    """Startup must not enumerate credentials or hide a historical repair."""
+    app_tree = ast.parse((SRC / "server" / "app.py").read_text(encoding="utf-8"))
+    lifespan = next(node for node in app_tree.body if isinstance(node, ast.AsyncFunctionDef) and node.name == "lifespan")
+    assert not any(
+        isinstance(node, ast.ImportFrom) and node.module == "aletheia.config.secrets"
+        and any(alias.name in {"migrate_keyring_to_file", "get_secret", "set_secret", "_get_keyring"} for alias in node.names)
+        for node in ast.walk(lifespan)
+    )
+    secrets_tree = ast.parse((SRC / "config" / "secrets.py").read_text(encoding="utf-8"))
+    assert not any(
+        isinstance(node, ast.FunctionDef) and node.name == "migrate_keyring_to_file"
+        or isinstance(node, ast.Attribute) and node.attr == "CredEnumerate"
+        for node in ast.walk(secrets_tree)
+    )
+
+
 def test_risk_engine_does_not_import_agents():
     """Risk Engine must not depend on agents/ (unidirectional data flow)."""
     imports = _get_imports(SRC / "risk" / "engine.py")

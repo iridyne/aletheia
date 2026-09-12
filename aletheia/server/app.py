@@ -465,18 +465,6 @@ async def lifespan(app: FastAPI):
     stage_started = _log_startup_stage("runtime_context", stage_started, startup_started)
     logger.info("Aletheia Trading OS v%s starting", __version__)
     logger.info("Dashboard: http://%s:%d", cfg.app.bind_host, runtime_context["port"] or cfg.app.dashboard_port)
-    # Migrate keyring secrets to the encrypted file store so that CLI / service
-    # processes (which may run under a different Windows logon session and cannot
-    # reach the OS keyring) always find secrets in the file fallback path.
-    try:
-        from aletheia.config.secrets import migrate_keyring_to_file
-
-        n = migrate_keyring_to_file()
-        if n:
-            logger.info("Migrated %d secret(s) from keyring to file store", n)
-    except Exception as _e:
-        logger.debug("Keyring-to-file migration skipped: %s", _e)
-    stage_started = _log_startup_stage("secret_migration", stage_started, startup_started)
     # Database upgrades belong to the owner-controlled gateway/deployment phase.
     # The backend only verifies the durable ledger before starting any writer.
     from aletheia.storage.migrations import assert_migrations_current
