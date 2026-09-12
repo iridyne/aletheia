@@ -367,6 +367,20 @@ async def test_bitget_credentials_write_only(client):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/binance-testnet/credentials-status"),
+        ("POST", "/api/settings/binance-testnet-credentials"),
+        ("POST", "/api/binance-testnet/test-connection"),
+    ],
+)
+async def test_binance_testnet_compatibility_routes_are_removed(client, method, path):
+    response = await client.request(method, path, json={} if method == "POST" else None)
+    assert response.status_code == 404
+
+
+@pytest.mark.anyio
 async def test_exchange_credentials_invalid_profile(client):
     resp = await client.post("/api/settings/exchange-credentials", json={
         "profile": "production", "api_key": "x",

@@ -484,12 +484,64 @@ def test_exchange_credential_checks_use_private_endpoints():
         okx_test_connection,
     )
 
-    for handler in (
-        binance_test_candidate,
-        binance_test_connection,
-        okx_test_candidate,
-        okx_test_connection,
-    ):
+    for handler in (binance_test_candidate, okx_test_candidate):
         source = inspect.getsource(handler)
         assert "fetch_time(" not in source
-        assert "fetch_balance(" in source or "get_positions(" in source
+        assert "fetch_balance(" in source
+    for handler in (binance_test_connection, okx_test_connection):
+        source = inspect.getsource(handler)
+        assert "fetch_time(" not in source
+        assert "probe_account_reachable" in source
+    from aletheia.uta.manager import probe_account_reachable
+
+    assert '"get_account"' in inspect.getsource(probe_account_reachable)
+
+
+@spec_claim(
+    SpecClaim(
+        "API-S11",
+        "api_reference",
+        "§exchange credential route convergence",
+        "L2a",
+        "Retired Binance testnet compatibility routes and frontend aliases are absent; "
+        "modern profile-aware routes remain the only current surface.",
+        status="implemented",
+    ),
+)
+def test_retired_binance_testnet_routes_and_aliases_are_absent():
+    legacy_paths = (
+        "/binance-testnet/credentials-status",
+        "/settings/binance-testnet-credentials",
+        "/binance-testnet/test-connection",
+    )
+    route_source = (_ROUTES / "bitget.py").read_text(encoding="utf-8")
+    client_source = (_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(
+        encoding="utf-8",
+    )
+    reference = (_ROOT / "docs" / "design" / "api" / "api_reference.md").read_text(
+        encoding="utf-8",
+    )
+    generated = (_ROOT / "frontend" / "src" / "api" / "generated" / "api.d.ts").read_text(
+        encoding="utf-8",
+    )
+    for path in legacy_paths:
+        assert path not in route_source
+        assert path not in client_source
+        assert path not in reference
+        assert path not in generated
+    for alias in (
+        "setExchangeCredentials",
+        "getBinanceTestnetCredStatus",
+        "setBinanceTestnetCredentials",
+        "testBinanceTestnet",
+    ):
+        assert alias not in client_source
+    for current_path in (
+        "/binance/credentials-status",
+        "/settings/binance-credentials",
+        "/binance/test-connection",
+        "/binance/test-candidate",
+    ):
+        assert current_path in route_source
+        assert current_path in client_source
+        assert current_path in reference

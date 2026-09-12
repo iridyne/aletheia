@@ -1,4 +1,4 @@
-"""Exchange connection + credentials API routes (Bitget + Binance Testnet + OKX).
+"""Exchange connection + credentials API routes (Bitget + Binance + OKX).
 
 Credentials are write-only over the API: POST accepts api_key/secret,
 GET only reports configured + last-4. Raw secrets are never returned.
@@ -145,13 +145,6 @@ async def binance_credentials_status():
     return _binance_cred_status()
 
 
-# Legacy endpoint — keep for backward compat during transition
-@router.get("/binance-testnet/credentials-status")
-async def binance_testnet_credentials_status():
-    full = _binance_cred_status()
-    return full["testnet"]
-
-
 class BinanceCredentialsRequest(BaseModel):
     profile: str = "testnet"
     api_key: str | None = None
@@ -186,13 +179,6 @@ async def set_binance_credentials(req: BinanceCredentialsRequest):
     return {"updated": fields_set, "status": _binance_cred_status()}
 
 
-# Legacy endpoint
-@router.post("/settings/binance-testnet-credentials")
-async def set_binance_testnet_credentials_legacy(req: BinanceCredentialsRequest):
-    req.profile = "testnet"
-    return await set_binance_credentials(req)
-
-
 class BinanceTestRequest(BaseModel):
     mode: str = "testnet"
 
@@ -205,12 +191,6 @@ async def binance_test_connection(req: BinanceTestRequest = BinanceTestRequest()
     execution_mode = "binance_testnet" if req.mode == "testnet" else "binance_live_limited"
     result = await asyncio.to_thread(probe_account_reachable, execution_mode)
     return {**result, "mode": req.mode}
-
-
-# Legacy endpoint
-@router.post("/binance-testnet/test-connection")
-async def binance_testnet_test_connection():
-    return await binance_test_connection(BinanceTestRequest(mode="testnet"))
 
 
 class BinanceCandidateRequest(BaseModel):
