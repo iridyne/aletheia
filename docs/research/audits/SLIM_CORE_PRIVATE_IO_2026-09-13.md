@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `2fc29fb75fb4c4f2d8ed391bc3653c42583dfb33`. This is a bounded evidence
+based on `878e1accd5661867fb156c2ecbe25a1a190a8ff7`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -58,6 +58,14 @@ These mocked reads grant neither Live authority nor account qualification.
 The unchanged concrete-import allowlist is deliberately not a claim that all
 private I/O is contained: candidate probes and TP/SL recovery remain visible
 above, and package movement alone cannot settle their ownership.
+
+The current-head identity audit removes duplicate generic external-mode sets
+from Gateway routing, position routing, pending/stale cleanup, funding
+settlement, Demo Risk freshness, startup scope, and account-mode reconciliation.
+Those consumers now reuse `config.exchanges` identity classifications. The
+remaining direct mode branches are the documented UTA profile composition or
+venue-native capability/recovery exceptions above; this change does not claim
+that those concrete clients have moved out of Core reachability.
 
 ## Startup filesystem repair ownership
 
