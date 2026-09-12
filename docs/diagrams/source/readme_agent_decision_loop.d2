@@ -15,19 +15,18 @@ title: "Agent Decision Loop / Agent 决策闭环" {
   style.bold: true
 }
 
-producers: "Signal producers / 信号生产者" {
-  universe: "Universe scanners\n确定性特征与 scanner family" { class: signal }
-  observer: "Market Observer\nLLM 市场解读" { class: signal }
-  research: "Research / equity / prediction observers\n研究与跨市场观察" { class: signal }
+producers: "Candidate and evidence producers / 候选与证据生产者" {
+  universe: "Universe scanners\n确定性特征与 Candidate Selection Utility" { class: signal }
+  observer: "Market Observer\nLLM advisory enrichment" { class: signal }
+  research: "Serenity / equity / prediction observers\n研究与跨市场观察" { class: signal }
 }
 
-opportunity: "Durable Opportunity generation\n带 snapshot、source manifest 与 valid_until" { class: signal }
+opportunity: "Candidate source evidence\nexact snapshot · source manifest · capability" { class: signal }
 
-ranker: "Paper Trader Ranker / 候选准入" {
+candidate: "Durable Candidate Planning Generation" {
   class: signal
-  gates: "Eligibility gates\ntradability · TTL · direction · dedupe"
-  enrich: "Evidence enrichment\nfeatures · regime · guards · factor history"
-  pending: "PiDecision(action=signal_pending)\n耐久候选载体"
+  gates: "Selection gates\ntradability · expiry · direction · dedupe"
+  context: "Frozen source/context\ncycle lineage · exact instrument · deadlines"
 }
 
 context: "Three-layer decision context / 三层决策上下文" {
@@ -39,33 +38,32 @@ context: "Three-layer decision context / 三层决策上下文" {
 operator: "System Operator / 唯一 AI 入场决策者" {
   class: operator
   hydrate: "Hydrate one exact candidate\n按因果 ID 读取候选"
-  reason: "Structured assessment\n证据化推理与 sizing"
-  decide: "Terminal decision\ntrade · skip · watch/defer"
+  reason: "Structured EntryHypothesis\n证据化推理与事实引用"
+  decide: "Planning decision\nENTRY_PLAN · NO_PLAN · unavailable"
 }
 
-terminal: "Decision outcomes / 决策出口" {
-  trade: "trade → immutable TradeProposal" { class: terminal }
-  skip: "skip → reason + attribution" { class: terminal }
-  defer: "watch/defer → durable retry or expiry" { class: terminal }
+terminal: "Planning outcomes / 规划出口" {
+  plan: "ENTRY_PLAN → immutable Entry Plan" { class: terminal }
+  no_plan: "NO_PLAN → typed reason" { class: terminal }
+  unavailable: "blocked/unavailable → bounded retry or owner input" { class: terminal }
 }
 
 safety: "Risk Engine + Execution Gateway\nAI 决策不能绕过硬性风控" { class: safety }
 
 producers.universe -> opportunity
-producers.observer -> opportunity
-producers.research -> opportunity
-opportunity -> ranker.gates
-ranker.gates -> ranker.enrich
-ranker.enrich -> ranker.pending
-ranker.pending -> operator.hydrate
+producers.observer -> opportunity: "advisory only"
+producers.research -> opportunity: "observation only"
+opportunity -> candidate.gates
+candidate.gates -> candidate.context
+candidate.context -> operator.hydrate
 context.market -> operator.reason
 context.portfolio -> operator.reason
 context.wisdom -> operator.reason
 operator.hydrate -> operator.reason
 operator.reason -> operator.decide
-operator.decide -> terminal.trade
-operator.decide -> terminal.skip
-operator.decide -> terminal.defer
-terminal.trade -> safety
-terminal.skip -> context.portfolio: "future review" { style.stroke-dash: 5 }
-terminal.defer -> ranker.pending: "wake on fresh facts" { style.stroke-dash: 5 }
+operator.decide -> terminal.plan
+operator.decide -> terminal.no_plan
+operator.decide -> terminal.unavailable
+terminal.plan -> safety
+terminal.no_plan -> context.portfolio: "future review" { style.stroke-dash: 5 }
+terminal.unavailable -> candidate.context: "resume same cycle" { style.stroke-dash: 5 }

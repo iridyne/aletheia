@@ -32,16 +32,16 @@ ingest: "Ingestion & normalization / 采集规范化" {
 
 market_store: "Market truth\nmarket snapshots · OHLCV · universe features\norder book · funding · OI · news" { class: store }
 
-discovery: "Discovery / 机会发现" {
+discovery: "Candidate discovery / 候选发现" {
   class: process
   observe: "Universe + Market Observer"
-  opportunity: "Opportunity generation"
-  rank: "Admission + ranking"
+  candidate: "Candidate Selection Utility"
+  generation: "Planning Generation\nsource/context/期限冻结"
 }
 
-decision_store: "Decision truth\nOpportunity · PiDecision · learning manifest" { class: store }
+decision_store: "Decision truth\nCandidate · Planning Generation · Entry Plan" { class: store }
 
-operator: "System Operator\nexact candidate + three-layer context\n→ trade / skip / defer" { class: decision }
+operator: "System Operator Entry Planner\nexact Planning Generation + bounded context\n→ EntryHypothesis" { class: decision }
 
 execution: "Risk & execution / 风控执行" {
   class: trade
@@ -69,13 +69,13 @@ ingest.collect -> ingest.canonical
 ingest.canonical -> ingest.feature
 ingest.feature -> market_store
 market_store -> discovery.observe
-discovery.observe -> discovery.opportunity
-discovery.opportunity -> discovery.rank
-discovery.rank -> decision_store
+discovery.observe -> discovery.candidate
+discovery.candidate -> discovery.generation
+discovery.generation -> decision_store
 decision_store -> operator
 learning_store -> operator: "retrieved evidence" { style.stroke-dash: 5 }
-operator -> execution.proposal: "trade"
-operator -> decision_store: "skip / defer"
+operator -> execution.proposal: "compiled Entry Plan"
+operator -> decision_store: "NO_PLAN / unavailable"
 execution.proposal -> execution.risk
 execution.risk -> execution.order: "approved only"
 execution.order -> trade_store
@@ -85,4 +85,4 @@ settlement.net -> settlement.attribution
 settlement.attribution -> settlement.review
 settlement.review -> settlement.measure
 settlement.measure -> learning_store
-learning_store -> discovery.rank: "bounded feedback" { style.stroke-dash: 5 }
+learning_store -> discovery.candidate: "bounded selection evidence" { style.stroke-dash: 5 }

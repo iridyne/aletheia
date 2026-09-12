@@ -9,15 +9,15 @@
 
 ## 第一章：全景 — 系统里有谁
 
-![System Overview](../../diagrams/rendered/01_system_overview.png)
+![System Overview](../../diagrams/rendered/readme_system_overview.svg)
 
 想象 Aletheia 是一家小型对冲基金，有明确分工：
 
 | 角色 | 组件 | 职责 | 自治权 |
 |------|------|------|--------|
-| 入场决策者 | **System Operator** | 对确切候选输出 `trade` / `skip` | 唯一受支持的入场策略决策主体 |
+| 入场决策者 | **System Operator** | 对确切 Planning Generation 输出 `ENTRY_PLAN` / `NO_PLAN` | 唯一受支持的入场策略决策主体 |
 | 市场观察 | Market Observer | 对 emitter-admitted Opportunity 做可选 LLM advisory enrichment | 只写 namespaced assessment，不下单 |
-| 候选整理 | Paper Ranker / Paper Trader | 确定性筛选并写 `signal_pending` | 不调用 LLM，不提交 Proposal |
+| 候选准入 | Candidate Selection Utility / Universe service | 确定性选择 execution-eligible Candidate，并发布 Planning Generation | 不调用 LLM，不提交 Proposal |
 | 运行评估 | Python Operator assessment | 有界配置建议、通知和仍存在的委派 | 不是交易策略主体 |
 | 保护性持仓管理 | Position Manager | 止损、止盈、追踪和受控平仓 | 只缩减既有授权持仓 |
 
@@ -28,7 +28,7 @@
 
 ## 第二章：数据采集 — 系统的"眼睛"
 
-![Data Collection](../../diagrams/rendered/02_data_collection.png)
+![Data Collection](../../diagrams/rendered/readme_data_flow.svg)
 
 活动主线从运行时配置并记录的 market-data venue 获取 crypto spot/perpetual 市场事实，
 并把 venue、market type 和 symbol 身份保留到持久化记录。其他 adapter 或历史采集代码
@@ -53,68 +53,63 @@
 
 ## 第三章：信号发现 — "我觉得 ETH 可以做多"
 
-![Signal Discovery](../../diagrams/rendered/03_signal_discovery.png)
+![Signal Discovery](../../diagrams/rendered/readme_agent_decision_loop.svg)
 
 当前受支持的入场候选只有一条因果链：
 
 ```
-Market Observer (10min)
-  → LLM 读取确切 instrument 的有来源市场事实
-  → 写入 Opportunity
-  → Paper Ranker 确定性筛选
-  → Paper Trader（3min fallback + committed-event nudge）
-  → 写入 signal_pending PiDecision
-  → System Operator（事件驱动 + ~15min fallback）
-  → 输出 trade / skip
-  → trade 才形成不可变 Proposal，随后进入 Risk 与 Execution
+Universe / accepted Serenity Candidate publication
+  → Candidate Selection Utility 确定性准入
+  → durable Candidate Planning Generation（source/context/期限冻结）
+  → System Operator Entry Planner（事件驱动 + ~15min heartbeat）
+  → Planner hypothesis
+  → deterministic Compiler
+  → immutable Entry Plan
+  → Proposal → Risk → Execution Gateway → Coordinator / UTA
 ```
 
-Paper Trader 不调用 LLM、不提交 Proposal，也不直接平仓。旧的
-`paper_running RuleSet → 自动触发` 路径已经删除；表名、旧记录或历史图中仍出现
+Market Observer、equity/prediction observer 与 Serenity research 只提供有来源的观察或
+Candidate source evidence；它们不创建 Proposal。`Opportunity`、`signal_pending` 与旧
+Ranker/Funnel 记录仍可供历史分析读取，但不再是当前入场队列或 System Operator claim。
+旧的 `paper_running RuleSet → 自动触发` 路径已经删除；表名、旧记录或历史图中仍出现
 这些状态，不构成当前产品能力。
 
 ---
 
 ## 第四章：System Operator 决策 — 唯一的"按钮"在这里
 
-![System Operator Decision](../../diagrams/rendered/04_pi_agent_decision.png)
+![System Operator Decision](../../diagrams/rendered/readme_agent_decision_loop.svg)
 
-System Operator 由 committed event 唤醒，并保留约 15 分钟的 fallback。每次只处理
-一个确切 pending candidate，面前是三层信息：
+System Operator 由 Candidate planning committed event 唤醒，并保留约 15 分钟的 heartbeat
+fallback。每次只处理一个确切 Planning Generation，面前是冻结的 Candidate source/context、
+精确 market evidence、Portfolio state 和有界 Learning bundle：
 
-### Layer 1: 市场现在长什么样
+### 市场与执行事实
 - 所有币的价格快照
 - 特征指标（RSI/BB/FR/vol_ratio/taker/OI_divergence）
-- 开放 Opportunities
-- Factor Feedback（历史胜率/期望）
+- 当前 Candidate 的 Planning Generation 与 cycle 状态
+- Entry profiles、执行模式与 UTA capability facts
 
-### Layer 2: 我现在手里有什么
+### 当前组合状态
 - 当前持仓（symbol/direction/pnl）
-- Ranker 评分后的候选列表
-- **等待我决策的 pending_signals**
+- 现有 Proposal、Order、Fill 和 Position 的可追溯状态
 
-### Layer 3: 我过去学到了什么
+### 学习与历史证据
 - 上次决策回顾（我做了什么？结果如何？）
 - Knowledge Lessons（犯过的错）
 - Serenity Research（研究洞察）
 
 ### 决策过程
 
-1. 信号解读规则注入 prompt（硬编码逻辑）：
-   - FR > +0.01% → 多头拥挤，bearish 偏向
-   - FR < -0.01% → 空头拥挤，bullish 偏向
-   - OI_div=+1 → 隐性积累（OI↑ price↓），可能反转做多
-   - taker > 1.2 → 主动买入确认
-   - vol_ratio > 2x → 放量突破确认
-
-2. Bull vs Bear 辩论（高 conviction 时触发）
-
-3. 输出决策：
+1. System Operator 只返回结构化 `EntryHypothesis`；模型不得决定执行价格、数量、杠杆、止损、
+   止盈或触发参数。
+2. Compiler 根据冻结的 anchors、市场质量与 Entry Profile 计算计划几何。
+3. 输出规划结果：
 
 | 决策 | 含义 | 后续 |
 |------|------|------|
-| `trade` | 确认交易 | → 执行层下单 |
-| `skip` | 放弃信号 | 记录原因，下轮可回顾 |
+| `ENTRY_PLAN` | 证据充分且通过 Compiler | → immutable Entry Plan → Risk/Gateway |
+| `NO_PLAN` | 证据不足或冲突 | 记录 typed reason，不创建执行状态 |
 
 ---
 
@@ -139,11 +134,9 @@ Order 提交与真实成交是不同事实。只有匹配的交易所私有成�
 
 ## 第六章：持仓管理 — 自治安全层
 
-![Position Management](../../diagrams/rendered/06_position_management.png)
+这是系统中**唯一不经 System Operator 的环节**。原因：止损必须快速执行，不能等 LLM。
 
-这是系统中**唯一不经 System Operator 的环节**。原因：止损必须秒级执行，不能等 LLM。
-
-每分钟自动检查：
+Position Manager 每 30 秒检查一次精确 instrument 的 fresh mark：
 
 | 机制 | 触发条件 | 动作 |
 |------|----------|------|
@@ -154,13 +147,14 @@ Order 提交与真实成交是不同事实。只有匹配的交易所私有成�
 | **超时保护** | 持仓 > max_hold_hours | 强制平仓 |
 | **交易所同步** | exchange TPSL 成交 | 本地状态同步 |
 
-平仓后 → 计算 PnL → 输出 Trade Outcome → 进入反馈闭环。
+平仓后由外部私有成交证据驱动 Fill、Position 和 verified Outcome；证据不足时保持未决或
+不可用，不把本地模拟成交当作当前资格。
 
 ---
 
 ## 第七章：反馈闭环 — 结果先成为证据，再允许影响决策
 
-![Feedback Loop](../../diagrams/rendered/07_feedback_loop.png)
+![Feedback Loop](../../diagrams/rendered/readme_learning_evolution_loop.svg)
 
 交易结束后，系统先持久化真实 close、净结果和因果归因，再运行后续消费者：
 
@@ -183,14 +177,12 @@ Order 提交与真实成交是不同事实。只有匹配的交易所私有成�
 
 ## 第八章：策略生命周期 — 当前支持边界
 
-![Strategy Lifecycle](../../diagrams/rendered/08_strategy_lifecycle.png)
-
 本图和旧的 `draft → paper_candidate → paper_running` 流程属于历史规则引擎设计。
 RuleSet、Strategy Designer、backtest orchestrator 和 Optuna 策略变体路径已经删除，
 不属于当前产品能力。
 
-当前 System Operator 的受支持交易职责是：读取一个确切候选的三层上下文，产生
-`trade` 或 `skip`，并让完整 `trade` 进入不可变 Proposal、Risk 和 Execution Gateway。
+当前 System Operator 的受支持交易职责是：读取一个确切 Planning Generation 的有界上下文，产生
+`ENTRY_PLAN` 或 `NO_PLAN`；只有完整 Entry Plan 才能进入不可变 Proposal、Risk 和 Execution Gateway。
 Python Operator assessment 只保留有界配置调整、通知和仍存在的一次性委派。
 历史 `recommend_promote` / `recommend_retire` / `recommend_demote` 没有可达的策略
 生命周期消费者，不得从表中存在旧记录推断功能仍可用。
@@ -211,12 +203,12 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 
 | 原则 | 实现 |
 |------|------|
-| **System Operator 是入场决策者** | 当前候选只产生 `trade` / `skip`；Risk 与 Execution 仍是独立硬边界 |
-| **其他组件只产出候选事实** | Observer 写 Opportunity，Paper Trader 写 `signal_pending`；二者都不提交 Proposal |
+| **System Operator 是入场决策者** | 当前 Candidate 只产生 `ENTRY_PLAN` / `NO_PLAN`；Risk 与 Execution 仍是独立硬边界 |
+| **其他组件只产出候选事实** | Observer/Universe/Serenity 写带来源事实；Candidate Selection 发布 Planning Generation；都不提交 Proposal |
 | **保护层自治但不扩权** | Position Manager 只能缩减既有授权持仓，仍保留因果链和审计 |
 | **反馈先测量后影响** | verified outcome、归因与正式 exposure 先落账；unsupported hook 保持静态 fallback |
 | **策略生命周期不冒充能力** | 旧 RuleSet 升阶/退役链已删除；未来恢复必须重新证明完整链路 |
-| **Risk Engine 是硬墙** | System Operator 的 `trade` 仍须通过独立 Risk 审批才能执行 |
+| **Risk Engine 是硬墙** | Entry Plan 仍须通过独立 Risk 审批才能执行 |
 
 ---
 
@@ -226,8 +218,8 @@ Python Operator assessment 只保留有界配置调整、通知和仍存在的�
 |------|------|--------|
 | Market Data Collector | 5 min | 拉取价格/FR/OI/Taker/Liquidation |
 | Market Observer | 10 min | 对 emitter-admitted Opportunity 做可选 LLM enrichment |
-| Paper Trader | 3 min fallback + committed-event nudge | 确定性候选整理 → 写 signal_pending |
-| System Operator trading decision | event-driven + ~15 min fallback | 读确切 pending candidate → `trade` / `skip` |
+| Candidate Selection / Universe refresh | 10 min + source publication | 确定性准入 → 发布 Candidate Planning Generation |
+| System Operator Entry Planner | event-driven + ~15 min heartbeat | 读取确切 Planning Generation → `ENTRY_PLAN` / `NO_PLAN` |
 | Position Manager | 30 sec protective cycle（另有 exchange TP/SL fill check） | 追踪保护 / 检查平仓条件 |
 | Python Operator assessment | 4 h | 有界 config 调整、通知和当前委派 |
 | TS operator-shell | continuous supervision | 状态监督、Command Registry 编排和受控自愈 |
