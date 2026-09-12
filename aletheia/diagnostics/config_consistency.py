@@ -135,14 +135,27 @@ def _check_whitelist_empty(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
 def _check_scheduler_needs_llm(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
     if not cfg.runtime.scheduler_enabled:
         return None
-    default = cfg.models.default_provider
-    providers = cfg.models.providers
-    if default not in providers or not providers[default].enabled:
+    from aletheia.model_provider.router import provider_is_configured
+
+    unavailable = []
+    for tier in ("fast", "deep"):
+        selected = getattr(cfg.models, tier)
+        profile = cfg.models.providers.get(selected.endpoint_id) if selected else None
+        if (
+            selected is None
+            or not selected.endpoint_id.strip()
+            or not selected.model_id.strip()
+            or profile is None
+            or not profile.enabled
+            or not provider_is_configured(selected.endpoint_id, profile)
+        ):
+            unavailable.append(tier)
+    if unavailable:
         return ConfigInconsistency(
             field_path="runtime.scheduler_enabled",
             severity="warning",
-            message=f"scheduler_enabled=true but default LLM provider '{default}' is unavailable — agent runs will fail",
-            fix_hint=f"Enable the '{default}' provider, or update default_provider to an available one",
+            message=f"scheduler_enabled=true but model selections are unavailable: {', '.join(unavailable)} — affected LLM tasks cannot run",
+            fix_hint="Assign each affected task tier an explicit model on an enabled HTTP endpoint in Settings → AI Model Providers",
         )
     return None
 
