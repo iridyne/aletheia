@@ -11,7 +11,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from aletheia.config.exchanges import is_live_execution_mode
+from aletheia.config.exchanges import EXTERNAL_EXECUTION_MODES, is_live_execution_mode
 from aletheia.config.loader import load_config
 from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
@@ -75,14 +75,7 @@ _DECISION_ROLES = frozenset({"preflight", "authoritative"})
 _NATIVE_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
 _NATIVE_DIRECTIONS = frozenset({"long", "short"})
 _NATIVE_ORDER_TYPES = frozenset({"market", "limit"})
-_NATIVE_EXECUTION_MODES = frozenset({
-    "bitget_demo",
-    "bitget_live_limited",
-    "binance_testnet",
-    "binance_live_limited",
-    "okx_demo",
-    "okx_live_limited",
-})
+_NATIVE_EXECUTION_MODES = EXTERNAL_EXECUTION_MODES
 
 
 def _physical_market_type(value: str | None) -> str | None:
@@ -1038,12 +1031,12 @@ def _evaluate_proposal_locked(
     #    unknown/future state) must BLOCK — the previous `== "live_disabled"` check
     #    let every non-disabled value through, permitting live orders by accident (#7).
     live_state = cfg.live.state
-    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited") and live_state != "live_limited":
+    if is_live_execution_mode(proposal.execution_mode) and live_state != "live_limited":
         violations.append("live_disabled")
 
     # A live proposal must use the broker whose private account was selected for
     # the current configuration.
-    if proposal.execution_mode in ("bitget_live_limited", "okx_live_limited", "binance_live_limited"):
+    if is_live_execution_mode(proposal.execution_mode):
         from aletheia.config.exchanges import live_execution_mode_for_exchange
 
         expected_live_mode = live_execution_mode_for_exchange(cfg.exchange.name)
