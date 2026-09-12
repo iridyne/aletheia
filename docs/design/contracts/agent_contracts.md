@@ -3,7 +3,7 @@
 > Input/output contracts for all registered agent functions and scheduler jobs.
 > Each agent has defined triggers, data inputs, outputs, and side effects.
 > Source of truth: `aletheia/agent_runtime/scheduler.py` + `aletheia/agents/*.py`
-> Last updated: 2026-09-07 (D2 canonical entry; other domains unchanged)
+> Last updated: 2026-09-13 (D2 canonical entry; other domains unchanged)
 
 ---
 
@@ -15,8 +15,8 @@
 | 2 | market_observer | 10min | observer | Add advisory structured facts to existing triggered opportunities |
 | 3 | equity_observer | cron 工作日 09:30-16:00 America/New_York /30min | agents | xStocks/equity market scan (replaces stock_observer) |
 | 4 | prediction_observer | 30min | agents | Prediction market scan |
-| 6 | pi_trading_decision | ~15min (configurable) | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
-| 7 | position_manager | 5min | io | Manage open positions (trailing stop, exit) |
+| 6 | pi_trading_decision | ~15min + committed Candidate wake | agents | Canonical Planner heartbeat (wakes daemon or runs the same Planner inline) |
+| 7 | position_manager | 30s | io | Manage open positions (trailing stop, exit) |
 | 7a | position_path_observer | 5min | io | Recover and materialize the oldest expected complete 5m Position bucket |
 | 8 | tpsl_fill_check | 90s | io | Check exchange TP/SL order fills |
 | 9 | position_reconcile | 5min | io | Reconcile local vs exchange positions |
@@ -309,7 +309,7 @@ order identity is recovered by Gateway, not by reviving Setup execution.
 
 #### position_manager
 
-- **Trigger**: scheduler every 5min
+- **Trigger**: scheduler every 30s
 - **Inputs**: Open positions, current prices, market-aware exit signals
 - **LLM**: No
 - **Outputs**: Position closes (status=closed, realized_pnl computed)
@@ -378,41 +378,16 @@ deleted daily backtest cycle and now runs standalone (see scheduler_contract §j
 - **Outputs**: Calibration scores (ECE by bucket), grade (excellent/good/fair/poor)
 - **Side effects**: Updates calibration cache; exposed via /analytics/confidence-calibration
 
-#### learning_contribution_evaluator
+#### Learning contribution measurement (retired scheduler)
 
-- **Trigger**: one recurring interval at `learning.evaluation_interval_minutes` (default 60);
-  restart preserves a nearer durable future deadline, and an overdue deadline retries after 60s;
-  startup catch-up remains a one-shot caller of this same evaluator and retries when its successful
-  watermark/deadline is missing or invalid, or when the persisted cadence deadline has been reached
-- **Inputs**: prospective `universe_family_calibration` exposures plus exact-key settled outcomes
-- **Statistical unit**: persisted `assignment_unit_key` cluster; complete-cluster allocation utility
-  averages selected-member net return with zero utility for dropped members, and uses worst selected
-  MAE; incomplete or legacy unit-less clusters are excluded
-- **Outcome precedence**: `filter_candidate_outcomes` is canonical full-arm truth;
-  `universe_forward_outcomes` is a selected-member mirror/fallback and disagreement fails closed
-- **Outputs**: append-only monitoring and once-consumed confirmatory verdicts under
-  `universe_family_calibration_cluster_allocation_utility_v10`; old metric verdicts remain history
-- **Inference**: conditional randomization over the prospectively assigned complete clusters;
-  overlapping 1h/4h price paths are allowed and never resampled as IID outcomes
-- **Intervention provenance**: `authority_applied` records consistent treatment permission;
-  finite before/after behavior change is separate, and an authorized cluster is an actual
-  intervention only when at least one member changed
-- **Time semantics**: a market day is a UTC date with at least one complete eligible exposure unit
-  from either arm. Shadow integrity readiness uses one day plus 10 units per arm only to permit an
-  owner-started Paper-10 trial. Seven consecutive days plus 50 units in each arm inside that run
-  remain required for economic promotion;
-  a missing day resets the current window, planned outages receive no implicit waiver, and verdict
-  `created_at` remains evaluation time
-- **Inference semantics**: recurring results are descriptive monitoring. A Paper stage registered
-  before exposure freezes one outcome-blind assignment-unit cutoff, waits for those exact outcomes,
-  and consumes one confirmatory look at authority alpha `0.025`; cutoff-external rows cannot change
-  that decision, while current monitoring harm/negative/invalid evidence remains an anytime brake
-- **Authority**: measurement only; cannot change experiment stage, multiplier, paper authority,
-  Risk, Execution, exchange, or live state
-- **Current owner projection**: the implemented bounded summary is read-only and
-  cannot invoke this evaluator or lifecycle control from a GET request. The
-  broader `lco-v1` design remains the
-  [`learning_observability`](../proposals/learning_observability.md) Proposal.
+The former recurring `learning_contribution_evaluator`, startup measurement
+catch-up and lifecycle-controller jobs are not registered in the current
+Scheduler. Their persisted exposures, outcomes and verdicts remain historical
+evidence. The current owner surface is the bounded read-only
+`/api/analytics/learning-contribution` projection; it cannot invoke an evaluator,
+change experiment state, grant Paper influence, or affect Candidate, Risk,
+Execution, exchange or Live state. The broader `lco-v1` design remains the
+[`learning_observability`](../proposals/learning_observability.md) Proposal.
 
 ---
 

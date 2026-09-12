@@ -1310,10 +1310,10 @@ def init_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=15, next_run_time=datetime.now() + timedelta(seconds=10),
         executor="fast_io",
     )
-    # Protective paper exits consume the exact-instrument cache refreshed above
+    # Protective exits consume the exact-instrument cache refreshed above
     # every 30 seconds.  A five-minute cadence left a four-and-a-half-minute blind
     # window where a stop/target could be crossed and recover before the next
-    # sampled mark.  Match the available mark cadence; this remains sampled-paper
+    # sampled mark. Match the available mark cadence; this remains sampled-mark
     # semantics and does not claim exchange-native or tick-level triggering.
     _scheduler.add_job(
         _guarded("position_manager", _run_position_manager), "interval", seconds=30,

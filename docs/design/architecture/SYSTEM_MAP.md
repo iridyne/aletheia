@@ -2,7 +2,7 @@
 
 > 一页俯瞰系统所有活动部件、数据流向、管道状态。
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
-> Last synced with code/design: 2026-08-08 (Universe Twin Task 6)
+> Last synced with code/design: 2026-09-13 (canonical Candidate entry / UTA convergence)
 
 ---
 
@@ -20,18 +20,16 @@
 
 | Job ID | 频率 | 写入表 | 下游消费者 | 管道 |
 |--------|------|--------|-----------|------|
-| `market_data` | 5min | market_snapshots | price_feed, market_observer, paper_trader_ranker, risk_engine(data freshness) | ✅ |
+| `market_data` | 5min | market_snapshots | price_feed, market_observer, universe_refresh, risk_engine(data freshness) | ✅ |
 | `price_feed` | 30s | (内存缓存 watched_prices；输入保留 venue+spot/perp) | position_manager(mark-to-market), portfolio_snapshot | ✅ |
 | `data_collectors` | 2min | orderbook_snapshots, funding_rates, oi_snapshots | market_observer + universe/service | ⚠️ 主所采集按 InstrumentId 路由；只做实时 orderbook/Funding/OI |
 | `data_collector_context` | 10min | liquidation_events, macro_snapshots, volume ranking, cross-venue OI, CoinGecko/Hyperliquid/DefiLlama context | market_observer + universe/service | ⚠️ 独立 55s 时间盒；与主所 CCXT 串行，不让慢上下文继承核心预算 |
 | `exchange_sync` | 5min | positions(sync), portfolio_snapshots(side-effect) | risk_engine(exposure), position_manager, UI | ✅ |
 | `portfolio_snapshot` | 10min | portfolio_snapshots | risk_engine(drawdown scale), UI, Telegram | ✅ |
 | `position_path_observer` | 5min | append-only `position_path_observations`（完整入场后的 expected 5m buckets；精确 instrument + provider `is_closed` 证明，冻结 OHLCV + uPnL/cost/ExitPlan snapshot；缺失原因显式保留）+ durable `position_path_observation_deferred_buckets` | `aletheia inspect position-path`、`aletheia inspect stop-loss-path`、`aletheia control status`；事后区分 accounting mismatch、cost flip、profit giveback、never-favorable candidate，证据不全保持 unknown | ✅ 纯观测；每轮从最早未 materialize bucket 恢复，每 Position 最多执行两个 bounded catch-up pass，按 exact instrument 分组、有界并发、单请求 timeout；重试耗尽落 unavailable；不信任无 closed proof 的缓存；不改 Position、ExitPlan、Risk、Execution、Learning 或 Live |
-| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped open Opportunities，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes；每55分钟至多另写一批前瞻 `universe_twin_shadow_batches/records`，并只为 assigned-policy selected 候选登记 4h outcome | paper_trader_ranker、System Operator exact-candidate hydration/family edge、filter controller、risk live-evidence、doctor、guard candidate；Twin 记录完整 scanner-run assignment/evidence、0.5 propensity 与 observed-arm cluster ITT utility，未选候选记 0；其 evaluator 不写 Learning verdict | ✅ step-v1 仍是唯一权威；Twin 写入失败不回滚 snapshot/Opportunity，且不能影响 Paper/Risk/Execution/Learning；availability/lineage/NI/anytime-valid 仍为 blocker |
+| `universe_refresh` | 10min | universe_members, universe_feature_snapshots, universe_forward_outcomes，snapshot-scoped Candidates/Planning Generations，Learning treatment/control exposures，filter_decision_batches/filter_decisions/filter_candidate_outcomes；每55分钟至多另写一批前瞻 `universe_twin_shadow_batches/records`，并只为 assigned-policy selected 候选登记 4h outcome | Candidate Selection Utility、Entry Planner exact-candidate context、filter controller、risk live-evidence、doctor、guard candidate；Twin 记录完整 scanner-run assignment/evidence、0.5 propensity 与 observed-arm cluster ITT utility，未选候选记 0；其 evaluator 不写 Learning verdict | ✅ step-v1 仍是唯一权威；Twin 写入失败不回滚 snapshot/Candidate，且不能影响 Candidate/Risk/Execution/Learning；availability/lineage/NI/anytime-valid 仍为 blocker |
 | `outcome_settler` | 10min | 更新 universe_forward_outcomes + filter_candidate_outcomes；同步新 shadow 净结果 | 净收益校准、filter controller、alpha attribution、doctor | ✅ |
 | `outcome_hook_replay` | 1min | outcome_hook_jobs 状态、shadow_trades 结果、serenity_post_mortems | 合格平仓后反馈；每次重读 Position，缺价或部分失败留待重试 | ✅ |
-| `learning_contribution_evaluator` | `learning.evaluation_interval_minutes`（默认60min） | learning_contribution_verdicts, learning_job_health | paper lifecycle read model、operator inspection | ✅ 只测量：即使自主学习关闭或系统暂停也可运行；不改阶段、不启用影响 |
-| `learning_measurement_startup_catchup` | gateway 启动后2min一次 | learning_job_health 成功水位 + 持久 `next_due_at` | contribution evaluator | ✅ 只在水位/截止缺失或持久截止已到时恢复，未到截止则 no-op |
 | `cleanup` | cron 03:17 | 删除超保留期的分析/遥测行；filter batch 30d、decision/outcome 90d | SQLite 稳定性 + `data_pruned` audit | ✅，不触碰交易因果表 |
 | `ohlcv_nightly_backfill` | cron(可配) | market_ohlcv | (历史 OHLCV 存储;backtest 消费者随引擎删除 Position C) | ✅ |
 | `ohlcv_active_backfill` | 5–60min(可配，默认10min) | market_ohlcv + ohlcv_backfill_state | 活动 Universe 指标、结果结算、doctor；单轮1–10个精确 instrument/timeframe，失败退避 | ✅，不阻塞 universe_refresh |
@@ -46,16 +44,15 @@
 
 | Job ID | 频率 | 输入数据 | 输出数据 | 下游 | 管道 |
 |--------|------|---------|---------|------|------|
-| `market_observer` | 10min | 已通过 deterministic emitter 的 open Opportunity + exact-instrument context | namespaced `metadata.observer_assessment` advisory enrichment | 无阻塞下游；scanner 已独立唤醒 Ranker | ✅ exact snapshot/member/instrument + emitter pass fact；不新建 Opportunity |
-| `paper_trader` | 3min fallback + on-demand | open Opportunity generations + PiDecision + guards | 每轮最多 3 个新 `signal_pending`，全局最多 5 个 unresolved queued carriers；随后由 System Operator 决定是否形成 Proposal | ✅ 新 Opportunity/config/Guard/queue-slot/Universe 事实提交后合并唤醒；active carrier 与 30min cooldown 分开；队列满时 generation 保持 open 重试 |
-| `pi_trading_decision` | ~15min | market context + one Learning bundle（reflection/memo/reasoning/calibration/cases/lessons） | PiDecision（含 opportunity/proposal 因果 id + learning_manifest_json） | paper_trader(消费 decision) | ✅ |
-| `position_manager` | 5min | open positions + market prices + exit_rules | close proposals / TP-SL updates | ✅ |
+| `market_observer` | 10min | 已通过 deterministic emitter 的 open Opportunity + exact-instrument context | namespaced `metadata.observer_assessment` advisory enrichment | 无阻塞下游；Candidate publication 由其声明的 Universe/Serenity owner 负责 | ✅ exact snapshot/member/instrument + emitter pass fact；不新建 Opportunity |
+| `pi_trading_decision` | ~15min + committed Candidate wake | 当前 Candidate Planning Generation、冻结 source/context、精确 market windows、typed capability/profile facts | Planner hypothesis → deterministic Compiler → immutable Entry Plan，或 typed blocked/unavailable/no-plan outcome | fast_trigger_watch / Entry Workbench → Proposal → Risk/Gateway | ✅ 事件唤醒与 heartbeat 共用 `run_entry_planner_batch()`；持久 claim/retry/CAS 防止重复模型和计划 |
+| `position_manager` | 30s | open positions + exact-instrument marks + exit rules | close proposals / TP-SL updates | ✅ |
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
 | `post_trade_reviewer` | 4h | closed positions | knowledge_items(post_trade_review) | dreaming_agent, retrieve_lessons() | ✅ |
 | `risk_critic` | 6h | risk_decisions history | knowledge_items(lesson) | retrieve_lessons() → LLM prompts | ✅ |
-| `equity_observer` | 工作日 09:30-16:00 America/New_York /30min | yfinance + bitget xStocks | opportunities(equity) | paper_trader_ranker | ✅ |
-| `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | paper_trader_ranker, divergence_scanner | ✅ |
+| `equity_observer` | 工作日 09:30-16:00 America/New_York /30min | yfinance + bitget xStocks | opportunities(equity) | research/analytics（observation only） | ✅ |
+| `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | divergence_scanner / research analytics（observation only） | ✅ |
 | `guard_promotion` | cron 04:00 CST | guard_candidate knowledge_items + reviewer health/backlog | trading_guard(active) | ✅ Learning 总开关关闭或审核失败/过期/积压时仅冻结新自动晋级，不改变现有 guard |
 | `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ✅ Serenity 可经 promote→PiDecision 进入评估；每日批次键防重 |
 | `serenity_startup_catchup` | gateway 启动后4min一次 | 最近成功 Serenity run + 当前活动/批次记录 | 缺失时创建一个 scheduled research run | ✅ 补 02:00 漏跑；fresh/active/attempted 均 no-op，暂停恢复后仍可执行 |
@@ -63,7 +60,6 @@
 | `insight_synthesizer` | cron 02:30 CST + durable boot catch-up | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
 | `confidence_calibration` | 6h | predictions + outcomes | calibration reports | UI(analytics) | ⚠️ |
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果与未来首次样本 | controller_recommendations + filter_shadow_experiments/evaluations | CLI/API 诊断；只登记和评估 shadow，不写 config | ✅ 只读 |
-| `learning_lifecycle_controller` | `learning.evaluation_interval_minutes`（默认60min） | 当前阶段测量结果、实验/策略版本、Learning 设置 | learning_lifecycle_events + 后继纸面实验或冻结状态 | ✅ 与测量分离；仅在完整安全开关、路径白名单和无完整性事故时改变纸面状态 |
 | `pi_operator_loop` | cron 每4h:15 CST + boot 2min catch-up（assessment 3h45m 防重） | system health + strategies + positions | operator_assessment, operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
 
 上表中会产出、审核、晋级或自动应用 Learning 状态的任务统一受
@@ -75,9 +71,13 @@
 
 | 身份 | 含义 | 权威出口 |
 |---|---|---|
-| `open Opportunity` | 一次 Universe/Observer snapshot 的分析 generation，可继续被 Ranker 处理 | snapshot supersede、Ranker hard TTL/global retention、确定性永久拒绝，或原子认领为 queued |
-| `queued Opportunity + signal_pending` | 已通过 Ranker admission 的耐久 Operator carrier；来源 snapshot/member id 保持不可变归因 | Opportunity `valid_until`、System Operator terminal decision，或原子 Proposal claim |
-| `reviewed/expired` | 终态，不得倒退 | 必须由 PiDecision 或 typed filter evidence 解释；raw `expired` 不能直接等同 TTL |
+| `Candidate + Planning Generation` | execution-eligible Candidate 的当前规划注意力；冻结 source/context、cycle lineage、软/硬期限与 claim | `universe.service` 发布；`entry_planner` 原子认领、重试或终结 |
+| `Entry Plan` | 一个经 Planner/Compiler 验证的不可变执行意图，绑定 Candidate 与 exact instrument | `entry_planner`/Compiler 创建；fast monitoring 与 Gateway 只读消费 |
+| `planning_blocked/unavailable/failed` | 规划证据、权限、模型或编译失败的显式 typed 结果；不伪造 NO_PLAN 或 Proposal | 原因持久化；满足条件后恢复同一 cycle，或由 owner 重新规划 |
+
+`Opportunity`、`signal_pending`、旧 Ranker/Funnel 记录仍可被历史分析读取，但不再是
+当前入场队列、System Operator claim 或 Proposal authority。研究与观察 Opportunity
+也不能绕过 Candidate Planning Generation、Entry Plan、Risk 或 Gateway。
 
 Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_count` 是 generations，
 `setup_count` 是 `symbol + market + direction + scanner_family` 唯一 setup，
@@ -90,7 +90,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | 模块 | 触发方式 | 输入 | 输出 | 管道 |
 |------|---------|------|------|------|
 | risk_engine.evaluate_proposal() | 被 gateway.submit_proposal() 调用 | TradeProposal + config | RiskDecision(持久化) | ✅ |
-| execution/gateway.submit_proposal() | 被 paper_trader/position_manager 调用 | symbol/direction/qty/price | proposal→decision→order→fill 因果链 | ✅ |
+| execution/gateway.submit_proposal() | 被 Entry Plan execution / position_manager 调用 | symbol/direction/qty/price | proposal→decision→order→fill 因果链 | ✅ |
 | execution/reconciliation.reconcile() | reconciliation job(2min,仅live) | exchange state vs local | convergence_records | ✅ |
 | kill_switch | risk_engine check#8(日损触发) | daily_loss > threshold | kill_switch_active=True | ✅ |
 
@@ -100,13 +100,13 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 
 | 模块 | 写入路径 | 读取路径 | 管道 |
 |------|---------|---------|------|
-| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → LLM prompts (市观/paper_trader_ranker/trading_decision(PI)) | ✅ |
-| trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | active guard → paper_trader_ranker；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
-| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | trading_context Layer3 → System Operator prompt → risk engine #15(applied, non-expired) | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
-| ranker case/memo Learning | trade_case_study + latest trading_memo | paper_trader_ranker score | 🟡 consumer hook 已接，但 measurement-unsupported；实际增量固定为 0，不创建 formal exposure |
+| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → advisory context（Market Observer / Entry Planner） | ✅ |
+| trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | advisory candidate context；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
+| ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | Entry Planner learning context / System Operator review → bounded advisory use | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
+| historical Ranker case/memo Learning | trade_case_study + latest trading_memo | 只读历史 funnel/attribution reports | 🟡 不创建当前 Entry exposure，不改变 Candidate/Risk/Execution |
 | persona sizing Learning | clean realized regime cohort + causal opportunity outcome | trading/sizing → System Operator proposal rationale | 🟡 可显示静态/学习建议/实际金额，但 measurement-unsupported；实际金额保持静态 baseline，不创建 formal exposure |
 | ps_skills (SkillStore) | lesson_reviewer(applied lesson→draft skill), persistence API | persistence API / manual review | ✅ draft producer 已接入;不会自动 activate(见 knowledge_contract §6.A2) |
-| measured Learning ledger / `lco-v1` | Universe calibration 写受支持 exposure；Operator bundle 与其他 hooks 返回 static fallback；evaluator/lifecycle 写 7 个永久 Learning 表；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 内部 inspection/doctor + cached `/api/analytics/learning-contribution` summary + Learning measured-path selector | 🟡 有界只读 summary、registry-backed 选择、cache/timing 与当前 surface 响应式无障碍已实现；明细/分页与完整 workbench 仍缺失；不运行 evaluator/lifecycle、不提供 admission mutation、不改 Paper/Risk/Execution/Live |
+| measured Learning ledger / `lco-v1` | Universe calibration 写受支持 exposure；Operator bundle 与其他 hooks 返回 static fallback；canonical full-arm filter outcomes + selected-member Universe mirror/fallback | 内部 inspection/doctor + cached `/api/analytics/learning-contribution` summary + Learning measured-path selector | 🟡 当前仅提供有界只读 summary；旧 evaluator、startup measurement catch-up 与 lifecycle controller 已退役，不运行、不提供 admission mutation、不改 Candidate/Risk/Execution/Live |
 
 ---
 
