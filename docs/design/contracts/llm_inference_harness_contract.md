@@ -17,6 +17,15 @@ Application inference enters through `llm_complete()`, `llm_structured()`, or
 connectivity probes enter the same logical-call contract before using the
 broker directly. Provider adapters remain the physical network boundary.
 
+Generic OpenAI Chat Completions and Responses dispatch and model discovery use
+the official OpenAI SDK over the existing loop-owned HTTP client. SDK automatic
+retries and ambient credential/header inheritance are disabled; the existing
+explicit optional-field and model fallback policies remain authoritative.
+SDK content-bearing debug logs are disabled, status failures retain the shared
+credential-scrubbing boundary, and cancellation propagates. This bounded
+[transport convergence](../proposals/slim_core_http_model_transport.md) does not
+claim completion of the remaining HTTP-only endpoint/routing retirement work.
+
 Every production helper call declares a literal registered `caller` identity.
 An executable AST claim fails when application code omits that identity or
 uses a caller that is absent from `CALLER_SPECS`.

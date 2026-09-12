@@ -2,8 +2,10 @@
 
 import asyncio
 import json
+import logging
 
 import httpx
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI, Omit
 
 from aletheia.net import httpx_client, raise_for_status_without_secrets
 from aletheia.model_provider.base import (
@@ -18,9 +20,9 @@ from aletheia.model_provider.base import (
 )
 from aletheia.model_provider.registry import validate_provider_protocol
 
-# Backwards-compatible alias — the implementation now lives in aletheia.net so every
-# provider shares one credential-scrubbing path (error-leak 2.7).
-_raise_without_secrets = raise_for_status_without_secrets
+# SDK debug request logs include prompts. Content-free telemetry belongs to the
+# inference harness, including when the application's root logger is verbose.
+logging.getLogger("openai._base_client").setLevel(logging.WARNING)
 
 
 def _extract_text_content(raw) -> str:
@@ -146,6 +148,45 @@ class OpenAICompatibleProvider(ModelProvider):
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
+    def _sdk_client(self) -> AsyncOpenAI:
+        # Borrow the loop-owned pool; only ModelProvider.aclose closes it.
+        client = AsyncOpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key or "",
+            admin_api_key="",
+            organization="",
+            project="",
+            webhook_secret="",
+            max_retries=0,
+            http_client=self._get_http_client(httpx_client),
+        )
+        # SDK 2.x merges OPENAI_CUSTOM_HEADERS even with explicit defaults.
+        # A configured endpoint must never inherit ambient routing/credentials.
+        client._custom_headers = {
+            "Authorization": f"Bearer {self.api_key}" if self.api_key else Omit(),
+            "OpenAI-Organization": Omit(),
+            "OpenAI-Project": Omit(),
+        }
+        return client
+
+    async def _completion_response(self, payload: dict) -> httpx.Response:
+        client = self._sdk_client()
+        create = (
+            client.responses.with_raw_response.create
+            if self.protocol == "responses"
+            else client.chat.completions.with_raw_response.create
+        )
+        try:
+            return (await create(**payload, extra_headers=client._custom_headers)).http_response
+        except APIStatusError as exc:
+            # Keep the response for the existing bounded optional-field retry;
+            # final failures are scrubbed before leaving this adapter.
+            return exc.response
+        except APIConnectionError as exc:
+            exc.request.headers.clear()
+            error_type = httpx.ReadTimeout if isinstance(exc, APITimeoutError) else httpx.ConnectError
+            raise error_type("model endpoint request failed") from None
+
     async def complete(self, request: ModelRequest) -> ModelResponse:
         if self.protocol == "responses":
             return await self._complete_responses(request)
@@ -174,8 +215,7 @@ class OpenAICompatibleProvider(ModelProvider):
                     "schema": request.structured_schema,
                 },
             }
-        client = self._get_http_client(httpx_client)
-        resp = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=self._headers())
+        resp = await self._completion_response(payload)
         for _ in range(2):
             if "reasoning_effort" in payload and _reasoning_effort_is_unsupported(resp):
                 payload = dict(payload)
@@ -195,12 +235,8 @@ class OpenAICompatibleProvider(ModelProvider):
                     ]
             else:
                 break
-            resp = await client.post(
-                f"{self.base_url}/chat/completions",
-                json=payload,
-                headers=self._headers(),
-            )
-        _raise_without_secrets(resp)
+            resp = await self._completion_response(payload)
+        raise_for_status_without_secrets(resp)
         data = resp.json()
         content = _extract_chat_completion_text(data)
         return ModelResponse(
@@ -233,12 +269,11 @@ class OpenAICompatibleProvider(ModelProvider):
                     "schema": request.structured_schema,
                 }
             }
-        client = self._get_http_client(httpx_client)
-        resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
+        resp = await self._completion_response(payload)
         if "reasoning" in payload and _responses_reasoning_is_unsupported(resp):
             payload = {k: v for k, v in payload.items() if k != "reasoning"}
-            resp = await client.post(f"{self.base_url}/responses", json=payload, headers=self._headers())
-        _raise_without_secrets(resp)
+            resp = await self._completion_response(payload)
+        raise_for_status_without_secrets(resp)
         data = resp.json()
         content = ""
         for item in data.get("output", []):
@@ -259,9 +294,9 @@ class OpenAICompatibleProvider(ModelProvider):
     async def list_models(self) -> list[dict]:
         """Fetch available models from the OpenAI-compatible /models endpoint."""
         try:
-            client = self._get_http_client(httpx_client)
+            client = self._sdk_client()
             async with asyncio.timeout(4):
-                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
+                resp = (await client.models.with_raw_response.list(extra_headers=client._custom_headers)).http_response
             if resp.status_code != 200:
                 return []
             data = resp.json()

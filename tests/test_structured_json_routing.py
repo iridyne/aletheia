@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.model_http import openai_http
 from pydantic import BaseModel
 
 from aletheia.model_provider.base import (
@@ -572,19 +573,16 @@ async def test_openai_compatible_sends_json_object_response_format(monkeypatch):
         async def aclose(self):
             return None
 
-    monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="glm-5.2")
-    resp = await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_object",
+    with openai_http(post=FakeClient().post):
+        provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="glm-5.2")
+        resp = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_object",
+            )
         )
-    )
-    assert resp.content == '{"ok": true}'
-    assert payloads[0]["response_format"] == {"type": "json_object"}
+        assert resp.content == '{"ok": true}'
+        assert payloads[0]["response_format"] == {"type": "json_object"}
 
 
 @pytest.mark.asyncio
@@ -614,28 +612,25 @@ async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
         async def aclose(self):
             return None
 
-    monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
-    await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_schema",
-            structured_schema=schema,
-            structured_schema_name="plan_intent",
+    with openai_http(post=FakeClient().post):
+        provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+        await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_schema",
+                structured_schema=schema,
+                structured_schema_name="plan_intent",
+            )
         )
-    )
 
-    assert payloads[0]["response_format"] == {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "plan_intent",
-            "strict": True,
-            "schema": schema,
-        },
-    }
+        assert payloads[0]["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "plan_intent",
+                "strict": True,
+                "schema": schema,
+            },
+        }
 
 
 @pytest.mark.asyncio
@@ -671,33 +666,30 @@ async def test_openai_compatible_responses_preserves_strict_json_schema(monkeypa
         "required": ["decision"],
         "additionalProperties": False,
     }
-    monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = OpenAICompatibleProvider(
-        base_url="http://model.test/v1",
-        model="m1",
-        protocol="responses",
-    )
-    response = await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_schema",
-            structured_schema=schema,
-            structured_schema_name="plan_intent",
+    with openai_http(post=FakeClient().post):
+        provider = OpenAICompatibleProvider(
+            base_url="http://model.test/v1",
+            model="m1",
+            protocol="responses",
         )
-    )
+        response = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_schema",
+                structured_schema=schema,
+                structured_schema_name="plan_intent",
+            )
+        )
 
-    assert response.content == '{"decision":"NO_PLAN"}'
-    assert payloads[0]["text"] == {
-        "format": {
-            "type": "json_schema",
-            "name": "plan_intent",
-            "strict": True,
-            "schema": schema,
+        assert response.content == '{"decision":"NO_PLAN"}'
+        assert payloads[0]["text"] == {
+            "format": {
+                "type": "json_schema",
+                "name": "plan_intent",
+                "strict": True,
+                "schema": schema,
+            }
         }
-    }
 
 
 @pytest.mark.asyncio
@@ -776,20 +768,17 @@ async def test_openai_compatible_retries_without_json_object_when_unsupported(mo
         async def aclose(self):
             return None
 
-    monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
-    resp = await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_object",
+    with openai_http(post=FakeClient().post):
+        provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+        resp = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_object",
+            )
         )
-    )
-    assert resp.content == '{"ok": true}'
-    assert payloads[0]["response_format"] == {"type": "json_object"}
-    assert "response_format" not in payloads[1]
+        assert resp.content == '{"ok": true}'
+        assert payloads[0]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in payloads[1]
 
 
 @pytest.mark.asyncio
@@ -829,25 +818,22 @@ async def test_openai_compatible_retries_without_json_schema_when_unsupported(mo
         async def aclose(self):
             return None
 
-    monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
-        lambda *, timeout: FakeClient(),
-    )
-    provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
-    resp = await provider.complete(
-        ModelRequest(
-            messages=[{"role": "user", "content": "x"}],
-            response_format="json_schema",
-            structured_schema=schema,
+    with openai_http(post=FakeClient().post):
+        provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")
+        resp = await provider.complete(
+            ModelRequest(
+                messages=[{"role": "user", "content": "x"}],
+                response_format="json_schema",
+                structured_schema=schema,
+            )
         )
-    )
 
-    assert resp.content == '{"decision": "NO_PLAN"}'
-    assert payloads[0]["response_format"]["type"] == "json_schema"
-    assert "response_format" not in payloads[1]
-    assert payloads[1]["messages"][-1]["content"].startswith(
-        "Respond with valid JSON matching this schema:"
-    )
+        assert resp.content == '{"decision": "NO_PLAN"}'
+        assert payloads[0]["response_format"]["type"] == "json_schema"
+        assert "response_format" not in payloads[1]
+        assert payloads[1]["messages"][-1]["content"].startswith(
+            "Respond with valid JSON matching this schema:"
+        )
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,41 @@
+---
+id: slim-core-http-model-transport
+status: accepted
+github_issue: 3134
+related_contracts:
+  - ../contracts/llm_inference_harness_contract.md
+---
+
+# Official HTTP model transport
+
+This D2 transport convergence implements the owner-approved
+[#3134](https://github.com/iridyne/aletheia/issues/3134) HTTP-only model boundary.
+The first bounded change replaces the generic OpenAI Chat Completions and
+Responses adapters' handwritten HTTP dispatch with the official OpenAI SDK.
+It does not add another provider framework or a second inference entry point.
+
+The existing ModelProvider envelope remains responsible for logical-call
+identity, measured usage, structured repair and explicit fallback. The existing
+loop-owned HTTP client remains responsible for network/proxy policy and closure.
+SDK automatic retries are disabled; only the existing explicit optional-field
+compatibility retries remain. SDK status errors pass through the existing
+credential-scrubbing HTTP error boundary. An endpoint without a credential must
+not inherit an environment credential or transmit a fabricated bearer token.
+Model discovery stays bounded and manual model selection stays valid.
+
+Use the HTTPX-compatible official OpenAI 2.x release line (minimum 2.54.0),
+verified against its [published dependency metadata](https://pypi.org/pypi/openai/2.54.0/json).
+OpenAI 3.x uses HTTPX2; changing the application's shared network stack is not
+part of this batch. Do not introduce a parallel SDK-owned network-policy stack.
+
+The accepted program still requires Anthropic SDK convergence, retirement of
+CLI/OAuth/native proprietary transports, and explicit endpoint/model routing.
+This bounded transport change does not claim those remaining boundaries are
+complete. Existing Databricks-specific transport remains outside this batch.
+No stored endpoint, secret, routing choice, runtime or trading authority changes.
+
+Verification uses a real SDK with an in-memory HTTP transport: exact protocol
+paths and payloads, missing optional fields, status/error redaction, no SDK
+retry, cancellation, no environment credential fallback, raw usage preservation
+and loop-owned client closure. Existing inference/fallback tests must retain
+their observable behavior; no real inference request is an acceptance fixture.
