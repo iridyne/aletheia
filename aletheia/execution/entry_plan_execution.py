@@ -547,7 +547,8 @@ def execute_entry_plan(
         raise ValueError("entry_plan_hash_mismatch")
     plan = decode_entry_plan(payload)
     require_entry_plan_runtime_authority(plan)
-    if plan.execution_account_mode != "bitget_demo":
+    from aletheia.execution.venue_capabilities import entry_execution_minimum_permission
+    if entry_execution_minimum_permission(plan.execution_account_mode) is None:
         raise ValueError("entry_plan_tactic_capability_unavailable")
 
     from aletheia.trading.entry_execution_projection import resolve_entry_execution

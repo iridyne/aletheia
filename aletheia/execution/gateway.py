@@ -1433,7 +1433,7 @@ def _execute_proposal(
         )
         _entry_execution_stage(proposal, execution_receipt, "preflight_risk_completed")
         if not preflight_result.approved:
-            if proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and getattr(preflight_result, "disposition", "REJECT") == "DEFER":
+            if proposal.entry_plan_id and _venue_capabilities.entry_execution_minimum_permission(proposal.execution_mode) is not None and getattr(preflight_result, "disposition", "REJECT") == "DEFER":
                 return _wait_for_entry_market(proposal, owner_token, execution_receipt,
                     "canonical_risk_deferred", status="waiting_risk")
             if _receipt_only_risk_rejection(preflight_result):
@@ -1467,7 +1467,7 @@ def _execute_proposal(
 
         _entry_execution_stage(proposal, execution_receipt, "authoritative_risk_completed")
         if not risk_result.approved:
-            if proposal.entry_plan_id and proposal.execution_mode == "bitget_demo" and getattr(risk_result, "disposition", "REJECT") == "DEFER":
+            if proposal.entry_plan_id and _venue_capabilities.entry_execution_minimum_permission(proposal.execution_mode) is not None and getattr(risk_result, "disposition", "REJECT") == "DEFER":
                 return _wait_for_entry_market(proposal, owner_token, execution_receipt,
                     "canonical_risk_deferred", status="waiting_risk")
             if _receipt_only_risk_rejection(risk_result):
@@ -1479,7 +1479,7 @@ def _execute_proposal(
         allowed_mode = risk_result.allowed_execution_mode
 
         if execution_proposal.entry_plan_id:
-            if allowed_mode != "bitget_demo":
+            if _venue_capabilities.entry_execution_minimum_permission(allowed_mode) is None:
                 return _reject_for_exchange_constraints(
                     proposal,
                     "Entry Plan order tactics are unavailable for this execution mode.",

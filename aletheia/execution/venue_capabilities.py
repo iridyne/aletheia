@@ -57,6 +57,11 @@ ENTRY_EXECUTION_MINIMUM_PERMISSION: dict[str, str] = {
     "bitget_demo": "Full",
 }
 
+
+def entry_execution_minimum_permission(execution_mode: str | None) -> str | None:
+    """Return the registered Entry Plan permission for one execution identity."""
+    return ENTRY_EXECUTION_MINIMUM_PERMISSION.get(str(execution_mode or "").strip())
+
 _REGISTRY_CACHE_TTL = 14400  # 4h — same cadence as the OKX demo capability cache
 # universe_registry.market_type is free TEXT and is populated with the universe
 # vocabulary ("perp"/"spot"); every consumer of this cache indexes it with the
