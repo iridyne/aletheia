@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `11d0fdb6b522798bd59043ed9821158a41aca288`. This is a bounded evidence
+based on `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -10,7 +10,7 @@ and current Issue define the target; the older
 
 ## Remaining concrete-client reachability
 
-`UTA-S07` scans production imports outside `uta/` and `exchanges/`. Its three
+`UTA-S07` scans production imports outside `uta/` and `exchanges/`. Its two
 remaining importing modules do not perform interchangeable work:
 
 | Entrypoint / consumer | Actual read and downstream authority | Containment consequence |
@@ -18,7 +18,6 @@ remaining importing modules do not perform interchangeable work:
 | `server.routes.bitget` stored-credential connection endpoints, called by `ExecutionTab` | Previously three native clients read account/positions. They now call existing `uta.manager.probe_account_reachable` off the HTTP event loop. It accepts only complete account evidence, classifies errors without raw messages, and uses `query_uta` teardown. UI consumes `connected` / `error`; it does not consume the old Binance position count. | One existing account-probe owner; no separate route client or probe executor. Endpoint mode identifies the configured account, not trading permission. |
 | Same module's candidate-credential endpoints | Bitget still signs a candidate account-info request with `build_headers` and imports the legacy client's `BASE_URL`; Binance/OKX construct temporary CCXT balance probes. These requests do not persist candidate credentials. Credential-status/write routes are separate from the stored-account probe. | The module remains on the concrete-import allowlist. This cutover does not claim adapter-only credential ownership or remove candidate-probe side channels. |
 | `agent_runtime.scheduler._tpsl_fill_check_body` | The configured Bitget profile selects classic v2 plan history or UTA v3 `strategy-sub-orders`; UTA maps an exact filled `subOrderId` to `executeOrderId`. A UTA exact Order read proves account membership before `_claim_observed_tpsl_close`; native exact order fills then feed `materialize_bitget_close`, with another configured-identity check. | This is an active recovery/economic-evidence path, not inert history. Parent-trigger discovery remains a native venue concern; normalized `OrderQuery` / `OrderStatusReport` still do not own it. |
-| `execution.venue_capabilities.fetch_venue_capabilities` | Calls `OKXClient.load_demo_markets` for public sandbox listing facts. Cached consumers distinguish unavailable from a successfully loaded empty symbol set. | Importing a private-capable class does not make this read private. Preserve actual public listing/failure semantics when extracting it; do not replace it with account balance or an empty default. |
 
 ## Independently necessary evidence boundaries
 
@@ -64,7 +63,7 @@ from Gateway routing, position routing, pending/stale cleanup, funding
 settlement, Demo Risk freshness, startup scope, and account-mode reconciliation.
 Those consumers now reuse `config.exchanges` identity classifications. The
 remaining direct mode branches are the documented UTA profile composition or
-venue-native capability/recovery exceptions above; this change does not claim
+venue-native recovery exceptions above; this change does not claim
 that those concrete clients have moved out of Core reachability.
 
 The subsequent Entry identity pass also removes the generic consumers' direct
@@ -109,11 +108,11 @@ and is not runtime or exchange qualification evidence.
 The execution-identity seam is also merged at this checkpoint. Generic Gateway
 and capability consumers no longer import or maintain a second
 mode-to-venue dictionary; they read `config.exchanges.EXECUTION_MODE_VENUES`.
-The OKX Demo public sandbox loader remains the only specialized capability
-branch, and UTA profile composition/private-I-O boundaries are unchanged. The
-focused local tests (82 architecture/spec and 212 execution/registry/pipeline)
-cover this structural reuse; they do not prove private-account containment,
-deployment, or exchange qualification.
+The OKX Demo public sandbox loader now uses the managed generic CCXT factory,
+while UTA profile composition and the Bitget-native private-I/O boundary remain
+unchanged. The focused local tests (82 architecture/spec and 212
+execution/registry/pipeline) cover this structural reuse; they do not prove
+private-account containment, deployment, or exchange qualification.
 
 The reconciliation identity seam is also merged at this checkpoint. Reconciliation
 now derives its native Bitget versus non-Bitget UTA/CCXT partitions and live
@@ -148,6 +147,17 @@ type checks, build/performance budgets, Ruff, docs governance, preflight, local
 CI contract tests, and diff checks passed. The production pool's exact slot
 owners, stream/finite isolation, Fedora runtime identity, and account
 qualification remain open evidence gates.
+
+The public capability seam is now removed from the concrete private-I/O
+allowlist. `execution.venue_capabilities` delegates OKX demo symbol discovery
+to the existing managed generic CCXT factory, and the duplicate static method on
+`OKXClient` was deleted. The call loads only public sandbox market metadata and
+always closes its loop-local client; no account credentials, private endpoint,
+order mutation, or UTA identity is involved. UTA-S07 now leaves only the
+Bitget-native scheduler TP/SL recovery and candidate-credential route as
+concrete-client reachability exceptions. This structural evidence does not
+prove those two paths, production slot ownership, Fedora runtime, or account
+qualification.
 
 ## Startup filesystem repair ownership
 
