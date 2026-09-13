@@ -1,10 +1,14 @@
-"""Bitget API authentication — HMAC-SHA256 request signing."""
+"""Bitget API authentication — HMAC-SHA256 request signing + candidate credential probe."""
 
-import hmac
-import hashlib
 import base64
+import hashlib
+import hmac
 import time
-from datetime import datetime, timezone
+
+from aletheia.net import httpx_client
+
+BASE_URL = "https://api.bitget.com"
+DEMO_BASE_URL = "https://api.bitget.com"  # Same URL, demo distinguished by header
 
 
 def get_timestamp() -> str:
@@ -54,3 +58,35 @@ def build_headers(
     if demo:
         headers["paptrading"] = "1"
     return headers
+
+async def probe_candidate_credentials(
+    api_key: str,
+    api_secret: str,
+    passphrase: str,
+    profile: str,
+) -> dict:
+    """Verify-before-commit probe for CANDIDATE Bitget credentials.
+
+    Signs one read-only account-info request with the supplied credentials and
+    never stores, logs, or echoes them. Rejections return the stable
+    secret-safe ``credential_probe_rejected`` code without upstream message
+    text (a venue error can carry the signed request, i.e. the API key).
+    """
+    if profile not in ("demo", "live"):
+        raise ValueError("profile must be 'demo' or 'live'")
+    path = "/api/v2/spot/account/info"
+    try:
+        headers = build_headers(api_key, api_secret, passphrase, "GET", path, "", demo=profile == "demo")
+        async with httpx_client(timeout=15) as client:
+            resp = await client.get(f"{BASE_URL}{path}", headers=headers)
+            data = resp.json()
+        if data.get("code") == "00000":
+            return {"connected": True, "profile": profile}
+        return {"connected": False, "profile": profile, "error": "credential_probe_rejected"}
+    except Exception as e:
+        err_msg = type(e).__name__
+        if "timeout" in str(e).lower():
+            err_msg = "connection_timeout"
+        elif "connect" in str(e).lower():
+            err_msg = "connection_failed"
+        return {"connected": False, "profile": profile, "error": err_msg}
