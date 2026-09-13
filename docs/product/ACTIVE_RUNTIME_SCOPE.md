@@ -1,6 +1,6 @@
 ---
 schema_version: 2
-scope_id: crypto-stock-linked-exchange-mainline-v3
+scope_id: slim-core-bitget-http-v1
 status: active
 authorized_extensions:
   cn_equity:
@@ -19,20 +19,8 @@ instrument_profiles:
     market_types:
       - spot
       - perp
-  verified_stock_linked_perp:
-    asset_class: equity
-    asset_subclass: stock_linked_perp
-    venue: binance
-    reference_assets:
-      - SOXL
-      - SOXS
-    market_types:
-      - perp
-    identity_status: complete
 execution_modes:
   - bitget_demo
-  - okx_demo
-  - binance_testnet
 decision_authority: aletheia.agent_shell.entry_planner.system_operator_entry_planner
 risk_authority: aletheia.risk.engine.evaluate_proposal
 execution_entrypoint: aletheia.execution.gateway.submit_proposal
@@ -59,16 +47,21 @@ allowed to count as the active MVP mainline. It narrows the broader product map;
 it does not describe every research, observation, reconciliation, or historical
 compatibility path in the repository.
 
-The active instruments remain crypto spot/perpetuals plus the narrowly verified
-exchange-listed `stock_linked_perp` profile. For the latter, a complete
-`instrument-background/v1` and supported analysis context are mandatory; this
-does not declare ordinary equities, indices, commodities, prediction markets, or
-arbitrary exchange derivatives executable. All active instruments share one
-System Operator, one Risk Engine, and one Execution Gateway. The active execution
-targets are explicitly configured external demo/testnet accounts. The declaration
-lists registered routes; it does not certify credentials, instrument capabilities,
-Golden Path completion, replay evidence or economic qualification for an account.
-The local simulator and its former scope are [archived](../design/history/local_simulated_runtime_scope.md).
+The accepted [Slim Product boundary](CAPABILITY_GROUND_TRUTH.md), under
+[#3134](https://github.com/iridyne/aletheia/issues/3134), is exchange/provider-agnostic
+Core plus the active Bitget Exchange Extension and configured HTTP Model Endpoints.
+Crypto spot/perpetuals on Bitget Demo are the current qualification route.
+OKX/Binance and the formerly registered stock-linked profile are frozen, not
+active Runtime support. Their historical account/instrument identities remain
+readable and retain their original economics; this declaration does not rewrite
+history or remove existing exposure-recovery obligations.
+
+The existing startup gate consumes `execution_modes` above: frozen routes do not
+gain new-entry admission simply because an adapter still exists. This declaration
+does not prove credentials, Golden Path completion, deployment or economic
+qualification. With no usable Exchange Extension, trading remains unavailable
+while Core diagnostics/history must remain accessible. Live remains outside
+this scope. The former simulator scope is [archived](../design/history/local_simulated_runtime_scope.md).
 
 For Universe-linked entry, the same System Operator authority is expressed as
 Candidate → canonical Planning Cycle → immutable Entry Plan → Proposal. All new
