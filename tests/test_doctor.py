@@ -1309,6 +1309,33 @@ def test_kill_switch_active_is_a_blocker(monkeypatch):
     assert ks and ks[0].severity == "blocker"
 
 
+def test_demo_margin_gate_tracks_registered_execution_modes(monkeypatch):
+    import aletheia.config.exchanges as exchanges
+    import aletheia.config.loader as loader
+    from types import SimpleNamespace
+
+    cfg = SimpleNamespace(
+        agent=SimpleNamespace(permission_mode="Paper"),
+        live=SimpleNamespace(state="live_disabled"),
+        exchange=SimpleNamespace(mode="demo", paper_execution_mode="future_demo"),
+        risk=SimpleNamespace(max_demo_position_margin_usdt=0.0),
+        runtime=SimpleNamespace(kill_switch_active=False, paused=False),
+    )
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr(exchanges, "DEMO_EXECUTION_MODES", frozenset({"future_demo"}))
+    import aletheia.agent_runtime.pause_ownership as pause_ownership
+
+    monkeypatch.setattr(pause_ownership, "active_pause_owners", lambda _cfg: [])
+    monkeypatch.setattr(pause_ownership, "active_pause_blocker_names", lambda _cfg: [])
+    monkeypatch.setattr(pause_ownership, "pause_blocked_reason", lambda _cfg: None)
+
+    report = dx.Report(generated_at="t")
+    dx._probe_config_gates(report)
+
+    check = next(c for c in report.checks if c.name == "config.demo_margin_cap")
+    assert check.severity == "blocker"
+
+
 def test_invalid_persisted_config_reports_safe_validation_path(monkeypatch):
     import aletheia.config.loader as loader
     from pydantic import ValidationError
