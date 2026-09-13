@@ -66,35 +66,26 @@ def _check_default_provider(cfg: "AletheiaConfig") -> ConfigInconsistency | None
     return None
 
 
-# NOTE: credentials are loaded via get_secret() (keyring / encrypted store), NOT from
-# environment variables — so the fix hints must point at the secrets store, not env vars.
-_DEMO_CRED_MAP: dict[str, tuple[str, str]] = {
-    "bitget_demo": ("bitget.demo.api_key", "Configure demo credentials via Settings → Credentials (or `aletheia secrets set bitget.demo.api_key` / `.api_secret` / `.passphrase`)"),
-    "okx_demo": ("okx.demo.api_key", "Configure demo credentials via Settings → Credentials (or `aletheia secrets set okx.demo.api_key` / `.api_secret` / `.passphrase`)"),
-    "binance_testnet": ("binance.testnet.api_key", "Configure testnet credentials via Settings → Credentials (or `aletheia secrets set binance.testnet.api_key` / `.api_secret`)"),
-}
-
-
 def _check_demo_credentials(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
-    if cfg.exchange.mode != "demo":
+    from aletheia.config.exchanges import DEMO_EXECUTION_MODES
+    from aletheia.uta.manager import build_uta_registry
+
+    mode = cfg.exchange.paper_execution_mode
+    if cfg.exchange.mode != "demo" or mode not in DEMO_EXECUTION_MODES:
         return None
-    pem = cfg.exchange.paper_execution_mode
-    if pem not in _DEMO_CRED_MAP:
-        return None
-    secret_key, fix_hint = _DEMO_CRED_MAP[pem]
     try:
-        from aletheia.config.secrets import get_secret
-        key = get_secret(secret_key)
-        if not key:
-            return ConfigInconsistency(
-                field_path="exchange.paper_execution_mode",
-                severity="warning",
-                message=f"paper_execution_mode={pem} but demo API credentials are missing",
-                fix_hint=fix_hint,
-            )
-    except Exception:  # noqa: BLE001 — secrets layer might not be available
-        pass
-    return None
+        registry = build_uta_registry(cfg, execution_modes=(mode,))
+        if registry.configured_identities():
+            return None
+        detail = "demo account credentials are incomplete"
+    except Exception:  # noqa: BLE001 — unavailable is not configured
+        detail = "demo account credential configuration is unavailable"
+    return ConfigInconsistency(
+        field_path="exchange.paper_execution_mode",
+        severity="warning",
+        message=f"paper_execution_mode={mode}: {detail}",
+        fix_hint="Check the selected account credentials via Settings → Credentials",
+    )
 
 
 def _check_exchange_consistency(cfg: "AletheiaConfig") -> ConfigInconsistency | None:
