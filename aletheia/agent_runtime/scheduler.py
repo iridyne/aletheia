@@ -20,7 +20,7 @@ from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from aletheia.config.exchanges import is_live_execution_mode
+from aletheia.config.exchanges import execution_mode_environment, is_live_execution_mode
 from aletheia.config.loader import load_config
 
 logger = logging.getLogger("aletheia.scheduler")
@@ -2695,7 +2695,9 @@ def _tpsl_fill_check_body():
         async def _check_account(execution_mode, account_candidates):
             if not account_candidates:
                 return {"materialized": [], "errors": []}
-            account_mode = "demo" if execution_mode == "bitget_demo" else "live"
+            account_mode = execution_mode_environment(execution_mode)
+            if account_mode not in {"demo", "live"}:
+                raise ValueError("bitget_account_environment_unavailable")
             from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
             reader_identity = _configured_identity(execution_mode)

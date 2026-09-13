@@ -87,3 +87,13 @@ def test_reconciliation_partitions_follow_registered_uta_identities():
     assert _BITGET_ACCOUNT_MODES == bitget_modes
     assert set(_MULTIBROKER_ACCOUNT_MODES) == multibroker_modes
     assert set(_CCXT_LIVE_MODES) == ccxt_live_modes
+
+
+def test_bitget_tpsl_recovery_uses_registered_account_environment():
+    import inspect
+
+    from aletheia.agent_runtime import scheduler
+
+    source = inspect.getsource(scheduler._tpsl_fill_check_body)
+    assert "execution_mode_environment(execution_mode)" in source
+    assert 'account_mode = "demo" if execution_mode == "bitget_demo" else "live"' not in source
