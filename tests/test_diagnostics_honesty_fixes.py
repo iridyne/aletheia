@@ -107,6 +107,28 @@ def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(m
     assert _check_scheduler_needs_llm(cfg) is None
 
 
+def test_demo_credential_diagnostic_requires_complete_scoped_account(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.diagnostics.config_consistency import _check_demo_credentials
+    from aletheia.uta import manager
+
+    cfg = AletheiaConfig()
+    cfg.exchange.mode = "demo"
+    cfg.exchange.paper_execution_mode = "bitget_demo"
+    credentials = {"api_key": "synthetic"}
+
+    def scoped_secret(key):
+        assert key.startswith("bitget.demo."), "unrelated credentials requested"
+        return credentials.get(key.rsplit(".", 1)[1])
+
+    monkeypatch.setattr(manager, "get_secret", scoped_secret)
+    monkeypatch.setattr(manager, "get_credential_generation", lambda _scope: 0)
+    finding = _check_demo_credentials(cfg)
+    assert finding is not None and finding.severity == "warning"
+    credentials.update(api_secret="synthetic", passphrase="synthetic")
+    assert _check_demo_credentials(cfg) is None
+
+
 # ---------------------------------------------------------------------------
 # #178 — doctor honours all three source severities
 # ---------------------------------------------------------------------------
