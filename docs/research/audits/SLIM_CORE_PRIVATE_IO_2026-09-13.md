@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `8965e969fc1276641cd13b2418b88498a3c58796`. This is a bounded evidence
+based on `8a4309dc84e814c6fee75fcbccd5f884f868e07d`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -122,6 +122,20 @@ mode-list duplicate without moving the documented Bitget native private-I/O
 exception or changing account proof/materialization semantics. The 105-test
 focused local evidence is structural and mocked only; it does not prove private
 account containment, deployment, or exchange qualification.
+
+The subsequent profile-generation repair keeps private-account evidence bound to
+the selected identity: changing the configured Bitget profile invalidates both
+registered Bitget demo and live UTA generations. Doctor's demo gate and native
+TP/SL recovery now consume the registered environment set rather than separate
+mode copies. No credentials were read or changed, and no account qualification is
+implied.
+
+The stale Gateway-lock test import was deleted after the implementation had
+already been retired; no replacement lock owner or private-I/O path was added.
+The active model healthcheck's stale OAuth-refresh wording was corrected to the
+shared inference broker. OAuth/Codex/Databricks references that remain in source
+are historical config identity/read surfaces or history documentation, not live
+transport or credential-refresh callers.
 
 ## Startup filesystem repair ownership
 

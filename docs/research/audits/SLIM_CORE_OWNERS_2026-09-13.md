@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `8965e969fc1276641cd13b2418b88498a3c58796`, under
+Source checkpoint: `8a4309dc84e814c6fee75fcbccd5f884f868e07d`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -193,3 +193,20 @@ recovery exception and unknown-outcome handling while preventing future mode
 identity drift. Focused evidence is 105 reconciliation/UTA/identity/pipeline
 tests with Ruff and local preflight/plan passing; no account, route, or runtime
 authority changed.
+
+The profile-generation seam is now merged at this checkpoint. A Bitget profile
+change advances the UTA configuration generation for every registered Bitget
+execution identity, so cached demo/live account evidence cannot survive a
+credential/profile switch. The Doctor demo margin gate likewise consumes the
+registered demo/testnet identity set, and native Bitget TP/SL recovery derives
+its account environment from the same registry. These are identity/conformance
+repairs only; credential scope, Risk policy, submission authority, and runtime
+state are unchanged.
+
+The stale-test retirement seam removed a test-only import of the already-retired
+Gateway lock module; historical `ps_*` schema/read surfaces remain untouched.
+The active model healthcheck documentation now describes the shared inference
+broker rather than a retired OAuth-refresh path. Neither change adds a runtime
+mainline, compatibility facade, transport, credential authority, or external
+I/O. Local focused tests, Ruff, documentation governance, and diff checks pass;
+remote CI remains retired and is not evidence.
