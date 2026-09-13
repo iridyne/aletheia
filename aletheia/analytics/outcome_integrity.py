@@ -243,14 +243,33 @@ _ATTRIBUTION_SQL = """
               SELECT 1 FROM orders leg
               WHERE leg.position_id = p.id
                 AND (leg.close_reason IS NULL OR trim(leg.close_reason) = '')
-                AND (leg.proposal_id IS NULL OR leg.proposal_id <> tp.id)
+                AND (
+                    leg.proposal_id IS NULL
+                    OR (leg.proposal_id <> tp.id AND NOT EXISTS (
+                        SELECT 1 FROM trade_proposals leg_tp
+                        WHERE leg_tp.id = leg.proposal_id
+                          AND tp.entry_plan_id IS NOT NULL
+                          AND leg_tp.entry_plan_id = tp.entry_plan_id
+                          AND leg.entry_plan_id = tp.entry_plan_id
+                          AND leg_tp.entry_leg_index IN (0, 1)
+                          AND leg_tp.entry_leg_index <> coalesce(tp.entry_leg_index, 0)
+                          AND leg_tp.opportunity_id IS tp.opportunity_id
+                          AND leg_tp.symbol = tp.symbol AND leg.symbol = o.symbol
+                          AND leg_tp.market_type = tp.market_type AND leg.market_type = o.market_type
+                          AND leg_tp.direction = tp.direction AND leg.direction = o.direction
+                          AND leg_tp.execution_mode = tp.execution_mode
+                          AND leg.execution_mode = o.execution_mode
+                          AND o.uta_account_identity_json IS NOT NULL
+                          AND leg.uta_account_identity_json = o.uta_account_identity_json
+                    ))
+                )
           )
     )
 """
 
 
 def attribution_chain_complete(row: dict[str, Any], *, db: Any = None) -> bool:
-    """Prove source-specific ancestry and every entry leg's Proposal backlink.
+    """Prove source ancestry and same-Proposal or exact same-Plan leg backlinks.
 
     Universe entries use their immutable Plan and its completed Generation /
     Candidate binding. Opportunity and Serenity source history keeps its existing
