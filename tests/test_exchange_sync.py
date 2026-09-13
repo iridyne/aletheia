@@ -359,7 +359,7 @@ def test_unified_cache_generation_mismatch_revokes_authority(monkeypatch):
 
             return (UTAAccountIdentity.model_validate(identity),)
 
-    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: Registry())
     state = {
         "execution_modes": ["okx_demo"],
         "accounts": [
@@ -396,7 +396,7 @@ def test_unified_cache_rejects_legacy_adapter_identity(monkeypatch):
 
     cfg = AletheiaConfig()
     monkeypatch.setattr(es, "load_config", lambda: cfg)
-    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry())
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: Registry())
     state = {
         "execution_modes": ["okx_demo"],
         "accounts": [
@@ -450,7 +450,7 @@ def test_unified_cache_validates_only_persisted_account_scope(monkeypatch):
     cfg = AletheiaConfig()
     monkeypatch.setattr(es, "load_config", lambda: cfg)
     monkeypatch.setattr(
-        "aletheia.uta.manager.build_uta_registry", lambda _cfg: Registry()
+        "aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: Registry()
     )
 
     paper_state = {
@@ -806,8 +806,7 @@ def test_exact_live_refresh_does_not_replace_demo_cache(tmp_path, monkeypatch):
         adapter_implementation="CCXTUTAAdapter", adapter_version="1", ccxt_version="4.5.56")
     live = demo.model_copy(update={"account_id": "okx_live_limited",
         "execution_mode": "okx_live_limited", "environment": "live", "profile": "okx_live"})
-    monkeypatch.setattr(manager, "build_uta_registry", lambda cfg: SimpleNamespace(
-        configured_identities=lambda: (demo, live)))
+    monkeypatch.setattr(manager, "build_uta_registry", lambda cfg, **_kwargs: SimpleNamespace(configured_identities=lambda: (demo, live)))
 
     def query(*, execution_modes=None):
         identity = live if execution_modes == (live.execution_mode,) else demo

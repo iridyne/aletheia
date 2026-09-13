@@ -126,7 +126,7 @@ def _query_exchange_fill(
         identity = next(
             (
                 candidate
-                for candidate in build_uta_registry().configured_identities()
+                for candidate in build_uta_registry(execution_modes=(execution_mode,)).configured_identities()
                 if candidate.execution_mode == execution_mode
             ),
             None,
