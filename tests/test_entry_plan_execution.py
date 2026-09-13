@@ -563,7 +563,7 @@ def test_dynamic_entry_plan_invalidation_covers_the_full_entry_zone():
 
 
 def test_realized_liquidity_comes_only_from_private_fill_evidence():
-    from aletheia.execution.exchange_materialization import parse_bitget_private_fills
+    from tests.fill_reports import reports
 
     base = {
         "orderId": "EX-1",
@@ -574,8 +574,8 @@ def test_realized_liquidity_comes_only_from_private_fill_evidence():
         "feeCoin": "USDT",
         "cTime": "1787788800000",
     }
-    assert parse_bitget_private_fills([{**base, "tradeScope": "M"}])[0].realized_liquidity == "maker"
-    assert parse_bitget_private_fills([base])[0].realized_liquidity is None
+    assert reports([{**base, "tradeScope": "M"}])[0].liquidity_side == "maker"
+    assert reports([base])[0].liquidity_side is None
 
 
 def test_canonical_risk_enforces_the_bound_entry_plan_envelope(monkeypatch):

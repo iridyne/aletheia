@@ -793,7 +793,7 @@ def _write_filled_gap_event(
 
 
 class _UTAReconciliationProjection:
-    """Temporary raw-row projection for the existing atomic materializer."""
+    """Typed UTA projection for the existing atomic materializer."""
 
     def __init__(self, execution_mode: str, expected_account: UTAAccountIdentity) -> None:
         self.execution_mode = execution_mode
