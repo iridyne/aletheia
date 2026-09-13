@@ -46,8 +46,14 @@ def _setup_db(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     loader._invalidate_config_cache()
+    (tmp_path / "config.yaml").write_text(
+        "exchange:\n"
+        "  name: bitget\n"
+        "  mode: demo\n"
+        "  paper_execution_mode: bitget_demo\n",
+        encoding="utf-8",
+    )
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
-
     sq._db_conn = None
     conn = sqlite3.connect(str(tmp_path / "app.db"), check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -78,7 +84,13 @@ def _configure_exchange(name: str) -> None:
     import aletheia.config.loader as loader
 
     loader.CONFIG_PATH.write_text(
-        yaml.safe_dump({"exchange": {"name": name, "mode": "live"}}),
+        yaml.safe_dump({
+            "exchange": {
+                "name": name,
+                "mode": "live",
+                "paper_execution_mode": "bitget_demo",
+            }
+        }),
         encoding="utf-8",
     )
     loader._invalidate_config_cache()

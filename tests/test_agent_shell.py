@@ -1970,6 +1970,7 @@ async def test_runtime_explains_why_proposal_failed_from_risk_decision(tmp_path,
         market_type="spot",
         direction="short",
         status="rejected",
+        execution_mode="bitget_demo",
         agent_rationale="Funding reversal thesis.",
     )
     insert_trade_proposal(proposal)
