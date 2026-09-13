@@ -400,6 +400,13 @@ export class ApiError extends Error {
 	}
 }
 
+export function queryRetryDelay(_attempt: number, error: unknown): number {
+	const retryAfter = error instanceof ApiError ? Number(error.retryAfter) : Number.NaN;
+	return Number.isFinite(retryAfter) && retryAfter >= 0
+		? Math.min(retryAfter * 1000, 30_000)
+		: 1_000;
+}
+
 function errorField(value: unknown): string | undefined {
 	if (typeof value !== "string" && typeof value !== "number") return undefined;
 	const text = String(value).trim();

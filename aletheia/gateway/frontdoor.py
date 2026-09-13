@@ -143,6 +143,46 @@ async def _probe_backend(backend_url: str) -> dict:
         }
 
 
+async def _probe_backend_liveness(backend_url: str) -> dict:
+    """Read backend liveness without consuming the ordinary proxy pool."""
+    global _last_backend_ready_at
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT, trust_env=False) as client:
+            resp = await client.get(f"{backend_url.rstrip('/')}/_infra/livez")
+        if resp.status_code == 200:
+            from datetime import datetime, timezone
+
+            _last_backend_ready_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict):
+                return {**payload, "ok": True}
+        return {
+            "ok": False,
+            "error": "backend_unavailable",
+            "status_code": resp.status_code,
+            "last_seen_at": _last_backend_ready_at,
+        }
+    except Exception as exc:  # noqa: BLE001 - diagnostics must not raise
+        emit_infra_event(
+            severity="warning",
+            source="frontdoor",
+            code="backend_unavailable",
+            entity_id=backend_url,
+            message="Backend worker is unreachable from the frontdoor",
+            action="gateway_recovering",
+            metadata={"backend_base_url": backend_url, "error": type(exc).__name__},
+            dedupe_sec=30,
+        )
+        return {
+            "ok": False,
+            "error": "backend_unavailable",
+            "last_seen_at": _last_backend_ready_at,
+        }
+
+
 def _filtered_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
     return {
         key: value
@@ -423,6 +463,25 @@ def create_app(
         query = request.url.query.encode("utf-8") if request.url.query else None
         target = httpx.URL(f"{backend}/_infra/doctor", query=query)
         return await proxy_http(request, "_infra/doctor", backend, target)
+
+    @app.get("/api/ready")
+    async def api_ready():
+        payload = await _probe_backend_liveness(_backend_url())
+        if payload.get("ok"):
+            return JSONResponse(status_code=200, content=payload)
+        payload.setdefault("reason", "backend_unavailable")
+        payload.setdefault("message", "Aletheia backend worker is restarting or unreachable")
+        payload.setdefault("action", "gateway_recovering")
+        payload.setdefault("retry_after_sec", 3)
+        return JSONResponse(
+            status_code=503,
+            content=payload,
+            headers={
+                "Cache-Control": "no-store",
+                "Retry-After": "3",
+                "X-Aletheia-Degraded": "backend_unavailable",
+            },
+        )
 
     @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     async def proxy_api(path: str, request: Request):

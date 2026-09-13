@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, api, decodeOhlcvResponse, extractApiError, parseApiError } from './client'
+import { ApiError, api, decodeOhlcvResponse, extractApiError, parseApiError, queryRetryDelay } from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -57,6 +57,15 @@ describe('Remote Control Token browser storage', () => {
 })
 
 describe('API errors', () => {
+  it('honors a bounded Retry-After delay for query retries', () => {
+    const error = new ApiError(503, 'capacity')
+    error.retryAfter = '3'
+    expect(queryRetryDelay(0, error)).toBe(3000)
+    error.retryAfter = '999'
+    expect(queryRetryDelay(0, error)).toBe(30000)
+    expect(queryRetryDelay(0, new Error('other'))).toBe(1000)
+  })
+
   it('requests usage insights for the selected supported window', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ window: { days: 30 } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
