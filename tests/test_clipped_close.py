@@ -12,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 import json
 from datetime import datetime, timezone
-
+from tests.fill_reports import reports
 
 class _CloseAdapter:
     def __init__(self, captured):
@@ -105,8 +105,8 @@ def _seed_position_with_claim(db, *, position_id: str, order_id: str,
 
 
 def _fill_rows(quantity: float, exchange_order_id: str = "EX-CLIP-1",
-               trade_id: str | None = None, fee_coin: str = "USDT") -> list[dict]:
-    return [{
+               trade_id: str | None = None, fee_coin: str = "USDT"):
+    return reports([{
         "orderId": exchange_order_id,
         "tradeId": trade_id or f"FILL-{exchange_order_id}",
         "fillPrice": "1.4800",
@@ -114,7 +114,7 @@ def _fill_rows(quantity: float, exchange_order_id: str = "EX-CLIP-1",
         "fee": "0.2",
         "feeCoin": fee_coin,
         "cTime": "1787409000000",
-    }]
+    }], symbol="XRP/USDT", market_type="usdt_futures")
 
 
 def test_clipped_close_exact_fill_reduces_position_and_releases_claim(

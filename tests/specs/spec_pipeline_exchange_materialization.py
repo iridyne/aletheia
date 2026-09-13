@@ -15,6 +15,7 @@ import sqlite3
 import threading
 
 import pytest
+from tests.fill_reports import reports
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -94,20 +95,52 @@ def _private_fill(
     fee: float | None,
     filled_at_ms: int,
     fee_currency: str = "USDT",
-) -> dict:
-    row = {
+    market_type: str = "spot",
+):
+    raw = {
         "orderId": exchange_order_id,
         "tradeId": trade_id,
         "cTime": str(filled_at_ms),
         "feeCoin": fee_currency,
     }
     if price is not None:
-        row["fillPrice"] = str(price)
+        raw["fillPrice"] = str(price)
     if quantity is not None:
-        row["fillQuantity"] = str(quantity)
+        raw["fillQuantity"] = str(quantity)
     if fee is not None:
-        row["fee"] = str(fee)
-    return row
+        raw["fee"] = str(fee)
+    received_at = datetime.fromtimestamp(filled_at_ms / 1000, tz=timezone.utc)
+    try:
+        return reports(
+            [raw],
+            identity=_spec_identity(),
+            symbol="BTC/USDT",
+            market_type=market_type,
+            received_at=received_at,
+        )[0]
+    except ValueError:
+        from aletheia.uta.compat import instrument_from_local
+        from aletheia.uta.models import FillReport
+
+        # Keep malformed-boundary cases representable so Core can prove its
+        # fail-closed behavior without accepting raw dictionaries.
+        return FillReport.model_construct(
+            identity=_spec_identity(),
+            instrument=instrument_from_local("BTC/USDT", market_type),
+            client_order_id=None,
+            venue_order_id=exchange_order_id,
+            venue_fill_id=trade_id,
+            side="buy",
+            position_side=None,
+            trade_intent=None,
+            quantity=raw.get("fillQuantity"),
+            price=raw.get("fillPrice"),
+            fee=raw.get("fee"),
+            fee_currency=fee_currency,
+            liquidity_side=None,
+            executed_at=received_at,
+            received_at=received_at,
+        )
 
 
 def _seed_native_chain(
@@ -911,14 +944,13 @@ def test_submission_unknown_recovers_exchange_id_from_client_oid(tmp_path, monke
         fee=0.04635,
         filled_at_ms=1_784_300_000_000,
     )
-    fill["clientOid"] = ""
-    _patch_bitget_history(monkeypatch, [fill])
     _, proposal, _, order = _seed_native_chain(
         exchange_order_id=None,
         order_status="submission_unknown",
         proposal_status="submission_unknown",
     )
-    fill["clientOid"] = proposal.id
+    fill = fill.model_copy(update={"client_order_id": proposal.id})
+    _patch_bitget_history(monkeypatch, [fill])
 
     result = reconcile()
 

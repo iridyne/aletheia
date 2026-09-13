@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.storage import repositories as repo
-
+from tests.fill_reports import reports
 _MODE = "bitget_demo"
 
 
@@ -18,7 +18,6 @@ _MODE = "bitget_demo"
 def _isolate_entry_contract(monkeypatch):
     """Neutralise the entry-contract fingerprint match, exactly as the owning
     entry-plan test module does.
-
     `_require_ai_entry_authority` compares the plan's behaviour/schema
     fingerprints against `entry_contract_fingerprints()`. `_plan()` seeds
     deliberately synthetic fingerprints, so a fixture plan can never match the
@@ -234,16 +233,18 @@ def _seeded_plan_with(plan_updates):
 
 
 def _private_entry_fill(order: dict, *, quantity=None, fee="0.02", fee_coin="USDT"):
-    return {
+    row = {
         "orderId": order["exchange_order_id"],
         "clientOid": order["client_order_id"],
         "tradeId": f"private-entry-{order['id']}",
         "fillPrice": "100.05",
         "fillQuantity": str(quantity if quantity is not None else order["quantity"]),
-        "fee": fee,
         "feeCoin": fee_coin,
         "cTime": str(int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000),
     }
+    if fee is not None:
+        row["fee"] = fee
+    return reports([row], symbol=order["symbol"], market_type=order["market_type"])[0]
 
 
 def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
@@ -284,21 +285,7 @@ def test_exchange_entry_plan_opens_a_position_through_risk_and_the_broker(
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
 
     materialized = materialize_bitget_entry(
-        order["id"],
-        [
-            {
-                "orderId": order["exchange_order_id"],
-                "clientOid": order["client_order_id"],
-                "tradeId": f"private-entry-{order['id']}",
-                "fillPrice": "100.05",
-                "fillQuantity": str(order["quantity"]),
-                "fee": "0.02",
-                "feeCoin": "USDT",
-                "cTime": str(
-                    int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000
-                ),
-            }
-        ],
+        order["id"], [_private_entry_fill(order)]
     )
     assert materialized.state == "filled", materialized
 
@@ -542,11 +529,9 @@ def test_entry_with_unavailable_cost_is_not_reported_as_complete(
     order = repo.get_order(result["order_id"])
 
     row = _private_entry_fill(order, fee=fee, fee_coin=fee_coin)
-    if fee is None:
-        row.pop("fee")
 
     try:
-        materialized = materialize_bitget_entry(order["id"], row and [row])
+        materialized = materialize_bitget_entry(order["id"], [row])
     except Exception:
         # Refusing outright is an acceptable, honest answer for evidence that
         # cannot be costed.

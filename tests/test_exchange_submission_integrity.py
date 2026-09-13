@@ -14,12 +14,12 @@ import ccxt
 import httpx
 import pytest
 
+from datetime import datetime, timezone
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage.sqlite import reset_db
-
 from tests.uta.test_execution_coordinator import _insert_bound_position
 from aletheia.uta.models import SubmissionReport, CommandEvidence, OrderStatusReport, OrderLifecycle
-from datetime import datetime, timezone
+from tests.fill_reports import reports
 
 
 def _report(command, *, venue_order_id, state="open", filled_quantity=0, evidence=CommandEvidence.ACKNOWLEDGED, reason_code=None):
@@ -77,8 +77,8 @@ def _private_fill(
     *,
     quantity: float,
     suffix: str,
-) -> dict:
-    return {
+):
+    return reports([{
         "orderId": exchange_order_id,
         "clientOid": client_order_id,
         "tradeId": f"private-trade-{suffix}",
@@ -87,7 +87,7 @@ def _private_fill(
         "fee": "0.01",
         "feeCoin": "USDT",
         "cTime": "1784050000000",
-    }
+    }], symbol="BTC/USDT", market_type="spot")[0]
 
 
 @pytest.mark.parametrize("execution_mode", MODES)

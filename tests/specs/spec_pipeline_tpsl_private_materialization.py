@@ -12,6 +12,7 @@ import pytest
 from aletheia.uta.compat import utc
 from tests.specs.spec_meta import SpecClaim, spec_claim
 from tests.specs.uta_private_history import _identity
+from tests.fill_reports import reports
 
 
 def _setup_db(tmp_path, monkeypatch):
@@ -121,6 +122,10 @@ def _private_close_fill(exchange_order_id: str, *, filled_at_ms: int = 1_784_050
         "feeCoin": "USDT",
         "cTime": str(filled_at_ms),
     }
+
+
+def _private_close_report(exchange_order_id: str, identity):
+    return reports([_private_close_fill(exchange_order_id)], identity=identity)[0]
 
 
 def _patch_configured_reader(monkeypatch, *identities):
@@ -277,9 +282,9 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
                 "executeOrderId": "",
             }]
 
-        async def get_order_fills(self, *, order_id, symbol, market_type):
+        async def get_order_fill_reports(self, *, order_id, symbol, market_type, identity):
             calls.append(("fills", order_id, symbol, market_type))
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -382,9 +387,9 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
                 "executeOrderId": "EXEC-LIVE-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, symbol, market_type):
+        async def get_order_fill_reports(self, *, order_id, symbol, market_type, identity):
             calls.append(("fills", order_id, symbol, market_type))
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -514,7 +519,7 @@ def test_incomplete_or_ambiguous_plan_identity_stays_open(
         async def get_plan_order_history(self, **kwargs):
             return history
 
-        async def get_order_fills(self, **kwargs):
+        async def get_order_fill_reports(self, **kwargs):
             raise AssertionError("invalid plan identity must not query fills")
 
         async def close(self):
@@ -577,13 +582,13 @@ def test_private_fill_query_failure_keeps_claim_open(tmp_path, monkeypatch):
                 "executeOrderId": "EXEC-TP-X",
             }]
 
-        async def get_order_fills(self, **kwargs):
+        async def get_order_fill_reports(self, **kwargs):
             exact_fill_calls.append((
                 kwargs["order_id"], kwargs["symbol"], kwargs["market_type"]
             ))
             if not fills_available:
                 raise RuntimeError("private history incomplete")
-            return [_private_close_fill(kwargs["order_id"])]
+            return [_private_close_report(kwargs["order_id"], kwargs["identity"])]
 
         async def get_open_orders(self, **kwargs):
             return []
@@ -720,8 +725,8 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
                 "executeOrderId": f"EXEC-{order_id}",
             }]
 
-        async def get_order_fills(self, **_kwargs):
-            return [{"tradeId": "private-fill"}]
+        async def get_order_fill_reports(self, *, identity, **_kwargs):
+            return [_private_close_report("private-order", identity)]
 
         async def close(self):
             return None
@@ -835,11 +840,11 @@ def test_rotated_reader_identity_never_stamps_entry_identity(tmp_path, monkeypat
                 "executeOrderId": "EXEC-ROT-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, symbol, market_type):
+        async def get_order_fill_reports(self, *, order_id, symbol, market_type, identity):
             calls.append(("fills", order_id))
             if not fills_available:
                 raise RuntimeError("private fills unavailable")
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def place_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never place an order")
@@ -930,10 +935,10 @@ def test_pre_proof_pending_claim_is_never_advanced(tmp_path, monkeypatch):
                 "executeOrderId": "EXEC-LEG-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
             if not fills_available:
                 raise RuntimeError("private history incomplete")
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def close(self):
             return None
@@ -1046,9 +1051,9 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
                 "executeOrderId": "EXEC-UNC-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
             venue_reads.append("fills")
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def close(self):
             venue_reads.append("close")
@@ -1158,9 +1163,9 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
                 "executeOrderId": "EXEC-BND-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
             raw_fill_reads.append(order_id)
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def close(self):
             return None
@@ -1240,8 +1245,8 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
                 "executeOrderId": "EXEC-BND3-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
-            rows = [_private_close_fill(order_id)]
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
+            rows = [_private_close_report(order_id, identity)]
             if rotate_on_fill_read:
                 _patch_configured_reader(monkeypatch, rotated_identity)
             return rows
@@ -1277,8 +1282,8 @@ def test_evidence_scope_is_bounded_and_rotation_after_discovery_claims_nothing(
                 "executeOrderId": order_id.replace("PLAN-", "EXEC-"),
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
-            return [_private_close_fill(order_id)]
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
+            return [_private_close_report(order_id, identity)]
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _StableClient)
     summary = scheduler._tpsl_fill_check_body()
@@ -1339,9 +1344,9 @@ def test_position_far_older_than_retention_still_converges(tmp_path, monkeypatch
                 "executeOrderId": "EXEC-OLD-SL",
             }]
 
-        async def get_order_fills(self, *, order_id, **_kwargs):
+        async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
             raw_fill_reads.append(order_id)
-            return [_private_close_fill(order_id)]
+            return [_private_close_report(order_id, identity)]
 
         async def close(self):
             return None

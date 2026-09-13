@@ -20,7 +20,7 @@ from aletheia.execution.position_enrichment import liquidation_price_for
 from aletheia.execution.stops import merge_protective_stop
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Position, new_id
-
+from aletheia.uta.models import FillReport
 
 def _ms_to_iso(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).isoformat()
@@ -184,131 +184,65 @@ def _timestamp_ms(value) -> int | None:
     return int(round(parsed.timestamp() * 1000))
 
 
-def _fee_from_row(row: dict) -> tuple[float | None, str]:
-    """Keep missing cost distinct from zero; reject malformed supplied amounts."""
-    direct = row.get("fee")
-    if direct not in (None, ""):
-        try:
-            fee = abs(float(direct))
-        except (TypeError, ValueError) as exc:
-            raise PrivateFillEvidenceInvalid("private fill row has malformed fee") from exc
-        if not math.isfinite(fee):
-            raise PrivateFillEvidenceInvalid("private fill row has non-finite fee")
-        return fee, str(row.get("feeCoin") or "")
-
-    details = row.get("feeDetail")
-    if isinstance(details, dict):
-        details = [details]
-    if details is None or details == []:
-        return None, str(row.get("feeCoin") or "")
-    if not isinstance(details, list):
-        raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail")
-    fees: list[float] = []
-    currencies: set[str] = set()
-    missing_amount = False
-    for detail in details:
-        if not isinstance(detail, dict):
-            raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail")
-        raw_fee = detail.get("totalFee")
-        if raw_fee in (None, ""):
-            raw_fee = detail.get("fee")
-        currencies.add(str(detail.get("feeCoin") or "").strip().upper())
-        if raw_fee in (None, ""):
-            missing_amount = True
-            continue
-        try:
-            fee = abs(float(raw_fee))
-        except (TypeError, ValueError) as exc:
-            raise PrivateFillEvidenceInvalid("private fill row has malformed fee detail") from exc
-        if not math.isfinite(fee):
-            raise PrivateFillEvidenceInvalid("private fill row has non-finite fee")
-        fees.append(fee)
-    total = sum(fees)
-    if len(currencies) != 1 or not math.isfinite(total):
-        raise PrivateFillEvidenceInvalid("private fill row has ambiguous fee total")
-    return (None if missing_amount else total), currencies.pop()
-
-
-def _coerce_rows(rows) -> list[dict]:
-    if isinstance(rows, dict):
-        rows = rows.get("fillList") or rows.get("list") or []
-    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-
-
-def parse_bitget_private_fills(rows) -> list[PrivateFill]:
-    """Normalize one order-scoped batch or reject it as unusable."""
-    parsed: dict[str, PrivateFill] = {}
-    for row in _coerce_rows(rows):
-        fill_id = str(row.get("tradeId") or row.get("execId") or "").strip()
-        exchange_order_id = str(row.get("orderId") or row.get("order_id") or "").strip()
-        client_order_id = str(row.get("clientOid") or row.get("clientOrderId") or "").strip() or None
-        price = _positive_float(row.get("fillPrice") or row.get("price") or row.get("execPrice"))
-        quantity = _positive_float(
-            row.get("fillQuantity")
-            or row.get("fillQty")
-            or row.get("baseVolume")
-            or row.get("execQty")
-            or row.get("size")
-            or row.get("fillSize")
-        )
-        fee = _fee_from_row(row)
-        try:
-            timestamp_ms = int(row.get("cTime") or row.get("createdTime") or 0)
-            filled_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc).isoformat()
-        except (TypeError, ValueError, OSError, OverflowError):
-            timestamp_ms = 0
-            filled_at = ""
-        if (
-            not fill_id
-            or not exchange_order_id
-            or price is None
-            or quantity is None
-            or timestamp_ms <= 0
-        ):
-            raise PrivateFillEvidenceInvalid("private fill row is incomplete or non-finite")
-        raw_liquidity = str(row.get("tradeScope") or row.get("execType") or row.get("liquidity") or "").strip().lower()
-        realized_liquidity = {"m": "maker", "maker": "maker", "t": "taker", "taker": "taker"}.get(raw_liquidity)
-        evidence = PrivateFill(
-            fill_id=fill_id,
-            exchange_order_id=exchange_order_id,
-            client_order_id=client_order_id,
-            price=price,
-            quantity=quantity,
-            fee=fee[0],
-            fee_currency=fee[1],
-            realized_liquidity=realized_liquidity,
-            filled_at=filled_at,
+def _private_fill_from_report(report: FillReport) -> PrivateFill:
+    """Convert one validated UTA FillReport into storage-safe materialization data."""
+    if not isinstance(report, FillReport):
+        raise PrivateFillEvidenceInvalid("private fill evidence must be a UTA FillReport")
+    try:
+        if report.executed_at.tzinfo is None or report.executed_at.utcoffset() is None:
+            raise ValueError("fill timestamp is naive")
+        timestamp_ms = int(round(report.executed_at.timestamp() * 1000))
+        item = PrivateFill(
+            fill_id=str(report.venue_fill_id).strip(),
+            exchange_order_id=str(report.venue_order_id or "").strip(),
+            client_order_id=(str(report.client_order_id).strip() if report.client_order_id else None),
+            price=float(report.price),
+            quantity=float(report.quantity),
+            fee=(float(report.fee) if report.fee is not None else None),
+            fee_currency=str(report.fee_currency or ""),
+            realized_liquidity=report.liquidity_side,
+            filled_at=report.executed_at.astimezone(timezone.utc).isoformat(),
             filled_at_ms=timestamp_ms,
         )
-        prior = parsed.get(fill_id)
-        if prior is not None and prior != evidence:
-            raise MaterializationIntegrityError(f"conflicting private fill identity: {fill_id}")
-        parsed[fill_id] = evidence
-    return sorted(parsed.values(), key=lambda item: (item.filled_at_ms, item.fill_id))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PrivateFillEvidenceInvalid("private fill report has incomplete or non-finite economics") from exc
+    if not item.fill_id or not item.exchange_order_id or item.filled_at_ms <= 0:
+        raise PrivateFillEvidenceInvalid("private fill report identity or timestamp is incomplete")
+    return item
+
+
+def _fill_reports(rows) -> list[FillReport]:
+    if isinstance(rows, FillReport):
+        return [rows]
+    if not isinstance(rows, (list, tuple)):
+        return []
+    if any(not isinstance(row, FillReport) for row in rows):
+        raise PrivateFillEvidenceInvalid("private fill evidence must use normalized UTA reports")
+    return list(rows)
 
 
 def evidence_for_order(order: dict, rows) -> tuple[str | None, list[PrivateFill]]:
-    """Match by venue order id, or recover a lost id through stable clientOid."""
+    """Match normalized fills by venue order id or stable client order id."""
     exchange_order_id = str(order.get("exchange_order_id") or "").strip() or None
     client_order_id = str(order.get("client_order_id") or "").strip() or None
-    raw_rows = _coerce_rows(rows)
+    reports = _fill_reports(rows)
     if exchange_order_id:
-        matched_rows = [
-            row for row in raw_rows if str(row.get("orderId") or row.get("order_id") or "").strip() == exchange_order_id
+        matched = [
+            row for row in reports if str(row.venue_order_id or "").strip() == exchange_order_id
         ]
-        return exchange_order_id, parse_bitget_private_fills(matched_rows)
+        return exchange_order_id, [_private_fill_from_report(row) for row in matched]
     if not client_order_id:
         return None, []
-    matched_rows = [
-        row
-        for row in raw_rows
-        if str(row.get("clientOid") or row.get("clientOrderId") or "").strip() == client_order_id
+    matched = [
+        row for row in reports if str(row.client_order_id or "").strip() == client_order_id
     ]
-    matched = parse_bitget_private_fills(matched_rows)
-    remote_ids = {item.exchange_order_id for item in matched}
+    evidence = [_private_fill_from_report(row) for row in matched]
+    remote_ids = {item.exchange_order_id for item in evidence}
     if len(remote_ids) > 1:
         raise MaterializationIntegrityError("one client order identity maps to multiple exchange orders")
-    return (next(iter(remote_ids)) if remote_ids else None), matched
+    return (next(iter(remote_ids)) if remote_ids else None), evidence
+
+
 
 
 def _attribution_fields(proposal: dict) -> dict:

@@ -20,7 +20,7 @@ import pytest
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Position
-
+from tests.fill_reports import reports
 _MODE = "bitget_demo"
 
 
@@ -59,17 +59,19 @@ def _prepare_venue(monkeypatch, *, fill_price: float, evidence=None, reason_code
         lambda mode, symbol, market, qty, price: qty,
     )
 
-    def private_fill(order_row: dict) -> dict:
-        return {
+    def private_fill(order_row: dict, *, fee="0.01", fee_coin="USDT"):
+        row = {
             "orderId": order_row["exchange_order_id"],
             "clientOid": order_row["client_order_id"],
             "tradeId": f"private-fill-{order_row['id']}",
             "fillPrice": str(fill_price),
             "fillQuantity": str(order_row["quantity"]),
-            "fee": "0.01",
-            "feeCoin": "USDT",
+            "feeCoin": fee_coin,
             "cTime": str(int(datetime.now(timezone.utc).timestamp() * 1000) - 1_000),
         }
+        if fee is not None:
+            row["fee"] = fee
+        return reports([row], symbol=order_row["symbol"], market_type=order_row["market_type"])[0]
 
     return adapter, submitted, private_fill, _identity
 
@@ -506,12 +508,7 @@ def test_close_with_uncostable_fee_is_not_settled_as_complete(
     claim_id = repo.get_position(position.id)["pending_close_order_id"]
     assert claim_id
 
-    row = private_fill(repo.get_order(claim_id))
-    row["feeCoin"] = fee_coin
-    if fee is None:
-        row.pop("fee", None)
-    else:
-        row["fee"] = fee
+    row = private_fill(repo.get_order(claim_id), fee=fee, fee_coin=fee_coin)
 
     result = materialize_bitget_close(claim_id, [row])
     stored = repo.get_position(position.id)

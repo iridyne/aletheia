@@ -1,7 +1,12 @@
 """Bitget API client — ExchangeAdapter implementation."""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+from typing import Iterable
+
+from aletheia.uta.compat import instrument_from_local
+from aletheia.uta.models import FillReport, UTAAccountIdentity
 import math
 from urllib.parse import urlencode
 
@@ -198,6 +203,122 @@ def _bitget_verified_fill(raw: dict):
         realized_pnl=pnl,
         filled_at_ms=timestamp,
     )
+
+
+def _bitget_decimal(value, *, positive: bool = False) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Bitget fill decimal is malformed") from exc
+    if not result.is_finite() or (positive and result <= 0):
+        raise ValueError("Bitget fill decimal is not finite and positive")
+    return result
+
+
+def _bitget_fill_fee(row: dict) -> tuple[Decimal | None, str | None]:
+    direct = row.get("fee")
+    if direct not in (None, ""):
+        fee = _bitget_decimal(direct)
+        return abs(fee), str(row.get("feeCoin") or "") or None
+    details = row.get("feeDetail")
+    if isinstance(details, dict):
+        details = [details]
+    if details in (None, []):
+        return None, str(row.get("feeCoin") or "") or None
+    if not isinstance(details, list):
+        raise ValueError("Bitget fill fee detail is malformed")
+    if any(not isinstance(item, dict) for item in details):
+        raise ValueError("Bitget fill fee detail is malformed")
+    currencies = {str(item.get("feeCoin") or "").strip().upper() for item in details}
+    if len(currencies) != 1:
+        raise ValueError("Bitget fill fee currency is ambiguous")
+    values: list[Decimal] = []
+    missing = False
+    for item in details:
+        raw_fee = item.get("totalFee") or item.get("fee")
+        if raw_fee in (None, ""):
+            missing = True
+            continue
+        parsed = _bitget_decimal(raw_fee)
+        values.append(abs(parsed))
+    currency = next(iter(currencies)) or None
+    return (None if missing else sum(values, Decimal(0))), currency
+
+
+def normalize_private_fill_reports(
+    rows: Iterable[dict] | dict,
+    *,
+    symbol: str,
+    market_type: str,
+    identity: UTAAccountIdentity,
+    received_at: datetime | None = None,
+) -> list[FillReport]:
+    """Normalize native Bitget fill rows before they cross into Core."""
+    if isinstance(rows, dict):
+        rows = rows.get("fillList") or rows.get("list") or []
+    if not isinstance(rows, list):
+        raise ValueError("Bitget private fill response is malformed")
+    received = received_at or datetime.now(timezone.utc)
+    if received.tzinfo is None or received.utcoffset() is None:
+        raise ValueError("Bitget fill receipt time must be timezone-aware")
+    instrument = instrument_from_local(to_canonical(symbol), market_type)
+    normalized: dict[str, FillReport] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        fill_id = str(row.get("tradeId") or row.get("execId") or row.get("fillId") or "").strip()
+        order_id = str(row.get("orderId") or row.get("order_id") or "").strip()
+        client_order_id = str(row.get("clientOid") or row.get("clientOrderId") or "").strip() or None
+        price = _bitget_decimal(
+            row.get("fillPrice") or row.get("fillPx") or row.get("price") or row.get("execPrice"),
+            positive=True,
+        )
+        quantity = _bitget_decimal(
+            row.get("fillQuantity") or row.get("fillQty") or row.get("fillSz")
+            or row.get("baseVolume") or row.get("execQty") or row.get("size")
+            or row.get("fillSize"),
+            positive=True,
+        )
+        timestamp = row.get("cTime") or row.get("createdTime") or row.get("execTime") or row.get("timestamp")
+        try:
+            timestamp_ms = int(timestamp or 0)
+            executed_at = datetime.fromtimestamp(timestamp_ms / 1000, tz=timezone.utc)
+        except (TypeError, ValueError, OSError, OverflowError) as exc:
+            raise ValueError("Bitget fill timestamp is malformed") from exc
+        if not fill_id or not order_id or price is None or quantity is None or timestamp_ms <= 0:
+            raise ValueError("Bitget fill identity or economics is incomplete")
+        fee, fee_currency = _bitget_fill_fee(row)
+        raw_liquidity = str(
+            row.get("tradeScope") or row.get("execType") or row.get("liquidity") or ""
+        ).strip().lower()
+        liquidity = {"m": "maker", "maker": "maker", "t": "taker", "taker": "taker"}.get(raw_liquidity)
+        info = row.get("info") if isinstance(row.get("info"), dict) else {}
+        position_side = row.get("positionSide") or row.get("posSide") or info.get("positionSide")
+        trade_intent = row.get("tradeSide") or row.get("trade_side") or info.get("tradeSide")
+        report = FillReport(
+            identity=identity,
+            instrument=instrument,
+            client_order_id=client_order_id,
+            venue_order_id=order_id,
+            venue_fill_id=fill_id,
+            side=str(row.get("side") or "unknown"),
+            position_side=str(position_side) if position_side else None,
+            trade_intent=str(trade_intent) if trade_intent else None,
+            quantity=quantity,
+            price=price,
+            fee=fee,
+            fee_currency=fee_currency,
+            liquidity_side=liquidity,
+            executed_at=executed_at,
+            received_at=received,
+        )
+        prior = normalized.get(fill_id)
+        if prior is not None and prior != report:
+            raise ValueError(f"conflicting Bitget fill identity: {fill_id}")
+        normalized[fill_id] = report
+    return sorted(normalized.values(), key=lambda item: (item.executed_at, item.venue_fill_id))
 
 
 from aletheia.exchanges.bitget.profile_config import _KNOWN_PROFILES  # noqa: E402
@@ -1243,6 +1364,29 @@ class BitgetClient:
                 raise RuntimeError("Bitget exact private fill pagination incomplete")
             cursor = next_cursor
         raise RuntimeError("Bitget exact private fill history incomplete")
+
+    async def get_order_fill_reports(
+        self,
+        *,
+        order_id: str,
+        symbol: str,
+        market_type: str = "usdt_futures",
+        identity: UTAAccountIdentity,
+        received_at: datetime | None = None,
+    ) -> list[FillReport]:
+        """Return exact fills as normalized Core DTOs."""
+        rows = await self.get_order_fills(
+            order_id=order_id,
+            symbol=symbol,
+            market_type=market_type,
+        )
+        return normalize_private_fill_reports(
+            rows,
+            symbol=symbol,
+            market_type=market_type,
+            identity=identity,
+            received_at=received_at,
+        )
 
     async def _get_order_fills_uta_v3(self, *, order_id: str, symbol: str) -> list[dict]:
         """Fetch fills via UTA v3 /api/v3/trade/fills, filtering to this order_id."""

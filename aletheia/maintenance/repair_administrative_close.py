@@ -50,20 +50,22 @@ def _find_native_close_order(position_id: str) -> dict | None:
 
 
 def _aggregate_exchange_fills(
-    rows: list[dict],
+    rows,
     *,
     exchange_order_id: str,
     symbol: str,
     execution_mode: str,
 ) -> dict | None:
-    """Normalize and aggregate exact private fills through the shared contract."""
+    """Aggregate exact normalized private fills through the Core contract."""
     from aletheia.execution.exchange_materialization import (
         _private_fill_totals,
         durable_private_fill_id,
-        parse_bitget_private_fills,
+        evidence_for_order,
     )
 
-    evidence = parse_bitget_private_fills(rows)
+    _, evidence = evidence_for_order(
+        {"exchange_order_id": exchange_order_id}, rows
+    )
     if not evidence or any(item.exchange_order_id != exchange_order_id for item in evidence):
         return None
     quantity, notional, fee = _private_fill_totals(evidence, symbol=symbol)

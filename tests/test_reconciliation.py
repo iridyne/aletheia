@@ -37,15 +37,34 @@ def setup_env(tmp_path, monkeypatch):
 
 def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
     from aletheia.execution import reconciliation as recon
+    from tests.fill_reports import reports
+
+    def typed_rows(market_type):
+        rows = []
+        for index, row in enumerate(fill_rows):
+            item = dict(row)
+            item.setdefault("tradeId", f"test-fill-{index}")
+            item.setdefault("fillPrice", "60000")
+            item.setdefault("fee", "0")
+            item.setdefault("feeCoin", "USDT")
+            item.setdefault("cTime", "1789171200000")
+            rows.extend(
+                reports(
+                    [item],
+                    identity=ACCOUNT,
+                    market_type=market_type,
+                )
+            )
+        return rows
 
     async def fake_open_orders(self, market_type="spot"):
         return [{"orderId": oid} for oid in open_ids]
 
     async def fake_fills(self, symbol=None, market_type="spot", start_at=None):
-        return list(fill_rows)
+        return typed_rows(market_type)
 
-    async def fake_order_fills(self, **_kwargs):
-        return list(fill_rows)
+    async def fake_order_fills(self, **kwargs):
+        return typed_rows(kwargs.get("market_type", "spot"))
 
     monkeypatch.setattr(
         recon._UTAReconciliationProjection, "get_open_orders", fake_open_orders
