@@ -67,6 +67,44 @@ async def test_proxy_capacity_failure_is_not_backend_outage(tmp_path, monkeypatc
 
 
 @pytest.mark.anyio
+async def test_frontdoor_ready_bypasses_the_shared_proxy_pool(tmp_path, monkeypatch):
+    from aletheia.gateway import frontdoor
+
+    async def backend_liveness(_url):
+        return {"ok": True, "version": "test", "pid": 7, "uptime_sec": 1.0}
+
+    def proxy_client_must_not_be_used():
+        raise AssertionError("/api/ready must not consume the shared proxy pool")
+
+    monkeypatch.setattr(frontdoor, "_probe_backend_liveness", backend_liveness)
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", proxy_client_must_not_be_used)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        response = await client.get("/api/ready")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+
+
+@pytest.mark.anyio
+async def test_frontdoor_ready_preserves_retryable_backend_failure(tmp_path, monkeypatch):
+    from aletheia.gateway import frontdoor
+
+    async def backend_liveness(_url):
+        return {"ok": False, "error": "backend_unavailable"}
+
+    monkeypatch.setattr(frontdoor, "_probe_backend_liveness", backend_liveness)
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://backend")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        response = await client.get("/api/ready")
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "3"
+    assert response.headers["X-Aletheia-Degraded"] == "backend_unavailable"
+    assert response.json()["retry_after_sec"] == 3
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("cancel_at", ["headers", "body"])
 async def test_proxy_holders_are_observable_and_released_on_cancel(tmp_path, monkeypatch, cancel_at):
     import asyncio

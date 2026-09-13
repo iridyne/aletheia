@@ -19,6 +19,13 @@ def test_backend_connection_guard_uses_lightweight_ready_probe():
     assert "failureCount >= FAILURES_BEFORE_ALERT" in src
 
 
+def test_global_query_retries_honor_server_retry_after():
+    client = _read("api/client.ts")
+    main = _read("main.tsx")
+    assert "export function queryRetryDelay" in client
+    assert "retryDelay: queryRetryDelay" in main
+
+
 def test_fetch_progress_ignores_background_polling_queries():
     src = _read("components/FetchProgress.tsx")
 
