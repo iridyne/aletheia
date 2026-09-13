@@ -1,17 +1,26 @@
 # Aletheia Capability Ground Truth
 
-The current declared scope is `crypto-stock-linked-exchange-mainline-v3` in
-[Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md). It admits explicitly configured
-`bitget_demo`, `okx_demo`, and `binance_testnet` accounts for crypto spot/perpetuals
-and the narrowly declared, verified stock-linked perpetual profile. System
-Operator owns trading decisions; Risk Engine approval precedes Execution Gateway
-submission. Genuine outcomes require verified economic evidence.
+The accepted current product boundary is **Slim Core + active Bitget Exchange
+Extension + configured HTTP Model Endpoint(s)**, under
+[#3134](https://github.com/iridyne/aletheia/issues/3134). Core owns exchange-neutral
+trading semantics; concrete venue and model transports belong to Extensions.
+OKX/Binance, extra markets, research/Learning and optional surfaces are frozen or
+optional, not current Slim Product support. Historical decode/read is not a
+runtime capability.
+
+The existing machine-readable registration in [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md)
+still lists the pre-convergence routes and stock-linked profile. Those retained
+registrations are implementation facts, not promotion of frozen Extensions.
+Physical separation, absent-safe Core operation and exact-runtime qualification
+remain to be proven; this page does not assert that #3134 is complete.
+Risk approval must precede Gateway submission; genuine outcomes require verified
+economic evidence.
 
 ## Current capability boundary
 
 | Surface | Current boundary |
 | --- | --- |
-| External Demo/Testnet routes | Registered in active scope; registration does not prove account credentials, exact instrument capability, or end-to-end qualification |
+| External Demo/Testnet routes | Bitget Demo is the current Slim Product qualification route; retained OKX/Binance registrations are frozen, not current support. Registration never proves credentials or end-to-end qualification. |
 | Universe-linked Entry Plan | Current Bitget Demo route requires Full permission; other registered routes do not inherit that admission |
 | External order, Fill, Position and close settlement | Existing exchange evidence paths; historical simulator acceptance does not qualify these paths |
 | Account equity and performance | External account evidence with explicit completeness; historical simulator records keep their original identity and economics |

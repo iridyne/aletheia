@@ -11,12 +11,19 @@
 
 ## Product boundary
 
-Aletheia is a local-first, single-owner trading research and decision system.
-Its declared execution targets are explicitly configured `bitget_demo`,
-`okx_demo`, and `binance_testnet` accounts. Instruments are limited to crypto
-spot/perpetuals and the verified stock-linked perpetual profile declared in
-[Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md). This does not admit ordinary
-equities or arbitrary derivatives, certify an account, or enable Live.
+The accepted product is **exchange/provider-agnostic Slim Core + active Bitget
+Exchange Extension + configured HTTP Model Endpoint(s)**, per
+[#3134](https://github.com/iridyne/aletheia/issues/3134). Bitget Demo is the current
+external qualification route. OKX/Binance and additional markets remain frozen
+until separately promoted; retained executable registrations are not support
+claims. Core must expose history and diagnostics with trading unavailable when
+no usable Exchange Extension is configured. This is the accepted target, not
+proof that all implementation and deployed-runtime gaps have converged.
+
+Model protocols are OpenAI Chat Completions, OpenAI Responses and Anthropic
+Messages over configured HTTP endpoints, with explicit Fast/Deep endpoint/model
+pairs. CLI/subscription/OAuth transports are not current product paths.
+No account qualification, credential expansion or Live authority is implied.
 
 The current entry chain connects market evidence and Candidate/Opportunity to
 System Operator planning, an immutable Proposal, Risk approval, Execution
@@ -31,14 +38,13 @@ factory driving production entries.
 
 | Area | Included promise | Canonical detail |
 |---|---|---|
-| Market evidence | Declared crypto and verified stock-linked perpetual profiles, with exact instrument/provider/venue identity | Capability Ground Truth and data contracts |
+| Market evidence | Crypto market facts required by the Bitget route; additional markets and enrichments remain optional/frozen rather than a Slim Core promise | Capability Ground Truth and data contracts |
 | Decision | One attributable System Operator decision path with neutral/fail-closed behavior when required evidence is missing | Active Runtime Scope and agent contracts |
 | Risk | Deterministic Risk approval is mandatory before every execution attempt | Risk Engine contract |
-| Execution | Registered external Demo/Testnet routes; account and exact-instrument qualification remain separate requirements | Active Runtime Scope and execution contract |
+| Execution | Active Bitget Extension; other retained route registrations are frozen. Exact-account qualification remains separate | Active Runtime Scope and execution contract |
 | Position and exit | Exchange Fill evidence materializes Positions; the existing position owner and Gateway control external protection and closes | Execution, persistence, and data-model contracts |
 | Accounting | Orders, fills, positions, costs, funding, and genuine outcomes retain causal identity and explicit integrity status | Data/outcome contracts |
-| Learning artifacts | Reviews, lessons, cases, memos, retrieval, calibration, and learned-guard observation | Learning and knowledge contracts |
-| Measured Learning | Only currently registered paths and evidence gates apply; archived simulator qualification grants no current influence | Learning contract and registry |
+| Learning artifacts and measurements | Optional research Extension, not required Slim Core capability; existing owner admission and influence gates remain mandatory | Learning and knowledge contracts |
 | Owner surfaces | Local API, CLI, Dashboard, Doctor, audit history, and honest unavailable/degraded states | Capability Ground Truth |
 
 The repository contains additional implemented or experimental capabilities. Their
