@@ -209,6 +209,16 @@ def test_retired_internal_mode_cannot_pass_scope_or_exchange_check(tmp_path, mon
     assert {"active_runtime_scope", "exchange_sync"} <= set(verdict["blockers"])
 
 
+@pytest.mark.parametrize("mode", ["okx_demo", "binance_testnet"])
+def test_frozen_exchange_cannot_pass_active_scope(tmp_path, monkeypatch, mode):
+    setup_env(tmp_path, monkeypatch)
+    _healthy_cfg(exchange__paper_execution_mode=mode)
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+
+    verdict = gate.evaluate_startup_gate()
+    assert "active_runtime_scope" in verdict["blockers"]
+
+
 # --------------------------------------------------------------------------- #
 # 4. Reconciliation integrity incident → block
 # --------------------------------------------------------------------------- #

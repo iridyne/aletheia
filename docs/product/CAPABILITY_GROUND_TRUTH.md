@@ -8,11 +8,11 @@ OKX/Binance, extra markets, research/Learning and optional surfaces are frozen o
 optional, not current Slim Product support. Historical decode/read is not a
 runtime capability.
 
-The existing machine-readable registration in [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md)
-still lists the pre-convergence routes and stock-linked profile. Those retained
-registrations are implementation facts, not promotion of frozen Extensions.
-Physical separation, absent-safe Core operation and exact-runtime qualification
-remain to be proven; this page does not assert that #3134 is complete.
+[Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md) declares the Bitget Demo route
+and is consumed by the startup gate. Frozen exchange identities remain valid for
+historical provenance and recovery, not new-entry support. Physical separation,
+absent-safe Core operation and exact-runtime qualification remain to be proven;
+this page does not assert that #3134 is complete.
 Risk approval must precede Gateway submission; genuine outcomes require verified
 economic evidence.
 
