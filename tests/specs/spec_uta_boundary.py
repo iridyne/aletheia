@@ -235,24 +235,14 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
     # exactly, so it shrinks only alongside a real migration and can never grow
     # silently.
     #
-    # Two entries left it:
-    # * `repair_administrative_close.py` — moved to the shared
-    #   `_UTAReconciliationProjection`, which verifies the expected account, fails
-    #   closed on any non-COMPLETE read, and selects the Bitget classic_v2 /
-    #   uta_v3 surface by profile instead of routing it by hand.
-    # * `startup_behavior_gate.py` — only ever needed the SET of valid profile
-    #   names, which is a configuration fact (`config.schema.KNOWN_BITGET_PROFILES`,
-    #   the same constant `ExchangeConfig` validates against). Asking "is this a
-    #   known profile?" no longer requires importing a concrete venue client.
-    # * `cli/bitget_cmd.py` and `cli/secrets_cmd.py` — their `test` commands each
-    #   called `BitgetClient.test_connection()`, one hand-signed account read.
-    #   Replaced by `uta.manager.probe_account_reachable`, which runs the probe
-    #   through the same adapter, identity validation and teardown as every other
-    #   UTA read — so a probe can no longer succeed against an account the rest of
-    #   the system would reject.
+    # Two entries remain:
+    # * `agent_runtime/scheduler.py` — Bitget-native TPSL parent/child discovery
+    #   still needs the venue endpoint before exact UTA order/fill evidence.
+    # * `server/routes/bitget.py` — candidate-credential probes are one-shot
+    #   read-only checks and do not persist the supplied credentials. Stored
+    #   account probes in this module already use `uta.manager`.
     allowed = {
         "aletheia/agent_runtime/scheduler.py",
-        "aletheia/execution/venue_capabilities.py",
         "aletheia/server/routes/bitget.py",
     }
     actual = set()

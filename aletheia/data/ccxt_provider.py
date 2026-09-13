@@ -452,6 +452,41 @@ class CCXTProvider:
         self._sessions = []
 
 
+async def load_public_market_capabilities(
+    exchange_name: str,
+    *,
+    sandbox: bool = False,
+) -> dict[str, frozenset[str]]:
+    """Load active USDT spot/swap symbols through the generic CCXT factory.
+
+    This is public market metadata only: no credentials or private account
+    endpoints are involved. The caller owns no client; this helper always closes
+    the loop-local provider before returning or re-raising.
+    """
+    from aletheia.net import close_ccxt, make_ccxt
+
+    exchange, session = make_ccxt(exchange_name, options={"defaultType": "swap"})
+    try:
+        if sandbox:
+            exchange.set_sandbox_mode(True)
+        await exchange.load_markets()
+        symbols: dict[str, set[str]] = {"swap": set(), "spot": set()}
+        for info in exchange.markets.values():
+            if not info.get("active", True):
+                continue
+            market_type = info.get("type")
+            if market_type not in symbols:
+                continue
+            if (info.get("quote") or "").upper() != "USDT":
+                continue
+            canonical = to_canonical(f"{info.get('base', '')}/USDT")
+            symbols[market_type].add(canonical)
+        return {key: frozenset(value) for key, value in symbols.items()}
+    finally:
+        if not await close_ccxt(exchange, session):
+            raise RuntimeError("ccxt_cleanup_failed")
+
+
 def _opt_float(value) -> float | None:
     if value is None:
         return None

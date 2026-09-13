@@ -19,6 +19,7 @@ from aletheia.config import loader
 from aletheia.data.ccxt_provider import (
     _install_market_id_guard,
     get_market_data_provider,
+    load_public_market_capabilities,
     CCXTProvider,
 )
 from aletheia.data.sources.chain import FallbackChainProvider
@@ -133,3 +134,48 @@ def test_market_id_guard_drops_malformed_ccxt_rows():
 
     assert result["markets"] == [{"id": "BTC-USDT", "symbol": "BTC/USDT"}]
     assert exchange.seen_markets == [{"id": "BTC-USDT", "symbol": "BTC/USDT"}]
+
+
+async def test_public_market_capabilities_use_generic_factory_and_close(monkeypatch):
+    from aletheia.data import ccxt_provider as module
+
+    events: list[object] = []
+
+    class FakeExchange:
+        markets = {
+            "BTC/USDT:USDT": {"active": True, "type": "swap", "quote": "USDT", "base": "BTC"},
+            "WLD/USDT": {"active": True, "type": "spot", "quote": "USDT", "base": "WLD"},
+            "ETH/USDC:USDC": {"active": True, "type": "swap", "quote": "USDC", "base": "ETH"},
+            "OLD/USDT": {"active": False, "type": "spot", "quote": "USDT", "base": "OLD"},
+            "BTC/USD": {"active": True, "type": "future", "quote": "USD", "base": "BTC"},
+        }
+
+        def set_sandbox_mode(self, enabled):
+            events.append(("sandbox", enabled))
+
+        async def load_markets(self):
+            events.append("load_markets")
+
+    monkeypatch.setattr(
+        "aletheia.net.make_ccxt",
+        lambda name, **options: (events.append(("factory", name, options)) or (FakeExchange(), object())),
+    )
+
+    async def close_ccxt(exchange, session):
+        events.append(("close", exchange.__class__.__name__, session.__class__.__name__))
+        return True
+
+    monkeypatch.setattr("aletheia.net.close_ccxt", close_ccxt)
+
+    result = await load_public_market_capabilities("okx", sandbox=True)
+
+    assert result == {
+        "swap": frozenset({"BTC/USDT"}),
+        "spot": frozenset({"WLD/USDT"}),
+    }
+    assert events == [
+        ("factory", "okx", {"options": {"defaultType": "swap"}}),
+        ("sandbox", True),
+        "load_markets",
+        ("close", "FakeExchange", "object"),
+    ]
