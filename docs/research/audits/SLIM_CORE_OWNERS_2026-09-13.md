@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `8a4309dc84e814c6fee75fcbccd5f884f868e07d`, under
+Source checkpoint: `11d0fdb6b522798bd59043ed9821158a41aca288`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -210,3 +210,17 @@ broker rather than a retired OAuth-refresh path. Neither change adds a runtime
 mainline, compatibility facade, transport, credential authority, or external
 I/O. Local focused tests, Ruff, documentation governance, and diff checks pass;
 remote CI remains retired and is not evidence.
+
+The #3201 readiness seam is now merged at this checkpoint. Frontdoor exposes an
+explicit `/api/ready` route that probes the existing backend `/_infra/livez`
+endpoint through a short-lived client outside the ordinary proxy pool. A
+retryable failure preserves the existing liveness response shape while adding
+bounded `Retry-After`, `backend_unavailable`, and `no-store` headers; the
+frontend's shared React Query retry delay consumes that server value. This is a
+control-plane transport repair only: backend business routes, Risk, Gateway,
+execution, and account authority are unchanged. Frontdoor, focused frontend
+communication, client Vitest, TypeScript, ESLint, API/settings type checks,
+build/performance budgets, Ruff, docs governance, preflight, local CI contract
+tests, and diff checks passed locally. It does not prove #1884's production
+slot-owner attribution, stream/finite-pool isolation, Fedora runtime, or
+qualification.

@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `8a4309dc84e814c6fee75fcbccd5f884f868e07d`. This is a bounded evidence
+based on `11d0fdb6b522798bd59043ed9821158a41aca288`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -136,6 +136,18 @@ The active model healthcheck's stale OAuth-refresh wording was corrected to the
 shared inference broker. OAuth/Codex/Databricks references that remain in source
 are historical config identity/read surfaces or history documentation, not live
 transport or credential-refresh callers.
+
+The #3201 readiness seam changes no private-account reachability. Frontdoor's
+explicit `/api/ready` handler uses a separate short-lived probe to the existing
+backend `/_infra/livez` endpoint instead of consuming the ordinary proxy pool;
+its retryable headers and the frontend retry scheduler are control-plane
+transport only. No UTA, exchange client, credential, Risk, Gateway, settlement,
+or private fill path moved or gained a caller. Local Frontdoor and focused
+frontend communication checks, client Vitest, TypeScript, ESLint, API/settings
+type checks, build/performance budgets, Ruff, docs governance, preflight, local
+CI contract tests, and diff checks passed. The production pool's exact slot
+owners, stream/finite isolation, Fedora runtime identity, and account
+qualification remain open evidence gates.
 
 ## Startup filesystem repair ownership
 
