@@ -71,26 +71,32 @@ def _seed_administrative_close(monkeypatch) -> Position:
 
 
 def _private_rows():
-    return [
-        {
-            "tradeId": "remote-fill-1",
-            "orderId": "exchange-close-order",
-            "fillPrice": "101.0",
-            "fillQuantity": "0.4",
-            "fee": "0.04",
-            "feeCoin": "USDT",
-            "cTime": "1787788800000",
-        },
-        {
-            "tradeId": "remote-fill-2",
-            "orderId": "exchange-close-order",
-            "fillPrice": "102.0",
-            "fillQuantity": "0.6",
-            "fee": "0.06",
-            "feeCoin": "USDT",
-            "cTime": "1787788801000",
-        },
-    ]
+    from tests.fill_reports import reports
+
+    return reports(
+        [
+            {
+                "tradeId": "remote-fill-1",
+                "orderId": "exchange-close-order",
+                "fillPrice": "101.0",
+                "fillQuantity": "0.4",
+                "fee": "0.04",
+                "feeCoin": "USDT",
+                "cTime": "1787788800000",
+            },
+            {
+                "tradeId": "remote-fill-2",
+                "orderId": "exchange-close-order",
+                "fillPrice": "102.0",
+                "fillQuantity": "0.6",
+                "fee": "0.06",
+                "feeCoin": "USDT",
+                "cTime": "1787788801000",
+            },
+        ],
+        symbol="ETH/USDT",
+        market_type="spot",
+    )
 
 
 def test_aggregate_exchange_fills_uses_all_private_rows():

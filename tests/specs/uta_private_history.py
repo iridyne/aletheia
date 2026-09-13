@@ -105,18 +105,40 @@ def _instrument(scope: QueryScope) -> InstrumentIdentity:
     )
 
 
-def _matching_rows(rows, query) -> list[dict]:
+def _field(row, name, default=None):
+    if isinstance(row, FillReport):
+        return {
+            "orderId": row.venue_order_id,
+            "clientOid": row.client_order_id,
+            "tradeId": row.venue_fill_id,
+            "fillQuantity": row.quantity,
+            "fillPrice": row.price,
+            "fee": row.fee,
+            "feeCoin": row.fee_currency,
+            "cTime": row.executed_at,
+            "tradeScope": row.liquidity_side,
+        }.get(name, default)
+    return row.get(name, default)
+
+
+def _matching_rows(rows, query):
     result = []
     for row in rows:
-        if query.venue_order_id and str(row.get("orderId") or "") != str(query.venue_order_id):
+        if query.venue_order_id and str(_field(row, "orderId") or "") != str(query.venue_order_id):
             continue
-        if query.client_order_id and str(row.get("clientOid") or "") != str(query.client_order_id):
+        if query.client_order_id and str(_field(row, "clientOid") or "") != str(query.client_order_id):
             continue
-        result.append(dict(row))
+        result.append(row if isinstance(row, FillReport) else dict(row))
     return result
 
 
 def _fill(identity, scope, row, now):
+    if isinstance(row, FillReport):
+        return row.model_copy(update={
+            "identity": identity,
+            "instrument": _instrument(scope),
+            "received_at": now,
+        })
     ms = int(row["cTime"])
     return FillReport(
         identity=identity,
@@ -153,13 +175,13 @@ def _order_from_row(identity, scope, row, now):
     return OrderStatusReport(
         identity=identity,
         instrument=_instrument(scope),
-        client_order_id=row.get("clientOid"),
-        venue_order_id=row.get("orderId"),
-        side=str(row.get("side") or "buy"),
+        client_order_id=_field(row, "clientOid"),
+        venue_order_id=_field(row, "orderId"),
+        side=str(_field(row, "side") or "buy"),
         order_type="limit",
-        original_quantity=str(row.get("fillQuantity") or "1"),
-        filled_quantity=str(row.get("fillQuantity") or "1"),
-        price=str(row.get("fillPrice") or "1"),
+        original_quantity=str(_field(row, "fillQuantity") or "1"),
+        filled_quantity=str(_field(row, "fillQuantity") or "1"),
+        price=str(_field(row, "fillPrice") or "1"),
         state=OrderLifecycle.FILLED,
         received_at=now,
     )

@@ -35,6 +35,8 @@ from aletheia.execution.reconciliation import (
     _filled_quantity_by_order,
     resolve_orders_missing_from_exchange,
 )
+from tests.fill_reports import reports
+
 
 # --------------------------------------------------------------------------- #
 # Strategies
@@ -47,20 +49,26 @@ _order_ids = st.text(
     max_size=8,
 )
 
-# Non-negative finite quantities. We deliberately allow 0 and very small
-# values to exercise the ``max(quantity, 0.0)`` clamp and float sums.
 _quantities = st.floats(
-    min_value=0.0, max_value=1e6, allow_nan=False, allow_infinity=False
+    min_value=1e-9, max_value=1e6, allow_nan=False, allow_infinity=False
 )
 
 
-def _fill_row(order_id: str, quantity: float) -> dict:
-    """Build a fill row using one of the accepted quantity aliases.
 
-    Kept minimal: the function only reads a fixed set of keys, so a
-    representative pick per row is enough to explore branches.
-    """
-    return {"orderId": order_id, "fillQuantity": quantity}
+
+def _fill_row(order_id: str, quantity: float):
+    """Build one normalized FillReport through the Bitget extension boundary."""
+    return reports([
+        {
+            "orderId": order_id,
+            "tradeId": f"fill-{order_id}-{quantity}",
+            "fillPrice": "60000",
+            "fillQuantity": str(quantity),
+            "fee": "0",
+            "feeCoin": "USDT",
+            "cTime": "1789171200000",
+        }
+    ])[0]
 
 
 _fill_rows = st.builds(_fill_row, _order_ids, _quantities)
@@ -73,8 +81,8 @@ _fill_rows = st.builds(_fill_row, _order_ids, _quantities)
 
 @given(rows=st.lists(_fill_rows, max_size=40))
 @settings(max_examples=200, deadline=None)
-def test_filled_quantity_is_invariant_under_permutation(rows: list[dict]) -> None:
-    """Same fills in a different order must produce the same totals."""
+def test_filled_quantity_is_invariant_under_permutation(rows) -> None:
+    """Same normalized fills in a different order produce the same totals."""
     baseline = _filled_quantity_by_order(list(rows))
     reversed_view = _filled_quantity_by_order(list(reversed(rows)))
     assert baseline.keys() == reversed_view.keys()
@@ -84,13 +92,12 @@ def test_filled_quantity_is_invariant_under_permutation(rows: list[dict]) -> Non
 
 @given(rows=st.lists(_fill_rows, max_size=40))
 @settings(max_examples=200, deadline=None)
-def test_filled_quantity_equals_sum_of_valid_fills(rows: list[dict]) -> None:
-    """The per-order total must equal the naive sum of clamped quantities."""
+def test_filled_quantity_equals_sum_of_valid_fills(rows) -> None:
+    """The per-order total equals the sum of typed fill quantities."""
     expected: dict[str, float] = {}
     for row in rows:
-        expected[row["orderId"]] = expected.get(row["orderId"], 0.0) + max(
-            row["fillQuantity"], 0.0
-        )
+        order_id = row.venue_order_id
+        expected[order_id] = expected.get(order_id, 0.0) + float(row.quantity)
     actual = _filled_quantity_by_order(rows)
     assert actual.keys() == expected.keys()
     for order_id, total in expected.items():
@@ -99,48 +106,30 @@ def test_filled_quantity_equals_sum_of_valid_fills(rows: list[dict]) -> None:
 
 @given(rows=st.lists(_fill_rows, min_size=1, max_size=20))
 @settings(max_examples=100, deadline=None, suppress_health_check=[HealthCheck.filter_too_much])
-def test_splitting_a_fill_preserves_the_total(rows: list[dict]) -> None:
-    """Splitting one fill into two halves must not change the total.
-
-    This is the property a partial-fill re-run would break: if the
-    reconciler double-counts on split, this test surfaces it.
-    """
-    # Pick the first row with a non-trivial quantity to split.
+def test_splitting_a_fill_preserves_the_total(rows) -> None:
+    """Splitting one normalized fill into two halves preserves its total."""
     for i, row in enumerate(rows):
-        if row["fillQuantity"] > 1e-6:
-            half = row["fillQuantity"] / 2.0
+        if row.quantity > 1e-6:
+            half = float(row.quantity) / 2.0
             split = list(rows)
             split[i : i + 1] = [
-                _fill_row(row["orderId"], half),
-                _fill_row(row["orderId"], row["fillQuantity"] - half),
+                _fill_row(row.venue_order_id, half),
+                _fill_row(row.venue_order_id, float(row.quantity) - half),
             ]
             before = _filled_quantity_by_order(rows)
             after = _filled_quantity_by_order(split)
             assert before.keys() == after.keys()
             for order_id, total in before.items():
-                assert math.isclose(
-                    total, after[order_id], rel_tol=1e-9, abs_tol=1e-9
-                )
+                assert math.isclose(total, after[order_id], rel_tol=1e-9, abs_tol=1e-9)
             return
-    # No non-trivial row to split; nothing to assert (Hypothesis will find
-    # another example next iteration).
-
-
 def test_filled_quantity_rejects_malformed_inputs() -> None:
-    """Non-list / non-dict / missing-id / negative rows must contribute zero."""
-    # A bare dict without the fillList/list envelope: empty.
+    """Non-report inputs contribute zero; a valid report is counted."""
     assert _filled_quantity_by_order({"unrelated": [1, 2, 3]}) == {}
-    # None row and a row with no id are both silently ignored.
     assert _filled_quantity_by_order([None, {"fillQuantity": 1.0}]) == {}
-    # Negative and non-numeric quantities collapse to zero contribution.
-    result = _filled_quantity_by_order(
-        [
-            {"orderId": "A", "fillQuantity": -5.0},
-            {"orderId": "A", "fillQuantity": "not-a-number"},
-            {"orderId": "A", "fillQuantity": 3.0},
-        ]
-    )
-    assert result == {"A": pytest.approx(3.0)}
+    valid = _fill_row("A", 3.0)
+    assert _filled_quantity_by_order([None, {"fillQuantity": 1.0}, valid]) == {
+        "A": pytest.approx(3.0)
+    }
 
 
 # --------------------------------------------------------------------------- #

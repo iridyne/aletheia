@@ -13,6 +13,7 @@ from aletheia.execution.exchange_materialization import (
     _positive_float,
     evidence_for_order,
 )
+from tests.fill_reports import reports
 from aletheia.portfolio.pnl import fee_in_quote
 
 
@@ -39,7 +40,7 @@ def test_positive_float_finite_ok():
 @pytest.mark.parametrize("field", ["fillPrice", "fillQuantity", "fee"])
 @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
 def test_order_matched_nonfinite_private_evidence_is_rejected(field, value):
-    """Every non-finite candidate-order economic field invalidates its batch."""
+    """The Bitget extension rejects non-finite economics before Core."""
     row = {
         "tradeId": "t_bad",
         "orderId": "o1",
@@ -50,23 +51,13 @@ def test_order_matched_nonfinite_private_evidence_is_rejected(field, value):
         "cTime": "1700000000000",
     }
     row[field] = value
-
-    with pytest.raises(MaterializationIntegrityError, match="private fill row"):
-        evidence_for_order({"exchange_order_id": "o1"}, [row])
+    with pytest.raises(ValueError, match="finite"):
+        reports([row])
 
 
 def test_unrelated_nonfinite_private_evidence_does_not_block_exact_order():
-    """A malformed row for another order is outside the candidate evidence batch."""
-    unrelated = {
-        "tradeId": "t_bad",
-        "orderId": "o2",
-        "fillPrice": "NaN",
-        "fillQuantity": "0.5",
-        "fee": "0.1",
-        "feeCoin": "USDT",
-        "cTime": "1700000000000",
-    }
-    matched = {
+    """Core sees only already-normalized reports from the adapter."""
+    matched = reports([{
         "tradeId": "t_good",
         "orderId": "o1",
         "fillPrice": "2000.0",
@@ -74,16 +65,12 @@ def test_unrelated_nonfinite_private_evidence_does_not_block_exact_order():
         "fee": "0.1",
         "feeCoin": "USDT",
         "cTime": "1700000001000",
-    }
-
+    }])
     exchange_order_id, evidence = evidence_for_order(
-        {"exchange_order_id": "o1"},
-        [unrelated, matched],
+        {"exchange_order_id": "o1"}, matched
     )
-
     assert exchange_order_id == "o1"
     assert [item.fill_id for item in evidence] == ["t_good"]
-
 
 @pytest.mark.parametrize("field", ["fill_price", "fill_quantity", "fee"])
 @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
@@ -159,15 +146,16 @@ def test_unknown_fee_is_not_zero_or_assumed_quote(fee, currency, expected):
 
 
 def test_private_fee_parser_preserves_missing_and_rejects_mixed_amounts():
-    from aletheia.execution.exchange_materialization import _fee_from_row
+    from aletheia.exchanges.bitget.client import _bitget_fill_fee
 
-    assert _fee_from_row({"feeCoin": "USDT"}) == (None, "USDT")
-    assert _fee_from_row({"fee": "0.1"}) == (0.1, "")
-    assert _fee_from_row({"feeDetail": [{"feeCoin": "USDT"}]}) == (None, "USDT")
-    assert _fee_from_row({"feeDetail": [{"totalFee": "0.0", "feeCoin": "USDT"}]}) == (0.0, "USDT")
-    with pytest.raises(MaterializationIntegrityError, match="ambiguous fee total"):
-        _fee_from_row({"feeDetail": [
-            {"totalFee": "1", "feeCoin": "USDT"}, {"totalFee": "2", "feeCoin": "BGB"},
+    assert float(_bitget_fill_fee({"fee": "0.1"})[0]) == pytest.approx(0.1)
+    assert _bitget_fill_fee({"fee": "0.1"})[1] is None
+    assert _bitget_fill_fee({"feeDetail": [{"feeCoin": "USDT"}]}) == (None, "USDT")
+    assert _bitget_fill_fee({"feeDetail": [{"totalFee": "0.0", "feeCoin": "USDT"}]}) == (0.0, "USDT")
+    with pytest.raises(ValueError, match="ambiguous"):
+        _bitget_fill_fee({"feeDetail": [
+            {"totalFee": "1", "feeCoin": "USDT"},
+            {"totalFee": "2", "feeCoin": "BGB"},
         ]})
 
 

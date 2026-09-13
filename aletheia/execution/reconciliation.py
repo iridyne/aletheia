@@ -38,6 +38,7 @@ from aletheia.uta.manager import UTA_EXECUTION_MODES, build_uta_registry, query_
 from aletheia.uta.models import (
     UTAAccountIdentity,
     FillQuery,
+    FillReport,
     FundingLedgerQuery,
     OrderLifecycle,
     OrderQuery,
@@ -242,17 +243,15 @@ def _has_compatible_open_position(order: dict) -> bool:
 
 
 def _complete_exact_gap_evidence(order: dict, rows) -> bool:
-    """Require every exact-query row to carry complete matching economics."""
-    raw_rows = _response_rows(rows)
+    """Require every exact-query report to carry complete matching economics."""
+    reports = _response_rows(rows)
     exchange_order_id = str(order.get("exchange_order_id") or "").strip()
-    if not exchange_order_id or not raw_rows:
+    if not exchange_order_id or not reports:
         return False
-    if any(str(row.get("orderId") or "") != exchange_order_id for row in raw_rows):
+    if any(str(report.venue_order_id or "") != exchange_order_id for report in reports):
         return False
-    matched_id, evidence = evidence_for_order(order, raw_rows)
-    # The strict order-scoped parser rejects rows with missing fill identity or
-    # economics. A one-to-one result also guards against future parser changes.
-    if matched_id != exchange_order_id or len(evidence) != len(raw_rows):
+    matched_id, evidence = evidence_for_order(order, reports)
+    if matched_id != exchange_order_id or len(evidence) != len(reports):
         return False
     requested = _finite_float(order.get("quantity"), positive=True)
     if requested is None:
@@ -594,28 +593,23 @@ def _clear_verified_closed_pending() -> list[str]:
 
 
 def _filled_quantity_by_order(rows) -> dict[str, float]:
-    """Return cumulative, exchange-reported fill quantity by order id."""
-    if isinstance(rows, dict):
-        rows = rows.get("fillList") or rows.get("list") or []
-    if not isinstance(rows, list):
+    """Return cumulative quantity from normalized private FillReports."""
+    if isinstance(rows, FillReport):
+        rows = [rows]
+    if not isinstance(rows, (list, tuple)):
         return {}
     quantities: dict[str, float] = {}
-    for row in rows:
-        if not isinstance(row, dict):
+    for report in rows:
+        if not isinstance(report, FillReport) or not report.venue_order_id:
             continue
-        order_id = row.get("orderId") or row.get("order_id") or row.get("ordId")
-        if not order_id:
-            continue
-        raw_quantity = (
-            row.get("fillQuantity") or row.get("fillQty") or row.get("baseVolume")
-            or row.get("size") or row.get("fillSize")
-        )
         try:
-            quantity = float(raw_quantity)
+            quantity = float(report.quantity)
         except (TypeError, ValueError):
-            quantity = 0.0
-        key = str(order_id)
-        quantities[key] = quantities.get(key, 0.0) + max(quantity, 0.0)
+            continue
+        if not math.isfinite(quantity) or quantity <= 0:
+            continue
+        key = str(report.venue_order_id)
+        quantities[key] = quantities.get(key, 0.0) + quantity
     return quantities
 _CCXT_LIVE_MODES = tuple(
     sorted(
@@ -659,39 +653,31 @@ def _run_coro(coro):
         return pool.submit(asyncio.run, coro).result()
 
 
-def _response_rows(rows) -> list[dict]:
-    if isinstance(rows, dict):
-        rows = rows.get("fillList") or rows.get("list") or []
-    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+def _response_rows(rows) -> list[FillReport]:
+    if isinstance(rows, FillReport):
+        return [rows]
+    if not isinstance(rows, (list, tuple)):
+        return []
+    if any(not isinstance(row, FillReport) for row in rows):
+        return []
+    return list(rows)
 
 
 def _rows_reference_order(order: dict, rows) -> bool:
-    """Return whether raw private history names this venue/client identity."""
+    """Return whether normalized private history names this order identity."""
     exchange_order_id = str(order.get("exchange_order_id") or "")
     client_order_id = str(order.get("client_order_id") or "")
-    for row in _response_rows(rows):
-        if exchange_order_id and str(
-            row.get("orderId") or row.get("order_id") or ""
-        ) == exchange_order_id:
+    for report in _response_rows(rows):
+        if exchange_order_id and str(report.venue_order_id or "") == exchange_order_id:
             return True
-        if client_order_id and str(
-            row.get("clientOid") or row.get("clientOrderId") or ""
-        ) == client_order_id:
+        if client_order_id and str(report.client_order_id or "") == client_order_id:
             return True
     return False
 
 
 def _needs_symbol_scoped_history(order: dict, rows) -> bool:
-    """Detect when the default fill page cannot prove this unresolved Order."""
-    if order.get("source") != "native":
-        return not _rows_reference_order(order, rows)
-    try:
-        _, evidence = evidence_for_order(order, rows)
-    except MaterializationIntegrityError:
-        # Conflicting evidence must be rejected by the materializer, not hidden
-        # by replacing it with a second query result.
-        return False
-    return not evidence
+    """Detect when the default typed Fill page cannot prove this Order."""
+    return not _rows_reference_order(order, rows)
 
 
 def _is_close_order(order: dict) -> bool:
@@ -814,20 +800,6 @@ class _UTAReconciliationProjection:
         self.expected_account = expected_account
 
     @staticmethod
-    def _fill_row(fill) -> dict:
-        return {
-            "tradeId": fill.venue_fill_id,
-            "orderId": fill.venue_order_id,
-            "clientOid": fill.client_order_id,
-            "fillPrice": str(fill.price),
-            "fillQuantity": str(fill.quantity),
-            "fee": str(fill.fee) if fill.fee is not None else None,
-            "feeCoin": fill.fee_currency,
-            "cTime": int(fill.executed_at.timestamp() * 1000),
-            "tradeScope": fill.liquidity_side,
-        }
-
-    @staticmethod
     def _order_row(order) -> dict:
         return {
             "orderId": order.venue_order_id,
@@ -840,7 +812,11 @@ class _UTAReconciliationProjection:
         report = await query_uta(
             self.execution_mode,
             "get_open_orders",
-            OrderQuery(scope=scope_from_local("BTC/USDT", market_type or "usdt_futures").model_copy(update={"instrument": None})),
+            OrderQuery(
+                scope=scope_from_local(
+                    "BTC/USDT", market_type or "usdt_futures"
+                ).model_copy(update={"instrument": None})
+            ),
             expected_account=self.expected_account,
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
@@ -857,7 +833,7 @@ class _UTAReconciliationProjection:
         symbol: str | None = None,
         market_type: str = "usdt_futures",
         start_at=None,
-    ) -> list[dict]:
+    ) -> list[FillReport]:
         scope = (
             scope_from_local(symbol, market_type, start_at=start_at)
             if symbol
@@ -874,8 +850,7 @@ class _UTAReconciliationProjection:
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_fills_incomplete")
         return [
-            self._fill_row(fill)
-            for fill in report.fills
+            fill for fill in report.fills
             if fill.instrument.market_type == market_type
         ]
 
@@ -887,7 +862,7 @@ class _UTAReconciliationProjection:
         market_type: str,
         client_order_id: str | None = None,
         start_at=None,
-    ) -> list[dict]:
+    ) -> list[FillReport]:
         report = await query_uta(
             self.execution_mode,
             "get_fills",
@@ -900,8 +875,7 @@ class _UTAReconciliationProjection:
         )
         if report.completeness is not ReadCompleteness.COMPLETE:
             raise RuntimeError(report.reason_code or "uta_exact_fills_incomplete")
-        return [self._fill_row(fill) for fill in report.fills]
-
+        return list(report.fills)
     async def get_order_status(
         self,
         *,

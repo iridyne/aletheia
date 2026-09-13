@@ -2793,10 +2793,11 @@ def _tpsl_fill_check_body():
                             # endpoint: complete, and with no time window to get
                             # wrong. Re-resolve once more so nothing is persisted
                             # across a configuration change.
-                            private_fills = await client.get_order_fills(
+                            private_fills = await client.get_order_fill_reports(
                                 order_id=execute_order_id,
                                 symbol=to_bitget(pos["symbol"]),
                                 market_type=pos["market_type"],
+                                identity=reader_identity,
                             )
                             if _configured_identity(execution_mode) != reader_identity:
                                 raise ValueError("uta_account_identity_mismatch")
