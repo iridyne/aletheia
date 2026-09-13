@@ -190,9 +190,9 @@ async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
     :func:`load_venue_capabilities`.
     """
     if execution_mode == "okx_demo":
-        from aletheia.exchanges.okx.client import OKXClient
+        from aletheia.data.ccxt_provider import load_public_market_capabilities
 
-        return await OKXClient.load_demo_markets()
+        return await load_public_market_capabilities("okx", sandbox=True)
     return load_venue_capabilities(execution_mode)
 
 

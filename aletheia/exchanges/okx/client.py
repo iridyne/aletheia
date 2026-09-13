@@ -5,7 +5,6 @@ Supports:
 - get_positions() -> list of position dicts
 - fetch_balance() -> CCXT unified balance dict
 - fetch_time() -> Unix ms (connectivity probe)
-- load_demo_markets() -> frozenset of canonical symbols supported on demo
 - close() for session teardown
 
 Demo mode: CCXT sandbox mode injects `x-simulated-trading: 1` header.
@@ -640,41 +639,6 @@ class OKXClient:
             raise RuntimeError("ccxt_cleanup_failed")
         self._exchange = None
         self._session = None
-
-    @staticmethod
-    async def load_demo_markets() -> dict:
-        """Load supported symbols on OKX demo (sandbox) without credentials.
-
-        Returns {"swap": frozenset, "spot": frozenset} of canonical symbols.
-        Keeping the sets separate lets the pre-flight check be market-type-aware:
-        a symbol available only as spot (e.g. WLD) must not pass a perp order.
-        """
-        from aletheia.net import close_ccxt, make_ccxt
-        exchange, session = make_ccxt("okx", options={"defaultType": "swap"})
-        exchange.set_sandbox_mode(True)
-        try:
-            await exchange.load_markets()
-            swap_symbols: set = set()
-            spot_symbols: set = set()
-
-            for key, info in exchange.markets.items():
-                if not info.get("active", True):
-                    continue
-                mtype = info.get("type")
-                if mtype not in ("swap", "spot"):
-                    continue
-                quote = (info.get("quote") or "").upper()
-                if quote != "USDT":
-                    continue
-                canonical = to_canonical(info.get("base", "") + "/USDT")
-                if mtype == "swap":
-                    swap_symbols.add(canonical)
-                else:
-                    spot_symbols.add(canonical)
-            return {"swap": frozenset(swap_symbols), "spot": frozenset(spot_symbols)}
-        finally:
-            if not await close_ccxt(exchange, session):
-                raise RuntimeError("ccxt_cleanup_failed")
 
     @staticmethod
     def _map_status(raw: str) -> str:
