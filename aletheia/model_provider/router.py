@@ -632,7 +632,7 @@ async def _refresh_health_all() -> list[ModelHealth]:
 
 
 async def _safe_healthcheck(name: str) -> ModelHealth:
-    """Single-provider healthcheck with catch-all. Uses async OAuth refresh path."""
+    """Single-provider healthcheck with catch-all via the shared inference broker."""
     try:
         provider = await get_provider_async(name)
         from aletheia.model_provider.broker import inference_broker
