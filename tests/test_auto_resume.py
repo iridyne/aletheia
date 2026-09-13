@@ -374,36 +374,17 @@ async def test_stall_escalation_fires_after_threshold(tmp_path, monkeypatch):
     assert len(stall_events) >= 1
 
 
-# ---------------------------------------------------------------------------
-# 8. Stall classification: secret_missing detected correctly
-# ---------------------------------------------------------------------------
-
-def test_classify_stall_secret_missing(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    cfg = _save_paused_cfg()
-    cfg.models.providers["anthropic_compatible"].api_key_secret_ref = "model.test.api_key"
-    from aletheia.config.loader import save_config
-    save_config(cfg)
-
-    # Patch get_secret to return None (missing)
-    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda k: None)
-
+@pytest.mark.parametrize(("error", "expected"), [
+    ("connection refused", "network_unreachable"),
+    ("HTTP 401 from https://example.com", "auth_error"),
+])
+def test_classify_stall_uses_probe_evidence_without_secrets(monkeypatch, error, expected):
     from aletheia.agent_runtime.auto_resume import _classify_stall
-    result = _classify_stall([{"provider": "anthropic_compatible", "usable": False, "error": "connection refused"}])
-    assert result == "secret_missing"
 
+    def forbidden_secret_read(_key):
+        raise AssertionError("stall classification must not read raw credentials")
 
-# ---------------------------------------------------------------------------
-# 9. Stall classification: auth_error from 401 response
-# ---------------------------------------------------------------------------
-
-def test_classify_stall_auth_error(tmp_path, monkeypatch):
-    setup_env(tmp_path, monkeypatch)
-    _save_paused_cfg()
-
-    # Secret exists but provider returns 401
-    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda k: "some-key")
-
-    from aletheia.agent_runtime.auto_resume import _classify_stall
-    result = _classify_stall([{"provider": "anthropic_compatible", "usable": False, "error": "HTTP 401 from https://example.com"}])
-    assert result == "auth_error"
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden_secret_read)
+    assert _classify_stall([
+        {"provider": "keyless", "usable": False, "error": error},
+    ]) == expected

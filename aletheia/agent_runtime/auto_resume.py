@@ -6,7 +6,7 @@ periodically probes LLM availability. On success, it triggers the standard
 resume_gate flow: persist paused=False, resume scheduler, audit the event.
 
 Stall detection: after N consecutive failures, classify the root cause
-(secret_missing, auth_error, network_unreachable, unknown) and escalate to the
+(auth_error, network_unreachable, unknown) and escalate to the
 operator. Back off the probe interval to avoid log/notification spam.
 
 The loop exits when:
@@ -28,18 +28,8 @@ logger = logging.getLogger("aletheia.auto_resume")
 _active_task: asyncio.Task | None = None
 
 
-def _classify_stall(results: list[dict], cfg=None) -> str:
-    """Classify root cause from probe results for actionable escalation."""
-    from aletheia.config.secrets import get_secret
-
-    cfg = cfg or load_config()
-    default_provider = cfg.models.default_provider
-    provider_cfg = cfg.models.providers.get(default_provider)
-    if provider_cfg:
-        secret_ref = getattr(provider_cfg, "api_key_secret_ref", None)
-        if secret_ref and not get_secret(secret_ref):
-            return "secret_missing"
-
+def _classify_stall(results: list[dict]) -> str:
+    """Classify observed probe failures without inferring credential requirements."""
     errors = [r.get("error", "") for r in results if not r.get("usable")]
     error_text = " ".join(errors).lower()
 
@@ -53,10 +43,6 @@ def _classify_stall(results: list[dict], cfg=None) -> str:
 
 
 _STALL_GUIDANCE = {
-    "secret_missing": (
-        "LLM API key is missing from the secrets store (keyring/encrypted file). "
-        "Set it via Settings -> Model Provider, or `aletheia secrets set <key>`."
-    ),
     "auth_error": (
         "LLM provider returns 401/403 — the API key may be expired or invalid. "
         "Update via Settings -> Model Provider."
@@ -164,7 +150,7 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
             if consecutive_failures >= stall_threshold and (
                 consecutive_failures - last_escalation_at >= stall_threshold
             ):
-                cause = _classify_stall(probe_results, cfg)
+                cause = _classify_stall(probe_results)
                 _escalate_stall(cause, consecutive_failures)
                 last_escalation_at = consecutive_failures
                 current_interval = max(1, min(
@@ -183,7 +169,7 @@ async def _auto_resume_loop(interval_sec: int = 300) -> None:
         except Exception as e:
             consecutive_failures += 1
             probe_results = [{"provider": "unknown", "usable": False, "error": str(e)}]
-            cause = _classify_stall(probe_results, cfg)
+            cause = _classify_stall(probe_results)
             if consecutive_failures >= stall_threshold and (
                 consecutive_failures - last_escalation_at >= stall_threshold
             ):
