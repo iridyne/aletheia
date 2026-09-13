@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`, under
+Source checkpoint: `19c895975d6fef5cc37613fc4aef99fc4c41ffa5`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -235,3 +235,19 @@ the symbol cache. This is a public read-only capability repair: private account,
 order, Risk, Gateway, settlement, and credential ownership are unchanged.
 Focused execution/registry/UTA/capability tests (47), Ruff, and diff checks pass;
 remote CI remains retired and is not evidence.
+
+The remaining concrete-client audit is now bounded at this checkpoint. The
+candidate Bitget credential route still signs one minimal spot account-info
+request with caller-supplied credentials; replacing it with the configured UTA
+account probe would change the request/profile/permission contract and its
+acceptance semantics, so that cutover needs an explicit semantic decision or
+credential-backed comparative evidence. The scheduler TP/SL recovery path
+still needs Bitget's profile-selected parent/child plan-history lookup followed
+by an exact, window-free per-order fill query before it claims a local close.
+The frozen UTA protocol has no plan-history operation, and generic `get_fills`
+requires a bounded history start, so substituting it would be a D1 contract or
+runtime-semantics change rather than a D0 import cleanup. The concrete allowlist
+therefore remains intentional; no second framework, private writer, or
+credential authority is introduced. These two paths, #1884 runtime attribution,
+Bitget Demo qualification, and Scheme A physical movement remain open evidence
+gates.

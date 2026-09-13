@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`. This is a bounded evidence
+based on `19c895975d6fef5cc37613fc4aef99fc4c41ffa5`. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -158,6 +158,38 @@ Bitget-native scheduler TP/SL recovery and candidate-credential route as
 concrete-client reachability exceptions. This structural evidence does not
 prove those two paths, production slot ownership, Fedora runtime, or account
 qualification.
+
+## Remaining concrete-client convergence boundary
+
+At this current head, UTA-S07 has exactly two importing modules and neither is a
+safe D0 replacement:
+
+* `server.routes.bitget`'s candidate route accepts raw, uncommitted Bitget
+  credentials and checks one `/api/v2/spot/account/info` response. The stored
+  account route already uses `uta.manager.probe_account_reachable`, but that
+  manager resolves a configured execution identity and may issue the selected
+  UTA profile's balance requests. Routing a candidate through it would change
+  which endpoint, profile, permissions, and error classification are tested;
+  it requires an owner-approved contract choice or credential-backed
+  comparative evidence. The current one-shot probe remains an explicit
+  candidate-credential exception and does not grant adapter-only ownership.
+* `agent_runtime.scheduler._tpsl_fill_check_body` discovers a triggered Bitget
+  TP/SL parent and its exact child execution ID through the profile-selected
+  classic-v2 or UTA-v3 native history endpoint. It then proves account
+  membership through UTA before claiming the Position close and fetches exact
+  order fills without a time window before materialization. The frozen UTA
+  protocol has no plan-history method, while `CCXTUTAAdapter.get_fills` rejects
+  an unbounded query and is designed for a bounded account-history scan. A raw
+  CCXT substitution or a new UTA method would therefore alter a recovery/
+  economics contract and is D1/runtime work, not a concrete-import deletion.
+
+No safe code convergence remains in these two paths on source evidence alone.
+Keep both allowlisted until the semantic choice or exact Bitget Demo/Fedora
+qualification evidence exists; do not add a compatibility facade, a second
+exchange framework, or a new UTA protocol method as a speculative bridge. The
+existing TP/SL materialization specs and candidate-route security/API specs
+remain regression evidence, but mocked tests do not prove live account
+ownership, endpoint permissions, production runtime, or qualification.
 
 ## Startup filesystem repair ownership
 
