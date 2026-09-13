@@ -13,8 +13,7 @@ from pydantic import BaseModel
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import set_secret, get_secret
 from aletheia.files.jsonl import write_audit
-from aletheia.exchanges.bitget.auth import build_headers
-from aletheia.exchanges.bitget.client import BASE_URL
+from aletheia.exchanges.bitget.auth import probe_candidate_credentials
 from aletheia.trust.live_unlock import active_live_profile_conflict
 from aletheia.uta.manager import probe_account_reachable
 
@@ -103,28 +102,9 @@ async def test_candidate_credentials(req: TestCandidateCredsRequest):
     if req.profile not in ("demo", "live"):
         raise HTTPException(400, "profile must be 'demo' or 'live'")
 
-    path = "/api/v2/spot/account/info"
-    demo = req.profile == "demo"
-    try:
-        from aletheia.net import httpx_client
-        headers = build_headers(req.api_key, req.api_secret, req.passphrase, "GET", path, "", demo=demo)
-        async with httpx_client(timeout=15) as client:
-            resp = await client.get(f"{BASE_URL}{path}", headers=headers)
-            data = resp.json()
-        if data.get("code") == "00000":
-            return {"connected": True, "profile": req.profile}
-        return {
-            "connected": False,
-            "profile": req.profile,
-            "error": "credential_probe_rejected",
-        }
-    except Exception as e:
-        err_msg = type(e).__name__
-        if "timeout" in str(e).lower():
-            err_msg = "connection_timeout"
-        elif "connect" in str(e).lower():
-            err_msg = "connection_failed"
-        return {"connected": False, "profile": req.profile, "error": err_msg}
+    return await probe_candidate_credentials(
+        req.api_key, req.api_secret, req.passphrase, req.profile
+    )
 
 
 # ─── Binance credentials ───
