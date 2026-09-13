@@ -1,6 +1,6 @@
 # Slim Core production ownership inventory
 
-Source checkpoint: `11d0fdb6b522798bd59043ed9821158a41aca288`, under
+Source checkpoint: `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`, under
 [#3134](https://github.com/iridyne/aletheia/issues/3134). This is an inventory of
 current boundaries, not a declaration that compartmentalization or all single
 writers are proven. No runtime/data migration follows from classification here.
@@ -93,7 +93,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Close lifecycle | `finalize_position_close`: `pnl._commit_close_economics` or `outcome_closure.close_position_administrative` | Administrative lifecycle closure must remain distinct from cost-complete strategy Outcome admission. |
 | Final PnL / eligibility | Shared `pnl._commit_close_economics` and `analytics.outcome_integrity`; funding recovery and hooks use existing boundaries | Multiple same-Plan Proposals conflict with Learning §11.1's same-Proposal realized ancestry rule; no silent economic eligibility expansion. |
 | Pause / resume | `agent_runtime.pause_ownership` durable leases, lock and config mutation; scheduler pause/resume and resume gates consume it | Separate owner leases coordinate one pause state; optional components may not bypass leases or independently clear authority. |
-| Execution identity | `config.exchanges.EXECUTION_MODE_ENVIRONMENTS`, `EXECUTION_MODE_VENUES`, and derived Demo/Live/External sets; Gateway, Risk, lifecycle cleanup, startup scope and reconciliation consume these helpers/sets | UTA profile composition and venue-native capability/recovery branches remain explicit exceptions; unknown identities stay unavailable. |
+| Execution identity | `config.exchanges.EXECUTION_MODE_ENVIRONMENTS`, `EXECUTION_MODE_VENUES`, and derived Demo/Live/External sets; Gateway, Risk, lifecycle cleanup, startup scope and reconciliation consume these helpers/sets | UTA profile composition and venue-native recovery branches remain explicit exceptions; unknown identities stay unavailable. |
 | Historical Position repair | Schema migrations, bounded Outcome remediation and fixed-target #3111 overlap repair | The #3111 helper is explicit module CLI only, exact-snapshot/evidence checked and audit-idempotent; no production importer/caller. No repair was executed in this audit. |
 
 ## Fitness baseline and next proof
@@ -224,3 +224,14 @@ build/performance budgets, Ruff, docs governance, preflight, local CI contract
 tests, and diff checks passed locally. It does not prove #1884's production
 slot-owner attribution, stream/finite-pool isolation, Fedora runtime, or
 qualification.
+
+The public capability seam is now merged at this checkpoint. OKX demo market
+metadata is loaded by the existing generic CCXT factory in
+`data.ccxt_provider.load_public_market_capabilities`; the concrete
+`OKXClient.load_demo_markets` duplicate and the Core import of that class are
+gone. The helper preserves active USDT swap/spot filtering, sandbox selection,
+loop-local cleanup, and the known-empty versus unavailable distinction used by
+the symbol cache. This is a public read-only capability repair: private account,
+order, Risk, Gateway, settlement, and credential ownership are unchanged.
+Focused execution/registry/UTA/capability tests (47), Ruff, and diff checks pass;
+remote CI remains retired and is not evidence.
