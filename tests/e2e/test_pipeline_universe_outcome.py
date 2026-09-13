@@ -20,7 +20,8 @@ def universe_position(monkeypatch, request):
     monkeypatch.setattr("aletheia.execution.entry_plan_execution._require_ai_entry_authority", lambda p: None)
     _approving_risk(monkeypatch)
     _wire_venue(monkeypatch)
-    updates = getattr(request, "param", None)
+    updates = dict(getattr(request, "param", None) or {})
+    fill_fraction = updates.pop("entry_fill_fraction", 1.0)
     if updates and updates.get("source_kind") == "serenity":
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
         _, opportunity = _serenity_publication_source()
@@ -32,8 +33,10 @@ def universe_position(monkeypatch, request):
     result = _drive_entry(plan)
     assert result["status"] == "submitted", result
     order = repo.get_order(result["order_id"])
-    materialized = materialize_bitget_entry(order["id"], [_private_entry_fill(order)])
-    assert materialized.state == "filled"
+    materialized = materialize_bitget_entry(order["id"], [
+        _private_entry_fill(order, quantity=order["quantity"] * fill_fraction),
+    ])
+    assert materialized.state == ("filled" if fill_fraction == 1.0 else "partially_filled")
     position = repo.get_position(materialized.position_id)
     assert position["opportunity_id"] == (plan.source_id if plan.source_kind == "serenity" else None)
     return plan, position
@@ -181,3 +184,58 @@ def test_executed_ancestry_survives_candidate_expiry_and_generation_supersession
         (plan.planning_generation_id,),
     )
     assert attribution_chain_complete(position)
+
+
+@spec_claim(SpecClaim(
+    "PL-OF-ML-04", "pipeline_outcome_feedback", "same-Plan per-leg realized ancestry", "L2c",
+    "Distinct immutable Plan-leg Proposals share realized Outcome ancestry only with "
+    "matching Plan, source, instrument and exact account evidence; unrelated legs remain excluded.",
+    status="implemented",
+))
+@pytest.mark.parametrize("universe_position", [{"entry_fill_fraction": 0.4}], indirect=True)
+@pytest.mark.parametrize("broken_link", [None, "proposal_plan", "order_plan", "account", "missing_account"])
+def test_same_plan_two_proposals_reach_realized_outcome(
+    universe_position, monkeypatch, e2e_db, broken_link,
+):
+    from aletheia.analytics.outcome_integrity import attribution_chain_complete, raw_account_events
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.storage.models import Order, RiskDecision, TradeProposal
+    from tests.e2e.test_pipeline_exchange_entry_to_position import _private_entry_fill
+
+    _, position = universe_position
+    first = repo.get_order(position["order_id"])
+    repo.transition_order(first["id"], status="cancelled")
+    second = TradeProposal.model_validate(repo.get_trade_proposal(first["proposal_id"])).model_copy(update={
+        "id": "second-leg", "entry_leg_index": 1, "quantity": first["quantity"] * 0.6,
+        "status": "approved", "commit_hash": None, "parent_hash": None,
+    })
+    repo.insert_trade_proposal(second)
+    decision = RiskDecision(
+        proposal_id=second.id, approved=True, decision_role="authoritative",
+        allowed_execution_mode=second.execution_mode, proposal_execution_mode=second.execution_mode,
+        evaluated_quantity=second.quantity, proposal_commit_hash=second.commit_hash,
+    )
+    repo.insert_risk_decision(decision)
+    order = Order.model_validate(first).model_copy(update={
+        "id": "second-order", "proposal_id": second.id, "risk_decision_id": decision.id,
+        "quantity": second.quantity, "position_id": None, "status": "submitted",
+        "exchange_order_id": "venue-second", "client_order_id": second.id,
+        "execution_attempt_id": None, "execution_receipt_hash": None, "filled_at": None,
+    })
+    repo.insert_order(order)
+    result = materialize_bitget_entry(order.id, [_private_entry_fill(order.model_dump())])
+    assert result.position_id == position["id"] and result.state == "filled"
+    if broken_link == "proposal_plan":
+        e2e_db.execute("UPDATE trade_proposals SET entry_plan_id='unrelated' WHERE id=?", (second.id,))
+    elif broken_link == "order_plan":
+        e2e_db.execute("UPDATE orders SET entry_plan_id='unrelated' WHERE id=?", (order.id,))
+    elif broken_link == "account":
+        e2e_db.execute("UPDATE orders SET uta_account_identity_json=json_set(uta_account_identity_json, '$.account_id', 'unrelated') WHERE id=?", (order.id,))
+    elif broken_link == "missing_account":
+        e2e_db.execute("UPDATE orders SET uta_account_identity_json=NULL WHERE id=?", (order.id,))
+    current = repo.get_position(position["id"])
+    assert attribution_chain_complete(current) is (broken_link is None)
+    closed = _close(monkeypatch, current)
+    assert bool(closed["outcome_eligible"]) is (broken_link is None)
+    [snapshot] = raw_account_events()
+    assert bool(snapshot["_attribution_complete"]) is (broken_link is None)

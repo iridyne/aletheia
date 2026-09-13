@@ -150,7 +150,7 @@ def _insert_multileg_position(*, position_id: str, mixed_proposals: bool) -> dic
         "pipeline_outcome_feedback",
         "multileg relational attribution",
         "L2c",
-        "Every entry Order merged into one Position belongs to the same Proposal and "
+        "Entry Orders without a common immutable Plan must share one Proposal and "
         "Opportunity before the realized Outcome may enter attribution or Learning.",
         status="implemented",
     )

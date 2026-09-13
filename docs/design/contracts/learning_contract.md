@@ -852,9 +852,18 @@ The shared `analytics/outcome_integrity.py` owner validates the canonical
 Candidate → Planning Generation → EntryPlan → Proposal → Order/Position chain
 for both prospective close producers and snapshot read cohorts:
 
-- Position and every non-close entry Order name the same existing Proposal;
-  the primary Order points back to that Position and is not a close Order.
-- The Proposal names its EntryPlan, the Plan names its primary Order and
+- The primary Order points back to the Position and names its Proposal; it is
+  not a close Order. Entry Orders normally share that Proposal.
+- Owner-approved D1 under #3134: distinct per-leg Proposals may contribute to
+  the same realized Position when both identify the same immutable EntryPlan,
+  their leg indices are distinct (0/1; historical primary NULL means leg 0),
+  each Order identifies that Plan, and source Opportunity, instrument,
+  direction, execution mode and exact persisted UTA account identity agree.
+  This is not permission to merge unrelated Proposals or accounts. Existing
+  Fill verification, fee/funding completeness and exclusion gates still apply.
+  No historical backfill, completed-hook replay or negative-eligibility rewrite
+  is authorized; Risk and Live authority remain unchanged.
+- The Proposal and its entry Orders name the EntryPlan; the Plan names its
   completed Generation, and that Generation points back to the Plan.
 - The Plan's immutable Candidate identity matches the Generation's bound
   `last_candidate_id` (the original generation seed may precede requalification).
