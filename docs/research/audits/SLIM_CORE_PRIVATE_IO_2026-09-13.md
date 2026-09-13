@@ -1,7 +1,7 @@
 # Slim Core private-I/O reachability evidence
 
 Dated source audit for [#3134](https://github.com/iridyne/aletheia/issues/3134),
-based on `29eb0b0ce485e9d90c49c318fbc32b1b3a32a433`. This is a bounded evidence
+based on the current merge head. This is a bounded evidence
 inventory, not a complete production subsystem inventory, a support promise, or
 runtime qualification.
 The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
@@ -16,7 +16,7 @@ remaining importing modules do not perform interchangeable work:
 | Entrypoint / consumer | Actual read and downstream authority | Containment consequence |
 | --- | --- | --- |
 | `server.routes.bitget` stored-credential connection endpoints, called by `ExecutionTab` | Previously three native clients read account/positions. They now call existing `uta.manager.probe_account_reachable` off the HTTP event loop. It accepts only complete account evidence, classifies errors without raw messages, and uses `query_uta` teardown. UI consumes `connected` / `error`; it does not consume the old Binance position count. | One existing account-probe owner; no separate route client or probe executor. Endpoint mode identifies the configured account, not trading permission. |
-| Same module's candidate-credential endpoints | Bitget still signs a candidate account-info request with `build_headers` and imports the legacy client's `BASE_URL`; Binance/OKX construct temporary CCXT balance probes. These requests do not persist candidate credentials. Credential-status/write routes are separate from the stored-account probe. | The module remains on the concrete-import allowlist. This cutover does not claim adapter-only credential ownership or remove candidate-probe side channels. |
+| Same module's candidate-credential endpoints | The Bitget candidate probe is now owned by the Bitget extension: `exchanges.bitget.auth.probe_candidate_credentials` signs the read-only account-info request and returns the stable `credential_probe_rejected` code; the route no longer imports `build_headers` or `BASE_URL` and is off the `UTA-S07` concrete-import allowlist. Binance/OKX construct temporary CCXT balance probes. These requests do not persist candidate credentials. Credential-status/write routes are separate from the stored-account probe. | Route-level venue signing is deleted; `UTA-S07` allowlist shrank to the scheduler TP/SL seam only. Candidate-probe credentials remain request-scoped and non-persisted. |
 | `agent_runtime.scheduler._tpsl_fill_check_body` | The configured Bitget profile selects classic v2 plan history or UTA v3 `strategy-sub-orders`; UTA maps an exact filled `subOrderId` to `executeOrderId`. A UTA exact Order read proves account membership before `_claim_observed_tpsl_close`; native exact order fills then feed `materialize_bitget_close`, with another configured-identity check. | This is an active recovery/economic-evidence path, not inert history. Parent-trigger discovery remains a native venue concern; normalized `OrderQuery` / `OrderStatusReport` still do not own it. |
 
 ## Independently necessary evidence boundaries
@@ -148,16 +148,15 @@ CI contract tests, and diff checks passed. The production pool's exact slot
 owners, stream/finite isolation, Fedora runtime identity, and account
 qualification remain open evidence gates.
 
-The public capability seam is now removed from the concrete private-I/O
-allowlist. `execution.venue_capabilities` delegates OKX demo symbol discovery
-to the existing managed generic CCXT factory, and the duplicate static method on
-`OKXClient` was deleted. The call loads only public sandbox market metadata and
-always closes its loop-local client; no account credentials, private endpoint,
-order mutation, or UTA identity is involved. UTA-S07 now leaves only the
-Bitget-native scheduler TP/SL recovery and candidate-credential route as
-concrete-client reachability exceptions. This structural evidence does not
-prove those two paths, production slot ownership, Fedora runtime, or account
-qualification.
+The public capability seam was removed from the concrete private-I/O
+allowlist earlier: `execution.venue_capabilities` delegates OKX demo symbol
+discovery to the existing managed generic CCXT factory, and the duplicate
+static method on `OKXClient` was deleted. That call loads only public sandbox
+market metadata and always closes its loop-local client; no account
+credentials, private endpoint, order mutation, or UTA identity is involved.
+The candidate-credential route is now also off the allowlist: the Bitget
+extension owns the probe (see the reachability table above), leaving the
+Bitget-native scheduler TP/SL recovery seam as the only remaining entry.
 
 ## Startup filesystem repair ownership
 

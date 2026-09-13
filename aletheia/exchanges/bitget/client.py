@@ -6,7 +6,7 @@ import math
 from urllib.parse import urlencode
 
 from aletheia.net import httpx_client
-from aletheia.exchanges.bitget.auth import build_headers
+from aletheia.exchanges.bitget.auth import BASE_URL, DEMO_BASE_URL, build_headers
 from aletheia.exchanges.submission_errors import (
     ClosePositionAbsentError,
     SubmissionResponseUnknownError,
@@ -15,8 +15,6 @@ from aletheia.config.secrets import get_secret, redact
 from aletheia.data.symbols import to_bitget, to_canonical
 
 
-BASE_URL = "https://api.bitget.com"
-DEMO_BASE_URL = "https://api.bitget.com"  # Same URL, demo distinguished by header
 
 
 @dataclass
