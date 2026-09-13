@@ -157,11 +157,15 @@ def _account_generation(cfg, execution_mode: str, scope: str, profile: str) -> i
     )
 
 
-def build_uta_registry(cfg=None) -> UTARegistry:
-    """Build immutable factories from current config; no client/session is created."""
+def build_uta_registry(
+    cfg=None, *, execution_modes: tuple[str, ...] = UTA_EXECUTION_MODES,
+) -> UTARegistry:
+    """Resolve only requested account scopes; no client/session is created."""
     cfg = cfg or load_config()
     registry = UTARegistry()
     for execution_mode in UTA_EXECUTION_MODES:
+        if execution_mode not in execution_modes:
+            continue
         scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
             cfg, execution_mode
         )
@@ -205,7 +209,7 @@ def build_uta_registry(cfg=None) -> UTARegistry:
 
 def create_uta_adapter(execution_mode: str, cfg=None):
     """Create one loop-local evidence adapter for the exact configured account."""
-    return build_uta_registry(cfg).create(execution_mode)
+    return build_uta_registry(cfg, execution_modes=(execution_mode,)).create(execution_mode)
 
 
 async def query_uta(
@@ -353,7 +357,7 @@ async def get_unified_state(
         else execution_modes
     ))
     try:
-        registry = build_uta_registry(cfg)
+        registry = build_uta_registry(cfg, execution_modes=requested_modes)
     except Exception:
         return UnifiedState(
             total_equity_usdt=None,

@@ -170,7 +170,7 @@ def _unified_identity_is_current(state: dict) -> tuple[bool, str]:
         from aletheia.uta.manager import build_uta_registry
 
         cfg = load_config()
-        registry = build_uta_registry(cfg)
+        registry = build_uta_registry(cfg, execution_modes=execution_modes)
         expected = {
             identity.execution_mode: identity.model_dump(mode="json")
             for identity in registry.configured_identities()

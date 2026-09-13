@@ -103,7 +103,7 @@ async def test_uta_v1_zero_projection_uses_no_legacy_client(monkeypatch):
     adapter = FakeUTAAdapter(_identity())
     monkeypatch.setattr(
         "aletheia.uta.manager.build_uta_registry",
-        lambda _cfg: _registry(adapter),
+        lambda _cfg, **_kwargs: _registry(adapter),
     )
 
     state = await get_unified_state(_cfg())
@@ -122,7 +122,7 @@ async def test_incomplete_uta_position_view_keeps_account_but_revokes_totals(mon
     )
     monkeypatch.setattr(
         "aletheia.uta.manager.build_uta_registry",
-        lambda _cfg: _registry(adapter),
+        lambda _cfg, **_kwargs: _registry(adapter),
     )
 
     state = await get_unified_state(_cfg())
@@ -164,7 +164,7 @@ async def test_multi_account_reads_start_concurrently(monkeypatch):
             lambda _config, adapter=adapter: adapter,
         )
     cfg = _cfg()
-    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: registry)
 
     state = await get_unified_state(
         cfg, execution_modes=("okx_demo", "binance_testnet")
@@ -185,7 +185,7 @@ async def test_default_unified_scope_excludes_configured_live_account(monkeypatc
             lambda _config, adapter=adapter: adapter,
         )
     cfg = _cfg()
-    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: registry)
 
     paper = await get_unified_state(cfg)
     targeted_live = await get_unified_state(
@@ -207,7 +207,7 @@ async def test_default_unified_scope_excludes_configured_live_account(monkeypatc
 @pytest.mark.asyncio
 async def test_explicit_missing_unified_account_fails_closed(monkeypatch):
     monkeypatch.setattr(
-        "aletheia.uta.manager.build_uta_registry", lambda _cfg: UTARegistry()
+        "aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: UTARegistry()
     )
 
     state = await get_unified_state(
@@ -240,9 +240,22 @@ async def test_failed_position_read_keeps_other_account_but_revokes_aggregate(mo
     failed.get_positions = unavailable
     registry = _registry(failed)
     registry.register(UTAAdapterConfig(identity=healthy.identity), lambda _config: healthy)
-    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg: registry)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", lambda _cfg, **_kwargs: registry)
     state = await get_unified_state(_cfg())
     assert state.total_equity_usdt is None
     assert state.connected_brokers == ["binance_testnet"]
     assert state.accounts[0]["equity_usdt"] == 3000
     assert state.errors == ["okx_demo:account_read_unavailable"]
+
+
+def test_targeted_adapter_never_resolves_unrelated_credentials(monkeypatch):
+    from aletheia.uta import manager
+
+    def scoped_secret(key):
+        assert key.startswith("bitget.demo."), "unrelated credential scope accessed"
+        return "synthetic-test-value"
+
+    monkeypatch.setattr(manager, "get_secret", scoped_secret)
+    monkeypatch.setattr(manager, "get_credential_generation", lambda _scope: 0)
+    adapter = manager.create_uta_adapter("bitget_demo", _cfg())
+    assert adapter.identity.execution_mode == "bitget_demo"

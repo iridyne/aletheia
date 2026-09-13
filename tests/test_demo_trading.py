@@ -62,8 +62,7 @@ def _demo_config(monkeypatch, permission="Paper"):
     from types import SimpleNamespace
     from aletheia.uta import manager
     identity = _identity("bitget_demo")
-    monkeypatch.setattr(manager, "build_uta_registry", lambda *args: SimpleNamespace(
-        configured_identities=lambda: (identity,)))
+    monkeypatch.setattr(manager, "build_uta_registry", lambda *args, **kwargs: SimpleNamespace(configured_identities=lambda: (identity,)))
     exchange_sync._store_unified({
         "total_equity_usdt": 10000.0, "total_available_usdt": 10000.0,
         "accounts": [{"broker_id": "bitget_demo", "equity_usdt": 10000.0, "available_usdt": 10000.0,

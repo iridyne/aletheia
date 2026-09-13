@@ -2559,7 +2559,7 @@ def _configured_identity(execution_mode: str):
     return next(
         (
             identity
-            for identity in build_uta_registry().configured_identities()
+            for identity in build_uta_registry(execution_modes=(execution_mode,)).configured_identities()
             if identity.execution_mode == execution_mode
         ),
         None,
