@@ -242,6 +242,8 @@ def _assert_candidate_writer_boundary(root):
             literal_writes=literal_writes,
             expression_writes=expression_writes,
             allow_migration_dml=False,
+            raw_operations={"publish_candidate_snapshot": {"_insert", "_insert_many"}},
+            additive_migration_ddl=True,
         )
     tree = ast.parse(repository.read_text(encoding="utf-8"))
     publisher = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "publish_candidate_snapshot"), None)
@@ -303,6 +305,15 @@ def test_candidate_snapshot_creation_has_one_core_owner():
     ("aletheia/storage/migrations.py", "db.execute('DELETE FROM universe_members')"),
     ("extensions/export.py", "save = repo._insert_many"),
     ("extensions/export.py", "from aletheia.storage.repositories import _insert_many as save"),
+    ("extensions/export.py", "from aletheia.storage.repositories import _insert_many"),
+    ("extensions/other.py", "db.execute('DELETE FROM ' + 'universe_members')"),
+    ("aletheia/storage/migrations.py", "db.execute('DELETE FROM ' + 'universe_members')"),
+    ("aletheia/storage/repositories.py", "    _delete_by_rowid_batches('universe_members', '1=1')"),
+    ("aletheia/storage/repositories.py", "    _update('universe_snapshots', 'id', fields)"),
+    ("aletheia/storage/repositories.py", "    db.execute('DELETE FROM universe_members')"),
+    ("aletheia/storage/migrations.py", "db.execute('DROP TABLE universe_members')"),
+    ("aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_snapshots RENAME TO old_snapshots')"),
+    ("aletheia/storage/migrations.py", "db.execute('ALTER TABLE universe_members DROP COLUMN rank')"),
     ("aletheia/storage/repositories.py", "from aletheia.trading import serenity_publication"),
     ("aletheia/storage/repositories.py", "from ..trading import serenity_publication"),
     ("aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)' + ' OR 1=1')"),
@@ -322,6 +333,8 @@ def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source
     target.write_text(source, encoding="utf-8")
     if path == "extensions/export.py":
         (target.parent / "consumer.py").write_text(
+            "from extensions.export import _insert_many as save\nsave('universe_members', rows)"
+            if source.endswith("import _insert_many") else
             "from extensions.export import save\nsave('universe_members', rows)", encoding="utf-8",
         )
     with pytest.raises(AssertionError):
