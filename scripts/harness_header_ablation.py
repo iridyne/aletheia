@@ -131,7 +131,7 @@ async def run(provider: str, samples: int, concurrency: int, output: Path) -> No
 
 
 def main() -> None:
-    from aletheia.model_provider.http_runtime import build_http_provider
+    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity
     from aletheia.model_provider.router import configure_model_provider
 
     parser = argparse.ArgumentParser()
@@ -140,7 +140,7 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    configure_model_provider(build_http_provider)
+    configure_model_provider(build_http_provider, identity_reader=http_configuration_identity)
     asyncio.run(run(args.provider, args.samples, args.concurrency, args.output))
 
 

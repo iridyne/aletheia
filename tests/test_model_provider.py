@@ -27,9 +27,10 @@ from aletheia.model_provider.router import (
 @pytest.fixture(autouse=True)
 def _bind_http_constructor(monkeypatch):
     from aletheia.model_provider import router
-    from aletheia.model_provider.http_runtime import build_http_provider
+    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity
 
     monkeypatch.setattr(router, "_provider_factory", build_http_provider)
+    monkeypatch.setattr(router, "_provider_identity_reader", http_configuration_identity)
 
 
 @pytest.mark.parametrize("bound", [None, "selected-endpoint"])
@@ -201,7 +202,7 @@ async def test_async_router_shares_one_cached_instance(monkeypatch):
         time.sleep(0.02)
         return "synthetic-key"
 
-    monkeypatch.setattr(router, "get_secret", read)
+    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", read)
     clear_cache()
     try:
         providers = await asyncio.gather(*(get_provider_async("http") for _ in range(8)))

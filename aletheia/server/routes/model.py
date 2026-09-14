@@ -847,6 +847,7 @@ def _candidate_configuration_identity(
     """Build the same identity that a verified profile will persist."""
 
     from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider.http_runtime import http_configuration_identity
 
     values = pcfg.model_dump(mode="python") if pcfg is not None else {}
     for field_name in ProviderConfig.model_fields:
@@ -861,7 +862,7 @@ def _candidate_configuration_identity(
         overrides = {candidate.api_key_secret_ref: api_key}
     else:
         overrides = None
-    return provider_configuration_identity(
+    return http_configuration_identity(
         req.provider,
         candidate,
         credential_overrides=overrides,
@@ -869,6 +870,8 @@ def _candidate_configuration_identity(
 
 
 def _apply_model_config_sync(req: ModelProfileMutation, verification: dict | None = None):
+    from aletheia.model_provider.http_runtime import http_configuration_identity
+
     if req.api_key is not None:
         req.api_key = req.api_key.strip() or None
 
@@ -936,7 +939,7 @@ def _apply_model_config_sync(req: ModelProfileMutation, verification: dict | Non
         pcfg.api_key_secret_ref = secret_ref
         secret_override = {secret_ref: req.api_key}
 
-    identity_after = provider_configuration_identity(
+    identity_after = http_configuration_identity(
         req.provider,
         pcfg,
         credential_overrides=secret_override,

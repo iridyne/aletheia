@@ -1,7 +1,60 @@
-"""Configured HTTP endpoint construction; Core owns routing and cached lifetime."""
+"""HTTP construction and credential-backed identity; Core owns routing and lifetime."""
+
+import hashlib
+import json
 
 from aletheia.config.secrets import get_secret
 from aletheia.model_provider.registry import API_PROVIDER_TYPES, provider_config_protocol
+
+
+def http_configuration_identity(
+    name: str,
+    pcfg,
+    *,
+    credential_overrides: dict[str, str | None] | None = None,
+) -> str:
+    """Fingerprint one endpoint; only credential ingress supplies candidate overrides."""
+
+    provider_type = str(getattr(pcfg, "type", "") or name)
+    refs = (
+        getattr(pcfg, "api_key_secret_ref", None),
+    ) if provider_type in API_PROVIDER_TYPES else ()
+    credential_fingerprints: list[dict[str, str | None]] = []
+    for ref in refs:
+        if not ref:
+            continue
+        if credential_overrides is not None and ref in credential_overrides:
+            value = credential_overrides[ref]
+        else:
+            value = get_secret(ref)
+        credential_fingerprints.append(
+            {
+                "ref": ref,
+                "sha256": hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+                if value
+                else None,
+            }
+        )
+    payload = {
+        "provider": name,
+        "type": str(getattr(pcfg, "type", "") or name),
+        "base_url": str(getattr(pcfg, "base_url", "") or ""),
+        "workspace_url": str(getattr(pcfg, "workspace_url", "") or ""),
+        "protocol": provider_config_protocol(str(getattr(pcfg, "type", "") or name), pcfg),
+        "model": str(getattr(pcfg, "model", "") or ""),
+        "auth_scheme": str(getattr(pcfg, "auth_scheme", "") or ""),
+        "auth_type": str(getattr(pcfg, "auth_type", "") or ""),
+        # Historical identity inputs only; no transport consumes these fields.
+        "command": str(getattr(pcfg, "command", "") or ""),
+        "mode": str(getattr(pcfg, "mode", "") or ""),
+        "codex_model": str(getattr(pcfg, "codex_model", "") or ""),
+        "api_key_secret_ref": getattr(pcfg, "api_key_secret_ref", None),
+        "oauth_token_ref": getattr(pcfg, "oauth_token_ref", None),
+        "oauth_refresh_ref": getattr(pcfg, "oauth_refresh_ref", None),
+        "credential_fingerprints": credential_fingerprints,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_http_provider(name, pcfg):
