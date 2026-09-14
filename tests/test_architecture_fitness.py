@@ -220,14 +220,16 @@ def _assert_candidate_writer_boundary(root):
         ("storage/repositories.py", "refresh_active_snapshot_ttls"): {
             "UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)",
         },
+    }
+    expression_writes = {
         ("storage/repositories.py", "prune_universe_members"): {
-            "DELETE FROM universe_members WHERE snapshot_id IN (  SELECT id FROM universe_snapshots WHERE created_at < ?) AND NOT EXISTS (  SELECT 1 FROM universe_forward_outcomes o   WHERE o.member_id=universe_members.id AND o.entry_ts>=?)",
+            repr("DELETE FROM universe_members WHERE snapshot_id IN (  SELECT id FROM universe_snapshots WHERE created_at < ?) AND NOT EXISTS (  SELECT 1 FROM universe_forward_outcomes o   WHERE o.member_id=universe_members.id AND o.entry_ts>=?)") + " + protected_clause",
         },
-        # Exact static prefixes of existing bounded retention SQL. Dynamic
-        # placeholders/parameters remain outside this lexical writer proof.
+        # Pin complete SQL expression ASTs, not an independently allowed prefix.
+        # Runtime placeholder/parameter values remain outside lexical proof.
         ("storage/repositories.py", "prune_universe_snapshots"): {
-            "DELETE FROM universe_members WHERE snapshot_id IN (",
-            "DELETE FROM universe_snapshots WHERE id IN (",
+            "f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})'",
+            "f'DELETE FROM universe_snapshots WHERE id IN ({placeholders})'",
         },
     }
     for table in ("universe_snapshots", "universe_members"):
@@ -238,19 +240,33 @@ def _assert_candidate_writer_boundary(root):
             }},
             raw_owners={"publish_candidate_snapshot"},
             literal_writes=literal_writes,
+            expression_writes=expression_writes,
+            allow_migration_dml=False,
         )
     tree = ast.parse(repository.read_text(encoding="utf-8"))
     publisher = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "publish_candidate_snapshot"), None)
     assert publisher is not None, "canonical Candidate publisher missing"
-    inserts = [
-        (node.func.id, node.args[0].value)
-        for node in ast.walk(publisher)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        and node.func.id in {"_insert", "_insert_many"}
-        and node.args and isinstance(node.args[0], ast.Constant)
-    ]
+    inserts = []
+    for node in ast.walk(publisher):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
+        if name in {"_insert", "_insert_many"}:
+            table = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
+            assert isinstance(table, ast.Constant), "Candidate insertion table must be literal"
+            inserts.append((name, table.value))
     assert sorted(inserts) == [("_insert", "universe_snapshots"), ("_insert_many", "universe_members")]
-    assert "aletheia.trading.serenity_publication" not in _get_imports(repository)
+    from importlib.util import resolve_name
+
+    imports = _get_imports(repository)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if node.level:
+                module = resolve_name("." * node.level + module, "aletheia.storage")
+            imports.add(module)
+            imports.update(f"{module}.{alias.name}" for alias in node.names)
+    assert not any(name == "aletheia.trading.serenity_publication" or name.startswith("aletheia.trading.serenity_publication.") for name in imports)
 
 
 def test_candidate_snapshot_creation_has_one_core_owner():
@@ -279,6 +295,17 @@ def test_candidate_snapshot_creation_has_one_core_owner():
     ("aletheia/storage/repositories.py", "def outer():\n    def prune_universe_snapshots():\n        db.execute('DELETE FROM universe_members WHERE snapshot_id IN (')"),
     ("aletheia/universe/service.py", "from aletheia.storage.repositories import publish_candidate_snapshot as exported_writer"),
     ("aletheia/other.py", "writer = repo.publish_candidate_snapshot"),
+    ("aletheia/storage/repositories.py", "    repo._insert('universe_snapshots', snap)"),
+    ("aletheia/storage/repositories.py", "    repo._insert_many(table='universe_members', rows=members)"),
+    ("aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    db.execute(f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})' + ' OR 1=1')"),
+    ("aletheia/storage/migrations.py", "db.execute('INSERT INTO universe_members VALUES (?)')"),
+    ("aletheia/storage/migrations.py", "db.execute('UPDATE universe_snapshots SET status=1')"),
+    ("aletheia/storage/migrations.py", "db.execute('DELETE FROM universe_members')"),
+    ("extensions/export.py", "save = repo._insert_many"),
+    ("extensions/export.py", "from aletheia.storage.repositories import _insert_many as save"),
+    ("aletheia/storage/repositories.py", "from aletheia.trading import serenity_publication"),
+    ("aletheia/storage/repositories.py", "from ..trading import serenity_publication"),
+    ("aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)' + ' OR 1=1')"),
 ])
 def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source):
     repository = tmp_path / "aletheia/storage/repositories.py"
@@ -293,6 +320,10 @@ def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source
     if target == repository:
         source = repository.read_text(encoding="utf-8") + source
     target.write_text(source, encoding="utf-8")
+    if path == "extensions/export.py":
+        (target.parent / "consumer.py").write_text(
+            "from extensions.export import save\nsave('universe_members', rows)", encoding="utf-8",
+        )
     with pytest.raises(AssertionError):
         _assert_candidate_writer_boundary(tmp_path)
 
