@@ -352,7 +352,9 @@ def test_gateway_demo_proposal_propagates_stop(tmp_path, monkeypatch):
     take_profit = round(entry * 0.96, 8)
 
     # Demo path enforces a < 1800s market-snapshot freshness check (CR-RE).
-    insert_market_snapshot(MarketSnapshot(symbol="ETH/USDT", market_type="usdt_futures", price=entry))
+    insert_market_snapshot(MarketSnapshot(
+        symbol="ETH/USDT", market_type="usdt_futures", exchange="okx", price=entry,
+    ))
 
     result = submit_proposal(
         symbol="ETH/USDT",
@@ -416,7 +418,9 @@ def test_no_open_position_silently_loses_proposal_stop(tmp_path, monkeypatch):
         ("XRP/USDT", "short", 103.0),
     ]):
         # Demo path enforces market-snapshot freshness (< 1800s).
-        insert_market_snapshot(MarketSnapshot(symbol=sym, market_type="usdt_futures", price=100.0))
+        insert_market_snapshot(MarketSnapshot(
+            symbol=sym, market_type="usdt_futures", exchange="okx", price=100.0,
+        ))
         result = submit_proposal(
             symbol=sym, market_type="usdt_futures", direction=direction,
             quantity=0.01,

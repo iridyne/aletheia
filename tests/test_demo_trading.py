@@ -125,9 +125,12 @@ def _patch_place_order(monkeypatch, captured, *, status="filled", fill_price=Non
 
 
 def _fresh_snapshot(symbol="BTC/USDT", price=60000.0):
-    repo.insert_market_snapshot(MarketSnapshot(symbol=symbol, market_type="usdt_futures", price=price))
-    # latest_snapshot matches by symbol only, but seed canonical (pipeline format).
-    repo.insert_market_snapshot(MarketSnapshot(symbol=symbol, market_type="spot", price=price))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=symbol, market_type="usdt_futures", exchange="bitget", price=price,
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=symbol, market_type="spot", exchange="bitget", price=price,
+    ))
 
 
 # --- gateway routing ------------------------------------------------------

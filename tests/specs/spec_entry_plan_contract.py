@@ -616,7 +616,9 @@ def test_fill_first_immediate_reaches_gateway_risk_and_coordinator(tmp_path, mon
     from aletheia.execution.order_constraints import prepare_exchange_quantity
     _prepare_broker(monkeypatch, submit)
     monkeypatch.setattr("aletheia.execution.order_constraints.prepare_exchange_quantity", prepare_exchange_quantity)
-    repo.insert_market_snapshot(MarketSnapshot(symbol=plan.symbol, market_type="usdt_futures", price=100.))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol=plan.symbol, market_type="usdt_futures", exchange=plan.venue, price=100.,
+    ))
     now = datetime.now(timezone.utc)
     ms = int(now.timestamp()*1000)
     quote = FastMarketEvent(event_type="quote", instrument=InstrumentId.from_parts(plan.venue, plan.symbol, plan.market_type),
