@@ -89,11 +89,21 @@ def test_reconciliation_partitions_follow_registered_uta_identities():
     assert set(_CCXT_LIVE_MODES) == ccxt_live_modes
 
 
-def test_bitget_tpsl_recovery_uses_registered_account_environment():
-    import inspect
+@pytest.mark.parametrize("mode", ["bitget_demo", "bitget_live_limited"])
+def test_bitget_tpsl_recovery_uses_registered_account_environment(monkeypatch, mode):
+    from aletheia.exchanges import composition
+    from aletheia.exchanges.bitget import client, profile_config
+    from tests.specs.uta_private_history import _identity
 
-    from aletheia.agent_runtime import scheduler
-
-    source = inspect.getsource(scheduler._tpsl_fill_check_body)
-    assert "execution_mode_environment(execution_mode)" in source
-    assert 'account_mode = "demo" if execution_mode == "bitget_demo" else "live"' not in source
+    calls = []
+    monkeypatch.setattr(client, "BitgetClient", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr(profile_config, "configured_bitget_profile", lambda: "classic_v2")
+    identity = _identity(mode)
+    reader = composition.create_native_protection_reader(mode, expected_account=identity)
+    assert reader.identity == identity
+    assert calls == [{"mode": execution_mode_environment(mode), "profile": "classic_v2"}]
+    with pytest.raises(ValueError, match="native_protection_account_unsupported"):
+        composition.create_native_protection_reader(
+            mode, expected_account=identity.model_copy(update={"environment": "testnet"}),
+        )
+    assert len(calls) == 1

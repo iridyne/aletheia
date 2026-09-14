@@ -234,14 +234,11 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
     # exactly, so it shrinks only alongside a real migration and can never grow
     # silently.
     #
-    # Two entries remain:
-    # * `agent_runtime/scheduler.py` — Bitget-native TPSL parent/child discovery
-    #   still needs the venue endpoint before exact UTA order/fill evidence.
+    # One entry remains; TPSL discovery now crosses the normalized reader port.
     # * `server/routes/bitget.py` — candidate-credential probes are one-shot
     #   read-only checks and do not persist the supplied credentials. Stored
     #   account probes in this module already use `uta.manager`.
     allowed = {
-        "aletheia/agent_runtime/scheduler.py",
         "aletheia/server/routes/bitget.py",
     }
     actual = set()
