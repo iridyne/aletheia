@@ -297,15 +297,16 @@ async def collect_regime_record(min_hold_periods: int) -> MarketRegimeRecord | N
 
 def read_published_regime() -> tuple[object, object]:
     """Read published evidence only; do not fabricate the UI's sideways default."""
-    if _published_regime is not None:
+    published = _published_regime
+    if published is not None:
         from aletheia.data.freshness import assess_freshness
 
         verdict = assess_freshness(
-            {"detected_at": getattr(_published_regime, "detected_at", None)},
+            {"detected_at": getattr(published, "detected_at", None)},
             "regime", timestamp_field="detected_at",
         )
         if verdict.usable:
-            return getattr(_published_regime, "state", None), getattr(_published_regime, "confidence", None)
+            return getattr(published, "state", None), getattr(published, "confidence", None)
     from aletheia.storage.repositories import get_latest_market_regime
 
     regime = get_latest_market_regime()

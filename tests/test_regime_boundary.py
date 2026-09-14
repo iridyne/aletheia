@@ -72,3 +72,19 @@ def test_universe_keeps_publishing_without_optional_regime(tmp_path, monkeypatch
 
     monkeypatch.setattr(service, "_regime_refresher", None)
     test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+
+
+def test_published_read_keeps_one_snapshot_during_concurrent_replacement(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.data import freshness
+    from aletheia.regime import detector
+    from aletheia.risk.demo_entry_quality import load_published_regime
+
+    first = detector.MarketRegime(state="bull", confidence=0.8)
+    replacement = detector.MarketRegime(state="sideways", confidence=0.2)
+    monkeypatch.setattr(detector, "_published_regime", first)
+    def assess(*args, **kwargs):
+        detector._published_regime = replacement
+        return SimpleNamespace(usable=True)
+    monkeypatch.setattr(freshness, "assess_freshness", assess)
+    assert load_published_regime(fail_open=False) == ("bull", 0.8)
