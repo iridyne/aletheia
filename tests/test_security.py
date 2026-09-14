@@ -287,7 +287,7 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
     """A failing Binance candidate test returns the class name, not the raw error
     (which would echo the candidate api_key/secret submitted in the request)."""
     import ccxt.async_support as ccxt
-    from aletheia.server.routes.bitget import binance_test_candidate, BinanceCandidateRequest
+    from aletheia.exchanges.credential_routes import binance_test_candidate, BinanceCandidateRequest
 
     SECRET = "cand-secret-CAFEBABE-should-not-leak"
 
@@ -305,7 +305,7 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
 
 async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatch):
     import aletheia.net as net
-    from aletheia.server.routes.bitget import (
+    from aletheia.exchanges.credential_routes import (
         BinanceCandidateRequest,
         OkxCandidateRequest,
         binance_test_candidate,
@@ -363,7 +363,7 @@ async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatc
 
 async def test_exchange_candidate_cleanup_failure_closes_session_and_fails_closed(monkeypatch):
     import aletheia.net as net
-    from aletheia.server.routes.bitget import BinanceCandidateRequest, binance_test_candidate
+    from aletheia.exchanges.credential_routes import BinanceCandidateRequest, binance_test_candidate
 
     calls = []
 
@@ -387,6 +387,40 @@ async def test_exchange_candidate_cleanup_failure_closes_session_and_fails_close
 
     assert result == {"connected": False, "error": "RuntimeError"}
     assert calls == ["exchange", "session"]
+
+
+@pytest.mark.parametrize("broker,handler_name,request_name", [
+    ("bitget", "set_exchange_credentials", "ExchangeCredentialsRequest"),
+    ("binance", "set_binance_credentials", "BinanceCredentialsRequest"),
+    ("okx", "set_okx_credentials", "OkxCredentialsRequest"),
+])
+async def test_exchange_credential_ingress_preserves_scope_lock_and_audit(monkeypatch, broker, handler_name, request_name):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from aletheia.exchanges import credential_routes as routes
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(name=broker), live=SimpleNamespace(state="live_limited"))
+    writes, audit = [], []
+    monkeypatch.setattr(routes, "load_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_secret", lambda _ref: None)
+    monkeypatch.setattr(routes, "set_secret", lambda ref, value: writes.append((ref, value)))
+    monkeypatch.setattr(routes, "write_audit", audit.append)
+    request = getattr(routes, request_name)(profile="live", api_key="synthetic-key")
+    handler = getattr(routes, handler_name)
+    with pytest.raises(HTTPException) as error:
+        await handler(request)
+    assert error.value.status_code == 409
+    assert writes == audit == []
+    cfg.live.state = "live_disabled"
+    result = await handler(request)
+    assert writes == [(f"{broker}.live.api_key", "synthetic-key")]
+    assert result["updated"] == ["api_key"]
+    assert len(audit) == 1
+    assert audit[0]["actor"] == "human"
+    assert audit[0]["source"] == "dashboard"
+    assert audit[0]["event_type"] == "exchange_credentials_changed"
+    assert "synthetic-key" not in str(audit)
+    assert "synthetic-key" not in str(result)
 
 
 async def test_close_ccxt_reraises_cancellation_after_session_cleanup():

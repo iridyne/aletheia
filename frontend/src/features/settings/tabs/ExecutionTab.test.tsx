@@ -30,8 +30,8 @@ function deferred<T = void>() {
 
 function renderExecutionTab(
   paperMode = 'bitget_demo',
+  client = new QueryClient(),
 ) {
-  const client = new QueryClient()
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ExecutionTab
@@ -52,6 +52,27 @@ function renderExecutionTab(
 }
 
 describe('ExecutionTab', () => {
+  it.each([false, true])('reports unavailable credential status even with cached data=%s', cached => {
+    const client = new QueryClient({ defaultOptions: { queries: { retryOnMount: false } } })
+    const query = client.getQueryCache().build(client, { queryKey: ['bitgetCreds'] })
+    query.setState({
+      status: 'error', error: new Error('HTTP 404'),
+      data: cached ? { demo: { api_key: { configured: true } } } : undefined,
+    })
+    const html = renderExecutionTab('bitget_demo', client)
+    expect(html).toContain('not available')
+    expect(html).not.toContain('not configured')
+  })
+
+  it('reports not configured only after a successful credential-status read', () => {
+    const client = new QueryClient()
+    client.setQueryData(['bitgetCreds'], {
+      demo: { api_key: { configured: false } }, live: { api_key: { configured: false } },
+    })
+    expect(renderExecutionTab('bitget_demo', client)).toContain('not configured')
+    expect(renderExecutionTab()).not.toContain('not configured')
+  })
+
   it('preserves external-exchange section order without local account controls', () => {
     const html = renderExecutionTab()
     const ids = ['exchange-connection', 'trading-mode', 'paper-trading-parameters', 'capital-events']

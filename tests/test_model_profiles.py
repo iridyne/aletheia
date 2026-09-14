@@ -305,6 +305,57 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("provider_type", ["openai_compatible", "anthropic_compatible"])
+@pytest.mark.parametrize("operation", ["detect-models", "test-candidate"])
+@pytest.mark.parametrize("explicit_key", [False, True])
+async def test_candidate_key_stays_bound_to_its_endpoint(client, monkeypatch, provider_type, operation, explicit_key):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.model_provider.base import ModelHealth
+
+    http, _ = client
+    cfg = load_config()
+    cfg.models.providers["scoped"] = ProviderConfig(
+        type=provider_type, base_url="https://configured.example/v1", model="configured",
+        api_key_secret_ref="model.profile.scoped.api_key",
+    )
+    save_config(cfg)
+    reads = []
+    observed = []
+
+    def secret(ref):
+        reads.append(ref)
+        return "synthetic-stored-key"
+
+    async def catalogue(provider):
+        observed.append((provider.base_url, provider.api_key))
+        return []
+
+    async def health(provider):
+        await catalogue(provider)
+        return ModelHealth(provider=provider.name, available=True, model=provider.model)
+
+    monkeypatch.setattr("aletheia.server.routes.model.get_secret", secret)
+    adapter = f"aletheia.model_provider.{provider_type}." + (
+        "OpenAICompatibleProvider" if provider_type == "openai_compatible" else "AnthropicCompatibleProvider"
+    )
+    monkeypatch.setattr(adapter + ".list_models", catalogue)
+    monkeypatch.setattr(adapter + ".healthcheck", health)
+    payload = {"provider": "scoped"}
+    if operation == "test-candidate":
+        payload["model"] = "another-model"
+    if explicit_key:
+        payload.update(base_url="https://candidate.example/v1", api_key="  synthetic-candidate-key  ")
+    response = await http.post(f"/api/model/{operation}", json=payload)
+    assert response.status_code == 200, response.text
+    assert observed == [(
+        "https://candidate.example/v1" if explicit_key else "https://configured.example/v1",
+        "synthetic-candidate-key" if explicit_key else "synthetic-stored-key",
+    )]
+    assert reads == ([] if explicit_key else ["model.profile.scoped.api_key"])
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("field", ["command", "mode", "codex_model", "default", "set_as_deep", "set_as_fast"])
 async def test_retired_settings_fields_are_rejected(client, field):
     http, _ = client
@@ -929,6 +980,55 @@ async def test_retired_singleton_integration_has_no_mutation_endpoint(client):
     assert response.status_code == 404
     model = (await http.get("/api/model")).json()
     assert model["providers"] == {}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("provider_type, override", [
+    ("openai_compatible", {"base_url": "https://different.example/v1"}),
+    ("anthropic_compatible", {"base_url": "https://different.example/v1"}),
+    ("openai_compatible", {"base_url": "https://configured.example/another-tenant"}),
+    ("openai_compatible", {"protocol": "responses"}),
+    ("anthropic_compatible", {"auth_scheme": "bearer"}),
+])
+@pytest.mark.parametrize("operation", ["detect-models", "test-candidate", "update-profile"])
+async def test_candidate_cannot_send_stored_key_to_changed_endpoint(client, monkeypatch, provider_type, override, operation):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.config.schema import ProviderConfig
+
+    http, _ = client
+    cfg = load_config()
+    cfg.models.providers["scoped"] = ProviderConfig(
+        type=provider_type, base_url="https://configured.example/v1", model="configured",
+        api_key_secret_ref="model.profile.scoped.api_key",
+    )
+    save_config(cfg)
+    before = load_config().models.model_dump()
+    reads = []
+    probes = []
+
+    def secret(ref):
+        reads.append(ref)
+        return "synthetic-configured-key"
+
+    async def catalogue(provider):
+        probes.append(provider.base_url)
+        return []
+
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", secret)
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret", secret)
+    monkeypatch.setattr("aletheia.server.routes.model.get_secret", secret)
+    monkeypatch.setattr(f"aletheia.model_provider.{provider_type}." + (
+        "OpenAICompatibleProvider" if provider_type == "openai_compatible" else "AnthropicCompatibleProvider"
+    ) + ".list_models", catalogue)
+    payload = override
+    if operation == "update-profile":
+        response = await http.patch("/api/settings/model-profiles/scoped", json=payload)
+    else:
+        response = await http.post(f"/api/model/{operation}", json={"provider": "scoped", **payload})
+    assert response.status_code == 422
+    assert response.json()["detail"] == "candidate_credentials_required_for_changed_endpoint"
+    assert reads == probes == []
+    assert load_config().models.model_dump() == before
 
 
 @pytest.mark.anyio

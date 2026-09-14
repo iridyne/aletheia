@@ -431,37 +431,37 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
     queryKey: ['exchange-test', 'bitget', 'demo'],
     queryFn: () => api.testBitget('demo'),
     refetchInterval: 12000,
-    enabled: !!bitgetCreds.data?.demo?.api_key?.configured,
+    enabled: !bitgetCreds.isError && !!bitgetCreds.data?.demo?.api_key?.configured,
   })
   const bitgetLiveTest = useQuery({
     queryKey: ['exchange-test', 'bitget', 'live'],
     queryFn: () => api.testBitget('live'),
     refetchInterval: 12000,
-    enabled: !!bitgetCreds.data?.live?.api_key?.configured,
+    enabled: !bitgetCreds.isError && !!bitgetCreds.data?.live?.api_key?.configured,
   })
   const binanceTestnetTest = useQuery({
     queryKey: ['exchange-test', 'binance', 'testnet'],
     queryFn: () => api.testBinance('testnet'),
     refetchInterval: 15000,
-    enabled: !!binanceCreds.data?.testnet?.api_key?.configured,
+    enabled: !binanceCreds.isError && !!binanceCreds.data?.testnet?.api_key?.configured,
   })
   const binanceLiveTest = useQuery({
     queryKey: ['exchange-test', 'binance', 'live'],
     queryFn: () => api.testBinance('live'),
     refetchInterval: 15000,
-    enabled: !!binanceCreds.data?.live?.api_key?.configured,
+    enabled: !binanceCreds.isError && !!binanceCreds.data?.live?.api_key?.configured,
   })
   const okxDemoTest = useQuery({
     queryKey: ['exchange-test', 'okx', 'demo'],
     queryFn: () => api.testOkx('demo'),
     refetchInterval: 15000,
-    enabled: !!okxCreds.data?.demo?.api_key?.configured,
+    enabled: !okxCreds.isError && !!okxCreds.data?.demo?.api_key?.configured,
   })
   const okxLiveTest = useQuery({
     queryKey: ['exchange-test', 'okx', 'live'],
     queryFn: () => api.testOkx('live'),
     refetchInterval: 15000,
-    enabled: !!okxCreds.data?.live?.api_key?.configured,
+    enabled: !okxCreds.isError && !!okxCreds.data?.live?.api_key?.configured,
   })
 
   const getTestResult = (exId: string, prof: string) => {
@@ -474,10 +474,13 @@ function ExchangeConnectionCard({ qc, onDirty }: SettingsDirtyProps) {
   }
 
   const getConnStatus = (exId: string, prof: string): { state: ConnState; text: string } => {
-    const cData = exId === 'bitget' ? bitgetCreds.data : exId === 'binance' ? binanceCreds.data : okxCreds.data
+    const credentials = exId === 'bitget' ? bitgetCreds : exId === 'binance' ? binanceCreds : okxCreds
+    if (credentials.isError) return { state: 'red', text: 'not available' }
+    if (credentials.isPending) return { state: 'yellow', text: 'checking…' }
+    const cData = credentials.data
     const profData = cData && prof in cData ? (cData as Record<string, { api_key?: { configured?: boolean } }>)[prof] : undefined
-    const configured = !!profData?.api_key?.configured
-    if (!configured) return { state: 'muted', text: 'not configured' }
+    if (profData?.api_key?.configured === false) return { state: 'muted', text: 'not configured' }
+    if (profData?.api_key?.configured !== true) return { state: 'red', text: 'not available' }
     const testQ = getTestResult(exId, prof)
     if (!testQ?.data) return { state: 'yellow', text: 'checking…' }
     if (testQ.data.connected) return { state: 'green', text: 'connected' }

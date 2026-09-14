@@ -175,3 +175,15 @@ the endpoint's preferred-model verification proves a different model. Existing
 probe persistence may update endpoint verification only on an exact identity
 match. Clearing a role and deleting its endpoint leave the tier unassigned;
 assignment never enables an endpoint or changes credential scope.
+
+## Candidate credential confinement
+
+Discovery, candidate verification and profile-update verification cannot lend
+a saved endpoint's credential to an overridden URL, protocol, provider type or
+authentication scheme. Such a candidate must supply its own explicit key;
+otherwise reject before Secret Store resolution or a network probe. Unchanged
+endpoints may reuse their own configured reference, including when selecting a
+different model. Explicit candidate keys do not trigger an unused stored-key
+lookup. Anonymous endpoints without a configured reference remain anonymous.
+This restores #3134's configured-endpoint scope; it does not migrate credentials
+or claim that the remaining Model/Core import boundary has been converged.
