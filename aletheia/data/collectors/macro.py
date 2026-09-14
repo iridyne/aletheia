@@ -5,7 +5,7 @@ Data sources (priority order):
 2. CoinGecko /global (BTC dominance + total crypto market cap)
 3. yFinance (fallback for tradfi when FRED is unavailable)
 
-FRED API key: env var FRED_API_KEY (register free at https://fred.stlouisfed.org/docs/api/api_key.html).
+FRED credential reference: fred_api_key (FRED_API_KEY remains the environment fallback).
 """
 
 from __future__ import annotations
@@ -40,6 +40,23 @@ _FRED_SERIES = {
 _FRED_RESEARCH_ATTEMPTS: dict[str, str] = {}
 
 
+def _load_fred_api_key() -> str | None:
+    """Resolve only the credential required by the concrete FRED path."""
+    try:
+        from aletheia.config.secrets import get_secret
+        return get_secret("fred_api_key") or os.environ.get("FRED_API_KEY")
+    except Exception:
+        return os.environ.get("FRED_API_KEY")
+
+
+def _fred_coroutines():
+    api_key = _load_fred_api_key()
+    return (
+        _fetch_fred(api_key) if api_key else None,
+        _fetch_fred_research(api_key),
+    )
+
+
 class MacroCollector:
     domain = "macro"
 
@@ -52,11 +69,6 @@ class MacroCollector:
         """
         errors: list[str] = []
 
-        try:
-            from aletheia.config.secrets import get_secret
-            fred_key = get_secret("fred_api_key") or os.environ.get("FRED_API_KEY")
-        except Exception:
-            fred_key = os.environ.get("FRED_API_KEY")
         fng_enabled = False
         try:
             from aletheia.config.loader import load_config
@@ -66,7 +78,7 @@ class MacroCollector:
 
         # CoinGecko, FRED, and FNG are fully independent — run concurrently.
         cg_coro = _fetch_coingecko()
-        fred_coro = _fetch_fred(fred_key) if fred_key else None
+        fred_coro, fred_research_coro = _fred_coroutines()
         fng_coro = _fetch_fng() if fng_enabled else None
 
         coros: list = [cg_coro]
@@ -74,7 +86,7 @@ class MacroCollector:
             coros.append(fred_coro)
         if fng_coro is not None:
             coros.append(fng_coro)
-        coros.append(_fetch_fred_research(fred_key))
+        coros.append(fred_research_coro)
 
         gathered = await asyncio.gather(*coros, return_exceptions=True)
         research = gathered.pop()
@@ -101,8 +113,8 @@ class MacroCollector:
         if fred_coro is not None:
             fred_result = gathered[idx]; idx += 1
             if isinstance(fred_result, BaseException):
-                errors.append(f"fred: {fred_result}")
-                logger.debug("FRED fetch failed, falling back to yfinance: %s", fred_result)
+                errors.append("fred:request_failed")
+                logger.debug("FRED fetch failed, falling back to yfinance")
             else:
                 spy, vix, dxy, nasdaq = fred_result
                 logger.debug("FRED macro: spy=%s vix=%s dxy=%s nasdaq=%s", spy, vix, dxy, nasdaq)
@@ -292,8 +304,8 @@ async def _fetch_fred(
                         "source_observed_at": obs.get("date"), "precision": "date",
                         "acquired_at": datetime.now(timezone.utc).isoformat(),
                     })
-        except Exception as e:
-            logger.debug("FRED series %s failed: %s", series_id, e)
+        except Exception:
+            logger.debug("FRED series %s failed", series_id)
         return key, None
 
     async with httpx_client(timeout=10) as client:
