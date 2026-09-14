@@ -127,17 +127,21 @@ def _execute(proposal_id: str, risk_id: str):
     )
 
 
-def _fill(exchange_order_id: str, client_id: str):
-    return {
-        "orderId": exchange_order_id,
-        "clientOid": client_id,
-        "tradeId": "private-fill-1",
-        "fillPrice": "101.5",
-        "fillQuantity": "0.01",
-        "fee": "0.001",
-        "feeCoin": "USDT",
-        "cTime": "1784050000000",
-    }
+def _fill(exchange_order_id: str, client_id: str, *, identity, market_type, side):
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import FillReport
+
+    timestamp = datetime.fromtimestamp(1784050000, tz=timezone.utc)
+    return FillReport(
+        identity=identity,
+        instrument=instrument_from_local("BTC/USDT", market_type),
+        venue_order_id=exchange_order_id,
+        client_order_id=client_id,
+        venue_fill_id="private-fill-1",
+        side=side,
+        price="101.5", quantity="0.01", fee="0.001", fee_currency="USDT",
+        executed_at=timestamp, received_at=timestamp,
+    )
 
 
 @pytest.mark.parametrize(
@@ -335,7 +339,8 @@ def test_late_private_fill_wins_over_coordinator_ack_cas(tmp_path, monkeypatch):
         assert entered.wait(timeout=5)
         [pending] = repo.list_orders(limit=10)
         winner = materialize_bitget_entry(
-            pending["id"], [_fill("venue-late", proposal_id)]
+            pending["id"], [_fill("venue-late", proposal_id,
+                                 identity=adapter.identity, market_type="spot", side="buy")]
         )
         assert winner.state == "filled"
         release.set()
@@ -395,7 +400,8 @@ def test_late_private_close_wins_over_ambiguous_report(tmp_path, monkeypatch):
         assert entered.wait(timeout=5)
         [pending] = [row for row in repo.list_orders(limit=10) if row["position_id"] == position.id]
         winner = materialize_bitget_close(
-            pending["id"], [_fill("venue-close", pending["client_order_id"])]
+            pending["id"], [_fill("venue-close", pending["client_order_id"],
+                                 identity=adapter.identity, market_type="spot", side="sell")]
         )
         assert winner.state == "filled"
         release.set()
@@ -674,7 +680,10 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
                                 instrument=instrument_from_local("BTC/USDT", "usdt_futures"),
                                 purpose="entry", target_venue_order_id=order["exchange_order_id"], reason="test")
     assert coordinator.cancel_order(cancel).evidence is CommandEvidence.ACKNOWLEDGED
-    materialized = materialize_bitget_entry(order["id"], [_fill(order["exchange_order_id"], proposal.id)])
+    materialized = materialize_bitget_entry(order["id"], [_fill(
+        order["exchange_order_id"], proposal.id,
+        identity=identity, market_type="usdt_futures", side="buy",
+    )])
     assert materialized.state == "filled"
     [position] = repo.list_positions(status="open")
     repo.update_open_position_exit_plan(position["id"], stop_price=90.0, take_profit_price=120.0)
