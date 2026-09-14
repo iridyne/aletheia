@@ -32,6 +32,13 @@ FAMILY_NOT_DEMO_ELIGIBLE = "family_not_demo_eligible"
 REVERSE_AFTER_STOP = "reverse_after_stop"
 DEMO_ENTRY_QUALITY_UNAVAILABLE = "demo_entry_quality_unavailable"
 _policy_epoch_writer: Callable[[], str] | None = None
+_published_regime_reader: Callable[[], tuple[object, object]] | None = None
+
+
+def configure_regime_reader(reader: Callable[[], tuple[object, object]] | None) -> None:
+    """Bind published evidence without querying it or granting Risk authority."""
+    global _published_regime_reader
+    _published_regime_reader = reader
 
 
 def configure_demo_quality_epoch(writer: Callable[[], str] | None) -> None:
@@ -214,26 +221,9 @@ def load_published_regime(*, fail_open: bool = True) -> tuple[str | None, float 
     process that has not yet written a regime row.
     """
     try:
-        from aletheia.regime import detector as regime_mod
-        published = getattr(regime_mod, "_published_regime", None)
-        if published is not None:
-            from aletheia.data.freshness import assess_freshness
-
-            verdict = assess_freshness(
-                {"detected_at": getattr(published, "detected_at", None)},
-                "regime",
-                timestamp_field="detected_at",
-            )
-            if verdict.usable:
-                return _regime_values(
-                    getattr(published, "state", None),
-                    getattr(published, "confidence", None),
-                )
-        from aletheia.storage.repositories import get_latest_market_regime
-        regime = get_latest_market_regime()
-        if not regime or not regime.get("state"):
-            return None, None
-        return _regime_values(regime.get("state"), regime.get("confidence"))
+        if _published_regime_reader is None:
+            raise RuntimeError("regime_reader_unavailable")
+        return _regime_values(*_published_regime_reader())
     except Exception:
         if not fail_open:
             raise

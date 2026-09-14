@@ -1111,7 +1111,19 @@ else:
     configure_entry_learning(load_entry_learning_context)
 
 
-from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch
+from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch, configure_regime_reader
+from aletheia.universe.service import configure_regime_refresh
+
+try:
+    from aletheia.regime.detector import read_published_regime, collect_regime_record
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.regime", "aletheia.regime.detector"}:
+        raise
+    configure_regime_reader(None)
+    configure_regime_refresh(None)
+else:
+    configure_regime_reader(read_published_regime)
+    configure_regime_refresh(collect_regime_record)
 
 try:
     from aletheia.learning.demo_entry_quality import ensure_demo_entry_quality_policy_epoch
