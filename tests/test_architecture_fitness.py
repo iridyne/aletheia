@@ -42,7 +42,7 @@ def _assert_risk_writer_boundary(root: Path):
     repository = root / "aletheia/storage/repositories.py"
     migrations = root / "aletheia/storage/migrations.py"
     writers = {"insert_risk_decision", "insert_authoritative_risk_decision"}
-    risk_sql = re.compile(r'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:"risk_decisions"|`risk_decisions`|\[risk_decisions\]|risk_decisions\b)''', re.I)
+    risk_sql = re.compile(r'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"risk_decisions"|`risk_decisions`|\[risk_decisions\]|risk_decisions\b)''', re.I)
     for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -53,6 +53,11 @@ def _assert_risk_writer_boundary(root: Path):
                     parent = parents.get(parent)
                 function = parent.name if parent else None
                 canonical_insert = path == repository and function == "insert_risk_decision"
+                if isinstance(node, ast.Attribute) and node.attr in writers:
+                    assert path == owner or (
+                        path == repository and function == "insert_authoritative_risk_decision"
+                        and node.attr == "insert_risk_decision"
+                    ), (path, node.lineno)
                 if isinstance(node, ast.ImportFrom):
                     module = node.module or ""
                     if node.level:
@@ -87,6 +92,10 @@ def test_risk_decisions_have_one_application_writer():
     "repo.insert_authoritative_risk_decision(decision)",
     "repo._insert('risk_decisions', row)",
     "repo._insert(table='risk_decisions', data=row)",
+    "persist = repo.insert_risk_decision\npersist(row)",
+    "db.execute('INSERT INTO main.risk_decisions VALUES (?)')",
+    "db.execute('UPDATE main.\"risk_decisions\" SET approved=1')",
+    "db.execute('DELETE FROM \"main\".[risk_decisions]')",
     "db.execute('INSERT INTO \"risk_decisions\" VALUES (?)')",
     "db.execute('UPDATE [risk_decisions] SET approved=1')",
     "db.execute('DELETE FROM `risk_decisions`')",
