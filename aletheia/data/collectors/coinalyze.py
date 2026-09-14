@@ -82,11 +82,11 @@ class CoinalyzeCollector:
             ensure_opportunity_information_policy_epoch,
         )
 
-        ensure_opportunity_information_policy_epoch()
         api_key = _load_api_key()
         if not api_key:
             logger.debug("coinalyze: no API key configured — skipping collection")
             return {"open_interest": [], "liquidations": [], "errors": ["no_key"]}
+        ensure_opportunity_information_policy_epoch()
 
         oi_list: list[OpenInterestSnapshot] = []
         liq_list: list[LiquidationEvent] = []
@@ -108,9 +108,9 @@ class CoinalyzeCollector:
                 coinalyze_syms,
                 coverage=coverage["open_interest"],
             )
-        except Exception as e:
-            errors.append(f"oi: {e}")
-            logger.warning("coinalyze OI fetch failed: %s", e)
+        except Exception:
+            errors.append("oi:request_failed")
+            logger.warning("coinalyze OI fetch failed")
 
         # --- Liquidations ---
         try:
@@ -120,9 +120,9 @@ class CoinalyzeCollector:
                 coinalyze_syms,
                 coverage=coverage["liquidations"],
             )
-        except Exception as e:
-            errors.append(f"liquidations: {e}")
-            logger.warning("coinalyze liquidation fetch failed: %s", e)
+        except Exception:
+            errors.append("liquidations:request_failed")
+            logger.warning("coinalyze liquidation fetch failed")
 
         for family, state in coverage.items():
             if state["deferred"]:
@@ -228,7 +228,7 @@ async def _fetch_open_interest(
                 params={"symbols": ",".join(batch_syms), "api_key": api_key},
             )
             if resp.status_code != 200:
-                logger.warning("coinalyze OI non-200: %s %s", resp.status_code, resp.text[:200])
+                logger.warning("coinalyze OI non-200: %s", resp.status_code)
                 if coverage is not None:
                     coverage["rejected"].extend(batch_symbols)
                 continue
@@ -393,8 +393,8 @@ async def _fetch_liquidations(
                     else:
                         coverage["observed_empty"].append(canonical)
 
-            except Exception as e:
-                logger.debug("coinalyze liq fetch failed for %s: %s", canonical, e)
+            except Exception:
+                logger.debug("coinalyze liq fetch failed for %s", canonical)
                 if coverage is not None:
                     coverage["rejected"].append(canonical)
 

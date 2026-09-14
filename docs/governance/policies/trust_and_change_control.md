@@ -575,6 +575,12 @@ Tests: uv run pytest tests/test_workflow_routes.py -q
 - Tests must prove secrets do not appear in config, logs, agent context, or API
   GET responses.
 
+Concrete Data adapters may resolve only the credential reference required by
+their own provider. Data orchestration, Core, Research, UI, and Legacy code must
+not receive raw provider credentials or generic Secret Store enumeration access.
+Missing optional-provider credentials must leave that adapter unavailable
+without creating policy or data side effects.
+
 `aletheia/agent_runtime/permissions.py`
 
 - Restricted tools remain uncallable by LLM-driven agents.
