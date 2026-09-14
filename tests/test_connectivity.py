@@ -77,6 +77,27 @@ async def test_exchange_response_still_proves_external_egress(monkeypatch, excha
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("settings", [False, True])
+async def test_network_diagnostic_errors_hide_proxy_credentials(monkeypatch, settings):
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from aletheia.agent_runtime.connectivity import probe_exchange
+    from aletheia.server.routes.settings import test_network_proxy
+
+    @asynccontextmanager
+    async def client(**kwargs):
+        raise RuntimeError("http://user:synthetic-secret@proxy.invalid:8080")
+        yield
+
+    monkeypatch.setattr("aletheia.net.httpx_client", client)
+    result = (await test_network_proxy() if settings else
+              await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(name="bitget"))))
+    assert result["reachable"] is False
+    assert result["error"] == "RuntimeError"
+    assert "synthetic-secret" not in repr(result)
+
+
 def setup_env(tmp_path, monkeypatch):
     """Wire up an isolated data dir + fresh DB for each test."""
     import aletheia.config.loader as loader
