@@ -27,13 +27,20 @@ fail-safe, not a bug — the learner activates only where it has enough clean ev
 from __future__ import annotations
 
 import logging
-from typing import Literal
+from typing import Callable, Literal
 
 from aletheia.analytics.outcome_integrity import (
     eligible_strategy_outcomes,
 )
 
 logger = logging.getLogger("aletheia.trading.sizing_policy")
+
+_learned_notional_resolver: Callable[..., dict] | None = None
+
+
+def configure_sizing_evidence(resolver: Callable[..., dict] | None) -> None:
+    global _learned_notional_resolver
+    _learned_notional_resolver = resolver
 
 MAX_ADJ = 0.30           # max |appetite| nudge the learner may apply
 _REWARD_SCALE_PCT = 2.0  # a bucket mean of +2% realized → full +MAX_ADJ (tanh-like via clamp)
@@ -172,59 +179,42 @@ def resolve_learned_notional(
     outcome_candidate_key: str | None,
     opportunity_id: str | None,
 ) -> dict:
-    """Prospectively expose a learned size and return an auditable decision.
-
-    Historical persona rewards only propose ``learned_notional``. The actual size
-    stays at ``baseline_notional`` unless the common Learning experiment adapter
-    authorizes this paper treatment. Missing causal keys therefore fail closed.
-    """
-    from aletheia.learning.experiments import apply_numeric_treatment
-
+    """Keep static Core sizing usable when optional evidence is unavailable."""
     baseline = float(baseline_notional)
     learned = float(learned_notional)
-    if abs(learned - baseline) < 1e-9:
-        from aletheia.learning.experiments import InfluenceDecision
-        decision = InfluenceDecision(baseline, False, "baseline", "no_learned_delta")
-    else:
-        try:
-            decision = apply_numeric_treatment(
-                path_id="persona_sizing",
-                scope={
-                    "symbol": symbol,
-                    "direction": direction,
-                    "regime": regime_bucket,
-                },
-                action={"component": "base_notional", "method": "persona_reward_nudge"},
-                source_cohort=f"persona_regime:{regime_bucket or 'unknown'}",
-                target_horizon="4h",
-                candidate_key=candidate_key if outcome_candidate_key else None,
-                baseline=baseline,
-                treatment=learned,
-                consumer="paper_sizing_policy",
-                consumer_stage="notional",
-                outcome_candidate_key=outcome_candidate_key,
-                opportunity_id=opportunity_id,
-                manifest={
-                    "baseline_notional": baseline,
-                    "learned_notional": learned,
-                    "regime_bucket": regime_bucket,
-                },
-            )
-        except Exception as exc:
-            logger.warning("Sizing Learning adapter failed closed: %s", exc)
-            from aletheia.learning.experiments import InfluenceDecision
-            decision = InfluenceDecision(baseline, False, "unavailable", "adapter_error")
-    return {
+    no_delta = abs(learned - baseline) < 1e-9
+    result = {
         "baseline_notional": baseline,
         "learned_notional": learned,
-        "actual_notional": float(decision.value),
-        "authority_applied": bool(decision.applied),
-        "assignment": decision.assignment,
-        "reason": decision.reason,
-        "hypothesis_id": decision.hypothesis_id,
-        "experiment_id": decision.experiment_id,
-        "exposure_id": decision.exposure_id,
+        "actual_notional": baseline,
+        "authority_applied": False,
+        "assignment": "baseline" if no_delta else "unavailable",
+        "reason": "no_learned_delta" if no_delta else "sizing_learning_extension_unavailable",
+        "hypothesis_id": None,
+        "experiment_id": None,
+        "exposure_id": None,
     }
+    if _learned_notional_resolver is None:
+        return result
+    try:
+        evidence = _learned_notional_resolver(
+            baseline_notional=baseline, learned_notional=learned, symbol=symbol,
+            direction=direction, regime_bucket=regime_bucket,
+            candidate_key=candidate_key, outcome_candidate_key=outcome_candidate_key,
+            opportunity_id=opportunity_id,
+        )
+        # Persona sizing is measurement-unsupported: evidence never grants size authority.
+        if (
+            evidence["baseline_notional"] != baseline
+            or evidence["learned_notional"] != learned
+            or evidence["actual_notional"] != baseline
+            or evidence["authority_applied"] is not False
+        ):
+            raise ValueError("persona_sizing_authority_unsupported")
+        return {key: evidence[key] for key in result}
+    except Exception as exc:
+        logger.warning("Sizing Learning adapter failed closed: %s", exc)
+        return {**result, "assignment": "unavailable", "reason": "adapter_error"}
 
 
 def pyramid_plan(position: dict, adds_done: int = 0, cfg=None) -> dict:
