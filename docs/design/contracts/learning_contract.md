@@ -579,6 +579,11 @@ are deleted. Manual/seed guards are excluded from expiry. The existing scheduler
 pause/Learning job gates remain unchanged; reviewer promotion health is not an expiry
 dependency. Historical match counts never grant authority.
 
+`POST /api/settings/guard` rejects retired `auto_promote_enabled` and
+`min_matching_trades` writes, including mixed payloads, before config/audit mutation.
+Historical config decoding and read-only display remain available; doctor no longer
+suggests changing the retired flag. Other current guard settings are unchanged.
+
 Promotion must preserve auditability:
 
 - The active guard is created as `trading_guard`.

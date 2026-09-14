@@ -1982,7 +1982,7 @@ def _probe_knowledge_flood(report: Report) -> None:
 
 
 def _probe_learning_retrieval(report: Report) -> None:
-    """Learning retrieval-pool health — signal/noise + guard promotion stall.
+    """Stored Learning inventory — retrieval composition and guard counts.
 
     Two read-only checks surfaced by the 2026-06-26 full-lifecycle audit
     (docs/archive/legacy/issues/audits/LEARNING_LOOP_AUDIT_2026-06-26.md):
@@ -1994,12 +1994,10 @@ def _probe_learning_retrieval(report: Report) -> None:
        by the opportunity_id=None root cause (R0). A lopsided review:case ratio
        means the only live feedback loop is scoring against hallucination
        templates, not real attributed cases.
-    2. guard_promotion: guard_candidate rows pile up while 0 trading_guard are
-       active — the promotion chain is dead (config switch off + dir mismatch +
-       missing frontmatter, audit 断点 B0/B2/B3).
+    2. guard_promotion: active and pending shadow inventory, not a promotion
+       stall. The retired automatic-promotion flag needs no corrective action.
 
-    Both are MONITORING ONLY — the fixes touch the frozen decision chain and are
-    deferred to Round 2 (round2_week1_decision_chain_fixes.md Fix L-Bug-C/-D).
+    Both are monitoring only; pending learned candidates do not grant authority.
     """
     try:
         from collections import Counter
@@ -2054,21 +2052,9 @@ def _probe_learning_retrieval(report: Report) -> None:
             pending_candidates = len(load_trading_guards(status="candidate"))
         except Exception:
             pass
-        auto_promote = False
-        try:
-            from aletheia.config.loader import load_config
-            auto_promote = load_config().guard.auto_promote_enabled
-        except Exception:
-            pass
-        # P0 2026-07-12: learned/auto guards are shadow-only and can never auto-promote
-        # into blockers (that needs the ranker_learned_guard experiment). A backlog of
-        # shadow candidates is expected observation feed, NOT a broken promotion chain.
+        # A shadow backlog is observation feed, not a broken automatic promotion chain.
         detail = f"{active_guards} active guard(s), {pending_candidates} pending shadow candidate(s)"
-        fix = None
-        if auto_promote:
-            fix = ("guard.auto_promote_enabled=true — learned guards still cannot "
-                   "auto-promote, but disable it in Settings to match the intended default")
-        report.add("loop.guard_promotion", "ok", detail, fix)
+        report.add("loop.guard_promotion", "ok", detail)
     except Exception as e:
         report.add("loop.retrieval_pool", "info", f"probe error: {e}")
 

@@ -63,19 +63,54 @@ async def test_get_model_config(client):
 
 
 @pytest.mark.anyio
-async def test_guard_settings_reject_nonpositive_min_matching_trades(client):
+async def test_guard_settings_reject_retired_promotion_controls(client):
     from aletheia.config.loader import load_config
 
-    before = load_config().guard.min_matching_trades
+    before = load_config().guard.model_dump()
     with patch("aletheia.files.jsonl.write_audit") as write_audit:
-        for value in (0, -1):
+        for body in (
+            {"min_matching_trades": 0}, {"min_matching_trades": -1},
+            {"min_matching_trades": 3}, {"auto_promote_enabled": False},
+            {"auto_promote_enabled": True, "enabled": not before["enabled"]},
+        ):
             response = await client.post(
-                "/api/settings/guard", json={"min_matching_trades": value}
+                "/api/settings/guard", json=body
             )
             assert response.status_code == 422
 
-    assert load_config().guard.min_matching_trades == before
+    assert load_config().guard.model_dump() == before
     write_audit.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_guard_settings_keep_current_fields_and_historical_decode(client):
+    from aletheia.config.loader import load_config, save_config
+
+    cfg = load_config()
+    cfg.guard.auto_promote_enabled = True
+    cfg.guard.min_matching_trades = 7
+    save_config(cfg)
+    response = await client.post("/api/settings/guard", json={"max_score_penalty": 17})
+    assert response.status_code == 200
+    stored = load_config().guard
+    assert stored.max_score_penalty == 17
+    assert stored.auto_promote_enabled is True and stored.min_matching_trades == 7
+
+
+def test_doctor_does_not_suggest_changing_retired_guard_flag(monkeypatch):
+    from aletheia.config.loader import load_config, save_config
+    from aletheia.diagnostics.doctor import Report, _probe_learning_retrieval
+    from aletheia.knowledge import guards
+
+    cfg = load_config()
+    cfg.guard.auto_promote_enabled = True
+    save_config(cfg)
+    monkeypatch.setattr(guards, "load_trading_guards", lambda status: [object()] if status == "candidate" else [])
+    report = Report()
+    _probe_learning_retrieval(report)
+    check = next(check for check in report.checks if check.name == "loop.guard_promotion")
+    assert check.detail == "0 active guard(s), 1 pending shadow candidate(s)"
+    assert check.fix_hint == ""
 
 
 @pytest.mark.anyio
