@@ -57,13 +57,13 @@ def _configure_runtime() -> None:
 
     bind_uta_provider()
     try:
-        from aletheia.model_provider.http_runtime import build_http_provider
+        from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity
     except ModuleNotFoundError as exc:
         if exc.name != "aletheia.model_provider.http_runtime":
             raise
         configure_model_provider(None)
     else:
-        configure_model_provider(build_http_provider)
+        configure_model_provider(build_http_provider, identity_reader=http_configuration_identity)
 
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")

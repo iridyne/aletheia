@@ -4,29 +4,32 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime, timezone
-import hashlib
-import json
 import threading
 import time
 
 from aletheia.config.loader import load_config, mutate_config
 from aletheia.config.schema import ModelSelection
-from aletheia.config.secrets import get_secret
 from aletheia.model_provider.base import (
     MODEL_HEALTH_STALE_AFTER_SECONDS,
     ModelHealth,
     ModelProvider,
     clone_provider_with_model,
 )
-from aletheia.model_provider.registry import API_PROVIDER_TYPES, PROVIDER_TYPES, provider_config_protocol
+from aletheia.model_provider.registry import API_PROVIDER_TYPES, PROVIDER_TYPES
 
 _provider_factory: Callable[..., ModelProvider] | None = None
+_provider_identity_reader: Callable[..., str] | None = None
 
 
-def configure_model_provider(factory: Callable[..., ModelProvider] | None) -> None:
-    """Bind client construction at the existing process entrypoint, without I/O."""
-    global _provider_factory
+def configure_model_provider(
+    factory: Callable[..., ModelProvider] | None,
+    *,
+    identity_reader: Callable[..., str] | None = None,
+) -> None:
+    """Bind Model implementation operations at the existing entrypoint, without I/O."""
+    global _provider_factory, _provider_identity_reader
     _provider_factory = factory
+    _provider_identity_reader = identity_reader
 
 _cache: dict[str, ModelProvider] = {}
 
@@ -66,6 +69,10 @@ class ProviderNotConfigured(ValueError):
         super().__init__(f"Model provider is not_configured: {name}")
 
 
+class ModelAdapterUnavailable(ValueError):
+    """The optional Model implementation is not bound in this process."""
+
+
 def clear_provider_verification(pcfg) -> None:
     """Remove durable verification evidence from one provider config."""
 
@@ -93,54 +100,11 @@ def _require_provider_configured(name: str, pcfg) -> None:
         raise ProviderNotConfigured(name)
 
 
-def provider_configuration_identity(
-    name: str,
-    pcfg,
-    *,
-    credential_overrides: dict[str, str | None] | None = None,
-) -> str:
-    """Fingerprint probe-relevant config without persisting raw credentials."""
-
-    provider_type = str(getattr(pcfg, "type", "") or name)
-    refs = (
-        getattr(pcfg, "api_key_secret_ref", None),
-    ) if provider_type in API_PROVIDER_TYPES else ()
-    credential_fingerprints: list[dict[str, str | None]] = []
-    for ref in refs:
-        if not ref:
-            continue
-        if credential_overrides is not None and ref in credential_overrides:
-            value = credential_overrides[ref]
-        else:
-            value = get_secret(ref)
-        credential_fingerprints.append(
-            {
-                "ref": ref,
-                "sha256": hashlib.sha256((value or "").encode("utf-8")).hexdigest()
-                if value
-                else None,
-            }
-        )
-    payload = {
-        "provider": name,
-        "type": str(getattr(pcfg, "type", "") or name),
-        "base_url": str(getattr(pcfg, "base_url", "") or ""),
-        "workspace_url": str(getattr(pcfg, "workspace_url", "") or ""),
-        "protocol": provider_config_protocol(str(getattr(pcfg, "type", "") or name), pcfg),
-        "model": str(getattr(pcfg, "model", "") or ""),
-        "auth_scheme": str(getattr(pcfg, "auth_scheme", "") or ""),
-        "auth_type": str(getattr(pcfg, "auth_type", "") or ""),
-        # Historical identity inputs only; no transport consumes these fields.
-        "command": str(getattr(pcfg, "command", "") or ""),
-        "mode": str(getattr(pcfg, "mode", "") or ""),
-        "codex_model": str(getattr(pcfg, "codex_model", "") or ""),
-        "api_key_secret_ref": getattr(pcfg, "api_key_secret_ref", None),
-        "oauth_token_ref": getattr(pcfg, "oauth_token_ref", None),
-        "oauth_refresh_ref": getattr(pcfg, "oauth_refresh_ref", None),
-        "credential_fingerprints": credential_fingerprints,
-    }
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+def provider_configuration_identity(name: str, pcfg) -> str:
+    """Read opaque current-configuration evidence; Core never accepts secret values."""
+    if _provider_identity_reader is None:
+        raise ModelAdapterUnavailable("model_adapter_unavailable")
+    return _provider_identity_reader(name, pcfg)
 
 
 def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
@@ -155,9 +119,14 @@ def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
             "verification_invalidated": False,
             "verification_detail": None,
         }
-    current_identity = provider_configuration_identity(name, pcfg)
+    unavailable_detail = None
+    try:
+        current_identity = provider_configuration_identity(name, pcfg)
+    except ModelAdapterUnavailable as exc:
+        current_identity = None
+        unavailable_detail = str(exc)
     stored_identity = getattr(pcfg, "verification_identity", None)
-    invalidated = bool(stored_identity and stored_identity != current_identity)
+    invalidated = bool(stored_identity and current_identity is not None and stored_identity != current_identity)
     matches = bool(stored_identity and stored_identity == current_identity)
     return {
         "verified": getattr(pcfg, "verification_verified", None) if matches else None,
@@ -169,7 +138,9 @@ def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
         "verification_identity": stored_identity if matches else None,
         "verification_source": getattr(pcfg, "verification_source", None) if matches else None,
         "verification_invalidated": invalidated,
-        "verification_detail": getattr(pcfg, "verification_detail", None) if matches else None,
+        "verification_detail": unavailable_detail or (
+            getattr(pcfg, "verification_detail", None) if matches else None
+        ),
     }
 
 
@@ -190,8 +161,12 @@ def persist_provider_verification(
         if (
             pcfg is None
             or str(getattr(pcfg, "type", "") or name) not in API_PROVIDER_TYPES
-            or provider_configuration_identity(name, pcfg) != identity
         ):
+            return False
+        try:
+            if provider_configuration_identity(name, pcfg) != identity:
+                return False
+        except ModelAdapterUnavailable:
             return False
         pcfg.verification_identity = identity
         pcfg.verification_verified = verified
@@ -233,7 +208,7 @@ def get_provider(name: str | ModelSelection | None = None) -> ModelProvider:
     _require_provider_configured(name, pcfg)
 
     if _provider_factory is None:
-        raise ValueError("model_adapter_unavailable")
+        raise ModelAdapterUnavailable("model_adapter_unavailable")
     if name in _cache:
         return _cache[name]
 

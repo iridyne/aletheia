@@ -196,6 +196,18 @@ retains only its own label. This changes no stored history, pricing, fallback,
 budget policy or writer. Model/Core concrete imports and credential ingress
 remain separate, incomplete boundaries.
 
+The Model identity audit at `2734b00f4` moves the existing credential-backed
+configuration hash into the same HTTP implementation. Six stored/candidate
+identity goldens across the three accepted protocols remain byte-identical.
+Core reads opaque identity through the existing startup binding, never accepts
+candidate secret overrides, and retains verification comparison and persistence.
+An absent implementation cannot validate old evidence or persist new evidence;
+health reports unavailable verification without rewriting the stored identity
+or treating missing evidence as a proven mismatch. Candidate hashing stays in
+the HTTP management path, whose broader credential ingress is still a separate
+remaining boundary. No second hash implementation, credential cache or writer
+is introduced.
+
 ## Startup filesystem repair ownership
 
 At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found

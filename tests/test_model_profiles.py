@@ -149,7 +149,7 @@ async def test_historical_tier_loading_never_writes_or_reads_credentials(client,
 
     monkeypatch.setattr(loader, "save_config", forbidden)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", forbidden)
     parsed = loader.load_config(use_cache=False)
     assert parsed.models.fast == parsed.models.deep
     assert parsed.models.fast.model_id == "preferred"
@@ -272,7 +272,7 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     def forbidden(*_args, **_kwargs):
         pytest.fail("retired provider must not resolve a credential or execute")
 
-    monkeypatch.setattr(model_router, "get_secret", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", forbidden)
     monkeypatch.setattr(model_routes, "get_secret", forbidden)
     monkeypatch.setattr(ui, "get_secret", forbidden)
     assert not ui._model_provider_usable(cfg)
@@ -417,7 +417,9 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
         assert ref == "current-api-key"
         deletes.append(ref)
 
-    for module in (model_router, model_routes, ui):
+    from aletheia.model_provider import http_runtime
+
+    for module in (http_runtime, model_routes, ui):
         monkeypatch.setattr(module, "get_secret", read)
     monkeypatch.setattr(model_routes, "delete_secret", delete)
     assert model_router.provider_configuration_identity("http-profile", profile)
@@ -1016,7 +1018,7 @@ async def test_candidate_cannot_send_stored_key_to_changed_endpoint(client, monk
         return []
 
     monkeypatch.setattr("aletheia.config.secrets.get_secret", secret)
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", secret)
+    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", secret)
     monkeypatch.setattr("aletheia.server.routes.model.get_secret", secret)
     monkeypatch.setattr(f"aletheia.model_provider.{provider_type}." + (
         "OpenAICompatibleProvider" if provider_type == "openai_compatible" else "AnthropicCompatibleProvider"

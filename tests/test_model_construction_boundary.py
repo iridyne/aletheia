@@ -24,7 +24,12 @@ assert not any(name == item or name.startswith(item + '.') for name in sys.modul
 from aletheia.config.schema import AletheiaConfig, ProviderConfig
 cfg = AletheiaConfig()
 cfg.models.providers['endpoint'] = ProviderConfig(type='openai_compatible', base_url='https://model.test', enabled=True)
+profile = cfg.models.providers['endpoint']
+profile.api_key_secret_ref = 'synthetic-reference'
+profile.verification_identity = 'historical-identity'
+profile.verification_verified = True
 router.load_config = lambda: cfg
+assert not hasattr(router, 'get_secret')
 try:
     router.get_provider('endpoint')
 except ValueError as exc:
@@ -35,6 +40,8 @@ import asyncio
 health = asyncio.run(router.healthcheck_all(force=True))
 selected = next(row for row in health if row.provider == 'endpoint')
 assert selected.available is False and selected.error == 'model_adapter_unavailable'
+assert selected.verified is None and selected.verification_identity is None
+assert selected.verification_detail == 'model_adapter_unavailable'
 """
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
@@ -63,7 +70,7 @@ def test_core_constructor_port_preserves_cache_and_model_selection_without_readi
         pytest.fail('Core construction must not resolve credential values')
 
     monkeypatch.setattr(router, 'load_config', lambda: cfg)
-    monkeypatch.setattr(router, 'get_secret', forbidden)
+    monkeypatch.setattr('aletheia.config.secrets.get_secret', forbidden)
     monkeypatch.setattr(router, '_provider_factory', factory)
     router.clear_cache()
     try:
@@ -117,7 +124,9 @@ def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(mo
         pytest.fail("Startup binding must not resolve credentials")
 
     monkeypatch.setattr(router, "_provider_factory", None)
+    monkeypatch.setattr(router, "_provider_identity_reader", None)
     monkeypatch.setattr(http_runtime, "get_secret", forbidden)
     monkeypatch.setattr("aletheia.exchanges.composition.bind_uta_provider", lambda: None)
     main._configure_runtime()
     assert router._provider_factory is http_runtime.build_http_provider
+    assert router._provider_identity_reader is http_runtime.http_configuration_identity
