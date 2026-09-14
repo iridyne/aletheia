@@ -9,7 +9,7 @@ from unittest.mock import Mock, call
 import pytest
 
 
-@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py"])
+@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py"])
 def test_standard_core_consumers_do_not_import_concrete_data(module):
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
     assert not any(
@@ -56,6 +56,7 @@ from aletheia.data.providers import get_market_data_provider
 from aletheia.server.routes import data
 from aletheia.trading import market_context
 from aletheia.universe import outcome_recorder
+from aletheia.portfolio import position_path_observer
 for exact in (False, True):
     try:
         get_market_data_provider("bitget", exact_venue=exact)

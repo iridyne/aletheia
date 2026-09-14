@@ -46,11 +46,16 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
 @pytest.mark.real_network
 @pytest.mark.asyncio
 async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeypatch):
+    from aletheia.data import providers
+    from aletheia.data.ccxt_provider import create_market_data_provider
+
     class FakeExchange:
         async def fetch_ohlcv(self, *_args, **_kwargs):
             return [[1, 10, 11, 9, 10.5, 100]]
 
-    provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
+    monkeypatch.setattr(providers, "_provider_factory", create_market_data_provider)
+    provider = providers.get_market_data_provider("fixture", exact_venue=True)
+    assert provider._primary_name == provider._fallback_name == "fixture"
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: FakeExchange())
     monkeypatch.setattr(
         "aletheia.data.ccxt_provider.record_venue_success",

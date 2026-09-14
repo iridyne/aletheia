@@ -275,6 +275,12 @@ class MarketDataProvider(Protocol):
     ``get_ohlcv`` returns candles oldest→newest. Both fetch methods accept a
     canonical string symbol or an ``InstrumentId``. ``close`` releases the
     underlying session and must be idempotent.
+
+    Sources may additionally expose ``get_ohlcv_observation(symbol, timeframe,
+    limit, since) -> OHLCVResult`` as an async capability. It must not persist
+    market history or change venue health. Observation consumers require this
+    capability explicitly; ordinary OHLCV support does not imply it, and its
+    absence is unavailable rather than permission to use a writable read.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...
