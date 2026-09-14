@@ -81,7 +81,7 @@ def _assert_raw_position_writes(root: Path):
     """Literal SQL/helper guard, not a claim to resolve arbitrary dynamic SQL."""
     allowed = {f"aletheia/{path}" for path in _RAW_POSITION_UPDATE_ALLOWED}
     writes = re.compile(
-        r'''\b(?:UPDATE|INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM)\s+'''
+        r'''\b(?:UPDATE(?:\s+OR\s+\w+)?|INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|DELETE\s+FROM)\s+'''
         r'''(?:(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?'''
         r'''(?:"positions"|`positions`|\[positions\]|positions\b)''', re.I,
     )
@@ -90,6 +90,7 @@ def _assert_raw_position_writes(root: Path):
             if path.relative_to(root).as_posix() in allowed:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             aliases = {
                 alias.asname or alias.name: alias.name
                 for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
@@ -98,6 +99,11 @@ def _assert_raw_position_writes(root: Path):
             for node in ast.walk(tree):
                 if isinstance(node, ast.Constant) and isinstance(node.value, str):
                     assert not writes.search(node.value), (path, node.lineno)
+                if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+                    name = node.attr if isinstance(node, ast.Attribute) else aliases.get(node.id, node.id)
+                    if name in {"_insert", "_insert_many", "_update"}:
+                        call = parents.get(node)
+                        assert isinstance(call, ast.Call) and call.func is node, (path, node.lineno)
                 if isinstance(node, ast.Call):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else aliases.get(node.func.id, node.func.id) if isinstance(node.func, ast.Name) else None
                     if name in {"_insert", "_insert_many", "_update"}:
@@ -118,10 +124,14 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
 @pytest.mark.parametrize("directory", ["aletheia", "core", "extensions", "legacy", "ops", "scripts"])
 @pytest.mark.parametrize("source", [
     "db.execute('update [positions] SET realized_pnl=1')",
+    "db.execute('UPDATE OR REPLACE positions SET realized_pnl=1')",
+    "db.execute('UPDATE OR IGNORE main.[positions] SET realized_pnl=1')",
     "db.execute('DELETE FROM main.\"positions\"')",
     "db.execute('INSERT OR IGNORE INTO `positions` VALUES (?)')",
     "repo._update(table='positions', oid='id', data={'outcome_eligible': True})",
     "from aletheia.storage.repositories import _update as change\nchange('positions', 'id', fields)",
+    "change = repo._update\nchange('positions', 'id', fields)",
+    "from aletheia.storage.repositories import _insert as insert\nchange = insert\nchange('positions', fields)",
 ])
 def test_position_writer_guard_rejects_bypasses(tmp_path, directory, source):
     path = tmp_path / directory / "other.py"
