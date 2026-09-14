@@ -80,7 +80,7 @@ Goal: a row "this run at 09:32 produced THIS opportunity/proposal". Requirements
 - ✅ Decision 1 PnL zone — `frontend/src/components/PnLZone.tsx` (+ MetricTile `context` prop).
 - ✅ Decision 2 agent feed — `frontend/src/components/AgentFeed.tsx` (3 modes, localStorage `aletheia.feedMode`, time-interleaved/honest).
 - ✅ Decision 3 page assembly — `frontend/src/pages/Overview.tsx` rewritten; `.cockpit-main` + `.cockpit-rail` CSS.
-- tsc -b + vite build green; shipped to `aletheia/dashboard_static/`. Not committed (awaiting visual review).
+- tsc -b + vite build green; shipped to core/aletheia/dashboard_static/. Not committed (awaiting visual review).
 - Browser MCP unavailable on this box → no automated screenshot; owner reviews at `:8787` or dev `:5180`.
 
 ## Decision 3 — Full-page skeleton (DECIDED)

@@ -209,7 +209,7 @@ below are the Phase 3 target lines.
 | 24 | Pending outcome partial index | migration `20260806_0004_pending_outcome_partial_index_v5` | Replace the full `(status,due_at)` index with `(due_at,id) WHERE status='pending'`. Settlement queries are unchanged while settled/failed rows stop occupying this queue index. CASI read-only evidence on 2026-08-06: 707,160 settled + 16 failed + 0 pending rows; the old index occupied 38,649,856 bytes, so its current replacement is effectively empty. |
 | 19 | `market_regimes` skip-if-unchanged | `aletheia/storage/repositories.py:4672` (or wherever `INSERT INTO market_regimes` lives) | Skip INSERT if regime state is byte-identical to latest. Hourly floor. |
 | 20 | Learning behavior identity excludes `code_commit` | `aletheia/learning/policy_epochs.py` + `aletheia/learning/behavior_contracts.py` | Strip `code_commit` from policy hashing and use `behavior_contract_hash` for cohort/verdict identity. Exposure commits remain provenance and do not multiply behaviorally identical cohorts. |
-| 21 | `serenity_evidence` content_hash dedup | `aletheia/agents/research_worker.py:689` + `aletheia/agents/prediction_observer.py:434` + `aletheia/server/routes/data.py:390` | Use the existing `content_hash` column. Before INSERT, check `(theme_id, content_hash)`. Skip on match. |
+| 21 | `serenity_evidence` content_hash dedup | `extensions/serenity/research_worker.py:689` + `aletheia/agents/prediction_observer.py:434` + `aletheia/server/routes/data.py:390` | Use the existing `content_hash` column. Before INSERT, check `(theme_id, content_hash)`. Skip on match. |
 
 ---
 
@@ -432,7 +432,7 @@ The scheduling lives outside code (session-scope, not durable). See
 
 ## 12. Runbook: invoking the one-shot backfill
 
-The Phase 4 backfill script is `aletheia/maintenance/data_retention_backfill.py`.
+The Phase 4 backfill script is `ops/maintenance/data_retention_backfill.py`.
 Invoke from the repo root with `uv run`.
 
 ### 12.1 Preconditions
@@ -445,7 +445,7 @@ Invoke from the repo root with `uv run`.
 ### 12.2 Dry-run (audit only, no writes)
 
 ```sh
-uv run python -m aletheia.maintenance.data_retention_backfill --dry-run
+uv run python -m ops.maintenance.data_retention_backfill --dry-run
 ```
 
 Prints per-table `table | window | eligible_rows | est_mb` and totals.
@@ -454,7 +454,7 @@ Exit code always 0. Nothing is deleted.
 ### 12.3 Apply mode
 
 ```sh
-uv run python -m aletheia.maintenance.data_retention_backfill --apply --vacuum
+uv run python -m ops.maintenance.data_retention_backfill --apply --vacuum
 ```
 
 Additional flags:

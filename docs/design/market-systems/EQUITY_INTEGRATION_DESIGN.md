@@ -299,7 +299,7 @@ xStocks（Bitget ON-series）是代币化美股，存在**溢价/折价**（通�
 
 ### Phase 2：equity_observer agent（核心）
 
-4. 新建 `aletheia/agents/equity_observer.py`
+4. Equity observer 实现位于 `extensions/observation/equity_observer.py`，由 Core 装配入口注册。
    - 替代 `stock_observer.py` 的 yfinance 路径
    - 替代 `market_observer.py` 里的 xStocks 分支
    - 双路数据 + cross-validate + 统一 LLM prompt（equity 专属）

@@ -44,13 +44,12 @@
 | Canonical Derivatives Facts（DU-S29） | 现有 `DerivativesCollector` 的 primary/comparison 路径与 native Hyperliquid；一个 exact venue/instrument/fact 保留一个当前 writer | 原 Funding/OI 表的 nullable provenance；独立 `perp_price_snapshots`；`collector_health_state` 的最新比较覆盖 | `data/derivatives_facts.py` 只读规范投影及 `GET /api/market/derivatives-facts` 的 Positioning readiness 数据观察；比较行明确 `observation_only`，旧 scalar/context/evidence readers 排除这些新增行 | 🟡 observation-only；不改变 Candidate、Entry、Risk 或交易权限；未知 interval/单位/历史 provenance 保留 unavailable，不把采集成功当作经济证据 |
 | 现货价/OHLCV | CCXTProvider / market_data job | `market_snapshots` | market_observer / paper_trader / trading_decision / price_feed / shadow_trades | ✅ |
 | 微观结构/盘口 | MicrostructureCollector | `orderbook_snapshots` | market_observer→tradability→LLM；universe/features 选币；inspect/doctor 诊断 | ✅ CCXT 三列档位与 contractSize 深度已修复；按 venue+symbol+market_type 精确路由；超过 15 分钟整行退出决策 |
-| Binance public fast-market quote/trade/Kline/depth（DU-S28） | `BinanceFastMarketStream`（Spot + USD-M 公共 WebSocket；Spot depth 使用 REST snapshot 连续桥接） | 不持久化原始报文；仅 watcher 内存滚动状态 | Fast Monitoring → exact-instrument TriggerSpec 判断 | ✅ 不读取凭证/账户流，不进入 LLM、Risk、订单路由或跨 venue fallback；缺 ACK、snapshot、连续性或有效值时 unavailable |
+| Binance public fast-market quote/trade/Kline/depth（DU-S28） | frozen Extension：`extensions/exchanges/binance/fast_stream.py`（Spot + USD-M；Spot depth 保留 REST snapshot 连续桥接） | 不持久化原始报文；保留的解析器测试仅使用内存状态 | 当前产品启动不注册，无 active Fast Monitoring 消费路径 | frozen，须另行批准才可提升；保留实现不读取凭证/账户流、不进入订单路由；缺 ACK、snapshot、连续性或有效值时 unavailable |
 | 历史 K 线 | CCXTProvider / history_downloader / ohlcv_active_backfill | `market_ohlcv` + `ohlcv_backfill_state` | 图表、回测、trade path、shadow/alpha 分析、覆盖诊断 | ✅ 按 venue+symbol+market_type+timeframe+ts 隔离；动态活动成员由独立有界任务补齐，持久化失败退避且不阻塞 Universe 刷新；旧不明 venue 诚实标记 |
-| 公共资金费率(主交易所) | DerivativesCollector + bounded public history backfill | `funding_rate_snapshots` | market_observer→leverage→LLM；context_builder；universe/features；只读市场诊断 | ✅ 精确 venue；公共费率用于市场与研究数据，不能代替外部账户的私有 `broker_ledger` 资金费证据；实际持仓资金费证据不完整时保持 unavailable。本地模拟入场与结算消费者已[归档](../history/local_simulated_risk_execution.md) |
 | 持仓量 OI(主交易所) | DerivativesCollector | `open_interest_snapshots` | 同上→crowding_score | ✅ 精确 venue；超过 15 分钟连同变化率/LSR 整行退出决策 |
 | 衍生品仓位比（DU-S26） | DerivativesCollector (Binance public fapi global account ratio + top-trader position ratio) | `open_interest_snapshots.long_short_ratio/top_trader_position_ratio` → `universe_feature_snapshots` | normalizer→crowding_score→leverage→LLM；Relative Rank Shadow 的 perp 准入和 positioning rank | ✅ 两种 ratio 保持独立语义；缺 funding/OI/OI delta/任一 ratio 的 perp 候选在新 Shadow 中 fail closed，不读取本地私有账户仓位 |
 | 宏观(BTC.D/总市值/VIX/DXY/Nasdaq) | MacroCollector (FRED/CoinGecko/yf fallback) | `macro_snapshots` | market_observer / context_builder / regime / shadow_trades / position_enrichment | ✅ |
-| 美股宏观代理(S&P500/VIX/DXY/Gold) | yfinance_provider (enable_yfinance_macro 门控) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM | ✅ |
+| 美股宏观代理(S&P500/VIX/DXY/Gold) | extensions/yahoo/market_data (enable_yfinance_macro 门控) | 不落库，直接生成 markdown | market_context.build_market_context → "Macro context (daily)" 块 → LLM | ✅ |
 | 恐惧贪婪指数 | MacroCollector (alternative.me) | `macro_snapshots.fng_*` | macro 块→LLM | ✅ |
 | 涨跌幅榜 | CoinGeckoTopCollector | `coingecko_top_snapshots` + 折叠 summary | macro 块(top_movers_summary)→LLM | ✅ |
 | 成交量排名 | VolumeScannerCollector（精确 venue+market InstrumentId） | 内存 `_latest_volume_ranking` + `volume_ranking_snapshots` | universe/service→按原 market_type 排序已登记资产（不创建新资产） | ✅；单标的不支持不再打断整批 |
@@ -166,16 +165,15 @@ term slopes 是后端减前端 IV 百分点；front/back regime 比较有效 7D 
 | DU-S14 | L2a | `Position X` 离线解析器存在，能通过目录式 bundle 提取安全 knowledge cards / 结构快照；market_observer 与 System Operator 只消费压缩后的 advisory 结构证据 |
 | DU-S21 | L2c | Hyperliquid OI 按 source + freshness 读取并与 funding 一起渲染，System Operator manifest 保存实际 row ids |
 | DU-S22 | L2c | owner aggregate import 保存 source ref/hash + audit，建立 1h/4h/24h shadow outcomes；14 天前及无数据时均不影响决策 |
-| DU-S23 | L2c | 本地 paper 历史账本 settler 消费 primary-venue funding history；不冒充 broker ledger |
 | DU-S24 | L2a | xStock 上市状态源在 §3 登记；实现经 provider factory 精确查询责任 venue，单轮复用、有硬截止、不确定时保留配置，确认缺失的配置变更写 system audit |
 | DU-S25 | L2a | LLM 逻辑调用、物理 attempt 与 context manifest 三层数据已登记并以 logical_call_id 关联；持久化契约不含 prompt/response/source body |
 | DU-S27 | L2a | LiteLLM 公共模型/原生工具价格目录生成不可变、事件时点解析的快照；Gateway startup 单飞 refresh，且没有前端或人工价格 writer；cache/reasoning/web-search 的已观察计数必须有对应费率，Usage 只读计算且历史账本不回写 |
-| DU-S28 | L2a | Binance Spot/USD-M 公共 fast-market facts 仅进入 Fast Monitoring 内存消费者；不持久化、不读取凭证、不进入订单路由，Spot depth 未完成 snapshot/diff 连续桥接时 unavailable |
+| DU-S28 | L2a | Binance Spot/USD-M fast-market 实现仅保留在 frozen Extension，产品启动不注册且工厂不可启用；保留实现不持久化、不读取凭证、不进入订单路由，Spot depth 未完成 snapshot/diff 连续桥接时 unavailable |
 | DU-B01 | L2b | 给定 HL+主所 annualized funding，render 产出"Cross-venue funding"段、divergence 以 pp 计、含 predicted |
 | DU-B02 | L2b | 某 symbol 无 HL 数据时，跨venue段整体省略（不漏空行噪音，遵 R3） |
 | DU-C01 | L2a | `CoinalyzeCollector` 存在，有 `collect()` 方法和 `domain` 属性（Coinalyze 清算+OI 采集入口） |
 | DU-C02 | L2a | `derivatives.py` 不含 `_fetch_liquidations_ccxt` 及 `_CCXTLiquidationsUnsupported`（死代码已删，R4 诚实降级） |
-| DU-S04 | L2a | `yfinance_provider.py` 存在 + `market_context` 通过 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
+| DU-S04 | L2a | `extensions/yahoo/market_data.py` 存在 + `market_context` 通过可选 binding 与 `enable_yfinance_macro` 门控调用 + `data_utilization.md` §3 已登记（R5 合规） |
 | DU-S05 | L2a | 不存在 `class RegimeCollector`；`MacroCollector._classify_risk_regime()` 是 regime 的唯一实现（防虚构采集器类） |
 | DU-S06 | L2a | `scheduler.py` 含 `CoinalyzeCollector` 引用（已注册 `_async_data_collector_context`）且 `config/schema.py` 定义 `enable_coinalyze` + `coinalyze_api_key`（调度+配置结构双锁） |
 | DU-S07 | L2a | `market_context._TIMEFRAMES` 包含 `'1h'`、`'4h'`、`'1d'` 三值（OHLCV 多周期全量采集，防缩减） |

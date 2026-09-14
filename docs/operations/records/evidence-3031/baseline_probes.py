@@ -10,7 +10,7 @@ def test_current_margin_contract_mismatch():
     from aletheia.storage.models import TradeProposal
     from aletheia.uta.models import SubmitOrderCommand
     from aletheia.uta.compat import instrument_from_local
-    from aletheia.uta.profiles.bitget import _BitgetDemoProfile
+    from extensions.exchanges.bitget.profile import _BitgetDemoProfile
     from tests.uta.test_execution_coordinator import _identity
     p = TradeProposal(symbol='BTC/USDT', market_type='usdt_futures', direction='long',
                       price=100, quantity=1, leverage=5, execution_mode='bitget_demo')

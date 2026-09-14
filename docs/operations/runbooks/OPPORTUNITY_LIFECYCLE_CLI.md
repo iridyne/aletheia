@@ -74,17 +74,13 @@ V1 reconstructs these stages when evidence exists:
 
 ## Compatibility Routing
 
-`aletheia flow` is now a hidden compatibility alias for `aletheia opportunity`.
+`aletheia flow` is retired; use `aletheia opportunity` directly. The former
+wrapper is recorded in [CLI history](../../design/history/flow_cli_alias.md).
 
-The old focused commands remain executable for scripts, but human output points back to the opportunity command:
-
-```text
-uv run aletheia flow audit      -> uv run aletheia opportunity audit
-uv run aletheia flow trace      -> uv run aletheia opportunity trace
-uv run aletheia funnel audit    -> uv run aletheia opportunity audit --view funnel
-uv run aletheia sizing trace    -> uv run aletheia opportunity audit --view sizing
-uv run aletheia alpha audit     -> uv run aletheia opportunity audit --view alpha
-uv run aletheia thesis audit    -> uv run aletheia opportunity audit --view thesis
-```
+The old `alpha`, `funnel`, and `sizing` command groups are also retired. Use
+`opportunity audit --view alpha`, `--view funnel`, or `--view sizing` respectively.
+Windows use `--hours`; for example, seven days is `--hours 168`.
+`thesis audit` is retired in favor of `opportunity audit --view thesis`; the
+thesis snapshot and export commands retain their distinct responsibilities.
 
 `inspect opportunities` remains the raw row listing: it answers "which opportunities exist?" The opportunity CLI answers "what happened to this opportunity lifecycle?"

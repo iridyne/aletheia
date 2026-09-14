@@ -188,7 +188,7 @@ cd frontend && npm run build
 ```
 
 The production build emits content-hashed assets into
-`aletheia/dashboard_static`. The stable gateway on `:8787` remains the
+core/aletheia/dashboard_static. The stable gateway on :8787 remains the
 acceptance surface; do not restart it from a Worktree just to make frontend
 edits visible. If an owner-approved gateway restart is needed for a release,
 perform it from the owning checkout and prove the current commit with the normal

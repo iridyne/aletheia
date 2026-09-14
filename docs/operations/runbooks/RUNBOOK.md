@@ -80,20 +80,19 @@ When you're done iterating, run the normal production build once:
 cd frontend; npm run build
 ```
 
-The `build` step writes content-hashed assets into `aletheia/dashboard_static/`,
+The build step writes content-hashed assets into core/aletheia/dashboard_static/,
 which is what the gateway serves on `:8787`.
 
 ## 3. Configure a model provider (required for real analysis)
 
-Everything is configurable from the dashboard **Settings** page (OpenAlice-style),
-or via CLI. The agents degrade gracefully if no LLM is reachable (they record a
+Model endpoints are configured from the dashboard **Settings** page.
+The agents degrade gracefully if no LLM is reachable (they record a
 clean error and keep running), but they only produce *meaningful* research and
 directional signals once a provider is configured.
 
 ```bash
 # Dashboard: Settings → Model Provider → base URL + model + API key → Test  (primary)
-# or CLI (deprecated — still works, dashboard is the maintained surface):
-uv run aletheia model set --provider openai_compatible --base-url URL --model NAME --api-key
+# CLI diagnostics remain available; the model set command is retired.
 uv run aletheia model status
 uv run aletheia model test
 ```
@@ -124,10 +123,8 @@ separate `autonomous_paper_trading` switch. Before expecting entries, verify the
 effective Settings/Doctor projection rather than editing `config.yaml` manually:
 
 1. **Permission mode** → `Paper` (`Research`/`ReadOnly` never trade). Dashboard
-   Settings → Permission Mode (primary), or CLI:
-   ```bash
-   uv run aletheia permission set Paper
-   ```
+   Settings → Permission Mode. The redundant permission CLI is retired;
+   inspect the effective setting with `uv run aletheia inspect config`.
 2. Confirm the scheduler is enabled and not held by any durable pause owner:
    ```bash
    uv run aletheia inspect config

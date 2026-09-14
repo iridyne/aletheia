@@ -108,7 +108,7 @@ over the wire. At 1000 sessions/day this saves ~7.5 MiB/day of network
 - Land a follow-up Python PR that raises a warning if `context` key
   appears in the request body (surfaces stragglers).
 - Delete the retro-strip logic in
-  `aletheia/maintenance/data_retention_backfill.py:_retro_strip_message_context`
+  `ops/maintenance/data_retention_backfill.py:_retro_strip_message_context`
   once the field has been absent for 3+ days.
 
 **Code touchpoints (external).**
@@ -267,7 +267,7 @@ within a 4h window.
 
 **Problem.** Schema at `aletheia/storage/migrations.py:...` includes a
 `content_hash` column, but writers at
-`aletheia/agents/research_worker.py:689`,
+`extensions/serenity/research_worker.py:689`,
 `aletheia/agents/prediction_observer.py:434`, and
 `aletheia/server/routes/data.py:390` insert unconditionally.
 
