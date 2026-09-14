@@ -341,10 +341,14 @@ def test_risk_gate_stale_market_data_for_live(tmp_path, monkeypatch):
     cfg.risk.live.capital.base_usdt = 10_000.0
     monkeypatch.setattr(eng, "load_config", lambda: cfg)
 
-    # Return no market snapshot — simulates completely absent/stale data
+    # Return no exact snapshot and verify the execution identity reaching Risk.
+    def missing_snapshot(symbol, market_type=None, *, venue):
+        assert (symbol, market_type, venue) == ("BTC/USDT", "spot", "bitget")
+        return None
+
     monkeypatch.setattr(
         "aletheia.risk.engine._market_data_age_seconds",
-        lambda symbol, market_type=None: None,
+        missing_snapshot,
     )
 
     p = TradeProposal(
