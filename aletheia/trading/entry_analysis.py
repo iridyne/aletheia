@@ -369,7 +369,6 @@ def entry_causal_windows(
     candle_windows: dict, cutoff: datetime,
 ) -> tuple[dict, dict, list[EntryAnchor], list[str]]:
     """Share the Planner's exact causal admission and structure kernel."""
-    from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.data.market_structure import (
         CONTRACT_VERSION,
         CORE_ALGORITHM_VERSION,
@@ -377,7 +376,7 @@ def entry_causal_windows(
         canonical_market_structure_facts,
         derive_market_structure,
     )
-    from aletheia.data.providers import Candle
+    from aletheia.data.providers import Candle, timeframe_ms
     from aletheia.data.symbols import InstrumentId
 
     cutoff_ms = int(cutoff.timestamp() * 1000)

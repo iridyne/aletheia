@@ -10,8 +10,7 @@ import math
 import time
 from typing import Literal, Sequence
 
-from aletheia.data.ccxt_provider import timeframe_ms
-from aletheia.data.providers import Candle, MarketDataProvider
+from aletheia.data.providers import Candle, MarketDataProvider, timeframe_ms
 from aletheia.data.symbols import InstrumentId
 
 

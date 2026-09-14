@@ -144,7 +144,7 @@ class BinancePublicProvider:
         ]
         candles = [candle for candle in parsed if candle is not None]
         if candles:
-            from aletheia.data.ccxt_provider import timeframe_ms
+            from aletheia.data.providers import timeframe_ms
 
             tf_ms = timeframe_ms(timeframe)
             if (

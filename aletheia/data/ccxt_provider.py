@@ -39,6 +39,7 @@ import logging
 import time
 from typing import Any
 
+from aletheia.data import providers
 from aletheia.data.providers import (
     Candle,
     OHLCVAttempt,
@@ -58,33 +59,6 @@ from aletheia.data.venue_health import (
 )
 
 logger = logging.getLogger("aletheia.ccxt_provider")
-
-# Canonical timeframe → milliseconds. Single source of truth for bar durations.
-# Covers the Bitget/Binance/OKX granularities the charts UI exposes for parity
-# with mainstream exchange terminals; agent reasoning still uses the smaller
-# trading.instruments.TIMEFRAMES subset. An unlisted timeframe (e.g. "2m",
-# "1M") yields 0 from timeframe_ms(); the OHLCV route treats that as
-# unsupported when paginating.
-_TF_MS = {
-    "1m": 60_000,
-    "5m": 300_000,
-    "15m": 900_000,
-    "30m": 1_800_000,
-    "1h": 3_600_000,
-    "2h": 7_200_000,
-    "4h": 14_400_000,
-    "6h": 21_600_000,
-    "8h": 28_800_000,
-    "12h": 43_200_000,
-    "1d": 86_400_000,
-    "3d": 259_200_000,
-    "1w": 604_800_000,
-}
-
-
-def timeframe_ms(timeframe: str) -> int:
-    """Milliseconds in one bar of ``timeframe``; 0 for an unsupported timeframe."""
-    return _TF_MS.get(timeframe, 0)
 
 
 def _resolve_ccxt_symbol(symbol: InstrumentId | str) -> tuple[str, str, str]:
@@ -327,7 +301,7 @@ class CCXTProvider:
                 # the last element; treat it as unconfirmed so callers can
                 # exclude it from indicator calculations.
                 if candles:
-                    tf_ms = _TF_MS.get(timeframe, 0)
+                    tf_ms = providers.timeframe_ms(timeframe)
                     if tf_ms > 0 and candles[-1].timestamp + tf_ms > int(time.time() * 1000):
                         candles[-1].is_closed = False
                 # SQLite's writer lane is synchronous by contract. Waiting for it
@@ -494,20 +468,6 @@ def _opt_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError("ticker optional numeric field is invalid") from exc
-
-
-def require_exact_ticker_venue(ticker: Ticker, venue: str) -> Ticker:
-    """Reject a ticker whose physical provider differs from the requested venue."""
-    if not isinstance(ticker, Ticker):
-        raise ValueError("ticker payload is not canonical")
-    expected = str(venue or "").strip().lower()
-    actual = str(ticker.provider or "").strip().lower()
-    if not expected or actual != expected:
-        raise ValueError(
-            f"ticker provider {actual or 'unknown'} does not match venue "
-            f"{expected or 'unknown'}"
-        )
-    return ticker
 
 
 def get_market_data_provider(

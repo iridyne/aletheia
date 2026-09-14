@@ -578,10 +578,8 @@ async def _batch_fetch_market_observations(
     """
     import asyncio
 
-    from aletheia.data.ccxt_provider import (
-        get_market_data_provider,
-        require_exact_ticker_venue,
-    )
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.providers import require_exact_ticker_venue
 
     input_count = len(rows)
     identity_deferrals = {
@@ -858,7 +856,7 @@ def _build_plan(row: dict, *, now: datetime) -> _ObservationPlan | None:
     a valid instrument — the caller's fetch_bounded() turns that into a per-row
     miss, exactly as it did before this was split out of fetch_one().
     """
-    from aletheia.data.ccxt_provider import timeframe_ms
+    from aletheia.data.providers import timeframe_ms
     from aletheia.data.symbols import InstrumentId
 
     entry_dt = parse_utc(row.get("entry_ts"))

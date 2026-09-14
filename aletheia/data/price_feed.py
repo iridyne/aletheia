@@ -454,8 +454,8 @@ async def refresh_watched_prices() -> dict:
         from aletheia.data.ccxt_provider import (
             CCXTProvider,
             get_market_data_provider,
-            require_exact_ticker_venue,
         )
+        from aletheia.data.providers import require_exact_ticker_venue
         from aletheia.data.symbols import is_stock_token
         from aletheia.config.loader import load_config
 

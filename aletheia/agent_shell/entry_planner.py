@@ -239,7 +239,7 @@ async def plan_next_candidate(
                     feature = repo.get_latest_feature_snapshot(candidate["asset_id"]) or {}
                     cutoff = datetime.now(timezone.utc)
                     cutoff_ms = int(cutoff.timestamp() * 1000)
-                    from aletheia.data.ccxt_provider import timeframe_ms
+                    from aletheia.data.providers import timeframe_ms
 
                     windows = {
                         timeframe: repo.get_ohlcv_candles(

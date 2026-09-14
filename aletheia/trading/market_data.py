@@ -343,8 +343,8 @@ async def collect_market_snapshots() -> dict:
     from aletheia.data.ccxt_provider import (
         CCXTProvider,
         get_market_data_provider,
-        require_exact_ticker_venue,
     )
+    from aletheia.data.providers import require_exact_ticker_venue
     collected = []
     errors = []
     # Batch accumulators — all network fetches complete first, then a single
