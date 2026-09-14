@@ -12,7 +12,7 @@ from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_credential_generation, get_secret
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
 from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
-from aletheia.uta.models import ReadCompleteness, UTAAccountIdentity
+from aletheia.uta.models import OrderQuery, OrderQueryReport, ReadCompleteness, UTAAccountIdentity
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
 
@@ -227,11 +227,27 @@ async def query_uta(
     try:
         if expected_account is not None and adapter.identity != expected_account:
             raise ValueError("uta_account_identity_mismatch")
+        if method == "get_order":
+            if not isinstance(query, OrderQuery):
+                raise ValueError("uta_exact_order_query_invalid")
+            query.require_exact()
         await adapter.connect()
         operation = getattr(adapter, method)
         report = await operation() if query is None else await operation(query)
         if expected_account is not None and report.identity != expected_account:
             raise ValueError("uta_account_identity_mismatch")
+        if method == "get_order":
+            if not isinstance(report, OrderQueryReport):
+                raise ValueError("uta_exact_order_report_invalid")
+            found = report.found
+            if found is not None:
+                if query.venue_order_id and found.venue_order_id != query.venue_order_id:
+                    raise ValueError("uta_exact_order_identity_mismatch")
+                expected = query.scope.instrument
+                if expected is not None and (
+                    found.instrument.canonical_symbol, found.instrument.market_type
+                ) != (expected.canonical_symbol, expected.market_type):
+                    raise ValueError("uta_exact_order_instrument_mismatch")
         return report
     finally:
         try:
