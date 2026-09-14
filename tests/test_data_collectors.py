@@ -204,6 +204,88 @@ async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
     assert rows[0].funding_rate_annualized == pytest.approx(0.002 * 12 * 365)
 
 
+def test_coinalyze_loads_only_its_credential_reference(monkeypatch):
+    import aletheia.config.secrets as secrets
+    import aletheia.data.collectors.coinalyze as mod
+
+    requested: list[str] = []
+    monkeypatch.setattr(
+        secrets,
+        "get_secret",
+        lambda key: requested.append(key) or "configured",
+    )
+
+    assert mod._load_api_key() == "configured"
+    assert requested == ["coinalyze_api_key"]
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_without_key_has_no_policy_side_effect(monkeypatch):
+    import aletheia.data.collectors.coinalyze as mod
+    import aletheia.learning.opportunity_information_policy as policy
+
+    monkeypatch.setattr(mod, "_load_api_key", lambda: None)
+    ensure_policy = MagicMock()
+    monkeypatch.setattr(
+        policy,
+        "ensure_opportunity_information_policy_epoch",
+        ensure_policy,
+    )
+
+    assert await mod.CoinalyzeCollector().collect(["BTC/USDT"]) == {
+        "open_interest": [],
+        "liquidations": [],
+        "errors": ["no_key"],
+    }
+    ensure_policy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_coinalyze_errors_do_not_expose_credentials(monkeypatch, caplog):
+    import aletheia.data.collectors.coinalyze as mod
+    import aletheia.learning.opportunity_information_policy as policy
+
+    secret = "coinalyze-secret"
+
+    class Response:
+        status_code = 503
+        text = f"upstream rejected api_key={secret}"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, *args, **kwargs):
+            return Response()
+
+    async def fail_liquidations(*args, **kwargs):
+        raise RuntimeError(f"https://example.invalid?api_key={secret}")
+
+    async def fail_open_interest(*args, **kwargs):
+        raise RuntimeError(f"https://example.invalid?api_key={secret}")
+
+    monkeypatch.setattr(mod, "_load_api_key", lambda: secret)
+    monkeypatch.setattr(
+        policy,
+        "ensure_opportunity_information_policy_epoch",
+        lambda: None,
+    )
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr(mod, "_fetch_liquidations", fail_liquidations)
+
+    result = await mod.CoinalyzeCollector().collect(["BTC/USDT"])
+    monkeypatch.setattr(mod, "_fetch_open_interest", fail_open_interest)
+    exception_result = await mod.CoinalyzeCollector().collect(["BTC/USDT"])
+
+    assert "liquidations:request_failed" in result["errors"]
+    assert "oi:request_failed" in exception_result["errors"]
+    assert secret not in repr([result, exception_result])
+    assert secret not in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch):
     import aletheia.data.collectors.coinalyze as mod
