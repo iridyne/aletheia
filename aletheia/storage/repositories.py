@@ -1906,6 +1906,8 @@ def insert_trade_proposal(
 
 
 def update_trade_proposal(pid: str, **kwargs) -> None:
+    if set(kwargs) - {"status"}:
+        raise ValueError("immutable Proposal fields cannot be updated")
     _update("trade_proposals", pid, kwargs)
 
 

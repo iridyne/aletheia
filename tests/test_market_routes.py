@@ -302,6 +302,46 @@ async def test_ohlcv_route_falls_back_on_typed_empty_provider_result(client, mon
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("failure", ["missing_adapter", "construction"])
+@pytest.mark.parametrize("exact_history", [False, True])
+async def test_ohlcv_history_survives_provider_initialization_failure(client, monkeypatch, failure, exact_history):
+    import builtins
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Candle
+
+    repo.upsert_ohlcv_candles(
+        symbol="BTC/USDT", timeframe="1h", exchange="binance",
+        market_type="spot" if exact_history else "perp",
+        candles=[Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.4, volume=10)],
+    )
+    if failure == "missing_adapter":
+        original_import = builtins.__import__
+
+        def absent(name, *args, **kwargs):
+            if name == "aletheia.data.ccxt_provider":
+                raise ModuleNotFoundError("isolated absent adapter", name=name)
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", absent)
+    else:
+        def unavailable(_exchange):
+            raise RuntimeError("provider construction failed")
+
+        monkeypatch.setattr(ccxt_provider, "get_market_data_provider", unavailable)
+
+    response = await client.get(
+        "/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=99&exchange=binance&market_type=spot",
+    )
+    assert response.status_code == 200
+    if exact_history:
+        assert response.headers["x-aletheia-data-source"] == "database_fallback"
+        assert response.json()[0]["close"] == 1.4
+    else:
+        assert response.headers["x-aletheia-data-source"] == "unavailable"
+        assert response.json() == {"error": "market_data_unavailable", "candles": []}
+
+
+@pytest.mark.anyio
 async def test_ohlcv_route_reports_typed_empty_without_database_history(client, monkeypatch):
     from aletheia.data import ccxt_provider
     from aletheia.data.providers import OHLCVAttempt, OHLCVResult

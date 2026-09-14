@@ -1635,7 +1635,6 @@ async def get_market_ohlcv(
 
     from aletheia.config.loader import load_config
     from aletheia.data.cache import get_cache
-    from aletheia.data.ccxt_provider import get_market_data_provider
     from aletheia.data.providers import OHLCVResult, timeframe_ms
     from aletheia.data.symbols import InstrumentId, to_canonical
 
@@ -1693,9 +1692,12 @@ async def get_market_ohlcv(
         )
         if candles is None:
             data_source = "provider_fetch"
-            provider = get_market_data_provider(effective_exchange)
+            provider = None
             try:
                 try:
+                    from aletheia.data.ccxt_provider import get_market_data_provider
+
+                    provider = get_market_data_provider(effective_exchange)
                     fetch_kwargs = {
                         "timeframe": timeframe,
                         "limit": limit,
@@ -1721,7 +1723,8 @@ async def get_market_ohlcv(
                     candles = db_rows
                     data_source = "database_fallback"
             finally:
-                await provider.close()
+                if provider is not None:
+                    await provider.close()
 
         def _value(candle, key: str):
             return candle.get(key) if isinstance(candle, dict) else getattr(candle, key)
