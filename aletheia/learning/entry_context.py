@@ -7,24 +7,14 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from aletheia.trading import entry_learning as contract
 
 
-ENTRY_LEARNING_CONTEXT_VERSION = "entry-learning-context/v1"
-ENTRY_LEARNING_OUTCOME_VERSION = "entry-learning-outcome/v1"
-ENTRY_LEARNING_METRIC_VERSION = "entry-learning-metrics/v1"
 ENTRY_LEARNING_ADAPTER_ID = "mechanism-aware-entry-learning"
 ENTRY_LEARNING_ADAPTER_VERSION = "v1"
 ENTRY_LEARNING_INTERFERENCE_KEY = "mechanism-aware-grounded-entry"
-
-
-def _instant(value: str) -> datetime:
-    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    if parsed.tzinfo is None:
-        raise ValueError("entry_learning_timezone_required")
-    return parsed.astimezone(timezone.utc)
 
 
 def _fingerprint(value: object) -> str:
@@ -110,10 +100,10 @@ def _filled_unit_outcome(
             return None, None, None, "entry_learning_fixed_horizon_outcome_unavailable"
         outcome = outcomes[0]
         try:
-            due_at = _instant(outcome["due_at"])
-            settled_at = _instant(outcome["settled_at"])
-            filled_at = _instant(fill["filled_at"])
-            entry_at = _instant(outcome["entry_ts"])
+            due_at = contract._instant(outcome["due_at"])
+            settled_at = contract._instant(outcome["settled_at"])
+            filled_at = contract._instant(fill["filled_at"])
+            entry_at = contract._instant(outcome["entry_ts"])
             notional = abs(float(fill["fill_price"]) * float(fill["fill_quantity"]))
         except (TypeError, ValueError):
             return None, None, None, "entry_learning_fixed_horizon_outcome_invalid"
@@ -212,57 +202,6 @@ def _planning_inference_evidence(
     return identities, cost, refs, reasons
 
 
-class EntryLearningContext(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    version: Literal["entry-learning-context/v1"] = ENTRY_LEARNING_CONTEXT_VERSION
-    as_of_at: str
-    status: Literal["unavailable", "observational", "experimental"]
-    scope: dict[str, Any]
-    support: dict[str, Any]
-    metrics: dict[str, Any]
-    evidence_refs: tuple[str, ...] = Field(default_factory=tuple, max_length=64)
-    source_fingerprint: str | None
-    experiment_identity: dict[str, Any] | None = None
-    outcome_contract_version: str = ENTRY_LEARNING_OUTCOME_VERSION
-    metric_version: str = ENTRY_LEARNING_METRIC_VERSION
-    blocking_reasons: tuple[str, ...] = ()
-
-    @field_validator("as_of_at")
-    @classmethod
-    def _utc_cutoff(cls, value: str) -> str:
-        return _instant(value).isoformat()
-
-    @model_validator(mode="after")
-    def _bounded(self) -> "EntryLearningContext":
-        for name in ("complete_outcome_coverage",):
-            value = self.support.get(name)
-            if value is not None and (
-                not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1
-            ):
-                raise ValueError(f"entry_learning_{name}_invalid")
-        for name in ("fill_rate", "no_plan_rate", "no_trigger_rate", "no_fill_rate"):
-            value = self.metrics.get(name)
-            if value is not None and (
-                not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 1
-            ):
-                raise ValueError(f"entry_learning_{name}_invalid")
-        if self.status == "unavailable" and not self.blocking_reasons:
-            raise ValueError("entry_learning_unavailable_reason_required")
-        if self.status != "unavailable" and (not self.source_fingerprint or self.blocking_reasons):
-            raise ValueError("entry_learning_available_identity_invalid")
-        if self.status == "experimental":
-            identity = self.experiment_identity or {}
-            if (
-                identity.get("assignment") != "treatment"
-                or not identity.get("observation_id")
-                or not identity.get("manifest_hash")
-                or not identity.get("receipt_id")
-            ):
-                raise ValueError("entry_learning_experiment_identity_invalid")
-        elif self.experiment_identity is not None:
-            raise ValueError("entry_learning_experiment_identity_forbidden")
-        return self
 
 
 @dataclass(frozen=True)
@@ -359,54 +298,6 @@ def resolve_entry_learning_treatment(
     )
 
 
-def empty_entry_learning_context(
-    *,
-    as_of_at: str,
-    mechanism: str,
-    direction: str,
-    market_type: str,
-    policy: str,
-    policy_epoch: str | None,
-    reasons: tuple[str, ...] = ("entry_learning_evidence_unavailable",),
-) -> EntryLearningContext:
-    return EntryLearningContext(
-        as_of_at=as_of_at,
-        status="unavailable",
-        scope={
-            "mechanism": mechanism,
-            "direction": direction,
-            "market_type": market_type,
-            "entry_profile_id": "mechanism-aware-grounded/v1",
-            "horizon": "4h",
-            "candidate_selection_policy": policy,
-            "policy_epoch": policy_epoch,
-        },
-        support={
-            "independent_n": 0,
-            "distinct_symbols": 0,
-            "distinct_dates": 0,
-            "cycle_n": 0,
-            "planning_thread_n": 0,
-            "max_cycles_per_thread": 0,
-            "complete_outcome_coverage": 0.0,
-            "evidence_ref_total": 0,
-            "evidence_refs_truncated": False,
-        },
-        metrics={
-            "intent_to_treat_net_utility_pct": None,
-            "fill_rate": None,
-            "no_plan_rate": None,
-            "no_trigger_rate": None,
-            "no_fill_rate": None,
-            "mae_p95_pct": None,
-            "mfe_pct": None,
-            "mfe_to_realized_capture": None,
-            "model_and_data_cost": None,
-        },
-        evidence_refs=(),
-        source_fingerprint=None,
-        blocking_reasons=tuple(sorted(set(reasons))),
-    )
 
 
 def build_entry_learning_context(
@@ -419,12 +310,12 @@ def build_entry_learning_context(
     policy_epoch: str | None,
     exclude_generation_id: str = "",
     current_behavior_identity: dict[str, str] | None = None,
-) -> EntryLearningContext:
+) -> contract.EntryLearningContext:
     """Project existing planning/execution owners; never creates or updates evidence."""
 
     from aletheia.storage import repositories as repo
 
-    cutoff = _instant(as_of_at)
+    cutoff = contract._instant(as_of_at)
     db = repo.get_db()
     rows = db.execute(
         "SELECT pg.*,um.symbol AS candidate_symbol,ep.id AS plan_id,"
@@ -465,7 +356,7 @@ def build_entry_learning_context(
         eligible_rows.append(row)
     rows = eligible_rows
     if not rows:
-        return empty_entry_learning_context(
+        return contract.empty_entry_learning_context(
             as_of_at=cutoff.isoformat(),
             mechanism=mechanism,
             direction=direction,
@@ -507,7 +398,7 @@ def build_entry_learning_context(
     for raw in rows:
         row = dict(raw)
         try:
-            created = _instant(row["created_at"])
+            created = contract._instant(row["created_at"])
         except (TypeError, ValueError):
             invalid_reasons.add("entry_learning_unit_time_invalid")
             continue
@@ -555,7 +446,7 @@ def build_entry_learning_context(
             inference_costs.append(inference_cost)
         if row["status"] == "no_plan":
             try:
-                completed_at = _instant(row["completed_at"])
+                completed_at = contract._instant(row["completed_at"])
             except (TypeError, ValueError):
                 invalid_reasons.add("entry_learning_planning_outcome_incomplete")
                 continue
@@ -584,7 +475,7 @@ def build_entry_learning_context(
         orders, fills, position = _entry_capture_evidence(db, plan_id, cutoff)
         if not orders:
             try:
-                plan_terminal_at = _instant(row["plan_terminal_at"])
+                plan_terminal_at = contract._instant(row["plan_terminal_at"])
             except (TypeError, ValueError):
                 plan_terminal_at = None
             if (
@@ -609,7 +500,7 @@ def build_entry_learning_context(
         evidence_refs.extend(f"order:{order['id']}" for order in orders)
         if not fills:
             try:
-                plan_terminal_at = _instant(row["plan_terminal_at"])
+                plan_terminal_at = contract._instant(row["plan_terminal_at"])
             except (TypeError, ValueError):
                 plan_terminal_at = None
             if (
@@ -728,7 +619,7 @@ def build_entry_learning_context(
         "profile_identity": sorted(profile_identities),
     }
     if invalid_reasons:
-        return EntryLearningContext(
+        return contract.EntryLearningContext(
             as_of_at=cutoff.isoformat(),
             status="unavailable",
             scope=scope,
@@ -738,7 +629,7 @@ def build_entry_learning_context(
             source_fingerprint=None,
             blocking_reasons=tuple(sorted(invalid_reasons)),
         )
-    return EntryLearningContext(
+    return contract.EntryLearningContext(
         as_of_at=cutoff.isoformat(),
         status="observational",
         scope=scope,
@@ -753,11 +644,51 @@ def build_entry_learning_context(
 __all__ = [
     "ENTRY_LEARNING_ADAPTER_ID",
     "ENTRY_LEARNING_ADAPTER_VERSION",
-    "ENTRY_LEARNING_CONTEXT_VERSION",
     "ENTRY_LEARNING_INTERFERENCE_KEY",
-    "EntryLearningContext",
     "EntryLearningTreatmentAdapter",
     "build_entry_learning_context",
-    "empty_entry_learning_context",
+    "load_entry_learning_context",
     "resolve_entry_learning_treatment",
 ]
+
+
+def load_entry_learning_context(*, generation: dict, model_provider: str, profiles: tuple, **learning_scope) -> contract.EntryLearningContext:
+    """Apply the existing optional treatment/context flow, returning only the Core DTO."""
+    from aletheia.trading.entry_analysis import _bind_experimental_entry_learning_context, fingerprint
+    from aletheia.trading.entry_contract import entry_prompt_fingerprint
+
+    treatment = resolve_entry_learning_treatment(
+        planning_generation_id=str(generation["id"]),
+        **learning_scope,
+    )
+    if treatment.payload.get("include_learning_context") is True:
+        from aletheia.config.loader import load_config
+
+        provider_config = load_config().models.providers.get(str(model_provider))
+        current_behavior_identity = {
+            "producer_commit": str(generation.get("producer_commit") or ""),
+            "behavior_fingerprint": str(generation.get("behavior_fingerprint") or ""),
+            "entry_behavior_fingerprint": str(generation.get("entry_behavior_fingerprint") or ""),
+            "schema_fingerprint": str(generation.get("schema_fingerprint") or ""),
+            "mechanism_version": str(generation.get("mechanism_version") or ""),
+            "model_provider": str(model_provider),
+            "model": str(getattr(provider_config, "model", "") or ""),
+            "prompt_fingerprint": entry_prompt_fingerprint(),
+            "entry_profile_registry_hash": fingerprint(profiles),
+        }
+        learning_context = build_entry_learning_context(
+            **learning_scope,
+            exclude_generation_id=str(generation["id"]),
+            current_behavior_identity=current_behavior_identity,
+        )
+        learning_context = _bind_experimental_entry_learning_context(
+            learning_context,
+            treatment,
+            learning_scope,
+        )
+    else:
+        learning_context = contract.empty_entry_learning_context(
+            **learning_scope,
+            reasons=(f"entry_learning_treatment:{treatment.reason}",),
+        )
+    return learning_context

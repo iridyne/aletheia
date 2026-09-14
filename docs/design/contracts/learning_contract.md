@@ -904,6 +904,15 @@ and Risk doubles demonstrate the data path, not exchange route qualification.
 
 ## 12. Bounded Entry Learning context
 
+Core `trading.entry_learning` owns the frozen context DTO, validation, cutoff
+decoder, deterministic empty context and optional producer binding. Existing
+Web/CLI bootstrap binds `learning.entry_context.load_entry_learning_context`
+without resolving an experiment. Learning retains the cutoff-safe projection
+and canonical Lab treatment flow; Core rejects an observational-only or invalid
+experimental result at the boundary. Missing Entry Learning producer yields typed unavailable
+context with no experiment identity, never fabricated evidence or influence.
+No policy/metric version, prompt schema, cohort or admission rule changes.
+
 `entry-learning-context/v1` is a read-only T1-cutoff projection over existing
 Candidate, Planning Generation, Entry Plan, Order, Fill, Position, and retained
 outcome owners. It includes the full eligible denominator: `NO_PLAN`, no

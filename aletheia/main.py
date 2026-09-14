@@ -57,6 +57,17 @@ def _configure_runtime() -> None:
 
     bind_uta_provider()
 
+    from aletheia.trading.entry_learning import configure_entry_learning
+
+    try:
+        from aletheia.learning.entry_context import load_entry_learning_context
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.learning", "aletheia.learning.entry_context"}:
+            raise
+        configure_entry_learning(None)
+    else:
+        configure_entry_learning(load_entry_learning_context)
+
     from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch
 
     try:

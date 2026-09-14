@@ -7312,7 +7312,7 @@ def get_entry_plan_execution_lineage(plan_ids: list[str]) -> dict[str, dict]:
     from aletheia.portfolio.pnl import _realized_economics_value
     from aletheia.trading.trading_mandate import normalize_physical_market_type
     from aletheia.analytics.outcome_semantics import validated_outcome_economics
-    from aletheia.learning.entry_context import _instant
+    from aletheia.trading.entry_learning import _instant
 
     cutoff = datetime.now(timezone.utc)
 
