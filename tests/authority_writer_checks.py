@@ -23,7 +23,18 @@ def _alias_names(value):
     return names
 
 
-def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), literal_writes=None):
+def _sql_text(node):
+    """Join static SQL fragments; unknown expressions remain explicit gaps."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _sql_text(node.left) + _sql_text(node.right)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_sql_text(value) for value in node.values)
+    return "?"
+
+
+def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), literal_writes=None, expression_writes=None, allow_migration_dml=True, raw_operations=None, additive_migration_ddl=False):
     """Bounded named-reference/literal-write proof, not arbitrary dynamic SQL."""
     sql_pattern = re.compile(rf'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     repository = root / "aletheia/storage/repositories.py"
@@ -39,7 +50,12 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                 for (owner_path, function), statements in (literal_writes or {}).items()
                 if path == root / "aletheia" / owner_path
             }
-            canonical_names = set(allowed_literals)
+            allowed_expressions = {
+                function: {ast.dump(ast.parse(expression, mode="eval").body) for expression in expressions}
+                for (owner_path, function), expressions in (expression_writes or {}).items()
+                if path == root / "aletheia" / owner_path
+            }
+            canonical_names = set(allowed_literals) | set(allowed_expressions)
             if path == repository:
                 canonical_names |= raw_owners | {caller for caller, _ in delegations}
             for name in canonical_names:
@@ -47,23 +63,16 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                 if definitions:
                     assert len(definitions) == 1 and parents[definitions[0]] is tree, (path, name)
                     canonical[name] = definitions[0]
-            generic_aliases = {}
             for reference in ast.walk(tree):
                 if isinstance(reference, ast.ImportFrom) and (reference.module or "").endswith("repositories"):
                     for alias in reference.names:
                         if alias.name in _GENERIC_WRITERS:
-                            generic_aliases[alias.asname or alias.name] = alias.name
+                            assert path == repository, (path, reference.lineno, "generic writer re-export")
                 if isinstance(reference, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                     value = reference.value
                     aliases = _alias_names(value)
                     assert not aliases.intersection(owners), (path, reference.lineno, "named writer alias", aliases)
-                    if aliases.intersection(_GENERIC_WRITERS | generic_aliases.keys()):
-                        assert isinstance(value, (ast.Name, ast.Attribute)), (path, reference.lineno, "compound generic alias")
-                    name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id, value.id) if isinstance(value, ast.Name) else None
-                    if name in _GENERIC_WRITERS:
-                        for target in reference.targets if isinstance(reference, ast.Assign) else [reference.target]:
-                            if isinstance(target, ast.Name):
-                                generic_aliases[target.id] = name
+                    assert not aliases.intersection(_GENERIC_WRITERS), (path, reference.lineno, "generic writer alias")
             for node in ast.walk(tree):
                 child = node
                 parent = parents.get(node)
@@ -95,14 +104,32 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), l
                             assert alias.asname in {None, alias.name}, (path, node.lineno, "writer re-export")
                 if isinstance(node, ast.Call):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
-                    name = generic_aliases.get(name, name)
                     check_writer(name)
                     if name in _GENERIC_WRITERS:
                         table_arg = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
                         if isinstance(table_arg, ast.Constant) and isinstance(table_arg.value, str) and sql_pattern.search(_without_sql_comments("UPDATE " + table_arg.value)):
-                            assert path == migrations or canonical_storage_writer, (path, node.lineno)
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and sql_pattern.search(_without_sql_comments(node.value)):
-                    exact_literal = canonical_function and node.value in allowed_literals.get(function, ())
-                    assert path == migrations or canonical_storage_writer or exact_literal, (path, node.lineno)
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and ddl_pattern.search(_without_sql_comments(node.value)):
-                    assert path == migrations, (path, node.lineno, "authority table DDL")
+                            assert (path == migrations and allow_migration_dml) or canonical_storage_writer, (path, node.lineno)
+                            if canonical_storage_writer and function in (raw_operations or {}):
+                                assert name in raw_operations[function], (path, node.lineno, "non-publication mutation")
+                if isinstance(node, (ast.Constant, ast.BinOp, ast.JoinedStr)):
+                    expression = node
+                    while isinstance(parents.get(expression), ast.JoinedStr) or (
+                        isinstance(parents.get(expression), ast.BinOp) and isinstance(parents[expression].op, ast.Add)
+                    ):
+                        expression = parents[expression]
+                    if expression is not node:
+                        continue
+                    sql = _without_sql_comments(_sql_text(expression))
+                    exact_literal = canonical_function and isinstance(node, ast.Constant) and node.value in allowed_literals.get(function, ())
+                    exact_expression = canonical_function and ast.dump(expression) in allowed_expressions.get(function, ())
+                    if sql_pattern.search(sql):
+                        assert (path == migrations and allow_migration_dml) or canonical_storage_writer or exact_literal or exact_expression, (path, node.lineno)
+                        if canonical_storage_writer and function in (raw_operations or {}):
+                            assert "sql" in raw_operations[function], (path, node.lineno, "raw SQL mutation")
+                    for ddl in ddl_pattern.finditer(sql):
+                        assert path == migrations, (path, node.lineno, "authority table DDL")
+                        if additive_migration_ddl:
+                            assert ddl.group().upper().startswith("CREATE") or (
+                                ddl.group().upper().startswith("ALTER")
+                                and re.match(r"\s+ADD\s+(?:COLUMN\s+)?(?!CONSTRAINT\b)", sql[ddl.end():], re.I)
+                            ), (path, node.lineno, "non-additive authority DDL")
