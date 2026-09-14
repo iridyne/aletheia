@@ -20,6 +20,7 @@ Open positions are not closed. A zero/None threshold disables that clause.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 
 from aletheia.risk.policy import DEMO_EXECUTION_MODES
 
@@ -30,6 +31,13 @@ REGIME_SIDEWAYS_STANDDOWN = "regime_sideways_standdown"
 FAMILY_NOT_DEMO_ELIGIBLE = "family_not_demo_eligible"
 REVERSE_AFTER_STOP = "reverse_after_stop"
 DEMO_ENTRY_QUALITY_UNAVAILABLE = "demo_entry_quality_unavailable"
+_policy_epoch_writer: Callable[[], str] | None = None
+
+
+def configure_demo_quality_epoch(writer: Callable[[], str] | None) -> None:
+    """Bind optional epoch persistence at bootstrap, without performing a write."""
+    global _policy_epoch_writer
+    _policy_epoch_writer = writer
 
 # Same-symbol reverse after a stop_loss: NEAR short stop then NEAR long next day.
 REVERSE_AFTER_STOP_HOURS = 24
@@ -141,10 +149,9 @@ def collect_demo_entry_quality_violations(
         return []
     unavailable: list[str] = []
     try:
-        from aletheia.learning.demo_entry_quality import (
-            ensure_demo_entry_quality_policy_epoch,
-        )
-        ensure_demo_entry_quality_policy_epoch()
+        if _policy_epoch_writer is None:
+            raise RuntimeError("demo_quality_epoch_unavailable")
+        _policy_epoch_writer()
     except Exception:
         unavailable.append(f"{DEMO_ENTRY_QUALITY_UNAVAILABLE}:policy_epoch")
 

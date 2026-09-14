@@ -80,6 +80,12 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 18 | Liquidation Buffer | 期货(lev>1):估算爆仓价距入场 ≥ buffer% | `risk.min_liquidation_buffer_pct`(5.0) | `liquidation_too_close:{g}%<{b}%` | :695 (FL-S09) |
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
+关卡 #14b 的 epoch 写入由既有 Web/CLI 启动入口绑定
+`learning.demo_entry_quality.ensure_demo_entry_quality_policy_epoch`，启动绑定不执行写入。
+Core 在原质量检查时机调用它；组件缺失或写入失败仍返回
+`demo_entry_quality_unavailable:policy_epoch`，不会跳过其他质量检查或改变 Live 行为。
+epoch 的内容、哈希、历史保留与旋转规则不变。
+
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
 > 历史展示仍可使用 symbol-only fallback；该兼容读取不构成 Risk freshness authority。spec: `PL-MD-07/09`。
 >

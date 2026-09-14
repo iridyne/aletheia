@@ -315,6 +315,15 @@ def _block_real_exchange_orders(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_demo_quality_epoch(monkeypatch):
+    """Use actual epoch persistence against test-owned DBs, without starting Web/CLI."""
+    from aletheia.learning import demo_entry_quality as policy
+    from aletheia.risk import demo_entry_quality as quality
+
+    monkeypatch.setattr(quality, "_policy_epoch_writer", lambda: policy.ensure_demo_entry_quality_policy_epoch())
+
+
+@pytest.fixture(autouse=True)
 def _fast_network_timeout(request, monkeypatch):
     """Set very short httpx connect timeout so external calls fail fast.
 
