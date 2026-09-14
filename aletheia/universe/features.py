@@ -150,7 +150,7 @@ def _is_derivatives_market(market_type: object) -> bool:
 
 
 def _provider_observed_at(data: dict, *, received_at: datetime) -> str | None:
-    from aletheia.data.collectors.derivatives import provider_source_time
+    from aletheia.data.derivatives_facts import provider_source_time
 
     observed_at, _status = provider_source_time(data, received_at)
     return observed_at
@@ -1256,5 +1256,4 @@ async def collect_features(
 
     logger.info("Features collected for %d / %d assets", len(results), len(assets))
     return results
-
 
