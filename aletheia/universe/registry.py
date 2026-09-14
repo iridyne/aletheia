@@ -1,4 +1,4 @@
-"""Asset registry sync — fetches tradable pairs from the active exchange via CCXT.
+"""Asset registry admission and persistence from normalized venue listing facts.
 
 When running in demo mode (e.g. okx_demo), the registry is narrowed to only
 symbols actually supported on the demo environment — no wasted scanning.
@@ -11,10 +11,8 @@ import logging
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
-from aletheia.data.symbols import (
-    build_instrument_background,
-    instrument_background_rejection_reason,
-)
+from aletheia.data.providers import MarketInstrument, get_market_data_provider
+from aletheia.data.symbols import instrument_background_rejection_reason
 from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
 
@@ -24,34 +22,14 @@ _LEVERAGED_SUFFIXES = ("3L", "3S", "5L", "5S", "2L", "2S", "UP", "DOWN", "BULL",
 _EXCLUDED_BASES = {"BTTC", "LUNC", "LUNA", "UST", "FTT"}
 
 
-def _precision_to_decimals(p) -> int | None:
-    """CCXT market precision → integer decimal places.
-
-    CCXT reports precision in one of two modes: DECIMAL_PLACES (an int like 3) or
-    TICK_SIZE (a float like 0.001). int(0.001) == 0 silently destroyed tick-size
-    precision, so downstream orders rounded to whole units and got rejected.
-    Convert a sub-1 tick size to its decimal-place count.
-    """
-    if p is None:
-        return None
-    try:
-        if isinstance(p, float) and 0 < p < 1:
-            import math
-            return max(0, int(round(-math.log10(p))))
-        return int(p)
-    except (ValueError, OverflowError):
-        return None
-
-
-def _is_excluded(symbol_info: dict) -> bool:
+def _is_excluded(instrument: MarketInstrument) -> bool:
     """Filter out unsupported asset classes, leveraged tokens, and test symbols."""
-    base = (symbol_info.get("base") or "").upper()
-    symbol_id = (symbol_info.get("id") or "").upper()
+    base = instrument.base_asset
 
     # OKX category 3 is tokenized stocks/ETFs. The equity observer handles these
     # as observation-only until asset-class metadata and execution capability are
     # explicitly connected; treating them as crypto makes them silently executable.
-    if str((symbol_info.get("info") or {}).get("instCategory") or "") == "3":
+    if instrument.is_tokenized_equity:
         return True
 
     if any(base.endswith(s) for s in _LEVERAGED_SUFFIXES):
@@ -62,7 +40,7 @@ def _is_excluded(symbol_info: dict) -> bool:
     # "BTC_USDT_240628"). On venues whose SPOT ids use "_" (e.g. KuCoin "BTC_USDT")
     # this would over-exclude everything — revisit if adding such a venue. Current
     # venues (OKX/Bitget) use "-"/no separator, so this is safe today.
-    if "TEST" in symbol_id or "_" in symbol_id:
+    if instrument.is_test_or_dated:
         return True
     return False
 
@@ -105,27 +83,15 @@ def _invalidate_stale_pipeline_data() -> None:
 async def sync_registry(cfg: AletheiaConfig) -> int:
     """Sync the universe_registry from the configured exchange.
 
-    Uses CCXT load_markets() to get all active USDT-quoted pairs.
+    Reads normalized active USDT-quoted pairs from the configured venue.
     When in demo mode with a restricted symbol set (e.g. OKX demo),
     only symbols actually executable on demo are registered.
 
     Returns count of assets upserted.
     """
-    # #91 fix: previously built CCXTProvider(exchange=venue, fallback_exchange=venue) —
-    # primary and fallback pointed at the SAME exchange, so a primary outage had no
-    # cross-exchange fallback. The market-data factory (get_market_data_provider)
-    # already resolves fallback from `market_data.ccxt_fallback`, but that factory
-    # returns a FallbackChainProvider whose surface doesn't include the CCXT-native
-    # `_ensure_primary` + `load_markets` we need for universe sync. Match the
-    # factory's config resolution (fallback_exchange = md.ccxt_fallback) here so the
-    # two agree; a follow-up can lift the shared logic once the chain provider
-    # grows a load_markets equivalent.
-    from aletheia.data.ccxt_provider import CCXTProvider
-
     md = cfg.market_data
     venue = md.ccxt_exchange
-    fallback_venue = md.ccxt_fallback or venue
-    provider = CCXTProvider(exchange=venue, fallback_exchange=fallback_venue)
+    provider = get_market_data_provider(venue, exact_venue=True)
     assets: list[UniverseAsset] = []
     sync_started_at = datetime.now(timezone.utc).isoformat()
 
@@ -136,46 +102,33 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             logger.info("Demo whitelist active: %d symbols for %s",
                         len(demo_whitelist), cfg.exchange.paper_execution_mode)
 
-        exchange = provider._ensure_primary()
-        # Don't set fetchMarkets — OKX rejects 'linear' (uses 'SWAP' internally).
-        # Load all markets and filter in the loop below.
-        await exchange.load_markets()
-        markets = exchange.markets
+        read_instruments = getattr(provider, "get_market_instruments", None)
+        if not callable(read_instruments):
+            raise RuntimeError("market_instruments_unavailable")
+        instruments = await read_instruments()
+        if not isinstance(instruments, list) or any(
+            not isinstance(item, MarketInstrument) or item.venue != venue
+            or item.market_type not in {"spot", "perp"}
+            or not isinstance(item.base_asset, str) or not item.base_asset
+            or item.quote_asset != "USDT"
+            or item.symbol != f"{item.base_asset}/{item.quote_asset}"
+            for item in instruments
+        ):
+            raise ValueError("market_instruments_identity_invalid")
         include_futures = cfg.exchange.enabled_markets.get("usdt_futures", False)
 
         now = datetime.now(timezone.utc).isoformat()
 
-        for symbol_key, info in markets.items():
-            if not info.get("active", True):
+        for instrument in instruments:
+            canonical = instrument.symbol
+            market_type = instrument.market_type
+            if market_type == "perp" and not include_futures:
                 continue
-            quote = (info.get("quote") or "").upper()
-            if quote != "USDT":
-                continue
-
-            base = (info.get("base") or "").upper()
-            if not base:
-                continue
-
-            canonical = f"{base}/{quote}"
-
-            # Determine market type and filter
-            is_perp = info.get("swap") or info.get("future")
-            if is_perp and not include_futures:
-                continue
-            if info.get("option"):
-                continue
-            market_type = "perp" if is_perp else "spot"
-
-            background = build_instrument_background(
-                symbol=str(info.get("symbol") or symbol_key),
-                venue=venue,
-                market_type=market_type,
-                market_info=info,
-            )
+            background = instrument.background
             asset_class = background["asset_class"]
             # Keep unsupported products visible with an honest background.
             # Ordinary crypto exclusions remain absent altogether.
-            if _is_excluded(info) and asset_class == "crypto":
+            if _is_excluded(instrument) and asset_class == "crypto":
                 continue
 
             # Demo whitelist filter: skip symbols not executable on demo
@@ -185,14 +138,6 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 logger.debug("demo_whitelist: skip %s (not executable on %s)",
                              canonical, cfg.exchange.paper_execution_mode)
                 continue
-
-            limits = info.get("limits") or {}
-            cost_limits = limits.get("cost") or {}
-            min_notional = cost_limits.get("min")
-
-            precision = info.get("precision") or {}
-            price_prec = precision.get("price")
-            amount_prec = precision.get("amount")
 
             config_blacklisted = canonical in cfg.universe.blacklist
             support_reason = instrument_background_rejection_reason(
@@ -212,12 +157,12 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
                 venue=venue,
                 market_type=market_type,
                 symbol=canonical,
-                base_asset=base,
-                quote_asset=quote,
+                base_asset=instrument.base_asset,
+                quote_asset=instrument.quote_asset,
                 status="active",
-                min_notional=min_notional,
-                price_precision=_precision_to_decimals(price_prec),
-                amount_precision=_precision_to_decimals(amount_prec),
+                min_notional=instrument.min_notional,
+                price_precision=instrument.price_precision,
+                amount_precision=instrument.amount_precision,
                 first_seen_at=now,
                 last_seen_at=now,
                 is_blacklisted=blacklisted,
