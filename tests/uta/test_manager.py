@@ -22,6 +22,48 @@ from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 NOW = datetime(2026, 8, 27, tzinfo=timezone.utc)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["valid", "absent", "symbol", "market", "order_id", "query", "report"])
+async def test_exact_order_read_validates_normalized_evidence(monkeypatch, case):
+    from aletheia.uta.compat import scope_from_local
+    from aletheia.uta.manager import query_uta
+    from aletheia.uta.models import OrderLifecycle, OrderQuery, OrderQueryReport, OrderStatusReport
+
+    adapter = FakeUTAAdapter(_identity())
+    scope = scope_from_local("BTC/USDT", "usdt_futures")
+    query = OrderQuery(scope=scope, venue_order_id="order-1", client_order_id="local-id")
+    found = OrderStatusReport(
+        identity=adapter.identity,
+        instrument=scope_from_local(
+            "ETH/USDT" if case == "symbol" else "BTC/USDT",
+            "spot" if case == "market" else "usdt_futures",
+        ).instrument,
+        venue_order_id="other" if case == "order_id" else "order-1",
+        client_order_id="venue-encoded-local-id",
+        side="buy", order_type="limit", original_quantity="1", filled_quantity="0",
+        state=OrderLifecycle.OPEN, received_at=NOW,
+    )
+    report = OrderQueryReport(
+        identity=adapter.identity, scope=scope, completeness=ReadCompleteness.COMPLETE,
+        received_at=NOW, profile_version="1", found=None if case == "absent" else found,
+    )
+
+    async def get_order(_query):
+        return SimpleNamespace(identity=adapter.identity) if case == "report" else report
+
+    adapter.get_order = get_order
+    monkeypatch.setattr("aletheia.uta.manager.create_uta_adapter", lambda *_args: adapter)
+    if case == "query":
+        query = OrderQuery(scope=scope)
+    if case in {"valid", "absent"}:
+        assert await query_uta("okx_demo", "get_order", query, expected_account=adapter.identity) is report
+    else:
+        with pytest.raises(ValueError):
+            await query_uta("okx_demo", "get_order", query, expected_account=adapter.identity)
+    assert adapter.closed is True
+    assert adapter.connected is (case != "query")
+
+
 def _identity(generation=7, execution_mode="okx_demo"):
     live = execution_mode.endswith("_live_limited")
     return UTAAccountIdentity(
