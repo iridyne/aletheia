@@ -31,11 +31,11 @@ def _imports(relative_path: str) -> set[str]:
 ))
 def test_learning_has_no_execution_or_risk_authority():
     forbidden_prefixes = (
-        "aletheia.exchanges", "aletheia.execution", "aletheia.server.routes.live",
+        "extensions.exchanges", "aletheia.execution", "aletheia.server.routes.live",
         "aletheia.risk",
     )
     violations: dict[str, list[str]] = {}
-    for path in sorted((ROOT / "aletheia" / "learning").glob("*.py")):
+    for path in sorted((ROOT / "core" / "aletheia" / "learning").glob("*.py")):
         rel = str(path.relative_to(ROOT))
         bad = sorted(
             module for module in _imports(rel)
@@ -51,11 +51,11 @@ def test_learning_has_no_execution_or_risk_authority():
     "System Operator and frontend sources cannot call exchange order adapters directly.",
 ))
 def test_operator_and_frontend_have_no_direct_exchange_order_path():
-    operator_paths = sorted((ROOT / "aletheia" / "agent_shell").glob("*.py"))
+    operator_paths = sorted((ROOT / "core" / "aletheia" / "agent_shell").glob("*.py"))
     operator_violations = {
         str(path.relative_to(ROOT)): sorted(
             module for module in _imports(str(path.relative_to(ROOT)))
-            if module.startswith("aletheia.exchanges")
+            if module.startswith("extensions.exchanges")
         )
         for path in operator_paths
     }

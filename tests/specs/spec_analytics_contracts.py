@@ -211,18 +211,8 @@ def test_alpha_attribution_contract_shape_on_empty_db():
     assert trailing["recovery_contract"]["authority"] == "diagnostic_only"
     assert trailing["cross_cohort_pooling"] is False
     assert trailing["promotion_eligible"] is False
-    risk = report["risk_policy_evidence"]
-    assert risk["contract_version"] == "risk-policy-value/v1"
-    assert risk["baseline_policy"] == "pass-all-candidates/v1"
-    assert risk["behavior_authority"] is False
-    assert risk["promotion_eligible"] is False
-    assert risk["contribution_verdict"] == "insufficient_data"
-    execution = report["execution_cost_evidence"]
-    assert execution["contract_version"] == "execution-cost-pair/v1"
-    assert execution["baseline_policy"] == "frictionless-requested-fill/v1"
-    assert execution["behavior_authority"] is False
-    assert execution["promotion_eligible"] is False
-    assert execution["contribution_verdict"] == "insufficient_data"
+    assert "risk_policy_evidence" not in report
+    assert "execution_cost_evidence" not in report
     assert report["main_bottleneck"]["layer"] == "insufficient_data"
 
     weak_negative = {
@@ -231,7 +221,7 @@ def test_alpha_attribution_contract_shape_on_empty_db():
         "delta": -10.0,
         "contribution_verdict": "insufficient_data",
         "measurement_status": "directional_evidence_only",
-        "suspected_modules": ["aletheia/agents/paper_trader_ranker.py"],
+        "suspected_modules": ["core/aletheia/agents/paper_trader_ranker.py"],
         "reason": "directional only",
     }
     measured_negative = {
@@ -240,7 +230,7 @@ def test_alpha_attribution_contract_shape_on_empty_db():
         "delta": -1.0,
         "contribution_verdict": "negative",
         "measurement_status": "measured_contribution",
-        "suspected_modules": ["aletheia/universe/allocator.py"],
+        "suspected_modules": ["core/aletheia/universe/allocator.py"],
         "reason": "prospective control",
     }
     assert _main_bottleneck({"ranker": weak_negative})["layer"] == "insufficient_data"
@@ -442,7 +432,7 @@ def test_capital_events_ui_distinguishes_raw_adjusted_and_trading_series():
         root / "frontend/src/features/settings/tabs/ExecutionTab.tsx"
     ).read_text(encoding="utf-8")
     capital_route = (
-        root / "aletheia/server/routes/capital.py"
+        root / "core/aletheia/server/routes/capital.py"
     ).read_text(encoding="utf-8")
 
     assert "renders a separate cash-flow-adjusted series" in settings

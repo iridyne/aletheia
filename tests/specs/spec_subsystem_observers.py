@@ -14,10 +14,10 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_EQUITY_OBS = _ROOT / "aletheia" / "agents" / "equity_observer.py"
-_PRED_OBS = _ROOT / "aletheia" / "agents" / "prediction_observer.py"
-_SYMBOLS = _ROOT / "aletheia" / "data" / "symbols.py"
-_SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
+_EQUITY_OBS = _ROOT / "extensions" / "observation" / "equity_observer.py"
+_PRED_OBS = _ROOT / "extensions" / "prediction" / "observer.py"
+_SYMBOLS = _ROOT / "core" / "aletheia" / "data" / "symbols.py"
+_SCHEDULER = _ROOT / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
 
 
 # ---------------------------------------------------------------------------
@@ -28,12 +28,12 @@ _SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
 @spec_claim(
     SpecClaim(
         "OBS-S01", "agent_contracts", "§4 equity_observer", "L2a",
-        "aletheia/agents/equity_observer.py exists and exports a callable run_equity_observer",
+        "extensions/observation/equity_observer.py exists and exports a callable run_equity_observer",
     ),
 )
 def test_equity_observer_exists_and_callable():
     assert _EQUITY_OBS.exists(), "equity_observer.py not found"
-    from aletheia.agents import equity_observer
+    from extensions.observation import equity_observer
 
     assert callable(equity_observer.run_equity_observer)
 
@@ -41,12 +41,12 @@ def test_equity_observer_exists_and_callable():
 @spec_claim(
     SpecClaim(
         "OBS-S02", "agent_contracts", "§4 prediction_observer", "L2a",
-        "aletheia/agents/prediction_observer.py exists and exports a callable run_prediction_observer",
+        "extensions/prediction/observer.py exists and exports a callable run_prediction_observer",
     ),
 )
 def test_prediction_observer_exists_and_callable():
     assert _PRED_OBS.exists(), "prediction_observer.py not found"
-    from aletheia.agents import prediction_observer
+    from extensions.prediction import observer as prediction_observer
 
     assert callable(prediction_observer.run_prediction_observer)
 
@@ -106,7 +106,7 @@ def test_equity_observer_registered_in_scheduler():
 )
 def test_xstock_base_to_ticker_mapping_exists():
     """The xStock symbol map lives in symbols.py (equity_observer imports ticker_to_xstock from there)."""
-    assert _SYMBOLS.exists(), "aletheia/data/symbols.py not found"
+    assert _SYMBOLS.exists(), "core/aletheia/data/symbols.py not found"
     src = _SYMBOLS.read_text(encoding="utf-8")
     assert "_XSTOCK_BASE_TO_TICKER" in src, (
         "_XSTOCK_BASE_TO_TICKER dict not found in aletheia/data/symbols.py"
@@ -409,18 +409,33 @@ def test_prediction_observer_stamps_scanner_family_and_valid_until():
 
 @spec_claim(
     SpecClaim(
-        "OBS-NEWS-ANALYZER", "agent_contracts", "§scheduler news analysis", "L2a",
+        "OBS-NEWS-ANALYZER", "agent_contracts", "§scheduler news analysis", "L2b",
         "News analysis is a separate small-batch timeout job and RSS fetch never calls it.",
         status="implemented",
     ),
 )
-def test_news_analysis_is_separate_from_rss_scheduler_job():
-    import inspect
-
+async def test_news_analysis_is_separate_from_rss_scheduler_job(monkeypatch):
     from aletheia.agent_runtime import scheduler
+    from extensions.news import analyzer, collector, register_news_jobs
+
+    calls = []
+
+    async def fetch():
+        calls.append("fetch")
+        return {}
+
+    async def analyze(*, batch_size):
+        calls.append(("analyze", batch_size))
+        return {}
+
+    for name in ("_news_fetch", "_news_analyze", "_news_prune"):
+        monkeypatch.setattr(scheduler, name, getattr(scheduler, name))
+    monkeypatch.setattr(collector, "fetch_news_feeds", fetch)
+    monkeypatch.setattr(analyzer, "analyze_pending_news", analyze)
+    register_news_jobs()
 
     assert scheduler._ASYNC_JOB_TIMEOUT_SEC["news_analyze"] <= 120
-    assert "analyze_pending_news(batch_size=3)" in inspect.getsource(
-        scheduler._async_news_analyze
-    )
-    assert "analyze_pending_news" not in inspect.getsource(scheduler._async_news_fetch)
+    await scheduler._async_news_fetch()
+    assert calls == ["fetch"]
+    await scheduler._async_news_analyze()
+    assert calls == ["fetch", ("analyze", 3)]

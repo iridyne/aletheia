@@ -80,7 +80,7 @@ def _find_call_keywords(source: str, func_name: str) -> list[set[str]]:
 # ---------------------------------------------------------------------------
 
 
-_GUARDS_MODULE = "aletheia/knowledge/guards.py"
+_GUARDS_MODULE = "core/aletheia/knowledge/guards.py"
 
 
 
@@ -103,7 +103,7 @@ def test_guard_candidates_reachable_by_promoter():
     import pathlib
     src = (pathlib.Path(_project_root()) / _GUARDS_MODULE).read_text(encoding="utf-8")
     assert "guard_candidates" in src, (
-        "aletheia/knowledge/guards.py never references 'guard_candidates' — the "
+        "core/aletheia/knowledge/guards.py never references 'guard_candidates' — the "
         "promoter reads knowledge/guards/ while candidates are written to "
         "knowledge/guard_candidates/ → 0 promotions ever. "
         "See round2_week1_decision_chain_fixes.md Fix L-Bug-D"
@@ -133,7 +133,7 @@ def test_guard_candidates_reachable_by_promoter():
               status="implemented"),
 )
 def test_synthetic_closures_excluded_from_corpus():
-    """GREEN: the fix lives in aletheia/analytics/trade_case_builder.py (NOT the
+    """GREEN: the fix lives in extensions/learning/trade_case_builder.py (NOT the
     frozen decision chain — analytics is solo-editable). Verifies behaviourally that
     a synthetic-closure row produces no case study while a genuine close still does,
     and that the same filter guards auto-generated guard candidates.
@@ -143,7 +143,7 @@ def test_synthetic_closures_excluded_from_corpus():
     """
     from unittest.mock import MagicMock, patch
 
-    from aletheia.analytics import trade_case_builder as tcb
+    from extensions.learning import trade_case_builder as tcb
 
     def _row(position_id, close_reason, pnl_pct):
         return {
@@ -199,17 +199,17 @@ def test_lesson_reviewer_registered_and_overturnable():
     """
     import pathlib
 
-    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    from extensions.learning.lesson_reviewer import run_lesson_reviewer
     assert callable(run_lesson_reviewer)
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     assert '"lesson_reviewer"' in sched_src, (
         "scheduler.py does not register a lesson_reviewer job — the promotion step "
         "never runs. See content-probe fixes FIX 2 (LP-S09)."
     )
 
-    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/learning/lesson_reviewer.py").read_text(encoding="utf-8")
     assert 'status="accepted"' in reviewer_src or "status='accepted'" in reviewer_src, (
         "lesson_reviewer never re-reads accepted lessons — acceptances are not "
         "overturnable by later evidence (owner requirement). See FIX 2 (LP-S09)."
@@ -229,39 +229,36 @@ def test_lesson_reviewer_registered_and_overturnable():
               "Fixed 2026-06-28 (content-probe fixes).",
               status="implemented"),
 )
-def test_applied_policy_version_closure():
-    """mark_applied exists, is invoked by the reviewer, and the column is present."""
-    import pathlib
-
+def test_applied_policy_version_closure(monkeypatch):
+    """The shared owner atomically links lessons, rolls back failures, and replays safely."""
     from aletheia.learning.lessons import LessonStore
-    assert hasattr(LessonStore, "mark_applied") and callable(LessonStore.mark_applied), (
-        "LessonStore.mark_applied missing — applied_policy_version can never be set. "
-        "See FIX 2 (LP-S10)."
-    )
+    from aletheia.policies.store import PolicyStore
 
-    root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia/agents/lesson_reviewer.py").read_text(encoding="utf-8")
-    assert "mark_applied" in reviewer_src, (
-        "lesson_reviewer never calls mark_applied — accepted lessons would never "
-        "stamp a policy version. See FIX 2 (LP-S10)."
-    )
+    store = LessonStore()
+    lessons = [store.create("policy handoff", "trade_case_study", f"case-{i}") for i in range(2)]
+    ids = [lesson.lesson_id for lesson in lessons]
+    for lesson_id in ids:
+        store.accept(lesson_id)
+    real_mark = store.mark_applied
 
-    from aletheia.storage.sqlite import db_path
+    def fail_second(lesson_id, policy_version_id):
+        if lesson_id == ids[1]:
+            raise RuntimeError("synthetic linkage failure")
+        return real_mark(lesson_id, policy_version_id)
 
-    db = db_path()
-    if not db.exists():
-        pytest.skip("no production app.db on this machine")
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
-    try:
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='ps_lessons'"
-        ).fetchone()
-        if not exists:
-            pytest.skip("production app.db has no ps_lessons table to evaluate")
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(ps_lessons)")]
-    finally:
-        conn.close()
-    assert "applied_policy_version" in cols, "ps_lessons.applied_policy_version column missing"
+    with monkeypatch.context() as failing:
+        failing.setattr(store, "mark_applied", fail_second)
+        with pytest.raises(RuntimeError, match="synthetic linkage failure"):
+            store.apply_reviewed_lessons(ids)
+    assert PolicyStore().list_versions("lesson_policy") == []
+    assert all(store.get(lesson_id).status == "accepted" for lesson_id in ids)
+    assert all(store.get(lesson_id).applied_policy_version is None for lesson_id in ids)
+
+    version, applied = store.apply_reviewed_lessons(ids)
+    assert applied == ids
+    assert all(store.get(lesson_id).applied_policy_version == version.policy_version_id for lesson_id in ids)
+    assert store.apply_reviewed_lessons(ids) == (None, [])
+    assert len(PolicyStore().list_versions("lesson_policy")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +282,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     from datetime import datetime, timedelta, timezone
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -319,11 +316,11 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
         category="entry_timing", severity="warning",
     )
 
+    monkeypatch.setattr(lr, "get_provider_for_tier", lambda _tier: object())
     monkeypatch.setattr(
         lr, "llm_structured",
         AsyncMock(return_value=({"decision": "accept", "reasoning": "supported"}, None)),
     )
-
     await lr.run_lesson_reviewer(run_id="test")
 
     refreshed = store.get(lesson.lesson_id)
@@ -345,7 +342,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
 async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch):
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.model_provider.inference_contract import CALLER_SPECS, OutputMode
 
@@ -359,9 +356,9 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch)
             "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
         },
     )
+    monkeypatch.setattr(lr, "get_provider_for_tier", lambda _tier: object())
     call = AsyncMock(return_value=(None, "structured_empty_content"))
     monkeypatch.setattr(lr, "llm_structured", call)
-
     result = await lr.run_lesson_reviewer(run_id="test")
 
     assert LessonStore().get(lesson.lesson_id).status == "proposed"
@@ -380,7 +377,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 ):
     from unittest.mock import AsyncMock
 
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create("scoped", "trade_case_study", "case-1")
@@ -391,6 +388,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
             "exact_scope": {"total": 20, "win_rate": 50.0, "avg_return": 0.1},
         },
     )
+    monkeypatch.setattr(lr, "get_provider_for_tier", lambda _tier: object())
     monkeypatch.setattr(
         lr, "llm_structured",
         AsyncMock(return_value=({
@@ -405,7 +403,7 @@ async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failu
 
 
 async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -435,7 +433,7 @@ async def test_lesson_reviewer_cannot_revive_human_rejection(monkeypatch):
 
 
 async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     import aletheia.policies.store as policy_module
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
@@ -480,7 +478,7 @@ async def test_lesson_reviewer_revalidates_before_policy_handoff(monkeypatch):
 
 
 async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.policies.store import PolicyStore
 
@@ -505,7 +503,7 @@ async def test_lesson_reviewer_reuses_policy_after_partial_apply_failure():
 
 
 async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monkeypatch):
-    import aletheia.agents.lesson_reviewer as lr
+    import extensions.learning.lesson_reviewer as lr
     from aletheia.learning.lessons import LessonStore
     from aletheia.learning.skills import SkillStore
     from aletheia.policies.store import PolicyStore
@@ -560,7 +558,7 @@ async def test_lesson_reviewer_recovers_applied_lesson_missing_draft_skill(monke
 @spec_claim(
     SpecClaim("LP-S13", "learning_pipeline", "§8.3 risk threshold immutability", "L2a",
               "No create_* function in knowledge/manager.py and no module under "
-              "aletheia/learning/ imports or calls update_config() / "
+              "core/aletheia/learning/ imports or calls update_config() / "
               "update_risk_config() — the structural guarantee that learning output "
               "cannot modify risk_engine thresholds (knowledge_contract.md §8.3)",
               status="implemented"),
@@ -585,7 +583,7 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
     forbidden_calls = ("update_config", "update_risk_config")
 
     # (a) knowledge/manager.py must not contain any forbidden call
-    mgr_src = (root / "aletheia/knowledge/manager.py").read_text(encoding="utf-8")
+    mgr_src = (root / "core/aletheia/knowledge/manager.py").read_text(encoding="utf-8")
     for fn in forbidden_calls:
         assert fn not in mgr_src, (
             f"knowledge/manager.py calls {fn}() — learning write path can "
@@ -594,8 +592,8 @@ def test_learning_pipeline_cannot_modify_risk_thresholds():
 
     # (b) all .py files under aletheia/learning/ must not import risk.engine
     #     or call the forbidden config writers
-    learning_dir = root / "aletheia" / "learning"
-    assert learning_dir.exists(), "aletheia/learning/ directory missing"
+    learning_dir = root / "core" / "aletheia" / "learning"
+    assert learning_dir.exists(), "core/aletheia/learning/ directory missing"
     violations: list[str] = []
     for py_file in learning_dir.rglob("*.py"):
         src = py_file.read_text(encoding="utf-8")
@@ -645,7 +643,7 @@ def test_two_track_learning_triggers_independent():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
 
     # (a) 个例 review job 已注册
     assert '"post_trade_reviewer"' in sched_src, (
@@ -695,7 +693,7 @@ def test_two_track_learning_triggers_independent():
     )
 
     # (d) post_trade_reviewer 的实现内部调用 trade_case_builder
-    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/learning/post_trade_reviewer.py").read_text(encoding="utf-8")
     assert "trade_case_builder" in reviewer_src, (
         "post_trade_reviewer.py 未引用 trade_case_builder — 个例 reflection "
         "与 case_builder 的链接断开"
@@ -729,7 +727,7 @@ def test_risk_engine_no_learning_override_interface():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    engine_src = (root / "aletheia/risk/engine.py").read_text(encoding="utf-8")
+    engine_src = (root / "core/aletheia/risk/engine.py").read_text(encoding="utf-8")
     tree = ast.parse(engine_src)
 
     forbidden_patterns = (
@@ -775,7 +773,7 @@ def test_batch_synthesis_jobs_all_registered():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
 
     missing: list[str] = []
     for job_id in ("insight_synthesizer", "confidence_calibration", "dreaming_daily"):
@@ -824,7 +822,7 @@ def test_insight_synthesizer_has_startup_catchup():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     tree = ast.parse(sched_src)
 
     target = None
@@ -871,7 +869,7 @@ def test_serenity_daily_has_durable_startup_catchup():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    sched_src = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    sched_src = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     tree = ast.parse(sched_src)
     jobs: dict[str, ast.Call] = {}
     for node in ast.walk(tree):
@@ -931,7 +929,7 @@ def test_time_decay_overturn_path_exists():
 
     # 通过 AST 扫描函数名（FunctionDef/AsyncFunctionDef），不扫字符串字面量
     found_fns: list[str] = []
-    for search_dir in ("aletheia/analytics", "aletheia/learning", "aletheia/knowledge"):
+    for search_dir in ("core/aletheia/analytics", "core/aletheia/learning", "core/aletheia/knowledge"):
         d = root / search_dir
         if not d.exists():
             continue
@@ -981,7 +979,7 @@ def test_post_trade_reviewer_idempotent():
     import inspect
     import pathlib
 
-    from aletheia.agents.post_trade_reviewer import _fills_window_key
+    from extensions.learning.post_trade_reviewer import _fills_window_key
 
     fills_a = [{"id": "f1"}, {"id": "f2"}]
     fills_b = [{"id": "f2"}, {"id": "f1"}]  # reversed order
@@ -1000,7 +998,7 @@ def test_post_trade_reviewer_idempotent():
     )
 
     root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia/agents/post_trade_reviewer.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions/learning/post_trade_reviewer.py").read_text(encoding="utf-8")
     assert "window:" in reviewer_src, (
         "window: tag prefix missing from post_trade_reviewer.py — "
         "idempotency tag not written"
@@ -1041,7 +1039,7 @@ def test_dreaming_agent_lesson_evidence_populated():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    dreaming_src = (root / "aletheia/agents/dreaming_agent.py").read_text(encoding="utf-8")
+    dreaming_src = (root / "extensions/learning/dreaming_agent.py").read_text(encoding="utf-8")
 
     # (a) store.create is called with evidence= kwarg
     tree = ast.parse(dreaming_src)
@@ -1158,8 +1156,8 @@ def test_skill_store_producer_is_draft_only():
     import pathlib
 
     root = pathlib.Path(_project_root())
-    reviewer_src = (root / "aletheia" / "agents" / "lesson_reviewer.py").read_text(encoding="utf-8")
-    skill_src = (root / "aletheia" / "learning" / "skills.py").read_text(encoding="utf-8")
+    reviewer_src = (root / "extensions" / "learning" / "lesson_reviewer.py").read_text(encoding="utf-8")
+    skill_src = (root / "core" / "aletheia" / "learning" / "skills.py").read_text(encoding="utf-8")
 
     assert "SkillStore" in reviewer_src and "create_from_lesson" in reviewer_src
     assert "status=\"draft\"" in skill_src
@@ -1186,7 +1184,7 @@ def test_dreaming_agent_has_trading_performance_block():
     """LP-S18: static probe that the function and wiring exist."""
     import pathlib
     root = pathlib.Path(_project_root())
-    src = (root / "aletheia" / "agents" / "dreaming_agent.py").read_text(encoding="utf-8")
+    src = (root / "extensions" / "learning" / "dreaming_agent.py").read_text(encoding="utf-8")
 
     assert "_build_daily_trading_performance" in src, (
         "_build_daily_trading_performance not found in dreaming_agent.py — "
@@ -1223,7 +1221,7 @@ def test_dreaming_agent_has_trading_performance_block():
 def test_dreaming_agent_loss_day_label(monkeypatch):
     """LP-S19: central eligible close → LOSS_DAY; raw exclusions are ignored."""
     from aletheia.analytics import outcome_integrity
-    from aletheia.agents import dreaming_agent as da
+    from extensions.learning import dreaming_agent as da
 
     eligible_loss = {"outcome_eligible": 1, "realized_pnl": -42.5, "closed_at": "2026-01-01T01:00:00+00:00"}
     monkeypatch.setattr(
@@ -1268,7 +1266,7 @@ def test_dreaming_agent_loss_day_label(monkeypatch):
 def test_dreaming_agent_null_pnl_is_not_available(monkeypatch):
     """LP-S20: an incomplete raw close is excluded by the central authority."""
     from aletheia.analytics import outcome_integrity
-    from aletheia.agents import dreaming_agent as da
+    from extensions.learning import dreaming_agent as da
 
     monkeypatch.setattr(
         outcome_integrity, "eligible_strategy_outcomes", lambda **_: [],

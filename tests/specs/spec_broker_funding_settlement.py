@@ -60,7 +60,7 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     )
     monkeypatch.setattr(settlement, "_uta_funding_ledger", funding_ledger)
     task = asyncio.create_task(settlement.settle_unsettled_exchange_closes(limit=1))
-    await reader_started.wait()
+    await asyncio.wait_for(reader_started.wait(), timeout=5)
     force_update_position(position_id, current_price=999.0)
     before = funding_tests._broker_funding_state(position_id)
     release_reader.set()

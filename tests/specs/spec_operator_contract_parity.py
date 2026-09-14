@@ -68,7 +68,7 @@ def _py(tree, name):
 def test_ts_request_fields_subset_of_python():
     r = _root()
     ts = (r / "operator-shell" / "src" / "schemas.ts").read_text(encoding="utf-8")
-    py = (r / "aletheia" / "server" / "routes" / "operator.py").read_text(encoding="utf-8")
+    py = (r / "core" / "aletheia" / "server" / "routes" / "operator.py").read_text(encoding="utf-8")
     tree = ast.parse(py)
     probs = []
     for tn, pn in _PAIRS:

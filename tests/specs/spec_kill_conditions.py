@@ -61,7 +61,7 @@ def test_consecutive_kill_round_detection_exists():
 
     scorecard_path = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "aletheia"
+        / "core" / "aletheia"
         / "analytics"
         / "go_live_scorecard.py"
     )
@@ -94,8 +94,8 @@ def test_zero_fill_days_detection_exists():
     import pathlib
 
     search_dirs = [
-        pathlib.Path(__file__).resolve().parents[2] / "aletheia" / "diagnostics",
-        pathlib.Path(__file__).resolve().parents[2] / "aletheia" / "analytics",
+        pathlib.Path(__file__).resolve().parents[2] / "core" / "aletheia" / "diagnostics",
+        pathlib.Path(__file__).resolve().parents[2] / "core" / "aletheia" / "analytics",
     ]
     keywords = (
         "days_without_fill", "consecutive_empty_days", "zero_fill_days",
@@ -338,7 +338,7 @@ def test_live_unlock_route_calls_compute_scorecard():
 
     live_route_path = (
         pathlib.Path(__file__).resolve().parents[2]
-        / "aletheia"
+        / "core" / "aletheia"
         / "server"
         / "routes"
         / "live.py"

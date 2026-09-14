@@ -20,7 +20,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
               "OKX adapter declares it supports BOTH spot and usdt_futures"),
 )
 def test_okx_declares_spot_and_futures_capability():
-    from aletheia.exchanges.okx.client import SUPPORTED_MARKET_TYPES
+    from extensions.exchanges.okx.client import SUPPORTED_MARKET_TYPES
 
     assert "spot" in SUPPORTED_MARKET_TYPES
     assert "usdt_futures" in SUPPORTED_MARKET_TYPES
@@ -31,7 +31,7 @@ def test_okx_declares_spot_and_futures_capability():
               "okx_ccxt_symbol maps spot→canonical (no :USDT), perp→ccxt perp suffix"),
 )
 def test_okx_symbol_routing_by_market_type():
-    from aletheia.exchanges.okx.client import okx_ccxt_symbol
+    from extensions.exchanges.okx.client import okx_ccxt_symbol
 
     # Spot: plain canonical pair, NO settle suffix
     assert okx_ccxt_symbol("spot", "BTC/USDT") == "BTC/USDT"
@@ -45,7 +45,7 @@ def test_okx_symbol_routing_by_market_type():
               "is_leveraged_market is False for spot, True for usdt_futures"),
 )
 def test_spot_is_not_leveraged():
-    from aletheia.exchanges.okx.client import is_leveraged_market
+    from extensions.exchanges.okx.client import is_leveraged_market
 
     assert is_leveraged_market("spot") is False
     assert is_leveraged_market("usdt_futures") is True

@@ -29,9 +29,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_attribution"
 _ROOT = Path(__file__).parent.parent.parent
-_MODELS = _ROOT / "aletheia" / "storage" / "models.py"
-_MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_REFLECTION = _ROOT / "aletheia" / "agent_shell" / "reflection.py"
+_MODELS = _ROOT / "core" / "aletheia" / "storage" / "models.py"
+_MIGRATIONS = _ROOT / "core" / "aletheia" / "storage" / "migrations.py"
+_REFLECTION = _ROOT / "core" / "aletheia" / "agent_shell" / "reflection.py"
 
 
 # ---------------------------------------------------------------------------

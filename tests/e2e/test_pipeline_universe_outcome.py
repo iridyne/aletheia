@@ -10,7 +10,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 @pytest.fixture
-def universe_position(monkeypatch, request):
+def universe_position(monkeypatch, request, bitget_fast_stream):
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
     from tests.e2e.test_pipeline_exchange_entry_to_position import (
         _approving_risk, _drive_entry, _private_entry_fill, _wire_venue,

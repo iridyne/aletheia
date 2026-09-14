@@ -182,7 +182,7 @@ def test_narrative_and_diagnostic_evidence_cannot_add_samples():
 )
 def test_exit_policy_advisor_has_no_mutation_consumer():
     root = Path(__file__).resolve().parents[2]
-    path = root / "aletheia" / "analytics" / "exit_policy_advisor.py"
+    path = root / "core" / "aletheia" / "analytics" / "exit_policy_advisor.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     forbidden_modules = {
         "aletheia.config.loader",

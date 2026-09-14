@@ -54,10 +54,10 @@ def _operator_prompt_context() -> dict:
     )
 )
 def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
-    from aletheia.agent_shell import context
+    from aletheia.learning import lessons
 
     monkeypatch.setattr(
-        context,
+        lessons,
         "LessonStore",
         lambda: SimpleNamespace(list_all=lambda **_: [
             SimpleNamespace(
@@ -79,7 +79,9 @@ def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
         ]),
     )
 
+    from aletheia.agent_shell import context
     diagnostic = context.build_app_context(["learning"])["learning"]
+
     assert diagnostic["advisory_only"] is True
     assert diagnostic["manifest"]["source"] == "applied_ps_lessons"
     assert diagnostic["manifest"]["lesson_ids"] == ["current-reviewed-lesson"]
@@ -149,7 +151,7 @@ def _insert_forward_outcome(db, *, oid: str, symbol: str, direction: str, scanne
     ),
 )
 async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
-    from aletheia.agents import lesson_reviewer
+    from extensions.learning import lesson_reviewer
     from aletheia.learning.lessons import LessonStore
     from aletheia.storage.sqlite import get_db
 

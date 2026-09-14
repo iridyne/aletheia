@@ -36,9 +36,9 @@ def _src(rel: str) -> str:
 
 
 _LEARNERS = [
-    "aletheia/analytics/insight_synthesizer.py",
-    "aletheia/analytics/confidence_calibration.py",
-    "aletheia/analytics/reasoning_feedback.py",
+    "extensions/learning/insight_synthesizer.py",
+    "extensions/learning/confidence_calibration.py",
+    "extensions/learning/reasoning_feedback.py",
 ]
 
 
@@ -96,7 +96,10 @@ def test_clean_window_cutoff_behavior():
               "point so a later result can overturn/downweight an earlier judgment"),
 )
 def test_memo_effectiveness_module_exists():
-    mod = importlib.import_module("aletheia.analytics.memo_effectiveness")
+    core = importlib.import_module("aletheia.analytics.memo_effectiveness")
+    assert not hasattr(core, "evaluate_prior_memo")
+    assert callable(core.memo_half_life_weight)
+    mod = importlib.import_module("extensions.learning.memo_effectiveness")
     assert hasattr(mod, "evaluate_prior_memo"), (
         "memo_effectiveness must expose evaluate_prior_memo()"
     )
@@ -122,7 +125,7 @@ def test_prior_memo_overturned_by_subsequent_results(tmp_path, monkeypatch):
         insert_knowledge_item,
         list_knowledge_items,
     )
-    from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+    from extensions.learning.memo_effectiveness import evaluate_prior_memo
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
@@ -301,7 +304,7 @@ def test_position_regime_reads_market_regime(tmp_path, monkeypatch):
               "memo never reinforces the over-concentrated side (positive-feedback-trap guard)"),
 )
 def test_direction_bias_cap_is_enforced():
-    from aletheia.analytics.insight_synthesizer import _compute_direction_summary
+    from extensions.learning.insight_synthesizer import _compute_direction_summary
 
     # 9 short / 1 long = 90% one-sided, mirroring Round 1's short 17/23 concentration.
     # Shorts "win" and longs "lose" so the naive avg-PnL rule would scream short_preferred.
@@ -364,8 +367,8 @@ def test_learning_path_does_not_write_prompt_files():
 
     _PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[2]
     _SCAN_DIRS = [
-        _PROJECT_ROOT / "aletheia" / "learning",
-        _PROJECT_ROOT / "aletheia" / "analytics",
+        _PROJECT_ROOT / "core" / "aletheia" / "learning",
+        _PROJECT_ROOT / "core" / "aletheia" / "analytics",
     ]
 
     violations: list[str] = []

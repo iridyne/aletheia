@@ -7,6 +7,16 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+@pytest.fixture
+def bitget_fast_stream(monkeypatch):
+    from aletheia.universe import fast_stream
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream
+
+    monkeypatch.setattr(fast_stream, "_FAST_STREAM_ADAPTERS", {
+        "bitget_demo": (BitgetFastMarketStream, frozenset({"spot", "perp", "futures", "swap", "usdt_futures"})),
+    })
+
+
 @spec_claim(
     SpecClaim(
         "EP-S01",
@@ -153,7 +163,7 @@ def test_candidate_planning_claim_uses_exact_rank_with_stable_fallback():
         status="implemented",
     )
 )
-def test_exact_venue_capability_is_one_shared_executable_invariant():
+def test_exact_venue_capability_is_one_shared_executable_invariant(bitget_fast_stream):
     from aletheia.config.loader import load_config
     from aletheia.universe.fast_stream import (
         fast_market_data_unavailability_reason,
@@ -350,7 +360,7 @@ def test_workbench_projects_monitoring_and_plan_integrity():
     "Thin exact books release the same generation without model/input consumption; recovery binds a new qualified book.",
     status="implemented",
 ))
-def test_market_quality_retry_before_input_binding(monkeypatch):
+def test_market_quality_retry_before_input_binding(monkeypatch, bitget_fast_stream):
     from aletheia.config.loader import load_config, save_config
     from tests.test_entry_planner import test_market_quality_wait_does_not_bind_and_recovers_same_generation
     cfg = load_config()
@@ -435,10 +445,7 @@ def test_pre_broker_boundary_counterexamples(monkeypatch, scenario):
         if scenario == "dependency_timeout":
             from aletheia.execution import order_constraints
             def unavailable(*args, **kwargs):
-                try:
-                    raise TimeoutError("temporary venue metadata read")
-                except TimeoutError as exc:
-                    raise order_constraints.ConstraintUnavailable("metadata refresh failed") from exc
+                raise order_constraints.ConstraintUnavailable("metadata refresh failed", retryable=True)
             with monkeypatch.context() as dependency:
                 dependency.setattr(order_constraints, "prepare_exchange_quantity", unavailable)
                 return original_prepare(*args, **kwargs)

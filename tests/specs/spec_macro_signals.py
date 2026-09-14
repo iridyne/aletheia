@@ -18,6 +18,7 @@ before declaring any Step done.
 """
 
 from __future__ import annotations
+from tests.market_data import history_provider
 
 import ast
 from pathlib import Path
@@ -27,15 +28,15 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
-_MACRO = _ROOT / "aletheia" / "data" / "collectors" / "macro.py"
-_CG_TOP = _ROOT / "aletheia" / "data" / "collectors" / "coingecko_top.py"
-_MODELS = _ROOT / "aletheia" / "data" / "models.py"
-_MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
-_REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
-_SCHEDULER = _ROOT / "aletheia" / "agent_runtime" / "scheduler.py"
-_CONTEXT_BUILDER = _ROOT / "aletheia" / "data" / "context_builder.py"
-_MARKET_OBSERVER = _ROOT / "aletheia" / "agents" / "market_observer.py"
+_DERIVATIVES = _ROOT / "core" / "aletheia" / "data" / "collectors" / "derivatives.py"
+_MACRO = _ROOT / "extensions" / "macro" / "collector.py"
+_CG_TOP = _ROOT / "extensions" / "coingecko" / "top.py"
+_MODELS = _ROOT / "core" / "aletheia" / "data" / "models.py"
+_MIGRATIONS = _ROOT / "core" / "aletheia" / "storage" / "migrations.py"
+_REPOSITORIES = _ROOT / "core" / "aletheia" / "storage" / "repositories.py"
+_SCHEDULER = _ROOT / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
+_CONTEXT_BUILDER = _ROOT / "core" / "aletheia" / "data" / "context_builder.py"
+_MARKET_OBSERVER = _ROOT / "core" / "aletheia" / "agents" / "market_observer.py"
 _SETTINGS_SHELL = _ROOT / "frontend" / "src" / "pages" / "Settings.tsx"
 _SIGNALS_TAB = _ROOT / "frontend" / "src" / "features" / "settings" / "tabs" / "SignalsTab.tsx"
 
@@ -54,18 +55,31 @@ _CONTRACT = "data_layer_contract"
     ),
 )
 def test_primary_derivatives_source_time_contract_is_explicit():
+    from datetime import datetime, timedelta, timezone
+    from extensions.exchanges.ccxt.market_data import _parse_funding, _parse_oi
+    from aletheia.data.freshness import fresh_row
+
     freshness_doc = (
         _ROOT / "docs" / "design" / "market-systems" / "decision_context_freshness.md"
     ).read_text(encoding="utf-8")
-    models = _MODELS.read_text(encoding="utf-8")
-    derivatives = _DERIVATIVES.read_text(encoding="utf-8")
-
     for field in ("source_observed_at", "acquired_at", "source_time_status"):
         assert field in freshness_doc
-        assert models.count(field) >= 2
-        assert field in derivatives
-    assert "provider_source_time" in derivatives
-    assert 'observed_at=source_observed_at or acquired_at.isoformat()' in derivatives
+    now = datetime.now(timezone.utc)
+    source_ms = int((now - timedelta(minutes=1)).timestamp() * 1000)
+    market = dict(id="BTC-USDT-SWAP", symbol="BTC/USDT:USDT", swap=True,
+                  linear=True, base="BTC", quote="USDT", settle="USDT", contractSize=1)
+    for parse, raw, domain in (
+        (_parse_funding, {"fundingRate": 0.001}, "funding"),
+        (_parse_oi, {"openInterestValue": 123, "info": {"oiUsd": 123}}, "open_interest"),
+    ):
+        good = parse("BTC/USDT", "okx", {**raw, "timestamp": source_ms}, market=market)
+        assert good.source_time_status == "provided"
+        assert good.source_observed_at == datetime.fromtimestamp(source_ms / 1000, timezone.utc).isoformat()
+        assert datetime.fromisoformat(good.acquired_at) >= now
+        assert good.observed_at == good.source_observed_at
+        bad = parse("BTC/USDT", "okx", {**raw, "timestamp": "invalid"}, market=market)
+        assert bad.source_time_status == "invalid" and bad.source_observed_at is None
+        assert fresh_row(bad.model_dump(), domain) is None
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +200,7 @@ async def test_fng_failure_isolated_from_other_fields(monkeypatch):
     from types import SimpleNamespace
 
     import aletheia.config.loader as loader
-    from aletheia.data.collectors import macro as mod
+    from extensions.macro import collector as mod
 
     async def fake_coingecko():
         return 52.0, 2_000_000_000_000.0, 1.5
@@ -224,28 +238,40 @@ async def test_fng_failure_isolated_from_other_fields(monkeypatch):
 @spec_claim(
     SpecClaim(
         "MS-S08", _CONTRACT, "§3.3 CoinGecko collector", "L2a",
-        "aletheia/data/collectors/coingecko_top.py exists and exports CoinGeckoTopCollector",
+        "extensions/coingecko/top.py exists and exports CoinGeckoTopCollector",
     ),
 )
 def test_coingecko_top_collector_exists():
     assert _CG_TOP.exists(), "coingecko_top.py not found"
-    from aletheia.data.collectors import coingecko_top as mod
+    import extensions.coingecko.top as mod
     assert hasattr(mod, "CoinGeckoTopCollector")
     assert callable(getattr(mod.CoinGeckoTopCollector, "collect"))
 
 
 @spec_claim(
     SpecClaim(
-        "MS-S09", _CONTRACT, "§3.3 scheduler", "L2a",
-        "scheduler.py Phase B references CoinGeckoTopCollector within the "
-        "data_collectors job body",
+        "MS-S09", _CONTRACT, "§3.3 scheduler", "L2b",
+        "Core context collection invokes the bound CoinGecko Top producer",
     ),
 )
-def test_scheduler_registers_coingecko_top():
-    src = _SCHEDULER.read_text(encoding="utf-8")
-    assert "CoinGeckoTopCollector" in src, (
-        "scheduler.py must reference CoinGeckoTopCollector in Phase B"
-    )
+async def test_scheduler_registers_coingecko_top(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from extensions.coingecko import register_top_collector
+    from extensions.coingecko.top import CoinGeckoTopCollector
+
+    monkeypatch.setattr(scheduler, "_coingecko_top_collect", None)
+    with pytest.raises(RuntimeError, match="coingecko_top_extension_unavailable"):
+        await scheduler._collect_coingecko_top(12)
+
+    calls = []
+    async def collect(self, top_n):
+        calls.append(top_n)
+        return {"rows": [], "errors": [], "movers_summary": None}
+
+    monkeypatch.setattr(CoinGeckoTopCollector, "collect", collect)
+    register_top_collector()
+    assert (await scheduler._collect_coingecko_top(12))["errors"] == []
+    assert calls == [12]
 
 
 @spec_claim(
@@ -310,11 +336,11 @@ def test_coingecko_top_bulk_uses_begin_commit():
 def test_coingecko_top_degraded_does_not_raise():
     import asyncio
 
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.coingecko.top import CoinGeckoTopCollector
 
     async def run():
         # Monkeypatch httpx_client to raise inside the body.
-        import aletheia.data.collectors.coingecko_top as mod
+        import extensions.coingecko.top as mod
         original = mod.httpx_client
 
         class FailingCtx:
@@ -485,7 +511,7 @@ def test_backfill_idempotent_with_existing_rows(tmp_path, monkeypatch):
             )
 
     result = asyncio.run(_maybe_backfill_funding_history(
-        _FakeExchange(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+        history_provider(_FakeExchange(), "binance"), sym, "binance", since_hours=24,
     ))
     assert result == (0, True), f"backfill must be a no-op with existing rows; got {result} inserts"
     sq.close_db()
@@ -518,7 +544,7 @@ def test_oi_history_swallows_not_supported(tmp_path, monkeypatch):
     errors: list[str] = []
     # Must not raise.
     result = asyncio.run(_maybe_backfill_oi_history(
-        _FakeBitget(), "BTC/USDT", "BTC/USDT:USDT", "bitget",
+        history_provider(_FakeBitget(), "bitget"), "BTC/USDT", "bitget",
         since_hours=24, errors=errors,
     ))
     assert result == (0, False)

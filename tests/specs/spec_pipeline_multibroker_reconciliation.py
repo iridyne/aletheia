@@ -118,6 +118,71 @@ def _seed_authority(execution_mode: str, *, suffix: str):
     )
 
 
+@pytest.mark.parametrize("execution_mode", (*MODES, "bitget_demo", "bitget_live_limited"))
+@pytest.mark.parametrize("terminal_quantity", ["0.005", "0.007"])
+def test_all_accounts_share_ioc_terminal_quantity_reconciliation(
+    tmp_path, monkeypatch, execution_mode, terminal_quantity,
+):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Order
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import OrderLifecycle, OrderQueryReport, OrderStatusReport
+
+    proposal, decision = _seed_authority(execution_mode, suffix="shared-ioc")
+    order = Order(
+        proposal_id=proposal.id, risk_decision_id=decision.id,
+        client_order_id=proposal.id, symbol=proposal.symbol,
+        market_type=proposal.market_type, direction=proposal.direction,
+        order_type=proposal.order_type, quantity=proposal.quantity, price=proposal.price,
+        execution_mode=execution_mode, exchange_order_id="EX-shared-ioc",
+        status="submitted", order_tactic="OPPOSING_BBO_IOC",
+        uta_account_identity_json=_identity(execution_mode).model_dump_json(),
+    )
+    repo.insert_order(order)
+
+    async def evidence(stored):
+        return [{**_private_fill(order.exchange_order_id, suffix="shared-ioc"), "fillQuantity": "0.005"}]
+
+    _patch_private_evidence(monkeypatch, evidence)
+    original_query = reconciliation.query_uta
+    exact_queries = []
+
+    async def query(mode, method, request, *, expected_account):
+        if method != "get_order":
+            return await original_query(mode, method, request, expected_account=expected_account)
+        exact_queries.append(request)
+        assert expected_account == _identity(execution_mode)
+        now = datetime.now(timezone.utc)
+        return OrderQueryReport(
+            identity=expected_account, completeness="complete", scope=request.scope,
+            received_at=now, profile_version="1",
+            found=OrderStatusReport(
+                identity=expected_account,
+                instrument=instrument_from_local(order.symbol, order.market_type),
+                client_order_id=order.client_order_id, venue_order_id=order.exchange_order_id,
+                side="buy", order_type="market", original_quantity="0.01",
+                filled_quantity=terminal_quantity, state=OrderLifecycle.CANCELED, received_at=now,
+            ),
+        )
+
+    monkeypatch.setattr(reconciliation, "query_uta", query)
+    for _ in range(2):
+        reconciliation.reconcile()
+        stored = repo.get_order(order.id)
+        if terminal_quantity == "0.005":
+            assert stored["status"] == "cancelled"
+            assert stored["error_reason"] == "ioc_remainder_terminal"
+        else:
+            assert stored["status"] == "partially_filled"
+        assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 1
+        position = db.execute("SELECT quantity FROM positions WHERE order_id=?", (order.id,)).fetchone()
+        assert position["quantity"] == pytest.approx(0.005)
+    assert exact_queries
+    assert all(request.venue_order_id == order.exchange_order_id for request in exact_queries)
+
+
 def _private_fill(exchange_order_id: str, *, suffix: str) -> dict:
     return {
         "orderId": exchange_order_id,
@@ -326,8 +391,23 @@ old_source,):
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order, Position
 
+    proposal, decision = _seed_authority(
+        execution_mode, suffix=f"average-{execution_mode}"
+    )
+    primary_order = Order(
+        proposal_id=proposal.id, risk_decision_id=decision.id,
+        client_order_id=proposal.id, symbol=proposal.symbol,
+        market_type=proposal.market_type, direction=proposal.direction,
+        order_type=proposal.order_type, quantity=proposal.quantity,
+        price=proposal.price, execution_mode=execution_mode, status="filled",
+        uta_account_identity_json=_identity(execution_mode).model_dump_json(),
+        position_id=f"position-unverified-{execution_mode}",
+    )
+    repo.insert_order(primary_order)
     old_position = Position(
         id=f"position-unverified-{execution_mode}",
+        order_id=primary_order.id,
+        proposal_id=proposal.id,
         symbol="BTC/USDT",
         market_type="usdt_futures",
         direction="long",
@@ -340,9 +420,6 @@ old_source,):
         entry_price_source=old_source,
     )
     repo.insert_position(old_position)
-    proposal, decision = _seed_authority(
-        execution_mode, suffix=f"average-{execution_mode}"
-    )
     exchange_order_id = f"EX-MBR-AVERAGE-{execution_mode}"
     order = Order(proposal_id=proposal.id,
     risk_decision_id=decision.id,
@@ -900,7 +977,7 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(tmp_path, mon
 
 def _read_profile_fills(monkeypatch, execution_mode, profile, payload, venue_order_id, contract_size):
     import ccxt.async_support as ccxt
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
     from aletheia.uta.models import FillQuery, QueryScope
     from tests.uta.test_ccxt_adapter import _install
@@ -956,7 +1033,7 @@ def test_okx_private_reader_normalizes_contract_quantity_and_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
     from decimal import Decimal
-    from aletheia.uta.profiles import OKXDemoProfile, OKXLiveProfile
+    from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
     from aletheia.uta.models import ReadCompleteness
 
     profile_type = OKXDemoProfile if account_mode == "demo" else OKXLiveProfile
@@ -996,7 +1073,7 @@ def test_binance_private_reader_normalizes_order_matched_actual_fee(
     monkeypatch, execution_mode, account_mode
 ):
     from decimal import Decimal
-    from aletheia.uta.profiles import BinanceTestnetProfile, BinanceLiveProfile
+    from extensions.exchanges.binance.profile import BinanceTestnetProfile, BinanceLiveProfile
     from aletheia.uta.models import ReadCompleteness
 
     profile_type = BinanceTestnetProfile if account_mode == "testnet" else BinanceLiveProfile

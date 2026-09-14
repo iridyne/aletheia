@@ -17,11 +17,11 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _OPERATOR_LOOP_SRC = (
     Path(__file__).parent.parent.parent
-    / "aletheia" / "agent_shell" / "operator_loop.py"
+    / "core" / "aletheia" / "agent_shell" / "operator_loop.py"
 )
 _SCHEDULER_SRC = (
     Path(__file__).parent.parent.parent
-    / "aletheia" / "agent_runtime" / "scheduler.py"
+    / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
 )
 
 # ---------------------------------------------------------------------------
@@ -396,11 +396,11 @@ def test_observers_do_not_insert_pi_decisions():
     # chain_observer.py and macro_observer.py are not yet implemented —
     # guard only the files that exist to avoid false failures on missing files.
     _OBSERVER_FILES = [
-        _PROJECT_ROOT / "aletheia" / "agents" / "market_observer.py",
+        _PROJECT_ROOT / "core" / "aletheia" / "agents" / "market_observer.py",
     ]
     # Optionally guard additional observers if they exist
     for optional_name in ("chain_observer.py", "macro_observer.py"):
-        candidate = _PROJECT_ROOT / "aletheia" / "agents" / optional_name
+        candidate = _PROJECT_ROOT / "core" / "aletheia" / "agents" / optional_name
         if candidate.exists():
             _OBSERVER_FILES.append(candidate)
 
@@ -579,7 +579,7 @@ def test_write_operator_report_root_is_data_dir():
 
     _PROJECT_ROOT = Path(__file__).resolve().parents[2]
     fa_src = (
-        _PROJECT_ROOT / "aletheia" / "agent_shell" / "file_artifacts.py"
+        _PROJECT_ROOT / "core" / "aletheia" / "agent_shell" / "file_artifacts.py"
     ).read_text(encoding="utf-8")
 
     # 1. The path-builder must reference get_data_dir(), not a hardcoded docs/ path.

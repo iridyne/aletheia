@@ -12,7 +12,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 def _capture_bitget_http(monkeypatch) -> list[dict]:
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
 
     bodies: list[dict] = []
 
@@ -60,7 +60,7 @@ def _capture_bitget_http(monkeypatch) -> list[dict]:
     )
 )
 def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+    from extensions.exchanges.bitget.client import BitgetClient, OrderRequest
 
     bodies = _capture_bitget_http(monkeypatch)
 
@@ -103,7 +103,7 @@ def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch):
     )
 )
 def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+    from extensions.exchanges.bitget.client import BitgetClient, OrderRequest
 
     bodies = _capture_bitget_http(monkeypatch)
     client = BitgetClient(mode="demo")
@@ -150,7 +150,7 @@ def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch):
     ],
 )
 def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, value):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+    from extensions.exchanges.bitget.client import BitgetClient, OrderRequest
 
     bodies = _capture_bitget_http(monkeypatch)
     request = OrderRequest(

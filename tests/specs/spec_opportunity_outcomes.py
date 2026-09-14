@@ -240,7 +240,7 @@ def test_unreachable_venue_is_not_a_measurement_failure(monkeypatch):
 def test_failed_rows_separate_a_rejected_observation_from_no_observation():
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.maintenance.settlement_requeue import (
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage import repositories as repo

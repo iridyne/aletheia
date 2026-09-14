@@ -651,7 +651,7 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
 ):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
@@ -712,7 +712,7 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
 ):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
@@ -788,7 +788,7 @@ def test_bitget_margin_preparation_failure_does_not_leave_pending_order(
     )
     repo.insert_risk_decision(decision)
 
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
 
     profile = _profile("uta_v3")
@@ -1934,7 +1934,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(tmp_path,
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config import loader
     from aletheia.execution.verified_exit import classify_verified_exit
-    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from extensions.exchanges.submission_errors import ClosePositionAbsentError
     from aletheia.portfolio import disappearance_settlement, position_reconciler
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position

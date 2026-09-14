@@ -25,7 +25,7 @@ def test_scheduler_max_workers_cap():
     import re
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     source = src.read_text(encoding="utf-8")
     matches = re.findall(r"max_workers\s*=\s*(\d+)", source)
     assert matches, "No max_workers found in scheduler.py"
@@ -80,7 +80,7 @@ def test_guard_pipeline_functions():
     ),
 )
 def test_equity_observer_exists():
-    from aletheia.agents import equity_observer
+    from extensions.observation import equity_observer
 
     assert hasattr(equity_observer, "EquityRead")
 
@@ -99,7 +99,7 @@ def test_scheduler_executor_pool_names():
     import re
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     source = src.read_text(encoding="utf-8")
     m = re.search(r'_EXECUTOR_WORKERS\s*=\s*\{([^}]+)\}', source, re.DOTALL)
     assert m, "_EXECUTOR_WORKERS dict not found in scheduler.py"
@@ -123,7 +123,7 @@ def test_long_maintenance_jobs_do_not_share_short_io_lane():
     import ast
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     init_fn = next(
         node
@@ -166,7 +166,7 @@ def test_scheduler_job_ids_unique():
     from collections import Counter
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     # Only boot-time registrations (inside init_scheduler) must be unique.
@@ -265,7 +265,7 @@ def test_scheduler_job_wrappers_have_try_except():
     import ast
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     run_fns = [
         n for n in ast.walk(tree)
@@ -291,7 +291,7 @@ def test_registered_scheduler_jobs_record_swallowed_failures():
     import ast
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "agent_runtime" / "scheduler.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "agent_runtime" / "scheduler.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     functions = {
         node.name: node
@@ -465,7 +465,7 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
     }
     violations: list[str] = []
     for domain in ("agents", "trading", "universe", "risk"):
-        for source in sorted((root / "aletheia" / domain).rglob("*.py")):
+        for source in sorted((root / "core" / "aletheia" / domain).rglob("*.py")):
             tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
             for node in ast.walk(tree):
                 imported: list[str] = []
@@ -477,12 +477,12 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
                         *(
                             f"{node.module}.{alias.name}"
                             for alias in node.names
-                            if node.module in {"aletheia.exchanges", "aletheia.execution"}
+                            if node.module in {"extensions.exchanges", "aletheia.execution"}
                         ),
                     ]
                 for dependency in imported:
                     if (
-                        dependency.startswith("aletheia.exchanges.")
+                        dependency.startswith("extensions.exchanges.")
                         or dependency in forbidden_brokers
                     ):
                         violations.append(
@@ -520,7 +520,7 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
     root = Path(__file__).parent.parent.parent
 
     # The live wake path: durable Candidate planning, routed through pi_daemon.
-    service = (root / "aletheia/universe/service.py").read_text(encoding="utf-8")
+    service = (root / "core/aletheia/universe/service.py").read_text(encoding="utf-8")
     assert "notify_pi_daemon(source=source)" in service
     for wake_source in (
         "candidate_planning_generation_created",
@@ -529,18 +529,18 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
         assert wake_source in service
 
     # The scheduled fallback that must survive (contract row 6).
-    scheduler = (root / "aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    scheduler = (root / "core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     assert '_guarded("pi_trading_heartbeat", _run_pi_trading_decision)' in scheduler
     assert 'id="pi_trading_decision"' in scheduler
     assert "_pi_fallback_min = 15" in scheduler
 
     # The retired wake sources must stay retired.
     retired = {
-        "aletheia/agents/equity_observer.py": "equity_observer_opportunity",
-        "aletheia/agents/prediction_observer.py": "prediction_observer_opportunity",
-        "aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
-        "aletheia/analytics/guard_promotion.py": "guard_set_changed",
-        "aletheia/server/routes/settings.py": "ranker_config_changed",
+        "extensions/observation/equity_observer.py": "equity_observer_opportunity",
+        "extensions/prediction/observer.py": "prediction_observer_opportunity",
+        "core/aletheia/agents/divergence_scanner.py": "divergence_scanner_opportunity",
+        "core/aletheia/analytics/guard_promotion.py": "guard_set_changed",
+        "core/aletheia/server/routes/settings.py": "ranker_config_changed",
     }
     for relative, retired_source in retired.items():
         assert retired_source not in (root / relative).read_text(encoding="utf-8"), (
@@ -549,5 +549,5 @@ def test_canonical_planner_wake_sources_and_fallback_are_wired():
         )
 
     # notify_paper_trader itself is gone; nothing may reintroduce the symbol.
-    for relative in ("aletheia/agent_runtime/scheduler.py", "aletheia/agent_shell/commands.py"):
+    for relative in ("core/aletheia/agent_runtime/scheduler.py", "core/aletheia/agent_shell/commands.py"):
         assert "notify_paper_trader" not in (root / relative).read_text(encoding="utf-8")

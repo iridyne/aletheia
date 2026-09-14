@@ -78,7 +78,7 @@ def test_stock_token_functions_exist():
     ),
 )
 def test_equity_observer_uses_priority_token_lookup():
-    src = (_ROOT / "aletheia" / "agents" / "equity_observer.py").read_text(encoding="utf-8")
+    src = (_ROOT / "extensions" / "observation" / "equity_observer.py").read_text(encoding="utf-8")
     assert "ticker_to_stock_tokens" in src, (
         "equity_observer must import/call ticker_to_stock_tokens"
     )
@@ -103,7 +103,7 @@ def test_equity_observer_uses_priority_token_lookup():
     ),
 )
 def test_research_worker_has_equity_chain_lens():
-    src = (_ROOT / "aletheia" / "agents" / "research_worker.py").read_text(encoding="utf-8")
+    src = (_ROOT / "extensions" / "serenity" / "research_worker.py").read_text(encoding="utf-8")
     assert "_EQUITY_CHAIN_LENS" in src, (
         "research_worker must define _EQUITY_CHAIN_LENS"
     )
@@ -186,7 +186,7 @@ def test_stock_token_market_type():
     assert stock_token_market_type("AAPLON/USDT") == MARKET_SPOT
 
     # _STOCK_TOKEN_NON_SPOT extension point exists in symbols.py
-    src = (_ROOT / "aletheia" / "data" / "symbols.py").read_text(encoding="utf-8")
+    src = (_ROOT / "core" / "aletheia" / "data" / "symbols.py").read_text(encoding="utf-8")
     assert "_STOCK_TOKEN_NON_SPOT" in src, (
         "symbols.py must define _STOCK_TOKEN_NON_SPOT dict for swap overrides"
     )

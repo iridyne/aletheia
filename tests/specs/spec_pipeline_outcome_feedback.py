@@ -5,6 +5,7 @@ from __future__ import annotations
 from tests.position_fixture import force_update_position
 
 import sqlite3
+import pytest
 from datetime import datetime, timezone
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
@@ -588,12 +589,12 @@ def test_replay_rereads_closed_position_and_fails_closed(tmp_path, monkeypatch):
         status="implemented",
     )
 )
+@pytest.mark.parametrize("lost_cost", [None, "entry_fee", "exit_fee", "funding_cost"])
 def test_transient_attribution_read_failure_does_not_block_verified_close(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, lost_cost,
 ):
     _setup_db(tmp_path, monkeypatch)
     import aletheia.analytics.outcome_integrity as _oi_module
-    import aletheia.portfolio.outcome_hooks as _oh_module
     from aletheia.analytics.outcome_integrity import (
         AttributionReadError,
         assess_position_closure,
@@ -617,7 +618,6 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
         raise AttributionReadError("temporary close-time attribution read failure")
 
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", _raise_attribution_error)
-    monkeypatch.setattr(_oh_module, "attribution_chain_complete", _raise_attribution_error)
 
     result = outcome_closure.close_position_verified(
         position.id, _verified_result(position)
@@ -644,7 +644,10 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
     delivered = []
     # Restore attribution reads so the replay can re-evaluate and mark eligible.
     monkeypatch.setattr(_oi_module, "attribution_chain_complete", real_attribution)
-    monkeypatch.setattr(_oh_module, "attribution_chain_complete", real_attribution)
+    if lost_cost is not None:
+        # Corrupt only the isolated fixture: replay must revalidate costs instead
+        # of trusting the already recorded realized amount or recovered linkage.
+        force_update_position(position.id, **{lost_cost: None})
     monkeypatch.setattr(
         shadow_trades,
         "resolve_shadow_trades_for_position",
@@ -657,6 +660,13 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
 
     recovered = repo._select_one("positions", position.id)
     [completed_job] = repo.list_outcome_hook_jobs(position_id=position.id)
+    if lost_cost is not None:
+        assert replayed["completed"] == 0
+        assert completed_job["status"] == "skipped"
+        assert recovered["outcome_eligible"] == 0
+        assert recovered[lost_cost] is None
+        assert delivered == []
+        return
     assert replayed["completed"] == 1
     assert completed_job["status"] == "completed"
     assert recovered["outcome_eligible"] == 1
@@ -683,7 +693,7 @@ def test_transient_attribution_read_failure_does_not_block_verified_close(
 )
 def test_transient_attribution_read_failure_remains_retryable(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
-    import aletheia.portfolio.outcome_hooks as _oh_module
+    import aletheia.analytics.outcome_integrity as _oh_module
     from aletheia.analytics.outcome_integrity import AttributionReadError
     from aletheia.counterfactual import trades as shadow_trades
     from aletheia.portfolio import outcome_closure, outcome_hooks
@@ -959,7 +969,7 @@ def test_scheduler_registers_outcome_hook_replay_as_essential_io_work():
 
     source = (
         Path(__file__).parent.parent.parent
-        / "aletheia"
+        / "core" / "aletheia"
         / "agent_runtime"
         / "scheduler.py"
     ).read_text(encoding="utf-8")

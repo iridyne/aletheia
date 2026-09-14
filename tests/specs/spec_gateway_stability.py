@@ -33,7 +33,7 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_MARKET_OBS = _ROOT / "aletheia" / "agents" / "market_observer.py"
+_MARKET_OBS = _ROOT / "core" / "aletheia" / "agents" / "market_observer.py"
 
 _CONTRACT = "gateway_stability_contract"
 
@@ -105,7 +105,7 @@ def test_market_observer_has_module_logger():
     ),
 )
 def test_market_observer_budget_rotation_is_durable_and_cancellation_safe():
-    from aletheia.agents.round_robin import DurableRoundRobin, rotate_from_next
+    from aletheia.agents.round_robin import rotate_from_next
 
     assert rotate_from_next(["a", "b", "c"], next_key="b", key=str) == ["b", "c", "a"]
     source = _MARKET_OBS.read_text(encoding="utf-8")
@@ -496,7 +496,7 @@ def test_derivatives_persistence_failure_degrades_domain_and_job(
     from aletheia.agent_runtime import scheduler as sch
     from aletheia.config.schema import AletheiaConfig
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from extensions.exchanges.ccxt.orderbook import MicrostructureCollector
     from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
@@ -520,7 +520,8 @@ def test_derivatives_persistence_failure_degrades_domain_and_job(
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
     health: list[tuple[str, str, str | None]] = []
 
-    async def collect_microstructure(_self, _instruments):
+    async def collect_microstructure(_self, _instruments, *, venue=None):
+        assert venue is None
         return {"snapshots": [], "errors": []}
 
     async def collect_derivatives(_self, _symbols):
@@ -606,12 +607,19 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import scheduler as sch
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+    from extensions.coingecko.top import CoinGeckoTopCollector
+    monkeypatch.setattr(sch, "_coingecko_top_collect", lambda top_n: CoinGeckoTopCollector().collect(top_n=top_n))
+    from extensions.coinalyze.collector import CoinalyzeCollector
+    monkeypatch.setattr(sch, "_coinalyze_collect", lambda symbols: CoinalyzeCollector().collect(symbols))
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.macro.collector import MacroCollector
+    monkeypatch.setattr(sch, "_macro_collect", lambda symbols: MacroCollector().collect(symbols))
+    from extensions.exchanges.ccxt.orderbook import MicrostructureCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
+    from extensions.volume_scanner import register_collector as register_volume
+    from aletheia.agent_runtime import scheduler as volume_scheduler
+    monkeypatch.setattr(volume_scheduler, "_volume_scanner_collect", None)
+    register_volume()
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
 
@@ -619,7 +627,8 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
     health: list[tuple[str, str, str | None]] = []
 
-    async def collect_microstructure(_self, _instruments):
+    async def collect_microstructure(_self, _instruments, *, venue=None):
+        assert venue is None
         return {"snapshots": [row] if domain == "microstructure" else [], "errors": []}
 
     async def collect_derivatives(_self, _symbols):

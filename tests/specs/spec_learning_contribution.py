@@ -239,8 +239,6 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     )
 )
 def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(monkeypatch):
-    import json
-
     from aletheia.analytics.guard_effectiveness import compute_guard_stats
     from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
     from aletheia.storage.sqlite import get_db

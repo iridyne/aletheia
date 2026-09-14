@@ -77,7 +77,7 @@ def test_risk_engine_has_minimum_check_count():
     import ast
     from pathlib import Path
 
-    src = (Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py")
+    src = (Path(__file__).parent.parent.parent / "core" / "aletheia" / "risk" / "engine.py")
     tree = ast.parse(src.read_text(encoding="utf-8"))
     violations: set[str] = set()
     for node in ast.walk(tree):
@@ -2262,7 +2262,7 @@ def test_risk_engine_has_20_check_floor_with_new_tokens():
     from pathlib import Path
 
     src_path = (
-        Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+        Path(__file__).parent.parent.parent / "core" / "aletheia" / "risk" / "engine.py"
     )
     source_text = src_path.read_text(encoding="utf-8")
     tree = ast.parse(source_text)
@@ -2324,7 +2324,7 @@ def test_gateway_has_no_risk_free_broker_path():
     from pathlib import Path
 
     src_path = (
-        Path(__file__).parent.parent.parent / "aletheia" / "execution" / "gateway.py"
+        Path(__file__).parent.parent.parent / "core" / "aletheia" / "execution" / "gateway.py"
     )
     source_text = src_path.read_text(encoding="utf-8")
 
@@ -2459,7 +2459,7 @@ def test_position_manager_has_adjust_stop_interface():
 )
 def test_d2_s01_market_disabled_tokens_exist():
     from pathlib import Path
-    src_path = Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+    src_path = Path(__file__).parent.parent.parent / "core" / "aletheia" / "risk" / "engine.py"
     src = src_path.read_text(encoding="utf-8")
     assert "spot_market_disabled" in src, (
         "engine.py missing spot_market_disabled violation token for check #2"
@@ -2546,7 +2546,7 @@ def test_d2_b01_market_disabled_behavior(tmp_path, monkeypatch):
 def test_d2_c01_gateway_always_calls_evaluate_proposal():
     import ast
     from pathlib import Path
-    src_path = Path(__file__).parent.parent.parent / "aletheia" / "execution" / "gateway.py"
+    src_path = Path(__file__).parent.parent.parent / "core" / "aletheia" / "execution" / "gateway.py"
     source_text = src_path.read_text(encoding="utf-8")
 
     assert "evaluate_proposal" in source_text, (
@@ -2610,7 +2610,7 @@ def test_d2_c01_gateway_always_calls_evaluate_proposal():
 )
 def test_d2_s02_serenity_executor_not_yet_implemented():
     from pathlib import Path
-    aletheia_root = Path(__file__).parent.parent.parent / "aletheia"
+    aletheia_root = Path(__file__).parent.parent.parent / "core" / "aletheia"
     matches = list(aletheia_root.rglob("serenity_executor.py"))
     assert len(matches) > 0, "serenity_executor.py not yet created — tripwire is active"
 
@@ -2629,7 +2629,7 @@ def test_d2_s03_pnl_attribution_by_trade_school_exists():
     单独出现 trade_school 赋值 + realized_pnl 引用不算。"""
     import re
     from pathlib import Path
-    base = Path(__file__).parent.parent.parent / "aletheia"
+    base = Path(__file__).parent.parent.parent / "core" / "aletheia"
     dirs = [base / "analytics", base / "portfolio"]
     # 匹配模式：GROUP BY trade_school，或 filter/where 含 trade_school + PnL 聚合
     GROUP_BY_PATTERN = re.compile(r"GROUP BY trade_school", re.IGNORECASE)
@@ -2685,7 +2685,7 @@ def test_d2_b02_serenity_pnl_not_mixed_into_main_track(tmp_path, monkeypatch):
 )
 def test_d2_c02_position_pool_trade_school_boundary_declared():
     from pathlib import Path
-    src_path = Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py"
+    src_path = Path(__file__).parent.parent.parent / "core" / "aletheia" / "risk" / "engine.py"
     src = src_path.read_text(encoding="utf-8")
     assert "trade_school" in src, (
         "INVARIANT DRIFT: engine.py check #5/#6 position counting has no trade_school "
@@ -2707,7 +2707,7 @@ def test_d2_c02_position_pool_trade_school_boundary_declared():
 )
 def test_re_b17_check14_is_family_evidence_gate():
     from pathlib import Path
-    src = (Path(__file__).parent.parent.parent / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
+    src = (Path(__file__).parent.parent.parent / "core" / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
     # New evidence-based gate present …
     assert "family_not_live_eligible" in src, "check #14 must emit family_not_live_eligible"
     assert "_resolve_proposal_family" in src and "_family_live_edge" in src, (
@@ -2746,8 +2746,8 @@ def test_re_s07_demo_entry_quality_gate_is_wired():
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    engine = (root / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
-    quality = (root / "aletheia" / "risk" / "demo_entry_quality.py").read_text(encoding="utf-8")
+    engine = (root / "core" / "aletheia" / "risk" / "engine.py").read_text(encoding="utf-8")
+    quality = (root / "core" / "aletheia" / "risk" / "demo_entry_quality.py").read_text(encoding="utf-8")
     assert "collect_demo_entry_quality_violations" in engine
     assert "family_not_live_eligible" in engine
     assert "regime_confidence_standdown" in quality

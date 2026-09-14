@@ -39,9 +39,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "knowledge_fts_integrity"
 _ROOT = Path(__file__).parent.parent.parent
-_MANAGER = _ROOT / "aletheia" / "knowledge" / "manager.py"
-_RETRIEVAL = _ROOT / "aletheia" / "knowledge" / "retrieval.py"
-_OPERATOR_LOOP = _ROOT / "aletheia" / "agent_shell" / "operator_loop.py"
+_MANAGER = _ROOT / "core" / "aletheia" / "knowledge" / "manager.py"
+_RETRIEVAL = _ROOT / "core" / "aletheia" / "knowledge" / "retrieval.py"
+_OPERATOR_LOOP = _ROOT / "core" / "aletheia" / "agent_shell" / "operator_loop.py"
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_index_is_sole_fts_write_gate():
         str(_MANAGER.resolve()),
         str(_RETRIEVAL.resolve()),
     }
-    py_files = glob.glob(str(_ROOT / "aletheia" / "**" / "*.py"), recursive=True)
+    py_files = glob.glob(str(_ROOT / "core" / "aletheia" / "**" / "*.py"), recursive=True)
     violations = []
     for fp in py_files:
         p = Path(fp).resolve()

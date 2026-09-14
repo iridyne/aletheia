@@ -52,7 +52,7 @@ def audit_tmp(tmp_path, monkeypatch):
 )
 def test_write_audit_opens_append_only():
     """AST-scan jsonl.py: every open() call uses mode 'a', never 'w'."""
-    src = _REPO_ROOT / "aletheia" / "files" / "jsonl.py"
+    src = _REPO_ROOT / "core" / "aletheia" / "files" / "jsonl.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
 
     truncating_opens: list[str] = []
@@ -228,7 +228,7 @@ def test_trust_boundary_handlers_audit():
     """AST-scan routes/live.py and routes/risk.py:
     each listed handler must call write_audit or a known audit-delegating function.
     """
-    routes_root = _REPO_ROOT / "aletheia" / "server"
+    routes_root = _REPO_ROOT / "core" / "aletheia" / "server"
     missing_audit: list[str] = []
 
     for rel_path, handler_names in _TRUST_BOUNDARY_ROUTES:

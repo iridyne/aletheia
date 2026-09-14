@@ -26,8 +26,8 @@ TF_MS = 60_000
     "storage, cache, scheduler, incremental service, or heavy SMC dependency",
 ))
 def test_market_structure_has_one_dependency_light_core():
-    canonical = (ROOT / "aletheia/data/market_structure.py").read_text()
-    compatibility = (ROOT / "aletheia/universe/market_structure.py").read_text()
+    canonical = (ROOT / "core/aletheia/data/market_structure.py").read_text()
+    compatibility = (ROOT / "core/aletheia/universe/market_structure.py").read_text()
     project = (ROOT / "pyproject.toml").read_text().lower()
 
     ast.parse(canonical)
@@ -37,12 +37,12 @@ def test_market_structure_has_one_dependency_light_core():
     assert "get_ohlcv" not in compatibility
     assert "smc_enrichment" not in compatibility
     assert "aletheia.storage" not in canonical
-    enrichment = (ROOT / "aletheia/data/smc_enrichment.py").read_text()
+    enrichment = (ROOT / "core/aletheia/data/smc_enrichment.py").read_text()
     assert "join_consecutive" not in enrichment
     assert all(token not in project for token in (
         "smartmoneyconcepts", "pandas", "numba",
     ))
-    for path in (ROOT / "aletheia/universe").rglob("*.py"):
+    for path in (ROOT / "core/aletheia/universe").rglob("*.py"):
         source = path.read_text()
         assert "FRACTAL_K" not in source
         assert "BREAK_TOLERANCE_ATR" not in source

@@ -25,7 +25,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
     "insert_filter_candidate_outcomes_batch",
     "insert_universe_twin_shadow_bundle",
 ])
-def test_target_publication_failure_preserves_previous_authority(tmp_path, monkeypatch, writer):
+def test_target_publication_failure_preserves_previous_authority(tmp_path, monkeypatch, writer, bitget_fast_stream):
     import sqlite3
     from tests.test_sqlite_writer import _setup_db
     from tests.test_candidate_selection_utility import _controlled_admitted_target_candidate
@@ -311,14 +311,14 @@ def test_snapshot_freshness_rejects_far_future_timestamp(monkeypatch):
     ),
 )
 def test_contract_quote_volume_fallback_uses_contract_size():
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     class Exchange:
         markets = {
             "BTC/USDT:USDT": {"contract": True, "contractSize": 0.01},
         }
 
-    volume = _quote_volume_24h(
+    volume = quote_volume_24h(
         Exchange(),
         "BTC/USDT:USDT",
         {"quoteVolume": None, "baseVolume": 9_000_000, "last": 60_000},
@@ -695,7 +695,7 @@ def test_observed_instruments_preserve_member_venue_and_market(monkeypatch):
     ),
 )
 def test_okx_equity_contracts_are_excluded_from_crypto_registry():
-    from aletheia.universe.registry import _is_excluded
+    from extensions.exchanges.okx.instrument_background import excluded_from_crypto_registry
 
     equity_swap = {
         "base": "SPCX",
@@ -708,8 +708,8 @@ def test_okx_equity_contracts_are_excluded_from_crypto_registry():
         "info": {"instCategory": "1"},
     }
 
-    assert _is_excluded(equity_swap) is True
-    assert _is_excluded(crypto_swap) is False
+    assert excluded_from_crypto_registry(equity_swap) is True
+    assert excluded_from_crypto_registry(crypto_swap) is False
 
 
 @spec_claim(
@@ -722,13 +722,13 @@ def test_okx_equity_contracts_are_excluded_from_crypto_registry():
     ),
 )
 def test_universe_instrument_background_routes_supported_context_only():
+    from extensions.market_data import decode_market_background
     from aletheia.data.symbols import (
-        build_instrument_background,
         instrument_analysis_context,
         instrument_background_rejection_reason,
     )
 
-    equity = build_instrument_background(
+    equity = decode_market_background(
         symbol="SOXL/USDT:USDT",
         venue="binance",
         market_type="perp",
@@ -747,7 +747,7 @@ def test_universe_instrument_background_routes_supported_context_only():
     ) is None
     assert instrument_analysis_context(equity)["kind"] == "stock_linked_perp"
     for base in ("BTC", "ETH"):
-        crypto = build_instrument_background(
+        crypto = decode_market_background(
             symbol=f"{base}/USDT:USDT",
             venue="binance",
             market_type="perp",
@@ -761,7 +761,7 @@ def test_universe_instrument_background_routes_supported_context_only():
         assert instrument_background_rejection_reason(
             crypto, symbol=f"{base}/USDT", market_type="perp", venue="binance"
         ) is None
-    unsupported = build_instrument_background(
+    unsupported = decode_market_background(
         symbol="GOLD/USDT:USDT",
         venue="binance",
         market_type="perp",
@@ -773,7 +773,7 @@ def test_universe_instrument_background_routes_supported_context_only():
     assert instrument_background_rejection_reason(
         unsupported, symbol="GOLD/USDT", market_type="perp", venue="binance"
     ) == "unsupported_analysis_context:tradifi_perpetual"
-    okx_crypto = build_instrument_background(
+    okx_crypto = decode_market_background(
         symbol="BTC/USDT:USDT",
         venue="okx",
         market_type="perp",
@@ -781,7 +781,7 @@ def test_universe_instrument_background_routes_supported_context_only():
     )
     assert okx_crypto["asset_class"] == "crypto"
     for venue, info in (("okx", {"instType": "SWAP"}), ("unknown", {})):
-        unresolved = build_instrument_background(
+        unresolved = decode_market_background(
             symbol="BTC/USDT",
             venue=venue,
             market_type="perp" if venue == "okx" else "spot",

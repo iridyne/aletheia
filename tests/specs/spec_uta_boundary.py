@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
 ROOT = Path(__file__).resolve().parents[2]
-UTA_ROOT = ROOT / "aletheia" / "uta"
+UTA_ROOT = ROOT / "core" / "aletheia" / "uta"
 
 
 @spec_claim(
@@ -43,7 +46,7 @@ def test_uta_v1_protocol_surface_is_complete_and_singular():
         "cancel_order",
     }
     assert expected <= set(UTAAdapter.__protocol_attrs__)
-    assert not list((ROOT / "aletheia").rglob("*trading_venue*.py"))
+    assert not list((ROOT / "core" / "aletheia").rglob("*trading_venue*.py"))
 
 
 @spec_claim(
@@ -59,7 +62,7 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     violations = []
     forbidden_imports = (
         "aletheia.storage",
-        "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "ccxt",
     )
@@ -89,30 +92,24 @@ def test_uta_package_has_no_storage_or_concrete_client_side_channel():
     )
 )
 def test_migrated_mutations_have_one_gateway_coordinator_path():
-    from aletheia.uta.profiles import (
-        BinanceLiveProfile,
-        BitgetClassicV2LiveProfile,
-        BitgetClassicV2Profile,
-        BitgetUTAV3LiveProfile,
-        BitgetUTAV3Profile,
-        OKXDemoProfile,
-        OKXLiveProfile,
-    )
+    from extensions.exchanges.binance.profile import BinanceLiveProfile
+    from extensions.exchanges.bitget.profile import BitgetClassicV2LiveProfile, BitgetClassicV2Profile, BitgetUTAV3LiveProfile, BitgetUTAV3Profile
+    from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
 
-    coordinator_path = ROOT / "aletheia" / "execution" / "coordinator.py"
+    coordinator_path = ROOT / "core" / "aletheia" / "execution" / "coordinator.py"
     coordinator = coordinator_path.read_text(encoding="utf-8")
-    gateway = (ROOT / "aletheia" / "execution" / "gateway.py").read_text(
+    gateway = (ROOT / "core" / "aletheia" / "execution" / "gateway.py").read_text(
         encoding="utf-8"
     )
-    manager = (ROOT / "aletheia" / "portfolio" / "position_manager.py").read_text(
+    manager = (ROOT / "core" / "aletheia" / "portfolio" / "position_manager.py").read_text(
         encoding="utf-8"
     )
-    stops = (ROOT / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
+    stops = (ROOT / "core" / "aletheia" / "execution" / "stops.py").read_text(encoding="utf-8")
 
 
     command_importers = []
-    for path in (ROOT / "aletheia").rglob("*.py"):
-        if path.is_relative_to(UTA_ROOT) or path in {coordinator_path, ROOT / "aletheia" / "execution" / "gateway.py"}:
+    for path in (ROOT / "core" / "aletheia").rglob("*.py"):
+        if path.is_relative_to(UTA_ROOT) or path in {coordinator_path, ROOT / "core" / "aletheia" / "execution" / "gateway.py"}:
             continue
         text = path.read_text(encoding="utf-8")
         if any(name in text for name in (
@@ -193,12 +190,12 @@ def test_migrated_mutations_have_one_gateway_coordinator_path():
 )
 def test_phase_three_evidence_consumers_have_no_concrete_private_client_import():
     consumers = (
-        "aletheia/execution/reconciliation.py",
-        "aletheia/execution/stale_order_cleanup.py",
-        "aletheia/execution/pending_close_recovery.py",
-        "aletheia/portfolio/disappearance_settlement.py",
-        "aletheia/portfolio/broker_funding_settlement.py",
-        "aletheia/trust/live_unlock.py",
+        "core/aletheia/execution/reconciliation.py",
+        "core/aletheia/execution/stale_order_cleanup.py",
+        "core/aletheia/execution/pending_close_recovery.py",
+        "core/aletheia/portfolio/disappearance_settlement.py",
+        "core/aletheia/portfolio/broker_funding_settlement.py",
+        "core/aletheia/trust/live_unlock.py",
     )
     violations = []
     for relative in consumers:
@@ -212,7 +209,7 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
             else:
                 continue
             for name in names:
-                if name.startswith("aletheia.exchanges") or name in {
+                if name.startswith("extensions.exchanges") or name in {
                     "aletheia.execution.okx_broker",
                     "aletheia.execution.binance_broker",
                     "aletheia.execution.bitget_broker",
@@ -231,24 +228,19 @@ def test_phase_three_evidence_consumers_have_no_concrete_private_client_import()
     )
 )
 def test_unqualified_legacy_private_io_is_explicitly_contained():
-    # This set IS the legacy-client migration ledger (#2994). It is asserted
-    # exactly, so it shrinks only alongside a real migration and can never grow
-    # silently.
-    #
-    # Two entries remain:
-    # * `agent_runtime/scheduler.py` — Bitget-native TPSL parent/child discovery
-    #   still needs the venue endpoint before exact UTA order/fill evidence.
-    # * `server/routes/bitget.py` — candidate-credential probes are one-shot
-    #   read-only checks and do not persist the supplied credentials. Stored
-    #   account probes in this module already use `uta.manager`.
-    allowed = {
-        "aletheia/agent_runtime/scheduler.py",
-        "aletheia/server/routes/bitget.py",
+    # Every concrete private-client path is registered from a composition root;
+    # Core consumers use the UTA/provider ports or typed Extension readers.
+    allowed = set()
+    composition_roots = {
+        ROOT / "core" / "aletheia" / "main.py",
+        ROOT / "core" / "aletheia" / "server" / "app.py",
     }
     actual = set()
-    for path in (ROOT / "aletheia").rglob("*.py"):
+    for path in (ROOT / "core" / "aletheia").rglob("*.py"):
+        if path in composition_roots:
+            continue
         if path.is_relative_to(UTA_ROOT) or path.is_relative_to(
-            ROOT / "aletheia" / "exchanges"
+            ROOT / "extensions" / "exchanges"
         ):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -262,9 +254,9 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
             if any(
                 name.startswith(
                     (
-                        "aletheia.exchanges.binance",
-                        "aletheia.exchanges.bitget",
-                        "aletheia.exchanges.okx",
+                        "extensions.exchanges.binance",
+                        "extensions.exchanges.bitget",
+                        "extensions.exchanges.okx",
                     )
                 )
                 or name in {
@@ -299,3 +291,48 @@ def test_exact_head_consumer_port_matrix_exists():
         "funding settlement",
     ):
         assert consumer in text
+
+
+def test_generic_ccxt_does_not_import_venue_implementations():
+    forbidden = ("extensions.exchanges.bitget", "extensions.exchanges.binance", "extensions.exchanges.okx")
+    violations = []
+    for path in (ROOT / "extensions" / "exchanges" / "ccxt").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            elif isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            else:
+                continue
+            if any(name.startswith(forbidden) for name in names):
+                violations.append(f"{path.relative_to(ROOT)}:{node.lineno}")
+    assert violations == []
+
+
+def test_active_bitget_composition_does_not_require_frozen_venues(tmp_path):
+    # A fresh process catches transitive imports hidden by pytest collection.
+    result = subprocess.run(
+        [sys.executable, "-c", """
+import importlib.abc
+import sys
+
+class NoFrozenVenues(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(("extensions.exchanges.binance", "extensions.exchanges.okx")):
+            raise AssertionError(f"Active Bitget loaded frozen venue: {fullname}")
+
+sys.meta_path.insert(0, NoFrozenVenues())
+from aletheia.config.schema import AletheiaConfig
+from aletheia.uta.manager import funding_history_retention_contract
+from extensions.exchanges.bitget.extension import register_uta_provider
+
+register_uta_provider()
+assert funding_history_retention_contract("bitget_demo", cfg=AletheiaConfig()) == (90, "1")
+"""],
+        cwd=ROOT,
+        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

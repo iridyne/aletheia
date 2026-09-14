@@ -25,9 +25,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_multi_lens"
 _ROOT = Path(__file__).parent.parent.parent
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
-_MODELS = _ROOT / "aletheia" / "storage" / "models.py"
-_MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "serenity" / "research_worker.py"
+_MODELS = _ROOT / "core" / "aletheia" / "storage" / "models.py"
+_MIGRATIONS = _ROOT / "core" / "aletheia" / "storage" / "migrations.py"
 
 
 # ---------------------------------------------------------------------------

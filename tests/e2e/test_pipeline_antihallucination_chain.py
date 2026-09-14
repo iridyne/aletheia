@@ -58,7 +58,7 @@ class TestAntiHallucinationChain:
         assert eth_row["outcome_exclusion_reason"] == "incomplete_realized_economics"
 
         # ── Build case studies from the real closed positions ──
-        from aletheia.analytics.trade_case_builder import build_case_studies
+        from extensions.learning.trade_case_builder import build_case_studies
         result = build_case_studies()
         by_pos = {c["position_id"]: c["case_study_id"] for c in result["created"]}
         assert btc_pos in by_pos, "full-chain closed trade must produce a case study"

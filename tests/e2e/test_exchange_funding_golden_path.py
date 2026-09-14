@@ -17,7 +17,7 @@ _PROCESS_REPLAY = textwrap.dedent(
     import os
     from pathlib import Path
     import sys
-
+    from datetime import datetime, timezone
     data_dir = Path(os.environ["ALETHEIA_DATA_DIR"])
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -28,6 +28,7 @@ _PROCESS_REPLAY = textwrap.dedent(
     run_migrations()
 
     from aletheia.storage import repositories as repo
+    from aletheia.uta.models import FillReport, InstrumentIdentity, UTAAccountIdentity
 
     MODES = {
         "bitget_demo": {
@@ -198,16 +199,43 @@ _PROCESS_REPLAY = textwrap.dedent(
             status="submitted",
             requested_at=CLOSED_AT,
         )
-        fills = [{
-            "tradeId": f"close-{suffix}",
-            "orderId": close_order.exchange_order_id,
-            "clientOid": close_order.client_order_id,
-            "fillPrice": str(spec["exit_price"]),
-            "fillQuantity": "1.0",
-            "fee": "-0.2",
-            "feeCoin": "USDT",
-            "cTime": str(CLOSED_AT_MS),
-        }]
+        identity = UTAAccountIdentity(
+            account_id=f"fixture:{mode}",
+            execution_mode=mode,
+            venue=mode.split("_", 1)[0],
+            environment=spec["environment"],
+            profile="fixture",
+            credential_generation=0,
+            adapter_implementation="fixture",
+            adapter_version="1",
+        )
+        instrument = InstrumentIdentity(
+            canonical_symbol="BTC/USDT",
+            venue_symbol="BTCUSDT",
+            venue_instrument_id="BTCUSDT",
+            market_type="usdt_futures",
+            base_currency="BTC",
+            quote_currency="USDT",
+            settlement_currency="USDT",
+            contract_size="1",
+            linear=True,
+        )
+        fills = (
+            FillReport(
+                identity=identity,
+                instrument=instrument,
+                client_order_id=close_order.client_order_id,
+                venue_order_id=close_order.exchange_order_id,
+                venue_fill_id=f"close-{suffix}",
+                side="sell" if spec["direction"] == "long" else "buy",
+                quantity="1.0",
+                price=str(spec["exit_price"]),
+                fee="0.2",
+                fee_currency="USDT",
+                executed_at=datetime.fromtimestamp(CLOSED_AT_MS / 1000, tz=timezone.utc),
+                received_at=datetime.fromtimestamp(CLOSED_AT_MS / 1000, tz=timezone.utc),
+            ),
+        )
         first = materialize_bitget_close(close_order.id, fills)
         replay = materialize_bitget_close(close_order.id, fills)
         return {
@@ -220,8 +248,8 @@ _PROCESS_REPLAY = textwrap.dedent(
 
 
     def ledger_for(mode, start_time_ms, end_time_ms):
-        from aletheia.execution.broker_funding import (
-            make_complete_ledger,
+        from aletheia.execution.broker_funding import make_complete_ledger
+        from tests.broker_funding_fixture import (
             normalize_binance_funding_rows,
             normalize_bitget_funding_rows,
             normalize_okx_funding_rows,
@@ -315,7 +343,9 @@ _PROCESS_REPLAY = textwrap.dedent(
         }, sort_keys=True))
     elif phase in {"settle", "verify"}:
         from aletheia.portfolio import broker_funding_settlement as settlement
+        from extensions.exchanges.bitget.extension import register_uta_provider
 
+        register_uta_provider()
         settlement._uta_funding_ledger = fixture_funding_ledger
         result = asyncio.run(settlement.settle_unsettled_exchange_closes())
         print(json.dumps(database_snapshot(result), sort_keys=True))
@@ -329,7 +359,7 @@ def _run_process_phase(data_dir: Path, phase: str) -> dict:
     project_root = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
     env["ALETHEIA_DATA_DIR"] = str(data_dir)
-    env["PYTHONPATH"] = str(project_root)
+    env["PYTHONPATH"] = str(project_root / "core")
     completed = subprocess.run(
         [sys.executable, "-c", _PROCESS_REPLAY, phase],
         cwd=project_root,

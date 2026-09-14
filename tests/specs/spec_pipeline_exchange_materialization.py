@@ -1136,14 +1136,14 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(tmp_path, mo
     _patch_bitget_history(monkeypatch, [good, bad])
     funding_queries: list[dict] = []
     if lifecycle == "futures_close":
-        from aletheia.exchanges.bitget import client as bitget_client
+        from aletheia.execution.reconciliation import _UTAReconciliationProjection
 
         async def _funding_ledger(self, **kwargs):
             funding_queries.append(kwargs)
             return []
 
         monkeypatch.setattr(
-            bitget_client.BitgetClient,
+            _UTAReconciliationProjection,
             "get_funding_ledger",
             _funding_ledger,
         )
@@ -1239,10 +1239,16 @@ def test_private_derived_economic_overflow_never_mutates_position(tmp_path, monk
         )
         repo.insert_position(position)
         repo.update_order_metadata(first_order.id, position_id=position.id)
-        _, proposal, _, order = _seed_native_chain(
-            exchange_order_id=exchange_order_id,
-            quantity=1.0,
-        )
+        # Keep the overflow probe on a valid same-Proposal averaging path.
+        # An unrelated Proposal must now create its own Position.
+        from aletheia.storage.models import new_id
+        proposal = first_proposal
+        order = first_order.model_copy(update={
+            "id": new_id(), "exchange_order_id": exchange_order_id,
+            "position_id": None,
+            "status": "materialization_missing",
+        })
+        repo.insert_order(order)
 
     fill = _private_fill(
         exchange_order_id,
@@ -1257,6 +1263,10 @@ def test_private_derived_economic_overflow_never_mutates_position(tmp_path, monk
     initial_order_status = repo.get_order(order.id)["status"]
     initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
 
+    if lifecycle == "averaging_entry":
+        from aletheia.execution.exchange_materialization import MaterializationIntegrityError, materialize_bitget_entry
+        with pytest.raises(MaterializationIntegrityError, match="averaged entry economics must be finite"):
+            materialize_bitget_entry(order.id, [fill])
     first = reconcile()
 
     assert first["inconclusive"] == 1
@@ -1774,6 +1784,67 @@ def test_entry_backlink_cannot_attach_private_fill_to_another_account_position(t
     assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("ownership", ["without_backlink", "with_backlink", "candidate_orders"])
+def test_duplicate_primary_position_claims_reject_entry_replay(tmp_path, monkeypatch, ownership):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import MaterializationIntegrityError, materialize_bitget_entry
+    from aletheia.storage import repositories as repo
+    from aletheia.storage.models import Position, new_id
+
+    _, _, _, order = _seed_native_chain(exchange_order_id="duplicate-owner", quantity=0.5)
+    first_fill = _private_fill("duplicate-owner", "first-owner-fill", price=100., quantity=0.25,
+                              fee=0.01, filled_at_ms=1784600000000)
+    first = materialize_bitget_entry(order.id, [first_fill])
+    duplicate = Position.model_validate({**repo.get_position(first.position_id), "id": new_id()})
+    if ownership == "candidate_orders":
+        other_order = order.model_copy(update={"id": new_id(), "exchange_order_id": "other-primary",
+                                               "position_id": duplicate.id})
+        repo.insert_order(other_order)
+        duplicate.order_id = other_order.id
+    repo.insert_position(duplicate)
+    if ownership == "without_backlink":
+        repo.update_order_metadata(order.id, position_id=None)
+    elif ownership == "candidate_orders":
+        order = order.model_copy(update={"id": new_id(), "position_id": None})
+        repo.insert_order(order)
+        first_fill = _private_fill("duplicate-owner", "new-first-fill", price=100., quantity=0.25,
+                                  fee=0.01, filled_at_ms=1784600000000)
+    second_fill = _private_fill("duplicate-owner", "second-owner-fill", price=101., quantity=0.25,
+                               fee=0.01, filled_at_ms=1784600001000)
+    before = {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+              for table in ("positions", "orders", "fills", "trade_proposals")}
+    for _ in range(2):
+        with pytest.raises(MaterializationIntegrityError, match="ambiguous.*Position"):
+            materialize_bitget_entry(order.id, [first_fill, second_fill])
+        assert before == {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+                          for table in before}
+
+
+@pytest.mark.parametrize("changed", [{"credential_generation": 99}, {"account_id": "another-account"}])
+def test_same_mode_account_fill_collision_never_overwrites_history(tmp_path, monkeypatch, changed):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    from aletheia.storage import repositories as repo
+
+    _, _, _, old = _seed_native_chain(exchange_order_id="old-account-order", quantity=0.5)
+    old_fill = _private_fill("old-account-order", "same-remote-fill", price=100., quantity=0.5,
+                            fee=0.01, filled_at_ms=1784600000000)
+    materialize_bitget_entry(old.id, [old_fill])
+    _, _, _, current = _seed_native_chain(exchange_order_id="new-account-order", quantity=0.5)
+    identity = _spec_identity().model_copy(update=changed)
+    db.execute("UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+               (identity.model_dump_json(), current.id))
+    current_fill = _private_fill("new-account-order", "same-remote-fill", price=101., quantity=0.5,
+                                fee=0.02, filled_at_ms=1784600001000).model_copy(update={"identity": identity})
+    before = {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+              for table in ("positions", "orders", "fills", "trade_proposals")}
+    for _ in range(2):
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed: fills.id"):
+            materialize_bitget_entry(current.id, [current_fill])
+        assert before == {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+                          for table in before}
+
+
 @spec_claim(
     SpecClaim(
         "PL-XM-14",
@@ -1830,7 +1901,9 @@ def test_exit_intent_stamped_on_new_exchange_position(tmp_path, monkeypatch):
         status="implemented",
     )
 )
-def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
+@pytest.mark.parametrize("isolation", ["school", "proposal", "account"])
+@pytest.mark.parametrize("backlink", [False, True])
+def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch, isolation, backlink):
     """#172: serenity leg must not silently merge into a short_term position."""
     db = _setup_db(tmp_path, monkeypatch)
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
@@ -1876,9 +1949,17 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
     _, second_proposal, _, second_order = _seed_native_chain(
         exchange_order_id="EX-XM-SCHOOL-SECOND",
         quantity=0.3,
-        trade_school="serenity",
+        trade_school="serenity" if isolation == "school" else "short_term",
         expected_horizon_hours=168.0,
     )
+    if isolation == "account":
+        # Preserve incoming authority; the existing Position belongs to another
+        # configured account generation in the same logical execution mode.
+        other = _spec_identity().model_copy(update={"credential_generation": 99})
+        db.execute("UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+                   (other.model_dump_json(), first_order.id))
+    if backlink:
+        repo.update_order_metadata(second_order.id, position_id=short_term_position.id)
     fill_rows = [
         _private_fill(
             "EX-XM-SCHOOL-SECOND",
@@ -1889,6 +1970,16 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
             filled_at_ms=1_784_100_000_000,
         )
     ]
+    if backlink:
+        from aletheia.execution.exchange_materialization import MaterializationIntegrityError
+        before = {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+                  for table in ("positions", "orders", "fills", "trade_proposals")}
+        for _ in range(2):
+            with pytest.raises(MaterializationIntegrityError, match="linked Position"):
+                materialize_bitget_entry(second_order.id, fill_rows)
+            assert before == {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
+                              for table in before}
+        return
     result = materialize_bitget_entry(second_order.id, fill_rows)
     assert result.state == "filled"
 
@@ -1899,12 +1990,12 @@ def test_cross_school_averaging_creates_new_position(tmp_path, monkeypatch):
     assert len(positions) == 2, (
         f"expected 2 positions (one per school) but got {len(positions)}: {[p['trade_school'] for p in positions]}"
     )
-    schools = {p["trade_school"] for p in positions}
-    assert schools == {"short_term", "serenity"}, f"unexpected schools: {schools}"
+    assert {p["trade_school"] for p in positions} == (
+        {"short_term", "serenity"} if isolation == "school" else {"short_term"})
 
     # The short_term position must not have been touched.
     assert next(p for p in positions if p["trade_school"] == "short_term")["quantity"] == pytest.approx(0.5)
     # The serenity position carries the operator's horizon intent.
-    serenity_pos = next(p for p in positions if p["trade_school"] == "serenity")
+    serenity_pos = next(p for p in positions if p["id"] == result.position_id)
     assert serenity_pos["expected_horizon_hours"] == pytest.approx(168.0)
     assert serenity_pos["exit_plan_version"] == 1

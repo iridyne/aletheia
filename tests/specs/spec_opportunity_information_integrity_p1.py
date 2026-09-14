@@ -449,6 +449,7 @@ def test_post_trade_context_uses_exact_proposal_id_without_truncation():
             direction="long",
             quantity=1.0,
             price=100.0,
+            execution_mode="bitget_demo",
             agent_rationale=rationale,
         )
     )
@@ -504,6 +505,7 @@ def test_same_proposal_duplicate_finals_are_explicit_integrity_error():
         direction="long",
         quantity=1.0,
         price=100.0,
+        execution_mode="bitget_demo",
         agent_rationale="exact proposal rationale remains available",
     ))
     for index, action in enumerate(("trade", "skip")):

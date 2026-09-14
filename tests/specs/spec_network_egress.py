@@ -39,7 +39,7 @@ from pathlib import Path
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "network_egress_contract"
-_PKG = Path(__file__).resolve().parents[2] / "aletheia"
+_PKG = Path(__file__).resolve().parents[2] / "core" / "aletheia"
 
 # ccxt exchange ids we construct anywhere in the tree. The choke-point invariant
 # (NET-S04) is that `ccxt.<id>(...)` appears ONLY inside net.py (via make_ccxt).

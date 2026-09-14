@@ -3,7 +3,7 @@
 Contract Delta (2026-09-07, serenity_contract.md §7): the legacy
 `signal_pending` PiDecision queue is RETIRED. Both promotion paths — manual
 `routes/data.py:promote_serenity_theme` and automatic
-`research_worker._auto_promote_serenity_opportunities` — now go through one
+`serenity_publication.auto_publish_serenity_candidates` — now go through one
 source orchestration function in `trading.serenity_publication`:
 
     publish_serenity_candidates(theme_id, opportunity_ids, *,
@@ -46,9 +46,9 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _CONTRACT = "serenity_promote"
 _ROOT = Path(__file__).parent.parent.parent
-_SCHEMA = _ROOT / "aletheia" / "config" / "schema.py"
-_DATA_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "data.py"
-_SETTINGS_ROUTES = _ROOT / "aletheia" / "server" / "routes" / "settings.py"
+_SCHEMA = _ROOT / "core" / "aletheia" / "config" / "schema.py"
+_DATA_ROUTES = _ROOT / "core" / "aletheia" / "server" / "routes" / "data.py"
+_SETTINGS_ROUTES = _ROOT / "core" / "aletheia" / "server" / "routes" / "settings.py"
 _API_REF = _ROOT / "docs" / "design" / "api" / "api_reference.md"
 
 
@@ -533,7 +533,7 @@ def test_settings_serenity_endpoint_persists_and_bounds(tmp_path, monkeypatch):
 # L2a — Auto-promote pipeline integration
 # ---------------------------------------------------------------------------
 
-_RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
+_RESEARCH_WORKER = _ROOT / "extensions" / "serenity" / "research_worker.py"
 
 
 @spec_claim(
@@ -547,12 +547,12 @@ _RESEARCH_WORKER = _ROOT / "aletheia" / "agents" / "research_worker.py"
 def test_research_worker_auto_promote_block_exists():
     src = _RESEARCH_WORKER.read_text(encoding="utf-8")
     publication_src = (
-        _ROOT / "aletheia" / "trading" / "serenity_publication.py"
+        _ROOT / "core" / "aletheia" / "trading" / "serenity_publication.py"
     ).read_text(encoding="utf-8")
     assert "auto_promote" in src, (
         "research_worker.py has no auto_promote reference — the D5 switch is dead"
     )
-    assert "min_score_for_pi=cfg.serenity.min_score_for_pi" in src, (
+    assert "min_score_for_pi=_cfg.serenity.min_score_for_pi" in src, (
         "research_worker does not pass the configured score gate into the publication"
     )
     assert "score_serenity_opportunity" in publication_src, (
@@ -565,11 +565,11 @@ def test_research_worker_auto_promote_block_exists():
     assert "enqueue_serenity_theme_for_pi" not in src, (
         "research_worker still references the retired pending-carrier handoff"
     )
-    assert "notify_pi_daemon" in src, (
-        "research_worker does not wake the Planner after auto-promote"
+    assert "notify_pi_daemon" in publication_src, (
+        "Core publication does not wake the Planner after auto-promote"
     )
-    assert "serenity_auto_promote" in src, (
-        "research_worker auto-promote source tag missing — audit trail incomplete"
+    assert "serenity_auto_promote" in publication_src, (
+        "Core publication auto-promote source tag missing — audit trail incomplete"
     )
 
 

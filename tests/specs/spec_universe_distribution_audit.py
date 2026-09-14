@@ -8,12 +8,9 @@ Contract Delta (2026-09-07, #2945 + candidate_selection_utility_contract.md):
 Candidate Selection Utility now owns cross-market selection. Two of the three
 original mechanisms are gone, and one is INVERTED:
 
-* the six-family quota allocator is retired — `universe/service.py` hardcodes
-  `legacy_allocated = []` and never calls `allocator.allocate_universe`;
-  "Historical six-family and `total_score` records remain immutable audit
-  evidence" (contract §intro);
-* pre-allocation same-symbol dedupe is retired — `unique_scored = scored`,
-  because "Utility owns cross-market selection; retain every physical instrument";
+* the six-family quota allocator and pre-allocation dedupe are retired; the current
+  refresh path selects through the Candidate Selection Utility and retains its
+  typed physical-instrument population for that authority;
 * `preferred_market_type` is now a TIE-BREAK ONLY. Contract §6: "Cross-market
   deduplication uses the same order, with preferred market only resolving equal
   economic/signal rank." The old claim asserted the opposite — that `auto` keeps
@@ -53,18 +50,11 @@ _ROOT = Path(__file__).resolve().parents[2]
     ),
 )
 def test_utility_owns_cross_market_selection():
-    service = (_ROOT / "aletheia/universe/service.py").read_text(encoding="utf-8")
+    service = (_ROOT / "core/aletheia/universe/service.py").read_text(encoding="utf-8")
 
-    # The legacy quota allocator is not merely unused — refresh cannot reach it.
-    assert "legacy_allocated = []" in service, (
-        "refresh no longer allocates a six-family quota; if this literal is gone, "
-        "confirm against candidate_selection_utility_contract.md whether the legacy "
-        "allocator regained authority before changing this spec"
-    )
-    assert "unique_scored = scored" in service, (
-        "refresh must retain every physical instrument — Utility owns cross-market "
-        "selection, so pre-allocation dedupe would drop rows it needs to rank"
-    )
+    # The current refresh path has one selection authority and no legacy fallback.
+    assert "target_candidates_from_bundle" in service
+    assert "candidate_selection_legacy_runtime_removed" in service
     tree = ast.parse(service)
     called = {
         node.func.id if isinstance(node.func, ast.Name) else
@@ -91,7 +81,7 @@ def test_utility_owns_cross_market_selection():
 )
 def test_preferred_market_only_breaks_an_equal_rank():
     source = (
-        _ROOT / "aletheia/universe/candidate_selection_shadow.py"
+        _ROOT / "core/aletheia/universe/candidate_selection_shadow.py"
     ).read_text(encoding="utf-8")
     tree = ast.parse(source)
 

@@ -12,17 +12,34 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from aletheia.data.collectors.hyperliquid import _HL_INFO_URL
+from extensions.hyperliquid.collector import _HL_INFO_URL
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_HL = _ROOT / "aletheia" / "data" / "collectors" / "hyperliquid.py"
-_REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
+_HL = _ROOT / "extensions" / "hyperliquid" / "collector.py"
+
+
+async def test_hyperliquid_composition_passes_symbols_without_new_lifecycle(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from extensions.hyperliquid import register_collector
+    from extensions.hyperliquid.collector import HyperliquidCollector
+
+    monkeypatch.setattr(scheduler, "_hyperliquid_collect", None)
+    calls = []
+
+    async def collect(self, symbols):
+        calls.append(symbols)
+        return {"funding": [], "open_interest": [], "prices": [], "errors": []}
+
+    monkeypatch.setattr(HyperliquidCollector, "collect", collect)
+    register_collector()
+    assert (await scheduler._collect_hyperliquid(["BTC/USDT"]))["errors"] == []
+    assert calls == [["BTC/USDT"]]
+_REPOSITORIES = _ROOT / "core" / "aletheia" / "storage" / "repositories.py"
 
 # Path to real-data fixture captured from live API
 _FIXTURE_META = _ROOT / "tests" / "fixtures" / "hl_meta_and_asset_ctxs.json"
@@ -43,7 +60,7 @@ _CONTRACT = "data_layer_contract"
 )
 def test_hyperliquid_collector_exists():
     assert _HL.exists(), "hyperliquid.py not found"
-    from aletheia.data.collectors import hyperliquid as mod
+    import extensions.hyperliquid.collector as mod
     assert hasattr(mod, "HyperliquidCollector"), "HyperliquidCollector not exported"
     assert callable(getattr(mod.HyperliquidCollector, "collect")), (
         "HyperliquidCollector.collect must be callable"
@@ -116,7 +133,7 @@ def test_hyperliquid_parse_real_fixture_btc():
     assert _FIXTURE_META.exists(), f"Fixture not found: {_FIXTURE_META}"
     raw = json.loads(_FIXTURE_META.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.hyperliquid import _parse_funding, _parse_oi
+    from extensions.hyperliquid.collector import _parse_funding, _parse_oi
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).isoformat()
@@ -164,7 +181,7 @@ def test_hyperliquid_oi_usd_equals_coin_times_mark():
     assert _FIXTURE_META.exists(), f"Fixture not found: {_FIXTURE_META}"
     raw = json.loads(_FIXTURE_META.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.hyperliquid.collector import _parse_oi
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).isoformat()
@@ -201,7 +218,7 @@ def test_hyperliquid_oi_usd_equals_coin_times_mark():
     ),
 )
 def test_hyperliquid_http_failure_does_not_raise():
-    import aletheia.data.collectors.hyperliquid as mod
+    import extensions.hyperliquid.collector as mod
     original = mod.httpx_client
 
     class _FailCtx:
@@ -250,7 +267,7 @@ def test_hyperliquid_db_write(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    import aletheia.data.collectors.hyperliquid as mod
+    import extensions.hyperliquid.collector as mod
 
     # Mock both HTTP calls: return meta fixture for metaAndAssetCtxs,
     # return pred fixture for predictedFundings.
@@ -362,7 +379,7 @@ async def test_hyperliquid_live_e2e(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
+    from extensions.hyperliquid.collector import HyperliquidCollector
     result = await HyperliquidCollector().collect(symbols=["BTC/USDT", "ETH/USDT"])
 
     # Collection is pure; the caller owns persistence (scheduler batches it into

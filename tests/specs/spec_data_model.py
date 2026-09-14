@@ -37,7 +37,7 @@ def test_wal_mode_in_source():
     import ast
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "storage" / "sqlite.py"
     source = src.read_text(encoding="utf-8")
     assert "journal_mode=WAL" in source
 
@@ -52,7 +52,7 @@ def test_autocommit_isolation_level():
     import ast
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "sqlite.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "storage" / "sqlite.py"
     source = src.read_text(encoding="utf-8")
     assert "isolation_level=None" in source
 
@@ -236,7 +236,7 @@ def test_retired_runtime_control_plane_is_not_installed():
 def test_capital_events_table():
     from pathlib import Path
 
-    src = Path(__file__).parent.parent.parent / "aletheia" / "storage" / "migrations.py"
+    src = Path(__file__).parent.parent.parent / "core" / "aletheia" / "storage" / "migrations.py"
     source = src.read_text(encoding="utf-8")
     assert "capital_events" in source
 
@@ -270,8 +270,8 @@ def test_account_equity_snapshot_contract_is_explicit():
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    migration = (root / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
-    repository = (root / "aletheia" / "storage" / "repositories.py").read_text(encoding="utf-8")
+    migration = (root / "core" / "aletheia" / "storage" / "migrations.py").read_text(encoding="utf-8")
+    repository = (root / "core" / "aletheia" / "storage" / "repositories.py").read_text(encoding="utf-8")
     overview = (root / "frontend" / "src" / "charts" / "AccountEquityChart.tsx").read_text(encoding="utf-8")
     assert '"account_equity_usdt", "portfolio_snapshots", "REAL"' in migration
     assert "account_equity_usdt IS NOT NULL" in repository
@@ -290,7 +290,7 @@ def test_ohlcv_backfill_state_uses_full_instrument_primary_key():
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    migrations = (root / "aletheia" / "storage" / "migrations.py").read_text(
+    migrations = (root / "core" / "aletheia" / "storage" / "migrations.py").read_text(
         encoding="utf-8"
     )
     assert "CREATE TABLE IF NOT EXISTS ohlcv_backfill_state" in migrations
@@ -309,7 +309,7 @@ def test_collector_health_state_is_bounded_by_domain_primary_key():
     from pathlib import Path
 
     root = Path(__file__).parent.parent.parent
-    migrations = (root / "aletheia" / "storage" / "migrations.py").read_text(
+    migrations = (root / "core" / "aletheia" / "storage" / "migrations.py").read_text(
         encoding="utf-8"
     )
     assert "CREATE TABLE IF NOT EXISTS collector_health_state" in migrations
@@ -929,7 +929,7 @@ def test_migrations_define_learning_tables():
     """Structural: the three learning tables are declared in SCHEMA_SQL."""
     from pathlib import Path
     migrations_src = (
-        Path(__file__).parent.parent.parent / "aletheia" / "storage" / "migrations.py"
+        Path(__file__).parent.parent.parent / "core" / "aletheia" / "storage" / "migrations.py"
     ).read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS ps_lessons" in migrations_src, (
         "migrations.py missing ps_lessons CREATE TABLE"
