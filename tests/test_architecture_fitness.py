@@ -208,35 +208,117 @@ def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
     _assert_fill_writer_boundary(tmp_path)
 
 
+def _assert_candidate_writer_boundary(root):
+    from tests.authority_writer_checks import assert_writer_boundary
+
+    repository = root / "aletheia/storage/repositories.py"
+    literal_writes = {
+        ("storage/repositories.py", "expire_universe_snapshots"): {
+            "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND source_kind='universe' AND market_type = ? AND id != ?",
+            "UPDATE universe_snapshots SET status = 'superseded' WHERE status = 'active' AND source_kind='universe' AND market_type = ?",
+        },
+        ("storage/repositories.py", "refresh_active_snapshot_ttls"): {
+            "UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)",
+        },
+        ("storage/repositories.py", "prune_universe_members"): {
+            "DELETE FROM universe_members WHERE snapshot_id IN (  SELECT id FROM universe_snapshots WHERE created_at < ?) AND NOT EXISTS (  SELECT 1 FROM universe_forward_outcomes o   WHERE o.member_id=universe_members.id AND o.entry_ts>=?)",
+        },
+        # Exact static prefixes of existing bounded retention SQL. Dynamic
+        # placeholders/parameters remain outside this lexical writer proof.
+        ("storage/repositories.py", "prune_universe_snapshots"): {
+            "DELETE FROM universe_members WHERE snapshot_id IN (",
+            "DELETE FROM universe_snapshots WHERE id IN (",
+        },
+    }
+    for table in ("universe_snapshots", "universe_members"):
+        assert_writer_boundary(
+            root, table=table,
+            owners={"publish_candidate_snapshot": {
+                "universe/service.py", "trading/serenity_publication.py", "cli/dev_seed.py",
+            }},
+            raw_owners={"publish_candidate_snapshot"},
+            literal_writes=literal_writes,
+        )
+    tree = ast.parse(repository.read_text(encoding="utf-8"))
+    publisher = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "publish_candidate_snapshot"), None)
+    assert publisher is not None, "canonical Candidate publisher missing"
+    inserts = [
+        (node.func.id, node.args[0].value)
+        for node in ast.walk(publisher)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id in {"_insert", "_insert_many"}
+        and node.args and isinstance(node.args[0], ast.Constant)
+    ]
+    assert sorted(inserts) == [("_insert", "universe_snapshots"), ("_insert_many", "universe_members")]
+    assert "aletheia.trading.serenity_publication" not in _get_imports(repository)
+
+
 def test_candidate_snapshot_creation_has_one_core_owner():
-    import re
     from aletheia.storage import repositories as repo
 
     retired = {"insert_universe_snapshot", "insert_universe_member", "insert_universe_members_batch",
                "insert_candidate", "publish_serenity_candidates"}
     assert not retired.intersection(vars(repo))
-    writes = set()
-    for path in SRC.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                assert not re.search(r"\b(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+(?:universe_members|universe_snapshots)\b", node.value, re.I), (path, node.lineno)
-            if not isinstance(node, ast.Call) or not node.args:
-                continue
-            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None
-            table = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
-            if name not in {"_insert", "_insert_many"} or table not in {"universe_members", "universe_snapshots"}:
-                continue
-            parent = parents.get(node)
-            while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                parent = parents.get(parent)
-            writes.add((str(path.relative_to(SRC)), parent.name if parent else None, table))
-    assert writes == {
-        ("storage/repositories.py", "publish_candidate_snapshot", "universe_snapshots"),
-        ("storage/repositories.py", "publish_candidate_snapshot", "universe_members"),
+    _assert_candidate_writer_boundary(PROJECT_ROOT)
+
+
+@pytest.mark.parametrize("path,source", [
+    ("extensions/other.py", "repo.publish_candidate_snapshot(snapshot, members)"),
+    ("aletheia/other.py", "from .storage.repositories import publish_candidate_snapshot as persist\npersist(snapshot, members)"),
+    ("aletheia/other.py", "from aletheia.storage.repositories import _insert_many as save\nsave(table='universe_members', rows=rows)"),
+    ("aletheia/other.py", "db.execute('INSERT /* hidden */ INTO main.\"universe_snapshots\" VALUES (?)')"),
+    ("aletheia/other.py", "db.execute('UPDATE OR IGNORE [universe_members] SET rank=1')"),
+    ("legacy/other.py", "repo._delete_by_rowid_batches('universe_members', '1=1')"),
+    ("ops/other.py", "db.execute('CREATE TEMP TABLE universe_snapshots (id TEXT)')"),
+    ("scripts/other.py", "db.execute('DROP TABLE universe_members')"),
+    ("aletheia/storage/repositories.py", "def other():\n    db.execute('DELETE FROM universe_snapshots')"),
+    ("aletheia/storage/repositories.py", "def outer():\n    def publish_candidate_snapshot(snap, members):\n        _insert('universe_snapshots', snap)\n        _insert_many('universe_members', members)"),
+    ("aletheia/storage/repositories.py", "def expire_universe_snapshots():\n    _insert('universe_snapshots', row)"),
+    ("aletheia/storage/repositories.py", "def refresh_active_snapshot_ttls():\n    db.execute('UPDATE universe_members SET rank=1')"),
+    ("aletheia/storage/repositories.py", "def prune_universe_snapshots():\n    _delete_by_rowid_batches('universe_members', '1=1')"),
+    ("aletheia/storage/repositories.py", "def outer():\n    def prune_universe_snapshots():\n        db.execute('DELETE FROM universe_members WHERE snapshot_id IN (')"),
+    ("aletheia/universe/service.py", "from aletheia.storage.repositories import publish_candidate_snapshot as exported_writer"),
+    ("aletheia/other.py", "writer = repo.publish_candidate_snapshot"),
+])
+def test_candidate_writer_guard_rejects_undeclared_writes(tmp_path, path, source):
+    repository = tmp_path / "aletheia/storage/repositories.py"
+    repository.parent.mkdir(parents=True)
+    repository.write_text(
+        "def publish_candidate_snapshot(snap, members):\n"
+        "    _insert('universe_snapshots', snap)\n"
+        "    _insert_many('universe_members', members)\n", encoding="utf-8",
+    )
+    target = tmp_path / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target == repository:
+        source = repository.read_text(encoding="utf-8") + source
+    target.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_candidate_writer_boundary(tmp_path)
+
+
+def test_candidate_writer_guard_accepts_publication_and_distinct_maintenance(tmp_path):
+    sources = {
+        "aletheia/storage/repositories.py": (
+            "def publish_candidate_snapshot(snap, members):\n"
+            "    _insert('universe_snapshots', snap)\n"
+            "    _insert_many('universe_members', members)\n"
+            "def refresh_active_snapshot_ttls():\n"
+            "    db.execute('UPDATE universe_members SET expires_at=? WHERE id=? AND (expires_at IS NULL OR expires_at<?)')\n"
+            "def prune_universe_snapshots():\n"
+            "    db.execute(f'DELETE FROM universe_members WHERE snapshot_id IN ({placeholders})')\n"
+            "    db.execute(f'DELETE FROM universe_snapshots WHERE id IN ({placeholders})')\n"
+        ),
+        "aletheia/universe/service.py": "repo.publish_candidate_snapshot(snap, members)",
+        "aletheia/trading/serenity_publication.py": "repo.publish_candidate_snapshot(snap, members)",
+        "aletheia/cli/dev_seed.py": "repo.publish_candidate_snapshot(snap, members)",
+        "aletheia/storage/migrations.py": "db.execute('ALTER TABLE universe_members ADD COLUMN historical TEXT')",
     }
-    assert "aletheia.trading.serenity_publication" not in _get_imports(SRC / "storage" / "repositories.py")
+    for path, source in sources.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    _assert_candidate_writer_boundary(tmp_path)
 
 
 def test_gateway_startup_has_no_bulk_secret_migration():
