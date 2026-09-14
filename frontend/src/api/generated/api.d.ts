@@ -5026,7 +5026,7 @@ export interface paths {
         put?: never;
         /**
          * Test Network Proxy
-         * @description Test proxy connectivity by pinging Binance API through the configured proxy.
+         * @description Test configured egress independently of any exchange's availability.
          */
         post: operations["test_network_proxy_api_settings_network_test_post"];
         delete?: never;
@@ -5660,13 +5660,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * Telegram Health
-         * @description Live reachability check for the configured Telegram bot token.
-         *
-         *     Returns {reachable, username?, error?}. honest 'not_configured' when no token
-         *     is set. Never includes the token in the response.
-         */
+        /** Telegram Health */
         get: operations["telegram_health_api_telegram_health_get"];
         put?: never;
         post?: never;

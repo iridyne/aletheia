@@ -7,7 +7,7 @@ const sources = import.meta.glob("./**/*.tsx", {
 }) as Record<string, string>;
 
 const switchTag = /<(?:Switch|Toggle)\b[\s\S]*?\/>/g;
-const checkboxTag = /<input\b[\s\S]*?type=["']checkbox["'][\s\S]*?\/>/g;
+const checkboxTag = /<input\b(?=[^>]*\btype=["']checkbox["'])[^>]*\/>/g;
 const rowBlock = /<(?:Row|SettingsRow)\b[\s\S]*?<\/(?:Row|SettingsRow)>/g;
 const labelBlock = /<label\b[\s\S]*?<\/label>/g;
 
