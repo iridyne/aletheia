@@ -55,9 +55,10 @@ def _operator_prompt_context() -> dict:
 )
 def test_live_operator_diagnostic_learning_is_curated_and_advisory(monkeypatch):
     from aletheia.agent_shell import context
+    from aletheia.learning import lessons
 
     monkeypatch.setattr(
-        context,
+        lessons,
         "LessonStore",
         lambda: SimpleNamespace(list_all=lambda **_: [
             SimpleNamespace(
