@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
-
 POLICY_EPOCH_LABEL = "demo_entry_quality/v4"
 _EPOCH_KIND = "demo_entry_quality"
 _EFFECTIVE_VALUES = {
@@ -29,6 +27,8 @@ _AFFECTED_PATHS = (
 
 def ensure_demo_entry_quality_policy_epoch() -> str:
     """Return the durable epoch id, rotating when the policy definition changes."""
+    from aletheia.learning.policy_epochs import build_policy_epoch, persist_policy_epoch
+
     epoch = build_policy_epoch(
         _EPOCH_KIND,
         _EFFECTIVE_VALUES,

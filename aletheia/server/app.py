@@ -1064,6 +1064,18 @@ async def _request_timing(request, call_next):
             )
 
 
+from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch
+
+try:
+    from aletheia.learning.demo_entry_quality import ensure_demo_entry_quality_policy_epoch
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.learning", "aletheia.learning.demo_entry_quality"}:
+        raise
+    configure_demo_quality_epoch(None)
+else:
+    configure_demo_quality_epoch(ensure_demo_entry_quality_policy_epoch)
+
+
 from aletheia.risk.engine import configure_risk_lesson_treatment
 
 try:
