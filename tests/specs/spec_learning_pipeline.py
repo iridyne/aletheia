@@ -107,7 +107,7 @@ _GUARDS_MODULE = "aletheia/knowledge/guards.py"
 @spec_claim(
     SpecClaim("LP-S06", "learning_pipeline", "§Guard promotion", "L2a",
               "load_trading_guards reaches guard_candidate files (scans both guards/ and "
-              "guard_candidates/) so run_promotion_check can promote them — L-Bug-D fixed",
+              "guard_candidates/) for explicit owner review and promotion",
               status="implemented"),
 )
 def test_guard_candidates_reachable_by_promoter():

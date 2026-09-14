@@ -234,12 +234,8 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
     from aletheia.analytics import guard_effectiveness, guard_promotion, trade_attribution
     from aletheia.knowledge.guards import TradingGuard
     from aletheia.learning import control
-    monkeypatch.setattr(
-        guard_promotion, "load_config",
-        lambda: SimpleNamespace(guard=SimpleNamespace(
-            auto_promote_enabled=True, min_matching_trades=1,
-        )),
-    )
+    from aletheia.agent_runtime import scheduler
+    monkeypatch.setattr(scheduler, "load_config", lambda: SimpleNamespace(runtime=SimpleNamespace(paused=False)))
     monkeypatch.setattr(control, "promotion_refreeze_reason", lambda: None)
     monkeypatch.setattr(guard_promotion, "load_trading_guards", lambda status: [
         TradingGuard(
@@ -254,8 +250,7 @@ async def test_automatic_block_recommendation_routes_to_guard_shadow(monkeypatch
         guard_effectiveness, "_rows_matching_guard",
         lambda *args: (_ for _ in ()).throw(AssertionError("shadow-only candidate evaluated for promotion")),
     )
-    result = guard_promotion.run_promotion_check()
-    assert result["promotions"] == 0
+    scheduler._run_guard_promotion()
 
 
 @spec_claim(SpecClaim(

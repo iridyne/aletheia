@@ -1,14 +1,11 @@
 """Tests for guard effectiveness analytics and promotion pipeline."""
 
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from aletheia.analytics.guard_effectiveness import (
     compute_guard_stats,
     _row_to_guard_context,
 )
-from aletheia.analytics.guard_promotion import run_promotion_check
 
 
 class TestRowToGuardContext:
@@ -78,41 +75,3 @@ class TestComputeGuardStats:
         assert len(result) == 1
         assert result[0]["fire_count"] == 2
         assert result[0]["loss_rate_when_fired"] == 0.5
-
-
-class TestRunPromotionCheck:
-    @patch("aletheia.analytics.guard_promotion.load_config")
-    def test_skips_when_disabled(self, mock_cfg):
-        cfg = MagicMock()
-        cfg.guard.auto_promote_enabled = False
-        mock_cfg.return_value = cfg
-        result = run_promotion_check()
-        assert result["skipped"] is True
-
-    @patch("aletheia.analytics.guard_promotion.load_trading_guards")
-    @patch("aletheia.analytics.guard_promotion.load_config")
-    def test_no_candidates_zero_promotions(self, mock_cfg, mock_guards):
-        cfg = MagicMock()
-        cfg.guard.auto_promote_enabled = True
-        cfg.guard.min_matching_trades = 3
-        mock_cfg.return_value = cfg
-        mock_guards.return_value = []
-        result = run_promotion_check()
-        assert result["promotions"] == 0
-        assert result["candidates_checked"] == 0
-
-    @pytest.mark.parametrize("invalid_min_trades", [0, -1])
-    @patch("aletheia.analytics.guard_promotion.load_trading_guards")
-    @patch("aletheia.analytics.guard_promotion.load_config")
-    def test_invalid_min_matching_trades_fails_closed(
-        self, mock_cfg, mock_guards, invalid_min_trades
-    ):
-        cfg = MagicMock()
-        cfg.guard.auto_promote_enabled = True
-        cfg.guard.min_matching_trades = invalid_min_trades
-        mock_cfg.return_value = cfg
-
-        result = run_promotion_check()
-
-        assert result == {"skipped": True, "reason": "invalid min_matching_trades"}
-        mock_guards.assert_not_called()

@@ -1108,7 +1108,7 @@ def _maybe_generate_guard_candidates(settled_rows: list[dict]) -> None:
         content = _build_guard_candidate_content(row, net, direction)
 
         # Stable guard_id per (family, direction, symbol) loss pattern so the
-        # promoter (run_promotion_check) can match + promote/move it, and so the
+        # owner review can identify it, and so the
         # frontmatter carries status="candidate" (else load_trading_guards(
         # status="candidate") filters it out). Without these the candidate was
         # invisible to the promotion chain — L-Bug-D/B3.

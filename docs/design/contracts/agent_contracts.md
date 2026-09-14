@@ -37,7 +37,7 @@
 | 24 | data_collectors | 2min | io | 主交易所 orderbook、Funding rate、OI（串行 CCXT） |
 | 24a | data_collector_context | 10min | io | volume ranking、Hyperliquid、DefiLlama、CoinGecko、macro、Coinalyze、稀疏 derivatives history；独立 55s 时间盒 |
 | 25 | okx_demo_symbols | 4h | io | Refresh OKX demo symbol list |
-| 26 | guard_promotion | cron 04:00 CST | io | Promote candidate trading guards to active (learning; re-homed from deleted backtest_orchestrator, Position C) |
+| 26 | guard_promotion | cron 04:00 CST | io | Learned-guard TTL expiry only; persisted job identity retained, automatic promotion/deprecation by historical loss rate deleted |
 | 27 | universe_refresh | 10min | io | Universe composition refresh |
 | 28 | ohlcv_nightly_backfill | cron (configurable) CST | io | Historical OHLCV gap fill |
 | 29 | ohlcv_active_backfill | interval `historical_data.active_universe_backfill_interval_minutes` (optional) | io | Bounded exact-instrument repair for active members below the OHLCV minimum; durable backoff |
@@ -327,8 +327,9 @@ was `evaluate_trading_opportunity`; that entry evaluator is now also retired.
 Current entry is Candidate → PlanningGeneration → Planner/Compiler → EntryPlan. Legacy
 `strategy_records` / `backtest_runs` / `backtest_trades` tables are kept read-only
 for historical attribution (not written to). The deterministic `guard_promotion`
-job (candidate trading guards → active; a learning task) was re-homed from the
-deleted daily backtest cycle and now runs standalone (see scheduler_contract §job table).
+job was re-homed from the deleted daily backtest cycle. Its retained schedule now
+only performs learned-guard TTL expiry; candidate promotion is explicit owner review
+(see scheduler_contract §job table).
 
 ---
 

@@ -572,9 +572,12 @@ current Contract behavior.
    becomes active observation; this storage transition does not grant block or
    score-penalty authority.
 
-`config.guard.auto_promote_enabled` is a legacy setting. The scheduled job cannot
-promote or unshadow normal auto-generated candidates, and manual/seed guards are
-excluded from that job. Historical match counts alone never grant authority.
+`config.guard.auto_promote_enabled` is a historical config field with no runtime
+consumer. The retained `guard_promotion` scheduler identity only runs existing TTL
+expiry maintenance; loss-rate promotion/deprecation and their private write helpers
+are deleted. Manual/seed guards are excluded from expiry. The existing scheduler
+pause/Learning job gates remain unchanged; reviewer promotion health is not an expiry
+dependency. Historical match counts never grant authority.
 
 Promotion must preserve auditability:
 
