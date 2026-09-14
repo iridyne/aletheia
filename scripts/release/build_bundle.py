@@ -20,7 +20,7 @@ _FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
 
 _REQUIRED_ROOT_FILES = (Path("pyproject.toml"), Path("uv.lock"))
 _OPTIONAL_ROOT_FILES = (Path("README.md"), Path("LICENSE"), Path("LICENSE.md"))
-_REQUIRED_TREES = (Path("aletheia"), Path("scripts/runtime"))
+_REQUIRED_TREES = (Path("core/aletheia"), Path("scripts/runtime"))
 _EXCLUDED_DIR_NAMES = {
     "__pycache__",
     ".pytest_cache",
@@ -81,7 +81,7 @@ def _resolve_git_sha(root: Path, explicit: str | None) -> str:
 
 def _project_metadata(root: Path) -> tuple[str, str]:
     pyproject = root / "pyproject.toml"
-    init_file = root / "aletheia" / "__init__.py"
+    init_file = root / "core" / "aletheia" / "__init__.py"
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         project = data["project"]
@@ -106,10 +106,10 @@ def collect_bundle_files(root: Path) -> list[Path]:
     and a few root lock/metadata files are considered.
     """
     root = root.resolve()
-    dashboard_index = root / "aletheia" / "dashboard_static" / "index.html"
+    dashboard_index = root / "core" / "aletheia" / "dashboard_static" / "index.html"
     if not dashboard_index.is_file():
         raise BundleBuildError(
-            "aletheia/dashboard_static/index.html is missing; build the dashboard before the bundle"
+            "core/aletheia/dashboard_static/index.html is missing; build the dashboard before the bundle"
         )
     dashboard = dashboard_index.parent
     modern_markers = (

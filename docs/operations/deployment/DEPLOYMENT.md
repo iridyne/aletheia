@@ -230,7 +230,7 @@ uv run aletheia update
 ```powershell
 cd frontend
 npm run build
-# 产物写入 aletheia/dashboard_static/（gitignored）
+# 产物写入 core/aletheia/dashboard_static/（gitignored）
 cd ..
 uv run aletheia gateway restart --no-browser
 ```

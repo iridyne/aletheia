@@ -20,7 +20,7 @@ for package in ("keyring.backends", "ccxt", "yfinance", "feedparser"):
     hiddenimports.extend(collect_submodules(package))
 
 _datas = [
-    (str(ROOT / "aletheia" / "dashboard_static"), "aletheia/dashboard_static"),
+    (str(ROOT / "core" / "aletheia" / "dashboard_static"), "aletheia/dashboard_static"),
 ]
 for package in ("certifi", "keyring", "ccxt"):
     _datas.extend(collect_data_files(package, include_py_files=False))
