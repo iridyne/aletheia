@@ -30,11 +30,35 @@ blocked = {blocked!r}
 class RejectOptional:
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == name or fullname.startswith(name + '.') for name in blocked):
-            raise ImportError('unavailable optional implementation: ' + fullname)
+            raise ModuleNotFoundError('unavailable optional implementation: ' + fullname, name=fullname)
 sys.meta_path.insert(0, RejectOptional())
 module = importlib.import_module({target!r})
 {action}
 assert not any(name == prefix or name.startswith(prefix + '.') for name in sys.modules for prefix in blocked)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("error_type", ["ImportError", "ModuleNotFoundError"])
+def test_credential_route_internal_import_defect_is_not_optional_absence(error_type):
+    script = f"""
+import builtins
+original = builtins.__import__
+def importing(name, *args, **kwargs):
+    if name == 'aletheia.exchanges.credential_routes':
+        raise {error_type}('broken internal import', name='aletheia.trust.missing_internal')
+    return original(name, *args, **kwargs)
+builtins.__import__ = importing
+try:
+    import aletheia.server.app
+except {error_type} as exc:
+    assert exc.name == 'aletheia.trust.missing_internal'
+else:
+    raise AssertionError('internal import defect was hidden')
 """
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[2],
