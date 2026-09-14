@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
@@ -545,6 +546,7 @@ async def _fetch_single_feature(
     snapshot_buffer: list[UniverseFeatureSnapshot] | None = None,
     force_persist: bool = False,
     *, diagnostics_out: dict[str, object] | None = None,
+    taker_reader: Callable[[str], Awaitable[float | None]] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -837,37 +839,11 @@ async def _fetch_single_feature(
 
         # Taker buy/sell ratio. Only the event family uses it, and event only
         # fires on a sharp 1h move — so fetch it lazily for movers to keep the
-        # scan cheap. Venue-matched: Binance fapi or OKX rubik taker-volume.
+        # scan cheap. Data owns native venue endpoints and response decoding.
         if return_1h is not None and abs(return_1h) > _TAKER_FETCH_THRESHOLD:
-            ex_id = getattr(exchange, "id", "")
             try:
-                if ex_id == "binance":
-                    raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
-                    taker_data = await asyncio.wait_for(
-                        exchange.fapipublic_get_takerlongshortratio({
-                            "symbol": raw_sym, "period": "1h", "limit": 1,
-                        }),
-                        timeout=5.0,
-                    )
-                    if taker_data and len(taker_data) > 0:
-                        ratio = float(taker_data[0].get("buySellRatio", 0))
-                        if ratio > 0:
-                            taker_buy_ratio = ratio
-                elif ex_id == "okx":
-                    base = symbol.split("/")[0]
-                    resp = await asyncio.wait_for(
-                        exchange.public_get_rubik_stat_taker_volume({
-                            "ccy": base, "instType": "CONTRACTS", "period": "1H",
-                        }),
-                        timeout=5.0,
-                    )
-                    rows = (resp or {}).get("data") or []
-                    if rows:
-                        # OKX taker-volume row = [ts, sellVol, buyVol]
-                        sell_vol = float(rows[0][1])
-                        buy_vol = float(rows[0][2])
-                        if sell_vol > 0:
-                            taker_buy_ratio = buy_vol / sell_vol
+                if taker_reader is not None:
+                    taker_buy_ratio = await taker_reader(symbol)
             except Exception:
                 pass
 
@@ -1193,6 +1169,8 @@ async def collect_features(
                             str(asset.get("id") or "") in priority_asset_ids
                         ),
                         diagnostics_out=local_diagnostics,
+                        taker_reader=(getattr(perp_provider, "get_taker_buy_ratio", None)
+                                      if _is_derivatives_market(asset.get("market_type")) else None),
                     )
                 except Exception as e:
                     local_diagnostics["ohlcv_unavailable"] = 1
@@ -1256,4 +1234,3 @@ async def collect_features(
 
     logger.info("Features collected for %d / %d assets", len(results), len(assets))
     return results
-

@@ -299,6 +299,11 @@ class MarketDataProvider(Protocol):
     capability explicitly; ordinary OHLCV support does not imply it, and its
     absence is unavailable rather than permission to use a writable read.
 
+    The optional async ``get_taker_buy_ratio(symbol) -> float | None`` reads
+    the existing primary venue's 1h buy/sell ratio without writes or fallback.
+    Unsupported reads return None; acquisition errors propagate to the caller.
+    Core owns whether a feature observation warrants this optional request.
+
     The optional async ``get_market_instruments()`` capability returns active
     USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
     primary venue, without persistence or cross-venue fallback. Core retains
