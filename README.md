@@ -2,9 +2,9 @@
 
 Aletheia is an internal, local-first AI trading system that turns market
 evidence into risk-gated decisions, external Demo/Testnet execution, cost-complete
-outcomes, and measurable learning evidence. The active scope covers crypto
-spot/perpetuals and the narrowly declared stock-linked perpetual profile through
-explicitly configured `bitget_demo`, `okx_demo`, or `binance_testnet` accounts.
+outcomes, and measurable learning evidence. The active qualification scope is
+crypto spot/perpetuals through the Bitget Exchange Extension in `bitget_demo`.
+Retained OKX/Binance identities and the former stock-linked profile are frozen;
 Live trading and other research surfaces remain outside that core.
 
 The canonical support contracts are [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md)
@@ -52,7 +52,7 @@ flowchart LR
     D --> E[Risk Engine]
     E -->|approved| F[Execution Gateway]
     E -->|rejected| G[Risk evidence]
-    F --> H[Configured exchange Demo/Testnet]
+    F --> H[Bitget Demo Extension]
     H --> I[Fill / position / settlement]
     I --> J[Cost-complete genuine outcome]
     J --> K[Attribution and learning measurement]
@@ -68,10 +68,10 @@ Observation Lab evidence cannot grant trading authority.
 | Area | Position |
 | --- | --- |
 | Local runtime, scheduler, market data, dynamic universe | Supported core |
-| Candidate / Opportunity → Operator → Risk → configured external Demo/Testnet | Declared active flow; exact route qualification required |
+| Candidate / Opportunity → Operator → Risk → Bitget Demo Extension | Declared active flow; exact route qualification required |
 | Position lifecycle and cost-complete outcomes | External Fill and verified economic evidence required |
 | Observation Lab | Evidence infrastructure; zero trading authority |
-| Declared stock-linked perpetual profile | Bounded active scope; exact instrument capability required |
+| Former stock-linked perpetual profile | Frozen; historical identity remains readable, no new-entry support |
 | Serenity research and preferences | Experimental |
 | Other equity and prediction-market execution | Outside active scope |
 | Live execution | Outside Supported core; explicit owner authority required |

@@ -36,7 +36,6 @@
 | `news_fetch` | 15min(可配) | `news_items(status=new)` | news_analyze | ✅ RSS I/O 与 LLM 分离 |
 | `news_analyze` | 5min | 更新 `news_items` sentiment/relevance/status | Market Observer + Research Worker | ✅ 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
 | owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted `perp_structure_snapshots` + source/batch hash + coverage/universe audit; no holder rows or identities; seeds `perp_structure_shadow_outcomes` | Market Observer/System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | 🟡 no automatic endpoint/scheduler; retrospective imports fail evaluation; cost-aware unavailable; decision influence disabled |
-| `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
 
 ---
 
