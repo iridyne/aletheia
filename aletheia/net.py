@@ -354,8 +354,8 @@ class _RetryingTransport(httpx.AsyncBaseTransport):
                         pass
                     wait = self._initial_backoff * (2 ** attempt)
                     logger.debug(
-                        "HTTP %d from %s — retrying in %.1fs (attempt %d/%d)",
-                        response.status_code, request.url, wait,
+                        "HTTP %d — retrying in %.1fs (attempt %d/%d)",
+                        response.status_code, wait,
                         attempt + 1, self._max_retries + 1,
                     )
                     await asyncio.sleep(wait)
@@ -366,8 +366,8 @@ class _RetryingTransport(httpx.AsyncBaseTransport):
                 if attempt < self._max_retries:
                     wait = self._initial_backoff * (2 ** attempt)
                     logger.debug(
-                        "Transient %s for %s — retrying in %.1fs (attempt %d/%d)",
-                        type(e).__name__, request.url, wait,
+                        "Transient %s — retrying in %.1fs (attempt %d/%d)",
+                        type(e).__name__, wait,
                         attempt + 1, self._max_retries + 1,
                     )
                     await asyncio.sleep(wait)
@@ -399,7 +399,7 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
             response = await self._proxy_transport.handle_async_request(request)
             if response.status_code in self._PROXY_ERROR_CODES:
                 invalidate_proxy_cache()
-                logger.debug("Proxy returned %d for %s — retrying direct", response.status_code, request.url)
+                logger.debug("Proxy returned %d — retrying direct", response.status_code)
                 try:
                     await response.aread()
                 except Exception:
@@ -410,7 +410,7 @@ class _ProxyFallbackTransport(httpx.AsyncBaseTransport):
             return response
         except (httpx.ProxyError, httpx.ConnectError, httpx.ConnectTimeout) as e:
             invalidate_proxy_cache()
-            logger.debug("Proxy error for %s (%s) — retrying direct", request.url, e)
+            logger.debug("Proxy error (%s) — retrying direct", type(e).__name__)
             return await self._direct_transport.handle_async_request(request)
 
     async def aclose(self) -> None:

@@ -22,6 +22,36 @@ def clear_cache():
     _proxy_reachable_cache.clear()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("proxy", [False, True])
+@pytest.mark.parametrize("failure", ["status", "exception"])
+async def test_transport_retry_logs_exclude_credentials(proxy, failure, caplog):
+    caplog.set_level("DEBUG", logger="aletheia.net")
+    request = httpx.Request("GET", "https://example.invalid/data?api_key=synthetic-secret")
+    first = (httpx.Response(503) if failure == "status" else
+             httpx.ConnectError(str(request.url), request=request))
+    if proxy:
+        transport = _ProxyFallbackTransport("http://127.0.0.1:7897")
+        transport._proxy_transport.handle_async_request = AsyncMock(
+            side_effect=first if isinstance(first, Exception) else None,
+            return_value=first,
+        )
+        transport._direct_transport.handle_async_request = AsyncMock(
+            return_value=httpx.Response(200),
+        )
+    else:
+        inner = httpx.MockTransport(lambda req: httpx.Response(200))
+        inner.handle_async_request = AsyncMock(side_effect=[first, httpx.Response(200)])
+        transport = _RetryingTransport(inner, max_retries=1, initial_backoff=0)
+    try:
+        assert (await transport.handle_async_request(request)).status_code == 200
+        assert caplog.records
+        assert "synthetic-secret" not in caplog.text
+        assert request.url.params["api_key"] == "synthetic-secret"
+    finally:
+        await transport.aclose()
+
+
 class TestProxyFallbackTransport:
     @pytest.mark.asyncio
     async def test_normal_request_goes_through_proxy(self):
