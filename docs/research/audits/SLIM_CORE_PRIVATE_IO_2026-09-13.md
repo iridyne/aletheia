@@ -233,6 +233,20 @@ binds its own repository root before importing the app; its subprocess regressio
 compares the full schema to the current app. Regeneration then changes only the
 nullable setup field, not unrelated optional routes.
 
+## Pure market facts
+
+The market-fact audit at `0f188b5694c21b38caa8b4c8177f953047f6d340` found
+Core's causal-window, Planner and market-structure consumers importing the
+concrete CCXT provider solely for bar durations. The existing timeframe mapping
+and exact-ticker-venue validator now belong to the existing pure `data.providers`
+module. Their AST is unchanged, as is all caller logic outside imports. CCXT
+uses the shared duration function for trailing-bar closure; old helper exports
+are deleted with no forwarding aliases. Fresh-process evidence proves causal
+window handling and market-structure import remain available without the
+concrete provider. Fetching consumers still using CCXT construction are a
+separate, unfinished boundary; no data source, fallback, persistence or
+qualification semantics change here.
+
 ## Startup filesystem repair ownership
 
 The brokerless composition audit at `0f188b5694c21b38caa8b4c8177f953047f6d340`
