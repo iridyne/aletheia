@@ -38,7 +38,8 @@ def test_open_futures_position_yields_perp_instrument(monkeypatch):
     # positions store the execution vocabulary "usdt_futures"; InstrumentId needs "perp".
     monkeypatch.setattr(
         repo, "list_all_open_positions",
-        lambda: [{"symbol": "BTC/USDT", "market_type": "usdt_futures"}],
+        lambda: [{"symbol": "BTC/USDT", "market_type": "usdt_futures",
+                  "execution_mode": "bitget_demo"}],
     )
 
     insts = md._build_dynamic_instruments(_cfg())
