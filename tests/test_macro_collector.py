@@ -54,6 +54,97 @@ def _make_fake_httpx(payload: dict[str, Any]):
     return fake_httpx_client
 
 
+def test_fred_boundary_resolves_only_its_credential_reference(monkeypatch):
+    import aletheia.config.secrets as secrets
+
+    requested: list[str] = []
+
+    async def fetch_fred(key):
+        assert key == "configured"
+        return (1, 2, 3, 4)
+
+    async def fetch_research(key):
+        assert key == "configured"
+        return ["research"]
+
+    monkeypatch.setattr(
+        secrets,
+        "get_secret",
+        lambda key: requested.append(key) or "configured",
+    )
+    monkeypatch.setattr(macro_mod, "_fetch_fred", fetch_fred)
+    monkeypatch.setattr(macro_mod, "_fetch_fred_research", fetch_research)
+
+    async def collect():
+        fred, research = macro_mod._fred_coroutines()
+        return await fred, await research
+
+    assert asyncio.run(collect()) == ((1, 2, 3, 4), ["research"])
+    assert requested == ["fred_api_key"]
+
+
+def test_fred_boundary_without_key_skips_provider_request(monkeypatch):
+    async def unexpected_fred(_key):
+        raise AssertionError("unexpected FRED request")
+
+    async def fetch_research(key):
+        assert key is None
+        return ["not_configured"]
+
+    monkeypatch.setattr(macro_mod, "_load_fred_api_key", lambda: None)
+    monkeypatch.setattr(macro_mod, "_fetch_fred", unexpected_fred)
+    monkeypatch.setattr(macro_mod, "_fetch_fred_research", fetch_research)
+
+    fred, research = macro_mod._fred_coroutines()
+
+    assert fred is None
+    assert asyncio.run(research) == ["not_configured"]
+
+
+def test_fred_failures_do_not_expose_credentials(monkeypatch, caplog):
+    from types import SimpleNamespace
+
+    secret = "fred-secret"
+
+    @asynccontextmanager
+    async def client(**kwargs):
+        class Fake:
+            async def get(self, *args, **kwargs):
+                raise RuntimeError(f"https://example.invalid?api_key={secret}")
+
+        yield Fake()
+
+    monkeypatch.setattr(macro_mod, "httpx_client", client)
+    assert asyncio.run(macro_mod._fetch_fred(secret)) == (None, None, None, None)
+
+    async def fetch_fred(_key):
+        raise RuntimeError(f"https://example.invalid?api_key={secret}")
+
+    async def fetch_research(_key):
+        return []
+
+    async def fetch_coingecko():
+        return (50.0, 1e12, 1.0)
+
+    monkeypatch.setattr(macro_mod, "_load_fred_api_key", lambda: secret)
+    monkeypatch.setattr(macro_mod, "_fetch_fred", fetch_fred)
+    monkeypatch.setattr(macro_mod, "_fetch_fred_research", fetch_research)
+    monkeypatch.setattr(macro_mod, "_fetch_coingecko", fetch_coingecko)
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None)
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(
+            market_data=SimpleNamespace(enable_fear_greed=False),
+        ),
+    )
+
+    result = asyncio.run(MacroCollector().collect([]))
+
+    assert "fred:request_failed" in result["errors"]
+    assert secret not in repr(result)
+    assert secret not in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # 1. _fetch_fng — happy path
 # ---------------------------------------------------------------------------
