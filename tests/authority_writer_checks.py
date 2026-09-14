@@ -69,7 +69,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                         assert all(alias.name != "*" for alias in node.names), (path, node.lineno)
                     for alias in node.names:
                         check_writer(alias.name)
-                        if alias.name in owners and parents[node] is tree:
+                        if alias.name in owners and parent is None:
                             assert alias.asname in {None, alias.name}, (path, node.lineno, "writer re-export")
                 if isinstance(node, ast.Call):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
