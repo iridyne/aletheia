@@ -31,23 +31,19 @@ def merge_protective_stop(
 
 
 def place_exchange_protective_orders(position: dict) -> dict:
-    """Place exchange-side reduce-only SL/TP for an EXISTING position (e.g. an
-    adopted one), when enabled and supported. Broker-agnostic dispatch, non-fatal.
+    """Execution-owned dispatch of reduce-only SL/TP for an existing position.
 
     Gating (both must hold, else no-op returning {}):
       1. cfg.trading.exchange_tpsl_enabled is True (the global feature switch;
          defaults False → this is dormant until the operator opts in).
       2. execution_mode is a DEMO mode. Live is deliberately excluded: the
-         reconciler auto-adopts, so placing an exchange order on a live position
-         would be an AUTONOMOUS LIVE ORDER (forbidden by the safety rules). Live
-         adopted positions keep their DB stop/tp for human/position_manager use.
+         placing an exchange order on a live position would be an AUTONOMOUS
+         LIVE ORDER (forbidden by the safety rules).
 
-    Adoption parity: entry paths already persist brackets at open. This closes the
-    gap where adopt_position persisted DB stop/tp but never placed the exchange-side
-    bracket, leaving adopted positions without native protection when the gateway is
-    down. Returns placed ids ({} if none). Bitget-demo parity is a trivial follow-up
-    (adopt is OKX-only today — the active paper broker is okx_demo).
+    Reconciliation/adoption must not invoke this mutation path. Returns placed
+    ids ({} if none); Gateway and the coordinator retain execution authority.
     """
+    from aletheia.config.exchanges import execution_mode_environment
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -60,7 +56,7 @@ def place_exchange_protective_orders(position: dict) -> dict:
     if not stop and not tp:
         return {}
 
-    if mode in {"okx_demo", "bitget_demo"}:
+    if execution_mode_environment(mode) == "demo":
         from aletheia.execution.gateway import place_exchange_protection
         return place_exchange_protection(position["id"])
     return {}
@@ -82,6 +78,7 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
       1. cfg.trading.exchange_tpsl_enabled True (default False)
       2. execution_mode is a DEMO/TESTNET mode (never an autonomous live order).
     """
+    from aletheia.config.exchanges import execution_mode_environment
     from aletheia.config.loader import load_config
     from aletheia.storage import repositories as _repo
 
@@ -93,18 +90,19 @@ def replace_exchange_protective_stop(position_id: str, new_stop_price: float) ->
         return False
 
     mode = row.get("execution_mode") or ""
-    if mode in {"bitget_demo", "okx_demo"}:
+    environment = execution_mode_environment(mode)
+    if environment == "demo":
         from aletheia.execution.gateway import replace_exchange_protective_stop
         return replace_exchange_protective_stop(position_id, new_stop_price)
-    elif mode == "binance_testnet":
-        # Binance USDT-M client currently exposes only place_order (no
+    elif environment == "testnet":
+        # The currently supported testnet client exposes only place_order (no
         # place_stop / cancel_algo yet). The DB stop_price is still tightened by
         # the caller — the exchange bracket just can't be replaced until the
         # client grows a stop-order surface. Log so this doesn't fail silently
-        # if a user opts into exchange_tpsl_enabled on a Binance testnet account.
+        # if a user opts into exchange_tpsl_enabled on a testnet account.
         import logging as _log
         _log.getLogger("aletheia.execution.stops").warning(
-            "Binance trailed-stop exchange replacement not implemented "
+            "Testnet trailed-stop exchange replacement not implemented "
             "(position %s); DB stop_price tightened but exchange bracket unchanged.",
             position_id,
         )
