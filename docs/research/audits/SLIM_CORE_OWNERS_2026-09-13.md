@@ -91,7 +91,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Position entry | `insert_position`: native private-fill materialization or explicit external-position adoption | These represent distinct provenance. Generic compatible-position coalescing needs exact Plan/account audit before changing it. |
 | Position field groups | Repository materialization / exit-plan / observation / closed-settlement field allowlists and status CAS | Producers span materializer, position manager, protection coordinator, reconciler and PnL; field ownership is not proof of one high-level owner. |
 | Close lifecycle | `finalize_position_close`: `pnl._commit_close_economics` or `outcome_closure.close_position_administrative` | Administrative lifecycle closure must remain distinct from cost-complete strategy Outcome admission. |
-| Final PnL / eligibility | Shared `pnl._commit_close_economics` and `analytics.outcome_integrity`; funding recovery and hooks use existing boundaries | Owner accepted the #3134 D1 same-Plan per-leg ancestry exception in Learning §11.1. Shared writer/read eligibility checks retain exact account and economic gates; no historical backfill or runtime qualification is claimed. |
+| Final PnL / eligibility | Shared `pnl._commit_close_economics` and `analytics.outcome_integrity`; delayed cost completion calls the same commit operation | The eight named settlement calls are classified below. Attribution retry may update only eligibility/reason; expired funding may update only its exclusion/evidence fields; exit explanation may update only reasoning. These operations cannot directly write final PnL. Owner-approved same-Plan per-leg ancestry remains unchanged; no historical backfill or runtime qualification is claimed. |
 | Pause / resume | `agent_runtime.pause_ownership` durable leases, lock and config mutation; scheduler pause/resume and resume gates consume it | Separate owner leases coordinate one pause state; optional components may not bypass leases or independently clear authority. |
 | Execution identity | `config.exchanges.EXECUTION_MODE_ENVIRONMENTS`, `EXECUTION_MODE_VENUES`, and derived Demo/Live/External sets; Gateway, Risk, lifecycle cleanup, startup scope and reconciliation consume these helpers/sets | UTA profile composition and venue-native recovery branches remain explicit exceptions; unknown identities stay unavailable. |
 | Historical Position repair | Schema migrations, bounded Outcome remediation and fixed-target #3111 overlap repair | The #3111 helper is explicit module CLI only, exact-snapshot/evidence checked and audit-idempotent; no production importer/caller. No repair was executed in this audit. |
@@ -119,6 +119,37 @@ private evidence. This is not an arbitrary dynamic-SQL proof, a complete Order
 transition-writer audit, or runtime qualification.
 
 ## Fitness baseline and next proof
+
+### Closed-Position settlement call inventory
+
+At base `54795398bd91f0b58db03dc06cb599a740c49b7c`, AST inspection across
+production roots and scripts found eight calls to the final-close, closed-field
+and canonical economic-commit operations. They represent these distinct facts:
+
+| Fact / caller | Mutation boundary | Proof required by existing implementation |
+| --- | --- | --- |
+| Initial economic close: `pnl.close_position` | `_commit_close_economics` then `finalize_position_close` | Current open Position, close evidence/completeness assessment, caller's writer transaction, atomic close event and hook enrollment. |
+| Late cost completion: `broker_funding_settlement.materialize_exchange_close_costs` | The same `_commit_close_economics`, then `update_closed_position_settlement` | Unchanged incomplete close and matching NULL-economics close event; rechecked funding/fee evidence, no overwrite of known costs/economics. |
+| Administrative closure: `outcome_closure.close_position_administrative` | `finalize_position_close` | Exact reconciliation identity/evidence and open-state CAS; no verified exit, final PnL or eligible strategy Outcome is fabricated. |
+| Attribution retry: `outcome_hooks._load_eligible_position` | Closed-field writer: `outcome_eligible`, `outcome_exclusion_reason` only | Existing `attribution_read_failed` marker, re-read under writer lock, shared eligibility assessment and audit. It is not a cost-completion operation. |
+| Expired funding: `broker_funding_settlement._terminalize_funding_history_expired` | Closed-field writer: `funding_source`, eligibility/reason, reconciliation evidence only | Typed retention proof, exact unchanged closed snapshot and one matching NULL-economics event; stale evidence is a no-op. It does not turn unavailable funding into zero. |
+| Exit explanation: `pnl.persist_exit_reasoning` | Closed-field writer: `exit_reasoning` only | Position already closed; explanation cannot create a close or alter economics. |
+
+`tests/test_position_update_ownership.py` now checks the eight exact named-call
+owners, rejects named-writer callback/alias escape and restricts the three narrow field
+writers. The existing raw-Position guard is expanded from an uppercase
+substring under `aletheia/` to literal SQL and generic-helper checks across
+`aletheia/`, `core/`, `extensions/`, `legacy/`, `ops/` and `scripts/`, including
+case, quoted identifiers and schema-qualified names. Existing repository,
+migration and explicitly bounded historical-repair exceptions are unchanged.
+
+These are executable named-call/literal-write protections, not arbitrary
+dynamic-SQL or every callback/data-flow proof. Existing cost, administrative
+close, attribution retry and retention regressions establish the behavioral
+distinctions above. This batch changes no production code, state transitions,
+eligibility rule, repair authority or historical data.
+
+### Earlier focused baseline
 
 Exact-base focused baseline: 32 passed, 2 failed, 12 spec claims. Failures were
 the omitted fixed-target #3111 repair in the raw-Position-writer inventory and

@@ -11,6 +11,8 @@ import pytest
 from tests import test_broker_funding_economics as funding_tests
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
+configured_funding_retention = funding_tests.configured_funding_retention
+
 
 @spec_claim(
     SpecClaim(
@@ -60,12 +62,21 @@ async def test_delayed_broker_funding_rejects_stale_position_after_await(
     )
     monkeypatch.setattr(settlement, "_uta_funding_ledger", funding_ledger)
     task = asyncio.create_task(settlement.settle_unsettled_exchange_closes(limit=1))
-    await reader_started.wait()
-    force_update_position(position_id, current_price=999.0)
-    before = funding_tests._broker_funding_state(position_id)
-    release_reader.set()
-
-    result = await task
+    started = asyncio.create_task(reader_started.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {task, started}, timeout=10, return_when=asyncio.FIRST_COMPLETED,
+        )
+        assert started in done, task.result() if task.done() else "funding reader did not start"
+        force_update_position(position_id, current_price=999.0)
+        before = funding_tests._broker_funding_state(position_id)
+        release_reader.set()
+        result = await asyncio.wait_for(task, timeout=10)
+    finally:
+        release_reader.set()
+        started.cancel()
+        task.cancel()
+        await asyncio.gather(started, task, return_exceptions=True)
     assert result["settled"] == 0
     assert result["still_pending"] == 1
     assert len(result["errors"]) == 1 and position_id in result["errors"][0]
