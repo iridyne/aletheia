@@ -12,7 +12,7 @@ def test_1467_trailing_stop_exchange_before_db():
     
     If exchange call fails, we must NOT update local DB (no split state).
     Source inspection: _maybe_update_trailing_stop() should call
-    replace_exchange_protective_stop() before persist_position_exit_plan().
+    replace_exchange_protective_stop() before update_open_position_exit_plan().
     """
     with open("core/aletheia/portfolio/position_manager.py") as f:
         source = f.read()
@@ -35,10 +35,10 @@ def test_1467_trailing_stop_exchange_before_db():
     
     # Find positions of key calls
     exchange_call_pos = func_text.find("replace_exchange_protective_stop")
-    persist_call_pos = func_text.find("persist_position_exit_plan")
+    persist_call_pos = func_text.find("update_open_position_exit_plan")
     
     assert exchange_call_pos != -1, "replace_exchange_protective_stop call not found"
-    assert persist_call_pos != -1, "persist_position_exit_plan call not found"
+    assert persist_call_pos != -1, "update_open_position_exit_plan call not found"
     
     # Exchange call MUST come before persist call (lower position = earlier in text)
     assert exchange_call_pos < persist_call_pos, (

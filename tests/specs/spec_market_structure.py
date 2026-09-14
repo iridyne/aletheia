@@ -142,7 +142,7 @@ def test_market_structure_provider_historical_cutoff_is_replay_stable():
 ))
 def test_latest_close_time_and_spot_only_provider_guards_are_structural():
     from aletheia.data import market_structure
-    from aletheia.data.sources import binance_public
+    from extensions.exchanges.binance import public_market_data as binance_public
 
     snapshot_source = inspect.getsource(market_structure.MarketStructureProvider)
     spot_guard_source = inspect.getsource(binance_public._spot_canonical)

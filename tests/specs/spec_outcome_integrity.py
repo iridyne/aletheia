@@ -335,12 +335,15 @@ def test_analytics_routes_expose_raw_and_genuine_cohorts():
 )
 def test_history_remediation_tool_declares_non_destructive_protocol():
     assert importlib.util.find_spec("aletheia.maintenance.outcome_integrity") is not None
-    source = _source("core/aletheia/maintenance/outcome_integrity.py")
+    planner = _source("core/aletheia/maintenance/outcome_integrity.py")
+    operator = _source("ops/maintenance/outcome_integrity.py")
+    source = planner + operator
     for token in (
         "dry_run", "semantics_version", "superseded_by", "archive",
         "compensation_candidates", "owner_approval_required",
     ):
         assert token in source
+    assert "UPDATE positions" not in planner
     assert "DELETE FROM positions" not in source.upper()
 
 
