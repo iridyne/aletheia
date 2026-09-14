@@ -119,7 +119,7 @@ async def probe_exchange(cfg=None) -> dict:
         return {
             "reachable": False,
             "latency_ms": None,
-            "error": str(e)[:200],
+            "error": type(e).__name__,
             "exchange": exchange_name,
         }
 
