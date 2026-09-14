@@ -19,6 +19,77 @@ from aletheia.storage.migrations import run_migrations
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exchange", ["", "unsupported"])
+@pytest.mark.parametrize("external_reachable", [False, True])
+async def test_missing_exchange_probe_cannot_prove_connectivity(
+    monkeypatch, exchange, external_reachable,
+):
+    from aletheia.agent_runtime import connectivity
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.name = exchange
+    external = {
+        "reachable": external_reachable,
+        "latency_ms": 10 if external_reachable else None,
+        "error_code": None if external_reachable else "ConnectTimeout",
+    }
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value=external))
+    http_client = MagicMock(side_effect=AssertionError("No exchange endpoint to contact"))
+    monkeypatch.setattr("aletheia.net.httpx_client", http_client)
+
+    result, egress = await connectivity._probe_exchange_and_external(cfg)
+
+    assert egress == external
+    assert result == {
+        "reachable": False,
+        "latency_ms": None,
+        "error": "exchange_probe_unavailable",
+        "exchange": exchange,
+    }
+    http_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exchange", ["bitget", "okx", "binance"])
+@pytest.mark.parametrize("preference", [None, "", "stale", "okx"])
+async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange, preference):
+    from contextlib import asynccontextmanager
+    from aletheia.agent_runtime import connectivity
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.name = exchange if preference is None else preference
+    if preference is not None:
+        from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+        cfg.exchange.paper_execution_mode = EXCHANGE_UNIFICATION_MAP[exchange][1]
+    client = MagicMock(get=AsyncMock(return_value=MagicMock(status_code=200)))
+
+    @asynccontextmanager
+    async def http_client(**kwargs):
+        yield client
+
+    monkeypatch.setattr("aletheia.net.httpx_client", http_client)
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value={
+        "reachable": False, "latency_ms": None, "error_code": "ConnectTimeout",
+    }))
+    result, egress = await connectivity._probe_exchange_and_external(cfg)
+    client.get.assert_awaited_once_with(connectivity._EXCHANGE_ENDPOINTS[exchange])
+    assert result["reachable"] is True
+    assert result["exchange"] == exchange
+    assert egress == {
+        "reachable": True, "latency_ms": result["latency_ms"], "error_code": None,
+    }
+
+    pause = AsyncMock()
+    monkeypatch.setattr(connectivity, "_pause_for_network", pause)
+    monkeypatch.setattr(connectivity, "_record_probe_result", lambda result: result)
+    monkeypatch.setattr(connectivity, "_record_external_probe_result", lambda result: result)
+    await connectivity.startup_exchange_gate(cfg)
+    pause.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("settings", [False, True])
 async def test_network_diagnostic_errors_hide_proxy_credentials(monkeypatch, settings):
     from contextlib import asynccontextmanager
@@ -33,7 +104,9 @@ async def test_network_diagnostic_errors_hide_proxy_credentials(monkeypatch, set
 
     monkeypatch.setattr("aletheia.net.httpx_client", client)
     result = (await test_network_proxy() if settings else
-              await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(name="bitget"))))
+              await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(
+                  name="bitget", paper_execution_mode="bitget_demo",
+              ))))
     assert result["reachable"] is False
     assert result["error"] == "RuntimeError"
     assert "synthetic-secret" not in repr(result)
@@ -92,6 +165,10 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     import aletheia.agent_runtime.connectivity as conn_mod
 
     cfg = load_config()
+    cfg.exchange.name = "okx"
+    cfg.health.require_llm_at_startup = False
+    loader.save_config(cfg)
+    notifications = MagicMock()
     resume_loop = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.pause_scheduler",
@@ -100,7 +177,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     monkeypatch.setattr(conn_mod, "_exchange_auto_resume_loop", resume_loop)
     monkeypatch.setattr(
         "aletheia.notifications.notify_operator",
-        lambda *args, **kwargs: None,
+        notifications,
     )
 
     await conn_mod._pause_for_network(
@@ -109,7 +186,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
             "reachable": False,
             "latency_ms": None,
             "error": "timeout",
-            "exchange": cfg.exchange.name,
+            "exchange": "bitget",
         },
     )
     await asyncio.sleep(0)
@@ -120,6 +197,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     acquired_at = persisted.runtime.connectivity_pause_acquired_at
     assert persisted.runtime.paused is True
     assert persisted.runtime.paused_by_connectivity is True
+    assert persisted.runtime.pause_owners["exchange_connectivity"].reason == "bitget_unreachable"
     assert generation
     assert acquired_at
     datetime.fromisoformat(acquired_at)
@@ -135,6 +213,18 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
         if event.get("event_type") == "exchange_connectivity_paused"
     ]
     assert pause_events[-1]["after"]["pause_generation"] == generation
+    assert "bitget" in pause_events[-1]["message"]
+    assert "bitget" in notifications.call_args.args[1]
+
+    conn_mod._escalate_exchange_stall(cfg, {"exchange": "bitget", "error": "timeout"}, 3)
+    assert "bitget" in notifications.call_args.args[1]
+    conn_mod._record_probe_result({"exchange": "bitget", "reachable": True})
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.resume_scheduler", lambda: None)
+    assert await conn_mod._resume_from_network(cfg, pause_generation=generation) is True
+    assert "bitget" in notifications.call_args.args[1]
+    resume_events = [event for event in read_jsonl("audit.jsonl")
+                     if event.get("event_type") == "exchange_connectivity_resumed"]
+    assert "bitget" in resume_events[-1]["message"]
 
 
 @pytest.mark.asyncio

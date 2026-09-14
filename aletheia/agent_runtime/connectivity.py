@@ -93,14 +93,23 @@ async def probe_exchange(cfg=None) -> dict:
 
     Returns {reachable: bool, latency_ms: float|None, error: str|None, exchange: str}
     """
+    from aletheia.config.exchange_alignment import execution_exchange_for_mode
+
     if cfg is None:
         from aletheia.config.loader import load_config
         cfg = load_config()
 
-    exchange_name = cfg.exchange.name
+    exchange_name = execution_exchange_for_mode(
+        cfg.exchange.paper_execution_mode, configured_exchange=cfg.exchange.name,
+    ) or cfg.exchange.name
     url = _EXCHANGE_ENDPOINTS.get(exchange_name)
     if not url:
-        return {"reachable": True, "latency_ms": None, "error": None, "exchange": exchange_name}
+        return {
+            "reachable": False,
+            "latency_ms": None,
+            "error": "exchange_probe_unavailable",
+            "exchange": exchange_name,
+        }
 
     try:
         from aletheia.net import httpx_client
@@ -370,16 +379,17 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
     from aletheia.infra.events import emit_infra_event
     from aletheia.files.jsonl import write_audit
 
+    exchange = probe_result["exchange"]
     logger.warning(
         "Exchange %s unreachable for %d consecutive probes — pausing scheduler",
-        cfg.exchange.name, _consecutive_failures,
+        exchange, _consecutive_failures,
     )
 
     pause_generation = uuid4().hex
     pause_acquired_at = datetime.now(timezone.utc).isoformat()
     lease = acquire_pause(
         CONNECTIVITY_OWNER,
-        reason=f"{cfg.exchange.name}_unreachable",
+        reason=f"{exchange}_unreachable",
         generation=pause_generation,
         acquired_at=pause_acquired_at,
         source="connectivity_monitor",
@@ -391,8 +401,8 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         severity="critical",
         source="connectivity_monitor",
         code="exchange_unreachable_paused",
-        message=f"Exchange {cfg.exchange.name} unreachable ({_consecutive_failures} probes) — trading paused",
-        entity_id=cfg.exchange.name,
+        message=f"Exchange {exchange} unreachable ({_consecutive_failures} probes) — trading paused",
+        entity_id=exchange,
     )
     write_audit({
         "actor": "system",
@@ -400,7 +410,7 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         "event_type": "exchange_connectivity_paused",
         "entity_type": "gateway",
         "entity_id": "gateway",
-        "message": f"Paused: {cfg.exchange.name} unreachable — {probe_result.get('error', '')}",
+        "message": f"Paused: {exchange} unreachable — {probe_result.get('error', '')}",
         "after": {
             "paused": True,
             "pause_owner": "connectivity",
@@ -413,7 +423,7 @@ async def _pause_for_network(cfg, probe_result: dict) -> None:
         from aletheia.notifications import notify_operator
         notify_operator(
             "Exchange Connectivity Lost",
-            f"Exchange {cfg.exchange.name} unreachable — trading paused. Auto-resume active.",
+            f"Exchange {exchange} unreachable — trading paused. Auto-resume active.",
             level="critical",
         )
     except Exception:
@@ -521,7 +531,7 @@ async def _exchange_auto_resume_loop(
 def _escalate_exchange_stall(cfg, last_result: dict, consecutive: int) -> None:
     """Notify operator about exchange connectivity stall."""
     error = last_result.get("error", "unknown")
-    exchange = cfg.exchange.name
+    exchange = last_result["exchange"]
     message = (
         f"Exchange {exchange} unreachable for {consecutive} consecutive probes "
         f"({consecutive}min+). Last error: {error}. "
@@ -584,6 +594,7 @@ async def _resume_from_network(
         )
         return True
     recovery_failure_generation = _exchange_failure_generation
+    exchange = (_last_probe_result or {}).get("exchange", cfg.exchange.name)
 
     # #146: the paused flag is shared with the LLM startup gate. If the LLM is still
     # unavailable, do NOT clear paused on exchange recovery — that would un-pause a
@@ -644,10 +655,10 @@ async def _resume_from_network(
             source="connectivity_monitor",
             code="exchange_connectivity_restored_paused",
             message=(
-                f"Exchange {cfg.exchange.name} reachable again — trading remains paused "
+                f"Exchange {exchange} reachable again — trading remains paused "
                 f"by {remaining}"
             ),
-            entity_id=cfg.exchange.name,
+            entity_id=exchange,
         )
         write_audit(
             {
@@ -680,8 +691,8 @@ async def _resume_from_network(
         severity="info",
         source="connectivity_monitor",
         code="exchange_connectivity_resumed",
-        message=f"Exchange {cfg.exchange.name} reachable again — trading resumed",
-        entity_id=cfg.exchange.name,
+        message=f"Exchange {exchange} reachable again — trading resumed",
+        entity_id=exchange,
     )
     write_audit(
         {
@@ -690,7 +701,7 @@ async def _resume_from_network(
             "event_type": "exchange_connectivity_resumed",
             "entity_type": "gateway",
             "entity_id": "gateway",
-            "message": f"Resumed: {cfg.exchange.name} connectivity restored",
+            "message": f"Resumed: {exchange} connectivity restored",
             "before": {
                 "paused": True,
                 "pause_owner": CONNECTIVITY_OWNER,
@@ -709,7 +720,7 @@ async def _resume_from_network(
 
         notify_operator(
             "Exchange Connectivity Restored",
-            f"Exchange {cfg.exchange.name} reachable — trading resumed.",
+            f"Exchange {exchange} reachable — trading resumed.",
             level="info",
         )
     except Exception:
@@ -732,10 +743,10 @@ async def startup_exchange_gate(cfg=None) -> None:
     _record_probe_result(result)
     _record_external_probe_result(external_result)
     if result["reachable"]:
-        logger.info("startup exchange gate: %s reachable (%.0fms)", cfg.exchange.name, result.get("latency_ms") or 0)
+        logger.info("startup exchange gate: %s reachable (%.0fms)", result["exchange"], result.get("latency_ms") or 0)
         return
 
-    logger.warning("startup exchange gate: %s unreachable — will pause", cfg.exchange.name)
+    logger.warning("startup exchange gate: %s unreachable — will pause", result["exchange"])
     # Startup is an immediate gate, so preserve the historical threshold value
     # used by pause/audit messaging even though only one probe has run.
     global _consecutive_failures
