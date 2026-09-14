@@ -1795,13 +1795,7 @@ export const api = {
 	updateOperatorConfig: (body: Partial<{ loop_enabled: boolean }>) =>
 		post<{ updated: Record<string, any> }>("/settings/operator", body),
 	updateGuardConfig: (
-		body: Partial<{
-			enabled: boolean;
-			enforce_in_paper_ranker: boolean;
-			auto_promote_enabled: boolean;
-			min_matching_trades: number;
-			max_score_penalty: number;
-		}>,
+		body: components["schemas"]["GuardConfigUpdate"],
 	) => post<{ updated: Record<string, any> }>("/settings/guard", body),
 	updateRegimeConfig: (
 		body: Partial<{

@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import type { components } from './generated/api'
 import { ApiError, api, decodeOhlcvResponse, extractApiError, parseApiError, queryRetryDelay } from './client'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+it('uses the canonical writable Guard settings type', () => {
+  expectTypeOf<Parameters<typeof api.updateGuardConfig>[0]>().toEqualTypeOf<components['schemas']['GuardConfigUpdate']>()
 })
 
 it("preserves opaque cursors and zero limits in query strings", async () => {
