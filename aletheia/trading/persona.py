@@ -126,9 +126,9 @@ def build_sizing_context(
     # reward (dormant unless persona_learning_enabled + enough clean samples; bounded).
     if apply_learning:
         try:
-            from aletheia.learning.control import learning_influence_enabled
+            from aletheia.trust.learning_safety import learning_influence_allowed
 
-            apply_learning = bool(learning_influence_enabled())
+            apply_learning = bool(learning_influence_allowed())
         except Exception:
             # Learning authority is fail-closed when its global gate is unavailable.
             apply_learning = False

@@ -150,8 +150,8 @@ def learned_appetite_adjustment(regime_bucket: str | None, cfg=None) -> float:
     from aletheia.config.loader import load_config
     cfg = cfg or load_config()
     try:
-        from aletheia.learning.control import learning_influence_enabled
-        if not learning_influence_enabled():
+        from aletheia.trust.learning_safety import learning_influence_allowed
+        if not learning_influence_allowed():
             return 0.0
     except Exception:
         return 0.0

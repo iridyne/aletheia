@@ -595,9 +595,9 @@ def rollout_runtime_safe(cfg) -> bool:
         runtime = getattr(cfg, "runtime", None)
         if runtime is not None and bool(getattr(runtime, "paused", False)):
             return False
-        from aletheia.learning.control import learning_influence_enabled
+        from aletheia.trust.learning_safety import learning_influence_allowed
 
-        if not learning_influence_enabled():
+        if not learning_influence_allowed():
             return False
         from aletheia.trading.sizing_policy import in_distress
 
@@ -1126,9 +1126,9 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
         reason = "account_distress" if distress == "distressed" else "distress_evidence_unavailable"
         return _refreeze_all(reason, report_without_rollout=True)
     try:
-        from aletheia.learning.control import global_learning_refreeze_reason
+        from aletheia.trust.learning_safety import learning_refreeze_reason
 
-        health_reason = global_learning_refreeze_reason()
+        health_reason = learning_refreeze_reason()
     except Exception:
         health_reason = "learning_integrity_state_unavailable"
     if health_reason:
@@ -1161,9 +1161,9 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
     state = current_persona_rollout(cfg, create=True, now=now)
     if state is None:
         try:
-            from aletheia.learning.control import global_learning_refreeze_reason
+            from aletheia.trust.learning_safety import learning_refreeze_reason
 
-            health_reason = global_learning_refreeze_reason()
+            health_reason = learning_refreeze_reason()
         except Exception:
             health_reason = "learning_integrity_state_unavailable"
         if health_reason:
@@ -1175,9 +1175,9 @@ def advance_persona_rollout(now: datetime | None = None) -> dict[str, Any]:
         )
         return {"action": "refrozen", "reason": "invalid_rollout_status", "rollout": frozen}
     try:
-        from aletheia.learning.control import global_learning_refreeze_reason
+        from aletheia.trust.learning_safety import learning_refreeze_reason
 
-        health_reason = global_learning_refreeze_reason()
+        health_reason = learning_refreeze_reason()
     except Exception:
         health_reason = "learning_integrity_state_unavailable"
     if health_reason:
