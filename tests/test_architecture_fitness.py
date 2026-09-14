@@ -150,29 +150,57 @@ def test_scheduler_does_not_own_order_or_close_claim_writes():
             assert name not in writers, node.lineno
 
 
-def test_fill_writes_stay_with_exchange_materialization():
+def _assert_fill_writer_boundary(project_root):
     """Keep observed-close and native Fill writes under the same Core owner."""
-    import re
+    from tests.authority_writer_checks import assert_writer_boundary
 
-    owner = SRC / "execution" / "exchange_materialization.py"
-    storage = {SRC / "storage" / "repositories.py", SRC / "storage" / "migrations.py"}
-    fill_sql = re.compile(r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+fills\b", re.I)
-    for root in (SRC, PROJECT_ROOT / "extensions", PROJECT_ROOT / "legacy", PROJECT_ROOT / "ops", PROJECT_ROOT / "scripts"):
-        for path in root.rglob("*.py"):
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-                if isinstance(node, ast.ImportFrom) and node.module == "aletheia.storage.repositories":
-                    if any(alias.name == "insert_fill" for alias in node.names):
-                        assert path == owner, (path, node.lineno)
-                if isinstance(node, ast.Call):
-                    name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
-                    if name == "insert_fill":
-                        assert path == owner, (path, node.lineno)
-                    if name in {"_insert", "_insert_many", "_update"} and node.args:
-                        table = node.args[0]
-                        if isinstance(table, ast.Constant) and table.value == "fills":
-                            assert path in storage, (path, node.lineno)
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and fill_sql.search(node.value):
-                    assert path in storage | {owner}, (path, node.lineno)
+    assert_writer_boundary(
+        project_root, table="fills",
+        owners={"insert_fill": {"execution/exchange_materialization.py"}},
+        raw_owners={"insert_fill"},
+        literal_writes={
+            ("execution/exchange_materialization.py", "_verify_durable_fills"):
+                {"UPDATE fills SET fee_source=? WHERE id=?"},
+        },
+    )
+
+
+def test_fill_writes_stay_with_exchange_materialization():
+    _assert_fill_writer_boundary(PROJECT_ROOT)
+
+
+@pytest.mark.parametrize("path,source", [
+    ("aletheia/other.py", "from .storage.repositories import insert_fill as persist"),
+    ("extensions/other.py", "repo._insert(table='fills', data=row)"),
+    ("extensions/other.py", "db.execute('INSERT /* hidden */ INTO main.\"fills\" VALUES (?)')"),
+    ("extensions/other.py", "db.execute('DROP TABLE fills')"),
+    ("aletheia/storage/repositories.py", "def other(row):\n    _insert('fills', row)"),
+    ("aletheia/execution/exchange_materialization.py", "def other():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('UPDATE fills SET fee=? WHERE id=?')"),
+    ("aletheia/execution/exchange_materialization.py", "def outer():\n    def _verify_durable_fills():\n        db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("aletheia/execution/exchange_materialization.py", "@decorate('UPDATE fills SET fee_source=? WHERE id=?')\ndef _verify_durable_fills():\n    pass"),
+    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    _update('fills', row['id'], row)"),
+    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    return lambda: db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+])
+def test_fill_writer_guard_rejects_extra_authority(tmp_path, path, source):
+    target = tmp_path / path
+    target.parent.mkdir(parents=True)
+    target.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_fill_writer_boundary(tmp_path)
+
+
+def test_fill_writer_guard_preserves_exact_provenance_update(tmp_path):
+    sources = {
+        "aletheia/storage/repositories.py": "def insert_fill(row):\n    _insert('fills', row)",
+        "aletheia/execution/exchange_materialization.py": "from aletheia.storage.repositories import insert_fill\ndef _verify_durable_fills():\n    db.execute('UPDATE fills SET fee_source=? WHERE id=?')\ndef materialize(row):\n    insert_fill(row)",
+        "aletheia/storage/migrations.py": "db.execute('ALTER TABLE fills ADD COLUMN historical TEXT')",
+    }
+    for path, source in sources.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    _assert_fill_writer_boundary(tmp_path)
 
 
 def test_candidate_snapshot_creation_has_one_core_owner():
