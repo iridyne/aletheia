@@ -82,6 +82,8 @@ def test_all_generation_lifecycle_callers_are_guarded(tmp_path, writer):
     "plan_state_writer = transition_entry_plan",
     "plan_state_writer: Callable = repo.transition_entry_plan",
     "from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
+    "if True:\n    from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
+    "class Export:\n    from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
 ])
 def test_named_writer_alias_cannot_be_reexported(tmp_path, source):
     owner = tmp_path / "aletheia/execution/gateway.py"
