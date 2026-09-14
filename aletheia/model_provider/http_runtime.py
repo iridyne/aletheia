@@ -86,6 +86,20 @@ def http_configuration_identity(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def http_credential_status(name: str, pcfg) -> dict:
+    """Expose only selected-endpoint presence and masking metadata."""
+    if (pcfg.type or name) not in API_PROVIDER_TYPES or not pcfg.api_key_secret_ref:
+        return {"configured": False, "last4": None}
+    try:
+        value = get_secret(pcfg.api_key_secret_ref, strict=True)
+    except Exception:  # Secret-store failure is unknown, never absent or exception text.
+        return {"configured": None, "last4": None, "unavailable_reason": "model_credentials_unavailable"}
+    return {
+        "configured": bool(value),
+        "last4": (value[-4:] if len(value) >= 4 else "****") if value else None,
+    }
+
+
 def build_http_provider(name, pcfg):
     """Resolve only this selected endpoint's API credential reference."""
     provider_type = pcfg.type or name

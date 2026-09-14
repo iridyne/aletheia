@@ -4,8 +4,9 @@ export type ProviderCategory = "api";
 export type RoutingRole = "default" | "deep" | "fast";
 
 export interface KeyStatus {
-	configured: boolean;
+	configured: boolean | null;
 	last4: string | null;
+	unavailable_reason?: string;
 }
 
 export interface ProviderConfigView {

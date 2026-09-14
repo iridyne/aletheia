@@ -52,6 +52,12 @@ Current model configuration/probe requests reject obsolete workspace fields;
 only an explicit HTTP base URL configures a current endpoint. Historical workspace
 identity fields remain decode/read provenance, never routing or credential scope.
 
+Credential-presence projections are resolved by the Model implementation for the
+configured endpoint and expose only presence/masking metadata. These Core and
+Overview projections never read credential values. Missing implementation or secret-store failure is
+unknown/unavailable, not proof that no key is configured; presence is not inference
+usability. Settings and Overview preserve that distinction.
+
 Settings creates or updates HTTP profiles through `/settings/model-profiles`
 and assigns roles separately through `/settings/model-routing`. The fixed-provider
 `POST /settings/model` compatibility endpoint and combined role-assignment flags

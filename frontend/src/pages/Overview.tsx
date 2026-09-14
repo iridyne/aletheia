@@ -54,7 +54,7 @@ export default function Overview() {
   return (
     <div>
       <h2 className="page-title">Overview</h2>
-      <SetupNotice required={overview.data?.setup_required} />
+      <SetupNotice required={overview.isError ? null : overview.data?.setup_required} />
       <PnLZone bootstrap={overview.data} />
       <EntrySummaryStrip summary={overview.data?.summary} />
       <div className="cockpit-main">
@@ -70,12 +70,12 @@ export default function Overview() {
   )
 }
 
-function SetupNotice({ required }: { required?: boolean }) {
+export function SetupNotice({ required }: { required?: boolean | null }) {
   const navigate = useNavigate()
-  if (!required) return null
+  if (required === false || required === undefined) return null
   return (
     <Card className="setup-banner" role="status">
-      <strong className="mono text-xs tracking-widest">NO MODEL CONFIGURED</strong>
+      <strong className="mono text-xs tracking-widest">{required === null ? 'MODEL SETUP STATUS UNAVAILABLE' : 'NO MODEL CONFIGURED'}</strong>
       <button className="btn btn-sm secondary" onClick={() => navigate('/settings?tab=agent')}>Configure Model Provider →</button>
     </Card>
   )

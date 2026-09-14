@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
-import Overview, { isGoLiveScorecard, operatorMutationError } from './Overview'
+import Overview, { isGoLiveScorecard, operatorMutationError, SetupNotice } from './Overview'
 import type { CollectorHealthReport, MarketDataCoverageReport } from '../types'
 
 vi.mock('../components/PnLZone', () => ({ default: () => null }))
@@ -13,6 +14,11 @@ vi.mock('../components/AgentFeed', () => ({ default: () => null }))
 ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 describe('Overview', () => {
+  it.each([true, false, null, undefined])('preserves unknown model setup status: %s', required => {
+    const markup = renderToStaticMarkup(<MemoryRouter><SetupNotice required={required} /></MemoryRouter>)
+    expect(markup.includes('NO MODEL CONFIGURED')).toBe(required === true)
+    expect(markup.includes('MODEL SETUP STATUS UNAVAILABLE')).toBe(required === null)
+  })
   it('keeps operator rejection identity and rejects invalid qualification evidence', () => {
     expect(operatorMutationError('Pause gateway failed', new Error('backend 503'))).toBe('Pause gateway failed: backend 503')
     expect(operatorMutationError('Resume gateway failed', null)).toBe('Resume gateway failed: request failed')

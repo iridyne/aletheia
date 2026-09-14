@@ -31,7 +31,7 @@ export interface OverviewBootstrap {
   account?: Record<string, unknown>
   summary?: { active_entry_plans?: number; needs_planning?: number; expiring_soon?: number; runs_24h?: number } | null
   activity?: Array<Record<string, unknown>>
-  setup_required?: boolean
+  setup_required?: boolean | null
   coverage?: Record<string, unknown>
   errors?: Record<string, string>
 }

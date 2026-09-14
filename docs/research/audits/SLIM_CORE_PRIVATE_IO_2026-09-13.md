@@ -218,6 +218,21 @@ raw responses, cost usage and Core-owned fallback provenance are not rewritten.
 No additional provider implementation or lifecycle is introduced; credential
 management ingress remains a separate outstanding boundary.
 
+The Model status audit at `f04b61e64` removes raw credential reads from Overview
+and the Settings configuration projection. Both consume one sanitized status
+operation bound to the existing HTTP implementation; unsupported historical
+types and OAuth references remain inert. Missing implementation or a failed
+secret-store read produces unknown status, not a false missing-key claim.
+Overview's nullable setup status and Settings labels preserve that distinction;
+no presence check becomes a usability probe. HTTP/CLI credential writes still
+remain outside this completed read-only boundary.
+
+Type-generation verification also exposed that direct script execution could
+import a sibling editable checkout rather than this worktree. The exporter now
+binds its own repository root before importing the app; its subprocess regression
+compares the full schema to the current app. Regeneration then changes only the
+nullable setup field, not unrelated optional routes.
+
 ## Startup filesystem repair ownership
 
 At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found

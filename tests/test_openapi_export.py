@@ -5,6 +5,8 @@ from pathlib import Path
 
 
 def test_openapi_export_script_writes_schema(tmp_path):
+    from aletheia.server.app import app
+
     root = Path(__file__).resolve().parents[1]
     output = tmp_path / "openapi.json"
 
@@ -28,3 +30,4 @@ def test_openapi_export_script_writes_schema(tmp_path):
     assert "/api/operator/recommendations" in schema["paths"]
     assert "/api/serenity/status" in schema["paths"]
     assert "paths=" in result.stdout
+    assert schema == app.openapi(), "Exporter must use this checkout, not an installed editable sibling"
