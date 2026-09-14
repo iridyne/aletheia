@@ -854,14 +854,8 @@ async def llm_structured(
             except BudgetExceededError:
                 return _failure("llm_budget_exhausted")
             content = (resp.content or "").strip()
-            raw = resp.raw if isinstance(resp.raw, dict) else {}
-            usage = resp.usage or raw.get("usage") or {}
-            output_tokens = usage.get("completion_tokens", usage.get("output_tokens", 0))
-            choices = raw.get("choices") or []
-            reason = choices[0].get("finish_reason") if choices else raw.get("stop_reason")
-            if (raw.get("incomplete_details") or {}).get("reason") == "max_output_tokens":
-                reason = "incomplete"
-            finish_reason = reason if reason in {"stop", "length", "max_tokens", "incomplete"} else "unknown"
+            output_tokens = resp.output_tokens or 0
+            finish_reason = resp.finish_reason
             last_schema_error_code = None
             last_schema_error_text = ""
 

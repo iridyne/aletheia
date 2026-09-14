@@ -184,39 +184,6 @@ def _model_health_record(
     )
 
 
-_ANTHROPIC_EMPTY_TEXT_SUCCESS_STOP_REASONS = {
-    "end_turn",
-    "max_tokens",
-    "stop_sequence",
-    "tool_use",
-}
-
-
-def _has_provider_completion_evidence(raw: object) -> bool:
-    """Recognize protocol-level completion when no final text was emitted."""
-
-    if not isinstance(raw, dict):
-        return False
-
-    choices = raw.get("choices")
-    if isinstance(choices, list) and any(
-        isinstance(choice, dict)
-        and isinstance(choice.get("finish_reason"), str)
-        and bool(choice["finish_reason"].strip())
-        for choice in choices
-    ):
-        return True
-
-    if raw.get("status") == "completed":
-        return True
-
-    stop_reason = raw.get("stop_reason")
-    return (
-        isinstance(stop_reason, str)
-        and stop_reason in _ANTHROPIC_EMPTY_TEXT_SUCCESS_STOP_REASONS
-    )
-
-
 async def _close_candidate_provider(provider) -> None:
     """Close every loop-owned pool used by an ephemeral candidate probe."""
 
@@ -349,7 +316,7 @@ async def ping_model():
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
         content = (resp.content or "").strip()
-        if not content and not _has_provider_completion_evidence(resp.raw):
+        if not content and not resp.completion_confirmed:
             record_inference_finished(
                 inference_call, status="error", error_type="EmptyModelResponse"
             )
