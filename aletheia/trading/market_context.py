@@ -353,7 +353,7 @@ async def build_market_context(
 
     _owned_provider = False
     if provider is None:
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from aletheia.data.providers import get_market_data_provider
         provider = get_market_data_provider()
         _owned_provider = True
 

@@ -578,7 +578,7 @@ async def _batch_fetch_market_observations(
     """
     import asyncio
 
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.providers import get_market_data_provider
     from aletheia.data.providers import require_exact_ticker_venue
 
     input_count = len(rows)
@@ -702,8 +702,7 @@ async def _batch_fetch_market_observations(
         for venue in venues:
             providers[venue] = get_market_data_provider(
                 venue,
-                native_ccxt=True,
-                fallback_exchange=venue,
+                exact_venue=True,
             )
         fetched = list(identity_deferrals.items())
         fetched.extend(await asyncio.gather(*(fetch_bounded(row) for row in rows)))

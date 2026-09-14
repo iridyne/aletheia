@@ -500,6 +500,15 @@ def _opt_float(value) -> float | None:
         raise ValueError("ticker optional numeric field is invalid") from exc
 
 
+def create_market_data_provider(exchange: str | None = None, *, exact_venue: bool = False):
+    """Bind standard Core reads to the existing fresh concrete provider policy."""
+    if exact_venue:
+        if not exchange:
+            raise ValueError("exact market data requires a venue")
+        return get_market_data_provider(exchange, native_ccxt=True, fallback_exchange=exchange)
+    return get_market_data_provider(exchange)
+
+
 def get_market_data_provider(
     exchange: str | None = None,
     *,
