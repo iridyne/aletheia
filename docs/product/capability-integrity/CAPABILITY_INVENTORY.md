@@ -53,7 +53,7 @@ Discovery surfaces:
 | MD-05 | Historical OHLCV backfill | Maintain bounded historical bars for active-universe features and settlement | Scheduler, CLI | `ohlcv_active_backfill`, `ohlcv_nightly_backfill` |
 | MD-06 | Dynamic Universe generation | Discover, score, diversify, and persist tradable candidate instruments | Entry Workbench, Settings, scheduler | `aletheia/universe/`, `scheduler.py:universe_refresh` |
 | MD-07 | Universe family calibration | Measure cost-adjusted treatment/control outcomes by scanner family | Learning UI, CLI, scheduler | `universe_forward_outcomes`, `learning_exposures`, calibration analytics |
-| MD-08 | Forward outcome settlement | Settle universe/filter/shadow outcomes at declared horizons | Scheduler, Learning, CLI | `scheduler.py:outcome_settler`, `aletheia/learning/outcomes.py` |
+| MD-08 | Forward outcome settlement | Settle universe/filter/shadow outcomes at declared horizons | Scheduler, Learning, CLI | `scheduler.py:outcome_settler`, shared assessment in `aletheia/analytics/outcome_semantics.py` |
 | MD-09 | Market regime detection | Produce regime state and use it in analysis/sizing/risk context | Markets, Settings, CLI | `aletheia/regime/`, `aletheia/server/routes/data.py` |
 | MD-10 | News ingestion and analysis | Fetch, deduplicate, analyze, and expose relevant news | News Intel, Markets, scheduler | `news_fetch`, `news_analyze`, `aletheia/news/` |
 | MD-11 | Equity opportunity observation | Observe supported equities/xStocks during market hours and emit opportunities | Scheduler, Agent Activity | `scheduler.py:equity_observer`, `aletheia/agents/equity_observer.py` |
