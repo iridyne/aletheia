@@ -325,6 +325,13 @@ def _bind_regime_evidence(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_market_listing(monkeypatch):
+    from aletheia.data import ccxt_provider, providers
+
+    monkeypatch.setattr(providers, "_listing_reader", ccxt_provider.read_market_listing)
+
+
+@pytest.fixture(autouse=True)
 def _bind_demo_quality_epoch(monkeypatch):
     """Use actual epoch persistence against test-owned DBs, without starting Web/CLI."""
     from aletheia.learning import demo_entry_quality as policy
