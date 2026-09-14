@@ -641,8 +641,9 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
     from aletheia.uta.models import CancelOrderCommand
-    from aletheia.uta.profiles import (BinanceTestnetProfile, BinanceLiveProfile, OKXDemoProfile,
-                                     OKXLiveProfile, BitgetUTAV3Profile, BitgetUTAV3LiveProfile)
+    from aletheia.uta.profiles.binance import BinanceTestnetProfile, BinanceLiveProfile
+    from aletheia.uta.profiles.okx import OKXDemoProfile, OKXLiveProfile
+    from aletheia.uta.profiles.bitget import BitgetUTAV3Profile, BitgetUTAV3LiveProfile
     from tests.uta.test_ccxt_adapter import FakeExchange, _identity as profile_identity, _install
     from tests.execution_authority import seed_order_authority
 
