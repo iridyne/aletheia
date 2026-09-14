@@ -186,44 +186,9 @@ def portable_json_schema_payload(schema: Any) -> dict[str, Any]:
 
 
 def _configured_provider_name(provider: Any) -> str:
-    """Resolve an exact configured alias without changing provider routing."""
+    """Use the constructor's endpoint binding, never infer one from config."""
     existing = str(getattr(provider, "_aletheia_provider_name", "") or "").strip()
-    if existing:
-        return existing
-    fallback = str(getattr(provider, "name", "") or type(provider).__name__)
-    try:
-        from aletheia.config.loader import load_config
-
-        expected_type = {
-            "OpenAICompatibleProvider": "openai_compatible",
-            "AnthropicCompatibleProvider": "anthropic_compatible",
-        }.get(type(provider).__name__)
-        provider_model = str(getattr(provider, "model", "") or "")
-        provider_base_url = str(getattr(provider, "base_url", "") or "")
-        candidates: list[tuple[str, bool]] = []
-        for alias, pcfg in load_config().models.providers.items():
-            configured_type = str(getattr(pcfg, "type", "") or alias)
-            if expected_type and configured_type != expected_type:
-                continue
-            configured_base_url = str(getattr(pcfg, "base_url", "") or "")
-            if provider_base_url and configured_base_url and provider_base_url != configured_base_url:
-                continue
-            configured_model = str(getattr(pcfg, "model", "") or "")
-            candidates.append((alias, configured_model == provider_model))
-        exact = [alias for alias, matches_model in candidates if matches_model]
-        if len(exact) == 1:
-            resolved = exact[0]
-        elif len(candidates) == 1:
-            resolved = candidates[0][0]
-        else:
-            resolved = fallback
-    except Exception:
-        resolved = fallback
-    try:
-        setattr(provider, "_aletheia_provider_name", resolved)
-    except Exception:
-        pass
-    return resolved
+    return existing or str(getattr(provider, "name", "") or type(provider).__name__)
 
 
 def _cost_metadata(provider: Any, *, mode: str | None = None, request: Any = None) -> dict[str, Any]:
