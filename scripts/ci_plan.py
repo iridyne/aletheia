@@ -101,13 +101,13 @@ FULL_TEST_FILES = (
     "tests/specs/spec_codex_shepherd.py",
 )
 CRITICAL_PREFIXES = (
-    "aletheia/execution/",
-    "aletheia/gateway/",
-    "aletheia/portfolio/",
-    "aletheia/risk/",
-    "aletheia/runtime",
-    "aletheia/server/routes/risk.py",
-    "aletheia/storage/",
+    "core/aletheia/execution/",
+    "core/aletheia/gateway/",
+    "core/aletheia/portfolio/",
+    "core/aletheia/risk/",
+    "core/aletheia/runtime",
+    "core/aletheia/server/routes/risk.py",
+    "core/aletheia/storage/",
 )
 CRITICAL_TOKENS = (
     "account",
@@ -149,21 +149,21 @@ INTEGRATION_TEST_TOKENS = (
     "workbench",
 )
 PYTHON_CONTRACT_PREFIXES = (
-    "aletheia/config/",
-    "aletheia/server/routes/settings.py",
-    "aletheia/server/routes/ui.py",
-    "aletheia/data/models.py",
+    "core/aletheia/config/",
+    "core/aletheia/server/routes/settings.py",
+    "core/aletheia/server/routes/ui.py",
+    "core/aletheia/data/models.py",
 )
 COVERAGE_PATHS = (
-    "aletheia/analytics/profit_gradient.py",
-    "aletheia/analytics/profit_gradient_estimators.py",
-    "aletheia/analytics/profit_gradient_evidence.py",
-    "aletheia/analytics/position_replay.py",
-    "aletheia/counterfactual/filter_replay.py",
-    "aletheia/economics/context_artifacts.py",
-    "aletheia/execution/reconciliation.py",
-    "aletheia/learning/evidence_epoch.py",
-    "aletheia/learning/policy_epochs.py",
+    "core/aletheia/analytics/profit_gradient.py",
+    "core/aletheia/analytics/profit_gradient_estimators.py",
+    "core/aletheia/analytics/profit_gradient_evidence.py",
+    "core/aletheia/analytics/position_replay.py",
+    "core/aletheia/counterfactual/filter_replay.py",
+    "core/aletheia/economics/context_artifacts.py",
+    "core/aletheia/execution/reconciliation.py",
+    "core/aletheia/learning/evidence_epoch.py",
+    "core/aletheia/learning/policy_epochs.py",
     "scripts/coverage_floors.py",
     "tests/test_profit_gradient.py",
     "tests/test_profit_gradient_properties.py",
@@ -366,11 +366,11 @@ def _path_surfaces(path: str) -> set[str]:
         surfaces.add("python")
     if path.startswith(PYTHON_CONTRACT_PREFIXES) or path.startswith("scripts/export_openapi_schema.py"):
         surfaces.add("frontend_contract")
-    if path.startswith("aletheia/storage/"):
+    if path.startswith("core/aletheia/storage/"):
         surfaces.add("storage")
-    if path.startswith("aletheia/execution/"):
+    if path.startswith("core/aletheia/execution/"):
         surfaces.add("execution")
-    if path.startswith("aletheia/risk/"):
+    if path.startswith("core/aletheia/risk/"):
         surfaces.add("risk")
     if _coverage_path(path):
         surfaces.add("coverage")

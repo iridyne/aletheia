@@ -17,16 +17,16 @@ parallel = True
 # regressions on paths where a wrong answer misleads a decision, corrupts
 # state, or bypasses a check. Not a whole-repo target.
 include =
-    */aletheia/analytics/profit_gradient.py
-    */aletheia/analytics/profit_gradient_estimators.py
-    */aletheia/analytics/profit_gradient_evidence.py
-    */aletheia/analytics/position_replay.py
-    */aletheia/analytics/momentum_geometry_replay.py
-    */aletheia/counterfactual/filter_replay.py
-    */aletheia/economics/context_artifacts.py
-    */aletheia/execution/reconciliation.py
-    */aletheia/learning/evidence_epoch.py
-    */aletheia/learning/policy_epochs.py
+    */core/aletheia/analytics/profit_gradient.py
+    */core/aletheia/analytics/profit_gradient_estimators.py
+    */core/aletheia/analytics/profit_gradient_evidence.py
+    */core/aletheia/analytics/position_replay.py
+    */core/aletheia/analytics/momentum_geometry_replay.py
+    */core/aletheia/counterfactual/filter_replay.py
+    */core/aletheia/economics/context_artifacts.py
+    */core/aletheia/execution/reconciliation.py
+    */core/aletheia/learning/evidence_epoch.py
+    */core/aletheia/learning/policy_epochs.py
 
 [report]
 # Fail closed on missing data so a misconfigured job cannot pass silently.
@@ -41,5 +41,5 @@ exclude_also =
 
 [paths]
 source =
-    aletheia/
+    core/aletheia/
     */site-packages/aletheia/

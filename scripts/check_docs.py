@@ -194,7 +194,7 @@ def semantic_truth_failures() -> list[str]:
     """Guard a few cross-document truths that structural link checks cannot see."""
     failures: list[str] = []
 
-    registry_path = ROOT / "aletheia/learning/registry.py"
+    registry_path = ROOT / "core/aletheia/learning/registry.py"
     registry_tree = ast.parse(registry_path.read_text(encoding="utf-8"))
     measured_paths: list[str] = []
     for node in ast.walk(registry_tree):
@@ -225,7 +225,7 @@ def semantic_truth_failures() -> list[str]:
     ]
     if measured_paths != expected_measured_paths:
         failures.append(
-            "aletheia/learning/registry.py: measured-path contract mismatch; "
+            "core/aletheia/learning/registry.py: measured-path contract mismatch; "
             f"expected {expected_measured_paths}, found {measured_paths}"
         )
 
