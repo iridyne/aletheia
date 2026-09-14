@@ -604,7 +604,7 @@ async def observe_open_position_paths(
 ) -> dict[str, Any]:
     """Recover a bounded oldest-first prefix of each eligible Position path."""
 
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.providers import get_market_data_provider
 
     current = _observer_clock(now)
     cycle_started = time.monotonic()
@@ -813,15 +813,12 @@ async def observe_open_position_paths(
                 if provider is None:
                     provider = get_market_data_provider(
                         exchange=instrument.exchange,
-                        native_ccxt=True,
-                        fallback_exchange=instrument.exchange,
+                        exact_venue=True,
                     )
                     providers[instrument.exchange] = provider
-                # native_ccxt providers expose the side-effect-free path. The
-                # fallback keeps lightweight structural test doubles usable.
                 fetch_ohlcv = getattr(provider, "get_ohlcv_observation", None)
-                if fetch_ohlcv is None:
-                    fetch_ohlcv = provider.get_ohlcv
+                if not callable(fetch_ohlcv):
+                    raise RuntimeError("observation_ohlcv_unavailable")
                 result = await asyncio.wait_for(
                     fetch_ohlcv(
                         instrument,

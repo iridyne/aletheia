@@ -364,11 +364,46 @@ def test_projector_terminalizes_final_close_without_reusing_current_state():
     assert after_close["quantity"] is None
     assert after_close["_historical_state_reason"] == "historical_position_fully_closed"
 
+
+@pytest.mark.asyncio
+async def test_observer_never_falls_back_to_writable_ohlcv(monkeypatch):
+    from aletheia.data import providers
+    from aletheia.portfolio.position_path_observer import observe_open_position_paths
+    from aletheia.storage import repositories as repo
+
+    position = _seed_position()
+    calls = {"requested": 0, "closed": 0}
+
+    class Provider:
+        async def get_ohlcv(self, *args, **kwargs):
+            calls["requested"] += 1
+            return OHLCVResult([], requested=2)
+
+        async def close(self):
+            calls["closed"] += 1
+
+    def factory(*, exchange, exact_venue):
+        assert exchange == "bitget" and exact_venue is True
+        return Provider()
+
+    monkeypatch.setattr(providers, "get_market_data_provider", factory)
+    result = await observe_open_position_paths(
+        now=datetime(2026, 8, 13, 0, 5, tzinfo=timezone.utc)
+    )
+    assert calls == {"requested": 0, "closed": 1}
+    assert result["deferred"] == 1
+    assert result["inserted"] == 0
+    assert result["errors"] == [
+        {"instrument": "bitget:BTC/USDT:perp", "error_type": "RuntimeError"}
+    ]
+    assert repo.list_position_path_observations(position.id) == []
+
+
 @pytest.mark.asyncio
 async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
@@ -397,7 +432,7 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
     calls = {"created": 0, "requested": 0, "closed": 0}
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             calls["requested"] += 1
             assert str(instrument) == "bitget:BTC/USDT:perp"
             assert timeframe == "5m"
@@ -428,7 +463,7 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
         return Provider()
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", create_provider
+        provider_port, "get_market_data_provider", create_provider
     )
     now = datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
 
@@ -471,7 +506,7 @@ async def test_observer_defers_when_provider_cannot_prove_closed_bar(
 async def test_observer_requests_once_per_unique_instrument(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
@@ -482,7 +517,7 @@ async def test_observer_requests_once_per_unique_instrument(
     calls = {"created": 0, "requested": 0, "closed": 0}
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             calls["requested"] += 1
             assert str(instrument) == "bitget:BTC/USDT:perp"
             assert timeframe == "5m"
@@ -513,7 +548,7 @@ async def test_observer_requests_once_per_unique_instrument(
         return Provider()
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", create_provider
+        provider_port, "get_market_data_provider", create_provider
     )
     now = datetime.fromtimestamp((bucket + 300_000) / 1000, tz=timezone.utc)
 
@@ -537,7 +572,7 @@ async def test_observer_requests_once_per_unique_instrument(
 
 @pytest.mark.asyncio
 async def test_observer_samples_position_closed_after_target_bucket(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
@@ -550,7 +585,7 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
     calls = {"requested": 0}
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             calls["requested"] += 1
             assert since == bucket
             return OHLCVResult(
@@ -574,7 +609,7 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
 
     result = await observe_open_position_paths(
@@ -598,7 +633,7 @@ async def test_observer_samples_position_closed_after_target_bucket(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import (
         _store_unavailable,
         observe_open_position_paths,
@@ -618,7 +653,7 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
         raise AssertionError("an existing observation must skip provider lookup")
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", unexpected_provider
+        provider_port, "get_market_data_provider", unexpected_provider
     )
 
     result = await observe_open_position_paths(
@@ -640,7 +675,7 @@ async def test_observer_skips_existing_bucket_before_provider_lookup(monkeypatch
 async def test_observer_recovers_oldest_missing_buckets_with_bounded_catchup(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -656,7 +691,7 @@ async def test_observer_recovers_oldest_missing_buckets_with_bounded_catchup(
     requested: list[int] = []
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             requested.append(since)
             return OHLCVResult(
                 [
@@ -679,7 +714,7 @@ async def test_observer_recovers_oldest_missing_buckets_with_bounded_catchup(
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
 
@@ -712,7 +747,7 @@ async def test_observer_recovers_oldest_missing_buckets_with_bounded_catchup(
 
 @pytest.mark.asyncio
 async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -734,7 +769,7 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
     requested: list[int] = []
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             requested.append(since)
             return OHLCVResult(
                 [
@@ -757,7 +792,7 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     now = datetime.fromtimestamp((bucket + 1_800_000) / 1000, tz=timezone.utc)
 
@@ -784,7 +819,7 @@ async def test_observer_recovers_closed_position_path_after_missed_runs(monkeypa
 
 @pytest.mark.asyncio
 async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -813,7 +848,7 @@ async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
     requested: list[int] = []
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             requested.append(since)
             return OHLCVResult(
                 [
@@ -836,7 +871,7 @@ async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     now = datetime.fromisoformat("2026-08-13T02:00:00+00:00")
 
@@ -885,7 +920,7 @@ async def test_observer_recovers_oldest_bucket_for_each_position(monkeypatch):
 async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -908,7 +943,7 @@ async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
     requested: list[int] = []
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             requested.append(since)
             return OHLCVResult(
                 [
@@ -931,7 +966,7 @@ async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     now = datetime.fromtimestamp((bucket + 600_000) / 1000, tz=timezone.utc)
 
@@ -947,7 +982,7 @@ async def test_observer_terminal_recovery_uses_position_budget_for_the_round(
 
 @pytest.mark.asyncio
 async def test_observer_rejects_closed_bar_with_wrong_provider_identity(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -956,7 +991,7 @@ async def test_observer_rejects_closed_bar_with_wrong_provider_identity(monkeypa
     position = _seed_position(position_id="position-path-bar-identity")
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             return OHLCVResult(
                 [
                     Candle(
@@ -978,7 +1013,7 @@ async def test_observer_rejects_closed_bar_with_wrong_provider_identity(monkeypa
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
 
     result = await observer.observe_open_position_paths(
@@ -1093,7 +1128,7 @@ def test_position_path_observer_status_does_not_fabricate_expected_bucket():
 
 @pytest.mark.asyncio
 async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
@@ -1106,7 +1141,7 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
     calls = {"created": 0, "requested": 0, "closed": 0}
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             calls["requested"] += 1
             assert since == bucket + 300_000
             return OHLCVResult(
@@ -1134,7 +1169,7 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
         return Provider()
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", create_provider
+        provider_port, "get_market_data_provider", create_provider
     )
 
     skipped = await observe_open_position_paths(
@@ -1166,7 +1201,7 @@ async def test_observer_skips_bar_that_crosses_position_entry(monkeypatch):
 async def test_observer_persists_completed_instrument_before_other_timeout(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
 
@@ -1185,7 +1220,7 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
         def __init__(self, exchange: str):
             self.exchange = exchange
 
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             nonlocal slow_cancelled_after_fast_persisted
             if self.exchange == "okx":
                 try:
@@ -1216,7 +1251,7 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
             closed_exchanges.append(self.exchange)
 
     monkeypatch.setattr(
-        ccxt_provider,
+        provider_port,
         "get_market_data_provider",
         lambda **kwargs: Provider(kwargs["exchange"]),
     )
@@ -1245,7 +1280,7 @@ async def test_observer_persists_completed_instrument_before_other_timeout(
 
 @pytest.mark.asyncio
 async def test_observer_bounds_unique_instrument_concurrency(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
 
@@ -1265,7 +1300,7 @@ async def test_observer_bounds_unique_instrument_concurrency(monkeypatch):
     closed = 0
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             nonlocal active, maximum_active, requested
             active += 1
             requested += 1
@@ -1297,7 +1332,7 @@ async def test_observer_bounds_unique_instrument_concurrency(monkeypatch):
 
     provider = Provider()
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: provider
+        provider_port, "get_market_data_provider", lambda **_: provider
     )
 
     result = await observer.observe_open_position_paths(
@@ -1313,7 +1348,7 @@ async def test_observer_bounds_unique_instrument_concurrency(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_observer_rereads_position_closed_during_request(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
@@ -1322,7 +1357,7 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
     closed = 0
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             force_update_position(
                 position.id,
                 status="closed",
@@ -1360,7 +1395,7 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
             closed += 1
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
 
     result = await observe_open_position_paths(
@@ -1384,14 +1419,14 @@ async def test_observer_rereads_position_closed_during_request(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio.position_path_observer import observe_open_position_paths
     from aletheia.storage import repositories as repo
 
     position = _seed_position(position_id="position-invalid-opened-at")
     force_update_position(position.id, opened_at="not-a-timestamp")
     monkeypatch.setattr(
-        ccxt_provider,
+        provider_port,
         "get_market_data_provider",
         lambda **_: (_ for _ in ()).throw(
             AssertionError("invalid opened_at must not request market data")
@@ -1416,7 +1451,7 @@ async def test_observer_persists_invalid_opened_at_as_unavailable(monkeypatch):
 async def test_observer_persists_unavailable_after_bounded_market_data_retries(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
     from aletheia.storage.sqlite import get_db
@@ -1425,14 +1460,14 @@ async def test_observer_persists_unavailable_after_bounded_market_data_retries(
     bucket = 1_786_579_200_000
 
     class Provider:
-        async def get_ohlcv(self, *args, **kwargs):
+        async def get_ohlcv_observation(self, *args, **kwargs):
             raise TimeoutError("transient provider failure")
 
         async def close(self):
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     results = []
     for offset in (300_000, 600_000, 900_000):
@@ -1919,7 +1954,7 @@ def test_oldest_deferred_bucket_prefers_open_positions_over_closed_history():
 async def test_observer_processes_open_position_before_closed_history(
     monkeypatch,
 ):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.data.providers import Candle, OHLCVResult
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
@@ -1957,7 +1992,7 @@ async def test_observer_processes_open_position_before_closed_history(
     requested: list[int] = []
 
     class Provider:
-        async def get_ohlcv(self, instrument, timeframe="1h", limit=100, since=None):
+        async def get_ohlcv_observation(self, instrument, timeframe="1h", limit=100, since=None):
             requested.append(since)
             return OHLCVResult(
                 [
@@ -1980,7 +2015,7 @@ async def test_observer_processes_open_position_before_closed_history(
             return None
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", lambda **_: Provider()
+        provider_port, "get_market_data_provider", lambda **_: Provider()
     )
     now = datetime.fromtimestamp((live_bucket + 600_000) / 1000, tz=timezone.utc)
 
@@ -1997,7 +2032,7 @@ async def test_observer_processes_open_position_before_closed_history(
 
 @pytest.mark.asyncio
 async def test_archived_positions_and_retry_rows_are_not_observed_or_rewritten(monkeypatch):
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers as provider_port
     from aletheia.portfolio import position_path_observer as observer
     from aletheia.storage import repositories as repo
 
@@ -2031,7 +2066,7 @@ async def test_archived_positions_and_retry_rows_are_not_observed_or_rewritten(m
     )
     assert enqueued["enqueued_position_buckets"] == 0
     before = db.total_changes
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_: pytest.fail("archived provider call"))
+    monkeypatch.setattr(provider_port, "get_market_data_provider", lambda **_: pytest.fail("archived provider call"))
     result = await observer.observe_open_position_paths(now=now)
     status = observer.build_position_path_observer_status(now=now)
     assert result["positions"] == result["inserted"] == result["deferred"] == 0
