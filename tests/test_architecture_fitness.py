@@ -34,52 +34,17 @@ def _get_imports(path: Path) -> set[str]:
 
 
 def _assert_risk_writer_boundary(root: Path):
-    """Named writer/literal SQL guard; not an arbitrary dynamic-SQL proof."""
-    import re
-    from importlib.util import resolve_name
+    from tests.authority_writer_checks import assert_writer_boundary
 
-    owner = root / "aletheia/risk/engine.py"
-    repository = root / "aletheia/storage/repositories.py"
-    migrations = root / "aletheia/storage/migrations.py"
-    writers = {"insert_risk_decision", "insert_authoritative_risk_decision"}
-    risk_sql = re.compile(r'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"risk_decisions"|`risk_decisions`|\[risk_decisions\]|risk_decisions\b)''', re.I)
-    for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
-        for path in (root / directory).rglob("*.py"):
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-            for node in ast.walk(tree):
-                parent = parents.get(node)
-                while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    parent = parents.get(parent)
-                function = parent.name if parent else None
-                canonical_insert = path == repository and function == "insert_risk_decision"
-                if isinstance(node, ast.Attribute) and node.attr in writers:
-                    assert path == owner or (
-                        path == repository and function == "insert_authoritative_risk_decision"
-                        and node.attr == "insert_risk_decision"
-                    ), (path, node.lineno)
-                if isinstance(node, ast.ImportFrom):
-                    module = node.module or ""
-                    if node.level:
-                        package = ".".join(path.relative_to(root).parent.parts)
-                        module = resolve_name("." * node.level + module, package)
-                    if module != "aletheia.storage.repositories":
-                        continue
-                    if any(alias.name in writers for alias in node.names):
-                        assert path == owner, (path, node.lineno)
-                if isinstance(node, ast.Call):
-                    name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
-                    if name in writers:
-                        assert path == owner or (
-                            path == repository and function == "insert_authoritative_risk_decision"
-                            and name == "insert_risk_decision"
-                        ), (path, node.lineno)
-                    if name in {"_insert", "_insert_many", "_update"}:
-                        table = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
-                        if isinstance(table, ast.Constant) and table.value == "risk_decisions":
-                            assert canonical_insert or path == migrations, (path, node.lineno)
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and risk_sql.search(node.value):
-                    assert canonical_insert or path == migrations, (path, node.lineno)
+    assert_writer_boundary(
+        root, table="risk_decisions",
+        owners={
+            "insert_risk_decision": {"risk/engine.py"},
+            "insert_authoritative_risk_decision": {"risk/engine.py"},
+        },
+        raw_owners={"insert_risk_decision"},
+        delegations={("insert_authoritative_risk_decision", "insert_risk_decision")},
+    )
 
 
 def test_risk_decisions_have_one_application_writer():
@@ -116,6 +81,15 @@ def test_risk_writer_guard_rejects_non_owner(tmp_path, directory, source):
     ("aletheia/storage/repositories.py", "def rewrite(row):\n    _update('risk_decisions', row['id'], row)"),
     ("aletheia/storage/repositories.py", "def rewrite(row):\n    db.execute('DELETE FROM risk_decisions')"),
     ("aletheia/storage/repositories.py", "def rewrite(row):\n    insert_risk_decision(row)"),
+    ("extensions/other.py", "db.execute('INSERT /* hidden */ INTO risk_decisions VALUES (?)')"),
+    ("extensions/other.py", "db.execute('UPDATE OR IGNORE risk_decisions SET approved=1')"),
+    ("aletheia/risk/engine.py", "db.execute('DROP TABLE risk_decisions')"),
+    ("extensions/other.py", "from aletheia.storage.repositories import _insert as save\nsave('risk_decisions', row)"),
+    ("aletheia/storage/repositories.py", "def outer():\n    def insert_risk_decision(row):\n        _insert('risk_decisions', row)"),
+    ("aletheia/storage/repositories.py", "def insert_risk_decision(row):\n    pass\n@decorate(_insert('risk_decisions', row))\ndef unrelated():\n    pass"),
+    ("extensions/other.py", "from aletheia.storage.repositories import *\ninsert_risk_decision(row)"),
+    ("aletheia/risk/engine.py", "from aletheia.storage.repositories import insert_risk_decision as exported_writer"),
+    ("aletheia/storage/repositories.py", "@decorate(_insert('risk_decisions', row))\ndef insert_risk_decision(row):\n    pass"),
 ])
 def test_risk_writer_guard_rejects_relative_alias_and_new_storage_owner(tmp_path, path, source):
     target = tmp_path / path
@@ -127,7 +101,7 @@ def test_risk_writer_guard_rejects_relative_alias_and_new_storage_owner(tmp_path
 
 def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
     sources = {
-        "aletheia/risk/engine.py": "from ..storage.repositories import insert_risk_decision as persist\npersist(row)",
+        "aletheia/risk/engine.py": "def evaluate(row):\n    from ..storage.repositories import insert_risk_decision as persist\n    persist(row)",
         "aletheia/storage/repositories.py": "def insert_risk_decision(row):\n    _insert(table='risk_decisions', data=row)\ndef insert_authoritative_risk_decision(row):\n    insert_risk_decision(row)",
         "aletheia/storage/migrations.py": "db.execute('UPDATE [risk_decisions] SET approved=0')",
     }
