@@ -19,7 +19,7 @@ def _fact(base="BTC", **kwargs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["missing", "wrong_type", "wrong_venue", "wrong_symbol", "wrong_market", "read_error", "background_venue", "background_symbol", "background_market_type", "background_physical_market_type"])
+@pytest.mark.parametrize("failure", ["missing", "wrong_type", "wrong_venue", "wrong_symbol", "wrong_market", "read_error", "background_venue", "background_symbol", "background_market_type", "background_physical_market_type", "lowercase_symbol", "padded_symbol"])
 async def test_unavailable_market_facts_never_write_registry(monkeypatch, failure):
     cfg = AletheiaConfig()
     cfg.market_data.ccxt_exchange = "bitget"
@@ -31,6 +31,9 @@ async def test_unavailable_market_facts_never_write_registry(monkeypatch, failur
                 raise RuntimeError("listing unavailable")
             if failure == "wrong_type":
                 return [{}]
+            if failure in {"lowercase_symbol", "padded_symbol"}:
+                fact = _fact("btc" if failure == "lowercase_symbol" else " BTC")
+                return [replace(fact, background=fact.background | {"symbol": fact.symbol})]
             if failure.startswith("background_"):
                 field = failure.removeprefix("background_")
                 fact = _fact()

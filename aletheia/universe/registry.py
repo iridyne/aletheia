@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.providers import MarketInstrument, get_market_data_provider
-from aletheia.data.symbols import instrument_background_rejection_reason
+from aletheia.data.symbols import instrument_background_rejection_reason, to_canonical
 from aletheia.storage.models import UniverseAsset
 from aletheia.storage import repositories as repo
 
@@ -112,6 +112,7 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             or not isinstance(item.base_asset, str) or not item.base_asset
             or item.quote_asset != "USDT"
             or item.symbol != f"{item.base_asset}/{item.quote_asset}"
+            or item.symbol != to_canonical(item.symbol)
             or not isinstance(item.background, dict)
             or any(item.background.get(field) != expected for field, expected in (
                 ("venue", item.venue), ("symbol", item.symbol),
