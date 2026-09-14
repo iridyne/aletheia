@@ -23,7 +23,7 @@ def _alias_names(value):
     return names
 
 
-def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
+def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=(), literal_writes=None):
     """Bounded named-reference/literal-write proof, not arbitrary dynamic SQL."""
     sql_pattern = re.compile(rf'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     repository = root / "aletheia/storage/repositories.py"
@@ -34,12 +34,19 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
             canonical = {}
+            allowed_literals = {
+                function: statements
+                for (owner_path, function), statements in (literal_writes or {}).items()
+                if path == root / "aletheia" / owner_path
+            }
+            canonical_names = set(allowed_literals)
             if path == repository:
-                for name in raw_owners | {caller for caller, _ in delegations}:
-                    definitions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
-                    if definitions:
-                        assert len(definitions) == 1 and parents[definitions[0]] is tree, (path, name)
-                        canonical[name] = definitions[0]
+                canonical_names |= raw_owners | {caller for caller, _ in delegations}
+            for name in canonical_names:
+                definitions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
+                if definitions:
+                    assert len(definitions) == 1 and parents[definitions[0]] is tree, (path, name)
+                    canonical[name] = definitions[0]
             generic_aliases = {}
             for reference in ast.walk(tree):
                 if isinstance(reference, ast.ImportFrom) and (reference.module or "").endswith("repositories"):
@@ -65,6 +72,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                     parent = parents.get(parent)
                 function = getattr(parent, "name", None)
                 canonical_function = parent is not None and canonical.get(function) is parent and child in parent.body
+                canonical_storage_writer = path == repository and canonical_function and function in raw_owners
 
                 def check_writer(name):
                     if name not in owners:
@@ -92,8 +100,9 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                     if name in _GENERIC_WRITERS:
                         table_arg = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
                         if isinstance(table_arg, ast.Constant) and isinstance(table_arg.value, str) and sql_pattern.search(_without_sql_comments("UPDATE " + table_arg.value)):
-                            assert path == migrations or (canonical_function and function in raw_owners), (path, node.lineno)
+                            assert path == migrations or canonical_storage_writer, (path, node.lineno)
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and sql_pattern.search(_without_sql_comments(node.value)):
-                    assert path == migrations or (canonical_function and function in raw_owners), (path, node.lineno)
+                    exact_literal = canonical_function and node.value in allowed_literals.get(function, ())
+                    assert path == migrations or canonical_storage_writer or exact_literal, (path, node.lineno)
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and ddl_pattern.search(_without_sql_comments(node.value)):
                     assert path == migrations, (path, node.lineno, "authority table DDL")
