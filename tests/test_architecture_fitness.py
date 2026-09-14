@@ -184,6 +184,8 @@ def test_fill_writes_stay_with_exchange_materialization():
     ("aletheia/execution/exchange_materialization.py", "@decorate('UPDATE fills SET fee_source=? WHERE id=?')\ndef _verify_durable_fills():\n    pass"),
     ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    _update('fills', row['id'], row)"),
     ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    return lambda: db.execute('UPDATE fills SET fee_source=? WHERE id=?')"),
+    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    repo._delete_by_rowid_batches('fills', '1=1')"),
+    ("aletheia/execution/exchange_materialization.py", "def _verify_durable_fills():\n    db.execute('CREATE TEMP TABLE fills (id TEXT)')"),
 ])
 def test_fill_writer_guard_rejects_extra_authority(tmp_path, path, source):
     target = tmp_path / path
