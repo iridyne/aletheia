@@ -127,7 +127,7 @@ def _batch_scanner_weights_quota_stats(
             current_cost_model_sql,
             decode_filter_decision_batch,
         )
-        from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+        from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
         from aletheia.storage.sqlite import get_db
     except Exception:
         return []

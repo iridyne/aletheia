@@ -8,7 +8,7 @@ from datetime import date, datetime, timedelta, timezone
 from statistics import fmean
 from typing import Any
 
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 from aletheia.storage.sqlite import get_db
 
 

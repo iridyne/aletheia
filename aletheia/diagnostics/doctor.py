@@ -3677,7 +3677,7 @@ def _probe_filter_evidence(report: Report) -> None:
             "FROM filter_candidate_outcomes",
             (now_iso, stale_before),
         ).fetchone()
-        from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+        from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 
         net_complete_rows = db.execute(
             "SELECT * FROM filter_candidate_outcomes "

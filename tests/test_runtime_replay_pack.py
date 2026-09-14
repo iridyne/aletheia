@@ -23,7 +23,7 @@ def _metrics(conn: sqlite3.Connection) -> dict:
     positions = conn.execute("SELECT * FROM positions").fetchall()
     position_results = Counter()
     genuine = 0
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
 
     for raw in positions:
         row = dict(raw)

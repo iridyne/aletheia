@@ -60,7 +60,7 @@ results can influence a later trading judgment, even when it lives outside `alet
 | --- | --- | --- |
 | Outcome joins | `analytics/trade_attribution.py`, `trade_path.py` | read-only realized-trade joins |
 | Candidate counterfactuals | `counterfactual/trades.py`, `filter_evidence.py`, `universe/filter_outcome_recorder.py` | `filter_candidate_outcomes` is the canonical full-arm fixed-horizon source; `universe_forward_outcomes` is a selected-member legacy mirror/fallback, and economic disagreement fails closed |
-| Outcome economics | `learning/outcomes.py`, `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs current Universe measurement. Other declared treatments remain static until they have an outcome the treatment can causally change. |
+| Outcome economics | `universe/outcome_economics.py`, `analytics/outcome_semantics.py`, `close_reasons.py`, `learning_window.py` | shared fail-closed cost/quality contract governs current Universe measurement. Other declared treatments remain static until they have an outcome the treatment can causally change. |
 | Universe family calibration | `universe/allocator.py::get_family_multipliers`, `learning/experiments.py`, `universe/service.py` | 50-sample retrospective cohorts may propose a bounded 0.9/1.1 shadow treatment; actual paper influence requires stable prospective arms, linked net outcomes, minimum time, owner admission, and a consumed fixed-look confirmatory verdict; fallback is 1.0 |
 | Structured cases | `analytics/trade_case_builder.py` | deterministic high-confidence cases and guard candidates |
 | Universe guard producer | `universe/outcome_recorder.py` | derives candidate guards from settled rejected/pass outcomes |
@@ -315,7 +315,7 @@ The first target slice is implemented without changing trading behavior:
   paper-candidate blocking; declared Learning paths still have no effect unless that
   behavior gate admits the exact source and prospective path authority;
 - `learning/evidence.py` gives narrative and diagnostic artifacts zero quantitative sample weight;
-- `learning/outcomes.py` provides a shared fail-closed adapter for genuine realized positions and
+- Core `analytics/outcome_semantics.py` provides shared fail-closed assessment for genuine realized positions and
   settled cost-aware candidate outcomes; consumer migration is intentionally partial;
 - `learning/contribution.py` deduplicates repeated outcome identity, flags overlapping channel
   credit as not identifiable, and requests refreeze when eligible evidence coverage is lost;
@@ -827,8 +827,12 @@ profitability.
 
 ## 11. Outcome Integrity Handoff
 
-`aletheia/learning/outcomes.py` now composes the dependency-neutral
-`aletheia/analytics/outcome_integrity.py` assessment and then applies Learning's clean-window rules.
+Core `aletheia/analytics/outcome_semantics.py` composes the dependency-neutral
+`aletheia/analytics/outcome_integrity.py` assessment and applies the existing clean-window rules.
+Learning, Universe and operator read models consume this same implementation;
+the former `learning/outcomes.py` is deleted without a forwarding alias. Candidate
+temporal validation, cost completeness, clean-window boundaries and realized
+versus counterfactual meanings are unchanged.
 The global classifier/read model, behavior-consumer migration, owner-facing dual reporting and
 versioned clean-window gate are delivered. Risk account loss remains deliberately separate from
 strategy performance.

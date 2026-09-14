@@ -15,7 +15,7 @@ from aletheia.analytics.filter_evidence import (
     current_cost_model_complete_outcome_sql,
     current_cost_model_sql,
 )
-from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 from aletheia.storage.sqlite import get_db, register_instant_us
 
 _MAX_REPLAYS = 8

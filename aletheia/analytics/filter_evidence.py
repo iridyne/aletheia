@@ -486,7 +486,7 @@ def filter_feedback_stats(
     """Return cost-aware pass/reject cells with a conservative shrunk mean."""
     from aletheia.storage.sqlite import get_db, register_instant_us
 
-    from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+    from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 
     observed_end = (
         as_of_at.isoformat()
@@ -736,7 +736,7 @@ def observer_pre_filter_diagnostics(
     filter and never writes configuration or experiment state.
     """
     from aletheia.storage.sqlite import get_db, register_instant_us
-    from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+    from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 
     observed_end = (
         as_of_at.isoformat()

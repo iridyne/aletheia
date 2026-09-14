@@ -1098,7 +1098,7 @@ def test_factor_feedback_excludes_synthetic_closes():
     from unittest.mock import patch
 
     from aletheia.analytics import factor_feedback as ff
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from tests.test_outcome_closure import _insert_closed_position_via_producer
 
     synthetic = [{

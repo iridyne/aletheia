@@ -24,7 +24,7 @@ logger = logging.getLogger("aletheia.analytics.factor_feedback")
 
 def _genuine_rows(rows: list[dict]) -> list[dict]:
     """Use the shared fail-closed realized-outcome contract."""
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
 
     return [row for row in rows if assess_realized_position(row).eligible]
 

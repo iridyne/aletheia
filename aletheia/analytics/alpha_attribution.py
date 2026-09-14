@@ -17,7 +17,7 @@ from typing import Any
 
 from aletheia.utils.dt import parse_utc
 from aletheia.analytics.learning_window import outcome_window_metadata
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 from aletheia.storage.repositories import (
     SHADOW_OUTCOME_ENTRY_ALIGNMENT_MAX_SEC,
     complete_outcome_economics_sql,

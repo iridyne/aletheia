@@ -21,7 +21,7 @@ from aletheia.analytics.candidate_facts import (
     build_candidate_facts,
 )
 from aletheia.analytics.learning_window import LEARNING_DATA_FLOOR_ISO
-from aletheia.learning.outcomes import (
+from aletheia.analytics.outcome_semantics import (
     CANDIDATE_OUTCOME_TEMPORAL_REASONS,
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,

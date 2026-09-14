@@ -68,7 +68,7 @@ def _close(monkeypatch, position):
 def test_universe_close_reaches_shared_outcome_and_consumers(universe_position, monkeypatch):
     from aletheia.analytics.outcome_integrity import attribution_chain_complete, read_complete_outcome_cohort
     from aletheia.analytics.trade_attribution import build_trade_attribution_rows
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from aletheia.portfolio import outcome_hooks
 
     plan, position = universe_position

@@ -174,7 +174,7 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
 
     sq = _reviewer_db(tmp_path, monkeypatch)
     from aletheia.agents.lesson_reviewer import _fetch_evidence
-    from aletheia.learning import outcomes
+    from aletheia.analytics import outcome_semantics as outcomes
     from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create(

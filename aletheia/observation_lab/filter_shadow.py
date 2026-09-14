@@ -16,7 +16,7 @@ import sqlite3
 from statistics import median
 from typing import Any, Mapping
 
-from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 from aletheia.observation_lab.db import lab_transaction, readonly_lab_db
 from aletheia.storage.sqlite import get_db, register_instant_us
 

@@ -197,7 +197,7 @@ async def test_lesson_reviewer_requires_clean_exact_scope(monkeypatch):
     evidence = lesson_reviewer._fetch_evidence(lesson)
     assert evidence["aggregate"]["total"] == 30
     assert evidence["exact_scope"]["total"] == 5
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     assert assess_realized_position({
         "id": "synthetic", "closed_at": "2026-07-11T00:00:00+00:00",
         "close_reason": "reconciled_gone", "realized_pnl": 100,

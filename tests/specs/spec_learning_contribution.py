@@ -114,7 +114,7 @@ def test_ineligible_contribution_evidence_requests_refreeze():
     )
 )
 def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
-    from aletheia.learning.outcomes import assess_candidate_outcome, assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_candidate_outcome, assess_realized_position
 
     now = datetime.now(timezone.utc)
     clean = now.isoformat()
@@ -239,8 +239,6 @@ def test_shared_outcome_adapter_fails_closed_on_ineligible_rows():
     )
 )
 def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(monkeypatch):
-    import json
-
     from aletheia.analytics.guard_effectiveness import compute_guard_stats
     from aletheia.knowledge.guards import GuardAppliesTo, GuardPredicate, TradingGuard
     from aletheia.storage.sqlite import get_db
@@ -264,7 +262,7 @@ def test_guard_effectiveness_includes_successfully_blocked_candidate_outcomes(mo
     entry = _iso(1)
     due_at = (datetime.fromisoformat(entry) + timedelta(hours=4)).isoformat()
     snapshot = json.dumps({"guard_ids": [guard.guard_id]})
-    import aletheia.learning.outcomes as outcomes
+    import aletheia.analytics.outcome_semantics as outcomes
 
     original = outcomes.assess_candidate_outcome
     as_of_values = []
