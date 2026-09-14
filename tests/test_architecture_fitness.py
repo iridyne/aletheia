@@ -45,6 +45,16 @@ def _assert_risk_writer_boundary(root: Path):
         raw_owners={"insert_risk_decision"},
         delegations={("insert_authoritative_risk_decision", "insert_risk_decision")},
     )
+    repository = root / "aletheia/storage/repositories.py"
+    if repository.exists():
+        tree = ast.parse(repository.read_text(encoding="utf-8"))
+        authority = next((node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "insert_authoritative_risk_decision"), None)
+        assert authority is not None, "canonical authoritative Risk writer missing"
+        calls = [node for node in ast.walk(authority) if isinstance(node, ast.Call)]
+        assert sum(
+            (node.func.id if isinstance(node.func, ast.Name) else node.func.attr if isinstance(node.func, ast.Attribute) else None) == "insert_risk_decision"
+            for node in calls
+        ) == 1, "authoritative Risk writer must contain one direct insertion delegation"
 
 
 def test_risk_decisions_have_one_application_writer():
@@ -90,6 +100,12 @@ def test_risk_writer_guard_rejects_non_owner(tmp_path, directory, source):
     ("extensions/other.py", "from aletheia.storage.repositories import *\ninsert_risk_decision(row)"),
     ("aletheia/risk/engine.py", "from aletheia.storage.repositories import insert_risk_decision as exported_writer"),
     ("aletheia/storage/repositories.py", "@decorate(_insert('risk_decisions', row))\ndef insert_risk_decision(row):\n    pass"),
+    ("extensions/other.py", "repo._delete_by_rowid_batches('risk_decisions', '1=1')"),
+    ("extensions/other.py", "from aletheia.storage.repositories import _delete_by_rowid_batches as erase\nerase(table='risk_decisions', where='1=1')"),
+    ("extensions/other.py", "db.execute('CREATE TABLE risk_decisions (id TEXT)')"),
+    ("extensions/other.py", "db.execute('CREATE TABLE IF NOT EXISTS main.\"risk_decisions\" (id TEXT)')"),
+    ("extensions/other.py", "db.execute('CREATE TEMP TABLE risk_decisions (id TEXT)')"),
+    ("extensions/other.py", "db.execute('CREATE VIRTUAL TABLE risk_decisions USING fts5(id)')"),
 ])
 def test_risk_writer_guard_rejects_relative_alias_and_new_storage_owner(tmp_path, path, source):
     target = tmp_path / path
@@ -110,6 +126,19 @@ def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
     _assert_risk_writer_boundary(tmp_path)
+
+
+@pytest.mark.parametrize("calls", [0, 2])
+def test_risk_writer_guard_requires_one_direct_delegation(tmp_path, calls):
+    target = tmp_path / "aletheia/storage/repositories.py"
+    target.parent.mkdir(parents=True)
+    body = "\n".join(["    insert_risk_decision(row)"] * calls) or "    pass"
+    target.write_text(
+        "def insert_risk_decision(row):\n    _insert('risk_decisions', row)\n"
+        f"def insert_authoritative_risk_decision(row):\n{body}\n", encoding="utf-8",
+    )
+    with pytest.raises(AssertionError):
+        _assert_risk_writer_boundary(tmp_path)
 
 
 def test_scheduler_does_not_own_order_or_close_claim_writes():

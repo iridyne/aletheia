@@ -6,6 +6,7 @@ import re
 
 
 _SQL_COMMENTS = re.compile(r'''"(?:""|[^"])*"|'(?:''|[^'])*'|`(?:``|[^`])*`|\[[^\]]*\]|(?P<comment>/\*.*?\*/|--[^\r\n]*)''', re.S)
+_GENERIC_WRITERS = {"_insert", "_insert_many", "_update", "_delete_by_rowid_batches"}
 
 
 def _without_sql_comments(sql):
@@ -27,7 +28,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
     sql_pattern = re.compile(rf'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     repository = root / "aletheia/storage/repositories.py"
     migrations = root / "aletheia/storage/migrations.py"
-    ddl_pattern = re.compile(rf'''\b(?:DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
+    ddl_pattern = re.compile(rf'''\b(?:CREATE\s+(?:(?:TEMP|TEMPORARY|VIRTUAL)\s+)?TABLE(?:\s+IF\s+NOT\s+EXISTS)?|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -43,17 +44,16 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
             for reference in ast.walk(tree):
                 if isinstance(reference, ast.ImportFrom) and (reference.module or "").endswith("repositories"):
                     for alias in reference.names:
-                        if alias.name in {"_insert", "_insert_many", "_update"}:
+                        if alias.name in _GENERIC_WRITERS:
                             generic_aliases[alias.asname or alias.name] = alias.name
                 if isinstance(reference, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                     value = reference.value
                     aliases = _alias_names(value)
                     assert not aliases.intersection(owners), (path, reference.lineno, "named writer alias", aliases)
-                    helpers = {"_insert", "_insert_many", "_update"}
-                    if aliases.intersection(helpers | generic_aliases.keys()):
+                    if aliases.intersection(_GENERIC_WRITERS | generic_aliases.keys()):
                         assert isinstance(value, (ast.Name, ast.Attribute)), (path, reference.lineno, "compound generic alias")
                     name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id, value.id) if isinstance(value, ast.Name) else None
-                    if name in {"_insert", "_insert_many", "_update"}:
+                    if name in _GENERIC_WRITERS:
                         for target in reference.targets if isinstance(reference, ast.Assign) else [reference.target]:
                             if isinstance(target, ast.Name):
                                 generic_aliases[target.id] = name
@@ -89,7 +89,7 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
                     name = generic_aliases.get(name, name)
                     check_writer(name)
-                    if name in {"_insert", "_insert_many", "_update"}:
+                    if name in _GENERIC_WRITERS:
                         table_arg = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
                         if isinstance(table_arg, ast.Constant) and isinstance(table_arg.value, str) and sql_pattern.search(_without_sql_comments("UPDATE " + table_arg.value)):
                             assert path == migrations or (canonical_function and function in raw_owners), (path, node.lineno)
