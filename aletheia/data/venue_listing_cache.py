@@ -10,8 +10,8 @@ Design:
 - 6-hour TTL (internal constant — not exposed in Settings).
 - Lazy async load on first call; synchronous invalidation on config change.
 - fail-open: a None result (network failure, timeout) means "keep all instruments".
-- xStock (Bitget ON/r-series) filter uses market.get("active") is not False
-  instead of market.get("spot") is True, which correctly captures Bitget's
+- xStock (Bitget ON/r-series) filter uses market.get("active") != False
+  instead of requiring market.get("spot") is True, which captures Bitget's
   tokenized equity spot tokens that ccxt does not mark with spot=True.
 """
 
@@ -96,44 +96,14 @@ async def _load_listing(venue: str) -> frozenset[str] | None:
     """Fetch active canonical symbols from *venue* via CCXT load_markets().
 
     Returns None on any network/timeout/parse failure (fail-open).
-    Uses market.get("active") is not False as the liveness gate — this correctly
+    Uses market.get("active") != False as the liveness gate — this correctly
     captures Bitget tokenized equity tokens (ON-series, r-series) that ccxt does
     not mark with spot=True in their market dict.
     """
-    from aletheia.data.symbols import to_canonical
-
-    async def _fetch() -> frozenset[str]:
-        from aletheia.data.ccxt_provider import get_market_data_provider
-
-        provider = get_market_data_provider(
-            exchange=venue,
-            native_ccxt=True,
-            fallback_exchange=venue,
-        )
-        try:
-            exchange = provider._ensure_primary()
-            # Don't set defaultType globally — load all market types and
-            # let the active-flag filter do the work.
-            markets = await exchange.load_markets()
-            if not isinstance(markets, dict) or not markets:
-                raise ValueError(f"load_markets returned empty/invalid result for {venue}")
-            listed = frozenset(
-                to_canonical(str(sym))
-                for sym, info in markets.items()
-                # ccxt market dicts use three-value active: True/False/None.
-                # We want symbols that are NOT explicitly deactivated (False);
-                # None (unknown) and True both count as listed.
-                # != False is intentional: distinguishes False from None.
-                if isinstance(info, dict) and info.get("active") != False  # noqa: E712
-            )
-            if not listed:
-                raise ValueError(f"no active markets found for {venue}")
-            return listed
-        finally:
-            await provider.close()
+    from aletheia.data.providers import read_market_listing
 
     try:
-        task = asyncio.ensure_future(_fetch())
+        task = asyncio.ensure_future(read_market_listing(venue, spot_only=False))
         done, _ = await asyncio.wait({task}, timeout=_LISTING_LOAD_TIMEOUT_SEC)
         if task not in done:
             task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)

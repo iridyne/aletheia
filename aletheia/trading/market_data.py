@@ -95,36 +95,12 @@ async def _listed_symbols_on_exchange(exchange_name: str) -> frozenset[str] | No
     cancellation, the caller returns at the deadline while that task finishes cleanup.
     """
 
-    async def _load_and_close() -> frozenset[str]:
-        from aletheia.data.ccxt_provider import get_market_data_provider
-
-        provider = get_market_data_provider(
-            exchange=exchange_name,
-            native_ccxt=True,
-            fallback_exchange=exchange_name,
-        )
-        try:
-            exchange = provider._ensure_primary()
-            exchange.options["defaultType"] = "spot"
-            markets = await exchange.load_markets()
-            if not isinstance(markets, dict):
-                raise TypeError("exchange market list is not a mapping")
-            listed = frozenset(
-                to_canonical(str(symbol))
-                for symbol, market in markets.items()
-                if isinstance(market, dict)
-                and market.get("spot") is True
-                and market.get("active") is not False
-            )
-            if not listed:
-                raise ValueError("exchange returned no active spot markets")
-            return listed
-        finally:
-            await provider.close()
+    from aletheia.data.providers import read_market_listing
 
     try:
         return await _wait_without_cancel_drain(
-            _load_and_close(), timeout=_XSTOCK_LISTING_TIMEOUT_SEC
+            read_market_listing(exchange_name, spot_only=True),
+            timeout=_XSTOCK_LISTING_TIMEOUT_SEC,
         )
     except asyncio.CancelledError:
         raise
