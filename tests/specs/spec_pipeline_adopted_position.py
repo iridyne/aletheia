@@ -46,6 +46,10 @@ def _setup_db(tmp_path, monkeypatch):
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
     loader._invalidate_config_cache()
+    loader.CONFIG_PATH.write_text(
+        "exchange:\n  name: bitget\n  mode: demo\n  paper_execution_mode: bitget_demo\n",
+        encoding="utf-8",
+    )
     (tmp_path / "logs").mkdir(parents=True, exist_ok=True)
 
     sq._db_conn = None
@@ -76,9 +80,13 @@ def _configure_exchange(name: str) -> None:
     """Set the active exchange required by live execution-mode resolution."""
     import yaml
     import aletheia.config.loader as loader
+    from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
 
     loader.CONFIG_PATH.write_text(
-        yaml.safe_dump({"exchange": {"name": name, "mode": "live"}}),
+        yaml.safe_dump({"exchange": {
+            "name": name, "mode": "live",
+            "paper_execution_mode": EXCHANGE_UNIFICATION_MAP[name][1],
+        }}),
         encoding="utf-8",
     )
     loader._invalidate_config_cache()
