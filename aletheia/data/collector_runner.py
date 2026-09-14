@@ -23,16 +23,18 @@ _CONTEXT_INTERVAL_SEC = 600.0  # same cadence as data_collector_context
 
 def main() -> None:
     from aletheia.logging_config import configure_logging
-    from aletheia.data.providers import configure_listing_reader
+    from aletheia.data.providers import configure_listing_reader, configure_market_data_factory
 
     try:
-        from aletheia.data.ccxt_provider import read_market_listing
+        from aletheia.data.ccxt_provider import read_market_listing, create_market_data_provider
     except ModuleNotFoundError as exc:
         if exc.name != "aletheia.data.ccxt_provider":
             raise
         configure_listing_reader(None)
+        configure_market_data_factory(None)
     else:
         configure_listing_reader(read_market_listing)
+        configure_market_data_factory(create_market_data_provider)
 
     configure_logging()
     from aletheia.config.loader import bootstrap

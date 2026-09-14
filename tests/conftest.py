@@ -329,6 +329,7 @@ def _bind_market_listing(monkeypatch):
     from aletheia.data import ccxt_provider, providers
 
     monkeypatch.setattr(providers, "_listing_reader", ccxt_provider.read_market_listing)
+    monkeypatch.setattr(providers, "_provider_factory", ccxt_provider.create_market_data_provider)
 
 
 @pytest.fixture(autouse=True)

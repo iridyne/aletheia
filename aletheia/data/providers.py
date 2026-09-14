@@ -1,7 +1,8 @@
 """Market-data provider protocol + value models (Ticker, Candle).
 
 Normalized contracts with no concrete adapter imports or third-party deps.
-Composition binds the optional listing read; tests can replace the side effect.
+Composition binds optional listing reads and fresh provider creation; tests can
+replace those side effects without importing concrete adapters.
 """
 
 from __future__ import annotations
@@ -15,6 +16,21 @@ from aletheia.data.symbols import InstrumentId
 
 
 _listing_reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None = None
+_provider_factory: Callable[..., MarketDataProvider] | None = None
+
+
+def configure_market_data_factory(factory: Callable[..., MarketDataProvider] | None) -> None:
+    global _provider_factory
+    _provider_factory = factory
+
+
+def get_market_data_provider(exchange: str | None = None, *, exact_venue: bool = False) -> MarketDataProvider:
+    """Create a request-owned provider; exact reads forbid cross-source fallback."""
+    if exact_venue and not exchange:
+        raise ValueError("exact market data requires a venue")
+    if _provider_factory is None:
+        raise RuntimeError("market data provider unavailable")
+    return _provider_factory(exchange, exact_venue=exact_venue)
 
 
 def configure_listing_reader(
