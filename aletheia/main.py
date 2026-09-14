@@ -57,6 +57,17 @@ def _configure_runtime() -> None:
 
     bind_uta_provider()
 
+    from aletheia.trust.learning_safety import configure_learning_safety
+
+    try:
+        from aletheia.learning.control import learning_influence_gate_reason, global_learning_refreeze_reason
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.learning", "aletheia.learning.control"}:
+            raise
+        configure_learning_safety()
+    else:
+        configure_learning_safety(influence_gate=learning_influence_gate_reason, refreeze_reason=global_learning_refreeze_reason)
+
     from aletheia.trading.sizing_policy import configure_sizing_evidence
 
     try:

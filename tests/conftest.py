@@ -333,6 +333,15 @@ def _bind_entry_learning(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_learning_safety(monkeypatch):
+    from aletheia.learning import control
+    from aletheia.trust import learning_safety
+
+    monkeypatch.setattr(learning_safety, "_influence_gate", lambda: control.learning_influence_gate_reason())
+    monkeypatch.setattr(learning_safety, "_refreeze_reason", lambda: control.global_learning_refreeze_reason())
+
+
+@pytest.fixture(autouse=True)
 def _bind_sizing_evidence(monkeypatch):
     from aletheia.learning.sizing_evidence import resolve_sizing_evidence
     from aletheia.trading import sizing_policy
