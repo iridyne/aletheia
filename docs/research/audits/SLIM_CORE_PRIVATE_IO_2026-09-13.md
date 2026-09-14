@@ -171,6 +171,19 @@ route caller, and its claimed allowlist reduction was false. The corrective
 batch switches the caller; the concrete-import allowlist still has two entries.
 No assertion was weakened to manufacture full architectural convergence.
 
+The Model construction audit at `163b35a33` moves selected-endpoint client
+construction and its API-key lookup from the Core router to `http_runtime`.
+The existing Web/CLI entrypoints bind that constructor without creating clients
+or resolving keys; the standalone harness script binds at its explicit main.
+Core retains one cache, request-local model cloning, async lookup, health and
+closure owner. The duplicate concrete-class registry is removed in favor of
+existing access-method metadata; the implementation imports only the selected
+HTTP adapter. Missing construction is unavailable, including when a cached
+instance exists, and cannot fabricate a usable model. Core router/Web imports
+are tested with the HTTP implementation and both SDKs absent. Configuration
+identity hashing and management ingress still have separate raw-secret paths;
+this is not full Core credential convergence or Scheme A physical movement.
+
 The Model attempt-provenance audit at `163b35a33` found a second endpoint-name
 resolver in the shared provider envelope. It inferred an alias from concrete
 class names, current configuration, URL and model; even an unrelated sole

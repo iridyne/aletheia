@@ -1064,6 +1064,18 @@ async def _request_timing(request, call_next):
             )
 
 
+from aletheia.model_provider.router import configure_model_provider
+
+try:
+    from aletheia.model_provider.http_runtime import build_http_provider
+except ModuleNotFoundError as exc:
+    if exc.name != "aletheia.model_provider.http_runtime":
+        raise
+    configure_model_provider(None)
+    logger.warning("model_adapter_unavailable")
+else:
+    configure_model_provider(build_http_provider)
+
 app.include_router(health_router)
 app.include_router(infra_router)
 app.include_router(settings_router)

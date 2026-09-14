@@ -24,6 +24,14 @@ from aletheia.model_provider.router import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _bind_http_constructor(monkeypatch):
+    from aletheia.model_provider import router
+    from aletheia.model_provider.http_runtime import build_http_provider
+
+    monkeypatch.setattr(router, "_provider_factory", build_http_provider)
+
+
 @pytest.mark.parametrize("bound", [None, "selected-endpoint"])
 def test_attempt_endpoint_identity_is_never_guessed_from_current_config(monkeypatch, bound):
     from types import SimpleNamespace
@@ -151,7 +159,7 @@ async def test_async_provider_configuration_check_runs_off_event_loop(tmp_path, 
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", lambda _ref: "secret")
+    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", lambda _ref: "secret")
     clear_cache()
     cfg = load_config()
     cfg.models.providers["async-provider"] = ProviderConfig(

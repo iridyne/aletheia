@@ -33,12 +33,11 @@ from aletheia.model_provider.router import (
     persist_provider_verification,
     provider_configuration_identity,
     provider_is_configured,
-    PROVIDER_REGISTRY,
 )
 
 router = APIRouter(prefix="/api", tags=["model"])
 
-VALID_PROVIDERS = set(PROVIDER_REGISTRY.keys())
+VALID_PROVIDERS = API_PROVIDER_TYPES
 
 
 class ModelHealthRecord(BaseModel):
@@ -473,7 +472,7 @@ def get_provider_types():
     return {
         provider_type: definition.public()
         for provider_type, definition in PROVIDER_TYPES.items()
-        if provider_type in PROVIDER_REGISTRY
+        if provider_type in API_PROVIDER_TYPES
     }
 
 
