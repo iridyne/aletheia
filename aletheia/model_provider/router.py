@@ -1,7 +1,7 @@
 """Model provider router — creates and caches provider instances from config."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from concurrent.futures import Future
 from datetime import datetime, timezone
 import threading
@@ -20,6 +20,7 @@ from aletheia.model_provider.registry import API_PROVIDER_TYPES, PROVIDER_TYPES
 _provider_factory: Callable[..., ModelProvider] | None = None
 _provider_identity_reader: Callable[..., str] | None = None
 _provider_status_reader: Callable[..., dict] | None = None
+_selection_verifier: Callable[[str, str, str], Awaitable[dict]] | None = None
 
 
 def configure_model_provider(
@@ -27,12 +28,14 @@ def configure_model_provider(
     *,
     identity_reader: Callable[..., str] | None = None,
     status_reader: Callable[..., dict] | None = None,
+    selection_verifier: Callable[[str, str, str], Awaitable[dict]] | None = None,
 ) -> None:
     """Bind Model implementation operations at the existing entrypoint, without I/O."""
-    global _provider_factory, _provider_identity_reader, _provider_status_reader
+    global _provider_factory, _provider_identity_reader, _provider_status_reader, _selection_verifier
     _provider_factory = factory
     _provider_identity_reader = identity_reader
     _provider_status_reader = status_reader
+    _selection_verifier = selection_verifier
 
 _cache: dict[str, ModelProvider] = {}
 
@@ -74,6 +77,32 @@ class ProviderNotConfigured(ValueError):
 
 class ModelAdapterUnavailable(ValueError):
     """The optional Model implementation is not bound in this process."""
+
+
+async def verify_model_selection(endpoint_id: str, provider_type: str, model_id: str) -> dict:
+    """Verify only a configured endpoint/model selection, never candidate credentials."""
+    if _selection_verifier is None:
+        raise ModelAdapterUnavailable("model_adapter_unavailable")
+    return await _selection_verifier(endpoint_id, provider_type, model_id)
+
+
+def set_default_model_provider(cfg, provider_id: str) -> None:
+    """Apply the existing default-role policy to the caller's config transaction."""
+    cfg.models.default_provider = provider_id
+
+
+def clear_model_profile_roles(cfg, profile_id: str) -> list[str]:
+    """Retire an endpoint's Core-owned roles within its deletion transaction."""
+    cleared_roles = []
+    if cfg.models.default_provider == profile_id:
+        set_default_model_provider(cfg, "")
+        cleared_roles.append("default")
+    for tier in ("deep", "fast"):
+        selected = getattr(cfg.models, tier)
+        if selected and selected.endpoint_id == profile_id:
+            setattr(cfg.models, tier, None)
+            cleared_roles.append(tier)
+    return cleared_roles
 
 
 def clear_provider_verification(pcfg) -> None:
@@ -156,6 +185,29 @@ def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
     }
 
 
+def apply_provider_verification(
+    pcfg,
+    *,
+    current_identity: str,
+    identity: str,
+    verified: bool,
+    source: str,
+    reason_code: str,
+    detail: str | None = None,
+    verified_at: str | None = None,
+) -> bool:
+    """Apply matching evidence within the caller's canonical config transaction."""
+    if current_identity != identity:
+        return False
+    pcfg.verification_identity = identity
+    pcfg.verification_verified = verified
+    pcfg.verification_at = verified_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    pcfg.verification_source = source
+    pcfg.verification_reason_code = reason_code
+    pcfg.verification_detail = detail
+    return True
+
+
 def persist_provider_verification(
     name: str,
     *,
@@ -176,20 +228,14 @@ def persist_provider_verification(
         ):
             return False
         try:
-            if provider_configuration_identity(name, pcfg) != identity:
-                return False
+            current_identity = provider_configuration_identity(name, pcfg)
         except ModelAdapterUnavailable:
             return False
-        pcfg.verification_identity = identity
-        pcfg.verification_verified = verified
-        pcfg.verification_at = (
-            verified_at
-            or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return apply_provider_verification(
+            pcfg, current_identity=current_identity, identity=identity,
+            verified=verified, source=source, reason_code=reason_code,
+            detail=detail, verified_at=verified_at,
         )
-        pcfg.verification_source = source
-        pcfg.verification_reason_code = reason_code
-        pcfg.verification_detail = detail
-        return True
 
     persisted = mutate_config(apply)
     if persisted:

@@ -57,7 +57,7 @@ async def test_retired_model_type_cannot_probe_or_resolve_credentials(
 @pytest.mark.parametrize("provider_type", ["codex_cli", "openai_native", "anthropic_native", "databricks"])
 def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name, provider_type):
     from typer.testing import CliRunner
-    from aletheia.cli.model import model_app
+    from aletheia.main import app
     import aletheia.config.loader as loader
 
     cfg = AletheiaConfig()
@@ -69,6 +69,6 @@ def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name, p
 
     monkeypatch.setattr(loader, "save_config", forbidden)
     monkeypatch.setattr("typer.prompt", forbidden)
-    result = CliRunner().invoke(model_app, ["set", "--provider", name, "--api-key"])
+    result = CliRunner().invoke(app, ["model", "set", "--provider", name, "--api-key"])
     assert result.exit_code == 1
     assert not cfg.models.providers[name].enabled

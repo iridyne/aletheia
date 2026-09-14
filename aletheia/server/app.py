@@ -1067,7 +1067,7 @@ async def _request_timing(request, call_next):
 from aletheia.model_provider.router import configure_model_provider
 
 try:
-    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status
+    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
 except ModuleNotFoundError as exc:
     if exc.name != "aletheia.model_provider.http_runtime":
         raise
@@ -1076,7 +1076,7 @@ except ModuleNotFoundError as exc:
 else:
     configure_model_provider(
         build_http_provider, identity_reader=http_configuration_identity,
-        status_reader=http_credential_status,
+        status_reader=http_credential_status, selection_verifier=verify_http_model_selection,
     )
 
 app.include_router(health_router)
@@ -1085,6 +1085,14 @@ app.include_router(settings_router)
 app.include_router(data_router)
 app.include_router(live_router)
 app.include_router(model_router)
+try:
+    from aletheia.model_provider.credential_routes import router as model_credentials_router
+except ModuleNotFoundError as exc:
+    if exc.name != "aletheia.model_provider.credential_routes":
+        raise
+    logger.warning("model_credential_routes_unavailable")
+else:
+    app.include_router(model_credentials_router)
 app.include_router(bitget_router)
 try:
     from aletheia.exchanges.credential_routes import router as exchange_credentials_router

@@ -100,6 +100,19 @@ def http_credential_status(name: str, pcfg) -> dict:
     }
 
 
+async def verify_http_model_selection(endpoint_id: str, provider_type: str, model_id: str) -> dict:
+    """Reuse the credential-ingress probe for one configured endpoint/model pair."""
+    try:
+        from aletheia.model_provider.credential_routes import _verify_profile_candidate
+    except ModuleNotFoundError as exc:
+        if exc.name != "aletheia.model_provider.credential_routes":
+            raise
+        from aletheia.model_provider.router import ModelAdapterUnavailable
+
+        raise ModelAdapterUnavailable("model_adapter_unavailable") from None
+    return await _verify_profile_candidate(endpoint_id, provider_type, {"model": model_id})
+
+
 def build_http_provider(name, pcfg):
     """Resolve only this selected endpoint's API credential reference."""
     provider_type = pcfg.type or name

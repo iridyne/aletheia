@@ -91,7 +91,8 @@ def test_core_and_ui_project_only_sanitized_status_and_keep_absence_unknown(monk
     def forbidden(*_args):
         pytest.fail("Core metadata read must not resolve raw credentials")
 
-    monkeypatch.setattr(model, "get_secret", forbidden)
+    assert not hasattr(model, "get_secret")
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
     assert not hasattr(ui, "get_secret")
     assert model.get_model_config()["providers"]["selected"]["api_key"] == metadata
     assert ui._model_credential_configured(cfg) is True

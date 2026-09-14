@@ -57,7 +57,7 @@ def _configure_runtime() -> None:
 
     bind_uta_provider()
     try:
-        from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status
+        from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
     except ModuleNotFoundError as exc:
         if exc.name != "aletheia.model_provider.http_runtime":
             raise
@@ -65,7 +65,7 @@ def _configure_runtime() -> None:
     else:
         configure_model_provider(
             build_http_provider, identity_reader=http_configuration_identity,
-            status_reader=http_credential_status,
+            status_reader=http_credential_status, selection_verifier=verify_http_model_selection,
         )
 
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
@@ -101,6 +101,14 @@ app.add_typer(
 app.add_typer(bitget_app, name="bitget", help="Bitget connection (test deprecated → dashboard; sync is a debug tool).")
 app.add_typer(knowledge_app, name="knowledge", help="Knowledge base / experience-loop tools (reindex, search).")
 app.add_typer(guard_app, name="guard", help="Trading-guard admin: audit learned guards, downgrade to shadow-only.")
+
+try:
+    from aletheia.model_provider.credential_cli import set_cmd as set_model_credentials
+except ModuleNotFoundError as exc:
+    if exc.name != "aletheia.model_provider.credential_cli":
+        raise
+else:
+    model_app.command(name="set")(set_model_credentials)
 
 # [DEPRECATED → dashboard] superseded by the web UI; still work, kept as an escape hatch.
 app.add_typer(model_app, name="model", help="[deprecated → Settings] Model provider commands.")
