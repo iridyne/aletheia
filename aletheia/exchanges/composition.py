@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+import logging
 
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_credential_generation, get_secret
@@ -11,6 +12,9 @@ from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
 from aletheia.uta.manager import UTA_EXECUTION_MODES, configure_uta_provider
 from aletheia.uta.models import UTAAccountIdentity
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
+
+
+logger = logging.getLogger(__name__)
 
 
 def _profile_spec(cfg, execution_mode: str):
@@ -132,9 +136,13 @@ def build_uta_registry(
     for execution_mode in UTA_EXECUTION_MODES:
         if execution_mode not in execution_modes:
             continue
-        scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
-            cfg, execution_mode
-        )
+        try:
+            scope, profile_name, venue, environment, fields, profile_type = _profile_spec(
+                cfg, execution_mode
+            )
+        except ImportError:
+            logger.warning("exchange_profile_unavailable execution_mode=%s", execution_mode)
+            continue
         credentials = {field: get_secret(f"{scope}.{field}") for field in fields}
         if not all(credentials.values()):
             continue

@@ -24,6 +24,25 @@ def test_binding_does_not_resolve_credentials(monkeypatch):
     assert manager._retention_contract is composition.funding_history_retention_contract
 
 
+@pytest.mark.parametrize("error_type", [ImportError, ValueError])
+def test_profile_import_failure_does_not_resolve_secrets_or_echo_error(monkeypatch, caplog, error_type):
+    def unavailable(*_args):
+        raise error_type("sensitive-import-detail")
+
+    def forbidden(*_args):
+        pytest.fail("unavailable profile must not resolve credentials")
+
+    monkeypatch.setattr(composition, "_profile_spec", unavailable)
+    monkeypatch.setattr(composition, "get_secret", forbidden)
+    if error_type is ImportError:
+        assert composition.build_uta_registry(object(), execution_modes=("okx_demo",)).configured_identities() == ()
+        assert "exchange_profile_unavailable execution_mode=okx_demo" in caplog.text
+        assert "sensitive-import-detail" not in caplog.text
+    else:
+        with pytest.raises(ValueError, match="sensitive-import-detail"):
+            composition.build_uta_registry(object(), execution_modes=("okx_demo",))
+
+
 def test_core_delegates_only_requested_account_scope():
     calls = []
     registry = manager.UTARegistry()
