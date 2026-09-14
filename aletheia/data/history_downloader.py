@@ -46,7 +46,8 @@ async def download_symbol_history(
     backward from the local oldest bar instead of starting at the month boundary.
     """
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.providers import timeframe_ms
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage.repositories import (
         get_ohlcv_newest_ts,

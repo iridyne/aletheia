@@ -1635,8 +1635,8 @@ async def get_market_ohlcv(
 
     from aletheia.config.loader import load_config
     from aletheia.data.cache import get_cache
-    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
-    from aletheia.data.providers import OHLCVResult
+    from aletheia.data.ccxt_provider import get_market_data_provider
+    from aletheia.data.providers import OHLCVResult, timeframe_ms
     from aletheia.data.symbols import InstrumentId, to_canonical
 
     cfg = load_config()
