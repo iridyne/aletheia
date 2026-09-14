@@ -42,13 +42,23 @@ def test_core_delegates_only_requested_account_scope():
 
 def test_cli_entrypoint_binds_before_dispatch(monkeypatch):
     from aletheia import main
+    from typer.testing import CliRunner
 
-    def command():
-        assert manager._registry_factory is composition.build_uta_registry
+    assert CliRunner().invoke(main.app, ["version"]).exit_code == 0
+    assert manager._registry_factory is composition.build_uta_registry
 
-    monkeypatch.setattr(main, "app", command)
-    monkeypatch.setattr(main.atexit, "register", lambda *_args: None)
-    main._entry_point()
+
+def test_existing_packaged_dispatch_uses_same_cli_binding(monkeypatch):
+    import sys
+    from tests.test_packaged_runtime_contract import _entrypoint_module
+
+    entrypoint = _entrypoint_module()
+    monkeypatch.setattr(entrypoint, "_install_process_adapter", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["aletheia", "version"])
+    with pytest.raises(SystemExit) as result:
+        entrypoint.main()
+    assert result.value.code == 0
+    assert manager._registry_factory is composition.build_uta_registry
 
 
 @pytest.mark.asyncio
@@ -56,7 +66,11 @@ async def test_server_binds_before_background_startup(monkeypatch):
     import importlib
 
     server = importlib.import_module("aletheia.server.app")
-    monkeypatch.setattr(server, "bootstrap", lambda: object())
+    def bootstrap():
+        assert manager._registry_factory is composition.build_uta_registry
+        return object()
+
+    monkeypatch.setattr(server, "bootstrap", bootstrap)
     monkeypatch.setattr("aletheia.logging_config.configure_logging", lambda: None)
 
     class StopBeforeRuntime(Exception):
