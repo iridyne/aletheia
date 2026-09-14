@@ -509,12 +509,32 @@ def _candidate_protocol(provider_type: str, requested_protocol: str | None, pcfg
         raise HTTPException(422, str(exc)) from exc
 
 
+async def _candidate_api_key(req, provider_type: str, pcfg, protocol: str | None) -> str | None:
+    """Never lend a configured endpoint's credential to a different candidate."""
+    candidate_key = req.api_key.strip() if isinstance(req.api_key, str) else req.api_key
+    if candidate_key:
+        return candidate_key
+    if pcfg is None or not pcfg.api_key_secret_ref:
+        return None
+    saved_type = pcfg.type or req.provider
+    if (
+        saved_type != provider_type
+        or (req.base_url or pcfg.base_url or "").rstrip("/") != (pcfg.base_url or "").rstrip("/")
+        or protocol != provider_config_protocol(saved_type, pcfg)
+        or (
+            provider_type == "anthropic_compatible"
+            and (req.auth_scheme or pcfg.auth_scheme) != pcfg.auth_scheme
+        )
+    ):
+        raise HTTPException(422, "candidate_credentials_required_for_changed_endpoint")
+    return await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
+
+
 @router.post("/model/detect-models")
 async def detect_models(req: DetectModelsRequest):
     """Probe a candidate provider identity without persisting credentials."""
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -524,13 +544,7 @@ async def detect_models(req: DetectModelsRequest):
         if provider_type in API_PROVIDER_TYPES
         else None
     )
-    stored_key = (
-        await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
-        if pcfg and pcfg.api_key_secret_ref
-        else None
-    )
-    candidate_key = req.api_key.strip() if isinstance(req.api_key, str) else req.api_key
-    api_key = candidate_key or stored_key
+    api_key = await _candidate_api_key(req, provider_type, pcfg, protocol)
 
     if provider_type == "openai_compatible":
         provider = OpenAICompatibleProvider(
@@ -581,7 +595,6 @@ async def test_model_candidate(req: TestCandidateRequest):
     """
     from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-    from aletheia.config.secrets import get_secret
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -592,11 +605,7 @@ async def test_model_candidate(req: TestCandidateRequest):
         if provider_type in API_PROVIDER_TYPES
         else None
     )
-    stored_key = None
-    if pcfg and pcfg.api_key_secret_ref:
-        stored_key = await asyncio.to_thread(get_secret, pcfg.api_key_secret_ref)
-    candidate_key = req.api_key.strip() if isinstance(req.api_key, str) else req.api_key
-    api_key = candidate_key or stored_key
+    api_key = await _candidate_api_key(req, provider_type, pcfg, protocol)
 
     if provider_type == "openai_compatible":
         provider = OpenAICompatibleProvider(
