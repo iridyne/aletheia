@@ -128,7 +128,7 @@ def test_local_session_refuses_a_signer_not_trusted_by_installed_app(tmp_path):
 
 def test_local_session_uses_temporary_feed_for_check_update_and_terminal_status(monkeypatch, tmp_path):
     session = _session_module()
-    launcher = tmp_path / "core" / "aletheia"
+    launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     calls: list[tuple[list[str], dict[str, str]]] = []
@@ -167,7 +167,7 @@ def test_local_session_version_boundary_falls_back_to_apply_on_old_cli(monkeypat
     with the old hint; the driver must fall back to 'update apply --yes'.
     """
     session = _session_module()
-    launcher = tmp_path / "core" / "aletheia"
+    launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
 
@@ -198,7 +198,7 @@ def test_local_session_version_boundary_falls_back_to_apply_on_old_cli(monkeypat
 
 def test_local_session_version_boundary_detects_old_typer_help(monkeypatch, tmp_path):
     session = _session_module()
-    launcher = tmp_path / "core" / "aletheia"
+    launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     apply_calls: list[list[str]] = []
@@ -245,7 +245,7 @@ def test_local_session_rejects_a_relative_installed_cli_path():
 
 def test_local_session_treats_an_equivalent_payload_as_a_successful_noop(monkeypatch, tmp_path):
     session = _session_module()
-    launcher = tmp_path / "core" / "aletheia"
+    launcher = tmp_path / "aletheia"
     launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
     responses = iter(["already current", json.dumps({"status": "up_to_date"})])

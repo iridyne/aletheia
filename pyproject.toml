@@ -50,6 +50,7 @@ path = "core/aletheia/__init__.py"
 
 [tool.uv]
 cache-keys = [
+    { file = "pyproject.toml" },
     { file = "core/aletheia/__init__.py" },
 ]
 

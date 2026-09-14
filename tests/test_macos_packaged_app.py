@@ -57,7 +57,7 @@ def _payload(root: Path) -> Path:
 
 
 def _host(root: Path) -> Path:
-    _write_executable(root / "core" / "aletheia")
+    _write_executable(root / "aletheia")
     _write_executable(root / "aletheia-tray")
     return root
 

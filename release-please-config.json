@@ -63,7 +63,7 @@
       "extra-files": [
         {
           "type": "generic",
-          "path": "aletheia/__init__.py"
+        "path": "core/aletheia/__init__.py"
         }
       ]
     }
