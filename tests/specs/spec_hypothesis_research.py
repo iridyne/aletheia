@@ -307,6 +307,7 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             execution_mode="bitget_demo",
             scanner_family="momentum",
             opened_at="2026-08-16T00:01:00+00:00",
+            agent_rationale="Oversold momentum suggested a mean-reversion long.",
         )
         opportunity_id = position["opportunity_id"]
         proposal_id = position["proposal_id"]
@@ -318,10 +319,6 @@ async def test_legacy_trade_case_replay_requires_canonical_t0_envelope(monkeypat
             open_interest=1_000_000.0,
             oi_delta_1h=-12.0,
             key_observations=json.dumps({"volatility": "high"}),
-        )
-        repo.update_trade_proposal(
-            proposal_id,
-            agent_rationale="Oversold momentum suggested a mean-reversion long.",
         )
         repo.insert_pi_decision(PiDecision(
             id=f"causal-loss-decision-{index}",

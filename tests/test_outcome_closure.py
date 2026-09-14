@@ -181,6 +181,7 @@ def _insert_entry_chain(
     scanner_family: str = "fixture",
     confidence: str = "speculative",
     confidence_score: int | None = None,
+    agent_rationale: str = "",
 ) -> tuple[str, str, str]:
     """Persist the real entry lineage required by an eligible close fixture."""
     from aletheia.storage.models import (
@@ -226,6 +227,7 @@ def _insert_entry_chain(
         price=price,
         execution_mode=execution_mode,
         status="executed",
+        agent_rationale=agent_rationale,
         created_at=entry_at,
     )
     repo.insert_trade_proposal(proposal)
@@ -307,6 +309,7 @@ def _insert_closed_position_via_producer(
     confidence: str = "speculative",
     confidence_score: int | None = None,
     expected_outcome_eligible: bool = True,
+    agent_rationale: str = "",
 ) -> dict:
     """Open a complete fixture chain, then close it through production PnL."""
     from aletheia.portfolio.pnl import close_position
@@ -344,6 +347,7 @@ def _insert_closed_position_via_producer(
         scanner_family=scanner_family,
         confidence=confidence,
         confidence_score=confidence_score,
+        agent_rationale=agent_rationale,
     )
     funding_source = (
         "not_applicable"
