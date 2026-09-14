@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from aletheia.config.schema import AletheiaConfig
+from tests.live_identity import bind_live_identity
 
 
 def _config(monkeypatch, broker: str):
@@ -15,6 +16,7 @@ def _config(monkeypatch, broker: str):
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = broker
     monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
+    bind_live_identity(monkeypatch, trust)
     return cfg, trust
 
 
@@ -26,6 +28,72 @@ def _account_result(*, uid="account-1", environment="live", permissions=("trade"
             "permissions": list(permissions),
         },
     }
+
+
+@pytest.mark.parametrize("broker,profile", [
+    ("bitget", "classic_v2"), ("bitget", "uta_v3"),
+    ("okx", "okx_live"), ("binance", "binance_live"),
+])
+def test_live_identity_uses_scoped_uta_metadata_without_client(monkeypatch, broker, profile):
+    from aletheia.exchanges import composition
+    from aletheia.uta import manager
+
+    cfg, trust = _config(monkeypatch, broker)
+    if broker == "bitget":
+        cfg.exchange.bitget_profile = profile
+    mode = f"{broker}_live_limited"
+    calls = []
+
+    def registry(config, *, execution_modes):
+        calls.append(execution_modes)
+        return composition.build_uta_registry(config, execution_modes=execution_modes)
+
+    def forbidden(*_a, **_k):
+        pytest.fail("identity projection must not construct a client")
+
+    monkeypatch.setattr(manager, "_registry_factory", registry)
+    monkeypatch.setattr(composition, "CCXTUTAAdapter", forbidden)
+    monkeypatch.setattr(composition, "get_credential_generation", lambda scope: 7)
+    identity = trust.resolve_live_execution_identity(cfg)
+    assert calls == [(mode,)]
+    assert identity["uta_profile"] == profile
+    assert identity["credential_generation"] == composition._account_generation(cfg, mode, f"{broker}.live", profile)
+    assert identity["execution_mode"] == mode
+    assert cfg.live.state == "live_disabled"
+
+
+@pytest.mark.anyio
+async def test_unbound_live_identity_fails_before_private_probe(monkeypatch):
+    from aletheia.uta import manager
+
+    cfg, trust = _config(monkeypatch, "bitget")
+    monkeypatch.setattr(manager, "_registry_factory", None)
+
+    async def forbidden(*_a, **_k):
+        pytest.fail("missing adapter cannot authorize a private probe")
+
+    monkeypatch.setattr(trust, "_private_account_probe", forbidden)
+    result = await trust.run_live_preflight(cfg)
+    assert result["ok"] is False
+    assert result["reason_code"] == "exchange_adapter_unavailable"
+    assert cfg.live.state == "live_disabled"
+
+
+@pytest.mark.parametrize("change", [
+    {"execution_mode": "bitget_demo"}, {"venue": "okx"}, {"environment": "demo"},
+])
+def test_live_identity_rejects_mismatched_uta_account(monkeypatch, change):
+    from types import SimpleNamespace
+    from aletheia.exchanges import composition
+    from aletheia.uta import manager
+
+    cfg, trust = _config(monkeypatch, "bitget")
+    account = composition.build_uta_registry(
+        cfg, execution_modes=("bitget_live_limited",),
+    ).configured_identities()[0].model_copy(update=change)
+    monkeypatch.setattr(manager, "_registry_factory", lambda *_a, **_k: SimpleNamespace(configured_identities=lambda: (account,)))
+    with pytest.raises(ValueError, match="exchange_adapter_unavailable"):
+        trust.resolve_live_execution_identity(cfg)
 
 
 def _install_uta_probe(
@@ -339,6 +407,7 @@ def _route_evidence(cfg, monkeypatch):
     import aletheia.trust.live_unlock as trust
 
     monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
+    bind_live_identity(monkeypatch, trust)
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {
