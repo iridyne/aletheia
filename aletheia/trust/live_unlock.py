@@ -1,8 +1,8 @@
 """Fail-closed, broker-neutral proof for the live unlock boundary.
 
-The preflight deliberately performs one private, read-only account request on
-the configured live account.  It returns only hashed identity/revision data;
-credentials and raw exchange responses never leave this module.
+The preflight requests one private, read-only account proof through UTA. Core
+receives normalized authority and hashed revision evidence; credential values
+and raw exchange responses remain inside the Exchange implementation.
 """
 
 from __future__ import annotations
@@ -15,18 +15,11 @@ from typing import Any
 
 from aletheia.config.exchanges import live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
-from aletheia.config.secrets import get_secret
 
 PREFLIGHT_MAX_AGE_SECONDS = 300
 PREFLIGHT_TIMEOUT_SECONDS = 20
 ADAPTER_CAPABILITY_VERSION = "live-private-account-v1"
 PERMISSION_UNKNOWN_POLICY = "deny"
-
-_CREDENTIAL_FIELDS: dict[str, tuple[str, ...]] = {
-    "bitget": ("api_key", "api_secret", "passphrase"),
-    "okx": ("api_key", "api_secret", "passphrase"),
-    "binance": ("api_key", "api_secret"),
-}
 
 _PUBLIC_EVIDENCE_FIELDS = frozenset({
     "broker", "execution_mode", "account_environment", "account_fingerprint",
@@ -52,10 +45,6 @@ def _digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _secret_digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
 def _evidence_binding(evidence: dict[str, Any]) -> str:
     return _digest({
         "broker": evidence.get("broker"),
@@ -69,18 +58,6 @@ def _evidence_binding(evidence: dict[str, Any]) -> str:
     })
 
 
-def _credential_revision(broker: str) -> tuple[str, tuple[str, ...]]:
-    fields = _CREDENTIAL_FIELDS[broker]
-    refs = tuple(f"{broker}.live.{field}" for field in fields)
-    values = []
-    for ref in refs:
-        value = get_secret(ref)
-        if not value:
-            raise ValueError("credentials_not_configured")
-        values.append((ref, _secret_digest(value)))
-    return _digest(values), refs
-
-
 def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
     """Resolve selected broker identity without contacting an exchange."""
     cfg = cfg or load_config()
@@ -90,9 +67,9 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
         raise ValueError("selected_exchange_unsupported")
     if str(getattr(cfg.exchange, "mode", "") or "").lower() != "live":
         raise ValueError("exchange_mode_not_live")
-    credential_revision, refs = _credential_revision(broker)
-    from aletheia.uta.manager import build_uta_registry
+    from aletheia.uta.manager import build_uta_registry, read_credential_revision
 
+    credential_revision, refs = read_credential_revision(mode, cfg=cfg)
     accounts = build_uta_registry(cfg, execution_modes=(mode,)).configured_identities()
     if len(accounts) != 1 or (
         accounts[0].execution_mode != mode
@@ -123,43 +100,6 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
         "config_revision": config_revision,
         "adapter_capability_version": ADAPTER_CAPABILITY_VERSION,
     }
-
-
-def _walk_values(value: Any, *, depth: int = 0):
-    if depth > 4:
-        return
-    if isinstance(value, dict):
-        for key, item in value.items():
-            yield str(key).lower(), item
-            yield from _walk_values(item, depth=depth + 1)
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            yield from _walk_values(item, depth=depth + 1)
-
-
-def _account_id(raw: Any) -> str | None:
-    keys = {"uid", "user_id", "userid", "account_id", "accountid"}
-    for key, value in _walk_values(raw):
-        if key in keys and value not in (None, "", 0, False):
-            return str(value)
-    return None
-
-
-def _environment(raw: Any) -> str:
-    for key, value in _walk_values(raw):
-        key = key.replace("-", "_")
-        if key in {
-            "sandbox", "testnet", "simulated", "demo", "is_sandbox", "is_testnet",
-            "is_demo", "testnet_mode",
-        } and (value is True or str(value).lower() in {"true", "1", "yes"}):
-            return "demo"
-        if key in {"environment", "env", "account_environment", "accounttype", "account_type"}:
-            text = str(value or "").lower()
-            if any(token in text for token in ("demo", "testnet", "sandbox", "simulat")):
-                return "demo"
-            if any(token in text for token in ("live", "prod", "production")):
-                return "live"
-    return "live"
 
 
 async def _private_account_probe(identity: dict[str, Any], cfg=None):

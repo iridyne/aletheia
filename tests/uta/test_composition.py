@@ -10,6 +10,7 @@ from aletheia.uta import manager
 def unbound_provider(monkeypatch):
     monkeypatch.setattr(manager, "_registry_factory", None)
     monkeypatch.setattr(manager, "_retention_contract", None)
+    monkeypatch.setattr(manager, "_credential_revision_reader", None)
     monkeypatch.setattr(manager, "_native_protection_reader_factory", None)
     monkeypatch.setattr(manager, "_native_protection_modes", ())
 
@@ -24,6 +25,7 @@ def test_binding_does_not_resolve_credentials(monkeypatch):
     composition.bind_uta_provider()
     assert manager._registry_factory is composition.build_uta_registry
     assert manager._retention_contract is composition.funding_history_retention_contract
+    assert manager._credential_revision_reader is composition.read_credential_revision
 
 
 @pytest.mark.parametrize("error_type", [ImportError, ValueError])

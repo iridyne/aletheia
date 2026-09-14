@@ -54,10 +54,9 @@ def _setup_config(tmp_path, monkeypatch, state="live_disabled", first_done=False
     import aletheia.trust.live_unlock as trust
     from datetime import datetime, timedelta, timezone
 
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
     from tests.live_identity import bind_live_identity
 
-    bind_live_identity(monkeypatch, trust)
+    bind_live_identity(monkeypatch, lambda ref: f"test-secret:{ref}")
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {

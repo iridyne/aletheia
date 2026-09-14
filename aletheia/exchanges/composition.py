@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from importlib.metadata import version
+import hashlib
+import json
 import logging
 
+from aletheia.config.exchanges import live_execution_mode_for_exchange
 from aletheia.config.loader import load_config
 from aletheia.config.secrets import get_credential_generation, get_secret
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
@@ -93,6 +96,29 @@ def _profile_spec(cfg, execution_mode: str):
             profile_type,
         )
     raise KeyError(execution_mode)
+
+
+def read_credential_revision(execution_mode: str, *, cfg=None) -> tuple[str, tuple[str, ...]]:
+    """Hash only the selected live account's configured credential references."""
+    cfg = cfg or load_config()
+    if str(cfg.exchange.mode or "").lower() != "live" or execution_mode != live_execution_mode_for_exchange(cfg.exchange.name):
+        raise ValueError("selected_live_account_required")
+    try:
+        scope, _profile, _venue, _environment, fields, _profile_type = _profile_spec(cfg, execution_mode)
+    except ImportError:
+        raise ValueError("exchange_adapter_unavailable") from None
+    refs = tuple(f"{scope}.{field}" for field in fields)
+    values = []
+    for ref in refs:
+        try:
+            value = get_secret(ref)
+        except Exception:
+            raise ValueError("credential_revision_unavailable") from None
+        if not value:
+            raise ValueError("credentials_not_configured")
+        values.append((ref, hashlib.sha256(value.encode("utf-8")).hexdigest()))
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest(), refs
 
 
 def funding_history_retention_contract(
@@ -198,6 +224,7 @@ def bind_uta_provider() -> None:
     configure_uta_provider(
         registry_factory=build_uta_registry,
         retention_contract=funding_history_retention_contract,
+        credential_revision_reader=read_credential_revision,
         native_protection_reader_factory=create_native_protection_reader,
         native_protection_modes=NATIVE_PROTECTION_EXECUTION_MODES,
     )

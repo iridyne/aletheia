@@ -8,6 +8,8 @@ import pytest
 
 
 @pytest.mark.parametrize("target,blocked,action", [
+    ("aletheia.trust.live_unlock", ("aletheia.config.secrets", "aletheia.exchanges", "ccxt"),
+     "import asyncio\nfrom aletheia.config.schema import AletheiaConfig\ncfg = AletheiaConfig()\ncfg.exchange.name = 'bitget'\ncfg.exchange.mode = 'live'\nassert asyncio.run(module.run_live_preflight(cfg))['reason_code'] == 'exchange_adapter_unavailable'"),
     ("aletheia.exchanges.composition", ("aletheia.uta.profiles.binance", "aletheia.uta.profiles.okx"),
      "from aletheia.config.schema import ExchangeConfig\nmodule.get_secret = lambda key: 'synthetic-test-value' if key.startswith('bitget.demo.') else None\nmodule.get_credential_generation = lambda scope: 0\ncfg = SimpleNamespace(exchange=ExchangeConfig())\nassert [i.execution_mode for i in module.build_uta_registry(cfg).configured_identities()] == ['bitget_demo']\nassert module.build_uta_registry(cfg, execution_modes=('okx_demo',)).configured_identities() == ()"),
     ("aletheia.uta.manager", ("aletheia.config.secrets", "aletheia.uta.ccxt_adapter", "aletheia.uta.profiles"),
