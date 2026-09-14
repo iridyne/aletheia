@@ -13,16 +13,6 @@ from aletheia.config.secrets import get_credential_generation, get_secret
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
 from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
 from aletheia.uta.models import OrderQuery, OrderQueryReport, ReadCompleteness, UTAAccountIdentity
-from aletheia.uta.profiles import (
-    BinanceLiveProfile,
-    BinanceTestnetProfile,
-    BitgetClassicV2LiveProfile,
-    BitgetClassicV2Profile,
-    BitgetUTAV3LiveProfile,
-    BitgetUTAV3Profile,
-    OKXDemoProfile,
-    OKXLiveProfile,
-)
 from aletheia.uta.registry import UTAAdapterConfig, UTARegistry
 
 
@@ -61,6 +51,8 @@ class UnifiedState:
 
 def _profile_spec(cfg, execution_mode: str):
     if execution_mode == "binance_testnet":
+        from aletheia.uta.profiles.binance import BinanceTestnetProfile
+
         return (
             "binance.testnet",
             "binance_testnet",
@@ -70,6 +62,8 @@ def _profile_spec(cfg, execution_mode: str):
             BinanceTestnetProfile,
         )
     if execution_mode == "okx_demo":
+        from aletheia.uta.profiles.okx import OKXDemoProfile
+
         return (
             "okx.demo",
             "okx_demo",
@@ -79,6 +73,8 @@ def _profile_spec(cfg, execution_mode: str):
             OKXDemoProfile,
         )
     if execution_mode == "binance_live_limited":
+        from aletheia.uta.profiles.binance import BinanceLiveProfile
+
         return (
             "binance.live",
             "binance_live",
@@ -88,6 +84,8 @@ def _profile_spec(cfg, execution_mode: str):
             BinanceLiveProfile,
         )
     if execution_mode == "okx_live_limited":
+        from aletheia.uta.profiles.okx import OKXLiveProfile
+
         return (
             "okx.live",
             "okx_live",
@@ -97,6 +95,8 @@ def _profile_spec(cfg, execution_mode: str):
             OKXLiveProfile,
         )
     if execution_mode == "bitget_demo":
+        from aletheia.uta.profiles.bitget import BitgetClassicV2Profile, BitgetUTAV3Profile
+
         profile = cfg.exchange.bitget_profile
         profile_type = BitgetUTAV3Profile if profile == "uta_v3" else BitgetClassicV2Profile
         return (
@@ -108,6 +108,8 @@ def _profile_spec(cfg, execution_mode: str):
             profile_type,
         )
     if execution_mode == "bitget_live_limited":
+        from aletheia.uta.profiles.bitget import BitgetClassicV2LiveProfile, BitgetUTAV3LiveProfile
+
         profile = cfg.exchange.bitget_profile
         profile_type = (
             BitgetUTAV3LiveProfile
