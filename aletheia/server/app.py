@@ -1064,6 +1064,18 @@ async def _request_timing(request, call_next):
             )
 
 
+from aletheia.trust.behavior_authority import configure_candidate_filter_path
+
+try:
+    from aletheia.learning.registry import candidate_filter_path_declared
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.learning", "aletheia.learning.registry"}:
+        raise
+    configure_candidate_filter_path(None)
+else:
+    configure_candidate_filter_path(candidate_filter_path_declared)
+
+
 from aletheia.trust.learning_safety import configure_learning_safety
 
 try:

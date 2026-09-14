@@ -249,6 +249,11 @@ def get_learning_path(path_id: str) -> LearningPath:
     raise KeyError(f"undeclared Learning path: {path_id}")
 
 
+def candidate_filter_path_declared(path_id: str) -> bool:
+    """Read registry capability only; this never grants prospective authority."""
+    return "candidate_filter" in get_learning_path(path_id).allowed_effects
+
+
 def paper_influence_path_options() -> tuple[dict[str, object], ...]:
     """Return the honest Settings inventory for behavior-changing paths."""
     options = []
