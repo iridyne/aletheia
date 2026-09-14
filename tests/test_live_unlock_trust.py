@@ -7,14 +7,43 @@ import pytest
 from aletheia.config.schema import AletheiaConfig
 
 
+@pytest.mark.parametrize("broker", ["bitget", "okx", "binance"])
+def test_credential_revision_uses_scoped_fingerprints_without_changing_identity(monkeypatch, broker):
+    import hashlib
+    import aletheia.trust.live_unlock as trust
+    from aletheia.config.secrets import secret_fingerprint
+
+    refs = tuple(f"{broker}.live.{field}" for field in trust._CREDENTIAL_FIELDS[broker])
+    requested = []
+
+    def fingerprint(ref):
+        assert ref in refs
+        requested.append(ref)
+        return secret_fingerprint(f"synthetic:{ref}")
+
+    monkeypatch.setattr(trust, "get_secret_fingerprint", fingerprint)
+    expected = trust._digest([
+        (ref, hashlib.sha256(f"synthetic:{ref}".encode()).hexdigest()) for ref in refs
+    ])
+    assert trust._credential_revision(broker) == (expected, refs)
+    assert requested == list(refs)
+    assert not hasattr(trust, "get_secret")
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: None if ref == refs[-1] else fingerprint(ref))
+    with pytest.raises(ValueError, match="credentials_not_configured"):
+        trust._credential_revision(broker)
+
+
 def _config(monkeypatch, broker: str):
     import aletheia.trust.live_unlock as trust
+    from extensions.exchanges.bitget.extension import register_uta_provider
+    register_uta_provider()
 
     cfg = AletheiaConfig()
     cfg.exchange.name = broker
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = broker
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"secret:{ref}"))
     return cfg, trust
 
 
@@ -68,8 +97,8 @@ async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
         def __init__(self, mode):
             raise AssertionError("selected OKX preflight must not construct Bitget")
 
-    import aletheia.exchanges.okx.client as okx_client
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.okx.client as okx_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", UnexpectedBitget)
@@ -113,8 +142,8 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.okx.client as okx_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(okx_client, "OKXClient", InvalidOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", ValidBitget)
@@ -143,7 +172,7 @@ async def test_bitget_live_account_uses_same_private_contract(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", FakeBitget)
     result = await trust.run_live_preflight(cfg)
@@ -177,7 +206,7 @@ async def test_bitget_denied_authority_is_reported_without_losing_private_facts(
         async def close(self):
             pass
 
-    import aletheia.exchanges.bitget.client as bitget_client
+    import extensions.exchanges.bitget.client as bitget_client
 
     monkeypatch.setattr(bitget_client, "BitgetClient", FakeBitget)
     result = await trust.run_live_preflight(cfg)
@@ -210,7 +239,7 @@ async def test_demo_payload_fails_live_preflight(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
+    import extensions.exchanges.okx.client as okx_client
 
     monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     result = await trust.run_live_preflight(cfg)
@@ -238,7 +267,7 @@ async def test_binance_selected_account_uses_binance_private_probe(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.binance.client as binance_client
+    import extensions.exchanges.binance.client as binance_client
 
     monkeypatch.setattr(binance_client, "BinanceClient", FakeBinance)
     result = await trust.run_live_preflight(cfg)
@@ -264,7 +293,7 @@ async def test_account_fingerprint_change_invalidates_bound_evidence(monkeypatch
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
+    import extensions.exchanges.okx.client as okx_client
 
     monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     evidence = await trust.run_live_preflight(cfg)
@@ -295,7 +324,7 @@ async def test_permission_unknown_is_explicitly_denied(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
+    import extensions.exchanges.okx.client as okx_client
 
     monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     result = await trust.run_live_preflight(cfg)
@@ -320,7 +349,8 @@ def test_evidence_expires_and_binds_credential_revision(monkeypatch):
     assert valid is False
     assert reason == "stale_unlock_evidence"
 
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"rotated:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"rotated:{ref}"))
     valid, reason = trust.evidence_matches_config(cfg, evidence)
     assert valid is False
     assert reason == "credential_revision_mismatch"
@@ -338,7 +368,8 @@ def _route_evidence(cfg, monkeypatch):
     from datetime import datetime, timedelta, timezone
     import aletheia.trust.live_unlock as trust
 
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"secret:{ref}"))
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {

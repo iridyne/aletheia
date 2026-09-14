@@ -162,13 +162,11 @@ def test_model_test_exit_reflects_aggregate_provider_health(monkeypatch, results
         assert "No enabled model provider is reachable." in result.output
 
 
-def test_permission_status(tmp_path, monkeypatch):
-    import aletheia.config.loader as loader
-    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    result = runner.invoke(app, ["permission", "status"])
-    assert result.exit_code == 0
-    assert "Paper" in result.output
+@pytest.mark.parametrize("args", [["status"], ["set", "Paper"]])
+def test_permission_cli_is_retired(args):
+    result = runner.invoke(app, ["permission", *args])
+    assert result.exit_code == 2
+    assert "No such command" in result.output
 
 
 # ---------------------------------------------------------------------------

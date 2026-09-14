@@ -58,42 +58,13 @@ def test_entry_permission_uses_registered_capability_identity(monkeypatch):
     assert venue_capabilities.entry_execution_minimum_permission("okx_demo") == "Full"
 
 
-def test_reconciliation_partitions_follow_registered_uta_identities():
-    from aletheia.config.exchanges import execution_mode_environment, execution_mode_venue
-    from aletheia.execution.reconciliation import (
-        _BITGET_ACCOUNT_MODES,
-        _CCXT_LIVE_MODES,
-        _MULTIBROKER_ACCOUNT_MODES,
-    )
-    from aletheia.uta.manager import UTA_EXECUTION_MODES
-
-    bitget_modes = {
-        mode: execution_mode_environment(mode)
-        for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) == "bitget"
-        and execution_mode_environment(mode) in {"demo", "live"}
-    }
-    multibroker_modes = {
-        mode
-        for mode in UTA_EXECUTION_MODES
-        if execution_mode_venue(mode) not in {None, "bitget"}
-    }
-    ccxt_live_modes = {
-        mode
-        for mode in multibroker_modes
-        if execution_mode_environment(mode) == "live"
-    }
-
-    assert _BITGET_ACCOUNT_MODES == bitget_modes
-    assert set(_MULTIBROKER_ACCOUNT_MODES) == multibroker_modes
-    assert set(_CCXT_LIVE_MODES) == ccxt_live_modes
-
-
-def test_bitget_tpsl_recovery_uses_registered_account_environment():
+def test_reconciliation_has_one_ordinary_account_path():
     import inspect
+    from aletheia.execution import reconciliation
 
-    from aletheia.agent_runtime import scheduler
-
-    source = inspect.getsource(scheduler._tpsl_fill_check_body)
-    assert "execution_mode_environment(execution_mode)" in source
-    assert 'account_mode = "demo" if execution_mode == "bitget_demo" else "live"' not in source
+    assert not hasattr(reconciliation, "_BITGET_ACCOUNT_MODES")
+    assert not hasattr(reconciliation, "_MULTIBROKER_ACCOUNT_MODES")
+    assert not hasattr(reconciliation, "_fetch_multibroker_evidence")
+    source = inspect.getsource(reconciliation.reconcile)
+    assert "in UTA_EXECUTION_MODES" in source
+    assert source.count("_materialize_reconciled_order(") == 1

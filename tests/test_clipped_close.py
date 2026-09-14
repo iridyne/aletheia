@@ -12,9 +12,18 @@ from __future__ import annotations
 import sqlite3
 import json
 from datetime import datetime, timezone
+import pytest
 from tests.fill_reports import reports
 
 class _CloseAdapter:
+    @property
+    def capabilities(self):
+        from aletheia.uta.models import CapabilitySupport, UTACapabilities
+        return UTACapabilities(
+            source="fixture",
+            match_cap_close_fallback=CapabilitySupport.SUPPORTED,
+        )
+
     def __init__(self, captured):
         from aletheia.uta.models import UTAAccountIdentity
         self.identity = UTAAccountIdentity(
@@ -307,7 +316,12 @@ def test_clipped_close_survives_crash_restart_replay(tmp_path, monkeypatch):
     assert position["status"] == "open"
     assert abs(float(position["quantity"]) - 212.0) < 1e-9
 
-def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeypatch):
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+@pytest.mark.parametrize("caller_has_loop", [False, True])
+@pytest.mark.parametrize("fallback_support", ["supported", "unsupported", "unknown"])
+def test_marketable_limit_close_after_venue_market_path_cancel(
+    tmp_path, monkeypatch, cleanup_fails, caller_has_loop, fallback_support,
+):
     """After a match-cap cancel the retry becomes a bounded marketable limit."""
     _setup_db(tmp_path, monkeypatch)
     from types import SimpleNamespace
@@ -331,17 +345,53 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
 
     captured: dict = {}
 
+    from aletheia.uta.models import UTACapabilities
+
+    class _CapabilityAdapter(_CloseAdapter):
+        @property
+        def capabilities(self):
+            return UTACapabilities(
+                source="fixture", match_cap_close_fallback=fallback_support,
+            )
+
     class _Provider:
+        def __init__(self):
+            import asyncio
+            captured["provider_loop"] = asyncio.get_running_loop()
+
         async def get_ticker(self, instrument):
+            import asyncio
+            assert asyncio.get_running_loop() is captured["provider_loop"]
             captured["ticker"] = instrument
             return SimpleNamespace(last_price=1.5)
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
-    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
+        async def close(self):
+            import asyncio
+            assert asyncio.get_running_loop() is captured["provider_loop"]
+            captured["provider_closed"] = captured.get("provider_closed", 0) + 1
+            if cleanup_fails:
+                raise RuntimeError("provider cleanup unavailable")
 
-    result = coordinator.close_position("pos-clip", reason="stop_loss")
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CapabilityAdapter(captured))
+
+    if caller_has_loop:
+        import asyncio
+
+        async def call_from_loop():
+            return coordinator.close_position("pos-clip", reason="stop_loss")
+
+        result = asyncio.run(call_from_loop())
+    else:
+        result = coordinator.close_position("pos-clip", reason="stop_loss")
 
     request = captured["order"]
+    if fallback_support != "supported":
+        assert request.order_type == "market"
+        assert request.limit_price is None
+        assert request.quantity == 424.0
+        assert "provider_loop" not in captured
+        return
     assert request.order_type == "limit"
     # Short close = venue buy: bound floors onto the reference tick (1.5 has
     # one decimal → 1.515 floors to 1.5, still inside [ref, ref×1.01]).
@@ -349,6 +399,7 @@ def test_marketable_limit_close_after_venue_market_path_cancel(tmp_path, monkeyp
     assert request.quantity == 424.0  # marketable limit carries the full remaining
     assert captured["ticker"].symbol == "XRP/USDT"
     assert captured["ticker"].exchange == "bitget"
+    assert captured["provider_closed"] == 1
     assert result["closed"] is False or result.get("order_id")
 
 
@@ -374,8 +425,18 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
     captured: dict = {}
 
     class _Provider:
+        def __init__(self):
+            import asyncio
+            captured["provider_loop"] = asyncio.get_running_loop()
+
         async def get_ticker(self, instrument):
+            captured["ticker_attempted"] = True
             raise RuntimeError("ticker unavailable")
+
+        async def close(self):
+            import asyncio
+            assert asyncio.get_running_loop() is captured["provider_loop"]
+            captured["provider_closed"] = captured.get("provider_closed", 0) + 1
 
     monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", lambda **_kw: _Provider())
     monkeypatch.setattr(coordinator, "create_uta_adapter", lambda _mode: _CloseAdapter(captured))
@@ -385,6 +446,8 @@ def test_ticker_failure_falls_back_to_clipped_market(tmp_path, monkeypatch):
     request = captured["order"]
     assert request.order_type == "market"
     assert request.quantity == 212.0  # halved once by the single venue cancel
+    assert captured["ticker_attempted"] is True
+    assert captured["provider_closed"] == 1
     # The claimed row was aligned to the clip actually submitted.
     row = db.execute(
         "SELECT quantity FROM orders WHERE status='submitted' "
@@ -403,6 +466,22 @@ def test_quantize_to_reference_precision_matches_venue_ticks():
     assert _quantize_to_reference_precision(63984.611, 63351.1, up=False) == 63984.6
     # Whole-number reference keeps whole-number ticks.
     assert _quantize_to_reference_precision(2524.5, 2500.0, up=False) == 2524.0
+
+
+def test_close_coordination_does_not_select_behavior_by_venue_name():
+    import ast
+    import inspect
+    from aletheia.execution import coordinator
+
+    for function in (coordinator.close_position, coordinator._close_reference_price):
+        literals = {
+            node.value for node in ast.walk(ast.parse(inspect.getsource(function)))
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        assert not literals.intersection({
+            "bitget", "binance", "okx", "bitget_demo", "bitget_live_limited",
+            "binance_testnet", "okx_demo",
+        })
 
 
 def test_market_close_stays_market_without_cancel_history(tmp_path, monkeypatch):

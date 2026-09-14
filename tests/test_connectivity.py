@@ -18,6 +18,115 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_result", [
+    None,
+    {"reachable": "false", "exchange": "bitget", "latency_ms": 1, "error": None},
+    {"reachable": True, "exchange": "other-venue", "latency_ms": 1, "error": None},
+    {"reachable": True, "exchange": "bitget", "latency_ms": None, "error": None},
+    {"reachable": True, "exchange": "bitget", "latency_ms": 1, "error": "failed"},
+    {"reachable": True, "exchange": "bitget", "latency_ms": float("nan"), "error": None},
+    {"reachable": True, "exchange": "bitget", "latency_ms": -1, "error": None},
+    {"reachable": False, "exchange": "bitget", "latency_ms": None,
+     "error": "proxy http://synthetic-user:synthetic-password@localhost:7890"},
+    {"reachable": False, "exchange": "bitget", "latency_ms": None, "error": None},
+    {"reachable": False, "exchange": "bitget", "latency_ms": float("inf"),
+     "error": "ConnectTimeout"},
+])
+async def test_invalid_adapter_probe_cannot_authorize_recovery(monkeypatch, bad_result):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import connectivity
+
+    monkeypatch.setattr("aletheia.uta.manager._public_connectivity_probe", AsyncMock(return_value=bad_result))
+    external = {"reachable": False, "latency_ms": None, "error_code": "ConnectTimeout"}
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value=external))
+    result, observed_external = await connectivity._probe_exchange_and_external(
+        SimpleNamespace(exchange=SimpleNamespace(name="bitget")),
+    )
+    assert result["reachable"] is False
+    assert result["error"] == "invalid_exchange_probe_result"
+    assert observed_external == external
+
+
+@pytest.mark.asyncio
+async def test_exchange_probe_without_extension_is_unavailable(monkeypatch):
+    from aletheia.uta.manager import probe_public_connectivity
+
+    monkeypatch.setattr("aletheia.uta.manager._public_connectivity_probe", None)
+    monkeypatch.setattr("aletheia.net.httpx_client", lambda **_: pytest.fail("no adapter means no HTTP"))
+    result = await probe_public_connectivity("bitget")
+    assert result == {"reachable": False, "latency_ms": None,
+                      "error": "exchange_extension_unavailable", "exchange": "bitget"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("venue,url", [
+    ("bitget", "https://api.bitget.com/api/v2/public/time"),
+    ("okx", "https://www.okx.com/api/v5/public/time"),
+    ("binance", "https://api.binance.com/api/v3/ping"),
+])
+@pytest.mark.parametrize("status", [200, 503])
+async def test_extension_public_probe_preserves_wire_semantics(monkeypatch, venue, url, status):
+    from types import SimpleNamespace
+    from extensions.exchanges import composition
+    from aletheia.uta.manager import probe_public_connectivity
+
+    monkeypatch.setattr("aletheia.uta.manager._public_connectivity_probe", composition.probe_public_connectivity)
+
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.get.return_value = SimpleNamespace(status_code=status)
+    factory = MagicMock(return_value=client)
+    monkeypatch.setattr("aletheia.net.httpx_client", factory)
+    result = await probe_public_connectivity(venue)
+    factory.assert_called_once_with(timeout=8)
+    client.get.assert_awaited_once_with(url)
+    assert result["exchange"] == venue
+    assert result["reachable"] is (status == 200)
+    assert result["error"] == (None if status == 200 else "HTTP 503")
+
+
+@pytest.mark.asyncio
+async def test_unknown_exchange_cannot_prove_external_connectivity(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import connectivity
+    from extensions.exchanges.composition import probe_public_connectivity
+
+    monkeypatch.setattr("aletheia.uta.manager._public_connectivity_probe", probe_public_connectivity)
+
+    cfg = SimpleNamespace(exchange=SimpleNamespace(name="unknown-venue"))
+    external = {"reachable": False, "latency_ms": None, "error_code": "ConnectTimeout"}
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value=external))
+    monkeypatch.setattr("aletheia.net.httpx_client", lambda **_: pytest.fail("unknown venue must not perform HTTP"))
+    exchange, observed_external = await connectivity._probe_exchange_and_external(cfg)
+    assert exchange == {
+        "reachable": False, "latency_ms": None,
+        "error": "exchange_probe_unavailable", "exchange": "unknown-venue",
+    }
+    assert observed_external == external
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("probe", ["exchange", "settings"])
+async def test_network_probe_exception_never_exposes_credentials(monkeypatch, probe):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime.connectivity import probe_exchange
+    from aletheia.server.routes.settings import test_network_proxy
+    from extensions.exchanges.composition import probe_public_connectivity
+
+    monkeypatch.setattr("aletheia.uta.manager._public_connectivity_probe", probe_public_connectivity)
+
+    def unavailable(**kwargs):
+        raise ConnectionError("proxy http://synthetic-user:synthetic-password@localhost:7890")
+
+    monkeypatch.setattr("aletheia.net.httpx_client", unavailable)
+    result = await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(name="bitget"))) \
+        if probe == "exchange" else await test_network_proxy()
+    assert result["reachable"] is False
+    assert result["error"] == "ConnectionError"
+    assert "synthetic-password" not in repr(result)
+
+
 def setup_env(tmp_path, monkeypatch):
     """Wire up an isolated data dir + fresh DB for each test."""
     import aletheia.config.loader as loader

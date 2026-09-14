@@ -5,10 +5,44 @@ import threading
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 from aletheia.data.cache import get_cache
 
 _GET_OHLCV = CCXTProvider.get_ohlcv
+
+
+def test_confirmed_history_writer_does_not_hide_required_write_failure(monkeypatch):
+    from aletheia.data.market_history import persist_closed_candles
+    from aletheia.data.providers import Candle
+
+    def unavailable(**kwargs):
+        raise RuntimeError("required history unavailable")
+
+    monkeypatch.setattr("aletheia.storage.repositories.upsert_ohlcv_candles", unavailable)
+    with pytest.raises(RuntimeError, match="required history unavailable"):
+        persist_closed_candles("BTC/USDT", "1h", [Candle(1, 10, 11, 9, 10, 1)], "fixture", provider="fixture")
+
+
+@pytest.mark.asyncio
+async def test_history_write_failure_does_not_discard_acquired_candles(monkeypatch):
+    class Exchange:
+        async def fetch_ohlcv(self, *_args, **_kwargs):
+            return [[1, 10, 11, 9, 10.5, 100]]
+
+    provider = CCXTProvider("fixture", "fixture")
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: Exchange())
+    attempts = []
+
+    def unavailable(**kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError("fixture storage unavailable")
+
+    monkeypatch.setattr("aletheia.storage.repositories.upsert_ohlcv_candles", unavailable)
+    result = await _GET_OHLCV(provider, "BTC/USDT", limit=1, since=0)
+    assert len(result) == 1
+    assert len(attempts) == 1
+    assert attempts[0]["provider"] == "ccxt"
+    assert attempts[0]["exchange"] == "fixture"
 
 
 @pytest.mark.asyncio
@@ -27,7 +61,7 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
     def fake_persist(*_args, **_kwargs):
         persist_threads.append(threading.get_ident())
 
-    monkeypatch.setattr(provider, "_persist", fake_persist)
+    monkeypatch.setattr("aletheia.data.market_history.persist_closed_candles", fake_persist)
 
     candles = await _GET_OHLCV(
         provider,
@@ -45,7 +79,8 @@ async def test_get_ohlcv_persists_outside_scheduler_event_loop(monkeypatch):
 
 @pytest.mark.real_network
 @pytest.mark.asyncio
-async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeypatch):
+@pytest.mark.parametrize("since", [None, 0])
+async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeypatch, since):
     class FakeExchange:
         async def fetch_ohlcv(self, *_args, **_kwargs):
             return [[1, 10, 11, 9, 10.5, 100]]
@@ -53,21 +88,23 @@ async def test_observation_ohlcv_does_not_persist_or_change_venue_health(monkeyp
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: FakeExchange())
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.record_venue_success",
+        "extensions.exchanges.ccxt.market_data.record_venue_success",
         lambda _name: pytest.fail("observation fetch must not clear venue health"),
     )
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.record_venue_failure",
+        "extensions.exchanges.ccxt.market_data.record_venue_failure",
         lambda *_args: pytest.fail("observation fetch must not change venue health"),
     )
     monkeypatch.setattr(
-        provider,
-        "_persist",
+        "aletheia.data.market_history.persist_closed_candles",
         lambda *_args, **_kwargs: pytest.fail("observation fetch must not persist OHLCV"),
     )
+    cache = get_cache()
+    monkeypatch.setattr(cache, "get", lambda *_a, **_kw: pytest.fail("observation must not read shared cache"))
+    monkeypatch.setattr(cache, "set", lambda *_a, **_kw: pytest.fail("observation must not write shared cache"))
 
     candles = await provider.get_ohlcv_observation(
-        "BTC/USDT", timeframe="1h", limit=1, since=0
+        "BTC/USDT", timeframe="1h", limit=1, since=since
     )
 
     assert len(candles) == 1
@@ -94,7 +131,7 @@ async def test_fallback_ohlcv_cache_keeps_actual_venue_identity(monkeypatch):
     provider = CCXTProvider(exchange="primary", fallback_exchange="fallback")
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: primary)
     monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: fallback)
-    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.data.market_history.persist_closed_candles", lambda *_args, **_kwargs: None)
 
     first = await _GET_OHLCV(provider, "BTC/USDT", timeframe="1h", limit=1)
     second = await _GET_OHLCV(provider, "BTC/USDT", timeframe="1h", limit=1)
@@ -136,7 +173,7 @@ async def test_fresh_ohlcv_bypasses_and_does_not_replace_cache(monkeypatch):
     exchange = FakeExchange()
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
-    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.data.market_history.persist_closed_candles", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(
         provider,

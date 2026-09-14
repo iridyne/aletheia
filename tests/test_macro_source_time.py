@@ -6,15 +6,37 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from aletheia.data.collectors import macro
+from extensions.macro import collector as macro
 from aletheia.data.context_builder import build_market_context_from_db
 from aletheia.data.freshness import fresh_row
 from aletheia.regime.collector import _get_latest_vix
 from aletheia.storage import repositories as repo
 
 
+def test_macro_projection_does_not_require_collectors(monkeypatch):
+    import builtins
+
+    original_import = builtins.__import__
+
+    def without_collectors(name, *args, **kwargs):
+        if name.startswith(('aletheia.data.collectors', 'extensions.macro')):
+            raise ImportError('optional collectors unavailable')
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, '__import__', without_collectors)
+    now = datetime.now(timezone.utc)
+    result = fresh_row(dict(observed_at=now.isoformat(),
+                            total_market_cap_change_24h_pct=-4), 'macro', now=now)
+    assert result['risk_regime'] == 'risk_off'
+
+
 @pytest.mark.asyncio
 async def test_fred_source_dates_survive_collection_storage_and_current_consumers(monkeypatch):
+    from extensions.fred import collector as fred
+
+    monkeypatch.setattr(macro, "_fred_macro_fetch", fred.collect_macro)
+    monkeypatch.setattr(macro, "_fred_research_fetch", fred.collect_research)
+    monkeypatch.setattr(macro, "_fred_is_configured", fred.is_configured)
     now = datetime.now(timezone.utc)
     source_date = (now - timedelta(days=4)).date().isoformat()
     @asynccontextmanager
@@ -27,7 +49,7 @@ async def test_fred_source_dates_survive_collection_storage_and_current_consumer
         yield Fake()
     async def cg(): return 52.0, 2e12, 1.5
     async def fng(): return 55, 'Greed'
-    monkeypatch.setattr(macro, 'httpx_client', client)
+    monkeypatch.setattr(fred, 'httpx_client', client)
     monkeypatch.setattr(macro, '_fetch_coingecko', cg)
     monkeypatch.setattr(macro, '_fetch_fng', fng)
     monkeypatch.setattr('aletheia.config.secrets.get_secret', lambda _: 'fixture')

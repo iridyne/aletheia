@@ -534,7 +534,7 @@ async def test_refresh_returns_none_on_failure(svc):
     assert result is None
 
 
-def test_venue_mismatch_sets_execution_ineligible_with_risk_flag():
+def test_venue_mismatch_sets_execution_ineligible_with_risk_flag(bitget_fast_stream):
     """Allocated candidates whose venue cannot be monitored are marked ineligible."""
     from unittest.mock import MagicMock
     from aletheia.universe.service import _member_fingerprint
@@ -613,7 +613,7 @@ def test_venue_mismatch_changes_fingerprint():
     assert _member_fingerprint(before, None) != _member_fingerprint(after, None)
 
 
-def test_fast_market_data_unavailability_reason_returns_stable_tokens():
+def test_fast_market_data_unavailability_reason_returns_stable_tokens(bitget_fast_stream):
     """Helper returns None for matching venue, stable token for mismatch/unavailable."""
     from unittest.mock import MagicMock
     from aletheia.universe.fast_stream import fast_market_data_unavailability_reason
@@ -627,10 +627,9 @@ def test_fast_market_data_unavailability_reason_returns_stable_tokens():
 
     cfg_binance = MagicMock()
     cfg_binance.exchange.paper_execution_mode = "binance_testnet"
-    # Binance public streams cover the matching venue; exact market capability
-    # is checked when the caller supplies the candidate's market type.
+    # The frozen Binance adapter is not part of active product composition.
     result = fast_market_data_unavailability_reason(cfg_binance, "binance")
-    assert result is None
+    assert result == "FAST_MARKET_DATA_STREAM_UNAVAILABLE"
 
 
 def test_venue_ineligible_candidate_does_not_gain_planning_generation(tmp_path, monkeypatch):

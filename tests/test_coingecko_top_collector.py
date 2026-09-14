@@ -1,4 +1,4 @@
-"""Tests for aletheia.data.collectors.coingecko_top.
+"""Tests for extensions.coingecko.top.
 
 Covers CoinGeckoTopCollector.collect() and _build_movers_summary():
 - field mapping from CoinGecko response → row dict
@@ -13,10 +13,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
-from aletheia.data.collectors import coingecko_top as cg_mod
-from aletheia.data.collectors.coingecko_top import (
+import extensions.coingecko.top as cg_mod
+from extensions.coingecko.top import (
     CoinGeckoTopCollector,
     _build_movers_summary,
 )

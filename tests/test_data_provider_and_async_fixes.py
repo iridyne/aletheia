@@ -47,10 +47,10 @@ def test_universe_registry_uses_configured_fallback_exchange(monkeypatch):
             captured["exchange"] = exchange
             captured["fallback_exchange"] = fallback_exchange
 
-    monkeypatch.setattr(_ccxt_mod, "CCXTProvider", FakeCCXTProvider)
+    monkeypatch.setattr(_ccxt_mod, "_native_provider_factory", FakeCCXTProvider)
 
     from aletheia.universe import registry as _reg
-    # Sanity: the module inlines `from aletheia.data.ccxt_provider import CCXTProvider`
+    # The existing Core composition factory binds the concrete adapter.
     # inside sync_universe; running that call is the SUT. Drive it with a stubbed
     # cfg and a mocked _load_demo_whitelist so we exit early without a real
     # ccxt exchange.
@@ -86,7 +86,7 @@ def test_universe_features_uses_configured_fallback_exchange(monkeypatch):
             captured["exchange"] = exchange
             captured["fallback_exchange"] = fallback_exchange
 
-    monkeypatch.setattr(_ccxt_mod, "CCXTProvider", FakeCCXTProvider)
+    monkeypatch.setattr(_ccxt_mod, "_native_provider_factory", FakeCCXTProvider)
 
     from aletheia.universe import features as _feat
     cfg = _cfg_with({"ccxt_exchange": "bitget", "ccxt_fallback": "okx"})
@@ -122,7 +122,7 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
     so the blocking work is off-loop and all four tickers are concurrent.
     Assert this by making _fetch_one_tradfi_ticker block for a bit and running a
     competing async task in parallel — if the loop is stalled, the task can't tick."""
-    from aletheia.data.collectors import macro as _macro
+    from extensions.macro import collector as _macro
 
     STALL_SEC = 0.5
 
@@ -130,7 +130,7 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
         time.sleep(STALL_SEC)  # deliberately blocking, runs in asyncio.to_thread
         return 1.0, {"source": "yfinance", "precision": "date", "source_observed_at": "2026-09-04"}
 
-    async def fake_fred(_key):
+    async def fake_fred():
         return None, None, None, None  # forces yfinance fallback path
 
     async def fake_fng():
@@ -142,7 +142,8 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
     # Patch _fetch_one_tradfi_ticker — the function collect() dispatches per ticker
     # via asyncio.to_thread. (_fetch_tradfi is legacy/unused by collect().)
     monkeypatch.setattr(_macro, "_fetch_one_tradfi_ticker", fake_one_ticker)
-    monkeypatch.setattr(_macro, "_fetch_fred", fake_fred)
+    monkeypatch.setattr(_macro, "_fred_macro_fetch", fake_fred)
+    monkeypatch.setattr(_macro, "_fred_is_configured", lambda: True)
     monkeypatch.setattr(_macro, "_fetch_fng", fake_fng)
     monkeypatch.setattr(_macro, "_fetch_coingecko", fake_coingecko)
     monkeypatch.setenv("FRED_API_KEY", "irrelevant")  # keep FRED branch, returns None

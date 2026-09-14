@@ -8,6 +8,36 @@ from aletheia.config.schema import AletheiaConfig
 from aletheia.gateway import network
 
 
+@pytest.mark.parametrize("configured", [None, "remote_control_api_token", "tunnel_api_token"])
+def test_token_protection_checks_presence_without_raw_credentials(monkeypatch, configured):
+    from fastapi import HTTPException
+    from aletheia.config import secrets
+    from aletheia.server.routes import settings
+
+    cfg = AletheiaConfig()
+    before = cfg.model_dump()
+    saved, audited, reads = [], [], []
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    monkeypatch.setattr(settings, "save_config", lambda value: saved.append(value.model_dump()))
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", lambda value: audited.append(value))
+    monkeypatch.setattr(secrets, "get_secret", lambda ref: pytest.fail("settings must not receive a raw token"))
+    def fingerprint(ref):
+        reads.append(ref)
+        return "synthetic-fingerprint" if ref == configured else None
+    monkeypatch.setattr(secrets, "get_secret_fingerprint", fingerprint)
+    request = settings.RemoteControlConfigUpdate(require_token=True)
+    if configured is None:
+        with pytest.raises(HTTPException, match="Set an API token"):
+            settings.update_remote_control_config(request)
+        assert cfg.model_dump() == before
+        assert saved == audited == []
+    else:
+        assert settings.update_remote_control_config(request)["remote_control"]["require_token"] is True
+        assert len(saved) == len(audited) == 1
+    assert reads == (["remote_control_api_token"] if configured == "remote_control_api_token"
+                     else ["remote_control_api_token", "tunnel_api_token"])
+
+
 def test_frontdoor_binds_loopback_when_remote_control_is_disabled():
     cfg = AletheiaConfig()
     cfg.app.bind_host = "0.0.0.0"

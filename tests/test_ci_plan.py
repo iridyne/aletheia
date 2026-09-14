@@ -51,13 +51,13 @@ def test_safe_docs_are_zero_ci_but_authoritative_docs_are_full() -> None:
 
 
 def test_non_safe_docs_file_invalidates_zero_ci() -> None:
-    report = _plan(["README.md", "aletheia/cli/doctor_cmd.py"])
+    report = _plan(["README.md", "core/aletheia/cli/doctor_cmd.py"])
     assert report["mode"] == "affected"
     assert report["required"]["python_unit"] is True
 
 
 def test_critical_and_ci_authority_escalate() -> None:
-    deep = _plan(["aletheia/risk/engine.py"])
+    deep = _plan(["core/aletheia/risk/engine.py"])
     assert deep["mode"] == "deep"
     assert deep["required"]["runtime"] is True
     assert deep["review"]["codex_required"] is False
@@ -92,7 +92,7 @@ def test_frontend_operator_native_do_not_pull_unrelated_stacks() -> None:
 
 
 def test_shared_contract_propagates_to_dependents() -> None:
-    report = _plan(["aletheia/config/schema.py"])
+    report = _plan(["core/aletheia/config/schema.py"])
     assert report["mode"] == "affected"
     assert report["required"]["python_unit"] is True
     assert report["required"]["frontend"] is True
@@ -107,7 +107,7 @@ def test_unknown_incomplete_and_rename_fail_closed() -> None:
     assert incomplete["mode"] == "full"
     assert "CHANGED_FILES_INCOMPLETE" in incomplete["reason_codes"]
 
-    renamed = _plan([PathChange(path="docs/references/risk.md", status="renamed", previous_path="aletheia/risk/engine.py")])
+    renamed = _plan([PathChange(path="docs/references/risk.md", status="renamed", previous_path="core/aletheia/risk/engine.py")])
     assert renamed["mode"] == "deep"
     assert renamed["required"]["integration"] is True
 
@@ -147,7 +147,7 @@ def test_policy_changes_themselves_are_full_and_fingerprint_is_stable() -> None:
         ("M", "modified", None),
         ("A", "added", None),
         ("D", "removed", None),
-        ("R100", "renamed", "aletheia/risk/old_engine.py"),
+        ("R100", "renamed", "core/aletheia/risk/old_engine.py"),
     ],
 )
 def test_git_and_github_statuses_produce_identical_plans(
@@ -155,7 +155,7 @@ def test_git_and_github_statuses_produce_identical_plans(
     github_status: str,
     previous_path: str | None,
 ) -> None:
-    path = "aletheia/risk/engine.py"
+    path = "core/aletheia/risk/engine.py"
     git_report = _plan([PathChange(path, git_status, previous_path)])
     github_report = _plan([PathChange(path, github_status, previous_path)])
 
@@ -230,15 +230,15 @@ def test_operational_scripts_are_full_ci() -> None:
 
 def test_coverage_trust_boundaries_require_coverage_without_full_mode() -> None:
     for path in (
-        "aletheia/analytics/profit_gradient.py",
-        "aletheia/analytics/profit_gradient_estimators.py",
-        "aletheia/analytics/profit_gradient_evidence.py",
-        "aletheia/analytics/position_replay.py",
-        "aletheia/counterfactual/filter_replay.py",
-        "aletheia/economics/context_artifacts.py",
-        "aletheia/execution/reconciliation.py",
-        "aletheia/learning/evidence_epoch.py",
-        "aletheia/learning/policy_epochs.py",
+        "core/aletheia/analytics/profit_gradient.py",
+        "core/aletheia/analytics/profit_gradient_estimators.py",
+        "core/aletheia/analytics/profit_gradient_evidence.py",
+        "core/aletheia/analytics/position_replay.py",
+        "core/aletheia/counterfactual/filter_replay.py",
+        "core/aletheia/economics/context_artifacts.py",
+        "core/aletheia/execution/reconciliation.py",
+        "core/aletheia/learning/evidence_epoch.py",
+        "core/aletheia/learning/policy_epochs.py",
         "tests/test_reconciliation.py",
     ):
         report = _plan([path])

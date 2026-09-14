@@ -370,7 +370,7 @@ def test_historical_data_config_exposes_bounded_active_backfill_controls():
 def test_scheduler_registers_active_backfill_as_independent_bounded_job():
     from pathlib import Path
 
-    source = Path("aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
+    source = Path("core/aletheia/agent_runtime/scheduler.py").read_text(encoding="utf-8")
     assert '"ohlcv_active_backfill"' in source
     assert "_run_active_ohlcv_backfill" in source
     assert '_ASYNC_JOB_TIMEOUT_SEC["ohlcv_active_backfill"]' in source

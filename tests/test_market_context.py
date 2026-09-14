@@ -197,6 +197,131 @@ def test_build_context_renders_markdown_tables():
     assert _evaluate_pre_filter(debug)["passed"] is True
 
 
+
+def test_optional_macro_context_binding_preserves_gate_and_absence(monkeypatch):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.trading import market_context
+    cfg = AletheiaConfig()
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    calls = []
+    async def fetch():
+        calls.append("fetch")
+        return "macro-fixture-block"
+    for enabled, bound in ((False, True), (True, False), (True, True)):
+        cfg.market_data.enable_yfinance_macro = enabled
+        monkeypatch.setattr(market_context, "_macro_context_fetch", fetch if bound else None)
+        calls.clear()
+        context, _ = asyncio.run(market_context.build_market_context(
+            ["BTCUSDT"], provider=_FakeProvider()))
+        assert ("macro-fixture-block" in context) == (enabled and bound)
+        assert calls == (["fetch"] if enabled and bound else [])
+
+
+def test_macro_extension_binds_context_without_fetching(monkeypatch):
+    import builtins
+    from aletheia.trading import market_context
+    from extensions.serenity import research_worker
+    from extensions.observation import equity_observer
+    from aletheia.agent_runtime import scheduler
+    from extensions.market_data import register_market_data
+    from extensions.yahoo import market_data as yfinance_context
+    monkeypatch.setattr(market_context, "_macro_context_fetch", None)
+    monkeypatch.setattr(research_worker, "_equity_fundamentals_fetch", None)
+    monkeypatch.setattr(equity_observer, "_equity_indicators_fetch", None)
+    monkeypatch.setattr(equity_observer, "_equity_live_price_fetch", None)
+    monkeypatch.setattr(scheduler, "configure_macro_collector", lambda fetch: None)
+    register_market_data()
+    assert market_context._macro_context_fetch is yfinance_context.fetch_macro_context
+    assert research_worker._equity_fundamentals_fetch is yfinance_context.fetch_equity_fundamentals
+    assert equity_observer._equity_indicators_fetch is yfinance_context.fetch_equity_indicators
+    assert equity_observer._equity_live_price_fetch is yfinance_context.fetch_live_price
+    original_import = builtins.__import__
+    def without_yahoo(name, *args, **kwargs):
+        if name == "extensions.yahoo.market_data":
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", without_yahoo)
+        register_market_data()
+    assert market_context._macro_context_fetch is None
+    assert research_worker._equity_fundamentals_fetch is None
+    assert equity_observer._equity_indicators_fetch is None
+    assert equity_observer._equity_live_price_fetch is None
+
+    def without_serenity(name, *args, **kwargs):
+        if name.startswith("extensions.serenity"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", without_serenity)
+        register_market_data()
+    assert market_context._macro_context_fetch is yfinance_context.fetch_macro_context
+    assert equity_observer._equity_indicators_fetch is yfinance_context.fetch_equity_indicators
+
+    def without_observation(name, *args, **kwargs):
+        if name.startswith("extensions.observation"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", without_observation)
+        register_market_data()
+    assert market_context._macro_context_fetch is yfinance_context.fetch_macro_context
+    assert research_worker._equity_fundamentals_fetch is yfinance_context.fetch_equity_fundamentals
+
+
+def test_equity_fundamentals_missing_and_per_ticker_failure(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from extensions.yahoo.market_data import fetch_equity_fundamentals
+    monkeypatch.setitem(sys.modules, "yfinance", None)
+    assert fetch_equity_fundamentals(["NVDA"]) == []
+    calls = []
+    def ticker(name):
+        calls.append(name)
+        if name == "BAD":
+            raise RuntimeError("fixture outage")
+        return SimpleNamespace(info={"forwardPE": 20, "marketCap": 2e9,
+                                     "revenueGrowth": 0, "profitMargins": 0})
+    monkeypatch.setitem(sys.modules, "yfinance", SimpleNamespace(Ticker=ticker))
+    assert fetch_equity_fundamentals(["BAD", "NVDA"]) == [
+        "NVDA: PE=20.0 MCap=$2B RevGrowth=0% Margin=0%"]
+    assert calls == ["BAD", "NVDA"]
+
+
+def test_research_owns_fundamentals_workset_limit(monkeypatch):
+    from types import SimpleNamespace
+    from extensions.serenity import research_worker
+    from aletheia.config import loader
+    tickers = ["AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"]
+    cfg = SimpleNamespace(market_data=SimpleNamespace(
+        observed_stock_tokens=[f"r{ticker}/USDT" for ticker in tickers],
+        observed_xstocks=[]))
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    calls = []
+    def fetch(selected):
+        calls.append(selected)
+        return ["fundamentals-fixture"]
+    monkeypatch.setattr(research_worker, "_equity_fundamentals_fetch", fetch)
+    context = research_worker._get_equity_context_block()
+    assert calls == [tickers[:6]]
+    assert "TSLA" in context and "fundamentals-fixture" in context
+
+
+def test_macro_context_extension_runs_off_loop_and_missing_sdk_is_empty(monkeypatch):
+    import sys
+    import threading
+    from extensions.yahoo import market_data as yfinance_context
+    monkeypatch.setitem(sys.modules, "yfinance", None)
+    assert asyncio.run(yfinance_context.fetch_macro_context()) == ""
+    main_thread = threading.get_ident()
+    def fetch():
+        assert threading.get_ident() != main_thread
+        return "fixture"
+    monkeypatch.setattr(yfinance_context, "_fetch_macro_sync", fetch)
+    assert asyncio.run(yfinance_context.fetch_macro_context()) == "fixture"
+
+
 def test_build_context_rejects_consistent_foreign_candle_venue():
     from aletheia.data.cache import get_cache
     from aletheia.agents.market_observer import _evaluate_pre_filter
@@ -446,6 +571,7 @@ def test_observer_records_step_for_market_read(tmp_path, monkeypatch):
 
     # Force the structured-LLM path to fail.
     import aletheia.agents.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from tests.observer_admission_fixture import admit_observer_instrument
 
     admit_observer_instrument(monkeypatch, mo)
@@ -524,6 +650,7 @@ def test_observer_extracts_confidence_score_when_provided(tmp_path, monkeypatch)
     """When LLM returns the new structured shape, Observer enriches all fields."""
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from tests.observer_admission_fixture import admit_observer_instrument
 
     owner = admit_observer_instrument(monkeypatch, mo)
@@ -645,7 +772,7 @@ def test_prediction_market_lines_require_fresh_rows(tmp_path, monkeypatch):
 def test_research_prediction_context_requires_enabled_and_fresh_claims(tmp_path, monkeypatch):
     """Research agent should not reuse stale prediction-market claims when the module is off."""
     _setup_env(tmp_path, monkeypatch)
-    from aletheia.agents.research_agent import _prediction_context_block
+    from extensions.research.research_agent import _prediction_context_block
     from aletheia.config.loader import load_config, save_config
     from aletheia.storage.repositories import _insert
 
@@ -687,6 +814,7 @@ def test_observer_includes_fresh_perp_structure_context(tmp_path, monkeypatch):
     """Fresh perp-structure snapshots must reach the market_observer LLM prompt."""
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from aletheia.storage import repositories as repo
     from tests.observer_admission_fixture import admit_observer_instrument
 
@@ -746,6 +874,7 @@ def test_observer_includes_compact_position_x_structure_context(tmp_path, monkey
     """Fresh Position X structure evidence must be compressed before prompt injection."""
     _setup_env(tmp_path, monkeypatch)
     import aletheia.agents.market_observer as mo
+    monkeypatch.setattr(mo, "get_provider_for_tier", lambda _tier: object())
     from aletheia.storage import repositories as repo
     from tests.observer_admission_fixture import admit_observer_instrument
 

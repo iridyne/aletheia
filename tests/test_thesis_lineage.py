@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 
 def test_thesis_lineage_read_model_does_not_call_llm_or_agents():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "thesis_lineage.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "thesis_lineage.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {
@@ -653,8 +653,11 @@ def test_cli_human_and_json_outputs_are_stable():
     db.commit()
     runner = CliRunner()
 
-    human = runner.invoke(app, ["thesis", "audit", "--days", "7"])
-    machine = runner.invoke(app, ["thesis", "audit", "--days", "7", "--json"])
+    human = runner.invoke(app, ["opportunity", "audit", "--view", "thesis", "--hours", "168"])
+    machine = runner.invoke(app, ["opportunity", "audit", "--view", "thesis", "--hours", "168", "--json"])
+    retired = runner.invoke(app, ["thesis", "audit"])
+    assert retired.exit_code == 2
+    assert "No such command" in retired.output
     records = runner.invoke(app, ["thesis", "records", "--days", "7", "--json"])
     snapshot = runner.invoke(app, ["thesis", "snapshot", "--days", "7"])
     snapshot_list = runner.invoke(app, ["thesis", "snapshots", "--json"])

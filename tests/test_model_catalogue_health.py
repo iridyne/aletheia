@@ -3,8 +3,8 @@
 import pytest
 
 from aletheia.model_provider.base import ModelHealth
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
+from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 from aletheia.model_provider import router
 
 

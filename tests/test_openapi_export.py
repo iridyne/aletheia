@@ -11,7 +11,8 @@ def test_openapi_export_script_writes_schema(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
-            str(root / "scripts" / "export_openapi_schema.py"),
+            "-m",
+            "scripts.export_openapi_schema",
             "--output",
             str(output),
         ],
@@ -27,4 +28,9 @@ def test_openapi_export_script_writes_schema(tmp_path):
     assert "/api/status" in schema["paths"]
     assert "/api/operator/recommendations" in schema["paths"]
     assert "/api/serenity/status" in schema["paths"]
+    assert "/api/news" in schema["paths"]
+    assert "/api/prediction/status" in schema["paths"]
+    assert "observed_stocks" not in schema["components"]["schemas"]["MarketDataConfigUpdate"]["properties"]
+    assert "observed_xstocks" not in schema["components"]["schemas"]["MarketDataConfigUpdate"]["properties"]
+    assert "observed_equities" not in schema["components"]["schemas"]["MarketDataConfigUpdate"]["properties"]
     assert "paths=" in result.stdout

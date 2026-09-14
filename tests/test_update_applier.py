@@ -118,7 +118,7 @@ def _stub_pull_to_smoke(monkeypatch, python_deps_changed=False):
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
-    changed = ["pyproject.toml"] if python_deps_changed else ["aletheia/x.py"]
+    changed = ["pyproject.toml"] if python_deps_changed else ["core/aletheia/x.py"]
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: changed)
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
@@ -172,7 +172,7 @@ def test_rollback_fail_returns_rollback_failed_with_actual_head(tmp_path, monkey
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits_iter))
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
-    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/x.py"])
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["core/aletheia/x.py"])
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
     monkeypatch.setattr(applier, "_is_managed_venv", lambda: True)
     monkeypatch.setattr(git_ops, "reset_hard", lambda commit: {"ok": False, "reason": "hard_reset_error"})

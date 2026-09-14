@@ -12,7 +12,7 @@ from aletheia.knowledge.manager import (
     create_dreaming_log, create_strategy_memory, create_trade_case_study,
     archive_item, deprecate_item, delete_item, detect_contradictions,
 )
-from aletheia.agents.post_trade_reviewer import run_post_trade_reviewer
+from extensions.learning.post_trade_reviewer import run_post_trade_reviewer
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -120,7 +120,7 @@ def test_post_trade_review_creation(tmp_path, monkeypatch):
 async def test_post_trade_review_links_strategy_from_order_chain(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
 
-    from aletheia.agents import post_trade_reviewer
+    from extensions.learning import post_trade_reviewer
     from aletheia.storage.models import StrategyRecord
     from aletheia.storage.repositories import insert_strategy
     from aletheia.agent_runtime.tool_registry import init_tool_registry
@@ -160,7 +160,7 @@ async def test_post_trade_reviewer_scans_prefix_while_forward_page_stays_nonempt
     """A growing suffix cannot permanently hide older strategy identities."""
     setup_test_env(tmp_path, monkeypatch)
 
-    from aletheia.agents import post_trade_reviewer
+    from extensions.learning import post_trade_reviewer
     from aletheia.agents.round_robin import DurableRoundRobin
     from aletheia.storage.sqlite import get_db
 

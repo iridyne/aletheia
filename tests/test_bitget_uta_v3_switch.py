@@ -18,7 +18,7 @@ prove the uta_v3 profile is end-to-end functional for demo qualification:
   roundtrip, no cross-family fallback when the UTA wallet is momentarily empty).
 - v2-only private-history endpoints fail loud under uta_v3 instead of silently
   querying the wrong account view:
-  * get_funding_ledger raises ProfileContractError;
+  * funding history is owned by the UTA adapter, not this native client;
   * get_verified_position_exit degrades to an explicit inconclusive reason.
 - shared construction sites inherit the configured profile.
 """
@@ -28,8 +28,8 @@ import json
 
 import pytest
 
-from aletheia.exchanges.bitget import client as bg
-from aletheia.exchanges.bitget.client import (
+from extensions.exchanges.bitget import client as bg
+from extensions.exchanges.bitget.client import (
     BitgetClient,
     ClosePositionAbsentError,
     OrderRequest,
@@ -359,19 +359,6 @@ def test_is_unified_short_circuits_by_profile(monkeypatch):
 # ─── v2-only private history fails loud under uta_v3 ─────────────────────────
 
 
-def test_get_funding_ledger_fails_loud_on_uta_v3():
-    c = BitgetClient(mode="demo", profile="uta_v3")
-    with pytest.raises(ProfileContractError, match="classic_v2"):
-        asyncio.run(
-            c.get_funding_ledger(
-                broker_id="bitget_demo",
-                symbol="BTC/USDT",
-                start_time_ms=1700000000000,
-                end_time_ms=1700086400000,
-            )
-        )
-
-
 def _verified_exit_request():
     from aletheia.execution.verified_exit import VerifiedExitRequest
 
@@ -417,7 +404,7 @@ def _use_profile(tmp_path, monkeypatch, profile):
 
 
 def test_configured_profile_helper_reads_config(tmp_path, monkeypatch):
-    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+    from extensions.exchanges.bitget.profile_config import configured_bitget_profile
 
     _use_profile(tmp_path, monkeypatch, "uta_v3")
     assert configured_bitget_profile() == "uta_v3"
@@ -434,6 +421,11 @@ def _stub_creds(monkeypatch):
 
 def test_funding_recovery_has_no_venue_client_compatibility_layer():
     from aletheia.portfolio import broker_funding_settlement as settlement
+    from extensions.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.okx.client import OKXClient
 
     assert not hasattr(settlement, "_client_for_mode")
     assert not hasattr(settlement, "_UTAFundingProjection")
+    assert not hasattr(BitgetClient, "get_funding_ledger")
+    assert not hasattr(BinanceClient, "get_funding_ledger")
+    assert not hasattr(OKXClient, "get_funding_ledger")

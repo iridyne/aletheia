@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 
 def _background(symbol: str, *, stock_linked: bool) -> dict:
-    from aletheia.data.symbols import build_instrument_background
+    from extensions.market_data import decode_market_background
 
     base = symbol.split("/", 1)[0]
     info = (
@@ -15,7 +15,7 @@ def _background(symbol: str, *, stock_linked: bool) -> dict:
         if stock_linked
         else {"contractType": "PERPETUAL", "underlyingType": "COIN"}
     )
-    return build_instrument_background(
+    return decode_market_background(
         symbol=symbol,
         venue="binance",
         market_type="perp",

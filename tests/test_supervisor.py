@@ -273,7 +273,7 @@ def test_spawn_server_can_bind_internal_backend_port(tmp_path, monkeypatch):
     assert captured["cmd"][captured["cmd"].index("--log-level") + 1] == "debug"
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_PORT"] == "9876"
     assert captured["kwargs"]["cwd"] == str(runner._PROJECT_ROOT)
-    assert captured["kwargs"]["env"]["PYTHONPATH"] == str(runner._PROJECT_ROOT)
+    assert captured["kwargs"]["env"]["PYTHONPATH"] == str(runner._PROJECT_ROOT / "core")
     assert captured["kwargs"]["env"]["ALETHEIA_RUNTIME_ID"] == "process-runtime"
     from aletheia.gateway.frontdoor_route import read_frontdoor_route
 

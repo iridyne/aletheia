@@ -13,6 +13,33 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock
 
 
+def test_core_publication_owns_wake_retry_without_republication(monkeypatch):
+    from aletheia.storage import repositories as repo
+    from aletheia.trading import serenity_publication as publication
+    from extensions.serenity import research_worker
+    monkeypatch.setattr(publication, "_AUTO_PROMOTE_NOTIFY_RETRIES", set())
+    monkeypatch.setattr(repo, "get_serenity_opportunity",
+                        lambda oid: {"id": oid, "status": "active", "theme_id": "theme"})
+    monkeypatch.setattr(repo, "list_serenity_opportunities",
+                        lambda **kwargs: [{"id": "source"}])
+    calls, wakes = [], []
+    def publish(theme, ids, **kwargs):
+        calls.append((theme, ids, kwargs))
+        return ["candidate"] if len(calls) == 1 else []
+    def wake(**kwargs):
+        wakes.append(kwargs)
+        if len(wakes) == 1:
+            raise RuntimeError("fixture wake failure")
+    monkeypatch.setattr(publication, "publish_serenity_candidates", publish)
+    monkeypatch.setattr("aletheia.agent_runtime.pi_daemon.notify_pi_daemon", wake)
+    assert [publication.auto_publish_serenity_candidates(["source"], min_score_for_pi=37)
+            for _ in range(3)] == [1, 0, 0]
+    assert calls == [("theme", ["source"], {"min_score_for_pi": 37, "new_candidates_only": True})] * 3
+    assert wakes == [{"source": "serenity_auto_promote"}] * 2
+    assert publication._AUTO_PROMOTE_NOTIFY_RETRIES == set()
+    assert not hasattr(research_worker, "_auto_promote_serenity_opportunities")
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -61,10 +88,10 @@ class TestP0AutoPromote:
 
         return theme.id, opp.id
 
-    def test_auto_promote_publishes_candidate_when_score_sufficient(self):
+    def test_auto_promote_publishes_candidate_when_score_sufficient(self, bitget_fast_stream):
         from aletheia.config.loader import load_config, save_config
         from tests.test_candidate_opportunity_persistence import _serenity_publication_source
-        from aletheia.agents.research_worker import _auto_promote_serenity_opportunities
+        from aletheia.trading.serenity_publication import auto_publish_serenity_candidates
         from aletheia.storage import repositories as repo
 
         cfg = load_config()
@@ -76,8 +103,8 @@ class TestP0AutoPromote:
         notify_calls = []
         with patch("aletheia.agent_runtime.pi_daemon.notify_pi_daemon",
                    side_effect=lambda source="unknown": notify_calls.append(source)):
-            assert _auto_promote_serenity_opportunities([opportunity.id], cfg) == 1
-            assert _auto_promote_serenity_opportunities([opportunity.id], cfg) == 0
+            assert auto_publish_serenity_candidates([opportunity.id], min_score_for_pi=0) == 1
+            assert auto_publish_serenity_candidates([opportunity.id], min_score_for_pi=0) == 0
         assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 1
         assert repo.get_db().execute("SELECT COUNT(*) FROM pi_decisions").fetchone()[0] == 0
         assert repo.get_serenity_theme(theme.id)["status"] == "promoted"
@@ -273,7 +300,7 @@ class TestP3FlowContextBlock:
     def test_flow_block_returns_formatted_data(self):
         """With OI + liquidation data in DB, the block returns formatted text."""
         self._seed_flow_data()
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.serenity.research_worker import _get_flow_context_block
 
         result = _get_flow_context_block()
         assert "Derivatives Flow Data" in result, f"Got: {result!r}"
@@ -285,7 +312,7 @@ class TestP3FlowContextBlock:
 
     def test_flow_block_empty_when_no_data(self):
         """Without recent data, returns empty string."""
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.serenity.research_worker import _get_flow_context_block
         # DB exists but no recent rows (all older than 4h or empty)
         # The autouse fixture gives us a clean DB, so this should be empty
         from aletheia.storage.sqlite import get_db
@@ -299,7 +326,7 @@ class TestP3FlowContextBlock:
         assert result == ""
 
     def test_flow_block_is_coinalyze_only_and_preserves_unavailable_delta(self):
-        from aletheia.agents.research_worker import _get_flow_context_block
+        from extensions.serenity.research_worker import _get_flow_context_block
         from aletheia.storage.sqlite import get_db
 
         db = get_db()
@@ -322,23 +349,23 @@ class TestP3FlowContextBlock:
         assert "DOGE/USDT" not in result
         assert "Delta1h=0.0%" not in result
 
-    def test_equity_context_block_references_yfinance(self):
+    def test_equity_context_block_references_yfinance(self, monkeypatch):
         """_get_equity_context_block has yfinance injection logic (import path test).
 
         Full yfinance network call is NOT exercised in CI — we verify the code
         structure handles ImportError gracefully (yfinance not installed in test env).
         """
-        from aletheia.agents.research_worker import _get_equity_context_block
+        from extensions.serenity.research_worker import _get_equity_context_block
+        monkeypatch.setattr("extensions.serenity.research_worker._equity_fundamentals_fetch", None)
 
         # Should not crash even if yfinance is not installed
         # (the code has try/except ImportError)
         with patch("aletheia.config.loader.load_config") as mock_cfg:
             mock_cfg.return_value.market_data.observed_stock_tokens = ["rNVDA/USDT"]
-            mock_cfg.return_value.market_data.observed_xstocks = []
             result = _get_equity_context_block()
             # Even without yfinance, the ticker list should be present
-            if result:
-                assert "NVDA" in result
+            assert "NVDA" in result
+            assert "Fundamentals (latest)" not in result
 
 
 # ---------------------------------------------------------------------------

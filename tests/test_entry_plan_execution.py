@@ -116,13 +116,13 @@ def test_holding_horizon_requires_positive_finite_value(holding):
     ("reversal", "mean_reversion", "short", "perp", "short_term"),
     ("continuation", "momentum", "long", "spot", "serenity"),
 ])
-def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, request, tmp_path, mechanism, family, direction, market_type, school):
+def test_controlled_grounded_candidate_compiles_exchange_plan(monkeypatch, request, tmp_path, mechanism, family, direction, market_type, school, bitget_fast_stream):
     import asyncio
     import math
     from tests.test_candidate_selection_utility import _controlled_admitted_target_candidate
     from aletheia.config.loader import load_config, save_config
     from aletheia.data.providers import Candle
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.orderbook import parse_orderbook as _parse_orderbook
     from aletheia.agent_shell.entry_planner import plan_next_candidate
     from aletheia.trading.entry_analysis import EntryHypothesis
 
@@ -973,6 +973,59 @@ def _persist_waiting_plan(
     return plan
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["filled", "cancelled", "failed"])
+async def test_only_watcher_persists_aggregate_terminal_state(monkeypatch, outcome):
+    from aletheia.agent_runtime import fast_trigger_watch as watch
+    from aletheia.execution import entry_plan_execution as execution
+    from tests.test_entry_execution_projection import facts
+
+    plan = _persist_waiting_plan(mode="RESTING_MAKER", tactic="POST_ONLY_LIMIT")
+    before = repo.get_entry_plan(plan.plan_id)
+    state = facts(
+        filled_quantity=plan.target_quantity if outcome == "filled" else 0,
+        order_status="cancelled" if outcome == "cancelled" else None,
+        order_tactic="POST_ONLY_LIMIT",
+        proposal_status="error" if outcome == "failed" else None,
+        proposal_leg_index=0,
+    )
+    monkeypatch.setattr(execution, "_capture_facts", lambda *_args, **_kwargs: state)
+    now = datetime.now(timezone.utc)
+    result = execution.execute_entry_plan(
+        plan.plan_id, bid=100, ask=100.05,
+        observed_at=now.isoformat(), source_observed_at=now.isoformat(),
+        stream_generation_id="stream", subscription_generation_id="subscription",
+        quote_sequence=1, now=now,
+    )
+    assert result["status"] == outcome
+    assert repo.get_entry_plan(plan.plan_id) == before
+
+    monkeypatch.setattr("aletheia.risk.policy.resolve_risk_policy", lambda *_args: SimpleNamespace(
+        policy=SimpleNamespace(policy_id=plan.risk_policy_id, revision=plan.risk_policy_revision),
+        policy_hash=plan.risk_policy_hash,
+    ))
+    monkeypatch.setattr(watch, "fast_market_data_unavailability_reason", lambda *_args: None)
+    cfg = SimpleNamespace(exchange=SimpleNamespace(paper_execution_mode=plan.execution_account_mode))
+    watched, _ = await watch._load_entry_plan_watchers(cfg)
+    assert plan.plan_id not in watched
+    assert repo.get_entry_plan(plan.plan_id)["status"] == outcome
+
+
+def test_gateway_rejection_does_not_terminalize_parent_plan(monkeypatch):
+    from aletheia.execution import gateway
+
+    plan = _persist_waiting_plan()
+    before = repo.get_entry_plan(plan.plan_id)
+    proposal = SimpleNamespace(id="proposal", entry_plan_id=plan.plan_id, status="pending")
+    updates = []
+    monkeypatch.setattr(gateway, "update_trade_proposal", lambda identity, **values: updates.append((identity, values)))
+    monkeypatch.setattr(gateway, "write_audit", lambda _event: None)
+    result = gateway._reject_for_exchange_constraints(proposal, "unavailable")
+    assert result["status"] == "rejected"
+    assert updates == [("proposal", {"status": "rejected"})]
+    assert repo.get_entry_plan(plan.plan_id) == before
+
+
 def _execution_receipt_kwargs(
     now: datetime,
     *,
@@ -1637,11 +1690,14 @@ def test_resting_maker_receipt_has_plan_lifetime_not_trigger_ttl():
     assert proposal.price == plan.limit_price
 
 
-def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeypatch):
+@pytest.mark.parametrize("materialization", ["same_plan", "changed_account", "missing_account", "changed_order_plan",
+                                            "unapproved_primary", "changed_primary_hash", "adopted_primary"])
+def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeypatch, materialization):
     from aletheia.execution import gateway
     from aletheia.execution.entry_plan_execution import execute_entry_plan
     from aletheia.storage.models import Position, TradeProposal
     from tests.test_entry_execution_projection import plan_for
+    from tests.fill_reports import DEFAULT_IDENTITY, reports
 
     from aletheia.storage.models import EntryPlanRecord
     from tests.test_entry_planner import _typed_candidate
@@ -1669,7 +1725,8 @@ def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeyp
             market_type=proposal.market_type, direction=proposal.direction, execution_mode=mode,
             order_type="limit", price=proposal.price, quantity=proposal.quantity, client_order_id=proposal_id,
             entry_plan_id=plan.plan_id, order_tactic=proposal.order_tactic, post_only=proposal.post_only,
-            status="submitted", exchange_order_id=f"native-{len(orders)}")
+            status="submitted", exchange_order_id=f"native-{len(orders)}",
+            uta_account_identity_json=DEFAULT_IDENTITY.model_dump_json())
         repo.insert_order(order)
         receipts.append(execution_receipt)
         orders.append(order)
@@ -1720,6 +1777,45 @@ def test_current_capture_persists_two_immutable_legs_and_exact_remainder(monkeyp
     adapter = TypeAdapter(EntryPlanLineage)
     assert adapter.dump_python(adapter.validate_python(lineage), mode="json") == lineage
     assert repo.get_entry_plan(plan.plan_id)["plan_json"] == before
+
+    # Reconcile the actual second private Fill, not merely the mocked submission.
+    from aletheia.execution.exchange_materialization import materialize_bitget_entry
+    if materialization == "changed_account":
+        other = DEFAULT_IDENTITY.model_copy(update={"credential_generation": 99})
+        repo.execute_write("UPDATE orders SET uta_account_identity_json=? WHERE id=?",
+                           (other.model_dump_json(), first.id))
+    elif materialization == "missing_account":
+        repo.execute_write("UPDATE orders SET uta_account_identity_json=NULL WHERE id=?", (first.id,))
+    elif materialization == "changed_order_plan":
+        repo.execute_write("UPDATE orders SET entry_plan_id=NULL WHERE id=?", (first.id,))
+    elif materialization == "unapproved_primary":
+        repo.execute_write("UPDATE risk_decisions SET approved=0 WHERE id=?", (first.risk_decision_id,))
+    elif materialization == "changed_primary_hash":
+        repo.execute_write("UPDATE trade_proposals SET commit_hash='invalid' WHERE id=?", (first.proposal_id,))
+    elif materialization == "adopted_primary":
+        repo.execute_write("UPDATE orders SET source='adopted' WHERE id=?", (first.id,))
+    evidence = reports([dict(orderId=second.exchange_order_id, tradeId="second-private-fill",
+        fillPrice=str(second.price), fillQuantity=str(second.quantity), fee="0.03", feeCoin="USDT",
+        cTime="1789171200000")], symbol=second.symbol, market_type=second.market_type)
+    original = repo.get_position(position.id)
+    if materialization != "same_plan":
+        from aletheia.execution.exchange_materialization import MaterializationIntegrityError
+        stored_order = repo.get_order(second.id)
+        for _ in range(2):
+            with pytest.raises(MaterializationIntegrityError, match="linked Position"):
+                materialize_bitget_entry(second.id, evidence)
+            assert repo.get_position(position.id) == original
+            assert repo.get_order(second.id) == stored_order
+            assert repo.list_fills(order_id=second.id, limit=None) == []
+        return
+    result = materialize_bitget_entry(second.id, evidence)
+    assert result.state == "filled"
+    assert result.position_id == position.id
+    assert repo.get_position(position.id)["quantity"] == pytest.approx(plan.target_quantity)
+    assert repo.get_order(second.id)["position_id"] == result.position_id
+    replay = materialize_bitget_entry(second.id, evidence)
+    assert replay.position_id == result.position_id
+    assert len(repo.list_fills(order_id=second.id, limit=None)) == 1
 
 
 def test_cancel_handoff_crash_persists_uncertainty_before_external_effect(monkeypatch):

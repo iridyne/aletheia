@@ -565,8 +565,8 @@ def test_trade_funnel_cli_outputs_human_and_json_reports():
     from aletheia.main import app
 
     runner = CliRunner()
-    human = runner.invoke(app, ["funnel", "audit", "--hours", "24"])
-    machine = runner.invoke(app, ["funnel", "audit", "--days", "7", "--json"])
+    human = runner.invoke(app, ["opportunity", "audit", "--view", "funnel", "--hours", "24"])
+    machine = runner.invoke(app, ["opportunity", "audit", "--view", "funnel", "--hours", "168", "--json"])
 
     assert human.exit_code == 0
     assert "Trade Funnel Audit" in human.output
@@ -574,5 +574,5 @@ def test_trade_funnel_cli_outputs_human_and_json_reports():
     payload = json.loads(machine.output)
     assert "historical signal pipeline" in human.output
     assert payload["scope"] == "historical_signal_pipeline"
-    assert payload["window"]["days"] == 7
+    assert payload["window"]["hours"] == 168
     assert "main_choke_point" in payload

@@ -59,7 +59,9 @@ async def test_market_snapshots_route(client):
 
 @pytest.mark.anyio
 async def test_portfolio_history_route(client):
-    repo.insert_portfolio_snapshot(PortfolioSnapshot(total_value_usdt=1000, unrealized_pnl=50))
+    repo.insert_portfolio_snapshot(PortfolioSnapshot(
+        execution_mode="bitget_demo", total_value_usdt=1000, unrealized_pnl=50,
+    ))
     resp = await client.get("/api/market/portfolio-history")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
@@ -71,6 +73,7 @@ async def test_portfolio_history_route_returns_latest_window_in_ascending_order(
     for i in range(3):
         repo.insert_portfolio_snapshot(
             PortfolioSnapshot(
+                execution_mode="bitget_demo",
                 total_value_usdt=1000 + i,
                 snapshot_at=(base + timedelta(minutes=i)).isoformat(),
             )
@@ -169,7 +172,7 @@ async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", lambda **kw: _FakeCCXT())
     resp = await client.get("/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h")
     assert resp.status_code == 200
     data = resp.json()
@@ -250,7 +253,7 @@ async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypa
             timestamp=1700000000000, open=1, high=2, low=0.5, close=1.4, volume=10,
         )],
     )
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _UnavailableCCXT())
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", lambda **kw: _UnavailableCCXT())
     monkeypatch.setattr(
         ccxt_provider,
         "get_market_data_provider",
@@ -376,7 +379,7 @@ async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", lambda **kw: _FakeCCXT())
     resp = await client.get(f"/api/market/ohlcv?symbol=BTC/USDT&timeframe=1h&limit=300&before={cutoff}")
     assert resp.status_code == 200
     data = resp.json()

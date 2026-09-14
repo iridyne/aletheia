@@ -4,14 +4,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aletheia.agents.post_trade_reviewer import _run_case_builder_safe
+from extensions.learning.post_trade_reviewer import _run_case_builder_safe
 
-_CASES_MODULE = "aletheia.analytics.trade_case_builder"
+_CASES_MODULE = "extensions.learning.trade_case_builder"
 
 
 @pytest.fixture(autouse=True)
 def _no_log_tool():
-    with patch("aletheia.agents.post_trade_reviewer.log_tool"):
+    with patch("extensions.learning.post_trade_reviewer.log_tool"):
         yield
 
 
@@ -65,3 +65,24 @@ def test_healthy_zero_eligible_artifact_result_has_no_errors():
     assert cases == []
     assert candidates == []
     assert errors == []
+
+
+def test_missing_case_builder_reports_both_unavailable_operations(monkeypatch):
+    import builtins
+    import importlib.util
+
+    original_import = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name == _CASES_MODULE:
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", absent)
+    cases, candidates, errors = _run_case_builder_safe("missing-builder")
+    assert cases == [] and candidates == []
+    assert errors == [
+        "case_builder:build_case_studies:ModuleNotFoundError",
+        "case_builder:detect_guard_candidates:ModuleNotFoundError",
+    ]
+    assert importlib.util.find_spec("aletheia.analytics.trade_case_builder") is None

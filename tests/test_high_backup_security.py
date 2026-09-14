@@ -45,29 +45,28 @@ def test_restore_security_error_class_exists():
 
 
 def test_restore_rejects_symlink_at_destination(tmp_path):
-    """RestoreService must raise RestoreSecurityError when destination is a symlink."""
-    from aletheia.backup.restore import RestoreService, RestoreSecurityError
-    import shutil
+    """A verified archive cannot overwrite a file outside the restore target."""
+    from aletheia.backup.restore import RestoreService
+    from aletheia.backup.service import BackupService
+    import sqlite3
 
-    # Create a fake bundle with one file
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    (bundle / "data.txt").write_text("content")
+    with sqlite3.connect(bundle / "app.db") as db:
+        db.execute("CREATE TABLE preserved (value TEXT)")
+    archive = BackupService(bundle).create_backup()
 
     # Create target dir with a symlink at the destination path
     target = tmp_path / "target"
     target.mkdir()
     real_file = tmp_path / "real_elsewhere.txt"
     real_file.write_text("existing")
-    (target / "data.txt").symlink_to(real_file)
+    link = target / "app.db"
+    link.symlink_to(real_file)
 
-    svc = RestoreService()
-    # Calling _copy_single_file-equivalent should detect the symlink
-    # We test the source check in restore.py:
-    src_code = inspect.getsource(RestoreService.restore)
-    assert "is_symlink" in src_code, (
-        "restore() must check for symlinks at destination path (#1618)"
-    )
-    assert "RestoreSecurityError" in src_code, (
-        "restore() must raise RestoreSecurityError on symlink detection"
-    )
+    result = RestoreService().restore(archive, target)
+    assert not result.success
+    assert result.restored_files == 0
+    assert any("symlink" in error for error in result.errors)
+    assert link.is_symlink()
+    assert real_file.read_text() == "existing"

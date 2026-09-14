@@ -4,10 +4,45 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-import aletheia.telegram.bot as bot_module
+import extensions.telegram.bot as bot_module
 from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
-from aletheia.telegram.bot import TelegramBot
+from extensions.telegram.bot import TelegramBot
+from aletheia.telegram.commands import TelegramCommands
+
+
+@pytest.mark.anyio
+async def test_missing_transport_is_unavailable_without_side_effects(monkeypatch):
+    import aletheia.telegram as transport
+
+    monkeypatch.setattr(transport, "_factory", None)
+    monkeypatch.setattr(transport, "_health", None)
+    assert transport.create_transport() is None
+    assert await transport.transport_health() == {
+        "reachable": False, "error": "adapter_unavailable",
+    }
+
+
+@pytest.mark.parametrize("elapsed", [299.0, 301.0])
+def test_command_owner_consumes_kill_confirmation_once(monkeypatch, elapsed):
+    import aletheia.telegram.commands as commands_module
+    from aletheia.risk import kill_switch
+
+    commands = TelegramCommands()
+    activated = []
+    monkeypatch.setattr(commands_module, "write_audit", lambda event: None)
+    monkeypatch.setattr(kill_switch, "activate", lambda **kwargs: activated.append(kwargs))
+    monkeypatch.setattr(commands_module.time, "monotonic", lambda: 100.0)
+    assert "Reply /kill confirm" in commands._cmd_kill_request(123)
+    assert "No pending" in commands._cmd_kill_confirm(456)
+    monkeypatch.setattr(commands_module.time, "monotonic", lambda: 100.0 + elapsed)
+    response = commands._cmd_kill_confirm(123)
+    assert ("ACTIVATED" in response) is (elapsed < 300.0)
+    assert len(activated) == (1 if elapsed < 300.0 else 0)
+    assert "No pending" in commands._cmd_kill_confirm(123)
+    assert not hasattr(commands_module, "get_secret")
+    assert not hasattr(TelegramBot, "handle_message")
+    assert not hasattr(TelegramBot, "_cmd_kill_confirm")
 
 
 def setup_test_env(tmp_path, monkeypatch):
@@ -32,7 +67,7 @@ def setup_test_env(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_status_command(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    bot = TelegramBot()
+    bot = TelegramCommands()
     resp = await bot.handle_message(123, "/status")
     assert "Gateway" in resp
     assert "live_disabled" in resp
@@ -50,7 +85,7 @@ async def test_status_command_reports_unconfigured_execution(tmp_path, monkeypat
     cfg.exchange.paper_execution_mode = ""
     save_config(cfg)
 
-    resp = await TelegramBot().handle_message(123, "/status")
+    resp = await TelegramCommands().handle_message(123, "/status")
 
     assert "Not configured" in resp
     assert "okx (demo)" not in resp
@@ -60,7 +95,7 @@ async def test_status_command_reports_unconfigured_execution(tmp_path, monkeypat
 @pytest.mark.anyio
 async def test_pause_command(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    bot = TelegramBot()
+    bot = TelegramCommands()
     resp = await bot.handle_message(123, "/pause")
     assert "paused" in resp.lower()
     from aletheia.config.loader import load_config
@@ -79,7 +114,7 @@ async def test_resume_command(tmp_path, monkeypatch):
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
 
-    bot = TelegramBot()
+    bot = TelegramCommands()
     await bot.handle_message(123, "/pause")
     resp = await bot.handle_message(123, "/resume")
     assert "resumed" in resp.lower()
@@ -102,7 +137,7 @@ async def test_resume_command_blocks_when_llm_unavailable(tmp_path, monkeypatch)
 
     monkeypatch.setattr(resume_gate, "resume_if_llm_available", fake_resume)
 
-    bot = TelegramBot()
+    bot = TelegramCommands()
     await bot.handle_message(123, "/pause")
     resp = await bot.handle_message(123, "/resume")
 
@@ -114,7 +149,7 @@ async def test_resume_command_blocks_when_llm_unavailable(tmp_path, monkeypatch)
 @pytest.mark.anyio
 async def test_help_command(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    bot = TelegramBot()
+    bot = TelegramCommands()
     resp = await bot.handle_message(123, "/help")
     assert "/status" in resp
     assert "/pause" in resp
@@ -130,7 +165,7 @@ async def test_unauthorized_chat_rejected(tmp_path, monkeypatch):
     cfg.telegram.allowed_chat_ids = [999]
     save_config(cfg)
 
-    bot = TelegramBot()
+    bot = TelegramCommands()
     # Unauthorized chats get no reply at all (silent + audited), not an error string.
     resp = await bot.handle_message(123, "/status")
     assert resp is None
@@ -147,7 +182,7 @@ async def test_enabled_telegram_requires_allowed_chat_ids(tmp_path, monkeypatch)
     cfg.telegram.allowed_chat_ids = []
     save_config(cfg)
 
-    bot = TelegramBot()
+    bot = TelegramCommands()
     # Misconfigured (enabled but no allow-list) also yields no reply, never a
     # status leak — the condition is audited instead.
     resp = await bot.handle_message(123, "/status")
@@ -162,8 +197,7 @@ async def test_authorization_tracks_current_config_after_startup(tmp_path, monke
 
     import aletheia.config.loader as loader
 
-    bot = TelegramBot()
-    bot.allowed_chat_ids = {123}  # Startup snapshot.
+    bot = TelegramCommands()
 
     # Warm this process's cache, then emulate another process writing config.
     loader.load_config()
@@ -192,7 +226,7 @@ async def test_authorization_reads_config_off_event_loop(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     import threading
 
-    import aletheia.telegram.bot as telegram
+    import aletheia.telegram.commands as telegram
 
     event_loop_thread = threading.get_ident()
     reads = []
@@ -204,7 +238,7 @@ async def test_authorization_reads_config_off_event_loop(tmp_path, monkeypatch):
 
     monkeypatch.setattr(telegram, "load_config", tracked_load_config)
 
-    assert "Gateway" in await telegram.TelegramBot().handle_message(123, "/status")
+    assert "Gateway" in await telegram.TelegramCommands().handle_message(123, "/status")
     fresh_read_threads = [
         thread for thread, kwargs in reads if kwargs.get("use_cache") is False
     ]
@@ -217,14 +251,17 @@ async def test_authorization_reads_config_off_event_loop(tmp_path, monkeypatch):
 @pytest.mark.anyio
 async def test_latest_command_empty(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
-    bot = TelegramBot()
+    bot = TelegramCommands()
     resp = await bot.handle_message(123, "/latest")
     assert "No recent" in resp
     reset_db()
 
 
-def test_pnl_command_uses_one_mode_scoped_portfolio_projection(monkeypatch):
+@pytest.mark.parametrize("mode", ["bitget_demo", "okx_demo"])
+def test_pnl_command_uses_one_mode_scoped_portfolio_projection(monkeypatch, mode):
     import aletheia.portfolio.pnl as pnl
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: mode)
+    calls = []
 
     monkeypatch.setattr(
         pnl,
@@ -234,15 +271,16 @@ def test_pnl_command_uses_one_mode_scoped_portfolio_projection(monkeypatch):
     monkeypatch.setattr(
         pnl,
         "compute_portfolio",
-        lambda: {
+        lambda *, execution_mode: calls.append(execution_mode) or {
             "today_realized_pnl": 0.0,
             "today_realized_pnl_complete": True,
             "unrealized_pnl": -5.0,
         },
     )
 
-    response = TelegramBot()._cmd_pnl()
+    response = TelegramCommands()._cmd_pnl()
 
+    assert calls == [mode]
     assert "Realized: +0.00 USDT" in response
     assert "Unrealized: -5.00 USDT" in response
     assert "Total: -5.00 USDT" in response
@@ -250,6 +288,7 @@ def test_pnl_command_uses_one_mode_scoped_portfolio_projection(monkeypatch):
 
 def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
     import aletheia.portfolio.pnl as pnl
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: "bitget_demo")
 
     monkeypatch.setattr(
         pnl,
@@ -259,17 +298,23 @@ def test_pnl_command_preserves_incomplete_realized_state(monkeypatch):
     monkeypatch.setattr(
         pnl,
         "compute_portfolio",
-        lambda: {
+        lambda *, execution_mode: {
             "today_realized_pnl": 20.0,
             "today_realized_pnl_complete": False,
             "unrealized_pnl": -5.0,
         },
     )
 
-    response = TelegramBot()._cmd_pnl()
+    response = TelegramCommands()._cmd_pnl()
 
     assert "Realized: unavailable" in response
     assert "Total: unavailable" in response
+
+
+def test_pnl_command_without_selected_account_never_reads_all_modes(monkeypatch):
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: None)
+    monkeypatch.setattr("aletheia.portfolio.pnl.compute_portfolio", lambda **kwargs: pytest.fail("unscoped PnL read"))
+    assert TelegramCommands()._cmd_pnl() == "Today PnL: unavailable (execution_mode_unresolved)."
 
 
 @pytest.mark.anyio
@@ -296,7 +341,7 @@ async def test_reply_failure_does_not_stop_polling_or_replay_command(monkeypatch
 
     monkeypatch.setattr(bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client))
     monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
-    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot.commands, "handle_message", handle)
     monkeypatch.setattr(bot, "send_message", send)
 
     await bot.run(poll_interval=0)
@@ -369,7 +414,7 @@ async def test_command_failure_retries_without_advancing_offset(monkeypatch, cap
 
     monkeypatch.setattr(bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client))
     monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
-    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot.commands, "handle_message", handle)
 
     await bot.run(poll_interval=0)
 
@@ -405,7 +450,7 @@ async def test_repeated_command_failure_uses_update_escalation(monkeypatch):
         bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
     )
     monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
-    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot.commands, "handle_message", handle)
     monkeypatch.setattr(
         bot,
         "_escalate_update_failure",
@@ -453,7 +498,7 @@ async def test_failed_update_escalation_does_not_advance_offset(monkeypatch):
         bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
     )
     monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
-    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot.commands, "handle_message", handle)
     monkeypatch.setattr(
         bot,
         "_escalate_update_failure",
@@ -484,7 +529,7 @@ async def test_malformed_update_batch_retries_as_poll_failure(monkeypatch, caplo
         bot_module, "httpx_client", lambda *, timeout: _fake_httpx_client(client)
     )
     monkeypatch.setattr(bot_module.asyncio, "sleep", lambda _delay: _async_noop())
-    monkeypatch.setattr(bot, "handle_message", handle)
+    monkeypatch.setattr(bot.commands, "handle_message", handle)
 
     await bot.run(poll_interval=0)
 

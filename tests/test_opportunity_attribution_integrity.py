@@ -107,7 +107,7 @@ def test_serenity_trade_selects_namespace_before_uuid_lookup(monkeypatch):
     assert row["confidence_score"] == 88
     assert row["universe_member_id"] is None
 
-    from aletheia.analytics.trade_case_builder import _build_case_from_row
+    from extensions.learning.trade_case_builder import _build_case_from_row
 
     case = _build_case_from_row(row)
     assert case["scanner_family"] == "serenity"
@@ -186,7 +186,7 @@ def test_unique_legacy_decision_missing_identity_is_not_available(monkeypatch, f
 
 
 def test_case_preserves_typed_conflicting_integrity_error():
-    from aletheia.analytics.trade_case_builder import (
+    from extensions.learning.trade_case_builder import (
         _build_case_from_row,
         _render_case_body,
     )

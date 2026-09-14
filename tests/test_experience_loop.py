@@ -242,7 +242,7 @@ async def test_post_trade_reviewer_writes_medium_confidence_reviews(tmp_path, mo
 
     async def ok_llm(*a, **k):
         return ("Trailing stop on the SOL short would have captured more downside; exit was early.", None)
-    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", ok_llm)
+    monkeypatch.setattr("extensions.learning.post_trade_reviewer.llm_complete", ok_llm)
 
     result = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
@@ -263,7 +263,7 @@ async def test_post_trade_reviewer_keeps_fallback_lessons_medium(tmp_path, monke
 
     async def down_llm(*a, **k):
         return ("", "LLM unavailable")
-    monkeypatch.setattr("aletheia.agents.post_trade_reviewer.llm_complete", down_llm)
+    monkeypatch.setattr("extensions.learning.post_trade_reviewer.llm_complete", down_llm)
 
     result = await run_agent("post_trade_reviewer", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")
@@ -289,12 +289,21 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
     cfg = load_config(); cfg.agent.permission_mode = "Observe"; save_config(cfg)
     from aletheia.storage.models import TradeProposal
     from aletheia.knowledge.retrieval import retrieve_lessons
-    repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id="s1", symbol="BTC/USDT",
-                                             market_type="futures", direction="long"))
+    repo.insert_trade_proposal(
+        TradeProposal(
+            id="p1",
+            strategy_id="s1",
+            symbol="BTC/USDT",
+            market_type="futures",
+            execution_mode="bitget_demo",
+            direction="long",
+        )
+    )
 
     async def ok_llm(*a, **k):
         return ("Position sizing crept up after wins; cap risk per trade to limit drawdown clustering.", None)
     monkeypatch.setattr("aletheia.agents.risk_critic.llm_complete", ok_llm)
+    monkeypatch.setattr("aletheia.agents.risk_critic.get_provider_for_tier", lambda _tier: object())
 
     result = await run_agent("risk_critic", trigger_type="manual")
     assert result["status"] in ("completed", "completed_with_errors")

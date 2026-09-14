@@ -15,6 +15,14 @@ from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 
 
+@pytest.fixture(autouse=True)
+def research_extension(monkeypatch):
+    from aletheia.agents import _AGENTS
+    from extensions.research.research_agent import run_research_agent
+
+    monkeypatch.setitem(_AGENTS, "research_agent", run_research_agent)
+
+
 def setup_test_env(tmp_path, monkeypatch):
     """Set up test db and config."""
     import aletheia.config.loader as loader
@@ -42,6 +50,118 @@ def test_tool_registry_initialized():
     assert "get_market_snapshot" in TOOL_REGISTRY
     assert "create_research_note" in TOOL_REGISTRY
     assert "unlock_live" in TOOL_REGISTRY
+
+
+@pytest.mark.asyncio
+async def test_research_extension_absence_is_terminal_and_registration_is_explicit(tmp_path, monkeypatch):
+    import builtins
+    import importlib
+    import importlib.util
+    from aletheia.agents import _AGENTS, get_agent_fn
+    from extensions.research.research_agent import run_research_agent
+
+    setup_test_env(tmp_path, monkeypatch)
+    composition = importlib.import_module("aletheia.server.app")
+    monkeypatch.delitem(_AGENTS, "research_agent", raising=False)
+    original_import = builtins.__import__
+
+    def without_research(name, *args, **kwargs):
+        if name.startswith("extensions.research"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("absent research must not call models or publish notes")
+
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", forbidden)
+    monkeypatch.setattr("extensions.research.research_agent.create_research_note", forbidden)
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", without_research)
+        composition._register_research_extension()
+        assert "research_agent" not in _AGENTS
+        result = await run_agent("research_agent", trigger_type="manual")
+    assert result["status"] == "completed_with_errors"
+    stored = repo.get_agent_run(result["run_id"])
+    assert stored["status"] == "completed_with_errors" and stored["ended_at"]
+    assert any("Unknown agent: research_agent" in error for error in result["errors"])
+    assert repo.list_knowledge_items(item_type="research_note") == []
+    composition._register_research_extension()
+    assert get_agent_fn("research_agent") is run_research_agent
+    assert importlib.util.find_spec("aletheia.agents.research_agent") is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_name, registrar, inference", [
+    ("lesson_reviewer", "_register_learning_extension", "llm_structured"),
+    ("post_trade_reviewer", "_register_post_trade_extension", "llm_complete"),
+])
+async def test_learning_extension_absence_finishes_without_policy_writes(tmp_path, monkeypatch, agent_name, registrar, inference):
+    import builtins
+    import importlib
+    import importlib.util
+    from aletheia.agents import _AGENTS, get_agent_fn
+    module = importlib.import_module(f"extensions.learning.{agent_name}")
+    implementation = getattr(module, f"run_{agent_name}")
+
+    setup_test_env(tmp_path, monkeypatch)
+    composition = importlib.import_module("aletheia.server.app")
+    monkeypatch.delitem(_AGENTS, agent_name, raising=False)
+    original_import = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name.startswith("extensions.learning"):
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("absent Learning must not infer or apply lessons")
+
+    monkeypatch.setattr(module, inference, forbidden)
+    if agent_name == "post_trade_reviewer":
+        monkeypatch.setattr(module, "create_post_trade_review", forbidden)
+        monkeypatch.setattr(module, "_run_case_builder_safe", forbidden)
+    monkeypatch.setattr("aletheia.learning.lessons.LessonStore.apply_reviewed_lessons", forbidden)
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", absent)
+        getattr(composition, registrar)()
+        assert agent_name not in _AGENTS
+        result = await run_agent(agent_name, trigger_type="manual")
+    stored = repo.get_agent_run(result["run_id"])
+    assert stored["status"] == "completed_with_errors" and stored["ended_at"]
+    assert any(f"Unknown agent: {agent_name}" in error for error in result["errors"])
+    getattr(composition, registrar)()
+    assert get_agent_fn(agent_name) is implementation
+    assert importlib.util.find_spec(f"aletheia.agents.{agent_name}") is None
+
+
+def test_dreaming_registration_is_optional_without_core_facade(monkeypatch):
+    import builtins
+    import importlib
+    import importlib.util
+    from aletheia.agents import _AGENTS, get_agent_fn
+    from aletheia.agent_runtime import scheduler
+    from extensions.learning.dreaming_agent import _extract_lessons, run_dreaming_agent
+
+    composition = importlib.import_module("aletheia.server.app")
+    monkeypatch.delitem(_AGENTS, "dreaming_agent", raising=False)
+    monkeypatch.setattr(scheduler, "_lesson_extractor", None)
+    original_import = builtins.__import__
+
+    def absent(name, *args, **kwargs):
+        if name == "extensions.learning.dreaming_agent":
+            raise ModuleNotFoundError(name)
+        return original_import(name, *args, **kwargs)
+
+    with monkeypatch.context() as missing:
+        missing.setattr(builtins, "__import__", absent)
+        composition._register_dreaming_extension()
+        assert scheduler._lesson_extractor is None
+        with pytest.raises(ValueError, match="Unknown agent: dreaming_agent"):
+            get_agent_fn("dreaming_agent")
+    composition._register_dreaming_extension()
+    assert scheduler._lesson_extractor is _extract_lessons
+    assert get_agent_fn("dreaming_agent") is run_dreaming_agent
+    assert importlib.util.find_spec("aletheia.agents.dreaming_agent") is None
 
 
 def test_observe_tools_permitted_in_all_modes():
@@ -178,7 +298,7 @@ async def test_research_agent_creates_note(tmp_path, monkeypatch):
     async def _fake_llm(system, user, max_tokens=800, **_kwargs):
         return ("BTC 4h shows momentum divergence with RSI overbought while price consolidates. "
                 "ETH funding rates suggest crowded longs. Recommend reducing spot exposure into strength.", None)
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", _fake_llm)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", _fake_llm)
 
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] in _OK
@@ -206,8 +326,8 @@ async def test_dreaming_agent_creates_log(tmp_path, monkeypatch):
             "Focus for tomorrow: validate SOL breakout thesis with volume confirmation.",
             None,
         )
-    monkeypatch.setattr("aletheia.agents.dreaming_agent.llm_complete", _fake_llm)
-
+    monkeypatch.setattr("extensions.learning.dreaming_agent.llm_complete", _fake_llm)
+    monkeypatch.setattr("extensions.learning.dreaming_agent.get_provider_for_tier", lambda _tier: object())
     # Use cron trigger so both dreaming_log and daily_review paths are exercised.
     result = await run_agent("dreaming_agent", trigger_type="cron")
     assert result["status"] in _OK

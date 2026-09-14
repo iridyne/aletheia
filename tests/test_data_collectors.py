@@ -6,8 +6,8 @@ All tests are offline (no network, no DB). We mock ccxt and httpx.
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta, timezone
 
 
 # ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------------------
 
 def test_parse_orderbook_basic():
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.orderbook import parse_orderbook as _parse_orderbook
 
     ob = {
         "bids": [[50000.0, 1.0], [49990.0, 2.0]],
@@ -36,14 +36,14 @@ def test_parse_orderbook_basic():
 
 
 def test_parse_orderbook_empty():
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.orderbook import parse_orderbook as _parse_orderbook
 
     snap = _parse_orderbook("BTC/USDT", "binance", {"bids": [], "asks": []}, 0)
     assert snap is None
 
 
 def test_depth_within():
-    from aletheia.data.collectors.microstructure import _depth_within
+    from aletheia.data.orderbook import _depth_within
 
     levels = [[50000.0, 2.0], [49980.0, 3.0], [49950.0, 5.0]]
     # mid=50005, threshold=50005 * 0.001 = 50.005, so cutoff at 50005-50.005=49954.995
@@ -57,12 +57,13 @@ def test_depth_within():
 # ---------------------------------------------------------------------------
 
 def test_parse_funding_basic():
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from tests.market_data import parse_funding as _parse_funding
 
     raw = {
         "fundingRate": 0.0001,
         "fundingDatetime": "2026-06-14T08:00:00Z",
         "markPrice": 50000.0,
+        "interval": "8h",
     }
     snap = _parse_funding("BTC/USDT", "binance", raw)
     assert snap is not None
@@ -72,52 +73,68 @@ def test_parse_funding_basic():
 
 
 def test_parse_funding_missing_rate():
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from tests.market_data import parse_funding as _parse_funding
 
     snap = _parse_funding("BTC/USDT", "binance", {})
     assert snap is None
 
 
 def test_parse_oi_basic():
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
 
-    raw = {"openInterestValue": 1_000_000_000.0, "info": {"sumOpenInterest": "20000"}}
-    snap = _parse_oi("BTC/USDT", "binance", raw)
+    raw = {
+        "openInterestValue": 1_000_000_000.0,
+        "info": {"sumOpenInterestValue": "1000000000"},
+    }
+    market = {
+        "id": "BTCUSDT",
+        "symbol": "BTC/USDT:USDT",
+        "swap": True,
+        "base": "BTC",
+        "quote": "USDT",
+        "settle": "USDT",
+        "linear": True,
+    }
+    snap = _parse_oi("BTC/USDT", "binance", raw, market=market)
     assert snap is not None
     assert snap.open_interest_usd == 1_000_000_000.0
-    assert snap.open_interest_coin == 20000.0
+    assert snap.open_interest_coin is None
 
 
 def test_hyperliquid_oi_delta_uses_same_source_hour_baseline(monkeypatch):
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.hyperliquid.collector import _parse_oi
+    from extensions.hyperliquid.collector import hyperliquid_metadata
     from aletheia.storage import repositories as repo
 
+    now = datetime.now(timezone.utc)
+    baseline_at = (now - timedelta(hours=1)).isoformat()
     monkeypatch.setattr(
         repo,
-        "open_interest_near",
-        lambda symbol, exchange, **kwargs: {
+        "_select_all",
+        lambda *args, **kwargs: [{
+            "symbol": "BTC/USDT",
             "exchange": "hyperliquid",
             "open_interest_usd": 100.0,
-        },
-    )
-    monkeypatch.setattr(
-        repo,
-        "latest_open_interest",
-        lambda *args, **kwargs: {"open_interest_usd": 199.0},
+            "observed_at": baseline_at,
+            "acquired_at": baseline_at,
+            "derivatives_metadata_json": hyperliquid_metadata(
+                "BTC/USDT", baseline_at, oi=True
+            ),
+        }],
     )
 
     snap = _parse_oi(
         "BTC/USDT",
         {"openInterest": "11", "markPx": "10"},
-        datetime.now(timezone.utc).isoformat(),
+        now.isoformat(),
     )
 
     assert snap is not None
-    assert snap.oi_change_1h_pct == 10.0
+    assert snap.oi_change_1h_pct == pytest.approx(10.0)
 
 
 def test_hyperliquid_oi_delta_over_300_percent_is_unavailable(monkeypatch):
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.hyperliquid.collector import _parse_oi
     from aletheia.storage import repositories as repo
 
     monkeypatch.setattr(
@@ -145,7 +162,7 @@ def test_hyperliquid_oi_delta_over_300_percent_is_unavailable(monkeypatch):
     ],
 )
 def test_hyperliquid_oi_rejects_nonfinite_or_nonpositive_values(ctx):
-    from aletheia.data.collectors.hyperliquid import _parse_oi
+    from extensions.hyperliquid.collector import _parse_oi
 
     assert _parse_oi(
         "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
@@ -161,7 +178,7 @@ def test_hyperliquid_oi_rejects_nonfinite_or_nonpositive_values(ctx):
     ],
 )
 def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
-    from aletheia.data.collectors.hyperliquid import _parse_funding
+    from extensions.hyperliquid.collector import _parse_funding
 
     assert _parse_funding(
         "BTC/USDT", ctx, datetime.now(timezone.utc).isoformat()
@@ -170,7 +187,7 @@ def test_hyperliquid_funding_rejects_nonfinite_or_nonpositive_mark(ctx):
 
 @pytest.mark.asyncio
 async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
-    import aletheia.data.collectors.hyperliquid as mod
+    import extensions.hyperliquid.collector as mod
 
     class Response:
         def raise_for_status(self):
@@ -205,8 +222,74 @@ async def test_hyperliquid_predicted_funding_isolates_invalid_rows(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_coinalyze_without_key_has_no_collection_side_effects(monkeypatch):
+    from extensions.coinalyze import collector as coinalyze
+    from aletheia.data.collector_health import classify_collector_result
+    from aletheia.learning import opportunity_information_policy as policy
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unconfigured collector must not write or request data")
+
+    monkeypatch.setattr(coinalyze, "_load_api_key", lambda: None)
+    monkeypatch.setattr(coinalyze, "httpx_client", forbidden)
+    monkeypatch.setattr(policy, "ensure_opportunity_information_policy_epoch", forbidden)
+    result = await coinalyze.CoinalyzeCollector().collect(["BTC/USDT"])
+    assert result == {"open_interest": [], "liquidations": [], "errors": ["no_key"]}
+    assert classify_collector_result(result) == "not_configured"
+
+
+def test_coinalyze_resolves_only_its_own_credential(monkeypatch):
+    from extensions.coinalyze import collector
+
+    requested = []
+
+    def read_reference(key):
+        requested.append(key)
+        assert key == "coinalyze_api_key"
+        return None
+
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", read_reference)
+    monkeypatch.delenv("COINALYZE_API_KEY", raising=False)
+    assert collector._load_api_key() is None
+    assert not collector.is_configured()
+    assert requested == ["coinalyze_api_key", "coinalyze_api_key"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["exception", "response"])
+async def test_coinalyze_http_failures_do_not_expose_credentials(monkeypatch, caplog, failure):
+    import logging
+    import extensions.coinalyze.collector as mod
+    import aletheia.learning.opportunity_information_policy as policy
+
+    marker = "synthetic-sensitive-query-value"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            if failure == "exception":
+                raise RuntimeError(f"request failed: {url}?api_key={marker}")
+            return type("Response", (), {"status_code": 503, "text": marker})()
+
+    monkeypatch.setattr(mod, "_load_api_key", lambda: marker)
+    monkeypatch.setattr(policy, "ensure_opportunity_information_policy_epoch", lambda: None)
+    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    caplog.set_level(logging.DEBUG, logger=mod.logger.name)
+    result = await mod.CoinalyzeCollector().collect(["BTC/USDT"])
+    assert result["open_interest"] == result["liquidations"] == []
+    assert result["errors"]
+    assert marker not in repr(result)
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.coinalyze.collector as mod
     from aletheia.storage import repositories as repo
 
     class Response:
@@ -251,7 +334,7 @@ async def test_coinalyze_oi_delta_uses_hour_baseline_and_sanity_cap(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_coinalyze_skips_coin_only_and_nonfinite_oi(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.coinalyze.collector as mod
 
     class Response:
         status_code = 200
@@ -288,7 +371,7 @@ async def test_coinalyze_skips_coin_only_and_nonfinite_oi(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.coinalyze.collector as mod
 
     now = datetime.now(timezone.utc)
 
@@ -328,7 +411,7 @@ async def test_coinalyze_liquidations_isolate_invalid_rows(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_coinalyze_open_interest_batches_all_requested_symbols(monkeypatch):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.coinalyze.collector as mod
 
     requested = [f"S{i:02d}/USDT" for i in range(30)]
     calls: list[str] = []
@@ -378,7 +461,7 @@ async def test_coinalyze_open_interest_batches_all_requested_symbols(monkeypatch
 async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred(
     monkeypatch,
 ):
-    import aletheia.data.collectors.coinalyze as mod
+    import extensions.coinalyze.collector as mod
     import aletheia.learning.opportunity_information_policy as policy
     from aletheia.data.collector_health import classify_collector_result
 
@@ -439,30 +522,73 @@ async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred
 # ---------------------------------------------------------------------------
 
 def test_classify_risk_regime_risk_off():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=30.0, cap_change=None) == "risk_off"
     assert _classify_risk_regime(vix=None, cap_change=-5.0) == "risk_off"
 
 
 def test_classify_risk_regime_risk_on():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=12.0, cap_change=1.5) == "risk_on"
 
 
 def test_classify_risk_regime_neutral():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=20.0, cap_change=0.5) == "neutral"
     assert _classify_risk_regime(vix=None, cap_change=None) is None
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["request", "client"])
+async def test_fred_failures_do_not_expose_credentials(monkeypatch, caplog, failure):
+    import logging
+    from types import SimpleNamespace
+    import extensions.macro.collector as mod
+    from extensions.fred import collector as fred
+
+    monkeypatch.setattr(mod, "_fred_macro_fetch", fred.collect_macro)
+    monkeypatch.setattr(mod, "_fred_is_configured", fred.is_configured)
+
+    marker = "synthetic-sensitive-fred-value"
+
+    class Client:
+        async def __aenter__(self):
+            if failure == "client":
+                raise RuntimeError(f"client failed: api_key={marker}")
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def get(self, url, **kwargs):
+            raise RuntimeError(f"request failed: {url}?api_key={marker}")
+
+    monkeypatch.setattr(fred, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _: marker)
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: SimpleNamespace(
+        market_data=SimpleNamespace(enable_fear_greed=False)))
+    monkeypatch.setattr(mod, "_fetch_coingecko", AsyncMock(return_value=(50, 1e12, 1.5)))
+    monkeypatch.setattr(mod, "_fred_research_fetch", AsyncMock(return_value=[]))
+    fallback = MagicMock(return_value=None)
+    monkeypatch.setattr(mod, "_fetch_one_tradfi_ticker", fallback)
+    caplog.set_level(logging.DEBUG, logger=mod.logger.name)
+    result = await mod.MacroCollector().collect([])
+    assert result["snapshot"].btc_dominance == 50
+    assert result["snapshot"].vix_close is None
+    assert fallback.call_count == 4
+    assert any(error.startswith("fred:") for error in result["errors"])
+    assert marker not in repr(result)
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_fetch_fred_parses_response(monkeypatch):
     """FRED fetcher extracts latest non-'.' observation value."""
     import httpx
-    from aletheia.data.collectors.macro import _fetch_fred
+    from extensions.fred.collector import _fetch_fred
 
     # Mock a FRED-like JSON response
     def _mock_response(series_id):
@@ -505,7 +631,7 @@ async def test_fetch_fred_parses_response(monkeypatch):
 async def test_fetch_fred_skips_dots(monkeypatch):
     """All '.' values → returns None for that series."""
     import httpx
-    from aletheia.data.collectors.macro import _fetch_fred
+    from extensions.fred.collector import _fetch_fred
 
     class FakeResponse:
         status_code = 200

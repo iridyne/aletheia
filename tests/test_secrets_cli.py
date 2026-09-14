@@ -1,6 +1,6 @@
 """Tests for the secrets CLI (real implementation, not stubs)."""
 
-from unittest.mock import patch
+import pytest
 from typer.testing import CliRunner
 
 from aletheia.main import app
@@ -28,21 +28,13 @@ def test_secrets_set_stores_value(tmp_path, monkeypatch):
     assert "my_key_value" not in result.output
 
 
-def test_secrets_list_shows_set_and_missing(tmp_path, monkeypatch):
-    _isolate(tmp_path, monkeypatch)
-    from aletheia.config.secrets import set_secret
-    set_secret("bitget.demo.api_key", "abcd1234")
-    result = runner.invoke(app, ["secrets", "list"])
-    assert result.exit_code == 0
-    assert "SET" in result.output
-    assert "bitget.demo.api_key" in result.output
-    assert "MISSING" in result.output  # other keys not set
-    # raw secret never printed
-    assert "abcd1234" not in result.output
+@pytest.mark.parametrize("args", [["list"], ["test", "bitget"], ["test", "binance"]])
+def test_retired_secret_reads_have_no_authority(monkeypatch, args):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("retired command must not read credentials or probe accounts")
 
-
-def test_secrets_test_unknown_service(tmp_path, monkeypatch):
-    _isolate(tmp_path, monkeypatch)
-    result = runner.invoke(app, ["secrets", "test", "binance"])
-    assert result.exit_code == 1
-    assert "Unknown service" in result.output
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.uta.manager.probe_account_reachable", forbidden)
+    result = runner.invoke(app, ["secrets", *args])
+    assert result.exit_code == 2
+    assert "No such command" in result.output

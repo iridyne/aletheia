@@ -38,7 +38,7 @@ class _FakeHTTP:
 
 @pytest.fixture
 def fake_http(monkeypatch):
-    from aletheia.exchanges.bitget import client as bitget
+    from extensions.exchanges.bitget import client as bitget
 
     _FakeHTTP.routes = {}
     monkeypatch.setattr(bitget, "httpx_client", lambda **kwargs: _FakeHTTP())
@@ -135,7 +135,7 @@ def test_protocol_classification_requires_absence_complete_history_and_full_quan
 
 @pytest.mark.anyio
 async def test_bitget_verified_exit_uses_direct_position_and_close_fill(fake_http):
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     fake_http.routes = {
         "/api/v2/mix/position/all-position": {"code": "00000", "data": []},
@@ -169,7 +169,7 @@ async def test_bitget_verified_exit_uses_direct_position_and_close_fill(fake_htt
 
 @pytest.mark.anyio
 async def test_bitget_ignores_only_known_entry_order_fills(fake_http):
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     entry = {
         "tradeId": "bg-entry-fill",
@@ -220,7 +220,7 @@ async def test_bitget_ignores_only_known_entry_order_fills(fake_http):
 
 @pytest.mark.anyio
 async def test_bitget_missing_pagination_cursor_is_inconclusive(fake_http):
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     fill = {
         "tradeId": "same",
@@ -247,7 +247,7 @@ async def test_bitget_missing_pagination_cursor_is_inconclusive(fake_http):
 
 @pytest.mark.anyio
 async def test_bitget_complete_empty_history_confirms_absent_without_fill(fake_http):
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     fake_http.routes = {
         "/api/v2/mix/position/all-position": {"code": "00000", "data": []},
@@ -333,7 +333,7 @@ class _FakeOKXWithKnownEntry(_FakeOKX):
 
 @pytest.mark.anyio
 async def test_okx_verified_exit_normalizes_contract_quantity():
-    from aletheia.exchanges.okx.client import OKXClient
+    from extensions.exchanges.okx.client import OKXClient
 
     client = object.__new__(OKXClient)
     client._mode = "demo"
@@ -349,7 +349,7 @@ async def test_okx_verified_exit_normalizes_contract_quantity():
 
 @pytest.mark.anyio
 async def test_okx_ignores_only_known_entry_order_fills():
-    from aletheia.exchanges.okx.client import OKXClient
+    from extensions.exchanges.okx.client import OKXClient
 
     client = object.__new__(OKXClient)
     client._mode = "demo"
@@ -369,7 +369,7 @@ async def test_okx_ignores_only_known_entry_order_fills():
 
 @pytest.mark.anyio
 async def test_okx_repeated_pagination_cursor_is_inconclusive():
-    from aletheia.exchanges.okx.client import OKXClient
+    from extensions.exchanges.okx.client import OKXClient
 
     client = object.__new__(OKXClient)
     client._mode = "demo"
@@ -444,7 +444,7 @@ class _FakeBinanceWithKnownEntry(_FakeBinance):
 
 @pytest.mark.anyio
 async def test_binance_verified_exit_and_network_error_fail_closed():
-    from aletheia.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.binance.client import BinanceClient
 
     client = object.__new__(BinanceClient)
     client._mode = "testnet"
@@ -465,7 +465,7 @@ async def test_binance_verified_exit_and_network_error_fail_closed():
 
 @pytest.mark.anyio
 async def test_binance_ignores_only_known_entry_order_fills():
-    from aletheia.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.binance.client import BinanceClient
 
     client = object.__new__(BinanceClient)
     client._mode = "testnet"
@@ -484,7 +484,7 @@ async def test_binance_ignores_only_known_entry_order_fills():
 
 @pytest.mark.anyio
 async def test_binance_unpageable_full_response_is_inconclusive():
-    from aletheia.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.binance.client import BinanceClient
 
     client = object.__new__(BinanceClient)
     client._mode = "testnet"
@@ -499,7 +499,7 @@ async def test_binance_unpageable_full_response_is_inconclusive():
 
 @pytest.mark.anyio
 async def test_all_clients_reject_wrong_account_identity_without_querying():
-    from aletheia.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.binance.client import BinanceClient
 
     client = object.__new__(BinanceClient)
     client._mode = "testnet"
@@ -515,7 +515,7 @@ async def test_all_clients_reject_wrong_account_identity_without_querying():
 
 @pytest.mark.anyio
 async def test_expired_private_history_window_is_inconclusive_without_querying():
-    from aletheia.exchanges.binance.client import BinanceClient
+    from extensions.exchanges.binance.client import BinanceClient
 
     client = object.__new__(BinanceClient)
     client._mode = "testnet"
@@ -541,7 +541,7 @@ async def test_live_limited_execution_identity_is_the_scoped_live_account(
     client_kind, execution_mode,
 ):
     if client_kind == "okx":
-        from aletheia.exchanges.okx.client import OKXClient
+        from extensions.exchanges.okx.client import OKXClient
 
         client = object.__new__(OKXClient)
         client._mode = "live"
@@ -551,7 +551,7 @@ async def test_live_limited_execution_identity_is_the_scoped_live_account(
             client, "_contract_size", new=AsyncMock(return_value=0.1)
         )
     else:
-        from aletheia.exchanges.binance.client import BinanceClient
+        from extensions.exchanges.binance.client import BinanceClient
 
         client = object.__new__(BinanceClient)
         client._mode = "live"

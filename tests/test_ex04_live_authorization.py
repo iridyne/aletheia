@@ -74,7 +74,8 @@ def _setup_live_workspace(tmp_path, monkeypatch, *, broker: str = "okx", unlock:
     cfg.exchange.paper_execution_mode = f"{broker}_demo" if broker != "binance" else "binance_testnet"
     cfg.risk.allowed_exchange = broker
     cfg.agent.permission_mode = "Full"
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"test-secret:{ref}"))
     if unlock:
         cfg.live.state = "live_limited"
         cfg.live.unlock_evidence = _fresh_live_evidence(cfg, trust)

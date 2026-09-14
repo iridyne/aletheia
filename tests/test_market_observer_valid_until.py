@@ -143,14 +143,14 @@ async def test_stock_linked_owner_skips_crypto_observer_context(tmp_path, monkey
     _prepare_db(tmp_path, monkeypatch)
     from aletheia.agents import market_observer as observer
     from aletheia.analytics.filter_evidence import record_filter_decision
+    from extensions.market_data import decode_market_background
     from aletheia.data.symbols import (
-        build_instrument_background,
         instrument_analysis_context,
     )
     from aletheia.storage.models import Opportunity
     from aletheia.storage.repositories import get_opportunity
 
-    background = build_instrument_background(
+    background = decode_market_background(
         symbol="SOXL/USDT:USDT",
         venue="binance",
         market_type="perp",

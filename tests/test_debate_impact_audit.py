@@ -83,13 +83,13 @@ def _insert_forward(
 
 
 def test_debate_impact_read_model_has_no_llm_http_exchange_or_ranker_calls():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "debate_impact.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "debate_impact.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {
         "aletheia.agents",
         "aletheia.agent_shell",
-        "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "aletheia.model_provider",
         "openai",
@@ -233,7 +233,7 @@ def test_debate_impact_cli_outputs_human_and_json():
     assert "Debate Impact Audit" in human.output
     assert "debated_skips: 1" in human.output
     assert "Also summarized in the opportunity ledger:" in human.output
-    assert "uv run aletheia flow audit --hours 24" in human.output
+    assert "uv run aletheia opportunity audit --hours 24" in human.output
     assert raw.exit_code == 0
     assert '"debated_skips": 1' in raw.output
     assert "opportunity ledger" not in raw.output

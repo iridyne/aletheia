@@ -425,16 +425,16 @@ def test_learning_builders_fail_closed_without_mode(monkeypatch):
     import aletheia.analytics.execution_mode as em
     monkeypatch.setattr(em, "resolve_selected_execution_mode", lambda: None)
 
-    from aletheia.analytics.confidence_calibration import build_calibration_report
-    from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
+    from extensions.learning.confidence_calibration import build_calibration_report
+    from extensions.learning.reasoning_feedback import build_reasoning_feedback
 
     assert build_calibration_report() is None
     assert build_reasoning_feedback() is None
 
 
 def test_learning_persistence_rate_limits_against_artifact_mode(monkeypatch):
-    from aletheia.analytics import confidence_calibration as calibration
-    from aletheia.analytics import reasoning_feedback as feedback
+    from extensions.learning import confidence_calibration as calibration
+    from extensions.learning import reasoning_feedback as feedback
 
     generated_at = datetime.now(timezone.utc).isoformat()
     calibration_seen: dict = {}

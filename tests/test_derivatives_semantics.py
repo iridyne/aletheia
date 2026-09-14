@@ -1,15 +1,56 @@
+from tests.market_data import parse_funding, parse_oi
+from extensions.market_data import decode_derivatives_metadata as ccxt_metadata
+from extensions.exchanges.ccxt import market_data as wire
 """Current economic consumers must use source-proved units and intervals."""
 from datetime import datetime, timedelta, timezone
 import pytest
-from aletheia.data.collectors import derivatives
+from tests.market_data import primary_provider
 from aletheia.storage import repositories as repo
 
 MARKET=dict(id='BTC-USDT-SWAP',symbol='BTC/USDT:USDT',swap=True,base='BTC',quote='USDT',settle='USDT',linear=True,contractSize=.01)
 
+def test_core_price_snapshot_has_no_wire_or_provider_selection():
+    import ast
+    import inspect
+    from aletheia.data.derivatives_facts import price_snapshot
+
+    assert "raw" not in inspect.signature(price_snapshot).parameters
+    tree = ast.parse(inspect.getsource(price_snapshot))
+    literals = {node.value for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    assert not literals & {"ccxt", "hyperliquid", "markPrice", "indexPrice", "markPx", "oraclePx"}
+
+
+@pytest.mark.parametrize("source_symbol", [None, "BTC/USDT:USDT", "ETH/USDT:USDT"])
+def test_price_adapter_keeps_identity_clock_and_core_snapshot_semantics(source_symbol):
+    from aletheia.data.derivatives_facts import price_snapshot, project_price_snapshot
+
+    acquired = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    raw = {"markPrice": "101", "indexPrice": "100", "symbol": source_symbol,
+           "timestamp": int(acquired.timestamp() * 1000)}
+    row = wire._parse_price("BTC/USDT", "fixture", raw, market=MARKET, acquired_at=acquired)
+    if source_symbol == "ETH/USDT:USDT":
+        assert row is None
+        return
+    instrument = dict(canonical_symbol="BTC/USDT", source_instrument_id=MARKET["id"],
+                      market_type="perp", base_asset="BTC", quote_asset="USDT",
+                      settle_asset="USDT", linear=True, contract_size=.01)
+    expected = price_snapshot(
+        "BTC/USDT", "fixture", instrument=instrument, acquired_at=acquired,
+        provider="ccxt", mark_price=101, reference_price=100,
+        source_observed_at=acquired.isoformat(), source_time_status="provided",
+    )
+    assert row == expected
+    assert project_price_snapshot(row, now=acquired)[2]["value"] == pytest.approx(.01)
+    replay = wire._parse_price("BTC/USDT", "fixture", raw, market=MARKET,
+                               acquired_at=acquired + timedelta(seconds=1))
+    assert replay["id"] == row["id"]
+
+
 @pytest.mark.parametrize('interval,expected',[('1h',8.76),('8h',1.095),(None,None)])
 def test_current_funding_annualization_and_history_read(interval,expected):
     raw={'fundingRate':.001,'interval':interval}
-    snap=derivatives._parse_funding('BTC/USDT','okx',raw,market=MARKET)
+    snap=parse_funding('BTC/USDT','okx',raw,market=MARKET)
     assert snap.funding_rate_annualized==pytest.approx(expected) if expected is not None else snap.funding_rate_annualized is None
     repo.insert_funding_rate_snapshot(snap.model_dump())
     current=repo.latest_funding_rate('BTC/USDT','okx')
@@ -20,6 +61,10 @@ def test_current_funding_annualization_and_history_read(interval,expected):
     ({'openInterestAmount':100},None),
     ({'openInterestValue':123,'info':{'oiUsd':'123'}},123),
     ({'openInterestValue':123},None),
+    ({'openInterestValue':0,'info':{'oiUsd':'0'}},0),
+    ({'openInterestValue':123,'info':{'oiUsd':'123'},'symbol':'ETH/USDT:USDT'},None),
+    ({'openInterestValue':123,'info':{'oiUsd':'123'},'timestamp':None},None),
+    ({'openInterestValue':123,'info':{'oiUsd':'123'},'timestamp':1},None),
 ])
 async def test_universe_live_oi_never_guesses_units(monkeypatch,raw,expected):
     from aletheia.universe.features import _fetch_single_feature
@@ -33,9 +78,9 @@ async def test_universe_live_oi_never_guesses_units(monkeypatch,raw,expected):
         async def fetch_funding_rate(self,*a,**kw):
             return {'fundingRate':.001,'markPrice':60000,'interval':'8h','timestamp':int(now.timestamp()*1000)}
         async def fetch_open_interest(self,*a,**kw):
-            return {**raw,'symbol':'BTC/USDT:USDT','timestamp':int(now.timestamp()*1000)}
-    feature=await _fetch_single_feature(Exchange(),{'id':'btc','symbol':'BTC/USDT','venue':'okx','market_type':'perp'},
-        {'bid':99,'ask':101},now,lambda s:s+':USDT',snapshot_buffer=[])
+            return {'symbol':'BTC/USDT:USDT','timestamp':int(now.timestamp()*1000),**raw}
+    feature=await _fetch_single_feature({'id':'btc','symbol':'BTC/USDT','venue':'okx','market_type':'perp'},
+        {'bid':99,'ask':101},now,snapshot_buffer=[], market_data_provider=primary_provider(Exchange()))
     assert feature['open_interest']==expected
     assert feature['feature_snapshot_id'] != 'old-feature'
 
@@ -51,14 +96,15 @@ def test_unproved_history_remains_readable_without_current_economic_authority():
 
 
 def test_contract_quantity_and_nonfinite_values_use_one_canonical_primitive():
-    from aletheia.data.derivatives_facts import normalize_open_interest, instrument_from_market
+    from aletheia.data.derivatives_facts import normalize_open_interest
+    from extensions.exchanges.ccxt.derivatives_metadata import instrument_from_market
     now=datetime.now(timezone.utc)
     args=dict(instrument=instrument_from_market('BTC/USDT',MARKET),provider='ccxt',venue='okx',acquired_at=now,
         amount_unit='contracts',mark_price=60000)
-    assert normalize_open_interest({'openInterestAmount':100},**args)['value']==60000
-    assert normalize_open_interest({'openInterestAmount':float('nan')},**args)['value'] is None
+    assert normalize_open_interest(amount=100,**args)['value']==60000
+    assert normalize_open_interest(amount=float('nan'),**args)['value'] is None
     args['instrument']={**args['instrument'],'contract_size':None}
-    assert normalize_open_interest({'openInterestAmount':100},**args)['unavailable_reason']=='oi_unit_unproven'
+    assert normalize_open_interest(amount=100,**args)['unavailable_reason']=='oi_unit_unproven'
 
 
 def test_nullable_migration_preserves_historical_values_rowids_and_indexes():
@@ -91,15 +137,17 @@ def test_context_and_microstructure_do_not_display_unproved_annualization():
     assert get_market_microstructure('BTC/USDT',exchange='okx',market_type='perp')['funding_rate_annualized'] is None
 
 
-def test_current_oi_baseline_does_not_promote_comparison_observations():
-    from aletheia.data.derivatives_facts import ccxt_metadata, comparison_row, read_derivatives_facts
+def test_current_oi_baseline_does_not_promote_comparison_observations(monkeypatch):
+    from aletheia.data.derivatives_facts import comparison_row, read_derivatives_facts
     now=datetime.now(timezone.utc)
     old=(now-timedelta(hours=1)).isoformat()
     raw={'openInterestValue':100,'info':{'oiUsd':100}}
     metadata=ccxt_metadata('BTC/USDT','okx',MARKET,raw,family='open_interest')
     repo.insert_open_interest_snapshot(comparison_row(dict(symbol='BTC/USDT',exchange='okx',open_interest_usd=100,
         observed_at=old,acquired_at=old,source_time_status='missing',derivatives_metadata_json=metadata)))
-    current=derivatives._parse_oi('BTC/USDT','okx',{'openInterestValue':200,'info':{'oiUsd':200}},market=MARKET)
+    current=parse_oi('BTC/USDT','okx',{'openInterestValue':200,'info':{'oiUsd':200}},market=MARKET)
+    from tests.market_data import collect_live_oi
+    current = collect_live_oi(monkeypatch, current)
     assert current.oi_change_1h_pct is None
     repo.insert_open_interest_snapshot(current.model_dump())
     assert repo.latest_open_interest('BTC/USDT','okx')['oi_change_1h_pct'] is None

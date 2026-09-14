@@ -10,7 +10,7 @@ outcome via a mocked HTTP transport (no network, no real order).
 import httpx
 import pytest
 
-from aletheia.exchanges.bitget.client import BitgetClient
+from extensions.exchanges.bitget.client import BitgetClient
 
 
 class _Resp:

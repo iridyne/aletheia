@@ -40,7 +40,7 @@ def approvable_risk_trade(
     )
     repo.insert_opportunity(opportunity)
     repo.insert_market_snapshot(
-        MarketSnapshot(symbol=symbol, market_type=market_type, price=price)
+        MarketSnapshot(symbol=symbol, market_type=market_type, price=price, exchange="bitget")
     )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",

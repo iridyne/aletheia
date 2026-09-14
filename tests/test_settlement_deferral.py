@@ -651,7 +651,7 @@ def test_requeue_restores_only_the_rows_that_were_never_observed():
     write-off before any price arrived. A row that failed WITH an observation
     behind it (the 10x contamination guard) was a real verdict and must stay.
     """
-    from aletheia.maintenance.settlement_requeue import (
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage.sqlite import get_db
@@ -740,7 +740,9 @@ def test_doctor_reports_destroyed_evidence_and_how_to_reclaim_it():
 
 
 def test_requeue_dry_run_reports_without_writing():
-    from aletheia.maintenance.settlement_requeue import (
+    from aletheia.maintenance import settlement_requeue as diagnostics
+    assert not hasattr(diagnostics, "requeue_unobserved_failed_outcomes")
+    from ops.maintenance.settlement_requeue import (
         requeue_unobserved_failed_outcomes,
     )
     from aletheia.storage.sqlite import get_db
@@ -751,7 +753,23 @@ def test_requeue_dry_run_reports_without_writing():
 
     assert result["dry_run"] is True
     assert result["filter_candidate_outcomes"] == 1
+    assert diagnostics.count_unobserved_failed_outcomes()["filter_candidate_outcomes"] == 1
     row = get_db().execute(
         "SELECT status FROM filter_candidate_outcomes WHERE id=?", ("fco-dry",)
     ).fetchone()
     assert row["status"] == "failed", "dry run must not change terminal state"
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_requeue_cli_composition_preserves_explicit_apply(apply):
+    import json
+    from typer.testing import CliRunner
+    from aletheia.main import app
+    from aletheia.storage.sqlite import get_db
+
+    _insert_failed("filter_candidate_outcomes", "ops-cli", observed=False)
+    result = CliRunner().invoke(app, ["data", "requeue-unobserved-settlements", *(["--apply"] if apply else [])])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["dry_run"] is (not apply)
+    row = get_db().execute("SELECT status FROM filter_candidate_outcomes WHERE id=?", ("ops-cli",)).fetchone()
+    assert row["status"] == ("pending" if apply else "failed")

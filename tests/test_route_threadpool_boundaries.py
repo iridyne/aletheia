@@ -42,7 +42,7 @@ def test_risk_route_handlers_are_sync():
 
 
 def test_prediction_route_handlers_are_sync():
-    from aletheia.server.routes import prediction
+    from extensions.prediction import api as prediction
 
     handlers = [
         prediction.get_prediction_opportunities,

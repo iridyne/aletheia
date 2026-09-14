@@ -162,6 +162,10 @@ def test_sizing_trace_missing_fills_table_still_uses_positions(monkeypatch):
 
     assert report["summary"]["sample_size"] == 1
     assert report["traces"][0]["executed_notional_usdt"] == 25.0
+    assert report["traces"][0]["paper_trade_count"] is None
+    assert report["traces"][0]["effective_kelly"] is None
+    assert report["traces"][0]["current_policy_projection_usdt"] is None
+    assert report["traces"][0]["main_reason"] != "sample_aware_scaling"
     assert report["schema_errors"]
 
 
@@ -362,12 +366,12 @@ def test_sizing_trace_cli_outputs_human_and_json_reports(monkeypatch):
     _patch_cfg(monkeypatch, _cfg(vol_enabled=False))
 
     runner = CliRunner()
-    human = runner.invoke(app, ["sizing", "trace", "--hours", "24"])
-    machine = runner.invoke(app, ["sizing", "trace", "--days", "7", "--json"])
+    human = runner.invoke(app, ["opportunity", "audit", "--view", "sizing", "--hours", "24"])
+    machine = runner.invoke(app, ["opportunity", "audit", "--view", "sizing", "--hours", "168", "--json"])
 
     assert human.exit_code == 0
     assert "Sizing Trace Audit" in human.output
     assert machine.exit_code == 0
     payload = json.loads(machine.output)
-    assert payload["window"]["days"] == 7
+    assert payload["window"]["hours"] == 168
     assert "main_sizing_bottleneck" in payload

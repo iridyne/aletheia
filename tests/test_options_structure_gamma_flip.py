@@ -2,11 +2,10 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-import math
 
 import pytest
 
-from aletheia.data.collectors.options_structure import _bsm_gamma, _gamma_flip_spot_sweep
+from extensions.deribit.options_structure import _bsm_gamma, _gamma_flip_spot_sweep
 
 
 def _make_entry(strike: float, option_type: str, oi: float, spot: float, T: float, sigma: float) -> dict:
@@ -84,7 +83,7 @@ def test_options_snapshot_rejects_non_finite_values():
 
 
 def test_options_collector_rejects_non_finite_source_values(monkeypatch):
-    import aletheia.data.collectors.options_structure as mod
+    import extensions.deribit.options_structure as mod
 
     payload = {
         "result": [

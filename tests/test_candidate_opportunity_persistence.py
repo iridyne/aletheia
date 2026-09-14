@@ -193,7 +193,7 @@ def _serenity_publication_source():
     return theme, opportunity
 
 
-def test_serenity_publication_is_idempotent_scoped_and_never_writes_pi_decisions():
+def test_serenity_publication_is_idempotent_scoped_and_never_writes_pi_decisions(bitget_fast_stream):
     import json
     from datetime import timezone
     theme, opportunity = _serenity_publication_source()
@@ -214,7 +214,19 @@ def test_serenity_publication_is_idempotent_scoped_and_never_writes_pi_decisions
     assert repo.get_serenity_theme(theme.id)["status"] == "promoted"
 
 
-def test_serenity_publication_rolls_back_all_rows_on_failure():
+def test_serenity_missing_stream_never_publishes_candidate_or_generation(monkeypatch, bitget_fast_stream):
+    theme, opportunity = _serenity_publication_source()
+    monkeypatch.setattr("aletheia.universe.fast_stream._FAST_STREAM_ADAPTERS", {})
+    db = repo.get_db()
+    for _ in range(2):
+        with pytest.raises(ValueError, match="serenity_instrument_ineligible"):
+            publish_serenity_candidates(theme.id, [opportunity.id])
+        for table in ("universe_snapshots", "universe_members", "candidate_planning_generations", "pi_decisions"):
+            assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+        assert repo.get_serenity_theme(theme.id)["status"] == "active"
+
+
+def test_serenity_publication_rolls_back_all_rows_on_failure(bitget_fast_stream):
     theme, opportunity = _serenity_publication_source()
     db = repo.get_db()
     db.execute("CREATE TEMP TRIGGER reject_research_generation BEFORE INSERT ON candidate_planning_generations BEGIN SELECT RAISE(ABORT, 'publication failure'); END")
@@ -226,7 +238,7 @@ def test_serenity_publication_rolls_back_all_rows_on_failure():
     assert repo.get_serenity_theme(theme.id)["status"] == "active"
 
 
-def test_serenity_publication_rechecks_source_after_pa_preparation(monkeypatch):
+def test_serenity_publication_rechecks_source_after_pa_preparation(monkeypatch, bitget_fast_stream):
     theme, opportunity = _serenity_publication_source()
     prepare = repo.prepare_candidate_requalification
     def change_source(candidate):
@@ -240,7 +252,7 @@ def test_serenity_publication_rechecks_source_after_pa_preparation(monkeypatch):
     assert repo.get_serenity_theme(theme.id)["status"] == "active"
 
 
-def test_cross_source_cannot_replace_active_instrument_owner():
+def test_cross_source_cannot_replace_active_instrument_owner(bitget_fast_stream):
     from datetime import timezone
     theme, opportunity = _serenity_publication_source()
     ids = publish_serenity_candidates(theme.id, [opportunity.id])
@@ -264,7 +276,7 @@ def test_cross_source_cannot_replace_active_instrument_owner():
     assert repo.get_db().execute("SELECT COUNT(*) FROM candidate_planning_generations WHERE is_current=1").fetchone()[0] == 1
 
 
-def test_serenity_pa_absent_or_opposed_does_not_create_entry_authority():
+def test_serenity_pa_absent_or_opposed_does_not_create_entry_authority(bitget_fast_stream):
     theme, opportunity = _serenity_publication_source()
     repo.update_serenity_opportunity(opportunity.id, direction="short")
     with pytest.raises(ValueError, match="serenity_pa_direction_conflict"):
@@ -278,7 +290,7 @@ def test_serenity_pa_absent_or_opposed_does_not_create_entry_authority():
     assert repo.get_serenity_theme(theme.id)["status"] == "active"
 
 
-def test_research_batch_collision_rolls_back_and_released_owner_can_cut_over():
+def test_research_batch_collision_rolls_back_and_released_owner_can_cut_over(bitget_fast_stream):
     import json
     from datetime import timezone
     from aletheia.storage.models import SerenityOpportunity
@@ -301,7 +313,7 @@ def test_research_batch_collision_rolls_back_and_released_owner_can_cut_over():
     assert json.loads(successor["requalification_source_json"])["candidate_opportunity_context"]["source"]["id"] == second.id
 
 
-def test_generation_source_is_frozen_and_refresh_assets_allow_all_venues():
+def test_generation_source_is_frozen_and_refresh_assets_allow_all_venues(bitget_fast_stream):
     import json
     from datetime import timezone
     theme, opportunity = _serenity_publication_source()

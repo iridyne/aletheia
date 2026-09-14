@@ -15,8 +15,32 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
-import aletheia.data.collectors.macro as macro_mod
-from aletheia.data.collectors.macro import MacroCollector, _fetch_fng
+import extensions.macro.collector as macro_mod
+from extensions.macro.collector import MacroCollector, _fetch_fng
+
+
+def test_missing_fred_adapter_preserves_other_macro_facts_without_raw_key_access(monkeypatch):
+    from types import SimpleNamespace
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Core must not read a raw FRED credential")
+
+    async def coingecko():
+        return 50.0, 1e12, 1.5
+
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: SimpleNamespace(
+        market_data=SimpleNamespace(enable_fear_greed=False)))
+    monkeypatch.setattr(macro_mod, "_fred_macro_fetch", None)
+    monkeypatch.setattr(macro_mod, "_fred_research_fetch", None)
+    monkeypatch.setattr(macro_mod, "_fred_is_configured", None)
+    monkeypatch.setattr(macro_mod, "_fetch_coingecko", coingecko)
+    monkeypatch.setattr(macro_mod, "_fetch_one_tradfi_ticker", lambda _: None)
+    result = asyncio.run(MacroCollector().collect([]))
+    assert result["snapshot"].btc_dominance == 50.0
+    assert result["snapshot"].vix_close is None
+    assert result["fred_source_batches"] == []
+    assert "fred_research:failed" in result["errors"]
 
 
 # ---------------------------------------------------------------------------

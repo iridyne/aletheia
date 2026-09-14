@@ -4,8 +4,10 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.market_data import primary_provider
 
-from aletheia.data.derivatives_facts import instrument_from_market, normalize_funding
+from aletheia.data.derivatives_facts import normalize_funding
+from extensions.exchanges.ccxt.derivatives_metadata import instrument_from_market
 from aletheia.universe.candidate_funding import PERP_FUNDING_EVIDENCE_VERSION, proved_funding_interval
 from aletheia.universe.outcome_economics import estimate_outcome_economics
 
@@ -25,7 +27,7 @@ MARKET = dict(
 def proof(symbol="BTC/USDT", interval=3600):
     market = dict(MARKET, base=symbol.split("/")[0], id=symbol.replace("/", ""))
     f = normalize_funding(
-        {"fundingRate": 0.001, "timestamp": int(T0.timestamp() * 1000)},
+        0.001, source_observed_at=T0.isoformat(), source_time_status="provided",
         instrument=instrument_from_market(symbol, market),
         provider="ccxt",
         venue="bitget",
@@ -96,7 +98,8 @@ def test_unusable_or_wrong_instrument_proof_is_not_funding(change):
 
 
 @pytest.mark.asyncio
-async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval(monkeypatch):
+@pytest.mark.parametrize("hours,has_interval_time,expected", [(1, True, 3600), (None, True, None), (1, False, None)])
+async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval(monkeypatch, hours, has_interval_time, expected):
     from aletheia.universe.features import _fetch_single_feature
     from aletheia.storage import repositories as repo
 
@@ -105,8 +108,8 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
 
     class Exchange:
         id = "bitget"
-        markets = {"BTC/USDT:USDT": MARKET}
-        _candidate_markets_acquired_at = now.isoformat()
+        markets = {"BTC/USDT:USDT": {**MARKET, "info": {"fundInterval": hours}}}
+        _candidate_markets_acquired_at = now.isoformat() if has_interval_time else None
 
         async def fetch_ohlcv(self, *a, **kw):
             return [[int((now - timedelta(days=1)).timestamp() * 1000), 100, 101, 99, 100, 1000]]
@@ -118,12 +121,10 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
             return {}
 
     feature = await _fetch_single_feature(
-        Exchange(),
         dict(id="btc", symbol="BTC/USDT", venue="bitget", market_type="perp"),
-        dict(bid=99, ask=101, timestamp=int(now.timestamp() * 1000), info={"fundingRate": ".001"}),
+        dict(bid_price=99, ask_price=101, source_timestamp_ms=int(now.timestamp() * 1000), funding_rate=.001),
         now,
-        lambda s: s + ":USDT",
-        snapshot_buffer=[],
+        snapshot_buffer=[], market_data_provider=primary_provider(Exchange())
     )
     assert feature["funding_rate"] == 0.001
     row = {
@@ -131,7 +132,7 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
         "entry_ts": datetime.now(timezone.utc).isoformat(),
         "funding_rate_at_entry": feature["funding_rate"],
     }
-    assert proved_funding_interval(row) == 3600
+    assert proved_funding_interval(row) == expected
     assert json.loads(row["funding_evidence_json"])["interval_source"] == "bitget.contracts.fundInterval"
 
 

@@ -8,6 +8,37 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.mark.parametrize("candidate_present", [True, False])
+def test_target_fresh_process_imports_candidate_core_before_old_checkout(tmp_path, candidate_present):
+    import os
+    import sys
+    from aletheia.update import target_fresh
+
+    candidate = tmp_path / "candidate"
+    old = tmp_path / "old"
+    for root, identity in ((candidate / "core", "candidate"), (old, "old")):
+        package = root / "aletheia"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(f"IDENTITY = {identity!r}\n")
+    if not candidate_present:
+        (candidate / "core" / "aletheia" / "__init__.py").unlink()
+    env = {"PYTHONPATH": str(old), "PATH": os.defpath}
+    result = target_fresh._run_json_script(
+        "import json, aletheia\n"
+        f"print({target_fresh._RESULT_PREFIX!r} + json.dumps({{'identity': aletheia.IDENTITY}}))\n",
+        project_root=candidate,
+        env=env,
+        python_executable=sys.executable,
+        timeout=10,
+    )
+    if candidate_present:
+        assert result == {"identity": "candidate"}
+    else:
+        assert result["ok"] is False
+        assert "candidate_source_missing" in result["detail"]
+    assert env["PYTHONPATH"] == str(old)
+
+
 @pytest.fixture(autouse=True)
 def _settled_update_boundary(monkeypatch):
     from aletheia.observation_lab import runner
@@ -225,7 +256,7 @@ def test_apply_update_persists_target_commit_without_saving_prepull_config(monke
         "pull",
         lambda branch: {"ok": True, "remote_commit": "target-sha"},
     )
-    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/x.py"])
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["core/aletheia/x.py"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     monkeypatch.setattr(applier, "write_audit", lambda *args, **kwargs: None)
     persisted = []
@@ -337,7 +368,7 @@ def test_metadata_failure_does_not_turn_applied_update_into_false_rollback(monke
     monkeypatch.setattr(git_ops, "current_branch", lambda: "master")
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old-sha")
     monkeypatch.setattr(git_ops, "pull", lambda branch: {"ok": True, "remote_commit": "target-sha"})
-    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/x.py"])
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["core/aletheia/x.py"])
     monkeypatch.setattr(applier, "run_smoke_check", lambda: {"ok": True, "stage": "done", "detail": ""})
     monkeypatch.setattr(applier, "write_audit", lambda *args, **kwargs: None)
     monkeypatch.setattr(

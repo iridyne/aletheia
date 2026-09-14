@@ -12,6 +12,14 @@ from aletheia.agent_runtime.tool_registry import init_tool_registry
 from aletheia.agent_runtime.orchestrator import run_agent
 
 
+@pytest.fixture(autouse=True)
+def research_extension(monkeypatch):
+    from aletheia.agents import _AGENTS
+    from extensions.research.research_agent import run_research_agent
+
+    monkeypatch.setitem(_AGENTS, "research_agent", run_research_agent)
+
+
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -77,7 +85,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # historical_data.nightly_backfill_enabled — excluded from the required set.)
     job_ids = {j.id for j in s.get_jobs()}
     required = {
-        "market_data", "market_observer", "paper_trader", "pi_trading_decision",
+        "market_data", "market_observer", "pi_trading_decision",
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
@@ -86,6 +94,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     }
     missing = required - job_ids
     assert not missing, f"critical scheduler jobs missing: {missing}"
+    # Entry Plan contract retires PaperTrader; it must not regain a lifecycle.
+    assert "paper_trader" not in job_ids
     # Floor guards against wholesale registration failure without pinning an exact N.
     assert len(job_ids) >= len(required)
     market_observer_job = s.get_job("market_observer")
@@ -244,7 +254,7 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", lambda **kw: _FakeCCXT())
 
     # Disable xStocks so this test covers only the 3 crypto symbols (spot-only
     # collection path).  Must clear both the new stock-token field and the
@@ -252,7 +262,6 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     # r-series instruments to the collect run.
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -300,7 +309,6 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
     from aletheia.config.loader import load_config, save_config
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "binance"
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -330,7 +338,6 @@ async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, m
     from aletheia.data.providers import Ticker
 
     cfg = load_config()
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.observed_stock_tokens = []
     save_config(cfg)
 
@@ -387,7 +394,7 @@ async def test_agent_calls_llm_when_available(tmp_path, monkeypatch):
         return ("LLM-generated research content: BTC consolidating near 200MA with declining volume; "
                 "ETH funding rate turning negative signals positioning squeeze. Medium-confidence.", None)
 
-    monkeypatch.setattr("aletheia.agents.research_agent.llm_complete", fake_complete)
+    monkeypatch.setattr("extensions.research.research_agent.llm_complete", fake_complete)
     result = await run_agent("research_agent", trigger_type="manual")
     assert result["status"] == "completed"
     notes = repo.list_knowledge_items(item_type="research_note")

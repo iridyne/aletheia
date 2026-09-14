@@ -84,7 +84,10 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
             self.markets = markets
 
     class FakeProvider:
-        def __init__(self, **_kwargs):
+        def __init__(self, **kwargs):
+            assert kwargs == dict(
+                exchange="binance", native_ccxt=True, fallback_exchange="binance",
+            )
             self.exchange = FakeExchange()
 
         def _ensure_primary(self):
@@ -106,7 +109,13 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     cfg.exchange.enabled_markets = {"usdt_futures": True}
     cfg.universe.blacklist = []
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.CCXTProvider", FakeProvider)
+    from extensions.exchanges.composition import fetch_market_restrictions
+    monkeypatch.setattr(
+        "aletheia.execution.venue_capabilities._market_capability_reader",
+        fetch_market_restrictions,
+    )
+
+    monkeypatch.setattr("aletheia.data.ccxt_provider.get_market_data_provider", FakeProvider)
     monkeypatch.setattr(
         "aletheia.universe.registry.repo.sync_universe_assets", fake_sync
     )
@@ -154,9 +163,9 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
 
 
 def test_background_preserves_bitget_stock_token_boundary():
-    from aletheia.data.symbols import build_instrument_background
+    from extensions.market_data import decode_market_background
 
-    background = build_instrument_background(
+    background = decode_market_background(
         symbol="RNVDA/USDT",
         venue="bitget",
         market_type="spot",

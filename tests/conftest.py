@@ -17,6 +17,15 @@ from pathlib import Path
 
 import pytest
 
+@pytest.fixture
+def bitget_fast_stream(monkeypatch):
+    """Explicit public-stream composition for Core admission tests; no connection."""
+    from aletheia.universe import fast_stream
+    from extensions.exchanges.bitget.fast_stream import register_fast_market_stream
+
+    monkeypatch.setattr(fast_stream, "_FAST_STREAM_ADAPTERS", {})
+    register_fast_market_stream()
+
 # ---------------------------------------------------------------------------
 # Windows event-loop policy (D17-1)
 # ---------------------------------------------------------------------------
@@ -303,7 +312,7 @@ def _block_real_exchange_orders(request, monkeypatch):
     # opt out of this guard via @pytest.mark.real_place_order.
     if request.node.get_closest_marker("real_place_order"):
         return
-    from aletheia.exchanges.bitget import client as bg
+    from extensions.exchanges.bitget import client as bg
 
     async def _blocked(self, order):  # noqa: ARG001
         raise RuntimeError(
@@ -483,7 +492,18 @@ def _no_network_market_data(request, monkeypatch):
     """
     if request.node.get_closest_marker("real_network"):
         return
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.exchanges.ccxt.market_data import CCXTProvider
+    from extensions.market_data import build_native_provider
+    from extensions.exchanges.binance.positioning import fetch_positioning
+    monkeypatch.setattr("aletheia.data.collectors.derivatives._positioning_reader", fetch_positioning)
+    monkeypatch.setattr("aletheia.data.ccxt_provider._native_provider_factory", build_native_provider)
+    from extensions.market_data import fetch_registry_catalog
+    monkeypatch.setattr("aletheia.data.market_catalog._catalog_fetch", fetch_registry_catalog)
+    from extensions.exchanges.ccxt.orderbook import MicrostructureCollector
+    monkeypatch.setattr(
+        "aletheia.data.collectors.microstructure._orderbook_collect",
+        lambda symbols, **kwargs: MicrostructureCollector().collect(symbols, **kwargs),
+    )
 
     async def _empty_ohlcv(self, symbol, *, timeframe="1h", limit=100):
         return []

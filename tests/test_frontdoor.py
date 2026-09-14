@@ -33,6 +33,36 @@ def _compressed_static_fixture(tmp_path: Path) -> Path:
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("path", ["/_infra/status", "/_infra/doctor"])
+async def test_private_diagnostics_deny_when_auth_config_is_unavailable(tmp_path, monkeypatch, path):
+    from aletheia.config import loader
+    from aletheia.gateway import frontdoor
+
+    def unavailable(**kwargs):
+        raise ValueError("synthetic-sensitive-config-detail")
+    async def forbidden(*args, **kwargs):
+        pytest.fail("private diagnostics must stop before probing or proxying")
+    async def healthy_backend(_url):
+        return {"ready": True}
+    app = frontdoor.create_app(static_dir=_static_fixture(tmp_path), backend_url="http://127.0.0.1:9")
+    monkeypatch.setattr(loader, "load_config", unavailable)
+    monkeypatch.setattr(frontdoor, "_probe_backend", forbidden)
+    monkeypatch.setattr(frontdoor, "_get_proxy_client", lambda: pytest.fail("private proxy must not start"))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
+        response = await client.get(path)
+        liveness = await client.get("/_infra/livez")
+        shell = await client.get("/")
+        monkeypatch.setattr(frontdoor, "_probe_backend", healthy_backend)
+        readiness = await client.get("/_infra/readyz")
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Remote Control authentication configuration unavailable."}
+    assert "synthetic-sensitive" not in response.text
+    assert liveness.status_code == 200
+    assert shell.status_code == 200
+    assert readiness.status_code == 200
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("path", ["/api/status", "/_infra/doctor"])
 @pytest.mark.parametrize("failure,reason", [("PoolTimeout", "frontdoor_pool_exhausted"), ("ConnectError", "backend_unavailable")])
 async def test_proxy_capacity_failure_is_not_backend_outage(tmp_path, monkeypatch, path, failure, reason):
@@ -592,6 +622,7 @@ async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monke
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://frontdoor") as client:
         anon = await client.get("/_infra/status")
         wrong_token = await client.get("/_infra/status", headers={"X-Aletheia-Token": "wrong"})
+        non_ascii = await client.get("/_infra/status", headers=[(b"X-Aletheia-Token", b"\xe9")])
         authed = await client.get("/_infra/status", headers={"X-Aletheia-Token": TOKEN})
         # Public liveness must remain accessible with no auth.
         livez = await client.get("/_infra/livez")
@@ -599,6 +630,7 @@ async def test_frontdoor_status_requires_auth_when_remote_active(tmp_path, monke
 
     assert anon.status_code == 401
     assert wrong_token.status_code == 401
+    assert non_ascii.status_code == 401
     assert authed.status_code == 200
     assert authed.json()["role"] == "frontdoor"
     assert livez.status_code == 200

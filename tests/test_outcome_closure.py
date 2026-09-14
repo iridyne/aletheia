@@ -696,15 +696,14 @@ def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monke
 @pytest.mark.parametrize("field", ("fill_price", "fill_quantity", "fee"))
 def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
     from aletheia.execution.exchange_materialization import MaterializationIntegrityError
-    from aletheia.portfolio.outcome_closure import (
-        _materialize_observed_close_chain, close_position_from_verified_exit,
-    )
+    from aletheia.execution.exchange_materialization import materialize_observed_close_chain
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     evidence = _verified_result(position)
     with repo.transaction(immediate=True):
-        order_ids = _materialize_observed_close_chain(
+        order_ids = materialize_observed_close_chain(
             repo.get_position(position.id), evidence, reason="verified_exit",
         )
         # SQLite can retain nonnumeric text in these historical REAL columns.
@@ -719,6 +718,35 @@ def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
         "SELECT COUNT(*) FROM position_close_events WHERE position_id=?", (position.id,),
     ).fetchone()[0] == 0
     assert repo.list_outcome_hook_jobs(position_id=position.id) == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("fill_price", 999.0), ("fill_quantity", 99.0), ("fee", 99.0),
+    ("fee_currency", "BNB"), ("filled_at", "2000-01-01T00:00:00+00:00"),
+])
+def test_observed_close_rejects_changed_durable_fill_without_mutation(field, value):
+    from aletheia.execution.exchange_materialization import materialize_observed_close_chain
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
+
+    position = _position()
+    repo.insert_position(position)
+    evidence = _verified_result(position)
+    db = repo.get_db()
+    with repo.transaction(immediate=True):
+        order_ids = materialize_observed_close_chain(
+            repo.get_position(position.id), evidence, reason="verified_exit",
+        )
+        db.execute(f"UPDATE fills SET {field}=? WHERE order_id=?", (value, order_ids[0]))
+    before = {
+        table: [dict(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")]
+        for table in ("orders", "fills", "positions", "position_close_events")
+    }
+    for _ in range(2):
+        with pytest.raises(ValueError, match="remote close Fill conflicts"):
+            close_position_from_verified_exit(position.id, evidence)
+        for table, rows in before.items():
+            assert [dict(row) for row in db.execute(f"SELECT * FROM {table} ORDER BY rowid")] == rows
+        assert repo.list_outcome_hook_jobs(position_id=position.id) == []
 
 
 def _seed_late_exit_fee(*, funding_complete=True, strategy_close=True, missing_component="amount"):
@@ -747,10 +775,10 @@ def _seed_late_exit_fee(*, funding_complete=True, strategy_close=True, missing_c
         ),
     )
     if strategy_close:
-        from aletheia.portfolio.outcome_closure import _materialize_observed_close_chain
+        from aletheia.execution.exchange_materialization import materialize_observed_close_chain
 
         with repo.transaction(immediate=True):
-            _materialize_observed_close_chain(repo.get_position(position.id), incomplete_evidence, reason="take_profit")
+            materialize_observed_close_chain(repo.get_position(position.id), incomplete_evidence, reason="take_profit")
     close_position_from_verified_exit(position.id, incomplete_evidence,
         verified_strategy_reason="take_profit" if strategy_close else None)
     times = [datetime.fromtimestamp(fill.filled_at_ms / 1000, tz=timezone.utc) for fill in evidence.fills]
@@ -815,6 +843,10 @@ def test_late_fee_then_funding_progress_with_one_query_budget(monkeypatch, strat
     import asyncio
     from aletheia.execution.broker_funding import make_complete_ledger
     from aletheia.portfolio import broker_funding_settlement as settlement
+    from aletheia.uta import manager
+    from extensions.exchanges.composition import funding_history_retention_contract
+
+    monkeypatch.setattr(manager, "_retention_contract", funding_history_retention_contract)
 
     position, report = _seed_late_exit_fee(funding_complete=False, strategy_close=strategy_close)
     calls = []
@@ -951,7 +983,12 @@ def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
         funding_evidence=funding.evidence, funding_ledger=ledger)
     assert result["status"] == "settled" and result["realized_pnl"] == pytest.approx(9.74)
     assert repo.list_fills(order_id=close.id) == original
-    assert materialize_bitget_close(close.id, [{**raw, "fee": "0.2"}]).state == "filled"
+    assert materialize_bitget_close(
+        close.id,
+        [_private_fill(close.exchange_order_id, "native-fee-fill", price=110.0,
+                       quantity=1.0, fee=0.2, filled_at_ms=at_ms,
+                       market_type="usdt_futures")],
+    ).state == "filled"
     assert repo.list_fills(order_id=close.id) == original
 
 
@@ -1009,14 +1046,14 @@ def test_late_fee_preserves_account_scope_and_original_known_cost(fault):
 def test_verified_exit_normalization_has_no_second_close_writer():
     import ast
     import inspect
-    from aletheia.portfolio import outcome_closure, pnl, broker_funding_settlement
+    from aletheia.portfolio import outcome_closure, outcome_hooks, pnl, broker_funding_settlement
 
     owners = set()
     settlement_owners = set()
-    for module in (outcome_closure, pnl, broker_funding_settlement):
+    for module in (outcome_closure, outcome_hooks, pnl, broker_funding_settlement):
         tree = ast.parse(inspect.getsource(module))
         for function in tree.body:
-            if not isinstance(function, ast.FunctionDef):
+            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if any(
                 isinstance(node, ast.Call)
@@ -1037,6 +1074,7 @@ def test_verified_exit_normalization_has_no_second_close_writer():
     }
     assert settlement_owners == {
         (pnl.__name__, "_commit_close_economics"),
+        (pnl.__name__, "load_eligible_position_for_delivery"),
         (broker_funding_settlement.__name__, "_terminalize_funding_history_expired"),
     }
 

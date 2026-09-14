@@ -44,7 +44,7 @@ def _fake_payload(root: Path) -> Path:
     executable.write_bytes(b"#!/bin/sh\nexit 0\n")
     if os.name != "nt":
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
-    static = payload / "aletheia" / "dashboard_static"
+    static = payload / "core" / "aletheia" / "dashboard_static"
     static.mkdir(parents=True)
     (static / "index.html").write_text("<html>Aletheia</html>", encoding="utf-8")
     (payload / "_internal").mkdir()
@@ -78,7 +78,7 @@ def test_packaged_runtime_manifest_and_archive_are_deterministic(tmp_path):
     assert first_manifest["runtime_entrypoint"].startswith("aletheia-core")
     assert first_manifest["runtime_data_contract"] == "per-user-dot-aletheia"
     assert {entry["path"] for entry in first_manifest["files"]} >= {
-        "aletheia/dashboard_static/index.html",
+        "core/aletheia/dashboard_static/index.html",
         "_internal/runtime.dat",
     }
 
@@ -215,7 +215,7 @@ def test_pyinstaller_contract_is_one_folder_and_includes_dashboard():
 def test_frozen_child_commands_reenter_the_payload_instead_of_treating_it_as_python(tmp_path):
     executable = tmp_path / "aletheia-core"
     executable.write_text("payload", encoding="utf-8")
-    runner = tmp_path / "aletheia" / "_gateway_runner.py"
+    runner = tmp_path / "core" / "aletheia" / "_gateway_runner.py"
 
     assert translate_frozen_command(
         [str(executable), str(runner), "--no-browser"], executable=str(executable)
@@ -255,7 +255,7 @@ def test_gateway_runner_import_survives_frozen_popen_adapter(monkeypatch):
 
 
 def test_candidate_preflight_is_distinct_from_real_data_activation():
-    staging = (ROOT / "aletheia" / "update" / "packaged.py").read_text(encoding="utf-8")
+    staging = (ROOT / "core" / "aletheia" / "update" / "packaged.py").read_text(encoding="utf-8")
     entrypoint = (ROOT / "scripts" / "release" / "pyinstaller_entry.py").read_text(
         encoding="utf-8"
     )

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from tests.market_data import primary_provider
 
 
 def test_funding_crowding_threshold_uses_raw_fraction_units():
@@ -162,11 +163,9 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
     )
     db.commit()
     feat = await _fetch_single_feature(
-        FakeExchange(),
         {"id": "asset-btc", "venue": "okx", "market_type": "spot", "symbol": "BTC/USDT"},
-        {"quoteVolume": 1_000_000.0, "bid": 109.8, "ask": 110.0},
-        now,
-        lambda symbol: symbol,
+        {"quote_volume_24h": 1_000_000.0, "bid_price": 109.8, "ask_price": 110.0},
+        now, market_data_provider=primary_provider(FakeExchange())
     )
 
     assert feat is not None
@@ -193,15 +192,15 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
     from tests.test_entry_logic import setup_env
 
     setup_env(tmp_path, monkeypatch)
+    from extensions.market_data import decode_market_background
     from aletheia.data.symbols import (
-        build_instrument_background,
         instrument_analysis_context,
     )
     from aletheia.storage.sqlite import get_db
     from aletheia.universe.features import _fetch_single_feature
 
     now = datetime.now(timezone.utc)
-    background = build_instrument_background(
+    background = decode_market_background(
         symbol="SOXL/USDT:USDT",
         venue="binance",
         market_type="perp",
@@ -213,6 +212,11 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
 
     class FakeExchange:
         id = "binance"
+        markets = {"SOXL/USDT:USDT": {
+            "id": "SOXLUSDT", "symbol": "SOXL/USDT:USDT", "swap": True,
+            "base": "SOXL", "quote": "USDT", "settle": "USDT",
+            "linear": True, "contractSize": 1,
+        }}
 
         async def fetch_ohlcv(self, _symbol, timeframe, limit):
             count = {"15m": 100, "1h": 168, "4h": 50}[timeframe]
@@ -234,7 +238,11 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
             return {"fundingRate": 0.0002, "markPrice": 101.0, "timestamp": int(now.timestamp() * 1000)}
 
         async def fetch_open_interest(self, _symbol):
-            return {"openInterestValue": 12_000_000.0, "timestamp": int(now.timestamp() * 1000)}
+            return {
+                "openInterestValue": 12_000_000.0,
+                "info": {"sumOpenInterestValue": "12000000"},
+                "timestamp": int(now.timestamp() * 1000),
+            }
 
     db = get_db()
     db.execute(
@@ -244,18 +252,16 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
     )
     db.commit()
     feature = await _fetch_single_feature(
-        FakeExchange(),
         {
             "id": "asset-soxl", "venue": "binance", "market_type": "perp",
             "symbol": "SOXL/USDT",
             "metadata": json.dumps({"instrument_background": background}),
         },
-        {"quoteVolume": 20_000_000.0, "bid": 101.0, "ask": 101.1},
+        {"quote_volume_24h": 20_000_000.0, "bid_price": 101.0, "ask_price": 101.1},
         now,
-        lambda symbol: f"{symbol}:USDT",
         btc_return_24h=20.0,
         btc_return_4h=10.0,
-        btc_closes_1h=[float(index) for index in range(1, 169)],
+        btc_closes_1h=[float(index) for index in range(1, 169)], market_data_provider=primary_provider(FakeExchange())
     )
 
     assert feature is not None
@@ -316,18 +322,16 @@ async def test_pending_feature_refresh_bypasses_recent_row_suppression(
     buffered: list[UniverseFeatureSnapshot] = []
 
     feature = await _fetch_single_feature(
-        FakeExchange(),
         {
             "id": "asset-priority",
             "venue": "okx",
             "market_type": "spot",
             "symbol": "BTC/USDT",
         },
-        {"quoteVolume": 1_000_000.0, "bid": 99.9, "ask": 100.1},
+        {"quote_volume_24h": 1_000_000.0, "bid_price": 99.9, "ask_price": 100.1},
         now,
-        lambda symbol: symbol,
         snapshot_buffer=buffered,
-        force_persist=True,
+        force_persist=True, market_data_provider=primary_provider(FakeExchange())
     )
 
     assert feature is not None
@@ -385,18 +389,16 @@ async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
     buffered: list[UniverseFeatureSnapshot] = []
 
     feature = await _fetch_single_feature(
-        PartialExchange(),
         {
             "id": "asset-partial",
             "venue": "okx",
             "market_type": "spot",
             "symbol": "BTC/USDT",
         },
-        {"quoteVolume": 1_000_000.0, "bid": 99.9, "ask": 100.1},
+        {"quote_volume_24h": 1_000_000.0, "bid_price": 99.9, "ask_price": 100.1},
         now,
-        lambda symbol: symbol,
         snapshot_buffer=buffered,
-        force_persist=True,
+        force_persist=True, market_data_provider=primary_provider(PartialExchange())
     )
 
     assert feature is None

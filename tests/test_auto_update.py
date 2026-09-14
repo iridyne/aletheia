@@ -162,6 +162,54 @@ def test_product_version_parser_accepts_release_please_marker(monkeypatch):
     assert auto._version_from_ref("HEAD") == "0.7.0"
 
 
+@pytest.mark.parametrize("paths, selected", [
+    (["core/aletheia/__init__.py"], "core/aletheia/__init__.py"),
+    (["aletheia/__init__.py"], "aletheia/__init__.py"),
+    (["aletheia/__init__.py", "core/aletheia/__init__.py"], "core/aletheia/__init__.py"),
+    ([], None),
+])
+def test_git_version_reads_current_or_historical_object_without_checkout(monkeypatch, paths, selected):
+    from types import SimpleNamespace
+    from aletheia.update import git_ops
+
+    calls = []
+
+    def git(*args):
+        calls.append(args)
+        if args[0] == "ls-tree":
+            return SimpleNamespace(returncode=0, stdout="\n".join(paths))
+        assert args == ("show", f"fixed-sha:{selected}")
+        return SimpleNamespace(returncode=0, stdout='__version__ = "1.2.3"\n')
+
+    monkeypatch.setattr(git_ops, "_git", git)
+    assert git_ops.version_at_ref("fixed-sha") == ('__version__ = "1.2.3"\n' if selected else "")
+    assert calls[0] == (
+        "ls-tree", "--name-only", "fixed-sha", "--",
+        "core/aletheia/__init__.py", "aletheia/__init__.py",
+    )
+    assert len(calls) == (2 if selected else 1)
+
+
+@pytest.mark.parametrize("failed_command", ["ls-tree", "show"])
+def test_git_version_read_failure_does_not_fall_back(monkeypatch, failed_command):
+    from types import SimpleNamespace
+    from aletheia.update import git_ops
+
+    calls = []
+
+    def git(*args):
+        calls.append(args)
+        return SimpleNamespace(
+            returncode=1 if args[0] == failed_command else 0,
+            stdout="core/aletheia/__init__.py\naletheia/__init__.py\n",
+        )
+
+    monkeypatch.setattr(git_ops, "_git", git)
+    assert git_ops.version_at_ref("fixed-sha") == ""
+    assert len(calls) == (1 if failed_command == "ls-tree" else 2)
+    assert ("show", "fixed-sha:aletheia/__init__.py") not in calls
+
+
 def test_local_or_revoked_tag_is_not_a_candidate(tmp_path, monkeypatch):
     from aletheia.update import auto, git_ops
 
@@ -567,7 +615,22 @@ def test_candidate_preflight_uses_current_interpreter_and_pythonpath(tmp_path, m
     assert command[0] == auto.sys.executable
     assert command[1] == "-c"
     assert kwargs["cwd"] == worktree
-    assert str(worktree) in kwargs["env"]["PYTHONPATH"]
+    assert kwargs["env"]["PYTHONPATH"].split(auto.os.pathsep)[:2] == [
+        str(worktree / "core"), str(worktree),
+    ]
+    # Execute only against an absent candidate and a harmless stale sentinel.
+    # Even if the guard regresses, no real application module can be imported.
+    stale = tmp_path / "stale" / "aletheia"
+    stale.mkdir(parents=True)
+    (stale / "__init__.py").write_text("raise RuntimeError('stale_import')\n")
+    result = subprocess.run(
+        command, cwd=worktree,
+        env={"PYTHONPATH": str(stale.parent)},
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode != 0
+    assert "candidate_source_missing" in result.stderr
+    assert "stale_import" not in result.stderr
 
 def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     from aletheia.update import auto
@@ -591,6 +654,8 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     ("bitget_demo", "local_paper", "live_disabled", False),
     ("paper_internal", "external_exchange", "live_disabled", False),
     ("binance_demo", "external_exchange", "live_disabled", False),
+    ("binance_testnet", "external_exchange", "live_disabled", False),
+    ("okx_demo", "external_exchange", "live_disabled", False),
     ("bitget_live", "external_exchange", "live_disabled", False),
     ("bitget_demo", "external_exchange", "live_enabled", False),
 ])
@@ -615,6 +680,14 @@ def test_runtime_gate_uses_public_health_response(monkeypatch, mode, target, liv
     assert auto._runtime_gate(
         expected_sha="target-sha", expected_version="1.2.3"
     )["ok"] is allowed
+    if allowed:
+        for field in ("boot_commit", "current_commit", "version"):
+            original = responses["/api/status"][field]
+            responses["/api/status"][field] = "different-runtime-identity"
+            result = auto._runtime_gate(expected_sha="target-sha", expected_version="1.2.3")
+            assert result["ok"] is False
+            assert field in result["failed"]
+            responses["/api/status"][field] = original
     responses["/api/health"]["status"] = "degraded"
     assert auto._runtime_gate()["ok"] is False
 
@@ -918,7 +991,8 @@ def test_auto_run_reports_failures_to_systemd(monkeypatch):
 
     assert result.exit_code == 1
     assert result.stdout.strip() == "global_hold"
-def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch, tmp_path):
+@pytest.mark.parametrize("restore_ok", [True, False])
+def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch, tmp_path, restore_ok):
     from contextlib import contextmanager
     from types import SimpleNamespace
 
@@ -936,14 +1010,14 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
     monkeypatch.setattr(git_ops, "reset_hard", lambda old: {"ok": True})
     monkeypatch.setattr(auto, "_install_source_dependencies", lambda: True)
     monkeypatch.setattr(auto, "get_data_dir", lambda: tmp_path)
-    monkeypatch.setattr(
-        auto,
-        "RestoreService",
-        lambda: SimpleNamespace(
-            restore=lambda *_args: calls.append("restore") or SimpleNamespace(success=True),
-        ),
-    )
-    monkeypatch.setattr(auto, "_gateway_command", lambda action: {"ok": True})
+    def restore(_backup, _target, *, require_recovery_checkpoint=False):
+        assert require_recovery_checkpoint is True
+        calls.append("restore")
+        return SimpleNamespace(success=restore_ok, errors=["invalid checkpoint"] if not restore_ok else [])
+
+    monkeypatch.setattr(auto, "RestoreService", lambda: SimpleNamespace(restore=restore))
+    gateway = MagicMock(return_value={"ok": True})
+    monkeypatch.setattr(auto, "_gateway_command", gateway)
     monkeypatch.setattr(auto, "_version_from_ref", lambda old: "1.0.0")
     monkeypatch.setattr(auto, "_wait_for_runtime", lambda *_args: {"ok": True, "reason": "restored"})
     monkeypatch.setattr(worker_lock, "worker_cycle_exclusion", guard)
@@ -955,5 +1029,11 @@ def test_source_restore_invalidates_unproven_observation_continuity(monkeypatch,
 
     result = auto._restore_old_runtime("old", tmp_path / "backup", False, restore_static=False)
 
-    assert result == {"ok": True, "reason": "restored"}
-    assert calls == ["lock-enter", "restore", "invalidate:False", "lock-exit"]
+    if restore_ok:
+        assert result == {"ok": True, "reason": "restored"}
+        assert calls == ["lock-enter", "restore", "invalidate:False", "lock-exit"]
+        gateway.assert_called_once_with("start")
+    else:
+        assert result == {"ok": False, "reason": "data_restore_failed", "detail": "invalid checkpoint"}
+        assert calls == ["lock-enter", "restore", "lock-exit"]
+        gateway.assert_not_called()

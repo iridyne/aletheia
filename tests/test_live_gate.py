@@ -26,7 +26,8 @@ async def client(tmp_path, monkeypatch):
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = "bitget"
     save_config(cfg)
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"test-secret:{ref}"))
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {

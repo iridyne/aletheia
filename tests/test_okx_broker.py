@@ -12,7 +12,7 @@ from tests.async_test_utils import closing_coro_runner
 @pytest.fixture(autouse=True)
 def _reset_module_state():
     """Reset the module-level cache between tests."""
-    import aletheia.execution.venue_capabilities as mod
+    import extensions.exchanges.okx.market_capabilities as mod
     mod._okx_demo_symbols = None
     mod._okx_demo_symbols_loaded_at = 0.0
     yield
@@ -33,8 +33,8 @@ class TestLazyExchangeInit:
     """
 
     def _client(self):
-        from aletheia.exchanges.okx.client import OKXClient
-        with patch("aletheia.exchanges.okx.client.get_secret", return_value="x"):
+        from extensions.exchanges.okx.client import OKXClient
+        with patch("extensions.exchanges.okx.client.get_secret", return_value="x"):
             return OKXClient(mode="demo")
 
     def test_init_does_not_build_exchange(self):
@@ -65,10 +65,10 @@ class TestSymbolFilter:
 
     def test_initial_refresh_failure_fails_closed(self):
         """An unavailable demo whitelist must stop pre-order validation."""
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
 
         with patch(
-            "aletheia.execution.venue_capabilities.run_coro_from_sync",
+            "extensions.exchanges.okx.market_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
         ):
             with pytest.raises(RuntimeError, match="market load unavailable"):
@@ -79,7 +79,7 @@ class TestSymbolFilter:
 
     def test_filter_with_populated_set_blocks_unsupported(self):
         """Symbols not in swap frozenset are blocked for perp orders."""
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
         mod._okx_demo_symbols = {
             "swap": frozenset({"BTC/USDT", "ETH/USDT"}),
             "spot": frozenset({"BTC/USDT", "ETH/USDT", "DOGE/USDT"}),
@@ -96,7 +96,7 @@ class TestSymbolFilter:
 
     def test_filter_is_frozenset_o1_lookup(self):
         """Confirm the filter returns a frozenset for O(1) membership testing."""
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
         mod._okx_demo_symbols = {
             "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
             "spot": frozenset({"BTC/USDT"}),
@@ -108,7 +108,7 @@ class TestSymbolFilter:
 
     def test_refresh_builds_dict_of_frozensets_from_markets(self):
         """refresh_okx_demo_symbols builds {"swap": frozenset, "spot": frozenset}."""
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
 
         fake_result = {
             "swap": frozenset({"BTC/USDT", "ETH/USDT", "SOL/USDT"}),
@@ -116,7 +116,7 @@ class TestSymbolFilter:
         }
 
         with patch(
-            "aletheia.execution.venue_capabilities.run_coro_from_sync",
+            "extensions.exchanges.okx.market_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner(fake_result),
         ):
             count = mod.refresh_okx_demo_symbols()
@@ -125,7 +125,7 @@ class TestSymbolFilter:
         assert mod._okx_demo_symbols == fake_result
 
     def test_contended_refresh_reuses_newly_fresh_cache(self):
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
 
         fake_result = {
             "swap": frozenset({"BTC/USDT"}),
@@ -138,7 +138,7 @@ class TestSymbolFilter:
             )
         )
 
-        with patch("aletheia.execution.venue_capabilities.run_coro_from_sync", runner):
+        with patch("extensions.exchanges.okx.market_capabilities.run_coro_from_sync", runner):
             first = mod.refresh_okx_demo_symbols()
             second = mod.refresh_okx_demo_symbols()
 
@@ -146,10 +146,10 @@ class TestSymbolFilter:
         assert runner.call_count == 1
 
     def test_empty_refresh_is_known_loaded_absence(self):
-        import aletheia.execution.venue_capabilities as mod
+        import extensions.exchanges.okx.market_capabilities as mod
 
         with patch(
-            "aletheia.execution.venue_capabilities.run_coro_from_sync",
+            "extensions.exchanges.okx.market_capabilities.run_coro_from_sync",
             side_effect=closing_coro_runner({}),
         ):
             assert mod.refresh_okx_demo_symbols() == 0
@@ -157,22 +157,10 @@ class TestSymbolFilter:
         assert mod._get_demo_symbols("usdt_futures") == frozenset()
         assert mod._get_demo_symbols("spot") == frozenset()
 
-    def test_scheduler_records_refresh_failure(self, monkeypatch):
+    def test_frozen_exchange_has_no_background_refresh_entrypoint(self):
         from aletheia.agent_runtime import scheduler
 
-        failures = []
-        monkeypatch.setattr(
-            scheduler,
-            "_record_job_failure",
-            lambda job_id, error: failures.append((job_id, error)),
-        )
-        with patch(
-            "aletheia.execution.venue_capabilities.run_coro_from_sync",
-            side_effect=closing_coro_runner(RuntimeError("market load unavailable")),
-        ):
-            scheduler._run_okx_demo_symbols()
-
-        assert failures == [("okx_demo_symbols", "market load unavailable")]
+        assert not hasattr(scheduler, "_run_okx_demo_symbols")
 
 
 

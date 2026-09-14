@@ -39,6 +39,33 @@ def _healthy_exchange_view():
     return {"sync_status": "ok", "age_seconds": 0, "accounts": [{"broker_id": "bitget_demo"}]}
 
 
+@pytest.mark.parametrize("state", ["absent", "warning", "error"])
+def test_extension_configuration_diagnostic_cannot_block_startup(monkeypatch, state):
+    from aletheia.agent_runtime import startup_behavior_gate as gate
+    from aletheia.uta import manager
+
+    for name in (
+        "migrations_applied", "sqlite_integrity", "foreign_keys", "active_runtime_scope",
+        "exchange_sync", "pending_orders", "pending_closes", "reconciliation_incident",
+        "learning_influence",
+    ):
+        monkeypatch.setattr(gate, "_check_" + name, lambda cfg: (True, "ok"))
+    def diagnostic(cfg):
+        if state == "error":
+            raise RuntimeError("synthetic-sensitive-detail")
+        return "fixture_profile", False, "Experimental"
+    monkeypatch.setattr(manager, "_configuration_diagnostic", None if state == "absent" else diagnostic)
+    checks = gate._run_checks(object())
+    assert not [check for check in checks if check["blocking"] and not check["ok"]]
+    if state == "absent":
+        assert len(checks) == 9
+    else:
+        assert len(checks) == 10
+        assert checks[-1]["blocking"] is False
+        assert checks[-1]["ok"] is False
+        assert "synthetic-sensitive" not in checks[-1]["detail"]
+
+
 def setup_env(tmp_path, monkeypatch):
     """Point DATA_DIR/CONFIG_PATH at tmp and init a real DB (integrity naturally ok)."""
     import aletheia.config.loader as loader

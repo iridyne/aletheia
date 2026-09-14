@@ -9,6 +9,36 @@ from types import SimpleNamespace
 import pytest
 
 
+async def test_absent_defillama_does_not_abort_sibling_collection(monkeypatch):
+    import time
+    from aletheia.agent_runtime import scheduler
+
+    monkeypatch.setattr(scheduler, "_defillama_collect", None)
+    health = []
+    monkeypatch.setattr(scheduler, "_record_collector_health", lambda *a, **kw: health.append((a, kw)))
+
+    async def sibling():
+        return {"collected": 1}
+
+    results = await asyncio.gather(
+        scheduler._bounded(scheduler._collect_defillama(), "defillama", 12, time.monotonic() + 20),
+        sibling(),
+    )
+    assert results == [None, {"collected": 1}]
+    assert health[0][0] == ("defillama", "failed")
+    assert health[0][1]["error_code"] == "RuntimeError"
+
+    from extensions.defillama import register_defillama_collector
+    from extensions.defillama.collector import DefiLlamaCollector
+
+    async def collect(self):
+        return {"snapshots": [], "errors": []}
+
+    monkeypatch.setattr(DefiLlamaCollector, "collect", collect)
+    register_defillama_collector()
+    assert await scheduler._collect_defillama() == {"snapshots": [], "errors": []}
+
+
 def test_stale_scanner_cleanup_parses_iso_timestamps():
     from aletheia.agent_runtime import scheduler
     from aletheia.storage.sqlite import get_db
@@ -393,7 +423,7 @@ def test_universe_refresh_reconciles_stale_runs_before_skip(monkeypatch):
 
 def test_dreaming_daily_marks_lesson_extraction_contract_failure(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.agents import dreaming_agent
+    from extensions.learning import dreaming_agent
 
     async def invalid_extraction(_run_id, _outputs, errors):
         errors.append("lesson_extraction_invalid_output:structured_parse_error")
@@ -411,6 +441,7 @@ def test_dreaming_daily_marks_lesson_extraction_contract_failure(monkeypatch):
         ),
     )
     monkeypatch.setattr(dreaming_agent, "_extract_lessons", invalid_extraction)
+    monkeypatch.setattr(scheduler, "_lesson_extractor", invalid_extraction)
     monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_async)
     monkeypatch.setattr(
         scheduler,
@@ -484,10 +515,14 @@ def test_data_collectors_keeps_collecting_during_layered_trading_pause(monkeypat
 
 def test_symbol_independent_context_collectors_run_without_instruments(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
-    from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.options_structure import OptionsStructureCollector
+    from extensions.coingecko.top import CoinGeckoTopCollector
+    monkeypatch.setattr(scheduler, "_coingecko_top_collect", lambda top_n: CoinGeckoTopCollector().collect(top_n=top_n))
+    from extensions.defillama.collector import DefiLlamaCollector
+    monkeypatch.setattr(scheduler, "_defillama_collect", lambda: DefiLlamaCollector().collect())
+    from extensions.macro.collector import MacroCollector
+    monkeypatch.setattr(scheduler, "_macro_collect", lambda symbols: MacroCollector().collect(symbols))
+    from extensions.deribit.options_structure import OptionsStructureCollector
+    monkeypatch.setattr(scheduler, "_options_structure_collect", lambda: OptionsStructureCollector().collect())
 
     cfg = SimpleNamespace(
         market_data=SimpleNamespace(
@@ -549,13 +584,21 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     reproduction.
     """
     from aletheia.agent_runtime import scheduler
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from extensions.coingecko.top import CoinGeckoTopCollector
+    monkeypatch.setattr(scheduler, "_coingecko_top_collect", lambda top_n: CoinGeckoTopCollector().collect(top_n=top_n))
+    from extensions.defillama.collector import DefiLlamaCollector
+    monkeypatch.setattr(scheduler, "_defillama_collect", lambda: DefiLlamaCollector().collect())
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.hyperliquid import HyperliquidCollector
-    from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.hyperliquid.collector import HyperliquidCollector
+    monkeypatch.setattr(scheduler, "_hyperliquid_collect", lambda symbols: HyperliquidCollector().collect(symbols))
+    from extensions.macro.collector import MacroCollector
+    monkeypatch.setattr(scheduler, "_macro_collect", lambda symbols: MacroCollector().collect(symbols))
+    from extensions.exchanges.ccxt.orderbook import MicrostructureCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
+    from extensions.volume_scanner import register_collector as register_volume
+    from aletheia.agent_runtime import scheduler as volume_scheduler
+    monkeypatch.setattr(volume_scheduler, "_volume_scanner_collect", None)
+    register_volume()
 
     class _Clock:
         now = 1_000.0
@@ -570,7 +613,8 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     calls: list[str] = []
     health: list[tuple[str, str]] = []
 
-    async def _core_micro(self, instruments):
+    async def _core_micro(self, instruments, *, venue=None):
+        assert venue is None
         calls.append("microstructure")
         clock.advance(15)
         return {"snapshots": [], "errors": []}
@@ -739,10 +783,52 @@ def test_async_timeout_worker_bounds_noncooperative_executor_shutdown(monkeypatc
             thread.join(timeout=1)
 
 
+def test_absent_feedback_does_not_fail_memo_and_maintenance_reports_unavailable(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import reasoning_feedback, confidence_calibration
+    from ops.maintenance.outcome_integrity import _rebuild_allowed_reports
+
+    async def memo():
+        return None
+
+    successes, failures = [], []
+    monkeypatch.setattr(scheduler, "load_config", _cfg)
+    monkeypatch.setattr(scheduler, "_memo_synthesizer", memo)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", lambda job, coro: asyncio.run(coro))
+    monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(reasoning_feedback, "_feedback_builder", None)
+    monkeypatch.setattr(confidence_calibration, "_calibration_builder", lambda: None)
+    scheduler._run_insight_synthesizer()
+    assert successes == ["insight_synthesizer"]
+    assert failures == []
+    assert _rebuild_allowed_reports() == {
+        "calibration_report": "insufficient", "reasoning_feedback": "unavailable",
+    }
+
+
+def test_absent_memo_synthesizer_preserves_independent_feedback(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+
+    failures, feedback = [], []
+    monkeypatch.setattr(scheduler, "load_config", _cfg)
+    monkeypatch.setattr(scheduler, "_memo_synthesizer", None)
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(scheduler, "_record_job_success", lambda *args: pytest.fail("missing producer is unavailable"))
+    monkeypatch.setattr(reasoning_feedback, "_feedback_builder", lambda: feedback.append("ran"))
+    scheduler._run_insight_synthesizer()
+    assert failures == [("insight_synthesizer", "memo_synthesizer_unavailable")]
+    assert feedback == ["ran"]
+    assert not hasattr(insight_synthesizer, "synthesize_trading_memo")
+    assert callable(insight_synthesizer.get_latest_memo)
+
+
 def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     """The memo job must not create and close a disposable event loop."""
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+    from aletheia.analytics import reasoning_feedback
+    from extensions.learning import insight_synthesizer
 
     submitted = []
     successes = []
@@ -757,8 +843,8 @@ def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     monkeypatch.setattr(scheduler, "load_config", _cfg)
     monkeypatch.setattr(scheduler, "_run_async_with_timeout", run_bounded)
     monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
-    monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
-    monkeypatch.setattr(reasoning_feedback, "build_reasoning_feedback", lambda **_: None)
+    monkeypatch.setattr(scheduler, "_memo_synthesizer", synthesize)
+    monkeypatch.setattr(reasoning_feedback, "_feedback_builder", lambda **_: None)
 
     scheduler._run_insight_synthesizer()
 
@@ -766,9 +852,47 @@ def test_insight_synthesizer_uses_owned_async_timeout_loop(monkeypatch):
     assert successes == ["insight_synthesizer"]
 
 
+def test_insight_persistence_failure_is_not_job_success(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.analytics import reasoning_feedback
+    from extensions.learning import memo_effectiveness
+    from extensions.learning import insight_synthesizer
+    from aletheia.storage import repositories
+
+    failures, successes, feedback_runs = [], [], []
+    monkeypatch.setattr(scheduler, "load_config", _cfg)
+    monkeypatch.setattr(scheduler, "_run_async_with_timeout", lambda job, coro: asyncio.run(coro))
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+    monkeypatch.setattr(scheduler, "_record_job_success", successes.append)
+    monkeypatch.setattr(scheduler, "_memo_synthesizer", insight_synthesizer.synthesize_trading_memo)
+    monkeypatch.setattr(insight_synthesizer, "resolve_selected_execution_mode", lambda: "bitget_demo")
+    monkeypatch.setattr(insight_synthesizer, "_should_skip_synthesis", lambda **kwargs: False)
+    monkeypatch.setattr(memo_effectiveness, "evaluate_prior_memo", lambda **kwargs: None)
+    monkeypatch.setattr(insight_synthesizer, "_gather_statistics", lambda *args, **kwargs: {"total_trades": 10})
+    monkeypatch.setattr(insight_synthesizer, "_build_deterministic_memo", lambda *args, **kwargs: {
+        "generated_at": "2026-09-14T00:00:00+00:00", "valid_until": "2026-09-17T00:00:00+00:00",
+        "sample_size": 10, "regime_playbook": [], "timing_windows": [], "symbol_affinity": [],
+    })
+
+    async def no_enrichment(*args):
+        return None
+
+    def failed_write(item):
+        raise RuntimeError("fixture_memo_write_failed")
+
+    monkeypatch.setattr(insight_synthesizer, "_llm_synthesize_insight", no_enrichment)
+    monkeypatch.setattr(repositories, "insert_knowledge_item", failed_write)
+    monkeypatch.setattr(reasoning_feedback, "_feedback_builder", lambda: feedback_runs.append("ran"))
+    scheduler._run_insight_synthesizer()
+    assert failures == [("insight_synthesizer", "fixture_memo_write_failed")]
+    assert successes == []
+    assert feedback_runs == ["ran"]
+
+
 def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch):
     from aletheia.agent_runtime import scheduler
-    from aletheia.analytics import insight_synthesizer, reasoning_feedback
+    from aletheia.analytics import reasoning_feedback
+    from extensions.learning import insight_synthesizer
 
     failures = []
     feedback_runs = []
@@ -789,10 +913,10 @@ def test_insight_synthesizer_preserves_timeout_failure_and_feedback(monkeypatch)
         "_record_job_success",
         lambda *_args: pytest.fail("a timed-out memo must not be recorded as successful"),
     )
-    monkeypatch.setattr(insight_synthesizer, "synthesize_trading_memo", synthesize)
+    monkeypatch.setattr(scheduler, "_memo_synthesizer", synthesize)
     monkeypatch.setattr(
         reasoning_feedback,
-        "build_reasoning_feedback",
+        "_feedback_builder",
         lambda **_: feedback_runs.append("ran"),
     )
 
@@ -916,6 +1040,22 @@ def test_sync_timeout_worker_reuses_one_daemon_thread():
     assert workers[0].daemon is True
     assert metrics["sync_pending"] == 0
     assert metrics["abandoned_threads"] == 0
+
+
+def test_dreaming_absent_extractor_preserves_serenity_enqueue(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+
+    calls, failures = [], []
+    monkeypatch.setattr(scheduler, "load_config", lambda: SimpleNamespace(
+        runtime=SimpleNamespace(paused=False), serenity=SimpleNamespace(enabled=True)))
+    monkeypatch.setattr(scheduler, "_lesson_extractor", None)
+    monkeypatch.setattr(scheduler, "_enqueue_serenity_research_if_due",
+                        lambda: calls.append("serenity") or {"status": "queued"})
+    monkeypatch.setattr(scheduler, "_record_job_failure", lambda *args: failures.append(args))
+    scheduler._run_dreaming_agent()
+    assert calls == ["serenity"]
+    assert failures == [("dreaming_daily", "lesson_extractor_unavailable")]
 
 
 def test_sync_timeout_worker_rejects_when_capacity_is_exhausted(monkeypatch):

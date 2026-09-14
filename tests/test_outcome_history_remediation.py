@@ -43,7 +43,7 @@ def _seed_polluted_history() -> None:
 
 
 def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
-    from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+    from ops.maintenance.outcome_integrity import remediate_outcome_history
     from aletheia.storage.sqlite import get_db
 
     _seed_polluted_history()
@@ -56,6 +56,11 @@ def test_history_remediation_dry_run_apply_and_repeat_are_non_destructive():
     )]
 
     dry = remediate_outcome_history(dry_run=True)
+    from aletheia.maintenance import outcome_integrity as diagnostics
+    assert not hasattr(diagnostics, "remediate_outcome_history")
+    before_changes = db.total_changes
+    assert diagnostics.plan_outcome_history() == dry
+    assert db.total_changes == before_changes
     assert dry["classification"]["planned"] == 1
     assert dry["archive"]["planned"] == 2
     assert dry["archive"]["by_type"] == {
@@ -141,7 +146,7 @@ def test_versioned_clean_window_excludes_pre_anchor_incident_and_unknown_version
 
 
 def test_apply_rolls_back_classification_when_archive_step_fails():
-    from aletheia.maintenance.outcome_integrity import remediate_outcome_history
+    from ops.maintenance.outcome_integrity import remediate_outcome_history
     from aletheia.storage.sqlite import get_db
 
     _seed_polluted_history()
@@ -167,9 +172,13 @@ def test_apply_rolls_back_classification_when_archive_step_fails():
 
 def test_maintenance_source_has_no_delete_or_compensation_apply_path():
     from pathlib import Path
-    import aletheia.maintenance.outcome_integrity as module
+    import ops.maintenance.outcome_integrity as module
+    import aletheia.maintenance.outcome_integrity as diagnostics
 
-    source = Path(module.__file__).read_text()
+    read_source = Path(diagnostics.__file__).read_text()
+    assert "UPDATE " not in read_source.upper()
+    assert "INSERT " not in read_source.upper()
+    source = Path(module.__file__).read_text() + read_source
     assert "DELETE FROM" not in source.upper()
     assert "insert_capital_event" not in source
     assert "insert_paper_account_event" not in source

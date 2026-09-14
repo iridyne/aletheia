@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 from aletheia.data.providers import OHLCVResult, parse_ohlcv_candle
 from aletheia.data.sources.chain import FallbackChainProvider
 
@@ -56,7 +56,7 @@ async def test_ccxt_boundary_reports_rejected_rows_as_partial(monkeypatch) -> No
     ])
     provider = CCXTProvider(exchange="fixture", fallback_exchange="fallback")
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
-    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.data.market_history.persist_closed_candles", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(provider, "BTC/USDT", limit=2, since=0)
 

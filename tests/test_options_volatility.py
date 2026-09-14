@@ -8,9 +8,29 @@ from statistics import NormalDist
 
 import pytest
 
-from aletheia.data.options_volatility import derive_options_volatility
+from extensions.deribit.volatility import derive_options_volatility
 
 NOW = datetime(2026, 9, 11, 8, tzinfo=timezone.utc)
+
+
+def test_persisted_volatility_reads_do_not_require_deribit_extension(monkeypatch):
+    import builtins
+    from aletheia.storage import repositories as repo
+    from aletheia.data.options_volatility import OptionsVolatilitySnapshot
+
+    snapshot = OptionsVolatilitySnapshot(symbol="BTC", acquired_at=NOW.isoformat(), atm_iv_30d=65)
+    repo.insert_options_volatility_snapshot(snapshot.model_dump())
+    original = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "extensions.deribit" or name.startswith("extensions.deribit."):
+            raise ModuleNotFoundError(name)
+        return original(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    result = repo.options_volatility_at("BTC", NOW.isoformat())
+    assert result["available"] is True
+    assert result["atm_iv_30d"] == 65
 
 
 def chain(currency="BTC", days=(7, 30, 60)):
@@ -115,7 +135,7 @@ def test_sparse_delta_and_duplicate_input():
 
 
 def test_delta_interpolation_boundary():
-    from aletheia.data.options_volatility import _delta_point
+    from extensions.deribit.volatility import _delta_point
 
     def rows(a, b):
         return [{"delta": d, "side": "C", "iv": 60, "id": str(d), "instrument": str(d)} for d in (a, b)]
@@ -212,7 +232,7 @@ def test_cutoff_storage_and_legacy_isolation():
 
 @pytest.mark.parametrize("invalid_iv", [None, 5e-324, 1e308])
 def test_same_response_gex_unchanged(monkeypatch, invalid_iv):
-    import aletheia.data.collectors.options_structure as collector
+    import extensions.deribit.options_structure as collector
 
     calls = []
 

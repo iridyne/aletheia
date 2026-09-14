@@ -795,8 +795,12 @@ def test_migration_backfills_identity_without_inventing_historical_net():
     assert row["net_return_pct"] is None
 
 
-def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
-    from aletheia.data.ccxt_provider import CCXTProvider
+@pytest.mark.parametrize("source", ["ccxt", "fixture_adapter"])
+def test_derivative_ohlcv_persists_with_market_identity(monkeypatch, source):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "aletheia.data.ccxt_provider", None)
+    from aletheia.data.market_history import persist_closed_candles
     from aletheia.data.providers import Candle
 
     calls = []
@@ -806,24 +810,26 @@ def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
     )
     candles = [Candle(1, 100, 101, 99, 100.5, 10)]
 
-    CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="perp")
+    persist_closed_candles("BTC/USDT", "1h", candles, "okx", market_type="perp", provider=source)
     assert len(calls) == 1
     assert calls[0]["market_type"] == "perp"
-    CCXTProvider._persist("BTC/USDT", "1h", candles, "okx", market_type="spot")
+    assert calls[0]["provider"] == source
+    assert calls[0]["exchange"] == "okx"
+    persist_closed_candles("BTC/USDT", "1h", candles, "okx", market_type="spot", provider=source)
     assert len(calls) == 2
     assert calls[1]["market_type"] == "spot"
 
 
 def test_forming_ohlcv_is_not_visible_to_db_consumers_and_closed_bar_is_persisted():
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from aletheia.data.market_history import persist_closed_candles
     from aletheia.data.providers import Candle
     from aletheia.storage.repositories import get_ohlcv_candles
 
     closed = Candle(1_000, 100, 101, 99, 100.5, 10)
     forming = Candle(2_000, 100.5, 102, 100, 101.5, 8, is_closed=False)
 
-    CCXTProvider._persist(
-        "BTC/USDT", "1h", [closed, forming], "okx", market_type="perp"
+    persist_closed_candles(
+        "BTC/USDT", "1h", [closed, forming], "okx", market_type="perp", provider="ccxt"
     )
 
     assert get_ohlcv_candles(
@@ -846,8 +852,8 @@ def test_forming_ohlcv_is_not_visible_to_db_consumers_and_closed_bar_is_persiste
     ) == []
 
     forming.is_closed = True
-    CCXTProvider._persist(
-        "BTC/USDT", "1h", [forming], "okx", market_type="perp"
+    persist_closed_candles(
+        "BTC/USDT", "1h", [forming], "okx", market_type="perp", provider="ccxt"
     )
 
     assert [row["ts"] for row in get_ohlcv_candles(

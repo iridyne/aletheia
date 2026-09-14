@@ -26,7 +26,7 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import MarketSnapshot, Position
-from aletheia.exchanges.bitget.client import OrderRequest
+from extensions.exchanges.bitget.client import OrderRequest
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -61,6 +61,11 @@ def _demo_config(monkeypatch, permission="Paper"):
     from aletheia.portfolio import exchange_sync
     from types import SimpleNamespace
     from aletheia.uta import manager
+    from extensions.exchanges.composition import funding_history_retention_contract
+
+    # Broker fixtures bind credential-free profile metadata explicitly, without
+    # relying on another test importing the application composition root first.
+    monkeypatch.setattr(manager, "_retention_contract", funding_history_retention_contract)
     identity = _identity("bitget_demo")
     monkeypatch.setattr(manager, "build_uta_registry", lambda *args, **kwargs: SimpleNamespace(configured_identities=lambda: (identity,)))
     exchange_sync._store_unified({
@@ -267,7 +272,7 @@ def test_place_order_mix_body_has_margin_coin_and_tradeside(tmp_path, monkeypatc
     setup_env(tmp_path, monkeypatch)
     _demo_config(monkeypatch)
     import json
-    from aletheia.exchanges.bitget import client as bg
+    from extensions.exchanges.bitget import client as bg
 
     sent = {}
 
@@ -312,7 +317,7 @@ def test_place_order_hedge_close_body_has_holdside(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _demo_config(monkeypatch)
     import json
-    from aletheia.exchanges.bitget import client as bg
+    from extensions.exchanges.bitget import client as bg
 
     sent = {}
 

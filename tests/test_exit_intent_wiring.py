@@ -11,6 +11,7 @@ def test_trade_proposal_persists_exit_intent():
     p = TradeProposal(
         symbol="BTC/USDT",
         market_type="usdt_futures",
+        execution_mode="bitget_demo",
         direction="long",
         expected_horizon_hours=8.0,
         stop_source="operator",

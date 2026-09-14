@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from types import SimpleNamespace
 
 from aletheia.data.providers import Candle, Ticker
-from aletheia.data.sources.coingecko import _to_coingecko_id as to_coingecko_id
+from extensions.coingecko.market_data import _to_coingecko_id as to_coingecko_id
 from aletheia.data.symbols import to_binance as to_binance_symbol
-from aletheia.data.sources.coingecko import CoinGeckoProvider
-from aletheia.data.sources.binance_public import BinancePublicProvider
+from extensions.coingecko.market_data import CoinGeckoProvider
+from extensions.exchanges.binance.public_market_data import BinancePublicProvider
 from aletheia.data.sources.chain import FallbackChainProvider
 
 
@@ -42,10 +42,10 @@ class TestCoinGeckoProvider:
     @pytest.mark.anyio
     async def test_get_ticker(self, monkeypatch):
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._last_request_time", 0.0
+            "extensions.coingecko.market_data._last_request_time", 0.0
         )
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
+            "extensions.coingecko.market_data._MIN_INTERVAL_SEC", 0.0
         )
 
         mock_resp = MagicMock()
@@ -85,10 +85,10 @@ class TestCoinGeckoProvider:
     @pytest.mark.anyio
     async def test_unknown_symbol_raises(self, monkeypatch):
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._last_request_time", 0.0
+            "extensions.coingecko.market_data._last_request_time", 0.0
         )
         monkeypatch.setattr(
-            "aletheia.data.sources.coingecko._MIN_INTERVAL_SEC", 0.0
+            "extensions.coingecko.market_data._MIN_INTERVAL_SEC", 0.0
         )
         provider = CoinGeckoProvider()
         # F6: unmapped symbol raises a clear ValueError (not KeyError) so the provider
@@ -511,9 +511,35 @@ def test_ticker_accepts_zero_volume_and_change():
 
 
 class TestFactory:
+    @pytest.mark.parametrize("missing", ["none", "coingecko", "binance", "both"])
+    def test_public_fallback_modules_are_independently_optional(self, monkeypatch, missing):
+        import builtins
+        from extensions.market_data import build_spot_fallbacks
+
+        modules = {
+            "coingecko": "extensions.coingecko.market_data",
+            "binance": "extensions.exchanges.binance.public_market_data",
+        }
+        blocked = set(modules.values()) if missing == "both" else {modules.get(missing)}
+        original = builtins.__import__
+
+        def importing(name, *args, **kwargs):
+            if name in blocked:
+                raise ModuleNotFoundError(name)
+            return original(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", importing)
+        assert [provider.venue_name for provider in build_spot_fallbacks()] == [
+            name for name, module in modules.items() if module not in blocked
+        ]
+
     def test_fallback_enabled_returns_chain(self, monkeypatch):
         from aletheia.config import loader
         from aletheia.data.ccxt_provider import get_market_data_provider
+        from aletheia.data import ccxt_provider
+        from extensions.market_data import build_spot_fallbacks
+
+        monkeypatch.setattr(ccxt_provider, "_spot_fallback_factory", build_spot_fallbacks)
 
         md = SimpleNamespace(
             ccxt_exchange="binance",
@@ -525,10 +551,26 @@ class TestFactory:
         p = get_market_data_provider()
         assert isinstance(p, FallbackChainProvider)
         assert len(p._providers) == 3
+        assert [type(item) for item in p._providers[1:]] == [CoinGeckoProvider, BinancePublicProvider]
+        second = get_market_data_provider()
+        assert all(a is not b for a, b in zip(p._providers, second._providers))
+
+    def test_unbound_spot_fallbacks_retain_primary(self, monkeypatch):
+        from aletheia.config import loader
+        from aletheia.data import ccxt_provider
+
+        monkeypatch.setattr(ccxt_provider, "_spot_fallback_factory", None)
+        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(market_data=SimpleNamespace(
+            ccxt_exchange="bitget", ccxt_fallback="bybit", enable_crypto_fallback=True,
+        )))
+        provider = ccxt_provider.get_market_data_provider()
+        assert len(provider._providers) == 1
+        assert provider._providers[0]._primary_name == "bitget"
 
     def test_fallback_disabled_returns_ccxt(self, monkeypatch):
         from aletheia.config import loader
-        from aletheia.data.ccxt_provider import get_market_data_provider, CCXTProvider
+        from extensions.exchanges.ccxt.market_data import CCXTProvider
+        from aletheia.data.ccxt_provider import get_market_data_provider
 
         md = SimpleNamespace(
             ccxt_exchange="binance",

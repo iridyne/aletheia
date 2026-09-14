@@ -769,6 +769,23 @@ def test_adoption_waits_for_native_entry_materialization(tmp_path, monkeypatch, 
     assert repo.get_db().execute("SELECT count(*) FROM trade_proposals").fetchone()[0] == 0
 
 
+def test_adoption_rolls_back_proposal_order_and_position_if_exit_plan_write_fails(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.portfolio import position_reconciler
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("fixture_adoption_exit_plan_failed")
+
+    monkeypatch.setattr(repo, "update_open_position_exit_plan", fail)
+    db = repo.get_db()
+    tables = ("trade_proposals", "orders", "positions")
+    before = {table: [dict(row) for row in db.execute(f"SELECT * FROM {table}")] for table in tables}
+    with pytest.raises(RuntimeError, match="fixture_adoption_exit_plan_failed"):
+        position_reconciler.adopt_position(_ex("DOGEUSDT", "long", 204, entry=0.08689), "demo")
+    for table in tables:
+        assert [dict(row) for row in db.execute(f"SELECT * FROM {table}")] == before[table]
+
+
 def test_adoption_rechecks_position_after_stale_classification(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.portfolio.position_reconciler import adopt_position, PositionAdoptionIntegrityError

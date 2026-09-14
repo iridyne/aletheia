@@ -384,7 +384,7 @@ def test_latest_excludes_provider_closed_bar_before_its_close(monkeypatch):
 
 def test_binance_public_cannot_supply_non_spot_market_structure(monkeypatch):
     from aletheia.data.market_structure import MarketStructureProvider
-    from aletheia.data.sources.binance_public import BinancePublicProvider
+    from extensions.exchanges.binance.public_market_data import BinancePublicProvider
 
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "perp")
     monkeypatch.setattr(

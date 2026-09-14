@@ -1,17 +1,15 @@
 """Focused regressions for learning-loop contamination/dead-feedback fixes (B5a).
 
-#157 render_calibration_for_pi must not crash on a numeric ECE (broken f-string).
+Old Operator calibration/feedback prompt consumers are retired.
 #159 guard promotion/effectiveness must drop synthetic-close + pre-clean-window rows.
 """
 
 
-def test_render_calibration_does_not_crash_on_numeric_ece():
-    from aletheia.analytics.confidence_calibration import render_calibration_for_pi
-    out = render_calibration_for_pi({"ece": 0.123, "ece_grade": "B", "total_executed": 12})
-    assert "Conviction Calibration" in out
-    assert "0.123" in out                       # numeric ECE renders (previously raised ValueError)
-    assert "0.000" in render_calibration_for_pi({"ece": 0.0, "total_executed": 5})
-    assert "?" in render_calibration_for_pi({"ece": None, "total_executed": 0})   # missing → "?"
+def test_retired_operator_feedback_renderers_are_absent():
+    from aletheia.analytics import confidence_calibration, reasoning_feedback
+
+    assert not hasattr(confidence_calibration, "render_calibration_for_pi")
+    assert not hasattr(reasoning_feedback, "render_feedback_for_pi")
 
 
 def test_guard_clean_rows_drops_synthetic_and_pre_floor():
@@ -36,7 +34,7 @@ def test_case_builder_windows_on_close_time():
     """#16: the case-builder window filters on CLOSE time, not open time."""
     from datetime import datetime, timedelta, timezone
 
-    from aletheia.analytics.trade_case_builder import _closed_after
+    from extensions.learning.trade_case_builder import _closed_after
 
     cutoff = datetime.now(timezone.utc).timestamp() - 24 * 3600  # last 24h
     recent_close = {"opened_at": "2026-06-01T00:00:00+00:00",
@@ -50,7 +48,7 @@ def test_case_builder_windows_on_close_time():
 
 def test_evidence_block_includes_scanner_family():
     """#99: block_scanner lessons must surface a scanner-family evidence slice to the judge."""
-    from aletheia.agents.lesson_reviewer import _evidence_block
+    from extensions.learning.lesson_reviewer import _evidence_block
     ev = {
         "aggregate": {"total": 100, "win_rate": 45.0, "avg_return": 0.1},
         "symbol": None,
@@ -64,7 +62,7 @@ def test_evidence_block_includes_scanner_family():
 
 def test_lesson_reviewer_zero_win_rate_demotes_exact_scope():
     """A literal 0% win rate must not be mistaken for a missing value."""
-    from aletheia.agents.lesson_reviewer import _deterministic_demote
+    from extensions.learning.lesson_reviewer import _deterministic_demote
 
     assert _deterministic_demote({
         "exact_scope": {"total": 10, "win_rate": 0.0, "avg_return": -2.0},
@@ -98,7 +96,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
     """
     import asyncio
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import run_lesson_reviewer
+    from extensions.learning.lesson_reviewer import run_lesson_reviewer
     from aletheia.learning.lessons import LessonStore
 
     store = LessonStore()
@@ -136,7 +134,7 @@ def test_applied_lesson_demoted_on_contradictory_evidence(tmp_path, monkeypatch)
 def test_lesson_evidence_ignores_gross_only_history(tmp_path, monkeypatch):
     """Legacy price moves without costs must not promote or overturn lessons."""
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from extensions.learning.lesson_reviewer import _fetch_evidence
     from aletheia.learning.lessons import LessonStore
 
     lesson = LessonStore().create(
@@ -173,7 +171,7 @@ def test_lesson_evidence_uses_complete_rows_at_one_cutoff(tmp_path, monkeypatch)
     from datetime import datetime, timedelta, timezone
 
     sq = _reviewer_db(tmp_path, monkeypatch)
-    from aletheia.agents.lesson_reviewer import _fetch_evidence
+    from extensions.learning.lesson_reviewer import _fetch_evidence
     from aletheia.learning import outcomes
     from aletheia.learning.lessons import LessonStore
 

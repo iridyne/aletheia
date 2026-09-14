@@ -10,6 +10,19 @@ import sqlite3
 
 import pytest
 
+@pytest.fixture(autouse=True)
+def _explicit_fast_stream_adapters(monkeypatch):
+    from aletheia.universe import fast_stream
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream
+
+    # Frozen adapters are test inputs, not implicit production composition.
+    monkeypatch.setattr(fast_stream, "_FAST_STREAM_ADAPTERS", {
+        "bitget_demo": (BitgetFastMarketStream, frozenset({"spot", "perp", "futures", "swap", "usdt_futures"})),
+        "binance_testnet": (BinanceFastMarketStream, frozenset({"perp", "futures", "swap", "usdt_futures"})),
+    })
+
+
 
 def _prepare(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -462,10 +475,7 @@ def test_market_structure_v2_state_projection_choch_and_exact_staleness():
 def test_selected_external_account_uses_public_fast_stream():
     from aletheia.config.schema import AletheiaConfig
     from aletheia.universe.fast_trigger import validate_fast_trigger_stream
-    from aletheia.universe.fast_stream import (
-        fast_market_data_unavailability_reason,
-        fast_market_data_venue_for_config,
-    )
+    from aletheia.universe.fast_stream import fast_market_data_unavailability_reason, fast_market_data_venue_for_config
 
     cfg = AletheiaConfig()
     cfg.fast_trigger.mode = "shadow"
@@ -1116,10 +1126,7 @@ async def test_resting_maker_cross_rejection_does_not_restart_stream(monkeypatch
 
 def test_bitget_parser_and_subscription_ack_are_exact_venue():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import (
-        BitgetFastMarketStream,
-        parse_bitget_message,
-    )
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream, parse_bitget_message
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     args = {"instType": "USDT-FUTURES", "instId": "BTCUSDT"}
@@ -1148,7 +1155,7 @@ def test_bitget_parser_and_subscription_ack_are_exact_venue():
 
 def test_bitget_trade_batch_is_normalized_to_chronological_sequence():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import parse_bitget_message
+    from extensions.exchanges.bitget.fast_stream import parse_bitget_message
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     events = parse_bitget_message(
@@ -1168,7 +1175,7 @@ def test_bitget_trade_batch_is_normalized_to_chronological_sequence():
 
 def test_bitget_candle_updates_use_envelope_sequence_not_bar_open_time():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import parse_bitget_message
+    from extensions.exchanges.bitget.fast_stream import parse_bitget_message
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     base = {
@@ -1187,7 +1194,7 @@ def test_bitget_candle_updates_use_envelope_sequence_not_bar_open_time():
 
 def test_binance_spot_and_perp_messages_are_normalized():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import parse_binance_message
+    from extensions.exchanges.binance.fast_stream import parse_binance_message
 
     spot = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
     perp = InstrumentId.from_parts("binance", "ETH/USDT", "perp")
@@ -1221,7 +1228,7 @@ def test_binance_spot_and_perp_messages_are_normalized():
 
 def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import parse_binance_message
+    from extensions.exchanges.binance.fast_stream import parse_binance_message
     from aletheia.universe.fast_trigger import TriggerPolicy
     from aletheia.trading.momentum_trigger import MomentumTriggerEngine
 
@@ -1287,14 +1294,14 @@ def test_binance_kline_updates_keep_one_open_candle_until_next_bar():
 )
 def test_binance_parser_rejects_invalid_or_unknown_facts(payload):
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import parse_binance_message
+    from extensions.exchanges.binance.fast_stream import parse_binance_message
 
     instrument = InstrumentId.from_parts("binance", "BTC/USDT", "spot")
     assert parse_binance_message(payload, {instrument}, market_type="spot") is None
 
 
 def test_binance_spot_book_bridges_snapshot_and_applies_deletes():
-    from aletheia.universe.fast_stream import _SpotBook
+    from extensions.exchanges.binance.fast_stream import _SpotBook
 
     book = _SpotBook()
     assert book.add({"U": 101, "u": 102, "b": [["100", "2"]], "a": [["102", "0"]]}) is False
@@ -1309,7 +1316,7 @@ def test_binance_spot_book_bridges_snapshot_and_applies_deletes():
 
 
 def test_binance_spot_book_sequence_gap_resets_before_publish():
-    from aletheia.universe.fast_stream import _SpotBook
+    from extensions.exchanges.binance.fast_stream import _SpotBook
 
     book = _SpotBook()
     book.add({"U": 11, "u": 11, "b": [["10", "1"]], "a": [["12", "1"]]})
@@ -1321,7 +1328,7 @@ def test_binance_spot_book_sequence_gap_resets_before_publish():
 
 
 def test_binance_spot_book_rejects_snapshot_that_cannot_bridge_first_event():
-    from aletheia.universe.fast_stream import _SpotBook
+    from extensions.exchanges.binance.fast_stream import _SpotBook
 
     book = _SpotBook()
     book.add({"U": 15, "u": 15, "b": [["10", "1"]], "a": [["12", "1"]]})
@@ -1335,7 +1342,7 @@ def test_binance_spot_book_rejects_snapshot_that_cannot_bridge_first_event():
 @pytest.mark.asyncio
 async def test_binance_spot_snapshot_retries_transient_failure():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream, _SpotBook
 
     class _Response:
         def __init__(self, error=None):
@@ -1388,7 +1395,7 @@ async def test_binance_spot_snapshot_retries_transient_failure():
 @pytest.mark.asyncio
 async def test_binance_spot_snapshot_failure_keeps_perp_lane_available():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream, _SpotBook
 
     class _Session:
         def get(self, *_args, **_kwargs):
@@ -1419,7 +1426,8 @@ async def test_binance_spot_snapshot_failure_keeps_perp_lane_available():
 @pytest.mark.asyncio
 async def test_binance_delta_subscription_preserves_unchanged_instrument_generation():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import BinanceFastMarketStream, FastMarketEvent
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream
+    from aletheia.universe.fast_stream import FastMarketEvent
 
     class _Ws:
         def __init__(self):
@@ -1465,7 +1473,7 @@ async def test_binance_delta_subscription_preserves_unchanged_instrument_generat
 @pytest.mark.asyncio
 async def test_binance_dual_socket_health_keeps_ready_perp_lane_while_spot_syncs():
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import BinanceFastMarketStream, _SpotBook
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream, _SpotBook
 
     class _Ws:
         def __init__(self):
@@ -1507,7 +1515,8 @@ async def test_binance_subscription_confirmation_rejects_error_and_unknown_acks(
     import aiohttp
 
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import BinanceFastMarketStream, FastStreamHealth
+    from extensions.exchanges.binance.fast_stream import BinanceFastMarketStream
+    from aletheia.universe.fast_stream import FastStreamHealth
 
     class _Ws:
         def __init__(self):
@@ -1566,7 +1575,7 @@ async def test_binance_connect_only_requires_watched_market_sockets(
     should_connect,
 ):
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe import fast_stream
+    from extensions.exchanges.binance import fast_stream
 
     class _Ws:
         closed = False
@@ -1619,7 +1628,7 @@ async def test_binance_connect_only_requires_watched_market_sockets(
 
 @pytest.mark.asyncio
 async def test_binance_connect_uses_managed_proxy_session(monkeypatch):
-    from aletheia.universe import fast_stream
+    from extensions.exchanges.binance import fast_stream
 
     class _Session:
         closed = False
@@ -1657,10 +1666,7 @@ async def test_bitget_malformed_time_or_sequence_does_not_terminate_stream():
     import aiohttp
 
     from aletheia.data.symbols import InstrumentId
-    from aletheia.universe.fast_stream import (
-        BitgetFastMarketStream,
-        parse_bitget_message,
-    )
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream, parse_bitget_message
 
     instrument = InstrumentId.from_parts("bitget", "BTC/USDT", "perp")
     arg = {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BTCUSDT"}
@@ -1706,7 +1712,7 @@ async def test_bitget_malformed_time_or_sequence_does_not_terminate_stream():
 
 @pytest.mark.asyncio
 async def test_bitget_ping_loop_uses_public_text_ping(monkeypatch):
-    from aletheia.universe.fast_stream import BitgetFastMarketStream
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream
 
     class _Ws:
         closed = False
@@ -1723,14 +1729,14 @@ async def test_bitget_ping_loop_uses_public_text_ping(monkeypatch):
     stream = BitgetFastMarketStream()
     stream._ws = _Ws()
     stream._pong_event = asyncio.Event()
-    monkeypatch.setattr("aletheia.universe.fast_stream.asyncio.sleep", _no_wait)
+    monkeypatch.setattr("extensions.exchanges.bitget.fast_stream.asyncio.sleep", _no_wait)
     await stream._ping_loop()
     assert stream._ws.sent == ["ping"]
 
 
 @pytest.mark.asyncio
 async def test_bitget_missing_pong_closes_stream_for_reconnect(monkeypatch):
-    from aletheia.universe.fast_stream import BitgetFastMarketStream
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream
 
     class _Ws:
         closed = False
@@ -1751,8 +1757,8 @@ async def test_bitget_missing_pong_closes_stream_for_reconnect(monkeypatch):
     stream = BitgetFastMarketStream()
     stream._ws = _Ws()
     stream._pong_event = asyncio.Event()
-    monkeypatch.setattr("aletheia.universe.fast_stream.asyncio.sleep", _no_wait)
-    monkeypatch.setattr("aletheia.universe.fast_stream.asyncio.wait_for", _timeout)
+    monkeypatch.setattr("extensions.exchanges.bitget.fast_stream.asyncio.sleep", _no_wait)
+    monkeypatch.setattr("extensions.exchanges.bitget.fast_stream.asyncio.wait_for", _timeout)
     await stream._ping_loop()
     assert stream._ws.closed is True
     assert stream.health().reason == "fast_trigger_stream_pong_timeout:bitget"

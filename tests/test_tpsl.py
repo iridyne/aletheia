@@ -19,7 +19,7 @@ def _make_client():
 
     classic_v2 profile: exercises the /api/v2/ mix TPSL endpoints directly.
     """
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
     c = BitgetClient.__new__(BitgetClient)
     c._base = "https://api.bitget.com"
     c._headers = lambda method, path, body="": {}
@@ -46,7 +46,7 @@ async def test_place_tpsl_order_sends_correct_body():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.place_tpsl_order(
             symbol="BTCUSDT", plan_type="pos_loss",
             trigger_price=95000.0, hold_side="long", size=0.01,
@@ -78,7 +78,7 @@ async def test_cancel_plan_order_sends_correct_body():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.cancel_plan_order("BTCUSDT", "plan-456")
 
     assert result["cancelled"] is True
@@ -102,7 +102,7 @@ async def test_get_pending_plan_orders_returns_list():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_pending_plan_orders()
 
     assert len(result) == 2
@@ -136,7 +136,7 @@ async def test_get_plan_order_history_requests_profit_loss_and_exact_plan_id():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_plan_order_history(order_id="plan-123")
 
     query = parse_qs(urlparse(captured["url"]).query)
@@ -194,7 +194,7 @@ async def test_get_order_fills_queries_exact_order_and_paginates_completely():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_order_fills(
             order_id="exec-456",
             symbol="BTCUSDT",
@@ -236,7 +236,7 @@ async def test_get_order_fills_rejects_full_page_without_next_cursor():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         with pytest.raises(RuntimeError, match="pagination incomplete"):
             await client.get_order_fills(
                 order_id="exec-456",
@@ -266,7 +266,7 @@ async def test_get_order_fills_rejects_rows_for_another_order():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_order_fills(
             order_id="exec-456",
             symbol="BTCUSDT",
@@ -299,7 +299,7 @@ async def test_get_order_fills_uses_uta_v3_when_unified():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_order_fills(
             order_id="uta-1",
             symbol="XRPUSDT",
@@ -330,7 +330,7 @@ async def test_get_order_fills_uta_treats_null_list_as_empty():
     mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
     mock_httpx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.get_order_fills(
             order_id="uta-empty",
             symbol="XRPUSDT",
@@ -358,7 +358,7 @@ async def test_close_uta_position_requires_symbol_and_pos_side():
     with pytest.raises(ValueError, match="pos_side"):
         await client.close_uta_position(symbol="XRP/USDT", pos_side="both")
 
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
+    with patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
         result = await client.close_uta_position(symbol="XRP/USDT", pos_side="short")
 
     assert "/api/v3/trade/close-positions" in captured["url"]

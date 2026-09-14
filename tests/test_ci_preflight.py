@@ -23,7 +23,7 @@ D1 — CI / development workflow behavior change.
 def test_preflight_reuses_change_contract_reason_codes() -> None:
     failures = preflight.run_preflight(
         "## Contract Delta\n\nNONE\n",
-        ["aletheia/ci.py"],
+        ["core/aletheia/ci.py"],
     )
 
     assert failures == [{
@@ -45,14 +45,14 @@ def test_changed_files_vs_base_uses_merge_base_not_current_base_tip(monkeypatch)
         if args == ["git", "merge-base", "HEAD", "origin/master"]:
             return SimpleNamespace(stdout="merge-base-123\n")
         if args == ["git", "diff", "--name-only", "merge-base-123...HEAD", "--"]:
-            return SimpleNamespace(stdout="docs/ci/guide.md\naletheia/ci.py\n")
+            return SimpleNamespace(stdout="docs/ci/guide.md\ncore/aletheia/ci.py\n")
         raise AssertionError(f"unexpected git invocation: {args}")
 
     monkeypatch.setattr(preflight.subprocess, "run", fake_run)
 
     assert preflight.changed_files_vs_base("origin/master") == [
         "docs/ci/guide.md",
-        "aletheia/ci.py",
+        "core/aletheia/ci.py",
     ]
     assert calls == [
         ["git", "merge-base", "HEAD", "origin/master"],
@@ -82,7 +82,7 @@ def test_main_reports_bounded_json_and_nonzero_for_invalid_metadata(tmp_path, ca
     body_path.write_text("## Contract Delta\n\nNONE\n", encoding="utf-8")
 
     assert preflight.main([
-        "--pr-body-file", str(body_path), "--changed-files", "aletheia/ci.py",
+        "--pr-body-file", str(body_path), "--changed-files", "core/aletheia/ci.py",
     ]) == preflight.EXIT_FAIL
 
     report = json.loads(capsys.readouterr().out)
@@ -97,7 +97,7 @@ def test_main_accepts_valid_body_without_network_or_runtime(tmp_path, capsys) ->
     body_path.write_text(VALID_D1_BODY, encoding="utf-8")
 
     assert preflight.main([
-        "--pr-body-file", str(body_path), "--changed-files", "aletheia/ci.py", "--json",
+        "--pr-body-file", str(body_path), "--changed-files", "core/aletheia/ci.py", "--json",
     ]) == preflight.EXIT_PASS
 
     report = json.loads(capsys.readouterr().out)

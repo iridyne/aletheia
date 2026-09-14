@@ -554,14 +554,14 @@ error_factory,):
     "client_module,client_name,mode,market_type",
     [
         pytest.param(
-            "aletheia.exchanges.okx.client",
+            "extensions.exchanges.okx.client",
             "OKXClient",
             "demo",
             "spot",
             id="okx-client",
         ),
         pytest.param(
-            "aletheia.exchanges.binance.client",
+            "extensions.exchanges.binance.client",
             "BinanceClient",
             "testnet",
             "usdt_futures",
@@ -596,7 +596,7 @@ def test_ccxt_bad_response_wrapped_by_real_client_remains_ambiguous(
     with pytest.raises(RuntimeError) as captured:
         asyncio.run(client.place_order(request))
 
-    from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
+    from extensions.exchanges.submission_errors import is_ambiguous_submission_error
 
     assert isinstance(captured.value.__cause__, ccxt.BadResponse)
     assert is_ambiguous_submission_error(captured.value) is True
@@ -615,8 +615,8 @@ def test_bitget_client_exposes_ambiguous_create_order_response(
     status_code,
     readable,
 ):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import (
+    from extensions.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.submission_errors import (
         SubmissionResponseUnknownError,
     )
 
@@ -682,8 +682,8 @@ def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
     monkeypatch,
     payload,
 ):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import (
+    from extensions.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.submission_errors import (
         SubmissionResponseUnknownError,
     )
 
@@ -725,7 +725,7 @@ def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
 
 @pytest.mark.real_place_order
 def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch):
-    from aletheia.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.bitget import client as bitget_client
 
     class _Response:
         status_code = 400
@@ -773,8 +773,8 @@ def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch):
 def test_bitget_no_position_close_rejection_is_structured(
     monkeypatch, response_code,
 ):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from extensions.exchanges.bitget import client as bitget_client
+    from extensions.exchanges.submission_errors import ClosePositionAbsentError
 
     class _Response:
         status_code = 400

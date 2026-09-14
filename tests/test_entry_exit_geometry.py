@@ -25,6 +25,7 @@ def _evidence(monkeypatch, **row_overrides):
         opportunity_id="opportunity-1",
         symbol="BTC/USDT",
         market_type="spot",
+        execution_mode="bitget_demo",
         direction="long",
         order_type="limit",
         quantity=2.0,
@@ -455,8 +456,8 @@ def test_file_backed_chain_validation_and_audit_are_read_only(tmp_path, monkeypa
     conn.row_factory = sqlite3.Row
     monkeypatch.setattr(sq, "_db_conn", conn)
     run_migrations()
-    root = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0)
-    child = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="short", quantity=1.0)
+    root = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0, execution_mode="bitget_demo")
+    child = TradeProposal(symbol="ETH/USDT", market_type="spot", direction="short", quantity=1.0, execution_mode="bitget_demo")
     repo.insert_trade_proposal(root)
     repo.insert_trade_proposal(child)
     stored = repo.get_trade_proposal(child.id)
@@ -479,8 +480,8 @@ def test_file_backed_chain_validation_and_audit_are_read_only(tmp_path, monkeypa
 def test_chain_skips_only_leading_legacy_rows_and_requires_hashed_target(tmp_path, monkeypatch):
     import sqlite3
 
-    legacy = TradeProposal(id="legacy", symbol="OLD/USDT", market_type="spot", direction="long", quantity=1.0)
-    target = TradeProposal(id="target", symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0)
+    legacy = TradeProposal(id="legacy", symbol="OLD/USDT", market_type="spot", direction="long", quantity=1.0, execution_mode="bitget_demo")
+    target = TradeProposal(id="target", symbol="BTC/USDT", market_type="spot", direction="long", quantity=1.0, execution_mode="bitget_demo")
     target.commit_hash = repo._compute_proposal_hash(target)
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
@@ -496,7 +497,7 @@ def test_chain_skips_only_leading_legacy_rows_and_requires_hashed_target(tmp_pat
     assert geometry._validate_proposal_chain(target.model_dump(), db=db) is True
     db.execute("INSERT INTO trade_proposals SELECT * FROM trade_proposals WHERE id='legacy'")
     db.execute("UPDATE trade_proposals SET id='gap' WHERE rowid=(SELECT max(rowid) FROM trade_proposals)")
-    later = TradeProposal(id="later", symbol="ETH/USDT", market_type="spot", direction="long", quantity=1.0, parent_hash=target.commit_hash)
+    later = TradeProposal(id="later", symbol="ETH/USDT", market_type="spot", direction="long", quantity=1.0, parent_hash=target.commit_hash, execution_mode="bitget_demo")
     later.commit_hash = repo._compute_proposal_hash(later)
     insert(later)
     assert geometry._validate_proposal_chain(later.model_dump(), db=db) is False

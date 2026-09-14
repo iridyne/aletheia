@@ -35,7 +35,7 @@ def _payload(root: Path) -> Path:
     root.mkdir(parents=True)
     executable = root / "aletheia-core"
     _write_executable(executable, b"runtime")
-    dashboard = root / "aletheia" / "dashboard_static"
+    dashboard = root / "core" / "aletheia" / "dashboard_static"
     dashboard.mkdir(parents=True)
     (dashboard / "index.html").write_text("<html>Aletheia</html>", encoding="utf-8")
     (root / "release-manifest.json").write_text(
@@ -57,7 +57,7 @@ def _payload(root: Path) -> Path:
 
 
 def _host(root: Path) -> Path:
-    _write_executable(root / "aletheia")
+    _write_executable(root / "core" / "aletheia")
     _write_executable(root / "aletheia-tray")
     return root
 
@@ -96,7 +96,7 @@ def test_macos_app_is_menu_bar_only_and_contains_bootstrap_runtime(tmp_path):
 
     runtime = contents / "Resources" / "runtime" / "aletheia-core"
     assert (runtime / "aletheia-core").is_file()
-    assert (runtime / "aletheia" / "dashboard_static" / "index.html").is_file()
+    assert (runtime / "core" / "aletheia" / "dashboard_static" / "index.html").is_file()
     assert (contents / "Resources" / "update-public-key.pem").is_file()
     assert (contents / "Resources" / "update-feed-url.txt").is_file()
 

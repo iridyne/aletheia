@@ -34,6 +34,45 @@ def test_collector_health_keeps_one_durable_row_per_domain(collector_db):
     assert rows[0]["empty_results"] == 1
 
 
+@pytest.mark.parametrize("domain", ["defillama", "coingecko_top", "hyperliquid", "volume_scanner", "coinalyze", "macro"])
+async def test_absent_public_extension_cannot_leave_healthy_rollup(collector_db, monkeypatch, domain):
+    import time
+    from aletheia.agent_runtime import scheduler
+    from aletheia.data.collector_health import (
+        COLLECTOR_CADENCE_SEC, get_collector_health_report, record_collector_status,
+    )
+    from aletheia.storage.repositories import get_collector_health_state
+
+    for name in COLLECTOR_CADENCE_SEC:
+        record_collector_status(name, "success", tick=1)
+    monkeypatch.setattr(scheduler, "_defillama_collect", None)
+    monkeypatch.setattr(scheduler, "_coingecko_top_collect", None)
+    monkeypatch.setattr(scheduler, "_hyperliquid_collect", None)
+    monkeypatch.setattr(scheduler, "_volume_scanner_collect", None)
+    monkeypatch.setattr(scheduler, "_coinalyze_collect", None)
+    monkeypatch.setattr(scheduler, "_macro_collect", None)
+    token = scheduler._DC_HEALTH_TICK.set(2)
+    try:
+        coro = (scheduler._collect_defillama() if domain == "defillama"
+                else scheduler._collect_hyperliquid(["BTC/USDT"]) if domain == "hyperliquid"
+                else scheduler._collect_volume_scanner(["BTC/USDT"], 30) if domain == "volume_scanner"
+                else scheduler._collect_coinalyze(["BTC/USDT"]) if domain == "coinalyze"
+                else scheduler._collect_macro([]) if domain == "macro"
+                else scheduler._collect_coingecko_top(10))
+        assert await scheduler._bounded(coro, domain, 12, time.monotonic() + 20) is None
+    finally:
+        scheduler._DC_HEALTH_TICK.reset(token)
+
+    row = get_collector_health_state(domain)
+    assert row["last_status"] == "failed"
+    assert row["last_tick"] == 2
+    report = get_collector_health_report(connectivity_status={"state": "reachable"})
+    assert report["status"] == "attention"
+    failed = next(item for item in report["domains"] if item["domain"] == domain)
+    assert failed["display_severity"] == "warning"
+    assert failed["last_status"] == "failed"
+
+
 def test_three_consecutive_collector_problems_emit_one_operator_warning(
     collector_db, monkeypatch
 ):

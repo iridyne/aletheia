@@ -19,6 +19,23 @@ ACCOUNT = UTAAccountIdentity(
     credential_generation=1, adapter_implementation="CCXTUTAAdapter", adapter_version="1",
 )
 
+
+def test_reconciliation_does_not_encode_symbols_for_a_concrete_venue():
+    import ast
+    import inspect
+    from aletheia.execution import reconciliation
+
+    tree = ast.parse(inspect.getsource(reconciliation))
+    imports = {
+        alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+    assert not imports.intersection({"to_bitget", "to_binance"})
+    assert not hasattr(reconciliation, "resolve_orders_missing_from_exchange")
+    assert not hasattr(reconciliation._UTAReconciliationProjection, "_order_row")
+    assert not hasattr(reconciliation._UTAReconciliationProjection, "get_order_detail_by_client_oid")
+
+
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
@@ -34,6 +51,74 @@ def setup_env(tmp_path, monkeypatch):
     registry = UTARegistry()
     registry.register(UTAAdapterConfig(identity=ACCOUNT), lambda _config: None)
     monkeypatch.setattr("aletheia.execution.reconciliation.build_uta_registry", lambda: registry)
+
+
+@pytest.mark.parametrize("source,evidence", [
+    ("open", "one"), ("open", "ambiguous"), ("open", "wrong_instrument"),
+    ("detail", "one"), ("detail", "wrong_instrument"), ("detail", "wrong_market"),
+])
+def test_order_identity_recovery_consumes_typed_orders(tmp_path, monkeypatch, source, evidence):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation as recon
+    from aletheia.uta.compat import instrument_from_local
+    from aletheia.uta.models import FillListReport, OrderListReport, OrderQueryReport, OrderStatusReport
+    from datetime import datetime, timezone
+
+    order = Order(
+        source="adopted", symbol="BTC/USDT",
+        market_type="usdt_futures" if source == "detail" else "spot",
+        direction="long", order_type="market", quantity=0.001, price=60000,
+        execution_mode=ACCOUNT.execution_mode, uta_account_identity_json=ACCOUNT.model_dump_json(),
+        client_order_id="recover-cid", status="submission_unknown",
+    )
+    repo.insert_order(order)
+    events = []
+
+    async def query(mode, method, request, *, expected_account):
+        assert expected_account == ACCOUNT
+        now = datetime.now(timezone.utc)
+        envelope = dict(identity=ACCOUNT, completeness="complete", scope=request.scope,
+                        received_at=now, profile_version="1")
+        if method == "get_fills":
+            return FillListReport(**envelope)
+        if method == "get_open_orders" and source == "detail":
+            return OrderListReport(**envelope)
+        assert method in {"get_open_orders", "get_order"}
+        symbols = ["ETH/USDT"] if evidence == "wrong_instrument" else ["BTC/USDT"]
+        if evidence == "ambiguous":
+            symbols *= 2
+        orders = tuple(
+            OrderStatusReport(
+                identity=ACCOUNT, instrument=instrument_from_local(
+                    symbol, "spot" if evidence == "wrong_market" else order.market_type,
+                ),
+                client_order_id=order.client_order_id, venue_order_id=f"EX-open-{index}",
+                side="buy", order_type="market", original_quantity="0.001",
+                filled_quantity="0", state="open", received_at=now,
+            ) for index, symbol in enumerate(symbols)
+        )
+        if method == "get_order":
+            assert request.client_order_id == order.client_order_id
+            assert request.scope.start_at is not None
+            return OrderQueryReport(**envelope, found=orders[0])
+        return OrderListReport(**envelope, orders=orders)
+
+    monkeypatch.setattr(recon, "query_uta", query)
+    monkeypatch.setattr(recon, "_write_reconcile_event", lambda row, **kwargs: events.append(kwargs))
+    result = recon.reconcile()
+    stored = repo.get_order(order.id)
+    assert stored["status"] == "submission_unknown"
+    assert result["filled"] == 0
+    assert repo.get_db().execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
+    if evidence == "one":
+        assert stored["exchange_order_id"] == "EX-open-0"
+        assert result["inconclusive"] == (0 if source == "open" else 1)
+    else:
+        assert stored["exchange_order_id"] is None
+        assert result["inconclusive"] == 1
+        reason = "client_order_identity_ambiguous" if evidence == "ambiguous" else "client_order_instrument_mismatch"
+        assert events[-1]["reason"] == reason
+
 
 def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
     from aletheia.execution import reconciliation as recon
@@ -58,7 +143,18 @@ def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
         return rows
 
     async def fake_open_orders(self, market_type="spot"):
-        return [{"orderId": oid} for oid in open_ids]
+        from datetime import datetime, timezone
+        from aletheia.uta.compat import instrument_from_local
+        from aletheia.uta.models import OrderStatusReport
+        return [
+            OrderStatusReport(
+                identity=ACCOUNT, instrument=instrument_from_local("BTC/USDT", market_type),
+                venue_order_id=oid, side="buy", order_type="market",
+                original_quantity="0.001", filled_quantity="0", state="open",
+                received_at=datetime.now(timezone.utc),
+            )
+            for oid in open_ids
+        ]
 
     async def fake_fills(self, symbol=None, market_type="spot", start_at=None):
         return typed_rows(market_type)
@@ -75,6 +171,61 @@ def _patch_open_orders(monkeypatch, open_ids, fill_rows=()):
         "get_order_fills",
         fake_order_fills,
     )
+
+
+@pytest.mark.parametrize("mode", ["bitget_live_limited", "okx_demo"])
+@pytest.mark.parametrize("is_close", [False, True])
+@pytest.mark.parametrize("failure", ["integrity", "value", "storage"])
+def test_shared_materialization_failure_records_one_safe_outcome(
+    tmp_path, monkeypatch, caplog, mode, is_close, failure,
+):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.execution import reconciliation as recon
+    from aletheia.execution.exchange_materialization import MaterializationIntegrityError
+
+    order = Order(
+        source="adopted", symbol="BTC/USDT", market_type="spot",
+        direction="long", order_type="market", quantity=0.001, price=60000,
+        execution_mode=mode, status="submitted", exchange_order_id="EX-failure",
+    )
+    repo.insert_order(order)
+    stored = repo.get_order(order.id)
+    events = []
+    calls = []
+    marker = "fixture_failure_payload_must_not_escape"
+    error = {
+        "integrity": MaterializationIntegrityError,
+        "value": ValueError,
+        "storage": sqlite3.OperationalError,
+    }[failure]
+
+    def fail(order_id, rows, **kwargs):
+        calls.append((order_id, rows, kwargs))
+        raise error(marker)
+
+    monkeypatch.setattr(
+        recon, "materialize_bitget_close" if is_close else "materialize_bitget_entry", fail,
+    )
+    monkeypatch.setattr(recon, "_write_reconcile_event", lambda row, **kwargs: events.append(kwargs))
+    errors = []
+    ledger = {"status": "fixture"}
+    assert recon._materialize_reconciled_order(
+        stored, [], is_close_order=is_close, funding_ledger=ledger, errors=errors,
+    ) is None
+    assert calls == [(order.id, [], {"funding_ledger": ledger} if is_close else {})]
+    updated = repo.get_order(order.id)
+    if failure == "storage":
+        assert updated["status"] == "materialization_missing"
+        assert updated["error_reason"] == "exchange_fill_local_materialization_missing"
+        assert events == [{"state": "materialization_missing", "reason": "local_materialization_failed"}]
+        assert errors == [f"{mode}/spot: local materialization failed"]
+    else:
+        assert updated == stored
+        assert events == [{"state": "submitted", "reason": "local_materialization_rejected"}]
+        assert errors == [f"{mode}/spot: local materialization rejected"]
+    assert marker not in caplog.text
+    assert marker not in str(errors)
+    assert repo.get_db().execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 0
 
 
 def test_submitted_order_no_longer_open_marked_filled(tmp_path, monkeypatch):
@@ -360,7 +511,13 @@ def test_reconciliation_scans_all_unresolved_orders_without_fixed_limit(
 
     assert result["checked"] == 501
 
-@pytest.mark.parametrize("stored_identity", [None, ACCOUNT.model_copy(update={"credential_generation": 0}).model_dump_json()])
+@pytest.mark.parametrize("stored_identity", [
+    None,
+    ACCOUNT.model_copy(update={"credential_generation": 0}).model_dump_json(),
+    ACCOUNT.model_copy(update={"account_id": "another-account"}).model_dump_json(),
+    ACCOUNT.model_copy(update={"profile": "another-profile"}).model_dump_json(),
+    ACCOUNT.model_copy(update={"adapter_version": "older"}).model_dump_json(),
+])
 def test_unmapped_or_changed_account_preserves_order_without_private_reads(tmp_path, monkeypatch, stored_identity):
     setup_env(tmp_path, monkeypatch)
     from aletheia.execution import reconciliation as recon

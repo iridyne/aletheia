@@ -131,7 +131,9 @@ async def test_portfolio_agent_returns_current_snapshot_as_output_artifact(monke
     monkeypatch.setattr(
         pnl,
         "compute_and_store_snapshot",
-        lambda **_kwargs: PortfolioSnapshot(id="snapshot-current", total_value_usdt=100.0),
+        lambda **_kwargs: PortfolioSnapshot(
+            id="snapshot-current", total_value_usdt=100.0, execution_mode="bitget_demo",
+        ),
     )
     init_tool_registry()
 

@@ -26,6 +26,138 @@ from fastapi.testclient import TestClient
 # Event Triggers POST — dead fields must be rejected (extra="forbid")
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("tickers, expected", [([], []), ([" nvda ", "NVDA"], ["NVDA"])])
+def test_equity_save_retires_legacy_list_and_empty_disables_observer(monkeypatch, tickers, expected):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import settings
+    from aletheia.agent_runtime import scheduler
+
+    cfg = AletheiaConfig()
+    cfg.market_data.observed_equities = ["AAPL"]
+    cfg.runtime.paused = False
+    tokens = list(cfg.market_data.observed_stock_tokens)
+    saved, audits = [], []
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    def mutate(change):
+        if change(cfg):
+            saved.append(cfg)
+        return True
+    monkeypatch.setattr(settings, "mutate_config", mutate)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", audits.append)
+    result = settings.update_observed_equities(settings.EquitiesConfigUpdate(tickers=tickers))
+    assert result == {"observed_equities": expected}
+    assert cfg.market_data.observed_equities == expected
+    assert not hasattr(cfg.market_data, "observed_stocks")
+    assert cfg.market_data.observed_stock_tokens == tokens
+    assert saved == [cfg]
+    assert audits[0]["before"] == {"observed_equities": ["AAPL"]}
+    assert audits[0]["after"] == {"observed_equities": expected}
+    if not expected:
+        monkeypatch.setattr(scheduler, "load_config", lambda: cfg)
+        def forbidden(*args, **kwargs):
+            raise AssertionError("cleared equities must not run the old stock list")
+        monkeypatch.setattr(scheduler, "_run_async_with_timeout", forbidden)
+        scheduler._run_equity_observer()
+
+
+@pytest.mark.parametrize("canonical", [None, [], ["AAPL"]])
+def test_legacy_equities_decode_has_no_runtime_alias(canonical):
+    from aletheia.config.schema import MarketDataConfig
+
+    raw = {"observed_stocks": ["TSLA"]}
+    if canonical is not None:
+        raw["observed_equities"] = canonical
+    cfg = MarketDataConfig.model_validate(raw, extra="forbid")
+    assert cfg.observed_equities == (canonical or ["TSLA"])
+    assert raw["observed_stocks"] == ["TSLA"]
+    assert not hasattr(cfg, "observed_stocks")
+    assert "observed_stocks" not in cfg.model_dump()
+    cfg.observed_equities = []
+    assert MarketDataConfig.model_validate(cfg.model_dump()).observed_equities == []
+
+
+@pytest.mark.parametrize("legacy", [None, "TSLA", [1]])
+def test_legacy_equities_decode_rejects_malformed_ignored_list(legacy):
+    from pydantic import ValidationError
+    from aletheia.config.schema import MarketDataConfig
+
+    with pytest.raises(ValidationError):
+        MarketDataConfig.model_validate({"observed_equities": ["AAPL"], "observed_stocks": legacy})
+
+
+@pytest.mark.parametrize("field", ["observed_stocks", "observed_xstocks", "observed_equities"])
+def test_market_data_rejects_retired_stock_list_before_config_access(monkeypatch, field):
+    from fastapi import FastAPI
+    from aletheia.server.routes import settings
+
+    def forbidden():
+        raise AssertionError("retired request field must fail before config access")
+
+    monkeypatch.setattr(settings, "load_config", forbidden)
+    app = FastAPI()
+    app.include_router(settings.router)
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/api/settings/market-data", json={field: ["TSLA"]})
+    assert response.status_code == 422
+    errors = response.json()["detail"]
+    assert any(error["loc"] == ["body", field] and error["type"] == "extra_forbidden"
+               for error in errors)
+
+
+@pytest.mark.parametrize("tokens", [None, [], ["rNVDA/USDT"]])
+def test_legacy_tokens_decode_preserves_defaults_merge_and_clear(tokens):
+    from aletheia.config.schema import MarketDataConfig
+
+    raw = {"observed_xstocks": ["TSLAON/USDT", "TSLAON/USDT"]}
+    if tokens is not None:
+        raw["observed_stock_tokens"] = tokens
+    base = MarketDataConfig().observed_stock_tokens if tokens is None else tokens
+    cfg = MarketDataConfig.model_validate(raw, extra="forbid")
+    assert cfg.observed_stock_tokens == list(dict.fromkeys(base + raw["observed_xstocks"]))
+    assert raw["observed_xstocks"] == ["TSLAON/USDT", "TSLAON/USDT"]
+    assert not hasattr(cfg, "observed_xstocks")
+    assert "observed_xstocks" not in cfg.model_dump()
+    cfg.observed_stock_tokens = []
+    assert MarketDataConfig.model_validate(cfg.model_dump()).observed_stock_tokens == []
+
+
+@pytest.mark.parametrize("legacy", [None, "TSLAON/USDT", [1]])
+def test_legacy_tokens_decode_rejects_malformed_list(legacy):
+    from pydantic import ValidationError
+    from aletheia.config.schema import MarketDataConfig
+
+    with pytest.raises(ValidationError):
+        MarketDataConfig.model_validate({"observed_xstocks": legacy})
+
+
+@pytest.mark.parametrize("tokens", [None, [], ["rNVDA/USDT"]])
+def test_canonical_token_save_replaces_decoded_legacy_only_when_explicit(monkeypatch, tokens):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import settings
+    from aletheia.trading.instruments import stock_tokens_from_config
+
+    cfg = AletheiaConfig()
+    cfg.market_data = type(cfg.market_data).model_validate({
+        "observed_stock_tokens": ["rAAPL/USDT"], "observed_xstocks": ["TSLAON/USDT"]})
+    audits, mutations = [], []
+    monkeypatch.setattr(settings, "load_config", lambda: cfg)
+    def mutate(change):
+        mutations.append(change(cfg))
+    monkeypatch.setattr(settings, "_mutate_config_with_candidate_publication_permit", mutate)
+    monkeypatch.setattr("aletheia.files.jsonl.write_audit", audits.append)
+    body = {"observed_stock_tokens": tokens} if tokens is not None else {"ohlcv_cache_ttl_min": 12}
+    settings.update_market_data_config(settings.MarketDataConfigUpdate(**body))
+    assert mutations == [True]
+    assert audits[0]["before"]["observed_stock_tokens"] == ["rAAPL/USDT", "TSLAON/USDT"]
+    assert not hasattr(cfg.market_data, "observed_xstocks")
+    if tokens is None:
+        assert cfg.market_data.observed_stock_tokens == ["rAAPL/USDT", "TSLAON/USDT"]
+    else:
+        assert cfg.market_data.observed_stock_tokens == tokens
+        assert [item.symbol for item in stock_tokens_from_config(cfg)] == (["RNVDA/USDT"] if tokens else [])
+        assert "observed_xstocks" not in audits[0]["after"]
+
+
 @pytest.fixture()
 def event_trigger_app():
     from aletheia.server.routes import settings as settings_mod
@@ -96,7 +228,7 @@ def test_strategy_factory_shell_is_gone():
     )
 
     root = pathlib.Path(__file__).parent.parent
-    for relative in ("aletheia/config/schema.py", "aletheia/server/routes/settings.py"):
+    for relative in ("core/aletheia/config/schema.py", "core/aletheia/server/routes/settings.py"):
         source = (root / relative).read_text(encoding="utf-8")
         assert "StrategyFactory" not in source, (
             f"{relative} references the removed Strategy Factory shell"
@@ -106,7 +238,7 @@ def test_strategy_factory_shell_is_gone():
         )
 
     # And the route itself must not come back under any decorator form.
-    settings_src = (root / "aletheia/server/routes/settings.py").read_text(encoding="utf-8")
+    settings_src = (root / "core/aletheia/server/routes/settings.py").read_text(encoding="utf-8")
     tree = ast.parse(settings_src)
     routes = {
         arg.value

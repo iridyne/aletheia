@@ -463,7 +463,7 @@ class _FakeHttpResponse:
 
 @pytest.mark.asyncio
 async def test_openai_compatible_sends_json_object_response_format(monkeypatch):
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     payloads = []
 
@@ -496,7 +496,7 @@ async def test_openai_compatible_sends_json_object_response_format(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     payloads = []
     schema = {
@@ -544,7 +544,7 @@ async def test_openai_compatible_sends_strict_json_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_responses_preserves_strict_json_schema(monkeypatch):
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     payloads = []
 
@@ -603,7 +603,7 @@ async def test_openai_compatible_responses_preserves_strict_json_schema(monkeypa
 
 @pytest.mark.asyncio
 async def test_anthropic_compatible_sends_strict_json_schema(monkeypatch):
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 
     payloads = []
     schema = {
@@ -645,7 +645,7 @@ async def test_anthropic_compatible_sends_strict_json_schema(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_retries_without_json_object_when_unsupported(monkeypatch):
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     payloads = []
 
@@ -689,7 +689,7 @@ async def test_openai_compatible_retries_without_json_object_when_unsupported(mo
 
 @pytest.mark.asyncio
 async def test_openai_compatible_retries_without_json_schema_when_unsupported(monkeypatch):
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     payloads = []
     schema = {

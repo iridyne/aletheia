@@ -1,6 +1,7 @@
 """Tests for secrets handling and redaction."""
 
 import os
+import hashlib
 import stat
 from unittest.mock import patch
 import pytest  # pyright: ignore[reportMissingImports]
@@ -12,6 +13,88 @@ from aletheia.config.secrets import (
     redact,
     set_secret,
 )
+
+
+@pytest.mark.parametrize("primary,fallback,provided,expected", [
+    (None, None, "", None),
+    ("", "fallback", "fallback", True),
+    ("primary", "fallback", "primary", True),
+    ("primary", "fallback", "fallback", False),
+    ("primary", None, "wrong", False),
+    ("primary", None, "", False),
+    ("primary", None, "é", False),
+])
+def test_remote_control_verification_keeps_credentials_inside_store(
+    monkeypatch, primary, fallback, provided, expected,
+):
+    from aletheia.config import secrets
+
+    reads = []
+    def read(key):
+        reads.append(key)
+        return {"remote_control_api_token": primary, "tunnel_api_token": fallback}[key]
+    monkeypatch.setattr(secrets, "get_secret", read)
+    assert secrets.verify_remote_control_token(provided) is expected
+    assert reads == (["remote_control_api_token"] if primary else
+                     ["remote_control_api_token", "tunnel_api_token"])
+
+
+@pytest.mark.parametrize("value,expected", [
+    (None, {"configured": False, "last4": None}),
+    ("", {"configured": False, "last4": None}),
+    ("abc", {"configured": True, "last4": None}),
+    ("fixture-1234", {"configured": True, "last4": "1234"}),
+])
+def test_secret_status_reads_only_requested_reference(monkeypatch, value, expected):
+    from aletheia.config import secrets
+
+    reads = []
+    def read(ref):
+        reads.append(ref)
+        return value
+
+    monkeypatch.setattr(secrets, "get_secret", read)
+    assert secrets.get_secret_status("model.profile.fixture.api_key") == expected
+    assert reads == ["model.profile.fixture.api_key"]
+
+
+@pytest.mark.parametrize("previous", [None, "", "previous-fixture"])
+@pytest.mark.parametrize("fail", [False, True])
+def test_secret_rollback_keeps_old_value_inside_store(monkeypatch, previous, fail):
+    from aletheia.config import secrets
+
+    values = {} if previous is None else {"owned-ref": previous}
+    monkeypatch.setattr(secrets, "get_secret", values.get)
+    monkeypatch.setattr(secrets, "set_secret", values.__setitem__)
+    monkeypatch.setattr(secrets, "delete_secret", lambda key: values.pop(key, None))
+    try:
+        with secrets.restore_secret_on_error("owned-ref") as exposed:
+            assert exposed is None
+            secrets.set_secret("owned-ref", "replacement-fixture")
+            if fail:
+                raise RuntimeError("config write failed")
+    except RuntimeError:
+        assert fail
+    else:
+        assert not fail
+    expected = ({} if previous is None else {"owned-ref": previous}) if fail else {"owned-ref": "replacement-fixture"}
+    assert values == expected
+
+
+def test_secret_fingerprint_reads_only_requested_reference(monkeypatch):
+    from aletheia.config import secrets
+
+    reads = []
+    def read(ref):
+        reads.append(ref)
+        return "fixture-key"
+
+    monkeypatch.setattr(secrets, "get_secret", read)
+    digest = secrets.get_secret_fingerprint("model.profile.fixture.api_key")
+    assert reads == ["model.profile.fixture.api_key"]
+    assert digest == hashlib.sha256(b"fixture-key").hexdigest()
+    assert secrets.secret_fingerprint(None) is None
+    assert secrets.secret_fingerprint("") is None
 
 
 @pytest.mark.parametrize(

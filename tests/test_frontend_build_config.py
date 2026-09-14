@@ -16,7 +16,7 @@ def test_vite_build_empties_output_dir():
 
 def test_dashboard_build_artifacts_are_not_tracked():
     tracked = subprocess.check_output(
-        ["git", "ls-files", "--", "aletheia/dashboard_static"], text=True
+        ["git", "ls-files", "--", "core/aletheia/dashboard_static"], text=True
     )
     assert tracked == ""
 

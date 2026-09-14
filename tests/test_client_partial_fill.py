@@ -32,13 +32,13 @@ def _no_sleep():
 
 
 def _okx_client():
-    from aletheia.exchanges.okx.client import OKXClient
-    with patch("aletheia.exchanges.okx.client.get_secret", return_value="x"):
+    from extensions.exchanges.okx.client import OKXClient
+    with patch("extensions.exchanges.okx.client.get_secret", return_value="x"):
         return OKXClient(mode="demo")
 
 
 def _okx_order(order_type="market"):
-    from aletheia.exchanges.okx.client import OrderRequest
+    from extensions.exchanges.okx.client import OrderRequest
     return OrderRequest(
         symbol="BTC/USDT", market_type="usdt_futures", side="buy",
         order_type=order_type, quantity=1.0,
@@ -48,7 +48,7 @@ def _okx_order(order_type="market"):
 
 async def _run_okx(create_resp, fetch_resp=None):
     """Drive OKXClient.place_order with a mocked ccxt exchange + contract_size=1."""
-    from aletheia.exchanges.okx.client import OKXClient
+    from extensions.exchanges.okx.client import OKXClient
 
     client = _okx_client()
     fake_ex = MagicMock()
@@ -90,13 +90,13 @@ async def test_okx_unfilled_does_not_fabricate():
 
 
 def _binance_client():
-    from aletheia.exchanges.binance.client import BinanceClient
-    with patch("aletheia.exchanges.binance.client.get_secret", return_value="x"):
+    from extensions.exchanges.binance.client import BinanceClient
+    with patch("extensions.exchanges.binance.client.get_secret", return_value="x"):
         return BinanceClient(mode="testnet")
 
 
 def _binance_order(order_type="market"):
-    from aletheia.exchanges.binance.client import OrderRequest
+    from extensions.exchanges.binance.client import OrderRequest
     return OrderRequest(
         symbol="BTC/USDT", market_type="usdt_futures", side="buy",
         order_type=order_type, quantity=1.0,

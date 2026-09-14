@@ -70,7 +70,7 @@ def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(m
 
     monkeypatch.setattr("aletheia.model_provider.router.get_provider", forbidden)
     monkeypatch.setattr("aletheia.model_provider.router.load_config", forbidden)
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret_fingerprint", forbidden)
     cfg = AletheiaConfig()
     cfg.runtime.scheduler_enabled = True
     cfg.models.providers["task"] = ProviderConfig(
@@ -110,7 +110,7 @@ def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(m
 def test_demo_credential_diagnostic_requires_complete_scoped_account(monkeypatch):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.diagnostics.config_consistency import _check_demo_credentials
-    from aletheia.uta import manager
+    from extensions.exchanges import composition as extension_manager
 
     cfg = AletheiaConfig()
     cfg.exchange.mode = "demo"
@@ -121,8 +121,9 @@ def test_demo_credential_diagnostic_requires_complete_scoped_account(monkeypatch
         assert key.startswith("bitget.demo."), "unrelated credentials requested"
         return credentials.get(key.rsplit(".", 1)[1])
 
-    monkeypatch.setattr(manager, "get_secret", scoped_secret)
-    monkeypatch.setattr(manager, "get_credential_generation", lambda _scope: 0)
+    monkeypatch.setattr(extension_manager, "get_secret", scoped_secret)
+    monkeypatch.setattr(extension_manager, "get_credential_generation", lambda _scope: 0)
+    monkeypatch.setattr("aletheia.uta.manager.build_uta_registry", extension_manager.build_uta_registry)
     finding = _check_demo_credentials(cfg)
     assert finding is not None and finding.severity == "warning"
     credentials.update(api_secret="synthetic", passphrase="synthetic")

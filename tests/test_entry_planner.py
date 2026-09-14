@@ -22,9 +22,15 @@ from aletheia.trading.entry_analysis import EntryHypothesis
 
 
 @pytest.fixture(autouse=True)
-def _bitget_market_data_authority(_inmemory_db):
+def _bitget_market_data_authority(_inmemory_db, monkeypatch):
     """Exercise Planner stages under the supported Bitget Demo / Full route."""
     from aletheia.config.loader import load_config, save_config
+    from aletheia.universe import fast_stream
+    from extensions.exchanges.bitget.fast_stream import BitgetFastMarketStream
+
+    monkeypatch.setattr(fast_stream, "_FAST_STREAM_ADAPTERS", {
+        "bitget_demo": (BitgetFastMarketStream, frozenset({"spot", "perp", "futures", "swap", "usdt_futures"})),
+    })
 
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "bitget"
@@ -1289,6 +1295,19 @@ def test_expired_planning_claim_is_recovered_after_restart():
     assert repo.claim_next_candidate_planning("early", now=start) is None
     recovered = repo.claim_next_candidate_planning("new-process", now=start + timedelta(seconds=2))
     assert recovered and recovered["owner_token"] == "new-process"
+    plan = _plan(generation)
+    before = repo.get_candidate_planning_generation(generation["id"])
+    assert not repo.bind_candidate_planner_input(
+        generation["id"], "dead-process", before["planner_input_json"], before["planner_input_hash"],
+    )
+    assert not repo.release_candidate_planning_claim(
+        generation["id"], "dead-process", "late cancellation", now=start + timedelta(seconds=2),
+    )
+    assert repo.complete_candidate_planning_with_plan(
+        generation["id"], "dead-process", plan, now=start + timedelta(seconds=2),
+    ) == ("claim_lost", None)
+    assert repo.get_entry_plan(plan.plan_id) is None
+    assert repo.get_candidate_planning_generation(generation["id"]) == before
 
 
 def test_retry_backoff_is_not_reported_as_immediate_planning_work():
@@ -1486,7 +1505,8 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
 
 @pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout", "load", "fetch", "invalid", "persistence"])
 def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book, caplog):
-    from aletheia.data.collectors.microstructure import MicrostructureCollector, _parse_orderbook
+    from extensions.exchanges.ccxt.orderbook import MicrostructureCollector
+    from aletheia.data.orderbook import parse_orderbook as _parse_orderbook
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
@@ -1662,7 +1682,7 @@ def test_real_task_cancellation_is_shielded_and_dispatch_retries_are_bounded(mon
                 entered.set()
                 await asyncio.Event().wait()
             if phase == "prefetch":
-                monkeypatch.setattr("aletheia.data.collectors.microstructure.MicrostructureCollector.collect", wait_for_cancel)
+                monkeypatch.setattr("extensions.exchanges.ccxt.orderbook.MicrostructureCollector.collect", wait_for_cancel)
             task = asyncio.create_task(plan_next_candidate(wait_for_cancel))
             await asyncio.wait_for(entered.wait(), timeout=1)
             task.cancel()
@@ -1723,7 +1743,7 @@ def test_system_planner_repairs_identity_without_rewriting(monkeypatch, field, w
 
 @pytest.mark.parametrize("bad_book", ["wide", "thin"])
 def test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, bad_book):
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from aletheia.data.orderbook import parse_orderbook as _parse_orderbook
     from aletheia.data.providers import Candle
     from aletheia.trading.entry_plan_compiler import require_entry_market_quality
     from aletheia.config.loader import load_config

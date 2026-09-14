@@ -118,19 +118,19 @@ def test_invalid_sdd_depth_value_fails() -> None:
 
 
 def test_structured_check_exposes_bounded_reason_codes_without_changing_messages() -> None:
-    failures = checker.structured_check_pr(MISSING_SDD_DEPTH, ["aletheia/core.py"])
+    failures = checker.structured_check_pr(MISSING_SDD_DEPTH, ["core/aletheia/core.py"])
 
     assert failures == [{
         "code": "missing_sdd_depth",
         "message": "Missing required section: ## SDD Depth",
     }]
-    assert check_pr_description(MISSING_SDD_DEPTH, ["aletheia/core.py"]) == [
+    assert check_pr_description(MISSING_SDD_DEPTH, ["core/aletheia/core.py"]) == [
         failures[0]["message"],
     ]
 
 
 def test_release_please_text_does_not_exempt_a_normal_pr() -> None:
-    failures = check_pr_description(RELEASE_PLEASE_PR, ["aletheia/core.py"])
+    failures = check_pr_description(RELEASE_PLEASE_PR, ["core/aletheia/core.py"])
     assert failures
 
 
@@ -186,7 +186,7 @@ def test_main_does_not_exempt_release_text_without_trusted_identity(
     event_path.write_text(json.dumps(event), encoding="utf-8")
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
-    monkeypatch.setattr(checker, "_changed_files_from_checkout", lambda: ["aletheia/core.py"])
+    monkeypatch.setattr(checker, "_changed_files_from_checkout", lambda: ["core/aletheia/core.py"])
 
     assert checker.main() == 1
 
@@ -203,7 +203,7 @@ def test_main_rejects_null_body_deterministically(
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
     monkeypatch.setattr(
-        checker, "_changed_files_from_checkout", lambda: ["aletheia/core.py"]
+        checker, "_changed_files_from_checkout", lambda: ["core/aletheia/core.py"]
     )
 
     assert checker.main() == 1
@@ -224,7 +224,7 @@ def test_github_template_only_pr_is_exempt() -> None:
 def test_mixed_exempt_and_code_requires_contract() -> None:
     """If any non-exempt file is touched, the full check applies."""
     failures = check_pr_description(
-        MISSING_SDD_DEPTH, ["docs/governance/policy.md", "aletheia/core.py"]
+        MISSING_SDD_DEPTH, ["docs/governance/policy.md", "core/aletheia/core.py"]
     )
     assert failures
 
@@ -321,7 +321,7 @@ def test_main_prefers_current_pr_body_file_over_stale_event_body(
     monkeypatch.setattr(
         checker,
         "_changed_files_from_checkout",
-        lambda: ["aletheia/core.py"],
+        lambda: ["core/aletheia/core.py"],
     )
 
     assert checker.main() == 0

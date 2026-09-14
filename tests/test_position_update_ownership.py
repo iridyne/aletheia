@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -45,11 +46,12 @@ def test_position_field_owners_reject_foreign_fields_and_stale_state():
 
 
 def test_production_has_no_generic_position_update_entrypoint():
-    root = Path(__file__).parents[1] / "aletheia"
+    root = Path(__file__).parents[1]
     offenders = []
-    for source in root.rglob("*.py"):
-        if "update_position(" in source.read_text(encoding="utf-8"):
-            offenders.append(str(source.relative_to(root)))
+    for domain in (root / "core" / "aletheia", root / "extensions"):
+        for source in domain.rglob("*.py"):
+            if "update_position(" in source.read_text(encoding="utf-8"):
+                offenders.append(str(source.relative_to(root)))
     assert offenders == []
 
 
@@ -62,16 +64,6 @@ _RAW_POSITION_UPDATE_ALLOWED = {
     "storage/migrations.py",
     # Hosts the owners themselves, including _update_owned_position_fields.
     "storage/repositories.py",
-    # One-shot remediation batch (REMEDIATION_BATCH_ID). Its idempotence key is
-    # `outcome_semantics_version IS NULL`, not a status CAS, and routing it
-    # through the settlement owner would mean permanently widening that owner's
-    # whitelist by close_category + outcome_semantics_version to accommodate a
-    # migration-shaped job. Keep the raw statement and the narrower authority.
-    "maintenance/outcome_integrity.py",
-    # Owner-approved #3111 fixed-target recovery: exact before-state comparison,
-    # private evidence validation and atomic audit idempotency; never a runtime caller.
-    # Do not widen the ordinary Position field owners for this historical repair.
-    "maintenance/repair_doge_adoption_overlap.py",
 }
 
 
@@ -82,12 +74,21 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
     CAS and PositionClaimConflict rowcount check. Current writes stay with
     the explicit owners below.
     """
-    root = Path(__file__).parents[1] / "aletheia"
+    root = Path(__file__).parents[1]
     offenders = sorted(
         str(source.relative_to(root))
-        for source in root.rglob("*.py")
-        if "UPDATE positions" in source.read_text(encoding="utf-8")
-        and str(source.relative_to(root)) not in _RAW_POSITION_UPDATE_ALLOWED
+        for domain in (root / "core" / "aletheia", root / "extensions", root / "ops")
+        for source in domain.rglob("*.py")
+        if re.search(r"\bUPDATE\s+positions\b", source.read_text(encoding="utf-8"), re.IGNORECASE)
+        and str(source.relative_to(root)) not in {
+            f"core/aletheia/{owner}" for owner in _RAW_POSITION_UPDATE_ALLOWED
+        # Fixed-target #3111 recovery retains its before-state, private-evidence
+        # and atomic audit guards; relocation grants no generic Ops writer.
+        } | {
+            "ops/maintenance/repair_doge_adoption_overlap.py",
+            # Version-null classification only; never final money settlement.
+            "ops/maintenance/outcome_integrity.py",
+        }
     )
     assert offenders == [], (
         f"raw `UPDATE positions` outside the owning modules: {offenders}. "
@@ -97,17 +98,30 @@ def test_raw_position_updates_are_confined_to_the_owning_modules():
     )
 
 
-def test_fixed_target_historical_repair_is_not_imported_by_production():
+@pytest.mark.parametrize("domain", ("core/aletheia", "extensions", "ops"))
+@pytest.mark.parametrize("sql", ("UPDATE positions SET", "update\npositions SET"))
+def test_raw_position_guard_detects_all_domains(tmp_path, monkeypatch, domain, sql):
+    source = tmp_path / domain / "foreign_writer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(f'SQL = """{sql}"""\n', encoding="utf-8")
+    monkeypatch.setitem(globals(), "__file__", str(tmp_path / "tests" / "ownership.py"))
+    with pytest.raises(AssertionError, match="foreign_writer.py"):
+        test_raw_position_updates_are_confined_to_the_owning_modules()
+
+
+@pytest.mark.parametrize("module", ("repair_doge_adoption_overlap", "repair_administrative_close", "data_retention_backfill"))
+def test_historical_repairs_are_not_imported_by_production(module):
     import ast
 
-    root = Path(__file__).parents[1] / "aletheia"
+    root = Path(__file__).parents[1] / "core" / "aletheia"
+    assert not (root / "maintenance" / f"{module}.py").exists()
     for source in root.rglob("*.py"):
         for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
             if isinstance(node, (ast.Import, ast.ImportFrom)):
                 names = [alias.name for alias in node.names]
                 if isinstance(node, ast.ImportFrom) and node.module:
                     names.append(node.module)
-                assert not any("repair_doge_adoption_overlap" in name for name in names), source
+                assert not any(module in name for name in names), source
 
 
 def test_known_pre_submission_error_can_be_reclaimed_by_one_new_close_order():

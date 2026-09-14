@@ -21,11 +21,14 @@ def _external_account():
 
 
 def test_analytics_schemas_preserve_available_and_unavailable_payloads(monkeypatch):
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from pydantic import TypeAdapter
-    from aletheia.server.app import app
     from aletheia.server.routes.analytics import router
 
+    # Schema/route coverage must not start the production pricing/exchange workers.
+    app = FastAPI()
+    app.include_router(router)
     paths = {
         "/trade-stats", "/trade-insights", "/strategy-kpis",
         "/strategy-performance", "/cost-summary", "/equity-curve",

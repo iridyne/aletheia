@@ -2,15 +2,18 @@
 
 
 
-def test_unqualified_inheritance_keeps_baseline():
-    from aletheia.learning.economic_knowledge import inherit_behavioral_economic_knowledge
+def test_retired_behavioral_inheritance_has_no_runtime_entrypoint():
+    import inspect
 
-    result = inherit_behavioral_economic_knowledge(
-        verdict_id="archived-positive", candidate_key="opportunity-1",
-        baseline=100.0, treatment=110.0, consumer_stage="universe_allocation",
-    )
-    assert result.value == 100.0
-    assert result.applied is False
+    from aletheia.learning import economic_knowledge, experiments
+
+    assert not hasattr(economic_knowledge, "inherit_behavioral_economic_knowledge")
+    parameters = inspect.signature(experiments.apply_numeric_treatment).parameters
+    assert not {
+        "expected_hypothesis_fingerprint", "expected_experiment_id",
+        "suppress_shadow_if_paper_active",
+        "deferred_exposure_writes",
+    }.intersection(parameters)
 
 
 def test_cognitive_inheritance_is_labeled_scoped_and_not_broadcast():

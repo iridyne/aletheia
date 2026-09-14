@@ -67,7 +67,7 @@ def test_refresh_route_does_not_import_get_agent():
     verify statically that the broken symbol is gone.
     """
     import inspect
-    import aletheia.server.routes.prediction as mod
+    import extensions.prediction.api as mod
 
     source = inspect.getsource(mod)
     # The broken import that caused issue #400 must not appear.

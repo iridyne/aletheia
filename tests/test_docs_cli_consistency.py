@@ -1,8 +1,8 @@
 """Docs-vs-CLI consistency guard (Issue #1242).
 
-Parses every ``aletheia permission set <MODE>`` and ``aletheia risk <SUBCMD>``
-invocation found in normative docs and verifies each resolves against the live
-Typer command tree and the allowed permission-mode enum.
+Rejects retired permission CLI instructions in normative docs and checks
+``aletheia risk <SUBCMD>`` against the supported command surface. Historical
+documents preserve former commands without treating them as current support.
 
 Also provides an explicit fixture for the paper-unblock recovery sequence so
 it fails loudly if the command tree changes again.
@@ -25,7 +25,6 @@ DOCS_ROOT = Path(__file__).parent.parent / "docs"
 # Only capture word-character tokens — strips trailing backticks, punctuation, etc.
 _PERMISSION_SET_RE = re.compile(r"aletheia permission set (\w+)")
 _RISK_SUBCMD_RE = re.compile(r"aletheia risk (\w[\w-]*)")
-VALID_PERMISSION_MODES = {"Observe", "Paper", "Full"}
 VALID_RISK_SUBCMDS = {"status", "kill", "resume"}
 
 
@@ -33,6 +32,8 @@ def _collect_doc_invocations(pattern: re.Pattern, glob: str = "**/*.md") -> list
     """Return [(file_path, captured_arg), ...] for every match in docs."""
     hits = []
     for path in sorted(DOCS_ROOT.rglob(glob)):
+        if path.is_relative_to(DOCS_ROOT / "design" / "history"):
+            continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for m in pattern.finditer(text):
             hits.append((str(path.relative_to(DOCS_ROOT)), m.group(1)))
@@ -40,18 +41,13 @@ def _collect_doc_invocations(pattern: re.Pattern, glob: str = "**/*.md") -> list
 
 
 # ---------------------------------------------------------------------------
-# permission set — enum validation (no live config needed)
+# Retired permission surface (no live config needed)
 # ---------------------------------------------------------------------------
 
-class TestPermissionSetEnum:
-    def test_all_documented_modes_are_valid(self):
+class TestRetiredPermissionCLI:
+    def test_normative_docs_do_not_route_to_retired_permission_cli(self):
         hits = _collect_doc_invocations(_PERMISSION_SET_RE)
-        assert hits, "No 'aletheia permission set' invocations found in docs — pattern may be broken"
-        bad = [(f, mode) for f, mode in hits if mode not in VALID_PERMISSION_MODES]
-        assert not bad, (
-            "Docs contain invalid permission modes:\n"
-            + "\n".join(f"  {f}: '{mode}'" for f, mode in bad)
-        )
+        assert not hits, hits
 
 
 # ---------------------------------------------------------------------------

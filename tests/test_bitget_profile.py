@@ -13,7 +13,7 @@ These are offline tests (no network, no credentials). They verify:
 
 import pytest
 
-from aletheia.exchanges.bitget.client import (
+from extensions.exchanges.bitget.client import (
     BitgetClient,
     ProfileContractError,
     profile_close_absent_codes,
@@ -139,29 +139,32 @@ def _make_cfg(profile, mode):
 
 
 def test_startup_gate_classic_v2_ok():
-    from aletheia.agent_runtime.startup_behavior_gate import _check_bitget_profile
+    from extensions.exchanges.bitget.profile_config import configuration_diagnostic
 
-    ok, detail = _check_bitget_profile(_make_cfg("classic_v2", "bitget_demo"))
+    name, ok, detail = configuration_diagnostic(_make_cfg("classic_v2", "bitget_demo"))
+    assert name == "bitget_profile"
     assert ok
     assert "classic_v2" in detail
 
 
 def test_startup_gate_uta_v3_ok_but_warns():
-    from aletheia.agent_runtime.startup_behavior_gate import _check_bitget_profile
+    from extensions.exchanges.bitget.profile_config import configuration_diagnostic
 
-    ok, detail = _check_bitget_profile(_make_cfg("uta_v3", "bitget_demo"))
+    name, ok, detail = configuration_diagnostic(_make_cfg("uta_v3", "bitget_demo"))
+    assert name == "bitget_profile"
     assert ok  # non-blocking: still passes
     assert "Experimental" in detail
 
 
 def test_startup_gate_unknown_profile_fails():
-    from aletheia.agent_runtime.startup_behavior_gate import _check_bitget_profile
+    from extensions.exchanges.bitget.profile_config import configuration_diagnostic
 
     class _FakeCfg:
         class exchange:
             bitget_profile = "bad_profile"
             paper_execution_mode = "bitget_demo"
 
-    ok, detail = _check_bitget_profile(_FakeCfg())
+    name, ok, detail = configuration_diagnostic(_FakeCfg())
+    assert name == "bitget_profile"
     assert not ok
     assert "bad_profile" in detail

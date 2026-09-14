@@ -1,10 +1,40 @@
 from __future__ import annotations
 
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 import asyncio
 
 
+def test_volume_scanner_selects_binance_perp_client(monkeypatch):
+    from aletheia.data import ccxt_provider
+    from extensions.volume_scanner.collector import VolumeScannerCollector
+    from aletheia.data.symbols import InstrumentId
+
+    calls = []
+    class Exchange:
+        options = {}
+        markets = {"BTC/USDT:USDT": {"contract": True, "contractSize": 1}}
+        async def load_markets(self):
+            return self.markets
+        async def fetch_tickers(self, symbols):
+            return {symbols[0]: {"quoteVolume": 1000, "last": 100, "percentage": 1}}
+        async def close(self):
+            calls.append("closed")
+
+    def client(self, name, **options):
+        calls.append(name)
+        return Exchange()
+
+    monkeypatch.setattr(CCXTProvider, "_client", client)
+    result = asyncio.run(VolumeScannerCollector().collect([
+        InstrumentId.from_parts("binance", "BTC/USDT", "perp"),
+    ]))
+    assert result["errors"] == []
+    assert calls == ["binanceusdm", "closed"]
+    assert result["top_symbols"][0]["market_type"] == "perp"
+
+
 def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -32,7 +62,8 @@ def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkey
         def __init__(self):
             self.exchange = FakeExchange()
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type):
+            assert market_type == "perp"
             return self.exchange
 
         async def close(self):
@@ -67,7 +98,7 @@ def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkey
 
 
 def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -89,7 +120,8 @@ def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypa
     class FakeProvider:
         _primary_name = "okx"
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type):
+            assert market_type == "perp"
             return FakeExchange()
 
         async def close(self):
@@ -111,7 +143,7 @@ def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypa
 
 
 def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -156,7 +188,8 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
     class FakeProvider:
         _primary_name = "okx"
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type):
+            assert market_type == "spot"
             return FakeExchange()
 
         async def close(self):
@@ -179,7 +212,7 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
 
 
 def test_volume_scanner_keeps_observation_only_equity_out_of_crypto_ranking(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.volume_scanner.collector import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -200,7 +233,8 @@ def test_volume_scanner_keeps_observation_only_equity_out_of_crypto_ranking(monk
     class FakeProvider:
         _primary_name = "okx"
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type):
+            assert market_type == "perp"
             return FakeExchange()
 
         async def close(self):

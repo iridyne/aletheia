@@ -4,14 +4,15 @@ import asyncio
 import threading
 import pytest  # pyright: ignore[reportMissingImports]
 from unittest.mock import patch, AsyncMock
+from types import SimpleNamespace
 from tests.model_http import model_http
 
 from aletheia.model_provider.base import ModelRequest, ModelHealth, ModelProvider, ProviderResponseError
-from aletheia.model_provider.openai_compatible import (
+from extensions.model_endpoints.openai_compatible import (
     OpenAICompatibleProvider,
     _extract_chat_completion_text,
 )
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 from aletheia.model_provider.router import (
     clear_cache,
     healthcheck_all,
@@ -22,6 +23,99 @@ from aletheia.model_provider.router import (
     list_models_cached,
     ProviderNotConfigured,
 )
+
+
+@pytest.fixture(autouse=True)
+def model_endpoint_composition(monkeypatch):
+    from aletheia.model_provider.router import PROVIDER_REGISTRY
+
+    for adapter in (OpenAICompatibleProvider, AnthropicCompatibleProvider):
+        monkeypatch.setitem(PROVIDER_REGISTRY, adapter.name, adapter)
+
+
+def test_cost_provider_identity_uses_explicit_endpoint_without_config_guessing(monkeypatch):
+    from aletheia.model_provider.base import _configured_provider_name
+
+    provider = SimpleNamespace(name="openai_compatible", model="shared", base_url="http://model.test")
+    unrelated_endpoint = SimpleNamespace(
+        type="openai_compatible", model="shared", base_url="http://model.test"
+    )
+    monkeypatch.setattr(
+        "aletheia.config.loader.load_config",
+        lambda: SimpleNamespace(models=SimpleNamespace(providers={"other-endpoint": unrelated_endpoint})),
+    )
+    assert _configured_provider_name(provider) == "openai_compatible"
+    provider._aletheia_provider_name = "selected-endpoint"
+    assert _configured_provider_name(provider) == "selected-endpoint"
+
+
+def test_configured_model_without_extension_is_unavailable(monkeypatch):
+    from aletheia.config.schema import AletheiaConfig, ProviderConfig
+    from aletheia.model_provider import router
+
+    cfg = AletheiaConfig()
+    pcfg = ProviderConfig(type="openai_compatible", base_url="http://model.test", enabled=True)
+    cfg.models.providers["configured-endpoint"] = pcfg
+    monkeypatch.setattr(router, "load_config", lambda: cfg)
+    monkeypatch.delitem(router.PROVIDER_REGISTRY, "openai_compatible")
+    assert router.provider_is_configured("configured-endpoint", pcfg)
+    with pytest.raises(RuntimeError, match="model_extension_unavailable"):
+        router.get_provider("configured-endpoint")
+
+
+def test_provider_verification_identity_preserves_existing_fingerprint(monkeypatch):
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import secret_fingerprint
+    from aletheia.model_provider import router
+
+    ref = "model.profile.fixture.api_key"
+    profile = ProviderConfig(
+        type="openai_compatible", base_url="http://model.test/v1",
+        model="fixture-model", api_key_secret_ref=ref,
+    )
+    digest = secret_fingerprint("fixture-key")
+    monkeypatch.setattr(router, "get_secret_fingerprint", lambda key: digest if key == ref else None)
+    expected = "733e7000c470c1621079676a180e167ce02f223b50f0a28bfbee0768a79a69a4"
+    assert router.provider_configuration_identity("fixture", profile) == expected
+    assert router.provider_configuration_identity(
+        "fixture", profile, credential_fingerprints={ref: digest}
+    ) == expected
+    assert router.provider_configuration_identity(
+        "fixture", profile, credential_fingerprints={ref: None}
+    ) != expected
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("provider_type", ["openai_compatible", "anthropic_compatible"])
+@pytest.mark.parametrize("value", [None, "fixture-key"])
+async def test_candidate_fingerprint_uses_adapter_credential_snapshot(monkeypatch, provider_type, value):
+    from aletheia.config.schema import ProviderConfig
+    from aletheia.config.secrets import secret_fingerprint
+    from aletheia.model_provider import router
+    from aletheia.server.routes import model as routes
+
+    ref = "model.profile.fixture.api_key"
+    reads = []
+    def read(key):
+        reads.append(key)
+        assert key == ref
+        return value
+
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", read)
+    profile = ProviderConfig(type=provider_type, base_url="http://model.test", api_key_secret_ref=ref)
+    req = routes.TestCandidateRequest(provider="fixture", type=provider_type)
+    protocol = routes._candidate_protocol(provider_type, None, profile)
+    provider = await routes._candidate_adapter(req, profile, provider_type, "default", protocol)
+    assert provider.credential_fingerprint == secret_fingerprint(value)
+    def no_second_read(_key):
+        raise AssertionError("candidate verification must use the adapter snapshot")
+
+    monkeypatch.setattr(router, "get_secret_fingerprint", no_second_read)
+    assert routes._candidate_configuration_identity(
+        req, provider_type, profile, provider.credential_fingerprint, protocol
+    )
+    assert reads == [ref]
+    await provider.aclose()
 
 
 def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
@@ -129,7 +223,6 @@ async def test_async_provider_configuration_check_runs_off_event_loop(tmp_path, 
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", lambda _ref: "secret")
     clear_cache()
     cfg = load_config()
     cfg.models.providers["async-provider"] = ProviderConfig(
@@ -171,11 +264,12 @@ async def test_async_router_shares_one_cached_instance(monkeypatch):
         time.sleep(0.02)
         return "synthetic-key"
 
-    monkeypatch.setattr(router, "get_secret", read)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", read)
     clear_cache()
     try:
         providers = await asyncio.gather(*(get_provider_async("http") for _ in range(8)))
         assert all(provider is providers[0] for provider in providers)
+        assert providers[0].api_key == "synthetic-key"
         assert get_provider("http") is providers[0]
     finally:
         clear_cache()
@@ -323,7 +417,7 @@ async def test_http_provider_reuses_loop_owned_client(monkeypatch):
         return client
 
     monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.httpx_client",
+        "extensions.model_endpoints.openai_compatible.httpx_client",
         factory,
     )
     provider = OpenAICompatibleProvider(base_url="http://model.test/v1", model="m1")

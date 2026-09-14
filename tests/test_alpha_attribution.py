@@ -221,7 +221,7 @@ def _insert_prospective_control_cohort(
                     role,
                     symbol,
                     entry,
-                    f"aletheia/{layer}.py",
+                    f"core/aletheia/{layer}.py",
                     json.dumps({"due_at": due_at}),
                     outcome_key,
                 ),
@@ -572,7 +572,7 @@ def test_universe_alpha_prefers_prospective_control_cohort():
                 "(id, layer, cohort_id, treatment_id, role, symbol, direction, horizon, "
                 "entry_price, entry_ts, score, module_path, metadata, outcome_candidate_key) "
                 "VALUES (?, 'universe', 'cohort-1', 'snap-1', ?, ?, 'long', '1h', 100, ?, 50, "
-                "'aletheia/universe/allocator.py', ?, ?)",
+                "'core/aletheia/universe/allocator.py', ?, ?)",
                 (f"aco-{role}-{i}", role, sym, entry, json.dumps({"due_at": due_at}), outcome_key),
             )
             db.execute(
@@ -951,7 +951,7 @@ def test_cli_and_api_surface_alpha_audit():
     from aletheia.server.routes.analytics import get_alpha_attribution
 
     runner = CliRunner()
-    result = runner.invoke(app, ["alpha", "audit", "--days", "7"])
+    result = runner.invoke(app, ["opportunity", "audit", "--view", "alpha", "--hours", "168"])
 
     assert result.exit_code == 0
     assert "Alpha Attribution Audit" in result.output

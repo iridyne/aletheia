@@ -4,7 +4,6 @@ Each test verifies that batch_* returns results semantically equivalent to
 calling the individual repository function N times.
 """
 
-import pytest
 
 
 def _prepare_db(tmp_path, monkeypatch):
@@ -159,7 +158,7 @@ def test_batch_open_interest_returns_latest_hyperliquid_row(tmp_path, monkeypatc
     from aletheia.storage.sqlite import get_db
 
     from datetime import datetime, timedelta, timezone
-    from aletheia.data.derivatives_facts import hyperliquid_metadata
+    from extensions.hyperliquid.collector import hyperliquid_metadata
     db = get_db()
     now = datetime.now(timezone.utc)
     for rid,venue,usd,age in [('hl-old','hyperliquid',1000,2),('hl-new','hyperliquid',2000,1),('okx-new','okx',9000,0)]:

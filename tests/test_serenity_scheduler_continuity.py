@@ -8,6 +8,33 @@ from aletheia.storage.models import SerenityResearchRun
 from aletheia.storage import repositories as repo
 
 
+@pytest.fixture(autouse=True)
+def configured_processor(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from extensions.serenity import research_worker
+
+    monkeypatch.setattr(scheduler, "_research_processor", research_worker._process_research_run)
+    monkeypatch.setattr(scheduler, "_research_crash_handler", research_worker.handle_research_crash)
+
+
+def test_missing_processor_creates_no_thread_run_or_retry(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unavailable processor must not start work")
+
+    monkeypatch.setattr(scheduler, "_research_processor", None)
+    monkeypatch.setattr(scheduler.threading, "Thread", forbidden)
+    monkeypatch.setattr(scheduler, "_current_scheduler",
+                        lambda: SimpleNamespace(running=True, add_job=forbidden))
+    with pytest.raises(RuntimeError, match="research_processor_unavailable"):
+        scheduler.enqueue_research_run("missing")
+    assert scheduler._enqueue_serenity_research_if_due()["status"] == "unavailable"
+    scheduler.schedule_serenity_retry("missing", {}, 0, "2026-09-14T01:02:03+00:00")
+    assert repo.list_serenity_research_runs(limit=10) == []
+
+
 def test_serenity_boundary_uses_latest_0200_cst():
     from aletheia.agent_runtime.scheduler import _serenity_schedule_boundary
 
@@ -18,12 +45,143 @@ def test_serenity_boundary_uses_latest_0200_cst():
     assert before == datetime(2026, 7, 9, 18, 0, tzinfo=timezone.utc)
 
 
+def test_research_reuses_owned_loop_and_scheduler_stop_drains_it(monkeypatch):
+    import asyncio
+    import threading
+    from aletheia.agent_runtime import scheduler
+
+    lane = scheduler._PersistentAsyncTimeoutWorker("research-lifecycle-test")
+    started, finished = threading.Event(), threading.Event()
+    threads, failures = [], []
+
+    async def process(run_id):
+        threads.append(threading.get_ident())
+        if run_id == "blocked":
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                finished.set()
+        else:
+            started.set()
+
+    monkeypatch.setattr(scheduler, "_research_worker", lane)
+    monkeypatch.setattr(scheduler, "_ensure_research_worker_ready", lambda: None)
+    monkeypatch.setattr(scheduler, "_research_processor", process)
+    monkeypatch.setattr(scheduler, "_research_crash_handler", lambda run_id, exc: failures.append((run_id, str(exc))))
+    try:
+        scheduler.enqueue_research_run("first")
+        assert started.wait(2)
+        started.clear()
+        scheduler.enqueue_research_run("blocked")
+        assert started.wait(2)
+        assert len(set(threads)) == 1
+        scheduler.stop_scheduler()
+        assert finished.is_set()
+        assert lane.closed and not lane.thread_alive and lane.pending == 0
+        assert failures == [("blocked", "research_scheduler_stopped")]
+    finally:
+        lane.close()
+
+
+def test_research_admission_failure_is_reported_before_reraise(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    failures = []
+
+    def reject(coroutine):
+        coroutine.close()
+        raise RuntimeError("scheduler async timeout queue is full")
+
+    monkeypatch.setattr(scheduler, "_ensure_research_worker_ready", lambda: None)
+    monkeypatch.setattr(scheduler, "_research_worker", SimpleNamespace(submit=reject))
+    monkeypatch.setattr(scheduler, "_research_crash_handler", lambda run_id, exc: failures.append((run_id, str(exc))))
+    with pytest.raises(RuntimeError, match="queue is full"):
+        scheduler.enqueue_research_run("rejected")
+    assert failures == [("rejected", "scheduler async timeout queue is full")]
+
+
+def test_research_cancelled_before_first_step_reports_shutdown(monkeypatch):
+    from concurrent.futures import Future
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    failures = []
+
+    def cancel(coroutine):
+        coroutine.close()
+        future = Future()
+        future.cancel()
+        return future
+
+    monkeypatch.setattr(scheduler, "_ensure_research_worker_ready", lambda: None)
+    monkeypatch.setattr(scheduler, "_research_worker", SimpleNamespace(submit=cancel))
+    monkeypatch.setattr(scheduler, "_research_crash_handler", lambda run_id, exc: failures.append((run_id, str(exc))))
+    scheduler.enqueue_research_run("not-started")
+    assert failures == [("not-started", "research_scheduler_stopped")]
+
+
+def test_research_draining_worker_cannot_be_replaced(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    draining = SimpleNamespace(closed=True, stopping=True, thread_alive=True)
+    monkeypatch.setattr(scheduler, "_research_worker", draining)
+    with pytest.raises(RuntimeError, match="research worker shutdown incomplete"):
+        scheduler._ensure_research_worker_ready()
+    scheduler._ensure_timeout_workers_ready()
+    assert scheduler._research_worker is draining
+
+
+def test_retry_job_registration_and_run_creation_have_one_scheduler_owner(monkeypatch):
+    from types import SimpleNamespace
+    from aletheia.agent_runtime import scheduler
+    from extensions.serenity import research_worker
+    from aletheia.storage.models import SerenityResearchRun
+
+    parent = SerenityResearchRun(status="rate_limited", trigger_type="manual", retry_count=0)
+    repo.insert_serenity_research_run(parent)
+    jobs, enqueued = [], []
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
+    deadline = "2026-09-14T01:02:03+00:00"
+    for unavailable in (None, SimpleNamespace(running=False)):
+        monkeypatch.setattr(scheduler, "_current_scheduler", lambda: unavailable)
+        scheduler.schedule_serenity_retry(parent.id, parent.model_dump(), 0, deadline)
+    assert len(repo.list_serenity_research_runs(limit=10)) == 1
+
+    def add_job(callback, trigger, **kwargs):
+        jobs.append((callback, trigger, kwargs))
+    monkeypatch.setattr(scheduler, "_current_scheduler",
+                        lambda: SimpleNamespace(running=True, add_job=add_job))
+    scheduler.schedule_serenity_retry(parent.id, parent.model_dump(), 0, deadline)
+    assert len(jobs) == 1
+    callback, trigger, options = jobs[0]
+    assert trigger == "date"
+    assert options == dict(run_date=datetime.fromisoformat(deadline),
+                           id=f"serenity_retry_{parent.id}", misfire_grace_time=120,
+                           replace_existing=True)
+    processor = scheduler._research_processor
+    monkeypatch.setattr(scheduler, "_research_processor", None)
+    callback()
+    assert len(repo.list_serenity_research_runs(limit=10)) == 1
+    assert enqueued == []
+    monkeypatch.setattr(scheduler, "_research_processor", processor)
+    callback()
+    callback()
+    children = [row for row in repo.list_serenity_research_runs(limit=10)
+                if row["parent_run_id"] == parent.id]
+    assert len(children) == 1 and children[0]["retry_count"] == 1
+    assert enqueued == [children[0]["id"]]
+    monkeypatch.setattr(scheduler, "_research_processor", None)
+    callback()
+    assert enqueued == [children[0]["id"]]
+    assert not hasattr(research_worker, "_schedule_auto_retry")
+
+
 def test_due_batch_enqueues_once(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
 
     enqueued: list[str] = []
-    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
     now = datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
 
     first = _enqueue_serenity_research_if_due(now)
@@ -38,7 +196,7 @@ def test_due_batch_enqueues_once(monkeypatch):
 
 
 def test_success_after_boundary_suppresses_catchup(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
 
     run = SerenityResearchRun(
@@ -49,7 +207,7 @@ def test_success_after_boundary_suppresses_catchup(monkeypatch):
     )
     repo.insert_serenity_research_run(run)
     enqueued: list[str] = []
-    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
 
     result = _enqueue_serenity_research_if_due(
         datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
@@ -61,7 +219,7 @@ def test_success_after_boundary_suppresses_catchup(monkeypatch):
 
 
 def test_future_success_is_not_fresh_or_healthy(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     import aletheia.config.loader as loader
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
     from aletheia.config.schema import SerenityConfig
@@ -74,7 +232,7 @@ def test_future_success_is_not_fresh_or_healthy(monkeypatch):
         finished_at=(now.replace(microsecond=0) + timedelta(days=1)).isoformat(),
     ))
     enqueued: list[str] = []
-    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
 
     first = _enqueue_serenity_research_if_due(now)
     second = _enqueue_serenity_research_if_due(now)
@@ -101,7 +259,7 @@ def test_future_success_is_not_fresh_or_healthy(monkeypatch):
 
 
 def test_future_success_does_not_hide_valid_fresh_run(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
 
     valid = SerenityResearchRun(
@@ -117,7 +275,7 @@ def test_future_success_does_not_hide_valid_fresh_run(monkeypatch):
     repo.insert_serenity_research_run(valid)
     repo.insert_serenity_research_run(future)
     enqueued: list[str] = []
-    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
 
     result = _enqueue_serenity_research_if_due(
         datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
@@ -130,13 +288,13 @@ def test_future_success_does_not_hide_valid_fresh_run(monkeypatch):
 
 
 def test_unrelated_active_run_suppresses_scheduled_batch(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
 
     active = SerenityResearchRun(trigger_type="manual", status="queued")
     repo.insert_serenity_research_run(active)
     enqueued: list[str] = []
-    monkeypatch.setattr(worker, "enqueue_research_run", enqueued.append)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", enqueued.append)
 
     result = _enqueue_serenity_research_if_due(
         datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
@@ -151,13 +309,13 @@ def test_unrelated_active_run_suppresses_scheduled_batch(monkeypatch):
 
 
 def test_enqueue_failure_is_persisted_and_not_retried_on_restart(monkeypatch):
-    import aletheia.agents.research_worker as worker
+    import extensions.serenity.research_worker as worker
     from aletheia.agent_runtime.scheduler import _enqueue_serenity_research_if_due
 
     def fail_enqueue(_run_id):
         raise RuntimeError("worker unavailable")
 
-    monkeypatch.setattr(worker, "enqueue_research_run", fail_enqueue)
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.enqueue_research_run", fail_enqueue)
     now = datetime(2026, 7, 11, 10, 0, tzinfo=timezone.utc)
 
     with pytest.raises(RuntimeError, match="worker unavailable"):

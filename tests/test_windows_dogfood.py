@@ -59,7 +59,7 @@ def _fake_payload(root: Path) -> Path:
     exe.write_bytes(b"fake-binary")
     if os.name != "nt":
         exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
-    static = payload / "aletheia" / "dashboard_static"
+    static = payload / "core" / "aletheia" / "dashboard_static"
     static.mkdir(parents=True)
     (static / "index.html").write_text("<html/>", encoding="utf-8")
     return payload

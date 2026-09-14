@@ -149,7 +149,7 @@ async def test_historical_tier_loading_never_writes_or_reads_credentials(client,
 
     monkeypatch.setattr(loader, "save_config", forbidden)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
-    monkeypatch.setattr("aletheia.model_provider.router.get_secret", forbidden)
+    monkeypatch.setattr("aletheia.model_provider.router.get_secret_fingerprint", forbidden)
     parsed = loader.load_config(use_cache=False)
     assert parsed.models.fast == parsed.models.deep
     assert parsed.models.fast.model_id == "preferred"
@@ -272,9 +272,9 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     def forbidden(*_args, **_kwargs):
         pytest.fail("retired provider must not resolve a credential or execute")
 
-    monkeypatch.setattr(model_router, "get_secret", forbidden)
-    monkeypatch.setattr(model_routes, "get_secret", forbidden)
-    monkeypatch.setattr(ui, "get_secret", forbidden)
+    monkeypatch.setattr(model_router, "get_secret_fingerprint", forbidden)
+    assert not hasattr(model_routes, "get_secret")
+    monkeypatch.setattr(ui, "get_secret_fingerprint", forbidden)
     assert not ui._model_provider_usable(cfg)
     view = (await http.get("/api/model")).json()
     assert view["default_provider"] == "historical-cli"
@@ -365,8 +365,7 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
         assert ref == "current-api-key"
         deletes.append(ref)
 
-    for module in (model_router, model_routes, ui):
-        monkeypatch.setattr(module, "get_secret", read)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", read)
     monkeypatch.setattr(model_routes, "delete_secret", delete)
     assert model_router.provider_configuration_identity("http-profile", profile)
     assert ui._model_provider_usable(cfg)
@@ -389,7 +388,7 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
 async def test_workspace_fields_are_rejected_on_http_requests(client, monkeypatch, method, path):
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def catalogue(_self):
         return []
@@ -411,7 +410,7 @@ async def test_workspace_fields_are_rejected_on_http_requests(client, monkeypatc
 async def test_failed_profile_verification_does_not_persist_config_or_secret(client, monkeypatch):
     from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def unavailable(provider):
         return ModelHealth(provider=provider.name, available=False, error="unauthorized")
@@ -443,7 +442,7 @@ async def test_profile_creation_trusts_inference_when_catalogue_is_unavailable(
     client, monkeypatch
 ):
     from aletheia.model_provider.base import ModelHealth
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def unavailable_catalogue(provider):
         return ModelHealth(
@@ -476,7 +475,7 @@ async def test_profile_creation_trusts_inference_when_catalogue_is_unavailable(
 async def test_openai_profile_rejects_invalid_protocol_before_probe(client, monkeypatch):
     from unittest.mock import AsyncMock
 
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     healthcheck = AsyncMock(side_effect=AssertionError("provider must not be called"))
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthcheck)
@@ -531,7 +530,7 @@ async def test_anthropic_profile_uses_registry_protocol_authority(client):
 async def test_test_candidate_rejects_invalid_protocol_before_probe(client, monkeypatch):
     from unittest.mock import AsyncMock
 
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     healthcheck = AsyncMock(side_effect=AssertionError("provider must not be called"))
     monkeypatch.setattr(OpenAICompatibleProvider, "healthcheck", healthcheck)
@@ -558,7 +557,7 @@ async def test_test_candidate_rejects_invalid_protocol_before_probe(client, monk
 async def test_detect_models_rejects_invalid_protocol_before_provider_call(client, monkeypatch):
     from unittest.mock import AsyncMock
 
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     list_models = AsyncMock(side_effect=AssertionError("provider must not be called"))
     monkeypatch.setattr(OpenAICompatibleProvider, "list_models", list_models)
@@ -699,7 +698,7 @@ async def test_custom_profile_inference_limits_use_canonical_update_without_reve
         raise AssertionError("admission-only updates must not call the provider")
 
     monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.OpenAICompatibleProvider.healthcheck",
+        "extensions.model_endpoints.openai_compatible.OpenAICompatibleProvider.healthcheck",
         must_not_verify,
     )
     response = await client[0].patch(
@@ -776,7 +775,7 @@ async def test_assigned_profile_can_be_disabled_without_losing_role(client, monk
         raise AssertionError("disabling an unavailable profile must not verify it")
 
     monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.OpenAICompatibleProvider.healthcheck",
+        "extensions.model_endpoints.openai_compatible.OpenAICompatibleProvider.healthcheck",
         must_not_verify,
     )
     response = await http.patch(
@@ -898,7 +897,7 @@ async def test_candidate_probe_resolves_adapter_from_profile_identity(client, mo
         return ModelHealth(provider=provider.name, available=True, model="probe-model")
 
     monkeypatch.setattr(
-        "aletheia.model_provider.openai_compatible.OpenAICompatibleProvider.healthcheck",
+        "extensions.model_endpoints.openai_compatible.OpenAICompatibleProvider.healthcheck",
         available,
     )
     response = await http.post(

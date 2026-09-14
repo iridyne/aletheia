@@ -19,8 +19,8 @@ import pytest
 
 def _make_bitget_client():
     """Build a BitgetClient with get_secret patched out."""
-    from aletheia.exchanges.bitget.client import BitgetClient
-    with patch("aletheia.exchanges.bitget.client.get_secret", return_value="dummy"):
+    from extensions.exchanges.bitget.client import BitgetClient
+    with patch("extensions.exchanges.bitget.client.get_secret", return_value="dummy"):
         return BitgetClient(mode="demo")
 
 
@@ -43,7 +43,7 @@ async def test_bitget_get_order_detail_by_client_oid_returns_order():
 
     client = _make_bitget_client()
     with (
-        patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_http),
+        patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_http),
         patch.object(client, "_get_creds", return_value=("k", "s", "p")),
     ):
         result = await client.get_order_detail_by_client_oid("my-client-oid", "BTCUSDT")
@@ -65,7 +65,7 @@ async def test_bitget_get_order_detail_by_client_oid_returns_none_on_not_found()
 
     client = _make_bitget_client()
     with (
-        patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_http),
+        patch("extensions.exchanges.bitget.client.httpx_client", return_value=mock_http),
         patch.object(client, "_get_creds", return_value=("k", "s", "p")),
     ):
         result = await client.get_order_detail_by_client_oid("missing-oid", "BTCUSDT")
@@ -76,7 +76,7 @@ async def test_bitget_get_order_detail_by_client_oid_returns_none_on_not_found()
 @pytest.mark.asyncio
 async def test_bitget_recovers_order_id_from_client_oid():
     """get_order_detail_by_client_oid exists on BitgetClient and returns orderId."""
-    from aletheia.exchanges.bitget.client import BitgetClient
+    from extensions.exchanges.bitget.client import BitgetClient
 
     detail_result = {
         "orderId": "RECOVERED-FROM-DETAIL",
@@ -101,7 +101,7 @@ async def test_bitget_recovers_order_id_from_client_oid():
 
 def _binance_adapter(monkeypatch):
     import ccxt.async_support as ccxt
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from tests.uta.test_ccxt_adapter import _profile, _identity, _install
     exchange = ccxt.binanceusdm()
     exchange.set_markets([{"id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT", "type": "swap", "spot": False, "swap": True, "future": False, "option": False, "contract": True, "linear": True, "inverse": False, "contractSize": 1}])

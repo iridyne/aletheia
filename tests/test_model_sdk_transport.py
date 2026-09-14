@@ -10,8 +10,8 @@ from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
 
 from aletheia.model_provider.base import ModelRequest
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
+from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
 
 @pytest.fixture(params=[

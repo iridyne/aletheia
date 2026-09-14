@@ -74,14 +74,16 @@ def test_shim_content_strips_trailing_separator():
 
 @pytest.mark.tier_unit
 def test_is_managed_shim_detects_marker(tmp_path):
-    f = tmp_path / "aletheia"
+    f = tmp_path / "core" / "aletheia"
+    f.parent.mkdir(parents=True)
     f.write_text(f"#!/bin/sh\n# {install_cli._MARKER}\nexec uv run ...\n")
     assert install_cli._is_managed_shim(f) is True
 
 
 @pytest.mark.tier_unit
 def test_is_managed_shim_rejects_unmanaged(tmp_path):
-    f = tmp_path / "aletheia"
+    f = tmp_path / "core" / "aletheia"
+    f.parent.mkdir(parents=True)
     f.write_text("#!/bin/sh\necho 'some other tool'\n")
     assert install_cli._is_managed_shim(f) is False
 

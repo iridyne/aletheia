@@ -13,17 +13,107 @@ Async functions are driven via asyncio.run(); no pytest-asyncio dependency.
 """
 
 from __future__ import annotations
+from tests.market_data import parse_funding, parse_oi
+from extensions.market_data import decode_derivatives_metadata
+from tests.market_data import history_provider
+from extensions.exchanges.ccxt import market_data as wire
 
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 import asyncio
 from datetime import datetime, timezone, timedelta
 
 import pytest
+from extensions.exchanges.binance import positioning
 
+
+
+@pytest.mark.parametrize("batched", [False, True])
+@pytest.mark.parametrize("failure", [None, "prepare", "fetch"])
+def test_live_collector_uses_normalized_provider_and_owns_cleanup(monkeypatch, batched, failure):
+    from types import SimpleNamespace
+    from aletheia.config import loader
+    from aletheia.data import ccxt_provider
+    from aletheia.data.collectors import derivatives
+
+    events = []
+    payload = {"funding": [], "open_interest": [], "errors": ["source_missing"]}
+
+    class Provider:
+        # Deliberately has no raw exchange, private venue name or CCXT methods.
+        async def prepare_live_derivatives(self):
+            events.append("prepare")
+            if failure == "prepare":
+                raise RuntimeError("prepare")
+            return "fixture", batched
+
+        async def get_live_derivatives(self, target, **kwargs):
+            events.append("fetch")
+            assert target == (["ETH/USDT", "BTC/USDT"] if batched else ["BTC/USDT"])
+            assert kwargs == {"batched": batched, "lsr_map": {}, "top_position_map": {}}
+            if failure == "fetch":
+                raise RuntimeError("fetch")
+            return payload
+
+        async def close(self):
+            events.append("close")
+
+    def registry(venue, symbols):
+        assert batched and venue == "fixture"
+        return ["ETH/USDT", "BTC/USDT"]
+
+    monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+        market_data=SimpleNamespace(enable_long_short_ratio=False)))
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **kwargs: Provider())
+    monkeypatch.setattr(derivatives, "_perp_target_set", registry)
+    if failure:
+        with pytest.raises(RuntimeError, match=failure):
+            asyncio.run(derivatives.DerivativesCollector().collect(["BTC/USDT", "BTC/USDT"]))
+    else:
+        assert asyncio.run(derivatives.DerivativesCollector().collect(
+            ["BTC/USDT", "BTC/USDT"])) == payload
+    assert events == (["prepare", "close"] if failure == "prepare"
+                      else ["prepare", "fetch", "close"])
 
 
 def _market(symbol):
     return dict(id=symbol.replace('/', ''), symbol=symbol+':USDT', swap=True,
         base=symbol.split('/')[0], quote='USDT', settle='USDT', linear=True, contractSize=1)
+
+
+@pytest.mark.parametrize("method", ["collect", "collect_history"])
+def test_derivatives_lanes_select_physical_perpetual_client(monkeypatch, method):
+    from aletheia.config import loader
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data import ccxt_provider
+    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.market_data import build_native_provider
+
+    cfg = AletheiaConfig()
+    cfg.market_data.enable_long_short_ratio = False
+    cfg.market_data.derivatives_history_hours = 1
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    events = []
+
+    class Exchange:
+        has = {}
+        markets = {}
+
+        async def load_markets(self):
+            pass
+
+        async def close(self):
+            events.append("closed")
+
+    provider = build_native_provider("binance", "binance")
+
+    def client(name, **options):
+        events.append(name)
+        return Exchange()
+
+    monkeypatch.setattr(provider, "_client", client)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **kw: provider)
+    asyncio.run(getattr(DerivativesCollector(), method)([]))
+    assert events == ["binanceusdm", "closed"]
 
 def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     tmp_path,
@@ -43,17 +133,18 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
             return acquired_at
 
     monkeypatch.setattr(mod, "datetime", FixedDateTime)
+    monkeypatch.setattr(wire, "datetime", FixedDateTime)
     monkeypatch.setattr(cfg_loader, "DATA_DIR", tmp_path)
     sq.close_db()
     migrations.run_migrations()
 
     stale_ms = int((acquired_at - timedelta(hours=2)).timestamp() * 1000)
-    funding = mod._parse_funding(
+    funding = parse_funding(
         "BTC/USDT",
         "okx",
         {"fundingRate": 0.0001, "timestamp": stale_ms},
     )
-    oi = mod._parse_oi(
+    oi = parse_oi(
         "BTC/USDT",
         "okx",
         {"openInterestValue": 1_000_000.0, "info":{"oiUsd":1000000}, "timestamp": stale_ms}, market=_market("BTC/USDT"),
@@ -70,12 +161,12 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
         assert fresh_row(row, domain, now=acquired_at) is None
 
     recent_ms = int((acquired_at - timedelta(minutes=2)).timestamp() * 1000)
-    recent = mod._parse_funding(
+    recent = parse_funding(
         "ETH/USDT",
         "okx",
         {"fundingRate": 0.0002, "timestamp": recent_ms},
     )
-    recent_oi = mod._parse_oi(
+    recent_oi = parse_oi(
         "ETH/USDT",
         "okx",
         {"openInterestValue": 2_000_000.0, "info":{"oiUsd":2000000}, "timestamp": recent_ms}, market=_market("ETH/USDT"),
@@ -100,7 +191,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
     future_ms = int((acquired_at + timedelta(minutes=6)).timestamp() * 1000)
     # "missing": no exchange timestamp, but acquired_at is populated → usable via
     # acquired_at fallback (exchange captures data without providing a source time).
-    missing_snap = mod._parse_funding("SOL/USDT", "okx", {"fundingRate": 0.0001})
+    missing_snap = parse_funding("SOL/USDT", "okx", {"fundingRate": 0.0001})
     assert missing_snap is not None
     assert missing_snap.source_time_status == "missing"
     assert missing_snap.source_observed_at is None
@@ -114,7 +205,7 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
             (acquired_at + timedelta(minutes=6)).isoformat(),
         ),
     ):
-        snapshot = mod._parse_funding("SOL/USDT", "okx", raw)
+        snapshot = parse_funding("SOL/USDT", "okx", raw)
         assert snapshot is not None
         assert snapshot.source_time_status == expected_status
         assert snapshot.source_observed_at == expected_source_time
@@ -128,12 +219,72 @@ def test_derivatives_source_time_survives_persistence_and_controls_freshness(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("value", [0, 123.0])
+def test_oi_wire_normalization_does_not_query_history(monkeypatch, value):
+    from aletheia.data import derivatives_facts
+    from aletheia.data.collectors import derivatives
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("wire normalization must not read historical Core state")
+
+    monkeypatch.setattr(derivatives_facts, "_open_interest_change", forbidden)
+    snap = parse_oi("BTC/USDT", "okx", {
+        "openInterestValue": value, "info": {"oiUsd": value},
+    }, market=_market("BTC/USDT"))
+    assert snap.open_interest_usd == value
+    assert snap.oi_change_1h_pct is None
+    assert not hasattr(derivatives, "_parse_oi")
+
+
+@pytest.mark.parametrize("family", ["funding", "oi"])
+@pytest.mark.parametrize("mismatch", [None, "symbol", "exchange"])
+def test_history_writer_accepts_only_requested_identity(tmp_path, monkeypatch, family, mismatch):
+    from aletheia.config import loader
+    from aletheia.storage import sqlite, migrations, repositories as repo
+    from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
+    from aletheia.data.collectors import derivatives
+
+    monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
+    sqlite.close_db()
+    migrations.run_migrations()
+    observed = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    identity = dict(symbol="BTC/USDT", exchange="fixture", observed_at=observed)
+    if mismatch:
+        identity[mismatch] = "ETH/USDT" if mismatch == "symbol" else "foreign"
+    snapshot = (FundingRateSnapshot(**identity, funding_rate=0.001) if family == "funding"
+                else OpenInterestSnapshot(**identity, open_interest_usd=123))
+
+    class Provider:
+        # No raw client or CCXT methods: Core owns only normalized persistence.
+        async def get_funding_history(self, symbol):
+            return [snapshot], []
+
+        async def get_open_interest_history(self, symbol):
+            return [snapshot], []
+
+    collect = getattr(derivatives, f"_maybe_backfill_{family}_history")
+    table = "funding_rate_snapshots" if family == "funding" else "open_interest_snapshots"
+    if mismatch:
+        with pytest.raises(ValueError, match="identity_mismatch"):
+            asyncio.run(collect(Provider(), "BTC/USDT", "fixture", 24))
+        assert repo._select_all(table) == []
+    else:
+        assert asyncio.run(collect(Provider(), "BTC/USDT", "fixture", 24)) == (1, False)
+        assert asyncio.run(collect(Provider(), "BTC/USDT", "fixture", 24)) == (0, False)
+        rows = repo._select_all(table)
+        assert len(rows) == 1
+        assert rows[0]["observed_at"] == observed
+        if family == "funding":
+            assert rows[0]["next_funding_time"] == observed
+    sqlite.close_db()
+
+
 def test_parse_oi_threads_lsr_value():
     """Given a raw CCXT OI dict + lsr=2.09, _parse_oi returns an
     OpenInterestSnapshot whose long_short_ratio == 2.09 (single-construction,
     no follow-up UPDATE).
     """
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
     from aletheia.data.models import OpenInterestSnapshot
 
     raw = {
@@ -155,7 +306,7 @@ def test_parse_oi_lsr_none_when_absent():
     """Same raw dict, lsr=None → snapshot constructs with long_short_ratio=None
     (must not raise — LSR is an optional augmentation per MS-C01).
     """
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
     from aletheia.data.models import OpenInterestSnapshot
 
     raw = {
@@ -172,7 +323,7 @@ def test_parse_oi_lsr_none_when_absent():
 def test_parse_oi_drops_invalid_optional_positioning_without_dropping_oi(
     invalid_ratio,
 ):
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
 
     snap = _parse_oi(
         "BTC/USDT",
@@ -200,7 +351,6 @@ def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
 
     Pattern mirrors spec_macro_signals.py::test_coingecko_top_degraded_does_not_raise.
     """
-    import aletheia.data.collectors.derivatives as mod
 
     class FailingClient:
         async def get(self, *args, **kwargs):
@@ -216,14 +366,13 @@ def test_fetch_binance_ratio_batch_returns_empty_on_http_error(monkeypatch):
     def fake_client(*args, **kwargs):
         return FakeCtx()
 
-    monkeypatch.setattr(mod, "httpx_client", fake_client)
+    monkeypatch.setattr(positioning, "httpx_client", fake_client)
 
-    result = asyncio.run(mod._fetch_binance_ratio_batch(["BTC/USDT", "ETH/USDT"], mod._BINANCE_LSR_URL))
+    result = asyncio.run(positioning._fetch_binance_ratio_batch(["BTC/USDT", "ETH/USDT"], positioning._BINANCE_LSR_URL))
     assert result == {}, f"expected empty dict on HTTP failure; got: {result!r}"
 
 
 def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
-    import aletheia.data.collectors.derivatives as mod
 
     class Client:
         async def get(self, url, *, params):
@@ -242,15 +391,17 @@ def test_fetch_top_position_ratio_uses_public_binance_endpoint(monkeypatch):
         async def __aexit__(self, *_args):
             return False
 
-    monkeypatch.setattr(mod, "httpx_client", lambda **_kwargs: Context())
+    monkeypatch.setattr(positioning, "httpx_client", lambda **_kwargs: Context())
     result = asyncio.run(
-        mod._fetch_binance_ratio_batch(["BTC/USDT"], mod._BINANCE_TOP_POSITION_RATIO_URL)
+        positioning._fetch_binance_ratio_batch(["BTC/USDT"], positioning._BINANCE_TOP_POSITION_RATIO_URL)
     )
     assert {symbol: row['value'] for symbol, row in result.items()} == {"BTC/USDT": 1.42}
     assert result['BTC/USDT']['source_observed_at'] is None
+    assert result['BTC/USDT']['provider'] == 'binance_public'
+    assert result['BTC/USDT']['venue'] == 'binance'
 
 
-@pytest.mark.parametrize("failure", ["timeout", "http_error"])
+@pytest.mark.parametrize("failure", ["timeout", "http_error", "missing_adapter"])
 def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure):
     """LSR is optional enrichment; its timeout must not consume the live path."""
     import aletheia.data.collectors.derivatives as mod
@@ -272,9 +423,13 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
             return {"openInterestValue": 123.0, "info":{"oiUsd":123}}
 
     class _Provider:
+        prepare_live_derivatives = CCXTProvider.prepare_live_derivatives
+        get_live_derivatives = CCXTProvider.get_live_derivatives
+        _metadata_reader = staticmethod(decode_derivatives_metadata)
         _primary_name = "okx"
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type=None):
+            assert market_type == "perp"
             return _Exchange()
 
         async def close(self):
@@ -290,7 +445,7 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
             return False
 
         async def get(self, url, *, params):
-            if url == mod._BINANCE_LSR_URL and params["symbol"] == "BTCUSDT":
+            if url == positioning._BINANCE_LSR_URL and params["symbol"] == "BTCUSDT":
                 return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
             if failure == "http_error":
                 return type("Response", (), {"status_code": 503})()
@@ -305,16 +460,21 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
             "derivatives_history_hours": 0,
         })()}
     )()
-    monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
+    def native_provider(*, native_ccxt):
+        assert native_ccxt is True
+        return _Provider()
+    monkeypatch.setattr(provider_mod, "get_market_data_provider", native_provider)
     monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
-    monkeypatch.setattr(mod, "_LSR_BUDGET_SEC", 0.01)
+    monkeypatch.setattr(positioning, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr(positioning, "_LSR_BUDGET_SEC", 0.01)
+    if failure == "missing_adapter":
+        monkeypatch.setattr(mod, "_positioning_reader", None)
 
     result = asyncio.run(mod.DerivativesCollector().collect(["BTC/USDT", "ETH/USDT"]))
 
     assert len(result["funding"]) == 1
     assert len(result["open_interest"]) == 1
-    assert result["open_interest"][0].long_short_ratio == 1.42
+    assert result["open_interest"][0].long_short_ratio == (None if failure == "missing_adapter" else 1.42)
     assert result["open_interest"][0].top_trader_position_ratio is None
     assert "top_position_ratio_missing BTC/USDT" in result["errors"]
     assert "global_account_ratio_missing ETH/USDT" in result["errors"]
@@ -363,7 +523,7 @@ def test_maybe_backfill_funding_idempotent_with_3_rows(tmp_path, monkeypatch):
             )
 
     result = asyncio.run(_maybe_backfill_funding_history(
-        _FakeExchange(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+        history_provider(_FakeExchange(), "binance"), sym, "binance", since_hours=24,
     ))
     assert result == (0, True), (
         f"backfill must be a no-op with 3 existing rows; got {result} inserts"
@@ -396,7 +556,7 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
 
     errors: list[str] = []
     result = asyncio.run(_maybe_backfill_oi_history(
-        _FakeBitget(), "BTC/USDT", "BTC/USDT:USDT", "bitget",
+        history_provider(_FakeBitget(), "bitget"), "BTC/USDT", "bitget",
         since_hours=24, errors=errors,
     ))
     assert result == (0, False), f"expected 0 inserts on NotSupported; got {result}"
@@ -421,14 +581,14 @@ def test_maybe_backfill_oi_swallows_not_supported(tmp_path, monkeypatch):
     ],
 )
 def test_parse_funding_rejects_nonfinite_or_nonpositive_mark(raw):
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from tests.market_data import parse_funding as _parse_funding
 
     assert _parse_funding("BTC/USDT", "okx", raw) is None
 
 
 @pytest.mark.parametrize("rate", [-0.0001, 0.0, 0.0001])
 def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate):
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from tests.market_data import parse_funding as _parse_funding
 
     snap = _parse_funding("BTC/USDT", "okx", {"fundingRate": rate})
 
@@ -443,7 +603,7 @@ def test_parse_funding_preserves_finite_signed_rates_without_optional_mark(rate)
 
 def test_parse_oi_returns_none_without_usd():
     """_parse_oi drops a row it cannot express in USD (honest gap over garbage)."""
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
 
     assert _parse_oi("BTC/USDT", "binance", {"openInterestAmount": 1.0}) is None
 
@@ -454,7 +614,7 @@ def test_parse_oi_returns_none_without_usd():
 
 
 def _seed_oi(repo, *, symbol, exchange, usd, age_min, now):
-    from aletheia.data.derivatives_facts import ccxt_metadata
+    from extensions.market_data import decode_derivatives_metadata as ccxt_metadata
     stamp = (now-timedelta(minutes=age_min)).isoformat()
     repo.insert_open_interest_snapshot({
         "derivatives_metadata_json": ccxt_metadata(symbol,exchange,_market(symbol),{'openInterestValue':usd,'info':{'oiUsd':usd,'sumOpenInterestValue':usd}},family='open_interest'),
@@ -499,7 +659,7 @@ def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
     from aletheia.storage import sqlite as sq
     from aletheia.storage import repositories as repo
     from aletheia.storage import migrations as mig
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from tests.market_data import parse_oi as _parse_oi
     sq.close_db()
     mig.run_migrations()
 
@@ -511,6 +671,9 @@ def test_parse_oi_delta_true_1h_ignores_foreign_venue(tmp_path, monkeypatch):
     snap = _parse_oi("BTC/USDT", "okx", {"openInterestValue": 1100.0,"info":{"oiUsd":1100}},market=_market("BTC/USDT"))
     assert snap is not None
     assert snap.open_interest_usd == 1100.0
+    from tests.market_data import collect_live_oi
+    assert snap.oi_change_1h_pct is None
+    snap = collect_live_oi(monkeypatch, snap)
     assert snap.oi_change_1h_pct == pytest.approx(10.0)  # (1100-1000)/1000, not vs the binance 5.0
     sq.close_db()
 
@@ -533,9 +696,16 @@ def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
     from aletheia.data import ccxt_provider as provider_mod
 
     class _Provider:
+        prepare_live_derivatives = CCXTProvider.prepare_live_derivatives
+        prepare_derivatives_history = CCXTProvider.prepare_derivatives_history
+        get_funding_history = CCXTProvider.get_funding_history
+        get_open_interest_history = CCXTProvider.get_open_interest_history
+        get_live_derivatives = CCXTProvider.get_live_derivatives
+        _metadata_reader = staticmethod(decode_derivatives_metadata)
         _primary_name = exchange.id
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type=None):
+            assert market_type == "perp"
             return exchange
 
         async def close(self):
@@ -544,7 +714,10 @@ def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
     cfg = type("Cfg", (), {"market_data": type("MD", (), {
         "enable_long_short_ratio": lsr, "derivatives_history_hours": 0,
     })()})()
-    monkeypatch.setattr(provider_mod, "get_market_data_provider", lambda: _Provider())
+    def native_provider(*, native_ccxt):
+        assert native_ccxt is True
+        return _Provider()
+    monkeypatch.setattr(provider_mod, "get_market_data_provider", native_provider)
     monkeypatch.setattr(cfg_loader, "load_config", lambda: cfg)
     return mod
 
@@ -698,20 +871,14 @@ def test_history_backfill_rejects_invalid_rows_before_persistence(
     errors: list[str] = []
     funding_count = asyncio.run(
         _maybe_backfill_funding_history(
-            _InvalidHistoryExchange(),
-            "BTC/USDT",
-            "BTC/USDT:USDT",
-            "bitget",
+            history_provider(_InvalidHistoryExchange(), "bitget"), "BTC/USDT", "bitget",
             since_hours=24,
             errors=errors,
         )
     )
     oi_count = asyncio.run(
         _maybe_backfill_oi_history(
-            _InvalidHistoryExchange(),
-            "BTC/USDT",
-            "BTC/USDT:USDT",
-            "bitget",
+            history_provider(_InvalidHistoryExchange(), "bitget"), "BTC/USDT", "bitget",
             since_hours=24,
             errors=errors,
         )
@@ -770,7 +937,7 @@ def test_funding_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeyp
 
     from aletheia.data.collectors.derivatives import _maybe_backfill_funding_history
     result = asyncio.run(_maybe_backfill_funding_history(
-        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+        history_provider(_FakeBinance(), "binance"), sym, "binance", since_hours=24,
     ))
     assert fetch_called["n"] == 1, "Binance fetch must occur when only Bybit rows exist"
     assert result == (1, False)
@@ -830,20 +997,19 @@ def test_oi_backfill_not_suppressed_by_foreign_venue_rows(tmp_path, monkeypatch)
 
     from aletheia.data.collectors.derivatives import _maybe_backfill_oi_history
     result = asyncio.run(_maybe_backfill_oi_history(
-        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+        history_provider(_FakeBinance(), "binance"), sym, "binance", since_hours=24,
     ))
     assert result == (1, False), f"expected 1 Binance OI insert at shared timestamp; got {result}"
 
     # same-venue rerun must be idempotent
     result2 = asyncio.run(_maybe_backfill_oi_history(
-        _FakeBinance(), sym, "BTC/USDT:USDT", "binance", since_hours=24,
+        history_provider(_FakeBinance(), "binance"), sym, "binance", since_hours=24,
     ))
     assert result2 == (0, False), f"same-venue rerun must be a no-op; got {result2}"
     sq.close_db()
 
 
 def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch):
-    import aletheia.data.collectors.derivatives as mod
     active = peak = 0
     calls = []
 
@@ -863,9 +1029,9 @@ def test_ratio_batch_covers_unique_targets_with_bounded_concurrency(monkeypatch)
             active -= 1
             return type("Response", (), {"status_code": 200, "json": lambda self: [{"longShortRatio": "1.42"}]})()
 
-    monkeypatch.setattr(mod, "httpx_client", lambda **kwargs: Client())
+    monkeypatch.setattr(positioning, "httpx_client", lambda **kwargs: Client())
     symbols = [f"T{i}/USDT" for i in range(23)]
-    result = asyncio.run(mod._fetch_binance_ratio_batch(symbols + symbols[:2], mod._BINANCE_LSR_URL))
+    result = asyncio.run(positioning._fetch_binance_ratio_batch(symbols + symbols[:2], positioning._BINANCE_LSR_URL))
     assert {symbol: row['value'] for symbol, row in result.items()} == dict.fromkeys(symbols, 1.42)
     assert len(calls) == 23
     assert 1 < peak <= 4

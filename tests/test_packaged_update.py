@@ -73,7 +73,7 @@ def _fake_payload(root: Path) -> Path:
     executable.write_bytes(b"#!/bin/sh\nexit 0\n")
     if os.name != "nt":
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
-    static = payload / "aletheia" / "dashboard_static"
+    static = payload / "core" / "aletheia" / "dashboard_static"
     static.mkdir(parents=True)
     (static / "index.html").write_text("<html>Aletheia</html>", encoding="utf-8")
     return payload

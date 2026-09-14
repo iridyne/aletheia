@@ -284,8 +284,8 @@ async def test_send_alert_delivers_from_running_loop(tmp_path, monkeypatch):
         async def send_message(self, chat_id, text, *, parse_mode="HTML"):
             sent.append((chat_id, text))
 
-    import aletheia.telegram.bot as bot_mod
-    monkeypatch.setattr(bot_mod, "TelegramBot", FakeBot)
+    import aletheia.telegram as transport
+    monkeypatch.setattr(transport, "_factory", FakeBot)
 
     from aletheia.agent_runtime import health
     # We are inside a running loop (async test). This previously scheduled an
@@ -354,9 +354,10 @@ def test_funding_recovery_states_degrade_health_and_doctor(
     from aletheia.diagnostics import doctor
     from aletheia.storage.models import Position
 
-    for position_id, reason in (
-        ("funding-terminal", "broker_funding_history_expired"),
-        ("funding-retry", "incomplete_funding_economics"),
+    for position_id, reason, verified in (
+        ("funding-terminal", "broker_funding_history_expired", True),
+        ("funding-retry", "incomplete_funding_economics", True),
+        ("funding-unverified", "incomplete_funding_economics", False),
     ):
         repo.insert_position(Position(
             id=position_id,
@@ -373,10 +374,19 @@ def test_funding_recovery_states_degrade_health_and_doctor(
             status="closed",
             realized_pnl=None,
             funding_source="unavailable",
+            funding_cost=None,
+            entry_fee=0.05,
+            exit_fee=0.1,
+            exit_fill_verified=verified,
+            exit_price_source="broker_fill" if verified else "unavailable",
             outcome_eligible=False,
             outcome_exclusion_reason=reason,
         )
 
+    from aletheia.portfolio.broker_funding_settlement import funding_recovery_state_counts
+
+    # A reason string alone cannot enroll an unverified close for recovery.
+    assert funding_recovery_state_counts() == {"retry_pending": 1, "terminal": 1}
     result = health.compute_health()
     assert result["status"] == "degraded"
     assert "broker_funding_history_expired:1" in result["issues"]

@@ -3,6 +3,8 @@
 import sqlite3
 from types import SimpleNamespace
 
+import pytest
+
 
 def _setup_db(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
@@ -189,3 +191,28 @@ def test_registry_symbol_availability_speaks_the_execution_vocabulary(e2e_db=Non
     assert gateway._check_symbol_availability(
         "DOGE/USDT", "bitget_demo", "usdt_futures"
     ) is not None
+@pytest.mark.parametrize("supported", [None, frozenset(), frozenset({"BTC/USDT"})])
+def test_symbol_check_uses_normalized_capability_without_venue_selection(monkeypatch, supported):
+    from aletheia.execution import gateway, venue_capabilities
+
+    calls = []
+
+    def supported_symbols(mode, market_type):
+        calls.append((mode, market_type))
+        return supported
+
+    monkeypatch.setattr(venue_capabilities, "get_supported_symbols", supported_symbols)
+    reason = gateway._check_symbol_availability("BTCUSDT", "contract_adapter", "spot")
+    assert (reason is not None) is (supported == frozenset())
+    assert calls == [("contract_adapter", "spot")]
+
+
+def test_symbol_capability_refresh_failure_is_not_unknown(monkeypatch):
+    from aletheia.execution import gateway, venue_capabilities
+
+    def unavailable(*_args):
+        raise RuntimeError("symbol_refresh_unavailable")
+
+    monkeypatch.setattr(venue_capabilities, "get_supported_symbols", unavailable)
+    with pytest.raises(RuntimeError, match="symbol_refresh_unavailable"):
+        gateway._check_symbol_availability("BTC/USDT", "contract_adapter")

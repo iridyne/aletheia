@@ -36,7 +36,8 @@ def _isolate(tmp_path, monkeypatch):
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = "bitget"
     save_config(cfg)
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
+    from aletheia.config.secrets import secret_fingerprint
+    monkeypatch.setattr(trust, "get_secret_fingerprint", lambda ref: secret_fingerprint(f"test-secret:{ref}"))
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {
@@ -228,8 +229,8 @@ async def test_stored_exchange_probe_uses_uta_off_request_loop(monkeypatch, venu
 
     monkeypatch.setattr(manager, "query_uta", query)
     monkeypatch.setattr(routes, "BitgetClient", forbidden_client, raising=False)
-    monkeypatch.setattr("aletheia.exchanges.binance.client.BinanceClient", forbidden_client)
-    monkeypatch.setattr("aletheia.exchanges.okx.client.OKXClient", forbidden_client)
+    monkeypatch.setattr("extensions.exchanges.binance.client.BinanceClient", forbidden_client)
+    monkeypatch.setattr("extensions.exchanges.okx.client.OKXClient", forbidden_client)
     route, request_type = {
         "bitget": (routes.test_connection, routes.TestConnectionRequest),
         "binance": (routes.binance_test_connection, routes.BinanceTestRequest),
@@ -411,8 +412,8 @@ async def test_close_ccxt_reraises_cancellation_after_session_cleanup():
 @pytest.mark.parametrize(
     ("module_name", "class_name"),
     [
-        ("aletheia.exchanges.binance.client", "BinanceClient"),
-        ("aletheia.exchanges.okx.client", "OKXClient"),
+        ("extensions.exchanges.binance.client", "BinanceClient"),
+        ("extensions.exchanges.okx.client", "OKXClient"),
     ],
 )
 async def test_exchange_client_close_surfaces_failure_and_retains_retry_handles(
@@ -480,7 +481,7 @@ def test_all_model_providers_use_shared_credential_scrubber():
     raise_for_status_without_secrets (error-leak 2.7 — unified)."""
     import pathlib
 
-    provider_dir = pathlib.Path("aletheia/model_provider")
+    provider_dir = pathlib.Path("core/aletheia/model_provider")
     offenders = []
     for f in provider_dir.glob("*.py"):
         text = f.read_text(encoding="utf-8")

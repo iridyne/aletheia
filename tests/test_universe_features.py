@@ -4,6 +4,9 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from tests.market_data import primary_provider
+from unittest.mock import AsyncMock, Mock
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 
 
 class _Exchange:
@@ -12,12 +15,17 @@ class _Exchange:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("baseline_write_fails", [False, True])
 async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
-    monkeypatch,
+    monkeypatch, baseline_write_fails,
 ):
     from aletheia.config.schema import AletheiaConfig
     from aletheia.data import ccxt_provider
     from aletheia.universe import features
+    from aletheia.storage import repositories as repo
+
+    writer = Mock(side_effect=OSError("history unavailable")) if baseline_write_fails else Mock(wraps=repo.upsert_ohlcv_candles)
+    monkeypatch.setattr(repo, "upsert_ohlcv_candles", writer)
 
     cfg = AletheiaConfig()
     cfg.market_data.ccxt_exchange = "bitget"
@@ -73,14 +81,24 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             mode = self.options.get("defaultType")
             calls.append(("ohlcv", symbol, timeframe, mode))
             if timeframe == "1h":
-                return [[index, 1, 1, 1, 100 + index, 1] for index in range(limit)]
+                return [[(index + 1) * 3600000, 100 + index, 101 + index, 99 + index, 100 + index, 1]
+                        for index in range(limit)] + [
+                    [int(datetime.now(timezone.utc).timestamp() * 1000), 9999, 9999, 9999, 9999, 1]
+                ]
             return [{"physical_market_type": mode}]
 
     class Provider:
+        prepare_primary_market = CCXTProvider.prepare_primary_market
+        get_primary_open_interest = CCXTProvider.get_primary_open_interest
+        get_primary_ohlcv = CCXTProvider.get_primary_ohlcv
+        get_tickers = CCXTProvider.get_tickers
+        get_orderbook = AsyncMock(return_value=None)
         instances = []
 
-        def __init__(self, *, exchange, fallback_exchange):
+        def __init__(self, *, exchange, fallback_exchange, native_ccxt):
+            assert native_ccxt is True
             assert (exchange, fallback_exchange) == ("bitget", "okx")
+            self._primary_name = exchange
             self.exchange = Exchange()
             self.closed = False
             self.instances.append(self)
@@ -91,7 +109,17 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         async def close(self):
             self.closed = True
 
-    async def fetch_single(exchange, asset, *_args, **_kwargs):
+    async def fetch_single(asset, *_args, **_kwargs):
+        exchange = _kwargs["market_data_provider"]._ensure_primary(asset["market_type"])
+        writer.assert_called_once()
+        if baseline_write_fails:
+            assert _kwargs["btc_closes_1h"] == []
+            assert _kwargs["btc_return_24h"] is _kwargs["btc_return_4h"] is None
+        else:
+            persisted = repo.get_ohlcv_candles("BTC/USDT", "1h", 168, "bitget", "spot", include_provenance=True)
+            assert [row["close"] for row in persisted] == _kwargs["btc_closes_1h"]
+            assert len(persisted) == 168 and persisted[-1]["close"] == 267
+            assert all(row["first_persisted_at"] for row in persisted)
         symbol = (
             f"{asset['symbol']}:USDT"
             if asset["market_type"] == "perp"
@@ -104,7 +132,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
             "physical_market_type": physical[0]["physical_market_type"],
         }
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", Provider)
     monkeypatch.setattr(features, "_fetch_single_feature", fetch_single)
     monkeypatch.setattr(
         features,
@@ -121,6 +149,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         "perp": "swap",
     }
     assert ("ohlcv", "BTC/USDT", "1h", "spot") in calls
+    writer.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -162,9 +191,15 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
             return [[index, 1, 1, 1, 100 + index, 1] for index in range(limit)]
 
     class Provider:
+        prepare_primary_market = CCXTProvider.prepare_primary_market
+        get_primary_open_interest = CCXTProvider.get_primary_open_interest
+        get_primary_ohlcv = CCXTProvider.get_primary_ohlcv
+        get_tickers = CCXTProvider.get_tickers
+        get_orderbook = AsyncMock(return_value=None)
         instances = []
 
         def __init__(self, **_kwargs):
+            self._primary_name = _kwargs["exchange"]
             market = "spot" if not self.instances else "perp"
             self.exchange = Exchange(fail_load=market == failed_market)
             self.closed = False
@@ -176,11 +211,11 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
         async def close(self):
             self.closed = True
 
-    async def fetch_single(_exchange, asset, *_args, **_kwargs):
+    async def fetch_single(asset, *_args, **_kwargs):
         fetched_assets.append(asset["id"])
         return {"asset_id": asset["id"], "market_type": asset["market_type"]}
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", Provider)
     monkeypatch.setattr(features, "_fetch_single_feature", fetch_single)
     monkeypatch.setattr(
         features,
@@ -198,17 +233,17 @@ async def test_market_bootstrap_failure_does_not_abort_other_market_features(
 
 
 def test_quote_volume_prefers_exchange_quote_volume():
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({"BTC/USDT": {"spot": True}})
     ticker = {"quoteVolume": 123_456.0, "baseVolume": 999.0, "last": 100.0}
 
-    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) == 123_456.0
+    assert quote_volume_24h(exchange, "BTC/USDT", ticker) == 123_456.0
 
 
 def test_quote_volume_converts_okx_contract_volume_to_quote_currency():
     """OKX swaps expose contracts in baseVolume and leave quoteVolume empty."""
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({
         "BTC/USDT:USDT": {
@@ -222,39 +257,47 @@ def test_quote_volume_converts_okx_contract_volume_to_quote_currency():
         "last": 60_000.0,
     }
 
-    assert _quote_volume_24h(exchange, "BTC/USDT:USDT", ticker) == 5_400_000_000.0
+    assert quote_volume_24h(exchange, "BTC/USDT:USDT", ticker) == 5_400_000_000.0
 
 
 def test_quote_volume_converts_spot_base_volume_when_quote_is_missing():
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({"ETH/USDT": {"spot": True}})
     ticker = {"quoteVolume": None, "baseVolume": 2_000.0, "last": 3_000.0}
 
-    assert _quote_volume_24h(exchange, "ETH/USDT", ticker) == 6_000_000.0
+    assert quote_volume_24h(exchange, "ETH/USDT", ticker) == 6_000_000.0
 
 
-def test_quote_volume_returns_zero_when_it_cannot_be_derived():
-    from aletheia.universe.features import _quote_volume_24h
+def test_quote_volume_is_unknown_when_it_cannot_be_derived():
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({"BAD/USDT:USDT": {"contract": True}})
     ticker = {"quoteVolume": None, "baseVolume": 100.0, "last": None}
 
-    assert _quote_volume_24h(exchange, "BAD/USDT:USDT", ticker) == 0.0
+    assert quote_volume_24h(exchange, "BAD/USDT:USDT", ticker) is None
+
+
+@pytest.mark.parametrize("market", [None, {}, {"symbol": "BTC/USDT:USDT"}])
+def test_derived_quote_volume_requires_market_unit_evidence(market):
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
+
+    exchange = _Exchange({"BTC/USDT:USDT": market})
+    assert quote_volume_24h(exchange, "BTC/USDT:USDT", {"baseVolume": 100, "last": 10}) is None
 
 
 def test_quote_volume_rejects_nonfinite_derived_total():
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({"BTC/USDT": {"spot": True}})
     ticker = {"quoteVolume": None, "baseVolume": 1e308, "last": 1e308}
 
-    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) is None
+    assert quote_volume_24h(exchange, "BTC/USDT", ticker) is None
 
 
 @pytest.mark.parametrize("invalid_volume", [float("nan"), float("inf"), -1.0, "", True])
 def test_quote_volume_rejects_explicit_invalid_direct_volume(invalid_volume):
-    from aletheia.universe.features import _quote_volume_24h
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
 
     exchange = _Exchange({"BTC/USDT": {"spot": True}})
     ticker = {
@@ -263,7 +306,7 @@ def test_quote_volume_rejects_explicit_invalid_direct_volume(invalid_volume):
         "last": 100.0,
     }
 
-    assert _quote_volume_24h(exchange, "BTC/USDT", ticker) is None
+    assert quote_volume_24h(exchange, "BTC/USDT", ticker) is None
 
 
 @pytest.mark.parametrize(
@@ -288,21 +331,48 @@ def test_market_snapshot_rejects_invalid_numeric_facts(overrides):
         MarketSnapshot(**payload)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("market,move,expected", [("spot", 4, None), ("perp", 0, None), ("perp", 3, None), ("perp", 4, 2.5), ("perp", -4, 2.5)])
+async def test_taker_request_is_only_for_derivative_movers(market, move, expected):
+    from aletheia.universe.features import _fetch_single_feature
+    from aletheia.data.providers import Candle
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    timestamp = int((now - timedelta(days=1)).timestamp() * 1000)
+    provider = SimpleNamespace(
+        get_primary_ohlcv=AsyncMock(return_value=[
+            Candle(timestamp, 100, 101, 99, 100, 1, exchange="okx"),
+            Candle(timestamp + 3600000, 100, 105, 95, 100 + move, 1, exchange="okx"),
+        ]),
+        get_orderbook=AsyncMock(return_value=None),
+        get_primary_funding=AsyncMock(return_value={}),
+        get_primary_open_interest=AsyncMock(return_value={}),
+        get_primary_taker_ratio=AsyncMock(return_value=2.5),
+    )
+    feature = await _fetch_single_feature(
+        {"id": "fixture", "symbol": "BTC/USDT", "venue": "okx", "market_type": market},
+        {"quote_volume_24h": 1000000}, now, snapshot_buffer=[], market_data_provider=provider,
+    )
+    assert feature["taker_buy_ratio"] == expected
+    assert provider.get_primary_taker_ratio.await_count == (0 if expected is None else 1)
+
+
 def test_provider_observed_at_requires_source_timestamp():
-    from aletheia.universe.features import _provider_observed_at
+    from extensions.exchanges.ccxt.derivatives_metadata import provider_source_time
 
     source = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
     received = datetime(2026, 8, 26, 12, 15, tzinfo=timezone.utc)
 
-    assert _provider_observed_at(
+    assert provider_source_time(
         {"timestamp": int(source.timestamp() * 1000)},
-        received_at=received,
-    ) == source.isoformat()
-    assert _provider_observed_at(
+        acquired_at=received,
+    ) == (source.isoformat(), "provided")
+    assert provider_source_time(
         {"datetime": "2026-08-26T12:00:00Z"},
-        received_at=received,
-    ) == "2026-08-26T12:00:00+00:00"
-    assert _provider_observed_at({}, received_at=received) is None
+        acquired_at=received,
+    ) == ("2026-08-26T12:00:00+00:00", "provided")
+    assert provider_source_time({}, acquired_at=received) == (None, "missing")
 
 
 def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
@@ -314,18 +384,15 @@ def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
         {"id": "sol", "symbol": "SOL/USDT", "venue": "okx", "market_type": "spot"},
         {"id": "low", "symbol": "LOW/USDT", "venue": "okx", "market_type": "spot"},
     ]
-    exchange = _Exchange({})
     tickers = {
-        "BTC/USDT": {"quoteVolume": 20_000_000.0},
-        "ETH/USDT:USDT": {"quoteVolume": 15_000_000.0},
-        "LOW/USDT": {"quoteVolume": 100.0},
+        ("spot", "BTC/USDT"): {"quote_volume_24h": 20_000_000.0},
+        ("perp", "ETH/USDT"): {"quote_volume_24h": 15_000_000.0},
+        ("spot", "LOW/USDT"): {"quote_volume_24h": 100.0},
     }
 
     candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
         assets,
         tickers,
-        exchange,
-        lambda symbol: f"{symbol}:USDT",
         min_volume=1_000_000.0,
     )
 
@@ -339,7 +406,28 @@ def test_ticker_prefilters_keep_complete_sequential_candidate_facts():
     assert volume_facts[2]["reason_code"] == "ticker_prerequisite_failed"
 
 
-def test_pending_candidate_bypasses_only_volume_prefilter():
+@pytest.mark.parametrize("ticker", [
+    {"last": 100.0},
+    {"baseVolume": 100.0},
+    {"baseVolume": 100.0, "last": 100.0},
+])
+def test_pending_candidate_cannot_bypass_missing_volume_evidence(ticker):
+    from aletheia.universe.features import _evaluate_ticker_prefilters
+
+    asset = {"id": "pending", "symbol": "BTC/USDT", "venue": "okx", "market_type": "perp"}
+    from extensions.exchanges.ccxt.tickers import quote_volume_24h
+    volume = quote_volume_24h(_Exchange({"BTC/USDT:USDT": {"contract": True}}), "BTC/USDT:USDT", ticker)
+    candidates, _, facts = _evaluate_ticker_prefilters(
+        [asset], {("perp", "BTC/USDT"): {"quote_volume_24h": volume}},
+        min_volume=1000,
+        priority_asset_ids={"pending"},
+    )
+    assert candidates == []
+    assert facts[0]["decision"] == "rejected"
+
+
+@pytest.mark.parametrize("volume", [0.0, 100.0])
+def test_pending_candidate_bypasses_only_volume_prefilter(volume):
     from aletheia.universe.features import _evaluate_ticker_prefilters
 
     asset = {
@@ -350,9 +438,7 @@ def test_pending_candidate_bypasses_only_volume_prefilter():
     }
     candidates, ticker_facts, volume_facts = _evaluate_ticker_prefilters(
         [asset],
-        {"LOW/USDT": {"quoteVolume": 100.0}},
-        _Exchange({}),
-        lambda symbol: symbol,
+        {("spot", "LOW/USDT"): {"quote_volume_24h": volume}},
         min_volume=1_000_000.0,
         priority_asset_ids={"pending-low-volume"},
     )
@@ -469,7 +555,6 @@ async def test_live_funding_override_requires_finite_rate(
             }
 
     feature = await _fetch_single_feature(
-        Exchange(),
         {
             "id": "asset-btc",
             "symbol": "BTC/USDT",
@@ -477,12 +562,11 @@ async def test_live_funding_override_requires_finite_rate(
             "market_type": "perp",
         },
         {
-            "quoteVolume": 1_000_000, "bid": 100, "ask": 101,
-            "timestamp": int((now - timedelta(minutes=source_age)).timestamp() * 1000),
-            "info": {"fundingRate": live_rate},
+            "quote_volume_24h": 1_000_000, "bid_price": 100, "ask_price": 101,
+            "source_timestamp_ms": int((now - timedelta(minutes=source_age)).timestamp() * 1000),
+            "funding_rate": live_rate,
         },
-        now,
-        lambda symbol: f"{symbol}:USDT",
+        now, market_data_provider=primary_provider(Exchange())
     )
 
     assert feature is not None
@@ -513,6 +597,14 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
             return current if tz is not None else current.replace(tzinfo=None)
 
     monkeypatch.setattr(features, "datetime", ResponseClock)
+    acquisition_times = iter([funding_received_at, oi_received_at])
+    class AcquisitionClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            current = next(acquisition_times)
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr("extensions.exchanges.ccxt.market_data.datetime", AcquisitionClock)
     monkeypatch.setattr(repo, "latest_orderbook", lambda *args, **kwargs: None)
     monkeypatch.setattr(repo, "latest_funding_rate", lambda *args, **kwargs: None)
     monkeypatch.setattr(repo, "latest_open_interest", lambda *args, **kwargs: None)
@@ -540,29 +632,30 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
 
     snapshots = []
     feature = await features._fetch_single_feature(
-        Exchange(),
         {
             "id": "asset-btc",
             "symbol": "BTC/USDT",
             "venue": "okx",
             "market_type": "perp",
         },
-        {"quoteVolume": 1_000_000, "bid": 100, "ask": 101},
+        {"quote_volume_24h": 1_000_000, "bid_price": 100, "ask_price": 101},
         scan_started_at,
-        lambda symbol: f"{symbol}:USDT",
-        snapshot_buffer=snapshots,
+        snapshot_buffer=snapshots, market_data_provider=primary_provider(Exchange())
     )
 
     assert feature is not None
     assert feature["funding_rate"] == -0.0002
     assert feature["funding_observed_at"] == funding_received_at.isoformat()
+    import json
+    assert json.loads(feature["funding_evidence_json"])["acquired_at"] == funding_received_at.isoformat()
     assert feature["open_interest"] == 123.0
     assert feature["feature_snapshot_ts"] == assembled_at.isoformat()
     assert [snapshot.ts for snapshot in snapshots] == [assembled_at.isoformat()]
 
 
 @pytest.mark.asyncio
-async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatch):
+@pytest.mark.parametrize("venue", ["okx", "binance"])
+async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatch, venue):
     from tests.test_entry_logic import setup_env
     from aletheia.universe import features
     from aletheia.storage import repositories as repo
@@ -582,31 +675,39 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         async def fetch_ohlcv(self, symbol, timeframe, limit):
             interval = {"15m": 900000, "1h": 3600000, "4h": 14400000}[timeframe]
             end = int(now.timestamp() * 1000) // interval * interval
-            return [[end - i * interval, 100, 101, 99, 100, 1000] for i in range(limit - 1, -1, -1)]
+            valid = [[end - i * interval, 100, 101, 99, 100, 1000] for i in range(limit - 1, -1, -1)]
+            # A closed but impossible provider row must enter neither history nor features.
+            return valid + [[end - interval, 100, 101, 99, 200, 1000]]
 
     exchange = Exchange()
+    provider = CCXTProvider(venue, venue)
+    provider._primary = exchange
+    provider._primary_perp = exchange
     for market in ("spot", "perp"):
-        asset = {"id": market, "symbol": "ETH/USDT", "venue": "okx", "market_type": market}
+        exchange.id = "binanceusdm" if venue == "binance" and market == "perp" else venue
+        asset = {"id": market, "symbol": "ETH/USDT", "venue": venue, "market_type": market}
         get_db().execute("INSERT INTO universe_registry (id, symbol, venue, market_type) VALUES (?, ?, ?, ?)",
-                         (market, "ETH/USDT", "okx", market))
+                         (market, "ETH/USDT", venue, market))
         get_db().commit()
         assert features._load_fresh_enrichment_rows(asset, now=now)[0] is None
-        feature = await features._fetch_single_feature(exchange, asset, {"quoteVolume": 1000000}, now, lambda s: f"{s}:USDT")
+        feature = await features._fetch_single_feature( asset, {"quote_volume_24h": 1000000}, now, market_data_provider=provider)
         assert feature["depth_10bps_usd"] == (40000 if market == "perp" else 20000)
-        row = repo.latest_orderbook("ETH/USDT", exchange="okx", market_type=market)
+        assert feature["last_price"] == 100
+        row = repo.latest_orderbook("ETH/USDT", exchange=venue, market_type=market)
         assert row["total_depth_10bps_usd"] == feature["depth_10bps_usd"]
         from aletheia.trading.entry_analysis import entry_causal_windows
         cutoff = datetime.now(timezone.utc)
-        windows = {tf: repo.get_ohlcv_candles("ETH/USDT", tf, n, "okx", market, include_provenance=True)
+        windows = {tf: repo.get_ohlcv_candles("ETH/USDT", tf, n, venue, market, include_provenance=True)
                    for tf, n in (("15m", 96), ("1h", 48), ("4h", 30))}
-        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", windows, cutoff)
+        assert all(bar["close"] == 100 for rows in windows.values() for bar in rows)
+        admitted, *_ = entry_causal_windows(venue, "ETH/USDT", market, "long", windows, cutoff)
         assert all(window["availability"] == "available" for window in admitted.values())
         repo.execute_write("UPDATE market_ohlcv SET first_persisted_at=NULL, last_mutated_at=NULL WHERE exchange=? AND symbol=? AND market_type=?",
-                           ("okx", "ETH/USDT", market))
-        repeated = await features._fetch_single_feature(exchange, asset, {"quoteVolume": 2000000}, now, lambda s: f"{s}:USDT")
+                           (venue, "ETH/USDT", market))
+        repeated = await features._fetch_single_feature( asset, {"quote_volume_24h": 2000000}, now, market_data_provider=provider)
         assert repeated["feature_snapshot_id"] == feature["feature_snapshot_id"]
-        recovered = repo.get_ohlcv_candles("ETH/USDT", "15m", 96, "okx", market, include_provenance=True)
-        admitted, *_ = entry_causal_windows("okx", "ETH/USDT", market, "long", {"15m": recovered}, datetime.now(timezone.utc))
+        recovered = repo.get_ohlcv_candles("ETH/USDT", "15m", 96, venue, market, include_provenance=True)
+        admitted, *_ = entry_causal_windows(venue, "ETH/USDT", market, "long", {"15m": recovered}, datetime.now(timezone.utc))
         assert admitted["15m"]["availability"] == "available"
         assert all(datetime.fromisoformat(bar["first_persisted_at"]) >= cutoff for bar in recovered)
         current_id = features.persist_feature_snapshot_for_emission(repeated)
@@ -615,6 +716,99 @@ async def test_discovery_books_are_exact_durable_and_reused(tmp_path, monkeypatc
         assert persisted["quote_volume_24h"] == repeated["quote_volume_24h"] == 2000000
         assert persisted["ts"] == repeated["feature_ts"] == repeated["feature_snapshot_ts"]
     assert exchange.calls == ["ETH/USDT", "ETH/USDT:USDT"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("symbol", "BTC/USDT"), ("exchange", "binance"), ("market_type", "perp")])
+async def test_discovery_rejects_mismatched_normalized_book(monkeypatch, field, value):
+    from aletheia.data.orderbook import parse_orderbook
+    from aletheia.universe import features
+
+    snapshot = parse_orderbook("ETH/USDT", "okx", {
+        "bids": [[99.99, 1]], "asks": [[100.01, 1]],
+    }, 1, market_type="spot")
+    reader = AsyncMock(return_value=snapshot.model_copy(update={field: value}))
+
+    writer = Mock()
+    monkeypatch.setattr(features.repo, "insert_orderbook_snapshot", writer)
+    assert await features._fetch_feature_orderbook(reader, {
+        "venue": "okx", "symbol": "ETH/USDT", "market_type": "spot",
+    }) is None
+    reader.assert_awaited_once()
+    writer.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [
+    [1, 100, 90, 99, 100, 1000],
+    [1, 100, 101, 99, 100, float("nan")],
+    [1, 100],
+])
+async def test_discovery_only_computes_from_persistable_candles(monkeypatch, invalid):
+    from aletheia.universe import features
+
+    class Exchange:
+        id = "fixture"
+
+        async def fetch_ohlcv(self, *_args, **_kwargs):
+            return [invalid]
+
+    writer = Mock()
+    technical = Mock(side_effect=AssertionError("rejected history cannot become features"))
+    monkeypatch.setattr(features.repo, "upsert_ohlcv_candles", writer)
+    monkeypatch.setattr(features, "get_technical_snapshot_service", technical)
+    diagnostics = {}
+    result = await features._fetch_single_feature( {"id": "fixture", "symbol": "BTC/USDT", "venue": "fixture", "market_type": "spot"},
+        {"quote_volume_24h": 1000000}, datetime.now(timezone.utc),
+        market_data_provider=primary_provider(Exchange()), diagnostics_out=diagnostics,
+    )
+    assert result is None
+    assert diagnostics["ohlcv_unavailable"] == 1
+    writer.assert_not_called()
+    technical.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_ohlcv_from_another_venue(monkeypatch):
+    from aletheia.data.providers import Candle
+    from aletheia.universe import features
+
+    writer = Mock()
+    technical = Mock()
+    monkeypatch.setattr(features.repo, "upsert_ohlcv_candles", writer)
+    monkeypatch.setattr(features, "get_technical_snapshot_service", technical)
+    result = await features._fetch_single_feature( {"id": "fixture", "symbol": "BTC/USDT", "venue": "okx", "market_type": "spot"},
+        {"quote_volume_24h": 1000000}, datetime.now(timezone.utc),
+        market_data_provider=Mock(get_primary_ohlcv=AsyncMock(return_value=[Candle(1, 100, 101, 99, 100, 1, exchange="binance")])),
+    )
+    assert result is None
+    writer.assert_not_called()
+    technical.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_discovery_history_failure_stops_before_feature_computation(monkeypatch):
+    from aletheia.universe import features
+    from aletheia.storage import repositories as repo
+
+    class Exchange:
+        id = "fixture"
+
+        async def fetch_ohlcv(self, *_args, **_kwargs):
+            return [[1, 100, 101, 99, 100, 1000]]
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("required history unavailable")
+
+    def forbidden():
+        raise AssertionError("unpersisted causal inputs cannot become features")
+
+    monkeypatch.setattr(repo, "upsert_ohlcv_candles", unavailable)
+    monkeypatch.setattr(features, "get_technical_snapshot_service", forbidden)
+    with pytest.raises(RuntimeError, match="required history unavailable"):
+        await features._fetch_single_feature( {"id": "fixture", "symbol": "BTC/USDT", "venue": "fixture", "market_type": "spot"},
+            {"quote_volume_24h": 1000000}, datetime.now(timezone.utc), market_data_provider=primary_provider(Exchange())
+        )
 
 
 @pytest.mark.asyncio
@@ -641,13 +835,18 @@ async def test_collection_failure_is_not_a_successful_empty_population(monkeypat
             raise OSError("history down")
     closed = []
     class Provider:
+        prepare_primary_market = CCXTProvider.prepare_primary_market
+        get_primary_open_interest = CCXTProvider.get_primary_open_interest
+        get_primary_ohlcv = CCXTProvider.get_primary_ohlcv
+        get_tickers = CCXTProvider.get_tickers
+        get_orderbook = AsyncMock(return_value=None)
         def __init__(self, **kwargs):
-            pass
+            self._primary_name = kwargs["exchange"]
         def _ensure_primary(self, *args):
             return Exchange()
         async def close(self):
             closed.append(True)
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", Provider)
+    monkeypatch.setattr(ccxt_provider, "_native_provider_factory", Provider)
     diagnostics = {}
     call = features.collect_features([{
         "id": "asset", "symbol": "ETH/USDT", "market_type": "spot", "venue": cfg.market_data.ccxt_exchange,
@@ -682,7 +881,9 @@ async def test_discovery_rejects_unavailable_books_without_persisting(tmp_path, 
         def unavailable(data):
             raise RuntimeError("writer unavailable")
         monkeypatch.setattr(repo, "insert_orderbook_snapshot", unavailable)
-    call = features._fetch_feature_orderbook(Exchange(), {"venue": "okx", "symbol": "ETH/USDT", "market_type": "spot"}, "ETH/USDT")
+    provider = CCXTProvider(Exchange.id, Exchange.id)
+    provider._primary = Exchange()
+    call = features._fetch_feature_orderbook(provider.get_orderbook, {"venue": "okx", "symbol": "ETH/USDT", "market_type": "spot"})
     if failure == "cancel":
         with pytest.raises(asyncio.CancelledError):
             await call

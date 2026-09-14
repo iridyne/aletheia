@@ -1,7 +1,7 @@
 """Frozen canonical facts and existing SQLite writes, with no live providers."""
 
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -22,10 +22,10 @@ def frozen():
             for family, table in (("funding", "funding_rate_snapshots"), ("open_interest", "open_interest_snapshots")):
                 row = repo._select_all(table, where="exchange=?", params=(venue,), order="rowid DESC", limit=1)[0]
                 facts.extend(project_snapshot(row, family, now=acquired))
-            price = price_snapshot("BTC/USDT", venue, {
-                "markPrice": 100 if age else 110, "indexPrice": 100,
-                "timestamp": int(acquired.timestamp()*1000),
-            }, instrument=instrument, acquired_at=acquired)
+            price = price_snapshot("BTC/USDT", venue,
+                mark_price=100 if age else 110, reference_price=100,
+                source_observed_at=acquired.isoformat(), source_time_status="provided",
+                instrument=instrument, acquired_at=acquired, provider="ccxt")
             repo.insert_perp_price_snapshot(price)
             facts.extend(project_price_snapshot(price, now=acquired))
     return facts

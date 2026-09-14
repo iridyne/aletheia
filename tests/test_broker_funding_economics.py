@@ -14,6 +14,8 @@ from aletheia.execution.broker_funding import (
     compute_stored_broker_funding,
     load_broker_funding_candidates,
     make_complete_ledger,
+)
+from tests.broker_funding_fixture import (
     normalize_binance_funding_rows,
     normalize_bitget_funding_rows,
     normalize_okx_funding_rows,
@@ -113,8 +115,8 @@ def test_complete_empty_private_ledger_proves_zero_funding(mode, environment):
 def test_private_history_retention_cannot_fabricate_complete_zero_funding():
     from aletheia.execution.broker_funding import (
         BrokerFundingIntegrityError,
-        require_retained_history,
     )
+    from tests.broker_funding_fixture import require_retained_history
 
     now_ms = 1_800_000_000_000
     ninety_one_days_ms = 91 * 24 * 60 * 60 * 1000
@@ -993,77 +995,6 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
     assert stored["funding_cost"] is None
     assert stored["realized_pnl"] is None
     assert stored["outcome_exclusion_reason"] == "incomplete_funding_economics"
-
-
-@pytest.mark.asyncio
-async def test_okx_funding_reader_uses_private_account_bills():
-    from aletheia.exchanges.okx.client import OKXClient
-
-    now = datetime.now(timezone.utc)
-    start_ms = int((now - timedelta(hours=2)).timestamp() * 1000)
-    end_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
-    exchange = MagicMock()
-    exchange.load_markets = AsyncMock()
-    exchange.market.return_value = {"id": "BTC-USDT-SWAP"}
-    exchange.private_get_account_bills = AsyncMock(return_value={
-        "code": "0",
-        "data": [{
-            "billId": "okx-funding-1",
-            "instId": "BTC-USDT-SWAP",
-            "pnl": "-1.25",
-            "type": "8",
-            "subType": "173",
-            "ccy": "USDT",
-            "ts": str(start_ms + 30 * 60 * 1000),
-            "posSide": "long",
-        }],
-    })
-    with patch(
-        "aletheia.exchanges.okx.client.get_secret", return_value="configured",
-    ):
-        client = OKXClient(mode="demo")
-    client._exchange = exchange
-    ledger = await client.get_funding_ledger(
-        broker_id="okx_demo",
-        symbol="BTC/USDT",
-        start_time_ms=start_ms,
-        end_time_ms=end_ms,
-    )
-    assert ledger["events"][0]["event_id"] == "okx-funding-1"
-    assert ledger["events"][0]["funding_cost"] == 1.25
-    exchange.private_get_account_bills.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_binance_funding_reader_uses_signed_income_history():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    now = datetime.now(timezone.utc)
-    start_ms = int((now - timedelta(hours=2)).timestamp() * 1000)
-    end_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
-    exchange = MagicMock()
-    exchange.fapiPrivateGetIncome = AsyncMock(return_value=[{
-        "tranId": "binance-funding-1",
-        "symbol": "BTCUSDT",
-        "income": "0.75",
-        "incomeType": "FUNDING_FEE",
-        "asset": "USDT",
-        "time": start_ms + 30 * 60 * 1000,
-    }])
-    with patch(
-        "aletheia.exchanges.binance.client.get_secret", return_value="configured",
-    ):
-        client = BinanceClient(mode="testnet")
-    client._exchange = exchange
-    ledger = await client.get_funding_ledger(
-        broker_id="binance_testnet",
-        symbol="BTC/USDT",
-        start_time_ms=start_ms,
-        end_time_ms=end_ms,
-    )
-    assert ledger["events"][0]["event_id"] == "binance-funding-1"
-    assert ledger["events"][0]["funding_cost"] == -0.75
-    exchange.fapiPrivateGetIncome.assert_awaited_once()
 
 
 def _seed_exchange_close_for_recovery(

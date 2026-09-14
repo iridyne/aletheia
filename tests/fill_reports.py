@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from aletheia.exchanges.bitget.client import normalize_private_fill_reports
+from extensions.exchanges.bitget.client import normalize_private_fill_reports
 from aletheia.uta.models import UTAAccountIdentity
 
 

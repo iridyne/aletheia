@@ -490,7 +490,7 @@ def test_model_health_freshness_boundary_is_server_owned():
 @pytest.mark.anyio
 async def test_model_health_separates_reachability_and_verification(client, monkeypatch):
     from aletheia.model_provider.base import ModelHealth
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def healthy(self):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
@@ -517,7 +517,7 @@ async def test_model_profile_verification_persists_and_config_change_invalidates
     client, monkeypatch
 ):
     from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def healthy(self):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
@@ -697,17 +697,26 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
     from aletheia.config.loader import get_data_dir, load_config, save_config
     from aletheia.config.schema import UniverseConfig
     from aletheia.storage.models import AuditEvent
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
     from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
         recover_candidate_selection_authority_transition,
         stage_candidate_selection_authority_transition,
     )
-
     cfg = load_config()
     target = UniverseConfig.model_validate({
         **cfg.universe.model_dump(mode="json"),
         "candidate_selection_policy": "candidate_selection_utility_v1",
-        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
+        "candidate_selection_policy_epoch": None,
     })
+    cfg.universe = target
+    target = UniverseConfig.model_validate({
+        **target.model_dump(mode="json"),
+        "candidate_selection_policy_epoch": canonical_fingerprint(
+            candidate_selection_policy_identity(cfg)
+        ),
+    })
+    cfg.universe = target
     legacy = UniverseConfig.model_validate({
         **target.model_dump(mode="json"),
         "candidate_selection_policy": "legacy_total_score_v1",
@@ -1710,6 +1719,47 @@ async def test_uta_profile_change_advances_account_generation(client):
     current = load_config().exchange
     assert current.uta_account_config_generation_for("bitget_demo") == 1
     assert current.uta_account_config_generation_for("bitget_live_limited") == 1
+    for mode in ("okx_demo", "okx_live_limited", "binance_testnet", "binance_live_limited"):
+        assert current.uta_account_config_generation_for(mode) == before.uta_account_config_generation_for(mode)
+
+    # Re-saving the same profile must not invalidate either account again.
+    repeated = await client.post(
+        "/api/settings/exchange-markets",
+        json={"spot": True, "usdt_futures": True, "bitget_profile": "uta_v3"},
+    )
+    assert repeated.status_code == 200
+    assert load_config().exchange.uta_account_config_generations == current.uta_account_config_generations
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("reachable,error", [(True, None), (False, "ConnectTimeout")])
+async def test_network_test_uses_independent_egress_probe(client, monkeypatch, reachable, error):
+    from unittest.mock import AsyncMock
+
+    probe = AsyncMock(return_value={"reachable": reachable, "latency_ms": None, "error_code": error})
+    monkeypatch.setattr("aletheia.agent_runtime.connectivity.probe_external_network", probe)
+    monkeypatch.setattr("aletheia.net.httpx_client", lambda **_: pytest.fail("route must not own another HTTP probe"))
+    response = await client.post("/api/settings/network/test")
+    assert response.status_code == 200
+    assert response.json()["reachable"] is reachable
+    assert response.json()["error"] == error
+    assert isinstance(response.json()["latency_ms"], int)
+    probe.assert_awaited_once_with()
+
+
+@pytest.mark.anyio
+async def test_profile_change_without_extension_does_not_mutate_config(client, monkeypatch):
+    from aletheia.config.loader import load_config
+    import aletheia.uta.manager as manager
+
+    before = load_config().exchange.model_dump()
+    monkeypatch.setattr(manager, "_profile_accounts", None)
+    response = await client.post(
+        "/api/settings/exchange-markets",
+        json={"spot": True, "usdt_futures": True, "bitget_profile": "uta_v3"},
+    )
+    assert response.status_code == 503
+    assert load_config().exchange.model_dump() == before
 
 
 @pytest.mark.anyio
@@ -1945,7 +1995,7 @@ async def test_codex_routes_are_removed(client, method, path):
 @pytest.mark.anyio
 async def test_model_test_candidate_pass(client, monkeypatch):
     """A reachable candidate key returns available=true, echoes no key, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
 
     async def fake_health(self):
@@ -1975,7 +2025,7 @@ async def test_model_test_candidate_pass(client, monkeypatch):
 @pytest.mark.anyio
 async def test_model_test_candidate_probe_succeeds_without_model_catalogue(client, monkeypatch):
     """An inference probe must not require optional /models list permission."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
 
@@ -2003,7 +2053,7 @@ async def test_model_test_candidate_probe_succeeds_without_model_catalogue(clien
 @pytest.mark.anyio
 async def test_model_test_candidate_fail(client, monkeypatch):
     """An unreachable candidate returns available=false + error, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
 
     async def fake_health(self):
@@ -2130,7 +2180,8 @@ async def test_telegram_health_not_configured(client):
 @pytest.mark.anyio
 async def test_telegram_health_reachable(client, monkeypatch):
     """A configured + reachable token reports the bot username, never the token."""
-    import aletheia.server.routes.telegram as tg_routes
+    import importlib
+    tg_routes = importlib.import_module("extensions.telegram.health")
     from aletheia.config.secrets import set_secret
 
     token = "123456:super-secret-bot-token"
@@ -2154,6 +2205,26 @@ async def test_telegram_health_reachable(client, monkeypatch):
     assert body["reachable"] is True
     assert body["username"] == "aletheia_bot"
     assert token not in resp.text
+
+
+@pytest.mark.anyio
+async def test_telegram_health_rejection_does_not_echo_upstream_token(client, monkeypatch):
+    import importlib
+    tg_routes = importlib.import_module("extensions.telegram.health")
+    from aletheia.config.secrets import set_secret
+
+    token = "123456:synthetic-sensitive-token"
+    set_secret("telegram.bot_token", token)
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def get(self, *args):
+            return type("Response", (), {"json": lambda self: {"ok": False, "description": token}})()
+    monkeypatch.setattr(tg_routes, "httpx_client", lambda **kwargs: Client())
+    response = await client.get("/api/telegram/health")
+    assert token not in response.text
+    assert response.json() == {"reachable": False, "error": "request_rejected"}
+
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("provider_type,protocol", [

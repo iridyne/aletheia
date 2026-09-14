@@ -89,7 +89,7 @@ async def test_catalog_reports_prediction_admission_state(tmp_path, monkeypatch)
 async def test_prediction_agent_defensively_rejects_disabled_config(monkeypatch):
     from types import SimpleNamespace
 
-    import aletheia.agents.prediction_observer as module
+    import extensions.prediction.observer as module
 
     monkeypatch.setattr(module, "load_config", lambda: SimpleNamespace(
         market_data=SimpleNamespace(prediction_enabled=False, observed_prediction_markets=["crypto"]),
@@ -100,3 +100,35 @@ async def test_prediction_agent_defensively_rejects_disabled_config(monkeypatch)
 
     assert result["errors"] == ["prediction_observer_disabled"]
     assert result["outputs"] == []
+
+
+@pytest.mark.anyio
+async def test_missing_prediction_provider_finishes_run_without_publication(tmp_path, monkeypatch):
+    import builtins
+    from extensions.prediction import observer
+    from aletheia.storage import repositories as repo
+
+    _setup(tmp_path, monkeypatch, enabled=True)
+    monkeypatch.setattr(observer, "is_tool_permitted", lambda *_args: True)
+    original_import = builtins.__import__
+
+    def missing_provider(name, *args, **kwargs):
+        if name == "extensions.prediction.polymarket":
+            raise ModuleNotFoundError("fixture provider missing", name=name)
+        return original_import(name, *args, **kwargs)
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("provider absence must not reach inference or publication")
+
+    monkeypatch.setattr(builtins, "__import__", missing_provider)
+    monkeypatch.setattr(observer, "llm_structured", forbidden)
+    monkeypatch.setattr(observer, "insert_opportunity", forbidden)
+    result = await observer.run_prediction_observer()
+    assert result["outputs"] == []
+    assert result["errors"] == ["polymarket_fetch_failed:ModuleNotFoundError"]
+    runs = repo.list_prediction_runs()
+    assert len(runs) == 1
+    assert runs[0]["status"] == "failed"
+    assert runs[0]["completed_at"] is not None
+    assert json.loads(runs[0]["errors"]) == result["errors"]
+    assert runs[0]["opportunities_created"] == 0

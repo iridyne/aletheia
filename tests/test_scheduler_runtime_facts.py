@@ -113,6 +113,7 @@ def test_health_check_samples_before_update_readiness_deadline(monkeypatch) -> N
 
     instance = scheduler.init_scheduler()
     assert instance is not None
+    assert instance.get_job("okx_demo_symbols") is None
     job = instance.get_job("health_check")
 
     assert job.trigger.interval.total_seconds() == 600

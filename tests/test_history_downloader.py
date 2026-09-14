@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
 
 from aletheia.data.history_downloader import download_symbol_history, check_coverage
+from extensions.exchanges.ccxt.market_data import CCXTProvider
+
+_REAL_GET_OHLCV = CCXTProvider.get_ohlcv
 
 
 def _mock_config():
@@ -29,6 +32,50 @@ class FakeCandle:
 
 def _make_candles(start_ts: int, count: int, tf_ms: int = 3_600_000):
     return [FakeCandle(timestamp=start_ts + i * tf_ms) for i in range(count)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["forward", "backward", "bootstrap"])
+async def test_download_has_one_writer_after_requested_window_filter(monkeypatch, mode):
+    from aletheia.data import ccxt_provider
+    from aletheia.storage import repositories as repo
+
+    now_ms = 1_800_000_000_000
+    start_ms = now_ms - 30 * 24 * 3600 * 1000
+    accepted_ms = (now_ms - 499 * 3_600_000 if mode == "bootstrap"
+                   else start_ms + 3_600_000)
+
+    class Exchange:
+        calls = 0
+
+        async def fetch_ohlcv(self, *_args, **kwargs):
+            self.calls += 1
+            if mode == "bootstrap" and self.calls != 2:
+                return []
+            return [[ts, 100, 101, 99, 100.5, 10] for ts in (kwargs["since"] - 1, accepted_ms)]
+
+    provider = CCXTProvider("fixture", "fixture")
+    exchange = Exchange()
+    # Exercise the real provider, including its normal persistence path.
+    monkeypatch.setattr(provider, "get_ohlcv", _REAL_GET_OHLCV.__get__(provider))
+    monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: exchange)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda *a, **kw: provider)
+    monkeypatch.setattr("aletheia.config.loader.load_config", _mock_config)
+    monkeypatch.setattr("aletheia.data.history_downloader.time.time", lambda: now_ms / 1000)
+    monkeypatch.setattr(repo, "get_ohlcv_newest_ts",
+                        lambda *a, **kw: now_ms - 3_600_000 if mode == "backward" else None)
+    monkeypatch.setattr(repo, "get_ohlcv_coverage",
+                        lambda *a, **kw: {"oldest_ts": accepted_ms + 3_600_000} if mode == "backward" else {})
+    writes = []
+
+    def persist(symbol, timeframe, candles, **kwargs):
+        writes.append([c.timestamp for c in candles])
+
+    monkeypatch.setattr(repo, "upsert_ohlcv_candles", persist)
+    result = await download_symbol_history("BTC/USDT", "1h", months=1, exchange="fixture")
+    assert result.error is None
+    assert result.bars_fetched == 1
+    assert writes == [[accepted_ms]]
 
 
 @pytest.mark.asyncio

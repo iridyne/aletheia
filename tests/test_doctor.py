@@ -7,9 +7,33 @@ build_report() with a real (empty) DB to prove they never raise.
 """
 
 import sqlite3
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from aletheia.diagnostics import doctor as dx
+
+
+@pytest.mark.parametrize("protocol", ["http", "socks5"])
+def test_network_report_never_contains_proxy_credentials(monkeypatch, protocol):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    import urllib.request
+
+    proxy = f"{protocol}://synthetic-user:synthetic-password@localhost:7890"
+    cfg = SimpleNamespace(network=SimpleNamespace(
+        proxy_url=proxy, enforce=True, proxy_protocol=protocol,
+    ))
+    monkeypatch.setattr("aletheia.config.loader.load_config", lambda: cfg)
+    opener = Mock()
+    opener.open.return_value.read.return_value = b"ok"
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_: opener)
+    monkeypatch.setattr(dx, "_egress_ip", lambda *_: None)
+    report = dx.Report()
+    dx._probe_network(report)
+    assert report.checks[0].severity == ("info" if protocol == "socks5" else "ok")
+    assert "synthetic-user" not in repr(report.checks)
+    assert "synthetic-password" not in repr(report.checks)
+    assert proxy not in repr(report.checks)
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -333,7 +357,15 @@ def test_db_capacity_reports_wal_backlog_before_normal_size_labels():
     assert "remaining" in hint or "checkpoint" in hint
 
 
-def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
+@pytest.fixture
+def coinalyze_binding(monkeypatch):
+    from aletheia.agent_runtime import scheduler
+    from extensions.coinalyze.collector import is_configured
+
+    monkeypatch.setattr(scheduler, "_coinalyze_is_configured", is_configured)
+
+
+def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch, coinalyze_binding):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _key: None)
     monkeypatch.delenv("COINALYZE_API_KEY", raising=False)
@@ -348,7 +380,7 @@ def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
     assert "unavailable while Coinalyze is not configured" in checks["data.liquidations"].detail
 
 
-def test_doctor_warns_when_configured_coinalyze_has_no_oi_rows(tmp_path, monkeypatch):
+def test_doctor_warns_when_configured_coinalyze_has_no_oi_rows(tmp_path, monkeypatch, coinalyze_binding):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "aletheia.config.secrets.get_secret",
@@ -365,7 +397,7 @@ def test_doctor_warns_when_configured_coinalyze_has_no_oi_rows(tmp_path, monkeyp
     assert "no liquidation events" in checks["data.liquidations"].detail
 
 
-def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch):
+def test_doctor_coinalyze_ok_when_oi_rows_are_fresh(tmp_path, monkeypatch, coinalyze_binding):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "aletheia.config.secrets.get_secret",
@@ -1165,7 +1197,7 @@ def test_build_report_runs_and_covers_all_dimensions():
     # every dimension contributes at least its primary check
     for expected in (
         "code.sync", "process.gateway", "process.gateway_service", "config.permission",
-        "config.kill_switch", "creds.bitget_demo", "data.market",
+        "config.kill_switch", "creds.exchange", "data.market",
         "data.collectors",
         "loop.activity", "health.rollup",
     ):
@@ -1398,6 +1430,61 @@ def test_paused_config_reports_each_active_owner(monkeypatch):
 
 
 
+@pytest.mark.parametrize("mode,counts,severity", [
+    (None, None, "info"),
+    ("okx_demo", None, "warn"),
+    ("okx_demo", (0, 3), "blocker"),
+    ("okx_demo", (1, 3), "warn"),
+    ("bitget_demo", (3, 3), "ok"),
+])
+def test_exchange_credential_diagnostic_is_selected_account_scoped(monkeypatch, mode, counts, severity):
+    from aletheia.uta import manager
+    from aletheia.config import loader, secrets
+    from aletheia.config.schema import AletheiaConfig
+
+    monkeypatch.setattr(loader, "load_config", lambda: AletheiaConfig())
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: mode)
+    monkeypatch.setattr(secrets, "get_secret", lambda key: pytest.fail("Core raw credential read"))
+    calls = []
+    monkeypatch.setattr(manager, "credential_configuration", lambda selected, cfg: calls.append(selected) or counts)
+    report = dx.Report(generated_at="t")
+    dx._probe_credentials(report)
+    check = next(row for row in report.checks if row.name == "creds.exchange")
+    assert check.severity == severity
+    assert calls == ([mode] if mode else [])
+    if counts is not None:
+        assert f"{counts[0]}/{counts[1]}" in check.detail
+
+
+def test_model_tier_credentials_do_not_fall_back_to_default(monkeypatch):
+    from aletheia.config import loader, secrets
+    from aletheia.config.schema import AletheiaConfig, ModelSelection, ProviderConfig
+
+    cfg = AletheiaConfig()
+    cfg.models.default_provider = "default"
+    cfg.models.providers = {
+        name: ProviderConfig(type="openai_compatible", enabled=True,
+                             base_url="https://fixture.invalid/v1", api_key_secret_ref=f"model.{name}.key")
+        for name in ("default", "fast-endpoint", "deep-endpoint")
+    }
+    cfg.models.fast = ModelSelection(endpoint_id="fast-endpoint", model_id="fast-model")
+    cfg.models.deep = ModelSelection(endpoint_id="deep-endpoint", model_id="deep-model")
+    monkeypatch.setattr(loader, "load_config", lambda: cfg)
+    monkeypatch.setattr("aletheia.model_provider.router.load_config", lambda: cfg)
+    reads = []
+    monkeypatch.setattr(secrets, "get_secret_fingerprint", lambda ref: reads.append(ref) or
+                        ("opaque" if ref == "model.default.key" else None))
+    report = dx.Report(generated_at="t")
+    dx._probe_credentials(report)
+    checks = {row.name: row for row in report.checks}
+    assert checks["creds.llm"].severity == "ok"
+    for tier in ("fast", "deep"):
+        assert checks[f"creds.llm.{tier}"].severity == "warn"
+        assert f"{tier}-endpoint" in checks[f"creds.llm.{tier}"].detail
+        assert f"{tier}-model" in checks[f"creds.llm.{tier}"].detail
+    assert reads == ["model.default.key", "model.fast-endpoint.key", "model.deep-endpoint.key"]
+
+
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.config.secrets as secrets
@@ -1409,7 +1496,17 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
         type="anthropic_compatible", enabled=True, api_key_secret_ref="model.gateway.api_key"
     )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(secrets, "get_secret", lambda key: "secret" if key == "model.gateway.api_key" else None)
+    def forbidden_raw_read(key):
+        raise AssertionError("Doctor must not receive raw credentials")
+
+    looked_up = []
+
+    def fingerprint(key):
+        looked_up.append(key)
+        return "opaque-fingerprint" if key == "model.gateway.api_key" else None
+
+    monkeypatch.setattr(secrets, "get_secret", forbidden_raw_read)
+    monkeypatch.setattr(secrets, "get_secret_fingerprint", fingerprint)
 
     r = dx.Report(generated_at="t")
     dx._probe_credentials(r)
@@ -1417,6 +1514,8 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
     llm = next(c for c in r.checks if c.name == "creds.llm")
     assert llm.severity == "ok"
     assert "anthropic_compatible" in llm.detail
+    assert looked_up == ["model.gateway.api_key"]
+    assert "opaque-fingerprint" not in str(r)
 
 
 def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):

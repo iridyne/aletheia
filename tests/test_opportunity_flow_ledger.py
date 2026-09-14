@@ -149,13 +149,13 @@ def _insert_proposal_chain(db: sqlite3.Connection, *, opp_id: str = "opp-flow-1"
 
 
 def test_opportunity_flow_read_model_has_no_llm_ranker_guard_or_execution_calls():
-    src_path = Path(__file__).resolve().parents[1] / "aletheia" / "analytics" / "opportunity_flow.py"
+    src_path = Path(__file__).resolve().parents[1] / "core" / "aletheia" / "analytics" / "opportunity_flow.py"
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
 
     forbidden_import_roots = {
         "aletheia.agents",
         "aletheia.agent_shell",
-        "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "aletheia.knowledge.guards",
         "aletheia.model_provider",
@@ -681,24 +681,22 @@ def test_opportunity_cli_outputs_audit_and_trace():
     assert payload["final_stage"] == "debate_downgraded"
 
 
-def test_legacy_flow_cli_remains_hidden_compatibility_alias():
+def test_legacy_flow_cli_is_retired():
     from aletheia.main import app
-    from aletheia.storage.sqlite import get_db
-
-    db = get_db()
-    _insert_opp(db)
-    _insert_decision(db)
 
     runner = CliRunner()
     audit = runner.invoke(app, ["flow", "audit", "--hours", "24", "--limit", "5"])
     trace = runner.invoke(app, ["flow", "trace", "--opportunity-id", "opp-flow-1", "--json"])
 
-    assert audit.exit_code == 0
-    assert "Deprecated: use `uv run aletheia opportunity audit`" in audit.output
-    assert "Opportunity Flow Ledger" in audit.output
-    assert trace.exit_code == 0
-    payload = json.loads(trace.output)
-    assert payload["opportunity_id"] == "opp-flow-1"
+    assert audit.exit_code == 2
+    assert trace.exit_code == 2
+    assert "No such command" in audit.output
+    assert "No such command" in trace.output
+
+    for command in ("alpha", "funnel", "sizing"):
+        result = runner.invoke(app, [command, "--help"])
+        assert result.exit_code == 2
+        assert "No such command" in result.output
 
 
 def test_opportunity_cli_outputs_specialized_views():

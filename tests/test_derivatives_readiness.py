@@ -33,8 +33,9 @@ def test_readiness_requires_compatible_exact_venues_and_keeps_unknowns(monkeypat
     store('okx', oi=200)
     store('hyperliquid', oi=900, settle='USDC')
     store('coinalyze', oi=10000)  # even a provider-tagged aggregate must never enter the subtotal
-    row = price_snapshot('BTC/USDT','binance',{'markPrice':101,'indexPrice':100,'timestamp':int(NOW.timestamp()*1000)},
-        instrument=instrument, acquired_at=NOW)
+    row = price_snapshot('BTC/USDT','binance',mark_price=101,reference_price=100,
+        source_observed_at=NOW.isoformat(),source_time_status='provided',
+        instrument=instrument, acquired_at=NOW, provider='ccxt')
     repo.insert_perp_price_snapshot(row)
     before = repo.latest_open_interest('BTC/USDT','binance')
     coverage = dict(acquired_at=NOW.isoformat(), venues={'bitget':{'BTC/USDT':{'listed':True,'funding':'provider_error','open_interest':'oi_unit_unproven'}}})
@@ -58,7 +59,8 @@ def test_readiness_requires_compatible_exact_venues_and_keeps_unknowns(monkeypat
 def test_missing_baseline_reference_and_current_not_listed_stay_unavailable(monkeypatch):
     cfg=AletheiaConfig()
     instrument=store('okx')
-    row=price_snapshot('BTC/USDT','okx',{'markPrice':100},instrument=instrument,acquired_at=NOW)
+    row=price_snapshot('BTC/USDT','okx',mark_price=100,reference_price=None,
+        instrument=instrument,acquired_at=NOW,provider='ccxt')
     repo.insert_perp_price_snapshot(row)
     result=derivatives_readiness('BTC/USDT',cfg,now=NOW)
     families=result['exact_venues']['okx']['families']

@@ -15,6 +15,7 @@ the WIRING from collector → SQLite → repo readers → context render is inta
 """
 
 from __future__ import annotations
+from extensions.exchanges.ccxt.market_data import CCXTProvider
 
 import asyncio
 import contextlib
@@ -42,7 +43,18 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     the macro top_movers_summary."""
     # ----- mock CCXT funding/OI fetches -----
     class _FakeFutures:
-        markets = {"BTC/USDT:USDT": {}}
+        markets = {
+            "BTC/USDT:USDT": {
+                "id": "BTCUSDT",
+                "symbol": "BTC/USDT:USDT",
+                "swap": True,
+                "base": "BTC",
+                "quote": "USDT",
+                "settle": "USDT",
+                "linear": True,
+                "contractSize": 1,
+            }
+        }
 
         async def load_markets(self):
             return self.markets
@@ -52,27 +64,34 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
                 "fundingRate": 0.0001,
                 "fundingDatetime": "2026-06-27T08:00:00Z",
                 "markPrice": 60_000.0,
+                "interval": "8h",
             }
 
         async def fetch_open_interest(self, sym):
             return {
                 "openInterestAmount": 100_000.0,
                 "openInterestValue": 6_000_000_000.0,
-                "info": {"sumOpenInterest": "100000"},
+                "info": {"sumOpenInterestValue": "6000000000"},
             }
 
     class _FakeProvider:
+        prepare_live_derivatives = CCXTProvider.prepare_live_derivatives
+        get_live_derivatives = CCXTProvider.get_live_derivatives
         _primary_name = "binance"
         _sessions = []
 
-        def _ensure_primary(self):
+        def _ensure_primary(self, market_type=None):
+            assert market_type == "perp"
             return _FakeFutures()
 
         async def close(self):
             return None
 
     from aletheia.data import ccxt_provider as ccxt_mod
-    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", lambda: _FakeProvider())
+    def native_provider(*, native_ccxt):
+        assert native_ccxt is True
+        return _FakeProvider()
+    monkeypatch.setattr(ccxt_mod, "get_market_data_provider", native_provider)
 
     # ----- mock httpx for: Binance LSR + Alt.me F&G + CoinGecko top -----
     class _FakeResp:
@@ -120,20 +139,20 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     from aletheia import net as net_mod
     monkeypatch.setattr(net_mod, "httpx_client", _fake_httpx_client)
     # Also patch the macro module's bound reference (top-of-file import).
-    from aletheia.data.collectors import macro as macro_mod
+    from extensions.macro import collector as macro_mod
     monkeypatch.setattr(macro_mod, "httpx_client", _fake_httpx_client)
     monkeypatch.setattr(
         macro_mod, "_fetch_one_tradfi_ticker", lambda _ticker: None
     )
-    from aletheia.data.collectors import derivatives as deriv_mod
+    from extensions.exchanges.binance import positioning as deriv_mod
     monkeypatch.setattr(deriv_mod, "httpx_client", _fake_httpx_client)
-    from aletheia.data.collectors import coingecko_top as cg_mod
+    import extensions.coingecko.top as cg_mod
     monkeypatch.setattr(cg_mod, "httpx_client", _fake_httpx_client)
 
     # Drive the collectors directly in the Phase B order the scheduler uses.
     from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.macro.collector import MacroCollector
+    from extensions.coingecko.top import CoinGeckoTopCollector
     from aletheia.storage import repositories as repo
 
     symbols = ["BTC/USDT"]
@@ -198,7 +217,7 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
 
     # 6. enriched_context render emits all five LLM-visible tokens
     from aletheia.data.context_builder import render_enriched_context_md
-    from aletheia.data.models import LeverageState, MacroSnapshot
+    from aletheia.data.models import MacroSnapshot
     from aletheia.data.normalizer import compute_leverage_state
     lv = compute_leverage_state(
         symbol="BTC/USDT",

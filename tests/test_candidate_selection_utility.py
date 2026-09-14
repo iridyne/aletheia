@@ -40,7 +40,8 @@ def test_fast_route_actionability_does_not_require_slow_snapshots(monkeypatch):
     assert select() == []
 
 
-def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stream_available", [False, True])
+def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch, bitget_fast_stream, stream_available):
     from tests.test_entry_logic import setup_env
     from aletheia.config.loader import load_config
     from aletheia.storage import repositories as repo
@@ -48,12 +49,19 @@ def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp
     setup_env(tmp_path, monkeypatch)
     cfg = load_config()
     cfg.market_data.ccxt_exchange = "bitget"
+    if not stream_available:
+        monkeypatch.setattr("aletheia.universe.fast_stream._FAST_STREAM_ADAPTERS", {})
     db = repo.get_db()
     for table in ("universe_members", "candidate_planning_generations", "market_snapshots"):
         assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
     candidate = _controlled_admitted_target_candidate(
         cfg, monkeypatch, mechanism="continuation", direction="long", market_type="spot",
+        expected_admission=stream_available,
     )
+    if not stream_available:
+        assert candidate is None
+        assert db.execute("SELECT COUNT(*) FROM candidate_planning_generations").fetchone()[0] == 0
+        return
     assert candidate.symbol.startswith("COIN") and candidate.execution_eligible
     generation = repo.get_candidate_planning_for_candidate(candidate.id)
     assert generation and generation["status"] == "pending"
@@ -82,7 +90,7 @@ def test_actionability_manifest_rotates_existing_policy_epoch(tmp_path, monkeypa
         k:v for k,v in current.items() if k != "semantic_manifest"}
 
 
-def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, monkeypatch):
+def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, monkeypatch, bitget_fast_stream):
     import json
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -120,15 +128,21 @@ def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, mo
     assert before_identity[1] != after_identity[1]
 
 
-def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direction, market_type):
+def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direction, market_type, expected_admission=True):
     import asyncio
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember
     from aletheia.config.loader import save_config, load_config
-    from aletheia.data.ccxt_provider import CCXTProvider, timeframe_ms
+    from extensions.exchanges.ccxt.market_data import CCXTProvider
+    from aletheia.data.ccxt_provider import timeframe_ms
     from aletheia.universe.service import UniverseService
 
     cfg.exchange.paper_execution_mode = "bitget_demo"
+    async def market_capabilities(mode):
+        assert mode == "bitget_demo"
+        return None  # This controlled adapter has no separate demo whitelist.
+
+    monkeypatch.setattr("aletheia.execution.venue_capabilities._market_capability_reader", market_capabilities)
     save_config(cfg)
     cfg = load_config()
     class Exchange:
@@ -162,13 +176,21 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     snapshot_id = asyncio.run(service.refresh())
     assert snapshot_id is not None, [dict(r) for r in repo.get_db().execute("SELECT * FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1")]
     members = service.get_current_universe()
+    if not expected_admission:
+        import json
+        assert members == []
+        metrics = json.loads(repo.get_db().execute(
+            "SELECT metrics FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1").fetchone()[0])
+        assert metrics["candidate_path"]["selection_reason_counts"][
+            "action_route_unavailable:FAST_MARKET_DATA_STREAM_UNAVAILABLE"] == 20
+        return None
     assert members, repo.get_db().execute("SELECT metrics FROM universe_scanner_runs ORDER BY rowid DESC LIMIT 1").fetchone()[0]
     candidate = UniverseMember.model_validate(members[0])
     assert candidate.opportunity_mechanism == mechanism and candidate.scanner_direction == direction
     assert candidate.candidate_selection_policy_epoch == cfg.universe.candidate_selection_policy_epoch
     return candidate
 
-def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch):
+def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkeypatch, bitget_fast_stream):
     from tests.test_entry_logic import setup_env
     from aletheia.config.loader import load_config
     from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
@@ -185,7 +207,7 @@ def test_refresh_publishes_loadable_candidate_economic_evidence(tmp_path, monkey
                and row["mechanism_id"] == "continuation" for row in outcomes)
 
 
-def test_current_publication_survives_retired_scanner_failure(tmp_path, monkeypatch):
+def test_current_publication_survives_retired_scanner_failure(tmp_path, monkeypatch, bitget_fast_stream):
     import json
     from tests.test_entry_logic import setup_env
     from aletheia.config.loader import load_config

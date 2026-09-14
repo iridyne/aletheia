@@ -43,6 +43,49 @@ def setup_test_env(tmp_path, monkeypatch):
     })
 
 
+@pytest.mark.parametrize("mode,bound", [
+    ("bitget_demo", True), ("bitget_live_limited", True),
+    ("okx_demo", False), ("okx_live_limited", False),
+    ("binance_testnet", False), ("binance_live_limited", False),
+])
+@pytest.mark.parametrize("force_independent", [False, True])
+def test_existing_account_configuration_exemptions(tmp_path, monkeypatch, mode, bound, force_independent):
+    setup_test_env(tmp_path, monkeypatch)
+    from aletheia.config.loader import load_config, save_config
+    from tests.risk_trade_fixture import approvable_risk_trade
+
+    cfg = load_config()
+    cfg.exchange.name = "bitget"
+    cfg.risk.allowed_exchange = "okx"
+    cfg.exchange.mode = "demo" if mode.endswith("live_limited") else "live"
+    save_config(cfg)
+    monkeypatch.setattr("aletheia.risk.kill_switch.activate", lambda **kwargs: pytest.fail("no real brake mutation"))
+    trade = approvable_risk_trade(monkeypatch, symbol="BTC/USDT", market_type="spot", direction="long", price=60000)
+    proposal = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
+                             execution_mode=mode, quantity=0.001, price=60000, **trade)
+    if force_independent:
+        # Synthetic property override proves Risk consumes the attribute, not
+        # a second hidden venue list. No production configuration is changed.
+        from aletheia.config.exchanges import AccountConfigBinding
+        monkeypatch.setattr("aletheia.risk.engine.execution_mode_account_config_binding",
+                            lambda selected: AccountConfigBinding.SELF_CONTAINED)
+        bound = False
+    result = evaluate_proposal(proposal, decision_role="preflight")
+    selected = [v for v in result.violations if v.startswith(("exchange_not_allowed:", "account_mode_mismatch:"))]
+    expected = []
+    if bound:
+        order_mode = "live" if mode.endswith("live_limited") else "demo"
+        expected = ["exchange_not_allowed:bitget!=okx", f"account_mode_mismatch:order={order_mode},exchange={cfg.exchange.mode}"]
+    assert selected == expected
+    reset_db()
+
+
+@pytest.mark.parametrize("mode", ["", "unknown_demo", "paper_internal", " OKX_DEMO "])
+def test_unknown_account_binding_never_grants_self_contained_exemption(mode):
+    from aletheia.config.exchanges import AccountConfigBinding, execution_mode_account_config_binding
+    assert execution_mode_account_config_binding(mode) is AccountConfigBinding.GLOBAL
+
+
 def test_risk_approves_valid_demo_proposal(tmp_path, monkeypatch):
     setup_test_env(tmp_path, monkeypatch)
     from tests.risk_trade_fixture import approvable_risk_trade
@@ -438,6 +481,15 @@ def test_authoritative_risk_and_filter_evidence_commit_together(
         params=(f"proposal:{proposal.id}",),
     )
     assert {row["horizon"] for row in outcomes} == {"15m", "1h", "4h", "24h"}
+    before = {
+        table: repo._select_all(table)
+        for table in ("risk_decisions", "filter_decisions", "filter_candidate_outcomes")
+    }
+    repeated = evaluate_proposal(proposal)
+    assert repeated.approved is True
+    assert repeated.decision_id == result.decision_id
+    assert {table: repo._select_all(table) for table in before} == before
+    assert len(repo._select_all("entry_risk_reservations")) == 1
     reset_db()
 
 

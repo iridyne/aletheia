@@ -441,6 +441,15 @@ def _enable_remote_control(tmp_path, monkeypatch, secret: str = "SVCTOKEN99"):
 
 
 @pytest.mark.anyio
+async def test_remote_owner_non_ascii_token_is_denied(client, tmp_path, monkeypatch):
+    _enable_remote_control(tmp_path, monkeypatch)
+    response = await client.get(
+        "/api/proposals", headers=[(b"X-Aletheia-Token", b"\xe9")],
+    )
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
 async def test_service_credential_can_start_approved_specialist(client, tmp_path, monkeypatch):
     """Service credential can enqueue a specialist in _OPERATOR_SERVICE_AGENT_ALLOWLIST."""
     svc_token = _enable_remote_control(tmp_path, monkeypatch)

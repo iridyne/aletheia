@@ -33,7 +33,8 @@ async def test_retired_model_type_cannot_probe_or_resolve_credentials(
     def forbidden(*_args, **_kwargs):
         pytest.fail("retired configuration must not resolve credentials")
 
-    monkeypatch.setattr(router, "get_secret", forbidden)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden)
+    monkeypatch.setattr(router, "get_secret_fingerprint", forbidden)
     router.clear_cache()
     try:
         assert not router.provider_is_configured(name, pcfg)
@@ -70,5 +71,6 @@ def test_operator_cli_cannot_reactivate_a_retired_transport(monkeypatch, name, p
     monkeypatch.setattr(loader, "save_config", forbidden)
     monkeypatch.setattr("typer.prompt", forbidden)
     result = CliRunner().invoke(model_app, ["set", "--provider", name, "--api-key"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
+    assert "No such command" in result.output
     assert not cfg.models.providers[name].enabled

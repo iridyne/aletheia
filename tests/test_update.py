@@ -408,7 +408,7 @@ def test_apply_skips_deps_when_pyproject_unchanged(tmp_path, monkeypatch):
     monkeypatch.setattr(git_ops, "is_worktree_dirty", lambda: False)
     monkeypatch.setattr(git_ops, "current_commit", lambda: "old111")
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
-    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["aletheia/foo.py"])
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["core/aletheia/foo.py"])
     # current_commit is called twice (before+after); make the second return new
     commits = iter(["old111", "new222"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
@@ -431,7 +431,7 @@ def test_apply_reinstalls_deps_when_pyproject_changed(tmp_path, monkeypatch):
     commits = iter(["old111", "new222"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
-    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["pyproject.toml", "aletheia/x.py"])
+    monkeypatch.setattr(git_ops, "changed_files", lambda old, new: ["pyproject.toml", "core/aletheia/x.py"])
     installed = {"called": 0}
     monkeypatch.setattr(
         applier, "_reinstall_deps", lambda: installed.__setitem__("called", installed["called"] + 1) or {"ok": True}
@@ -494,7 +494,7 @@ def test_schema_candidate_failure_is_durably_audited(tmp_path, monkeypatch):
     from aletheia.backup import service as backup_service
     from aletheia.update import applier, auto, git_ops
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     monkeypatch.setattr(git_ops, "reset_hard", lambda _commit: {"ok": True})
     monkeypatch.setattr(
         backup_service,
@@ -527,7 +527,7 @@ def test_schema_preflight_source_restore_retries_and_reports_actual_head(tmp_pat
     setup_env(tmp_path, monkeypatch)
     from aletheia.update import applier, git_ops
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     heads = iter(["old111", "new222", "unverified333"])
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(heads))
     resets = []
@@ -919,11 +919,15 @@ def _stub_clean_pull(monkeypatch, pyproject_changed=False, changed_files=None):
     monkeypatch.setattr(git_ops, "current_commit", lambda: next(commits))
     monkeypatch.setattr(git_ops, "pull", lambda branch="master": {"ok": True})
     changed = (
-        changed_files if changed_files is not None else (["pyproject.toml"] if pyproject_changed else ["aletheia/x.py"])
+        changed_files if changed_files is not None else (["pyproject.toml"] if pyproject_changed else ["core/aletheia/x.py"])
     )
     monkeypatch.setattr(git_ops, "changed_files", lambda old, new: changed)
     monkeypatch.setattr(git_ops, "tree_hash", lambda commit, path: "frontend-tree")
     monkeypatch.setattr(applier, "_reinstall_deps", lambda: {"ok": True})
+    monkeypatch.setattr(
+        applier, "_restart_gateway",
+        lambda: pytest.fail("update tests must explicitly fake Gateway restart"),
+    )
 
 
 def test_apply_rolls_back_on_smoke_failure(tmp_path, monkeypatch):
@@ -1218,7 +1222,7 @@ def test_apply_refuses_schema_change_without_restart(tmp_path, monkeypatch):
 
     _stub_clean_pull(
         monkeypatch,
-        changed_files=["aletheia/storage/migrations.py"],
+        changed_files=["core/aletheia/storage/migrations.py"],
     )
     calls = []
     monkeypatch.setattr(
@@ -1245,7 +1249,7 @@ def test_apply_preflights_schema_change_against_backup_before_restart(tmp_path, 
     from aletheia.backup import service as backup_service
     from aletheia.update import applier, auto, git_ops
 
-    _stub_clean_pull(monkeypatch, changed_files=["aletheia/storage/migrations.py"])
+    _stub_clean_pull(monkeypatch, changed_files=["core/aletheia/storage/migrations.py"])
     monkeypatch.setattr(applier, "_dashboard_build_required", lambda _tree: False)
     calls = []
     backups = iter([tmp_path / "preflight.tar", tmp_path / "activation.tar"])

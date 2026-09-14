@@ -21,7 +21,7 @@ class _FakeExchange:
 # ── get_open_orders response parsing (real client, mocked ccxt exchange) ─────
 
 def test_okx_get_open_orders_parses(monkeypatch):
-    import aletheia.exchanges.okx.client as okxmod
+    import extensions.exchanges.okx.client as okxmod
     monkeypatch.setattr(okxmod, "get_secret", lambda k: "x")
     c = okxmod.OKXClient(mode="demo")
     monkeypatch.setattr(c, "_ensure_exchange", lambda: _FakeExchange([
@@ -35,7 +35,7 @@ def test_okx_get_open_orders_parses(monkeypatch):
 
 
 def test_binance_get_open_orders_parses(monkeypatch):
-    import aletheia.exchanges.binance.client as binmod
+    import extensions.exchanges.binance.client as binmod
     monkeypatch.setattr(binmod, "get_secret", lambda k: "x")
     c = binmod.BinanceClient(mode="testnet")
     monkeypatch.setattr(c, "_ensure_exchange", lambda: _FakeExchange([

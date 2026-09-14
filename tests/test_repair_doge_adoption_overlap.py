@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from aletheia.maintenance import repair_doge_adoption_overlap as repair
+from ops.maintenance import repair_doge_adoption_overlap as repair
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import Fill, Order, Position, RiskDecision, TradeProposal
 

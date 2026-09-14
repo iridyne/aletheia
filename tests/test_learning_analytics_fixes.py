@@ -38,7 +38,7 @@ class TestMemoRotationFixes:
 
     def test_evaluate_prior_memo_accepts_old_memo_for_rotation(self):
         """evaluate_prior_memo with for_rotation=True accepts a memo older than 72h."""
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        from extensions.learning.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
         from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
@@ -58,7 +58,7 @@ class TestMemoRotationFixes:
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item"), \
-             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
+             patch("extensions.learning.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{"id": "memo_old_123", "content": json.dumps(old_memo), "tags": "{}"}]
             mock_cohort.return_value = _complete_cohort([])
 
@@ -82,7 +82,7 @@ class TestMemoEffectivenessTradeFiltering:
         kwarg the way the real reader does; this test proves the reader
         forwards ``bitget_demo`` and only sees the two matching external closes.
         """
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        from extensions.learning.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
         from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
@@ -132,7 +132,7 @@ class TestMemoEffectivenessTradeFiltering:
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item"), \
-             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
+             patch("extensions.learning.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{"id": "memo_123", "content": json.dumps(memo), "tags": "{}"}]
             mock_cohort.side_effect = _by_mode
 
@@ -146,7 +146,7 @@ class TestMemoEffectivenessTradeFiltering:
     def test_memo_trade_window_uses_absolute_instants_not_iso_text(self):
         """Offset-bearing opened_at values are compared as UTC instants."""
         from aletheia.analytics.learning_window import CLEAN_WINDOW_ANCHOR_ID
-        from aletheia.analytics.memo_effectiveness import evaluate_prior_memo
+        from extensions.learning.memo_effectiveness import evaluate_prior_memo
         from aletheia.analytics.outcome_integrity import OUTCOME_SEMANTICS_VERSION
 
         memo = {
@@ -200,8 +200,8 @@ class TestMemoEffectivenessTradeFiltering:
 
         with patch("aletheia.storage.repositories.list_knowledge_items") as mock_list, \
              patch("aletheia.storage.repositories.update_knowledge_item") as mock_update, \
-             patch("aletheia.analytics.memo_effectiveness.is_current_outcome_artifact", return_value=True), \
-             patch("aletheia.analytics.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
+             patch("extensions.learning.memo_effectiveness.is_current_outcome_artifact", return_value=True), \
+             patch("extensions.learning.memo_effectiveness.read_complete_outcome_cohort") as mock_cohort:
             mock_list.return_value = [{
                 "id": "memo_time_123",
                 "content": json.dumps(memo),
@@ -228,7 +228,7 @@ class TestReasoningFeedbackRegimeTag:
         Three rejected long+momentum+bull + seven profitable executed long+momentum+bull
         → rejection rate 3/10 (all 10 in same bucket), NOT 3/3 (rejected-only bucket).
         """
-        from aletheia.analytics.reasoning_feedback import build_reasoning_feedback
+        from extensions.learning.reasoning_feedback import build_reasoning_feedback
 
         mock_db = MagicMock()
 
@@ -294,7 +294,7 @@ class TestReasoningFeedbackRegimeTag:
         )
 
         with patch("aletheia.storage.sqlite.get_db", return_value=mock_db), \
-             patch("aletheia.analytics.reasoning_feedback.read_complete_outcome_cohort",
+             patch("extensions.learning.reasoning_feedback.read_complete_outcome_cohort",
                    return_value=cohort), \
              patch("aletheia.analytics.learning_window.clean_window_cutoff",
                    return_value="2026-06-01T00:00:00Z"):

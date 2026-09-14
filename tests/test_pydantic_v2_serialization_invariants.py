@@ -15,7 +15,7 @@ class _SchemaLike:
 
 def _iter_python_files() -> Iterator[Path]:
     repo_root = Path(__file__).resolve().parents[1]
-    yield from (repo_root / "aletheia").rglob("*.py")
+    yield from (repo_root / "core" / "aletheia").rglob("*.py")
 
 
 def test_no_v1_model_compatibility_fallbacks() -> None:

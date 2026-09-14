@@ -1,7 +1,7 @@
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
-from aletheia.data.sources.binance_public import BinancePublicProvider
+from extensions.exchanges.ccxt.market_data import CCXTProvider
+from extensions.exchanges.binance.public_market_data import BinancePublicProvider
 from aletheia.data.sources.chain import FallbackChainProvider
 from aletheia.data.venue_health import (
     get_provider_capability_snapshot,
@@ -86,7 +86,7 @@ async def test_ccxt_skips_a_venue_after_rate_limit_refusal(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ccxt_rejects_invalid_ticker_before_recording_success(monkeypatch):
-    import aletheia.data.ccxt_provider as ccxt_module
+    import extensions.exchanges.ccxt.market_data as ccxt_module
 
     successes = []
     monkeypatch.setattr(ccxt_module, "record_venue_success", successes.append)
@@ -129,7 +129,7 @@ async def test_ccxt_all_invalid_tickers_are_unavailable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ccxt_all_invalid_ohlcv_keeps_venue_cooling_until_valid_data(monkeypatch):
-    import aletheia.data.ccxt_provider as ccxt_module
+    import extensions.exchanges.ccxt.market_data as ccxt_module
     import aletheia.data.venue_health as health
 
     monkeypatch.setattr(health, "emit_infra_event", lambda **_kwargs: None)
@@ -154,7 +154,7 @@ async def test_ccxt_all_invalid_ohlcv_keeps_venue_cooling_until_valid_data(monke
     provider = CCXTProvider("binance", "bybit")
     monkeypatch.setattr(provider, "_ensure_primary", lambda _market_type=None: primary)
     monkeypatch.setattr(provider, "_ensure_fallback", lambda _market_type=None: FallbackExchange())
-    monkeypatch.setattr(provider, "_persist", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("aletheia.data.market_history.persist_closed_candles", lambda *_args, **_kwargs: None)
 
     result = await _GET_OHLCV(provider, "BTC/USDT", limit=1, since=0)
 

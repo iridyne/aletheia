@@ -199,7 +199,7 @@ def test_family_pi_context_and_go_live_metrics_ignore_administrative_rows():
 
 
 def test_calibration_build_uses_only_verified_current_semantics_outcomes():
-    from aletheia.analytics.confidence_calibration import build_calibration_report
+    from extensions.learning.confidence_calibration import build_calibration_report
     from aletheia.storage.sqlite import get_db
 
     now = datetime.now(timezone.utc).isoformat()
@@ -298,7 +298,7 @@ def test_old_memo_and_reasoning_feedback_are_rejected():
 
 
 def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeypatch):
-    from aletheia.analytics import insight_synthesizer
+    from extensions.learning import insight_synthesizer
 
     monkeypatch.setattr(
         insight_synthesizer,
@@ -311,7 +311,7 @@ def test_memo_statistics_fail_closed_when_complete_cohort_is_unavailable(monkeyp
 
 
 def test_reasoning_feedback_does_not_persist_an_unavailable_cohort(monkeypatch):
-    from aletheia.analytics import reasoning_feedback
+    from extensions.learning import reasoning_feedback
 
     db = MagicMock()
     db.execute.return_value.fetchall.return_value = [{"proposal_id": "proposal-1"}]

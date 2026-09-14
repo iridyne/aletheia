@@ -816,7 +816,7 @@ def test_legacy_numeric_caller_uses_lab_seam_after_cutover(monkeypatch):
     assert tuple(row) == ("lab", "candidate-1")
 
 
-def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monkeypatch):
+def test_lab_treatment_backpressure_keeps_numeric_baseline(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.observation_lab import canonical
     from aletheia.observation_lab.canonical import (
@@ -834,7 +834,6 @@ def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monke
         resolution_reason="test",
         authority_source="lab",
     )
-    deferred: list[dict] = []
     decision = experiments.apply_numeric_treatment(
         path_id="ranker_case_score",
         scope={"feature": "score"},
@@ -846,24 +845,23 @@ def test_deferred_lab_treatment_backpressure_keeps_publication_on_baseline(monke
         treatment=2.0,
         consumer="test",
         consumer_stage="score",
-        deferred_exposure_writes=deferred,
     )
 
     assert decision.value == 1.0
     assert decision.reason == "outbox_backpressure"
-    assert deferred == []
+    assert decision.applied is False
+    assert decision.exposure_id is None
     assert get_db().execute(
         "SELECT COUNT(*) FROM observation_delivery_outbox"
     ).fetchone()[0] == 1
 
 
-def test_deferred_identityless_refusal_is_published_as_capture(monkeypatch):
+def test_numeric_identityless_refusal_is_persisted_as_capture(monkeypatch):
     from aletheia.learning import experiments
     from aletheia.observation_lab.canonical import set_authority_source
 
     monkeypatch.setattr(experiments, "_learning_gate_reason", lambda: None)
     set_authority_source("lab", actor="owner", reason="deferred-capture-test")
-    deferred: list[dict] = []
 
     decision = experiments.apply_numeric_treatment(
         path_id="ranker_case_score",
@@ -876,11 +874,16 @@ def test_deferred_identityless_refusal_is_published_as_capture(monkeypatch):
         treatment=2.0,
         consumer="test",
         consumer_stage="score",
-        deferred_exposure_writes=deferred,
     )
 
     assert decision.reason == "no_eligible_manifest"
-    assert deferred[0]["canonical_receipt"]["receipt_kind"] == "capture"
+    from aletheia.storage.sqlite import get_db
+
+    row = get_db().execute(
+        "SELECT receipt_kind, applied, observation_id FROM observation_delivery_outbox WHERE receipt_id=?",
+        (decision.exposure_id,),
+    ).fetchone()
+    assert tuple(row) == ("capture", 0, None)
 
 
 def test_observe_only_and_deny_tombstone_never_change_baseline():

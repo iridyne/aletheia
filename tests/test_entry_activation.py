@@ -360,7 +360,10 @@ async def test_watch_loop_restores_durable_activation_and_submits_same_plan(monk
             stop.set()
 
     stream = Stream()
-    monkeypatch.setattr(watch, "fast_market_stream_for_config", lambda _cfg: stream)
+    from aletheia.universe import fast_stream
+    monkeypatch.setattr(fast_stream, "_FAST_STREAM_ADAPTERS", {
+        "bitget_demo": (lambda: stream, frozenset({"spot", "perp"})),
+    })
     await asyncio.wait_for(watch._watch_loop(cfg), timeout=2)
     assert ready.activation_events[-1].instrument in stream.instruments
     assert len(set(submitted)) == 1, (repo.get_entry_plan(plan.plan_id)["status"],

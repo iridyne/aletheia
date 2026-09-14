@@ -146,7 +146,7 @@ def test_unknown_fee_is_not_zero_or_assumed_quote(fee, currency, expected):
 
 
 def test_private_fee_parser_preserves_missing_and_rejects_mixed_amounts():
-    from aletheia.exchanges.bitget.client import _bitget_fill_fee
+    from extensions.exchanges.bitget.client import _bitget_fill_fee
 
     assert float(_bitget_fill_fee({"fee": "0.1"})[0]) == pytest.approx(0.1)
     assert _bitget_fill_fee({"fee": "0.1"})[1] is None

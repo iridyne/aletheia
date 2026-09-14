@@ -14,7 +14,7 @@ def test_1467_trailing_stop_exchange_before_db():
     Source inspection: _maybe_update_trailing_stop() should call
     replace_exchange_protective_stop() before persist_position_exit_plan().
     """
-    with open("aletheia/portfolio/position_manager.py") as f:
+    with open("core/aletheia/portfolio/position_manager.py") as f:
         source = f.read()
     tree = ast.parse(source)
     
@@ -56,7 +56,7 @@ def test_1468_position_evaluation_has_exception_guard():
     Source inspection: the for loop body should have a broad try/except
     around the core evaluation logic.
     """
-    with open("aletheia/portfolio/position_manager.py") as f:
+    with open("core/aletheia/portfolio/position_manager.py") as f:
         source = f.read()
     
     lines = source.split("\n")

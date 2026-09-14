@@ -97,6 +97,47 @@ def _patch_loader(config_file: Path):
 # ─── Tests ────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.parametrize("writer", ["equities", "delist"])
+def test_observation_config_writes_preserve_newer_revision(tmp_path, monkeypatch, writer):
+    from contextlib import ExitStack
+    from aletheia.config import loader
+    from aletheia.server.routes import settings
+    from aletheia.trading import market_data
+
+    config_file = tmp_path / "config.yaml"
+    _seed(config_file)
+    with ExitStack() as stack:
+        for patch in _patch_loader(config_file):
+            stack.enter_context(patch)
+        monkeypatch.setattr(loader, "_emit_consistency_events", lambda cfg: None)
+        monkeypatch.setattr("aletheia.runtime_home_migration.assert_runtime_home_ready", lambda **kw: None)
+        audits = []
+        monkeypatch.setattr("aletheia.files.jsonl.write_audit", audits.append)
+        monkeypatch.setattr("aletheia.infra.events.emit_infra_event", lambda **kw: None)
+        stale = load_config(persist_migrations=False)
+        mutate_config(lambda cfg: setattr(cfg.app, "dashboard_port", 9999) or True)
+        real_load = loader.load_config
+
+        def cached_load(*, persist_migrations=True, **kwargs):
+            return stale.model_copy(deep=True) if persist_migrations else real_load(
+                persist_migrations=False, **kwargs)
+
+        monkeypatch.setattr(loader, "load_config", cached_load)
+        monkeypatch.setattr(settings, "load_config", cached_load)
+        if writer == "equities":
+            settings.update_observed_equities(settings.EquitiesConfigUpdate(tickers=[" tsla "]))
+        else:
+            assert market_data._auto_remove_xstock("AAPLON/USDT", "bitget", 3)
+            assert not market_data._auto_remove_xstock("AAPLON/USDT", "bitget", 3)
+        final = AletheiaConfig.model_validate(yaml.safe_load(config_file.read_text()))
+        assert final.app.dashboard_port == 9999
+        assert len(audits) == 1
+        if writer == "equities":
+            assert final.market_data.observed_equities == ["TSLA"]
+        else:
+            assert "AAPLON/USDT" not in final.market_data.observed_stock_tokens
+
+
 def test_concurrent_trading_mandate_writes_both_survive(tmp_path):
     """Two processes writing trading_mandate from the same base: both commits survive.
 

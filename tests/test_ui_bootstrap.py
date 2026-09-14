@@ -130,13 +130,17 @@ def test_model_setup_uses_configured_credential_channels(monkeypatch):
         command="",
     )
     cfg = SimpleNamespace(models=SimpleNamespace(providers={"default": provider}))
-    monkeypatch.setattr(ui, "get_secret", lambda ref: "configured" if ref == "provider-key" else None)
+    assert not hasattr(ui, "get_secret")
+    monkeypatch.setattr(ui, "get_secret_fingerprint", lambda ref: "fingerprint" if ref == "provider-key" else None)
     assert ui._model_provider_usable(cfg) is True
+    monkeypatch.setattr(ui, "get_secret_fingerprint", lambda ref: None)
+    assert ui._model_provider_usable(cfg) is False
 
 
-def test_overview_bootstrap_projects_activity_and_account_only():
+def test_overview_bootstrap_projects_activity_and_account_only(monkeypatch):
     from aletheia.server.routes.ui import overview_bootstrap
 
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: "bitget_demo")
     response = Response()
     payload = overview_bootstrap(response)
 

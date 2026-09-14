@@ -11,7 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from aletheia.data import macro_liquidity as ml
-from aletheia.data.collectors import macro
+from extensions.macro import collector as macro
+from extensions.fred import collector as fred
 from aletheia.storage import repositories as repo
 
 CUTOFF = "2026-09-11T12:00:00+00:00"
@@ -19,7 +20,10 @@ CUTOFF = "2026-09-11T12:00:00+00:00"
 
 @pytest.fixture(autouse=True)
 def fresh_process_throttle(monkeypatch):
-    monkeypatch.setattr(macro, "_FRED_RESEARCH_ATTEMPTS", {})
+    monkeypatch.setattr(fred, "_FRED_RESEARCH_ATTEMPTS", {})
+    monkeypatch.setattr(macro, "_fred_macro_fetch", fred.collect_macro)
+    monkeypatch.setattr(macro, "_fred_research_fetch", fred.collect_research)
+    monkeypatch.setattr(macro, "_fred_is_configured", fred.is_configured)
 
 
 def batch(sid, points, acquired=CUTOFF):
@@ -142,7 +146,7 @@ def test_daily_weekly_request_and_storage_budget(monkeypatch):
         @classmethod
         def now(cls, tz=None):
             return now
-    monkeypatch.setattr(macro, "datetime", Frozen)
+    monkeypatch.setattr(fred, "datetime", Frozen)
     calls = []
     @asynccontextmanager
     async def client(**kwargs):
@@ -155,17 +159,17 @@ def test_daily_weekly_request_and_storage_budget(monkeypatch):
                 return SimpleNamespace(raise_for_status=lambda: None, json=lambda: dict(units="lin",
                     observations=[dict(date=d.isoformat(), value="4") for d in days[:params["limit"]]]))
         yield Fake()
-    monkeypatch.setattr(macro, "httpx_client", client)
+    monkeypatch.setattr(fred, "httpx_client", client)
     sizes = []
     for day in range(7):
         now = datetime(2026, 9, 11+day, 12, tzinfo=timezone.utc)
-        fetched = asyncio.run(macro._fetch_fred_research("fixture"))
+        fetched = asyncio.run(fred._fetch_fred_research("fixture"))
         assert len(fetched) == (6 if day == 0 else 4)
         for row in fetched:
             sizes.append(len(json.dumps(row).encode()))
             repo.insert_fred_source_batch(row)
-        macro._FRED_RESEARCH_ATTEMPTS.clear()  # restart: durable cadence still holds
-        assert asyncio.run(macro._fetch_fred_research("fixture")) == []
+        fred._FRED_RESEARCH_ATTEMPTS.clear()  # restart: durable cadence still holds
+        assert asyncio.run(fred._fetch_fred_research("fixture")) == []
     assert len(calls) == 30  # 4 daily * 7 + 2 weekly
     assert all(p["limit"] == (32 if ml.SERIES[p["series_id"]][1] == "Daily" else 4) for p in calls)
     assert max(sizes) < 8192
@@ -182,21 +186,37 @@ def test_failed_and_unconfigured_attempts_are_cadence_bounded_and_redacted(monke
                 calls.append(1)
                 raise RuntimeError("https://example.invalid/?api_key=DO_NOT_LOG")
         yield Fake()
-    monkeypatch.setattr(macro, "httpx_client", client)
-    failed = asyncio.run(macro._fetch_fred_research("fixture"))
+    monkeypatch.setattr(fred, "httpx_client", client)
+    failed = asyncio.run(fred._fetch_fred_research("fixture"))
     assert len(calls) == 6 and all(b["unavailable_reason"] == "request_failed" for b in failed)
     assert "DO_NOT_LOG" not in json.dumps(failed)
     # No writes yet: persistence failure cannot turn into an intraday retry.
-    assert asyncio.run(macro._fetch_fred_research("fixture")) == []
+    assert asyncio.run(fred._fetch_fred_research("fixture")) == []
     for row in failed:
         repo.insert_fred_source_batch(row)
-    macro._FRED_RESEARCH_ATTEMPTS.clear()
-    assert asyncio.run(macro._fetch_fred_research("fixture")) == []
+    fred._FRED_RESEARCH_ATTEMPTS.clear()
+    assert asyncio.run(fred._fetch_fred_research("fixture")) == []
     assert len(calls) == 6
 
 
 def test_no_key_no_network_and_cli_is_read_only(monkeypatch):
-    result = asyncio.run(macro._fetch_fred_research(None))
+    def forbidden(**kwargs):
+        raise AssertionError("unconfigured FRED must not create an HTTP client")
+
+    requested = []
+
+    def own_reference(key):
+        requested.append(key)
+        assert key == "fred_api_key"
+        return None
+
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", own_reference)
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    monkeypatch.setattr(fred, "httpx_client", forbidden)
+    assert not fred.is_configured()
+    assert asyncio.run(fred.collect_macro()) == (None, None, None, None)
+    result = asyncio.run(fred.collect_research())
+    assert requested == ["fred_api_key"] * 3
     assert len(result) == 6 and all(b["unavailable_reason"] == "not_configured" for b in result)
     from typer.testing import CliRunner
     from aletheia.cli.data_cmd import data_app
@@ -212,17 +232,17 @@ def test_no_key_no_network_and_cli_is_read_only(monkeypatch):
 
 def test_collector_research_failure_does_not_change_existing_snapshot(monkeypatch):
     async def cg(): return 50, 1e12, 1
-    async def tradfi(_): return tuple((20, dict(source="fred", precision="date",
+    async def tradfi(): return tuple((20, dict(source="fred", precision="date",
         source_observed_at=datetime.now(timezone.utc).date().isoformat(), acquired_at=CUTOFF)) for _ in range(4))
-    async def research(_): return []
+    async def research(): return []
     monkeypatch.setattr(macro, "_fetch_coingecko", cg)
-    monkeypatch.setattr(macro, "_fetch_fred", tradfi)
-    monkeypatch.setattr(macro, "_fetch_fred_research", research)
+    monkeypatch.setattr(macro, "_fred_macro_fetch", tradfi)
+    monkeypatch.setattr(macro, "_fred_research_fetch", research)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _: "fixture")
     monkeypatch.setattr("aletheia.config.loader.load_config", lambda: SimpleNamespace(market_data=SimpleNamespace(enable_fear_greed=False)))
     before = asyncio.run(macro.MacroCollector().collect([]))["snapshot"].model_dump()
-    async def failed(_): raise RuntimeError("DO_NOT_LOG")
-    monkeypatch.setattr(macro, "_fetch_fred_research", failed)
+    async def failed(): raise RuntimeError("DO_NOT_LOG")
+    monkeypatch.setattr(macro, "_fred_research_fetch", failed)
     after = asyncio.run(macro.MacroCollector().collect([]))
     after_snapshot = after["snapshot"].model_dump()
     before.pop("observed_at"); after_snapshot.pop("observed_at")
@@ -260,7 +280,7 @@ def test_missing_storage_does_not_trigger_requests(monkeypatch):
     monkeypatch.setattr("aletheia.storage.sqlite.readonly_db", absent)
     assert ml.read_source_batches(CUTOFF) == []
     with pytest.raises(ValueError, match="fred_storage_unavailable"):
-        asyncio.run(macro._fetch_fred_research("fixture"))
+        asyncio.run(fred._fetch_fred_research("fixture"))
 
 
 def test_writer_rejects_forged_proof_and_nonfinite():

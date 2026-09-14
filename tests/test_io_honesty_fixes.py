@@ -678,7 +678,8 @@ def test_import_rejects_unauthorized_table(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("table", [
-    "trade_proposals", "ps_orders", "ps_fills", "ps_positions",
+    "trade_proposals", "orders", "fills", "positions", "position_close_events",
+    "ps_orders", "ps_fills", "ps_positions",
     "ps_gateway_sessions", "ps_order_intents", "ps_execution_intents",
 ])
 @pytest.mark.parametrize("commit", [False, True])

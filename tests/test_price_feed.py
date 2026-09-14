@@ -909,6 +909,34 @@ class TestRefreshWatchedPrices:
         assert get_cached_price("BTC/USDT") is None
 
 
+def test_stock_token_refresh_uses_pinned_factory(monkeypatch):
+    from aletheia.data import ccxt_provider, price_feed
+
+    instrument = InstrumentId.from_parts("bitget", "AAPLON/USDT", "spot")
+    monkeypatch.setattr(price_feed, "get_watched_instruments", lambda **kwargs: [instrument])
+    provider = AsyncMock()
+    provider.get_ticker.return_value = Ticker(
+        symbol=instrument.symbol, last_price=200.0, volume_24h=1000.0,
+        change_pct_24h=0.0, provider="bitget",
+    )
+    factory = MagicMock(return_value=provider)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", factory)
+    monkeypatch.setattr(
+        ccxt_provider, "_native_provider_factory",
+        MagicMock(side_effect=AssertionError("direct provider construction")),
+    )
+
+    result = asyncio.run(refresh_watched_prices())
+
+    factory.assert_called_once_with(
+        exchange="bitget", native_ccxt=True, fallback_exchange="bitget",
+    )
+    assert result["refreshed"] == 1
+    assert result["errors"] == []
+    provider.close.assert_awaited_once()
+    assert _instrument_price_cache[("bitget", instrument.symbol, "spot")]["price"] == 200.0
+
+
 class TestCacheStats:
     def test_empty_cache(self):
         stats = cache_stats()
