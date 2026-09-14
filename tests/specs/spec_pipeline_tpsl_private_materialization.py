@@ -807,8 +807,8 @@ def test_scheduler_tpsl_partial_failure_stays_red_and_recovers_while_paused(
         [_private_close_fill("EXEC-PLAN-FAIL"), _private_close_fill("EXEC-PLAN-OK")],
     )
     monkeypatch.setattr(
-        scheduler,
-        "_claim_observed_tpsl_close",
+        exchange_materialization,
+        "claim_observed_tpsl_close",
         lambda position_id, **_kwargs: ({"id": f"close-{position_id}"}, True),
     )
 
