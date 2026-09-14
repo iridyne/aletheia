@@ -579,7 +579,7 @@ Concrete Data adapters may resolve only the credential reference required by
 their own provider. Data orchestration, Core, Research, UI, and Legacy code must
 not receive raw provider credentials or generic Secret Store enumeration access.
 Missing optional-provider credentials must leave that adapter unavailable
-without creating policy or data side effects.
+without provider network access or unrelated policy/data side effects.
 
 `aletheia/agent_runtime/permissions.py`
 
