@@ -1,4 +1,4 @@
-"""Telegram bot reachability health route.
+"""Telegram adapter-owned bot reachability health route.
 
 Read-only: reports whether a configured bot token can reach the Telegram API
 (via getMe) and the resolved bot username. The token itself is NEVER returned,

@@ -235,6 +235,16 @@ nullable setup field, not unrelated optional routes.
 
 ## Startup filesystem repair ownership
 
+The Telegram health-route audit at `54d525afc9d172918ec42690ab0bc11545a98f1d`
+found Core's route module resolving `telegram.bot_token` and calling Telegram
+directly even when the optional Telegram package was absent. The handler now
+lives in `telegram.routes`, mounted by the existing Web composition only when
+that package/route is available. The old Core route module is deleted. Handler
+and decorator AST plus the full installed-app OpenAPI remain identical; only
+an absent adapter removes its own endpoint. Token scope, HTTP request/response,
+bot permissions and polling ownership are unchanged. Missing-package regression
+and existing route/bot tests are isolated local evidence, not a live bot probe.
+
 At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found
 two callers of `gateway.git_hooks.remove_managed_git_hooks`: backend lifespan
 and explicit `diagnostics.doctor.apply_fixes`. The helper resolves the shared

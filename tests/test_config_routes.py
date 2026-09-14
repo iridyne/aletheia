@@ -2162,7 +2162,7 @@ async def test_telegram_health_not_configured(client):
 @pytest.mark.anyio
 async def test_telegram_health_reachable(client, monkeypatch):
     """A configured + reachable token reports the bot username, never the token."""
-    import aletheia.server.routes.telegram as tg_routes
+    import aletheia.telegram.routes as tg_routes
     from aletheia.config.secrets import set_secret
 
     token = "123456:super-secret-bot-token"
