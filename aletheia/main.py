@@ -49,6 +49,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
+
+@app.callback()
+def _configure_runtime() -> None:
+    from aletheia.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
+
 # Bootstrap surface — keep on the CLI: these do what a not-yet-running web UI cannot.
 app.add_typer(gateway_app, name="gateway", help="Gateway lifecycle commands.")
 app.add_typer(doctor_app, name="doctor", help="Probe this machine's real state (single source of truth).")
