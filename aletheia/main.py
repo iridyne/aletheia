@@ -114,6 +114,9 @@ def _install_asked_path() -> Path:
 
 
 def _entry_point() -> None:
+    from aletheia.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
     atexit.register(_post_command_hint)
     app()
 

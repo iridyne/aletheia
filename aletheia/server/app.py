@@ -427,6 +427,9 @@ async def lifespan(app: FastAPI):
     stage_started = _log_startup_stage("logging", stage_started, startup_started)
 
     cfg = bootstrap()
+    from aletheia.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
     event_loop_lag_task = None
     # Apply proxy config to process env before any HTTP client or scheduler runs.
     # Ensures watchdog-started processes (which inherit no session env vars) still

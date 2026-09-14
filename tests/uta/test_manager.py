@@ -249,13 +249,13 @@ async def test_failed_position_read_keeps_other_account_but_revokes_aggregate(mo
 
 
 def test_targeted_adapter_never_resolves_unrelated_credentials(monkeypatch):
-    from aletheia.uta import manager
+    from aletheia.exchanges import composition
 
     def scoped_secret(key):
         assert key.startswith("bitget.demo."), "unrelated credential scope accessed"
         return "synthetic-test-value"
 
-    monkeypatch.setattr(manager, "get_secret", scoped_secret)
-    monkeypatch.setattr(manager, "get_credential_generation", lambda _scope: 0)
-    adapter = manager.create_uta_adapter("bitget_demo", _cfg())
+    monkeypatch.setattr(composition, "get_secret", scoped_secret)
+    monkeypatch.setattr(composition, "get_credential_generation", lambda _scope: 0)
+    adapter = composition.build_uta_registry(_cfg(), execution_modes=("bitget_demo",)).create("bitget_demo")
     assert adapter.identity.execution_mode == "bitget_demo"

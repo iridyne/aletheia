@@ -324,6 +324,9 @@ def repair_position(position_id: str, *, dry_run: bool = False) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from aletheia.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--position-id", required=True, help="Position to repair")
     parser.add_argument("--dry-run", action="store_true", help="report without writing")

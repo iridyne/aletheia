@@ -185,6 +185,9 @@ def apply(before: dict, evidence: dict) -> dict:
 
 
 def main():
+    from aletheia.exchanges.composition import bind_uta_provider
+
+    bind_uta_provider()
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--snapshot", type=Path)
