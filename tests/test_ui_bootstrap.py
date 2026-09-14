@@ -131,7 +131,7 @@ def test_model_setup_uses_configured_credential_channels(monkeypatch):
         command="",
     )
     cfg = SimpleNamespace(models=SimpleNamespace(providers={"default": provider}))
-    monkeypatch.setattr(http_runtime, "get_secret", lambda ref: "configured" if ref == "provider-key" else None)
+    monkeypatch.setattr(http_runtime, "get_secret", lambda ref, **kwargs: "configured" if ref == "provider-key" else None)
     monkeypatch.setattr(router, "_provider_status_reader", http_runtime.http_credential_status)
     assert ui._model_credential_configured(cfg) is True
 

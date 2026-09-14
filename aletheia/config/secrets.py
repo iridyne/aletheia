@@ -237,11 +237,18 @@ def set_secret(key: str, value: str) -> None:
             pass
 
 
-def get_secret(key: str) -> str | None:
-    """Retrieve a secret. Returns None if not found."""
+def get_secret(key: str, *, strict: bool = False) -> str | None:
+    """Retrieve one reference; strict reads distinguish unavailable from absent."""
     if is_preview_mode():
         return None
-    value = _file_get(key)
+    unavailable = False
+    try:
+        value = _file_get(key, strict=True) if strict else _file_get(key)
+    except Exception:
+        if not strict:
+            raise
+        unavailable = True
+        value = None
     if value is not None:
         return value
     kr = _get_keyring()
@@ -251,7 +258,9 @@ def get_secret(key: str) -> str | None:
             if value is not None:
                 return value
         except Exception:
-            pass
+            unavailable = True
+    if strict and unavailable:
+        raise RuntimeError("secret_store_unavailable") from None
     return None
 
 
@@ -320,7 +329,7 @@ def _file_set(key: str, value: str) -> None:
             _release_file_lock(fd)
 
 
-def _file_get(key: str) -> str | None:
+def _file_get(key: str, *, strict: bool = False) -> str | None:
     import json
     path = _fallback_path()
     _ensure_private_file(path)
@@ -329,8 +338,13 @@ def _file_get(key: str) -> str | None:
     fernet = _get_fernet()
     try:
         data = json.loads(fernet.decrypt(path.read_bytes()).decode())
-        return data.get(key)
+        value = data.get(key)
+        if strict and value is not None and not isinstance(value, str):
+            raise ValueError("invalid secret value")
+        return value
     except Exception:
+        if strict:
+            raise RuntimeError("secret_store_unavailable") from None
         return None
 
 

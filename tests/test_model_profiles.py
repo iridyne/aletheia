@@ -407,7 +407,7 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
     save_config(cfg)
     reads, deletes = [], []
 
-    def read(ref):
+    def read(ref, **kwargs):
         assert ref == "current-api-key"
         reads.append(ref)
         return "synthetic-api-key"

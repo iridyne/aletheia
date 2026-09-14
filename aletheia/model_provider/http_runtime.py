@@ -91,7 +91,7 @@ def http_credential_status(name: str, pcfg) -> dict:
     if (pcfg.type or name) not in API_PROVIDER_TYPES or not pcfg.api_key_secret_ref:
         return {"configured": False, "last4": None}
     try:
-        value = get_secret(pcfg.api_key_secret_ref)
+        value = get_secret(pcfg.api_key_secret_ref, strict=True)
     except Exception:  # Secret-store failure is unknown, never absent or exception text.
         return {"configured": None, "last4": None, "unavailable_reason": "model_credentials_unavailable"}
     return {
