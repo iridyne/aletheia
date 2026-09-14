@@ -1064,6 +1064,18 @@ async def _request_timing(request, call_next):
             )
 
 
+from aletheia.risk.engine import configure_risk_lesson_treatment
+
+try:
+    from aletheia.learning.risk_evidence import authorize_lesson_treatment
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.learning", "aletheia.learning.risk_evidence"}:
+        raise
+    configure_risk_lesson_treatment(None)
+else:
+    configure_risk_lesson_treatment(authorize_lesson_treatment)
+
+
 from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
 
 try:

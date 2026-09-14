@@ -79,18 +79,7 @@ class LessonStore:
         *,
         oldest_first: bool = False,
     ) -> list[PSLesson]:
-        db = get_db()
-        direction = "ASC" if oldest_first else "DESC"
-        if status:
-            rows = db.execute(
-                f"SELECT * FROM ps_lessons WHERE status = ? ORDER BY created_at {direction} LIMIT ?",
-                (status, limit),
-            ).fetchall()
-        else:
-            rows = db.execute(
-                f"SELECT * FROM ps_lessons ORDER BY created_at {direction} LIMIT ?", (limit,)
-            ).fetchall()
-        return [PSLesson(**dict(r)) for r in rows]
+        return repo.list_lessons(status=status, limit=limit, oldest_first=oldest_first)
 
     def backlog_stats(self) -> tuple[int, str | None]:
         row = get_db().execute(

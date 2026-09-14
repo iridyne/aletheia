@@ -312,9 +312,8 @@ def test_lesson_constraints_error_produces_violation(monkeypatch):
     from unittest.mock import MagicMock
     from aletheia.storage.models import TradeProposal
 
-    broken_store = MagicMock()
-    broken_store.return_value.list_all.side_effect = RuntimeError("DB gone")
-    monkeypatch.setattr("aletheia.learning.lessons.LessonStore", broken_store)
+    broken_read = MagicMock(side_effect=RuntimeError("DB gone"))
+    monkeypatch.setattr("aletheia.risk.engine.list_lessons", broken_read)
 
     from aletheia.risk.engine import _check_lesson_constraints
     p = TradeProposal(

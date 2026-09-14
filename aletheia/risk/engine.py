@@ -8,6 +8,7 @@ import json
 import logging
 import math
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -26,7 +27,7 @@ from aletheia.data.freshness import MAX_FUTURE_SKEW
 from aletheia.data.symbols import to_canonical
 from aletheia.execution.venue_capabilities import entry_execution_minimum_permission
 from aletheia.portfolio.account_loss import authoritative_account_realized_loss
-from aletheia.storage.models import RiskDecision, TradeProposal, exit_intent_violations
+from aletheia.storage.models import PSLesson, RiskDecision, TradeProposal, exit_intent_violations
 from aletheia.storage.repositories import (
     _RISK_DECISION_PREFIX,
     _RISK_PROPOSAL_PREFIX,
@@ -46,6 +47,7 @@ from aletheia.storage.repositories import (
     insert_risk_decision,
     list_active_entry_risk_reservations_for_risk,
     list_all_open_positions,
+    list_lessons,
     list_unresolved_native_entry_orders_for_risk,
     transaction,
     update_trade_proposal,
@@ -1689,6 +1691,13 @@ def _persist_risk_result(
 
 
 _STATIC_RISK_LESSON_SOURCE_TYPES = frozenset({"manual", "owner", "human"})
+_lesson_treatment: Callable[[PSLesson, TradeProposal, dict], bool] | None = None
+
+
+def configure_risk_lesson_treatment(reader: Callable[[PSLesson, TradeProposal, dict], bool] | None) -> None:
+    """Bind optional treatment evidence at bootstrap; never delegate Risk verdicts."""
+    global _lesson_treatment
+    _lesson_treatment = reader
 
 
 def _learned_lesson_constraint_authorized(lesson, proposal, recommendation: dict) -> bool:
@@ -1699,35 +1708,9 @@ def _learned_lesson_constraint_authorized(lesson, proposal, recommendation: dict
     proposal_id = str(getattr(proposal, "id", "") or "").strip()
     if not proposal_id:
         raise ValueError("risk_lesson_constraint_missing_proposal_id")
-    from aletheia.learning.experiments import apply_boolean_treatment
-    decision = apply_boolean_treatment(
-        path_id="risk_lesson_constraint",
-        scope={
-            "lesson_id": lesson.lesson_id,
-            "source_type": source_type,
-            "category": getattr(lesson, "category", None),
-        },
-        action={
-            "type": "proposal_filter",
-            "recommendation": recommendation,
-        },
-        source_cohort=f"ps_lessons:{source_type or 'unknown'}",
-        target_horizon="4h",
-        candidate_key=f"risk_lesson:{proposal_id}:{lesson.lesson_id}",
-        consumer="risk_engine",
-        consumer_stage="proposal_filter",
-        # record_risk_filter_decision() creates this exact fixed-horizon candidate
-        # for every authoritative Proposal.  The horizon suffix is required by
-        # the Learning cohort join; bare ``proposal:<id>`` would never settle.
-        outcome_candidate_key=f"proposal:{proposal_id}:4h",
-        opportunity_id=getattr(proposal, "opportunity_id", None),
-        manifest={
-            "proposal_id": proposal_id,
-            "lesson_id": lesson.lesson_id,
-            "static_owner_rule": False,
-        },
-    )
-    return bool(decision.applied and decision.value >= 1.0)
+    if _lesson_treatment is None:
+        raise RuntimeError("risk_lesson_treatment_unavailable")
+    return _lesson_treatment(lesson, proposal, recommendation)
 
 
 def _check_lesson_constraints(proposal) -> list[str]:
@@ -1743,14 +1726,12 @@ def _check_lesson_constraints(proposal) -> list[str]:
     try:
         import json
 
-        from aletheia.learning.lessons import LessonStore
-        store = LessonStore()
         # L-Bug-E fix: 'accepted' is a transient state (lesson_reviewer calls
         # accept then mark_applied in the same run), so query 'applied' instead.
         # SQLite LIMIT -1 means no limit. Applied Risk lessons are active
         # authority, not a display feed; truncating them silently disables older
         # blocks once the table grows.
-        active_lessons = store.list_all(status="applied", limit=-1)
+        active_lessons = list_lessons(status="applied", limit=-1)
         sym_canonical = to_canonical(proposal.symbol)
 
         from datetime import datetime, timezone

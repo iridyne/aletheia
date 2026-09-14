@@ -32,6 +32,7 @@ from aletheia.storage.models import (
     OrderStatus,
     OutcomeHookJob,
     Position,
+    PSLesson,
     PositionDisappearanceCandidate,
     PositionDisappearanceObservation,
     ReconciliationIntegrityIncident,
@@ -59,6 +60,24 @@ from aletheia.storage.sqlite import (
 )
 
 _PROVENANCE_FIELDS = ("runtime_session_id", "producer_commit", "behavior_fingerprint")
+
+
+def list_lessons(status: str | None = None, limit: int = 100, *, oldest_first: bool = False) -> list[PSLesson]:
+    """Read persisted rules independently of the optional lesson authoring surface."""
+    db = get_db()
+    direction = "ASC" if oldest_first else "DESC"
+    if status:
+        rows = db.execute(
+            f"SELECT * FROM ps_lessons WHERE status = ? ORDER BY created_at {direction} LIMIT ?",
+            (status, limit),
+        ).fetchall()
+    else:
+        rows = db.execute(
+            f"SELECT * FROM ps_lessons ORDER BY created_at {direction} LIMIT ?", (limit,)
+        ).fetchall()
+    return [PSLesson(**dict(row)) for row in rows]
+
+
 _CANDIDATE_SELECTION_RECORD_VERSIONS = frozenset({
     "candidate-selection-utility-record/v1",
     "candidate-selection-utility-record/v2",
