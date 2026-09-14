@@ -23,7 +23,7 @@ from aletheia.data.models import (
     FundingRateSnapshot,
     OpenInterestSnapshot,
 )
-from aletheia.data.freshness import MAX_FUTURE_SKEW
+from aletheia.data import derivatives_facts
 from aletheia.data.derivatives_facts import ccxt_metadata, finite
 
 logger = logging.getLogger("aletheia.data.collectors.derivatives")
@@ -447,7 +447,7 @@ def _parse_funding(
     if raw_mark is not None and (mark is None or mark <= 0):
         return None
     acquired_at = datetime.now(timezone.utc)
-    source_observed_at, source_time_status = provider_source_time(raw, acquired_at)
+    source_observed_at, source_time_status = derivatives_facts.provider_source_time(raw, acquired_at)
 
     try:
         return FundingRateSnapshot(
@@ -465,37 +465,6 @@ def _parse_funding(
         )
     except ValueError:
         return None
-
-
-def provider_source_time(
-    raw: dict,
-    acquired_at: datetime,
-) -> tuple[str | None, str]:
-    """Normalize one CCXT source timestamp without inventing source-now."""
-    raw_timestamp = raw.get("timestamp")
-    raw_datetime = raw.get("datetime")
-    try:
-        if raw_timestamp is not None:
-            if isinstance(raw_timestamp, bool):
-                return None, "invalid"
-            timestamp = float(raw_timestamp)
-            if not math.isfinite(timestamp):
-                return None, "invalid"
-            parsed = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
-        elif raw_datetime:
-            parsed = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00"))
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            parsed = parsed.astimezone(timezone.utc)
-        else:
-            return None, "missing"
-    except (OSError, OverflowError, TypeError, ValueError):
-        return None, "invalid"
-
-    acquired_at = acquired_at.astimezone(timezone.utc)
-    if parsed > acquired_at + MAX_FUTURE_SKEW:
-        return parsed.isoformat(), "future"
-    return parsed.isoformat(), "provided"
 
 
 def _parse_oi(
@@ -525,7 +494,7 @@ def _parse_oi(
     if top_position_ratio is not None and top_position_ratio < 0:
         top_position_ratio = None
     acquired_at = datetime.now(timezone.utc)
-    source_observed_at, source_time_status = provider_source_time(raw, acquired_at)
+    source_observed_at, source_time_status = derivatives_facts.provider_source_time(raw, acquired_at)
 
     from aletheia.data.derivatives_facts import _open_interest_change, project_snapshot
     current = dict(symbol=symbol, exchange=exchange, open_interest_usd=oi_usd,
@@ -715,7 +684,7 @@ async def _fetch_binance_ratio_batch(symbols: list[str], url: str) -> dict[str, 
                         ratio = finite(items[0].get("longShortRatio"))
                         if ratio is not None and ratio > 0:
                             acquired = datetime.now(timezone.utc)
-                            source, status = provider_source_time(items[0], acquired)
+                            source, status = derivatives_facts.provider_source_time(items[0], acquired)
                             results[sym] = dict(value=ratio, source_observed_at=source,
                                 source_time_status=status, acquired_at=acquired.isoformat(),
                                 instrument=dict(canonical_symbol=sym, source_instrument_id=sym.replace('/', ''),
