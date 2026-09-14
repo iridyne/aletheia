@@ -16,6 +16,13 @@ _OWNERS = {
     "finalize_exchange_acknowledgement": {"execution/coordinator.py"},
 }
 _RAW_OWNERS = {"insert_order", "transition_order", "update_order_metadata", "replace_order_error_reason"}
+_SQL_COMMENTS = re.compile(r'''"(?:""|[^"])*"|'(?:''|[^'])*'|`(?:``|[^`])*`|\[[^\]]*\]|(?P<comment>/\*.*?\*/|--[^\r\n]*)''', re.S)
+
+
+def _without_sql_comments(sql):
+    return _SQL_COMMENTS.sub(lambda match: " " if match.group("comment") else match.group(), sql)
+
+
 _ORDER_SQL = re.compile(r'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"orders"|'orders'|`orders`|\[orders\]|orders\b)''', re.I)
 
 
@@ -40,19 +47,21 @@ def _assert_order_writer_boundary(root):
                     for alias in reference.names:
                         if alias.name in {"_insert", "_insert_many", "_update"}:
                             generic_aliases[alias.asname or alias.name] = alias.name
-                if isinstance(reference, ast.Assign):
+                if isinstance(reference, (ast.Assign, ast.AnnAssign)):
                     value = reference.value
                     name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id) if isinstance(value, ast.Name) else None
                     if name in {"_insert", "_insert_many", "_update"}:
-                        for target in reference.targets:
+                        for target in reference.targets if isinstance(reference, ast.Assign) else [reference.target]:
                             if isinstance(target, ast.Name):
                                 generic_aliases[target.id] = name
             for node in ast.walk(tree):
+                child = node
                 parent = parents.get(node)
                 while parent is not None and not isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    child = parent
                     parent = parents.get(parent)
                 function = getattr(parent, "name", None)
-                canonical_function = parent is not None and canonical.get(function) is parent
+                canonical_function = parent is not None and canonical.get(function) is parent and child in parent.body
 
                 def check_writer(name):
                     if name not in _OWNERS:
@@ -77,9 +86,9 @@ def _assert_order_writer_boundary(root):
                     check_writer(name)
                     if name in {"_insert", "_insert_many", "_update"}:
                         table = node.args[0] if node.args else next((kw.value for kw in node.keywords if kw.arg == "table"), None)
-                        if isinstance(table, ast.Constant) and isinstance(table.value, str) and _ORDER_SQL.search("UPDATE " + table.value):
+                        if isinstance(table, ast.Constant) and isinstance(table.value, str) and _ORDER_SQL.search(_without_sql_comments("UPDATE " + table.value)):
                             assert path == migrations or (canonical_function and function in _RAW_OWNERS), (path, node.lineno)
-                if isinstance(node, ast.Constant) and isinstance(node.value, str) and _ORDER_SQL.search(node.value):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and _ORDER_SQL.search(_without_sql_comments(node.value)):
                     assert path == migrations or (canonical_function and function in _RAW_OWNERS), (path, node.lineno)
 
 
@@ -103,6 +112,10 @@ def test_order_writer_ownership():
     "db.execute('INSERT OR REPLACE INTO `orders` VALUES (?)')",
     "db.execute('UPDATE OR IGNORE orders SET status=?')",
     'db.execute("UPDATE \'orders\' SET status=?")',
+    "db.execute('UPDATE /* bypass */ orders SET status=?')",
+    "db.execute('INSERT /* bypass */ INTO orders DEFAULT VALUES')",
+    "db.execute('UPDATE -- bypass\\norders SET status=?')",
+    "persist: Callable = repo._update\npersist('orders', order_id, row)",
 ])
 def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     target = tmp_path / directory / "other.py"
@@ -119,6 +132,8 @@ def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     "class Other:\n    def insert_order(self, row):\n        _insert('orders', row)",
     "def insert_order(row):\n    pass\ndef insert_order(row):\n    _insert('orders', row)",
     "def other():\n    def insert_order(row):\n        _insert('orders', row)",
+    "def insert_order(seed=_insert('orders', row)):\n    pass",
+    "@decorate(_insert('orders', row))\ndef insert_order(row):\n    pass",
 ])
 def test_new_repository_wrapper_is_not_an_order_owner(tmp_path, source):
     target = tmp_path / "aletheia/storage/repositories.py"
