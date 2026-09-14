@@ -759,7 +759,10 @@ async def test_structured_failure_retains_content_free_completion_state(
 
     async def complete(request, **kwargs):
         calls.append(request)
-        return ModelResponse(content=content, model="test", usage=usage, raw=raw)
+        return ModelResponse(
+            content=content, model="test", usage=usage, raw=raw,
+            finish_reason=reason, output_tokens=tokens,
+        )
 
     async def provider(name):
         return object()

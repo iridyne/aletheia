@@ -208,6 +208,16 @@ the HTTP management path, whose broader credential ingress is still a separate
 remaining boundary. No second hash implementation, credential cache or writer
 is introduced.
 
+The Model response audit at `25c8fb801` found Core startup, structured repair
+and Settings ping decoding supplier usage/termination fields directly. HTTP
+implementations now normalize completion confirmation, bounded finish reason
+and optional output-token count into the existing response DTO. Missing counts
+are not represented as measured zero. The three Core consumers preserve their
+distinct success/content/retry policies, using only normalized facts. Existing
+raw responses, cost usage and Core-owned fallback provenance are not rewritten.
+No additional provider implementation or lifecycle is introduced; credential
+management ingress remains a separate outstanding boundary.
+
 ## Startup filesystem repair ownership
 
 At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found

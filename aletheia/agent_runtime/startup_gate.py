@@ -52,8 +52,8 @@ def _is_dns_error(exc: BaseException) -> bool:
 # enough that startup isn't blocked for long, but long enough for a genuine call.
 # Reasoning models (e.g. Qwen3.5, LongCat-2.0) need more budget: the thinking
 # block consumes tokens before any text block is emitted. Bump to 512 so there's
-# room for both phases. The completion_tokens/output_tokens fallback covers edge
-# cases where the budget is still exhausted on reasoning alone.
+# room for both phases. Normalized output-token evidence covers cases where
+# the budget is still exhausted on reasoning alone.
 _PROBE_TIMEOUT_SEC = 20
 _PROBE_MAX_TOKENS = 512
 
@@ -102,12 +102,8 @@ async def _probe_one(name: str) -> dict:
         content = (resp.content or "").strip() if resp is not None else ""
         if content:
             return {"provider": name, "usable": True, "error": None}
-        # Reasoning models may still exhaust the budget on the reasoning phase;
-        # completion_tokens > 0 proves the model ran — treat as usable.
-        # Some providers (LongCat, OpenAI-compatible) name the field output_tokens
-        # instead of completion_tokens; check both.
-        usage = (resp.raw or {}).get("usage", {}) if resp is not None else {}
-        completion = usage.get("completion_tokens", usage.get("output_tokens", 0))
+        # Positive output-token evidence also covers reasoning-only responses.
+        completion = (resp.output_tokens or 0) if resp is not None else 0
         if completion > 0:
             return {"provider": name, "usable": True, "error": None}
         return {"provider": name, "usable": False, "error": "empty_response"}

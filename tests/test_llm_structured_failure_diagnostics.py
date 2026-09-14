@@ -43,6 +43,7 @@ async def _run_failed_structured_fixture(content: str) -> tuple[str, dict]:
         return ModelResponse(
             content=content,
             raw={"usage": {"completion_tokens": 20}},
+            output_tokens=20,
         )
 
     with (
@@ -76,6 +77,7 @@ async def test_terminal_reasoning_empty_records_provider_failure(monkeypatch):
         return ModelResponse(
             content="",
             raw={"usage": {"completion_tokens": 20}},
+            output_tokens=20,
         )
 
     failures: list[bool] = []

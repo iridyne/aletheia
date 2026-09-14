@@ -58,9 +58,10 @@ def _cfg_with(providers: dict, default: str) -> AletheiaConfig:
 
 
 class _FakeResp:
-    def __init__(self, content, raw=None):
+    def __init__(self, content, raw=None, output_tokens=0):
         self.content = content
-        self.raw = raw  # mirrors ModelResponse.raw (Any = None); empty-content path reads it
+        self.raw = raw
+        self.output_tokens = output_tokens
 
 
 class _FakeProvider:
@@ -76,6 +77,22 @@ class _FakeProvider:
         if self._exc:
             raise self._exc
         return _FakeResp(self._content)
+
+
+@pytest.mark.parametrize("tokens,raw,usable", [
+    (3, None, True),
+    (0, {"usage": {"completion_tokens": 3}}, False),
+])
+def test_startup_uses_normalized_output_evidence_not_wire_usage(monkeypatch, tokens, raw, usable):
+    from aletheia.agent_runtime import startup_gate
+
+    async def complete(*_args, **_kwargs):
+        return _FakeResp("", raw=raw, output_tokens=tokens)
+
+    monkeypatch.setattr("aletheia.model_provider.fallback.complete_with_fallback", complete)
+    monkeypatch.setattr("aletheia.economics.inference_calls.record_inference_started", lambda *_a: True)
+    monkeypatch.setattr("aletheia.economics.inference_calls.record_inference_finished", lambda *_a, **_k: True)
+    assert asyncio.run(startup_gate._probe_one("selected"))["usable"] is usable
 
 
 def _patch_providers(monkeypatch, mapping: dict):

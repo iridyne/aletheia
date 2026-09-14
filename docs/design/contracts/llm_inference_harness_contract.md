@@ -17,6 +17,14 @@ Application inference enters through `llm_complete()`, `llm_structured()`, or
 connectivity probes enter the same logical-call contract before using the
 broker directly. Provider adapters remain the physical network boundary.
 
+Adapters also normalize completion evidence, bounded finish reason and optional
+output-token count into `ModelResponse`; Core startup, Settings ping and structured
+repair do not inspect supplier wire fields. Missing/malformed counts remain
+unknown in the DTO. The existing consumer policies stay distinct: startup accepts
+text or positive output-token evidence, ping accepts text or confirmed completion,
+and structured repair still requires valid content and its existing retry policy.
+Raw usage and responses remain unchanged for existing cost/provenance handling.
+
 Generic OpenAI Chat Completions / Responses and Anthropic Messages dispatch and
 model discovery use their official SDKs over the existing loop-owned HTTP client. SDK automatic
 retries and ambient credential/header inheritance are disabled; the existing

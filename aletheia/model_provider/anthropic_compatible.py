@@ -17,6 +17,7 @@ from aletheia.model_provider.base import (
     structured_via_complete,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
+from aletheia.model_provider.http_runtime import http_response_facts
 
 # SDK debug request logs contain prompts; the harness owns content-free telemetry.
 logging.getLogger("anthropic._base_client").setLevel(logging.WARNING)
@@ -108,6 +109,7 @@ class AnthropicCompatibleProvider(ModelProvider):
             model=data.get("model", self.model),
             usage=data.get("usage", {}),
             raw=data,
+            **http_response_facts(data),
         )
 
     async def structured(self, request: StructuredModelRequest, schema: type) -> dict:

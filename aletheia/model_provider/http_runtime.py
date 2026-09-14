@@ -7,6 +7,35 @@ from aletheia.config.secrets import get_secret
 from aletheia.model_provider.registry import API_PROVIDER_TYPES, provider_config_protocol
 
 
+def http_response_facts(data: dict) -> dict:
+    """Normalize HTTP completion evidence before it reaches Core policy consumers."""
+    choices = data.get("choices")
+    choices = choices if isinstance(choices, list) else []
+    first = choices[0] if choices and isinstance(choices[0], dict) else {}
+    stop_reason = data.get("stop_reason")
+    confirmed = any(
+        isinstance(choice, dict)
+        and isinstance(choice.get("finish_reason"), str)
+        and bool(choice["finish_reason"].strip())
+        for choice in choices
+    ) or data.get("status") == "completed" or (
+        isinstance(stop_reason, str)
+        and stop_reason in {"end_turn", "max_tokens", "stop_sequence", "tool_use"}
+    )
+    reason = first.get("finish_reason") if choices else stop_reason
+    incomplete = data.get("incomplete_details")
+    if isinstance(incomplete, dict) and incomplete.get("reason") == "max_output_tokens":
+        reason = "incomplete"
+    usage = data.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    output_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+    return {
+        "completion_confirmed": confirmed,
+        "finish_reason": reason if isinstance(reason, str) and reason in {"stop", "length", "max_tokens", "incomplete"} else "unknown",
+        "output_tokens": output_tokens if type(output_tokens) is int and output_tokens >= 0 else None,
+    }
+
+
 def http_configuration_identity(
     name: str,
     pcfg,

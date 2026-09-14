@@ -294,6 +294,9 @@ class ModelResponse:
     model: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     raw: Any = None
+    completion_confirmed: bool = False
+    finish_reason: Literal["stop", "length", "max_tokens", "incomplete", "unknown"] = "unknown"
+    output_tokens: int | None = None
 
 
 class ProviderResponseError(RuntimeError):

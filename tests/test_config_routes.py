@@ -92,6 +92,7 @@ async def test_get_inference_broker_metrics_is_sanitized(client):
 @pytest.mark.parametrize(
     "raw",
     [
+        None,  # Core consumes normalized evidence even without supplier wire data.
         {
             "choices": [
                 {
@@ -128,6 +129,8 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
             model="qwen35-122b-a10b",
             usage={"completion_tokens": 10},
             raw=raw,
+            completion_confirmed=True,
+            output_tokens=10,
         )
     )
     monkeypatch.setattr(
@@ -166,19 +169,6 @@ async def test_ping_model_accepts_reasoning_only_provider_completion(client, mon
     assert finished[0]["status"] == "success"
 
 
-def test_ping_model_does_not_accept_empty_response_without_completion_evidence():
-    from aletheia.server.routes.model import _has_provider_completion_evidence
-
-    assert not _has_provider_completion_evidence(None)
-    assert not _has_provider_completion_evidence({})
-    assert not _has_provider_completion_evidence({"choices": [{"message": {}}]})
-    assert not _has_provider_completion_evidence({"choices": [{"finish_reason": ""}]})
-    assert not _has_provider_completion_evidence({"status": "in_progress"})
-    assert not _has_provider_completion_evidence({"status": "failed"})
-    assert not _has_provider_completion_evidence({"stop_reason": "pause_turn"})
-    assert not _has_provider_completion_evidence({"stop_reason": "refusal"})
-
-
 @pytest.mark.anyio
 async def test_ping_model_records_error_when_empty_completion_has_no_evidence(client, monkeypatch):
     from types import SimpleNamespace
@@ -192,7 +182,10 @@ async def test_ping_model_records_error_when_empty_completion_has_no_evidence(cl
     )
     monkeypatch.setattr(
         "aletheia.model_provider.broker.brokered_complete",
-        AsyncMock(return_value=ModelResponse(content="", model="empty-model", raw={})),
+        AsyncMock(return_value=ModelResponse(
+            content="", model="empty-model", raw={"status": "completed"},
+            completion_confirmed=False,
+        )),
     )
     monkeypatch.setattr(
         "aletheia.config.loader.load_config",

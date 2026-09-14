@@ -118,6 +118,51 @@ async def test_sdk_status_failure_is_scrubbed_and_never_implicitly_retried(endpo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("facts,confirmed,reason,tokens", [
+    ({"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+      "usage": {"completion_tokens": 10}}, True, "length", 10),
+    ({"status": "completed", "usage": {"output_tokens": 12}}, True, "unknown", 12),
+    ({"stop_reason": "max_tokens", "usage": {"output_tokens": 7}}, True, "max_tokens", 7),
+    ({"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}, False, "incomplete", None),
+    ({"stop_reason": "pause_turn"}, False, "unknown", None),
+    ({"stop_reason": "refusal"}, False, "unknown", None),
+    ({"status": "failed"}, False, "unknown", None),
+    ({}, False, "unknown", None),
+])
+async def test_sdk_returns_normalized_completion_facts(endpoint, facts, confirmed, reason, tokens):
+    connect, _, path, _ = endpoint
+    raw = (
+        {"choices": [{"message": {"content": ""}}]} if path == "/chat/completions"
+        else {"output": []} if path == "/responses" else {"content": []}
+    )
+    raw.update(facts)
+    if path == "/chat/completions" and facts.get("stop_reason") == "max_tokens":
+        reason = "unknown"  # Existing choices precedence over foreign stop_reason.
+    async with httpx.AsyncClient(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(200, json=raw),
+    )) as transport:
+        provider = connect(transport)
+        response = await provider.complete(ModelRequest(messages=[]))
+        assert response.content == ""
+        assert response.completion_confirmed is confirmed
+        assert response.finish_reason == reason
+        assert response.output_tokens == tokens
+        assert response.raw == raw
+
+
+def test_malformed_http_metadata_does_not_invent_completion_facts():
+    from aletheia.model_provider.http_runtime import http_response_facts
+
+    assert http_response_facts({
+        "choices": [{"finish_reason": ["private-provider-text"]}],
+        "stop_reason": [], "incomplete_details": "malformed",
+        "usage": {"output_tokens": "not-a-count"},
+    }) == {"completion_confirmed": False, "finish_reason": "unknown", "output_tokens": None}
+    assert http_response_facts({"usage": {"output_tokens": 0}})["output_tokens"] == 0
+    assert http_response_facts({})["output_tokens"] is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error", [httpx.ConnectError, httpx.ReadTimeout, asyncio.CancelledError])
 async def test_sdk_transport_failure_retains_fallback_or_cancellation_without_retry(endpoint, error):
     connect, _, _, _ = endpoint
