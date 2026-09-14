@@ -274,8 +274,7 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
 
     monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", forbidden)
     monkeypatch.setattr(model_routes, "get_secret", forbidden)
-    monkeypatch.setattr(ui, "get_secret", forbidden)
-    assert not ui._model_provider_usable(cfg)
+    assert not ui._model_credential_configured(cfg)
     view = (await http.get("/api/model")).json()
     assert view["default_provider"] == "historical-cli"
     row = view["providers"]["historical-cli"]
@@ -419,11 +418,11 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
 
     from aletheia.model_provider import http_runtime
 
-    for module in (http_runtime, model_routes, ui):
+    for module in (http_runtime, model_routes):
         monkeypatch.setattr(module, "get_secret", read)
     monkeypatch.setattr(model_routes, "delete_secret", delete)
     assert model_router.provider_configuration_identity("http-profile", profile)
-    assert ui._model_provider_usable(cfg)
+    assert ui._model_credential_configured(cfg)
     response = await http.get("/api/model")
     assert response.status_code == 200
     assert response.json()["providers"]["http-profile"]["oauth"]["configured"] is False

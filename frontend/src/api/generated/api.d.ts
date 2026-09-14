@@ -10124,11 +10124,8 @@ export interface components {
              * @default ui-overview-v1
              */
             schema_version: string;
-            /**
-             * Setup Required
-             * @default false
-             */
-            setup_required: boolean;
+            /** Setup Required */
+            setup_required?: boolean | null;
             summary?: components["schemas"]["OverviewSummarySnapshot"] | null;
         } & {
             [key: string]: unknown;

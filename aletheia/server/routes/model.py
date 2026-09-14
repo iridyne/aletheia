@@ -32,6 +32,7 @@ from aletheia.model_provider.router import (
     healthcheck_all_with_metadata,
     persist_provider_verification,
     provider_configuration_identity,
+    provider_credential_status,
     provider_is_configured,
 )
 
@@ -194,16 +195,6 @@ async def _close_candidate_provider(provider) -> None:
     await provider.aclose()
 
 
-def _key_status(secret_ref: str | None) -> dict:
-    """Return {configured, last4} for a secret ref — never the raw key."""
-    if not secret_ref:
-        return {"configured": False, "last4": None}
-    val = get_secret(secret_ref)
-    if not val:
-        return {"configured": False, "last4": None}
-    return {"configured": True, "last4": val[-4:] if len(val) >= 4 else "****"}
-
-
 @router.get("/model")
 def get_model_config():
     """Return provider config + key-configured status (NEVER the raw key)."""
@@ -221,9 +212,9 @@ def get_model_config():
             "model": pcfg.model,
             "model_fallback_enabled": getattr(pcfg, "model_fallback_enabled", True),
             "fallback_models": list(getattr(pcfg, "fallback_models", []) or []),
-            "api_key": _key_status(pcfg.api_key_secret_ref if definition else None),
+            "api_key": provider_credential_status(name, pcfg),
             "auth_type": pcfg.auth_type,
-            "oauth": _key_status(None),
+            "oauth": {"configured": False, "last4": None},
             "inference_max_concurrency": pcfg.inference_max_concurrency,
             "inference_requests_per_minute": pcfg.inference_requests_per_minute,
             "inference_tpm": pcfg.inference_tokens_per_minute,
@@ -957,7 +948,7 @@ async def _apply_model_config(req: ModelProfileMutation, verification: dict | No
     from aletheia.model_provider.broker import inference_broker
 
     await inference_broker.invalidate_provider(req.provider)
-    key_status = await asyncio.to_thread(_key_status, pcfg.api_key_secret_ref)
+    key_status = await asyncio.to_thread(provider_credential_status, req.provider, pcfg)
     return {
         "provider": req.provider,
         "default_provider": cfg.models.default_provider,

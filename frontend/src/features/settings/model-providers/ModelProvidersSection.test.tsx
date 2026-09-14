@@ -88,6 +88,23 @@ function changeInput(input: HTMLInputElement, value: string) {
 }
 
 describe("ModelProvidersSection", () => {
+	it("does not label unavailable credential status as an absent key", () => {
+		const profile = {
+			...EXISTING_PROFILE, api_key: { configured: null, last4: null },
+		};
+		const client = cleanModelClient({ primary_api: profile });
+		const markup = renderToStaticMarkup(
+			<QueryClientProvider client={client}><ModelProvidersSection qc={client} /></QueryClientProvider>,
+		);
+		expect(markup).toContain("credential status unavailable");
+		expect(markup).not.toContain("key not configured");
+		const editor = renderToStaticMarkup(
+			<QueryClientProvider client={client}>
+				<ApiProfileEditor initial={draftFromProfile("primary-api", profile)} existing={profile} providerTypes={[API_TYPE]} qc={client} onClose={() => undefined} />
+			</QueryClientProvider>,
+		);
+		expect(editor).toContain('placeholder="Credential status unavailable"');
+	});
 	it("preserves a tier draft through refresh and submits its exact endpoint/model pair", async () => {
 		const client = cleanModelClient({ shared: EXISTING_PROFILE });
 		vi.spyOn(api, "getModelConfig").mockImplementation(async () => client.getQueryData(["model"])!);

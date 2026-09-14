@@ -122,6 +122,7 @@ def test_count_summary_normalizes_iso_run_timestamps(monkeypatch):
 
 def test_model_setup_uses_configured_credential_channels(monkeypatch):
     import aletheia.server.routes.ui as ui
+    from aletheia.model_provider import http_runtime, router
 
     provider = SimpleNamespace(
         type="openai_compatible",
@@ -130,13 +131,30 @@ def test_model_setup_uses_configured_credential_channels(monkeypatch):
         command="",
     )
     cfg = SimpleNamespace(models=SimpleNamespace(providers={"default": provider}))
-    monkeypatch.setattr(ui, "get_secret", lambda ref: "configured" if ref == "provider-key" else None)
-    assert ui._model_provider_usable(cfg) is True
+    monkeypatch.setattr(http_runtime, "get_secret", lambda ref: "configured" if ref == "provider-key" else None)
+    monkeypatch.setattr(router, "_provider_status_reader", http_runtime.http_credential_status)
+    assert ui._model_credential_configured(cfg) is True
 
 
-def test_overview_bootstrap_projects_activity_and_account_only():
+@pytest.mark.parametrize("configured,expected", [(True, False), (False, True), (None, None)])
+def test_overview_setup_preserves_unknown_credential_status(monkeypatch, configured, expected):
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.server.routes import ui
+
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: "bitget_demo")
+    monkeypatch.setattr("aletheia.portfolio.pnl.compute_portfolio", lambda **_kwargs: {})
+    monkeypatch.setattr(ui, "load_config", lambda **_kwargs: AletheiaConfig())
+    monkeypatch.setattr(ui, "_model_credential_configured", lambda _cfg: configured)
+    payload = ui.overview_bootstrap(Response())
+    assert payload["setup_required"] is expected
+    if configured is None:
+        assert payload["errors"]["setup"] == "model_credential_status_unavailable"
+
+
+def test_overview_bootstrap_projects_activity_and_account_only(monkeypatch):
     from aletheia.server.routes.ui import overview_bootstrap
 
+    monkeypatch.setattr("aletheia.analytics.execution_mode.resolve_selected_execution_mode", lambda: "bitget_demo")
     response = Response()
     payload = overview_bootstrap(response)
 
@@ -156,7 +174,7 @@ def test_overview_bootstrap_projects_unified_account_metadata(monkeypatch):
     monkeypatch.setattr(execution_mode, "resolve_selected_execution_mode", lambda: "okx_demo")
     monkeypatch.setattr(ui, "_count_summary", lambda: {"pending_proposals": 0, "open_opportunities": 0, "runs_24h": 0})
     monkeypatch.setattr(ui, "_compact_activity", lambda: [])
-    monkeypatch.setattr(ui, "_model_provider_usable", lambda _cfg: True)
+    monkeypatch.setattr(ui, "_model_credential_configured", lambda _cfg: True)
     monkeypatch.setattr(ui, "load_config", lambda persist_migrations=False: SimpleNamespace(exchange=SimpleNamespace(mode="demo")))
     monkeypatch.setattr(
         pnl,

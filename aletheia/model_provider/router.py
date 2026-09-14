@@ -19,17 +19,20 @@ from aletheia.model_provider.registry import API_PROVIDER_TYPES, PROVIDER_TYPES
 
 _provider_factory: Callable[..., ModelProvider] | None = None
 _provider_identity_reader: Callable[..., str] | None = None
+_provider_status_reader: Callable[..., dict] | None = None
 
 
 def configure_model_provider(
     factory: Callable[..., ModelProvider] | None,
     *,
     identity_reader: Callable[..., str] | None = None,
+    status_reader: Callable[..., dict] | None = None,
 ) -> None:
     """Bind Model implementation operations at the existing entrypoint, without I/O."""
-    global _provider_factory, _provider_identity_reader
+    global _provider_factory, _provider_identity_reader, _provider_status_reader
     _provider_factory = factory
     _provider_identity_reader = identity_reader
+    _provider_status_reader = status_reader
 
 _cache: dict[str, ModelProvider] = {}
 
@@ -105,6 +108,15 @@ def provider_configuration_identity(name: str, pcfg) -> str:
     if _provider_identity_reader is None:
         raise ModelAdapterUnavailable("model_adapter_unavailable")
     return _provider_identity_reader(name, pcfg)
+
+
+def provider_credential_status(name: str, pcfg) -> dict:
+    """Read sanitized presence metadata, never the referenced credential."""
+    if (pcfg.type or name) not in API_PROVIDER_TYPES or not pcfg.api_key_secret_ref:
+        return {"configured": False, "last4": None}
+    if _provider_status_reader is None:
+        return {"configured": None, "last4": None, "unavailable_reason": "model_adapter_unavailable"}
+    return _provider_status_reader(name, pcfg)
 
 
 def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:

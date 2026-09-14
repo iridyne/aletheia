@@ -129,12 +129,12 @@ class OverviewBootstrapResponse(BaseModel):
     account: dict[str, Any] = {}
     summary: OverviewSummarySnapshot | None = None
     activity: list[dict[str, Any]] = []
-    setup_required: bool = False
+    setup_required: bool | None = None
     coverage: dict[str, Any] = {}
     errors: dict[str, Any] = {}
 from aletheia import __version__
 from aletheia.config.exchange_alignment import exchange_alignment
-from aletheia.config.secrets import get_secret
+from aletheia.model_provider.router import provider_credential_status
 from aletheia.config.loader import load_config
 from aletheia.server.routes.health import _cached_compute_health, _cached_head_commit
 from aletheia.storage.sqlite import get_db
@@ -182,20 +182,15 @@ def _risk_snapshot(cfg) -> dict:
     return {"status": status, "violations": violations, "kill_switch_active": cfg.runtime.kill_switch_active}
 
 
-def _model_provider_usable(cfg) -> bool:
-    """Check stored credential presence, not inference usability."""
-    from aletheia.model_provider.registry import PROVIDER_TYPES
-
+def _model_credential_configured(cfg) -> bool | None:
+    """Project credential-presence metadata, not inference usability."""
+    unknown = False
     for name, provider in cfg.models.providers.items():
-        provider_type = getattr(provider, "type", "") or name
-        if provider_type not in PROVIDER_TYPES:
-            continue
-        for secret_ref in (
-            getattr(provider, "api_key_secret_ref", None),
-        ):
-            if secret_ref and get_secret(secret_ref):
-                return True
-    return False
+        configured = provider_credential_status(name, provider)["configured"]
+        if configured is True:
+            return True
+        unknown = unknown or configured is None
+    return None if unknown else False
 
 
 def _connectivity_snapshot() -> dict:
@@ -385,8 +380,10 @@ def overview_bootstrap(response: Response):
     summary = _safe("summary", _count_summary, None)
     activity = _safe("activity", _compact_activity, [])
     cfg = _safe("config", lambda: load_config(persist_migrations=False), None)
-    setup = _safe("setup", lambda: _model_provider_usable(cfg["value"]) if cfg["value"] is not None else False, False)
-    setup_required = not bool(setup["value"])
+    setup = _safe("setup", lambda: _model_credential_configured(cfg["value"]) if cfg["value"] is not None else None, None)
+    if setup["value"] is None:
+        setup = _available(None, reason=setup["reason"] or "model_credential_status_unavailable")
+    setup_required = None if setup["value"] is None else not setup["value"]
     p = portfolio["value"] or {}
     account = {key: p.get(key) for key in (
         "total_value_usdt", "account_equity_usdt", "today_pnl", "today_realized_pnl",

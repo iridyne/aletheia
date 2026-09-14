@@ -42,6 +42,7 @@ selected = next(row for row in health if row.provider == 'endpoint')
 assert selected.available is False and selected.error == 'model_adapter_unavailable'
 assert selected.verified is None and selected.verification_identity is None
 assert selected.verification_detail == 'model_adapter_unavailable'
+assert router.provider_credential_status('endpoint', profile) == {{'configured': None, 'last4': None, 'unavailable_reason': 'model_adapter_unavailable'}}
 """
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
@@ -125,8 +126,10 @@ def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(mo
 
     monkeypatch.setattr(router, "_provider_factory", None)
     monkeypatch.setattr(router, "_provider_identity_reader", None)
+    monkeypatch.setattr(router, "_provider_status_reader", None)
     monkeypatch.setattr(http_runtime, "get_secret", forbidden)
     monkeypatch.setattr("aletheia.exchanges.composition.bind_uta_provider", lambda: None)
     main._configure_runtime()
     assert router._provider_factory is http_runtime.build_http_provider
     assert router._provider_identity_reader is http_runtime.http_configuration_identity
+    assert router._provider_status_reader is http_runtime.http_credential_status

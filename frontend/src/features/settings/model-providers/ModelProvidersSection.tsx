@@ -378,9 +378,11 @@ export function ApiProfileEditor({
 						type="password"
 						value={draft.api_key}
 						placeholder={
-							existing?.api_key.configured
+							existing?.api_key.configured === true
 								? `Configured · ends ${existing.api_key.last4}`
-								: "Paste key"
+								: existing && existing.api_key.configured !== false
+									? "Credential status unavailable"
+									: "Paste key"
 						}
 						onChange={(event) => set("api_key", event.target.value)}
 					/>
@@ -520,9 +522,11 @@ function ApiProfiles({
 									</div>
 									<div className="model-card-meta">
 										{provider.type} · {provider.model || "model not selected"}
-										{provider.api_key.configured
+										{provider.api_key.configured === true
 											? ` · key ··${provider.api_key.last4}`
-											: " · key not configured"}
+											: provider.api_key.configured === false
+												? " · key not configured"
+												: " · credential status unavailable"}
 									</div>
 								</div>
 								<div className="model-card-controls">
