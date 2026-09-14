@@ -12,10 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from aletheia.config.exchanges import (
+    AccountConfigBinding,
     DEMO_EXECUTION_MODES,
     EXTERNAL_EXECUTION_MODES,
     LIVE_EXECUTION_MODE_SET,
     execution_mode_environment,
+    execution_mode_account_config_binding,
     execution_mode_venue,
     is_live_execution_mode,
 )
@@ -1242,19 +1244,15 @@ def _evaluate_proposal_locked(
                 scope=resolved_policy.mode,
             )
 
-    # 9a. Exchange allowlist — reject if target exchange != allowed_exchange.
-    # binance_testnet/binance_live_limited and okx_demo/okx_live_limited are self-contained
-    # (own credentials, independent of cfg.exchange) so exempt from allowlist checks.
-    if proposal.execution_mode in ("binance_testnet", "binance_live_limited", "okx_demo", "okx_live_limited"):
-        pass  # self-contained exchange modes use their own credentials
-    else:
+    # 9a/9b. Preserve the account's owner-approved global-config binding.
+    if (
+        execution_mode_account_config_binding(proposal.execution_mode)
+        == AccountConfigBinding.GLOBAL
+    ):
         if risk.allowed_exchange and cfg.exchange.name != risk.allowed_exchange:
             violations.append(f"exchange_not_allowed:{cfg.exchange.name}!={risk.allowed_exchange}")
-        # 9. Account mode match — order mode and exchange account must agree.
-        #    A live order requires exchange.mode == 'live'; a real demo order requires
-        #    exchange.mode == 'demo'. Without the demo side of this check, a bitget_demo
-        #    proposal evaluated while exchange.mode == 'live' would place a REAL live order
-        #    through the demo path (trust-boundary hole).
+        # Bound accounts retain both live and demo mode checks. Independent
+        # accounts retain their existing exemption, not a new trading authority.
         if _is_live(proposal.execution_mode) and cfg.exchange.mode != "live":
             violations.append(f"account_mode_mismatch:order=live,exchange={cfg.exchange.mode}")
         if execution_mode_environment(proposal.execution_mode) == "demo" and cfg.exchange.mode != "demo":
