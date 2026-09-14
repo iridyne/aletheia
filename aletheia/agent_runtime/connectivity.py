@@ -100,7 +100,12 @@ async def probe_exchange(cfg=None) -> dict:
     exchange_name = cfg.exchange.name
     url = _EXCHANGE_ENDPOINTS.get(exchange_name)
     if not url:
-        return {"reachable": True, "latency_ms": None, "error": None, "exchange": exchange_name}
+        return {
+            "reachable": False,
+            "latency_ms": None,
+            "error": "exchange_probe_unavailable",
+            "exchange": exchange_name,
+        }
 
     try:
         from aletheia.net import httpx_client

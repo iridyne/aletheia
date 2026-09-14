@@ -18,6 +18,65 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exchange", ["", "unsupported"])
+@pytest.mark.parametrize("external_reachable", [False, True])
+async def test_missing_exchange_probe_cannot_prove_connectivity(
+    monkeypatch, exchange, external_reachable,
+):
+    from aletheia.agent_runtime import connectivity
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.name = exchange
+    external = {
+        "reachable": external_reachable,
+        "latency_ms": 10 if external_reachable else None,
+        "error_code": None if external_reachable else "ConnectTimeout",
+    }
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value=external))
+    http_client = MagicMock(side_effect=AssertionError("No exchange endpoint to contact"))
+    monkeypatch.setattr("aletheia.net.httpx_client", http_client)
+
+    result, egress = await connectivity._probe_exchange_and_external(cfg)
+
+    assert egress == external
+    assert result == {
+        "reachable": False,
+        "latency_ms": None,
+        "error": "exchange_probe_unavailable",
+        "exchange": exchange,
+    }
+    http_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exchange", ["bitget", "okx", "binance"])
+async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange):
+    from contextlib import asynccontextmanager
+    from aletheia.agent_runtime import connectivity
+    from aletheia.config.schema import AletheiaConfig
+
+    cfg = AletheiaConfig()
+    cfg.exchange.name = exchange
+    client = MagicMock(get=AsyncMock(return_value=MagicMock(status_code=200)))
+
+    @asynccontextmanager
+    async def http_client(**kwargs):
+        yield client
+
+    monkeypatch.setattr("aletheia.net.httpx_client", http_client)
+    monkeypatch.setattr(connectivity, "probe_external_network", AsyncMock(return_value={
+        "reachable": False, "latency_ms": None, "error_code": "ConnectTimeout",
+    }))
+    result, egress = await connectivity._probe_exchange_and_external(cfg)
+    client.get.assert_awaited_once_with(connectivity._EXCHANGE_ENDPOINTS[exchange])
+    assert result["reachable"] is True
+    assert egress == {
+        "reachable": True, "latency_ms": result["latency_ms"], "error_code": None,
+    }
+
+
 def setup_env(tmp_path, monkeypatch):
     """Wire up an isolated data dir + fresh DB for each test."""
     import aletheia.config.loader as loader
