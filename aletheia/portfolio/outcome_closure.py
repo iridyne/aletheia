@@ -15,7 +15,7 @@ from aletheia.data.symbols import to_canonical
 from aletheia.execution.verified_exit import VerifiedExitResult
 from aletheia.portfolio.pnl import build_exit_reasoning, fee_in_quote
 from aletheia.storage import repositories as repo
-from aletheia.storage.models import AuditEvent, Fill, Order
+from aletheia.storage.models import AuditEvent
 
 
 def _json(value: object) -> str:
@@ -44,147 +44,6 @@ def _load_open(position_id: str) -> tuple[dict, dict | None]:
     if row.get("status") == "open":
         return row, None
     return row, _already_closed_result(position_id, row)
-
-
-def _materialize_observed_close_chain(
-    position: dict,
-    evidence: VerifiedExitResult,
-    *,
-    reason: str,
-) -> list[str]:
-    """Persist exact read-only exchange close facts inside the close transaction.
-
-    A disappearance query observes an already-completed exchange action; it does
-    not authorize or submit a new one.  Therefore an unknown remote Order is
-    stored as ``source='adopted'`` and every Fill keeps its account-scoped venue
-    identity.  Any conflicting local row aborts the whole Position close.
-    """
-    from aletheia.execution.exchange_materialization import (
-        durable_private_fill_id, _fill_totals,
-    )
-
-    grouped: dict[str, list] = {}
-    for item in evidence.fills:
-        remote_order_id = str(item.order_id or "").strip()
-        if not remote_order_id:
-            raise ValueError("observed close requires exact remote Order identity")
-        grouped.setdefault(remote_order_id, []).append(item)
-
-    db = repo.get_db()
-    materialized_order_ids: list[str] = []
-    for remote_order_id, items in grouped.items():
-        remote_quantity = sum(float(item.quantity) for item in items)
-        quantity_tolerance = max(1e-12, remote_quantity * 1e-9)
-        matches = db.execute(
-            "SELECT * FROM orders WHERE execution_mode=? AND exchange_order_id=? "
-            "ORDER BY rowid ASC",
-            (evidence.execution_mode, remote_order_id),
-        ).fetchall()
-        if len(matches) > 1:
-            raise ValueError("remote close Order identity is ambiguous locally")
-
-        if matches:
-            order = dict(matches[0])
-            expected = {
-                "symbol": str(position["symbol"]),
-                "market_type": str(position["market_type"]),
-                "direction": str(position["direction"]),
-                "execution_mode": str(position["execution_mode"]),
-            }
-            if any(str(order.get(key) or "") != value for key, value in expected.items()):
-                raise ValueError("observed close Order identity conflicts with Position")
-            if order.get("proposal_id") != position.get("proposal_id"):
-                raise ValueError("observed close Order Proposal conflicts with Position")
-            linked_position_id = str(order.get("position_id") or "")
-            pending_owner = position.get("pending_close_order_id") == order["id"]
-            if linked_position_id not in {"", str(position["id"])}:
-                raise ValueError("observed close Order belongs to another Position")
-            if not str(order.get("close_reason") or "").strip() and not pending_owner:
-                raise ValueError("remote Order is not a proven local close Order")
-            order_quantity = float(order.get("quantity") or 0.0)
-            if abs(order_quantity - remote_quantity) > quantity_tolerance:
-                raise ValueError("observed close Order quantity conflicts with private fills")
-            local_order_id = str(order["id"])
-        else:
-            adopted = Order(
-                proposal_id=position.get("proposal_id"),
-                risk_decision_id=None,
-                position_id=str(position["id"]),
-                close_reason=reason,
-                symbol=str(position["symbol"]),
-                market_type=str(position["market_type"]),
-                direction=str(position["direction"]),
-                order_type="observed_close",
-                quantity=remote_quantity,
-                price=None,
-                execution_mode=str(position["execution_mode"]),
-                exchange_order_id=remote_order_id,
-                status="filled",
-                source="adopted",
-                filled_at=datetime.fromtimestamp(
-                    max(item.filled_at_ms for item in items) / 1000,
-                    tz=timezone.utc,
-                ).isoformat(),
-            )
-            repo.insert_order(adopted)
-            local_order_id = adopted.id
-
-        for item in items:
-            durable_id = durable_private_fill_id(
-                str(position["execution_mode"]), str(item.fill_id)
-            )
-            ids = (durable_id, str(item.fill_id))
-            existing_rows = db.execute(
-                "SELECT * FROM fills WHERE id IN (?, ?) ORDER BY rowid ASC",
-                ids,
-            ).fetchall()
-            if len(existing_rows) > 1:
-                raise ValueError("remote close Fill identity is duplicated locally")
-            filled_at = datetime.fromtimestamp(
-                item.filled_at_ms / 1000, tz=timezone.utc
-            ).isoformat()
-            if existing_rows:
-                existing = dict(existing_rows[0])
-                _fill_totals([existing], symbol=str(position["symbol"]))
-                price_tolerance = max(1e-12, float(item.price) * 1e-9)
-                fee_tolerance = max(1e-12, abs(item.fee) * 1e-9) if item.fee is not None else 0.0
-                if (
-                    str(existing.get("order_id") or "") != local_order_id
-                    or abs(float(existing.get("fill_price") or 0.0) - item.price)
-                    > price_tolerance
-                    or abs(float(existing.get("fill_quantity") or 0.0) - item.quantity)
-                    > quantity_tolerance
-                    or (existing.get("fee") is None) != (item.fee is None)
-                    or (item.fee is not None and abs(float(existing["fee"]) - item.fee) > fee_tolerance)
-                    or str(existing.get("fee_currency") or "").upper()
-                    != str(item.fee_currency or "").upper()
-                    or str(existing.get("filled_at") or "") != filled_at
-                ):
-                    raise ValueError("remote close Fill conflicts with durable local fact")
-                continue
-            repo.insert_fill(Fill(
-                id=durable_id,
-                order_id=local_order_id,
-                fill_price=float(item.price),
-                fill_quantity=float(item.quantity),
-                fee=item.fee,
-                fee_currency=str(item.fee_currency or ""),
-                fee_source="reconciled" if item.fee is not None else "unavailable",
-                filled_at=filled_at,
-            ))
-
-        repo.transition_order(
-            local_order_id,
-            position_id=str(position["id"]),
-            status="filled",
-            error_reason=None,
-            filled_at=datetime.fromtimestamp(
-                max(item.filled_at_ms for item in items) / 1000,
-                tz=timezone.utc,
-            ).isoformat(),
-        )
-        materialized_order_ids.append(local_order_id)
-    return materialized_order_ids
 
 
 def _already_closed_result(position_id: str, row: dict) -> dict:
@@ -341,13 +200,15 @@ def close_position_verified(
     }
 
     def materialize() -> None:
+        from aletheia.execution.exchange_materialization import materialize_observed_close_chain
+
         current = repo._select_one("positions", position_id)
         if current is None:
             raise ValueError(f"position not found: {position_id}")
         _validate_verified_evidence(current, evidence)
         if closure_type == "verified_external":
             materialized_order_ids.extend(
-                _materialize_observed_close_chain(current, evidence, reason=reason)
+                materialize_observed_close_chain(current, evidence, reason=reason)
             )
 
     try:
