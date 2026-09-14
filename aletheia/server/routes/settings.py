@@ -2804,7 +2804,7 @@ async def test_network_proxy():
         return {"reachable": False, "latency_ms": latency_ms, "error": f"HTTP {resp.status_code}"}
     except Exception as e:
         latency_ms = int((time.monotonic() - t0) * 1000)
-        return {"reachable": False, "latency_ms": latency_ms, "error": str(e)[:200]}
+        return {"reachable": False, "latency_ms": latency_ms, "error": type(e).__name__}
 
 
 # ---------------------------------------------------------------------------
