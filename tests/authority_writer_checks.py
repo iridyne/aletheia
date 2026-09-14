@@ -12,11 +12,22 @@ def _without_sql_comments(sql):
     return _SQL_COMMENTS.sub(lambda match: " " if match.group("comment") else match.group(), sql)
 
 
+def _alias_names(value):
+    # Calls produce values, not statically resolved aliases; dynamic results are out of scope.
+    if value is None or isinstance(value, ast.Call):
+        return set()
+    names = {value.id} if isinstance(value, ast.Name) else {value.attr} if isinstance(value, ast.Attribute) else set()
+    for child in ast.iter_child_nodes(value):
+        names.update(_alias_names(child))
+    return names
+
+
 def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
     """Bounded named-reference/literal-write proof, not arbitrary dynamic SQL."""
     sql_pattern = re.compile(rf'''\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     repository = root / "aletheia/storage/repositories.py"
     migrations = root / "aletheia/storage/migrations.py"
+    ddl_pattern = re.compile(rf'''\b(?:DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+(?:(?:"[^"]+"|'[^']+'|`[^`]+`|\[[^\]]+\]|\w+)\s*\.\s*)?(?:"{re.escape(table)}"|'{re.escape(table)}'|`{re.escape(table)}`|\[{re.escape(table)}\]|{re.escape(table)}\b)''', re.I)
     for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
         for path in (root / directory).rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -34,11 +45,14 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                     for alias in reference.names:
                         if alias.name in {"_insert", "_insert_many", "_update"}:
                             generic_aliases[alias.asname or alias.name] = alias.name
-                if isinstance(reference, (ast.Assign, ast.AnnAssign)):
+                if isinstance(reference, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                     value = reference.value
-                    writer = value.attr if isinstance(value, ast.Attribute) else value.id if isinstance(value, ast.Name) else None
-                    assert writer not in owners, (path, reference.lineno, "named writer alias", writer)
-                    name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id) if isinstance(value, ast.Name) else None
+                    aliases = _alias_names(value)
+                    assert not aliases.intersection(owners), (path, reference.lineno, "named writer alias", aliases)
+                    helpers = {"_insert", "_insert_many", "_update"}
+                    if aliases.intersection(helpers | generic_aliases.keys()):
+                        assert isinstance(value, (ast.Name, ast.Attribute)), (path, reference.lineno, "compound generic alias")
+                    name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id, value.id) if isinstance(value, ast.Name) else None
                     if name in {"_insert", "_insert_many", "_update"}:
                         for target in reference.targets if isinstance(reference, ast.Assign) else [reference.target]:
                             if isinstance(target, ast.Name):
@@ -81,3 +95,5 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                             assert path == migrations or (canonical_function and function in raw_owners), (path, node.lineno)
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and sql_pattern.search(_without_sql_comments(node.value)):
                     assert path == migrations or (canonical_function and function in raw_owners), (path, node.lineno)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and ddl_pattern.search(_without_sql_comments(node.value)):
+                    assert path == migrations, (path, node.lineno, "authority table DDL")
