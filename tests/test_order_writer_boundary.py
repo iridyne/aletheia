@@ -77,7 +77,7 @@ def test_new_repository_wrapper_is_not_an_order_owner(tmp_path, source):
 
 def test_order_guard_accepts_canonical_owner_and_delegation(tmp_path):
     sources = {
-        "aletheia/execution/coordinator.py": "from ..storage.repositories import insert_order as persist\npersist(row)",
+        "aletheia/execution/coordinator.py": "def submit(row):\n    from ..storage.repositories import insert_order as persist\n    persist(row)",
         "aletheia/storage/repositories.py": "def insert_order(row):\n    _insert('orders', row)\ndef finalize_exchange_acknowledgement(row):\n    transition_order(row['id'], status='submitted')",
         "aletheia/storage/migrations.py": "db.execute('UPDATE [orders] SET status=?')",
     }

@@ -8,6 +8,17 @@ from tests.authority_writer_checks import assert_writer_boundary
 
 
 _OWNERS = {
+    "expire_candidate_attention": set(),
+    "reconcile_candidate_attention": {"universe/service.py"},
+    "candidate_attention_is_active": {"agent_shell/entry_planner.py"},
+    "count_pending_candidate_planning": {"agent_shell/entry_planner.py", "agent_runtime/pi_daemon.py"},
+    "complete_candidate_planning_no_plan": {"agent_shell/entry_planner.py"},
+    "block_candidate_planning": {"agent_shell/entry_planner.py"},
+    "mark_candidate_planning_stage": {"agent_shell/entry_planner.py"},
+    "fail_candidate_planning": {"agent_shell/entry_planner.py"},
+    "defer_candidate_planning": {"agent_shell/entry_planner.py"},
+    "defer_candidate_planning_with_code": {"agent_shell/entry_planner.py"},
+    "release_candidate_planning_claim": {"agent_shell/entry_planner.py"},
     "ensure_candidate_planning_generation": {"universe/service.py", "trading/serenity_publication.py"},
     "claim_next_candidate_planning": {"agent_shell/entry_planner.py"},
     "bind_candidate_planner_input": {"agent_shell/entry_planner.py"},
@@ -17,6 +28,14 @@ _OWNERS = {
     "record_entry_plan_monitoring": {"agent_runtime/fast_trigger_watch.py"},
     "transition_entry_plan": {"agent_runtime/fast_trigger_watch.py", "execution/entry_plan_execution.py", "execution/gateway.py"},
 }
+_DELEGATIONS = {
+    (caller, "expire_candidate_attention") for caller in (
+        "candidate_attention_is_active", "reconcile_candidate_attention",
+        "claim_next_candidate_planning", "count_pending_candidate_planning",
+        "complete_candidate_planning_no_plan", "defer_candidate_planning",
+        "complete_candidate_planning_with_plan",
+    )
+} | {("defer_candidate_planning_with_code", "defer_candidate_planning")}
 _RAW_OWNERS = {
     "candidate_planning_generations": {
         "expire_candidate_attention", "reconcile_candidate_attention",
@@ -36,11 +55,42 @@ _RAW_OWNERS = {
 
 def _assert_planning_writer_boundary(root):
     for table, raw_owners in _RAW_OWNERS.items():
-        assert_writer_boundary(root, table=table, owners=_OWNERS, raw_owners=raw_owners)
+        assert_writer_boundary(root, table=table, owners=_OWNERS, raw_owners=raw_owners, delegations=_DELEGATIONS)
 
 
 def test_planning_writer_ownership():
     _assert_planning_writer_boundary(Path(__file__).resolve().parents[1])
+
+
+@pytest.mark.parametrize("writer", [
+    "complete_candidate_planning_no_plan", "block_candidate_planning",
+    "mark_candidate_planning_stage", "fail_candidate_planning",
+    "defer_candidate_planning", "defer_candidate_planning_with_code",
+    "release_candidate_planning_claim", "expire_candidate_attention",
+    "reconcile_candidate_attention", "candidate_attention_is_active",
+    "count_pending_candidate_planning",
+])
+def test_all_generation_lifecycle_callers_are_guarded(tmp_path, writer):
+    target = tmp_path / "aletheia/other.py"
+    target.parent.mkdir()
+    target.write_text(f"from aletheia.storage.repositories import {writer}\n{writer}(row)")
+    with pytest.raises(AssertionError):
+        _assert_planning_writer_boundary(tmp_path)
+
+
+@pytest.mark.parametrize("source", [
+    "plan_state_writer = transition_entry_plan",
+    "plan_state_writer: Callable = repo.transition_entry_plan",
+    "from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
+])
+def test_named_writer_alias_cannot_be_reexported(tmp_path, source):
+    owner = tmp_path / "aletheia/execution/gateway.py"
+    owner.parent.mkdir(parents=True)
+    owner.write_text(source)
+    other = tmp_path / "aletheia/other.py"
+    other.write_text("from aletheia.execution.gateway import plan_state_writer\nplan_state_writer(row)")
+    with pytest.raises(AssertionError):
+        _assert_planning_writer_boundary(tmp_path)
 
 
 @pytest.mark.parametrize("writer", _OWNERS)

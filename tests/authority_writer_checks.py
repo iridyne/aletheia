@@ -36,6 +36,8 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                             generic_aliases[alias.asname or alias.name] = alias.name
                 if isinstance(reference, (ast.Assign, ast.AnnAssign)):
                     value = reference.value
+                    writer = value.attr if isinstance(value, ast.Attribute) else value.id if isinstance(value, ast.Name) else None
+                    assert writer not in owners, (path, reference.lineno, "named writer alias", writer)
                     name = value.attr if isinstance(value, ast.Attribute) else generic_aliases.get(value.id) if isinstance(value, ast.Name) else None
                     if name in {"_insert", "_insert_many", "_update"}:
                         for target in reference.targets if isinstance(reference, ast.Assign) else [reference.target]:
@@ -67,6 +69,8 @@ def assert_writer_boundary(root, *, table, owners, raw_owners, delegations=()):
                         assert all(alias.name != "*" for alias in node.names), (path, node.lineno)
                     for alias in node.names:
                         check_writer(alias.name)
+                        if alias.name in owners and parents[node] is tree:
+                            assert alias.asname in {None, alias.name}, (path, node.lineno, "writer re-export")
                 if isinstance(node, ast.Call):
                     name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
                     name = generic_aliases.get(name, name)
