@@ -120,6 +120,7 @@ def test_http_factory_resolves_only_selected_endpoint_reference(monkeypatch, pro
 def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(monkeypatch):
     from aletheia import main
     from aletheia.model_provider import http_runtime, router
+    from aletheia.portfolio import outcome_hooks
 
     def forbidden(_ref):
         pytest.fail("Startup binding must not resolve credentials")
@@ -128,6 +129,7 @@ def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(mo
     monkeypatch.setattr(router, "_provider_identity_reader", None)
     monkeypatch.setattr(router, "_provider_status_reader", None)
     monkeypatch.setattr(router, "_selection_verifier", None)
+    monkeypatch.setattr(outcome_hooks, "_feedback_executor", None)
     monkeypatch.setattr(http_runtime, "get_secret", forbidden)
     monkeypatch.setattr("aletheia.exchanges.composition.bind_uta_provider", lambda: None)
     main._configure_runtime()

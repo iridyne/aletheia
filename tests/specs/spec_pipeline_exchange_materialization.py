@@ -6,6 +6,8 @@ prove that an exchange-confirmed fill becomes one durable, replay-safe chain.
 
 from __future__ import annotations
 
+from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+
 from tests.position_fixture import force_update_position
 
 from collections import Counter
@@ -1331,7 +1333,8 @@ def test_complete_private_close_fill_closes_linked_position_once(tmp_path, monke
             close_reason=close_reason,
         )
 
-    monkeypatch.setattr(pnl, "_close_serenity_feedback", _capture_feedback)
+    from aletheia.learning import outcome_feedback
+    monkeypatch.setattr(outcome_feedback, "_close_serenity_feedback", _capture_feedback)
 
     first = reconcile()
     stored_order = repo.get_order(close_order.id)

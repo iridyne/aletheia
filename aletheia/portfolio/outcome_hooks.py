@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
 from datetime import datetime, timezone
@@ -19,6 +20,14 @@ logger = logging.getLogger("aletheia.portfolio.outcome_hooks")
 SHADOW_TRADES_HOOK = "shadow_trades"
 SERENITY_POST_MORTEM_HOOK = "serenity_post_mortem"
 _INVALIDATION_FENCED_HOOKS = {SHADOW_TRADES_HOOK, SERENITY_POST_MORTEM_HOOK}
+
+_feedback_executor: Callable[[str, dict], None] | None = None
+
+
+def configure_outcome_feedback(executor: Callable[[str, dict], None] | None) -> None:
+    """Bind optional feedback at bootstrap; Core retains every durable job transition."""
+    global _feedback_executor
+    _feedback_executor = executor
 
 
 def enqueue_outcome_hook_jobs(position: dict) -> list[dict]:
@@ -241,23 +250,6 @@ def _hook_applicability_reason(hook_type: str, position: dict) -> str | None:
 
 
 def _execute_hook(hook_type: str, position: dict) -> None:
-    if hook_type == SHADOW_TRADES_HOOK:
-        from aletheia.counterfactual.trades import (
-            resolve_shadow_trades_for_position,
-        )
-
-        resolve_shadow_trades_for_position(position)
-        return
-    if hook_type == SERENITY_POST_MORTEM_HOOK:
-        from aletheia.portfolio.pnl import _close_serenity_feedback
-
-        realized = position.get("realized_pnl")
-        if realized is None:
-            raise ValueError("Serenity feedback requires realized economics")
-        _close_serenity_feedback(
-            position,
-            float(realized),
-            str(position.get("close_reason") or "verified_exit"),
-        )
-        return
-    raise ValueError(f"unsupported Outcome hook type: {hook_type}")
+    if _feedback_executor is None:
+        raise RuntimeError("outcome_feedback_unavailable")
+    _feedback_executor(hook_type, position)

@@ -223,7 +223,7 @@ Serenity 是**长周期**策略,不能被短线机制误杀。判别符 `trade_s
 - max_hold_days=90 时，SWING 择时24h、entry expiry4h、持仓2160h互不替代。PA invalidation 不是持仓周期届满。short_term holding 仍复制其 timing horizon。
 - 最终真实结构 stop 保留，Compiler 基于最终 stop 重新约束风险仓位；不再存在 Serenity 固定百分比入场 stop 设置，不能覆盖所选有效结构。
 - `position_manager`: serenity 仓位**不受 72h 短期上限**(`_decide_exit` 100h 仍返回 None,SH-B01)、**trailing stop 是 no-op**(SH-B02);short_term 回归——72h cap 仍触发(SH-B03)。serenity 走 `thesis_invalidated` 退出(读 `get_serenity_opportunity`,由 `trade_school=='serenity'` 守卫,SH-S08)。
-- 关仓自动复盘: `pnl._close_serenity_feedback` 写 `SerenityPostMortem`(SH-S09);`trade_attribution` 在标准 join 落空时回落 serenity opportunity 查询(SH-S10)。
+- 关仓自动复盘: Core `portfolio.outcome_hooks` 持有资格检查、持久化投递任务、租约与重试；既有 Web/CLI 启动入口绑定可选 `learning.outcome_feedback.execute_outcome_feedback`，其中 `_close_serenity_feedback` 写 `SerenityPostMortem`(SH-S09)。组件缺失时任务失败且可重试，不改写已确认的关仓与经济事实；`trade_attribution` 在标准 join 落空时回落 serenity opportunity 查询(SH-S10)。
 
 ---
 
