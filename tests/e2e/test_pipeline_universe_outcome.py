@@ -3,6 +3,8 @@
 The shared ancestry/closure/read-cohort and consumer code is never mocked.
 Account/fill/funding transport qualification remains owned by its existing suites.
 """
+
+from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
 import pytest
 
 from aletheia.storage import repositories as repo

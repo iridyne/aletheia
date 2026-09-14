@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+
 from tests.position_fixture import force_update_position
 
 import sqlite3
@@ -102,8 +104,10 @@ def test_unverified_exchange_close_is_explicitly_excluded_from_feedback(
     )
     repo.insert_position(position)
     feedback_calls: list[tuple] = []
+    from aletheia.learning import outcome_feedback
+
     monkeypatch.setattr(
-        pnl,
+        outcome_feedback,
         "_close_serenity_feedback",
         lambda *args: feedback_calls.append(args),
     )

@@ -56,6 +56,18 @@ def _configure_runtime() -> None:
     from aletheia.model_provider.router import configure_model_provider
 
     bind_uta_provider()
+
+    from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
+
+    try:
+        from aletheia.learning.outcome_feedback import execute_outcome_feedback
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.learning", "aletheia.learning.outcome_feedback"}:
+            raise
+        configure_outcome_feedback(None)
+    else:
+        configure_outcome_feedback(execute_outcome_feedback)
+
     try:
         from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
     except ModuleNotFoundError as exc:

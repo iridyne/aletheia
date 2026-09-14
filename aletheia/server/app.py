@@ -1064,6 +1064,18 @@ async def _request_timing(request, call_next):
             )
 
 
+from aletheia.portfolio.outcome_hooks import configure_outcome_feedback
+
+try:
+    from aletheia.learning.outcome_feedback import execute_outcome_feedback
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.learning", "aletheia.learning.outcome_feedback"}:
+        raise
+    configure_outcome_feedback(None)
+else:
+    configure_outcome_feedback(execute_outcome_feedback)
+
+
 from aletheia.model_provider.router import configure_model_provider
 
 try:

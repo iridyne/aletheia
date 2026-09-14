@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.outcome_feedback import configured_outcome_feedback as configured_outcome_feedback
+
 from tests.position_fixture import force_update_position
 from tests.test_broker_funding_economics import configured_funding_retention as configured_funding_retention
 
