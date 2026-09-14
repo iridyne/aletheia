@@ -695,16 +695,16 @@ def test_verified_external_close_rolls_back_all_facts_if_close_event_fails(monke
 
 @pytest.mark.parametrize("field", ("fill_price", "fill_quantity", "fee"))
 def test_verified_close_rejects_nonfinite_same_identity_durable_fill(field):
-    from aletheia.execution.exchange_materialization import MaterializationIntegrityError
-    from aletheia.portfolio.outcome_closure import (
-        _materialize_observed_close_chain, close_position_from_verified_exit,
+    from aletheia.execution.exchange_materialization import (
+        MaterializationIntegrityError, materialize_observed_close_chain,
     )
+    from aletheia.portfolio.outcome_closure import close_position_from_verified_exit
 
     position = _position(execution_mode="bitget_demo")
     repo.insert_position(position)
     evidence = _verified_result(position)
     with repo.transaction(immediate=True):
-        order_ids = _materialize_observed_close_chain(
+        order_ids = materialize_observed_close_chain(
             repo.get_position(position.id), evidence, reason="verified_exit",
         )
         # SQLite can retain nonnumeric text in these historical REAL columns.
@@ -747,10 +747,10 @@ def _seed_late_exit_fee(*, funding_complete=True, strategy_close=True, missing_c
         ),
     )
     if strategy_close:
-        from aletheia.portfolio.outcome_closure import _materialize_observed_close_chain
+        from aletheia.execution.exchange_materialization import materialize_observed_close_chain
 
         with repo.transaction(immediate=True):
-            _materialize_observed_close_chain(repo.get_position(position.id), incomplete_evidence, reason="take_profit")
+            materialize_observed_close_chain(repo.get_position(position.id), incomplete_evidence, reason="take_profit")
     close_position_from_verified_exit(position.id, incomplete_evidence,
         verified_strategy_reason="take_profit" if strategy_close else None)
     times = [datetime.fromtimestamp(fill.filled_at_ms / 1000, tz=timezone.utc) for fill in evidence.fills]
@@ -951,7 +951,7 @@ def test_native_close_late_fee_uses_same_cost_owner_and_keeps_original_fill():
         funding_evidence=funding.evidence, funding_ledger=ledger)
     assert result["status"] == "settled" and result["realized_pnl"] == pytest.approx(9.74)
     assert repo.list_fills(order_id=close.id) == original
-    assert materialize_bitget_close(close.id, [{**raw, "fee": "0.2"}]).state == "filled"
+    assert materialize_bitget_close(close.id, report.fills).state == "filled"
     assert repo.list_fills(order_id=close.id) == original
 
 
