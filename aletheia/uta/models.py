@@ -325,6 +325,14 @@ class OrderQuery(UTAModel):
         return self
 
 
+class NativeProtectionHistory(UTAModel):
+    """Discovered child IDs, not proof of account membership or Fill economics."""
+
+    identity: UTAAccountIdentity
+    plan_order_id: str = Field(min_length=1)
+    execute_order_ids: tuple[str, ...] = ()
+
+
 class OrderStatusReport(UTAModel):
     identity: UTAAccountIdentity
     instrument: InstrumentIdentity

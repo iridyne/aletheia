@@ -10,14 +10,15 @@ and current Issue define the target; the older
 
 ## Remaining concrete-client reachability
 
-`UTA-S07` scans production imports outside `uta/` and `exchanges/`. Its two
-remaining importing modules do not perform interchangeable work:
+`UTA-S07` scans production imports outside `uta/` and `exchanges/`. Following
+the native-protection read-port extraction (base `b829d0535`), only the candidate
+credential route remains on its concrete-import allowlist:
 
 | Entrypoint / consumer | Actual read and downstream authority | Containment consequence |
 | --- | --- | --- |
 | `server.routes.bitget` stored-credential connection endpoints, called by `ExecutionTab` | Previously three native clients read account/positions. They now call existing `uta.manager.probe_account_reachable` off the HTTP event loop. It accepts only complete account evidence, classifies errors without raw messages, and uses `query_uta` teardown. UI consumes `connected` / `error`; it does not consume the old Binance position count. | One existing account-probe owner; no separate route client or probe executor. Endpoint mode identifies the configured account, not trading permission. |
-| Same module's candidate-credential endpoints | Bitget delegates its read-only candidate account-info probe to `exchanges.bitget.auth.probe_candidate_credentials`; the route no longer composes signatures or endpoint URLs. Binance/OKX construct temporary CCXT balance probes. No candidate credentials are persisted. | The route still imports the concrete Bitget extension, so `UTA-S07` correctly retains BOTH route and scheduler entries. This is protocol-composition consolidation, not complete Core/Extension or credential-authority convergence. |
-| `agent_runtime.scheduler._tpsl_fill_check_body` | The configured Bitget profile selects classic v2 plan history or UTA v3 `strategy-sub-orders`; UTA maps an exact filled `subOrderId` to `executeOrderId`. A UTA exact Order read proves account membership before `_claim_observed_tpsl_close`; native exact order fills then feed `materialize_bitget_close`, with another configured-identity check. | This is an active recovery/economic-evidence path, not inert history. Parent-trigger discovery remains a native venue concern; normalized `OrderQuery` / `OrderStatusReport` still do not own it. |
+| Same module's candidate-credential endpoints | Bitget delegates its read-only candidate account-info probe to `exchanges.bitget.auth.probe_candidate_credentials`; the route no longer composes signatures or endpoint URLs. Binance/OKX construct temporary CCXT balance probes. No candidate credentials are persisted. | The route still imports the concrete Bitget extension. This is not complete Core/Extension or credential-authority convergence. |
+| `agent_runtime.scheduler._tpsl_fill_check_body` | Existing startup composition binds a read-only `NativeProtectionReader`. The Bitget implementation owns client construction, profile selection, parent/child wire parsing and symbol conversion. Core validates normalized account/parent identity, proves exact Order membership before `_claim_observed_tpsl_close`, then sends exact private fills to `materialize_bitget_close` after another configured-identity check. | No scheduler concrete-client import or wire parser remains. This necessary native exception adds no writer, transport, lifecycle owner or UTAAdapter v1 method. Raw per-request credential behavior is unchanged; the independent account proof remains mandatory. |
 
 ## Independently necessary evidence boundaries
 

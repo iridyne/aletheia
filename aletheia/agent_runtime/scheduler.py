@@ -2573,12 +2573,13 @@ def _claim_observed_tpsl_close(
     reason: str,
     expected_account,
 ):
-    """Atomically register an observed Bitget TPSL execution without placing it."""
+    """Atomically register an observed native TPSL execution without placing it."""
     from datetime import datetime, timezone
     from aletheia.execution.coordinator import _position_account
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
     from aletheia.uta.models import UTAAccountIdentity
+    from aletheia.uta.manager import native_protection_execution_modes
 
     execute_order_id = str(execute_order_id or "").strip()
     if not execute_order_id:
@@ -2588,9 +2589,9 @@ def _claim_observed_tpsl_close(
         if position is None or position.get("status") != "open":
             return None, False
         execution_mode = position.get("execution_mode")
-        if execution_mode not in {"bitget_demo", "bitget_live_limited"}:
+        if execution_mode not in native_protection_execution_modes():
             raise ValueError(
-                "automatic TPSL close registration requires a supported Bitget mode"
+                "automatic TPSL close registration requires a supported native reader"
             )
         # The observing reader is built from current configuration, but the claim
         # carries the entry Order's frozen identity. Only a reader authenticating
@@ -2657,14 +2658,17 @@ def _tpsl_fill_check_body():
     try:
         import asyncio
         import json as _json
-        from aletheia.data.symbols import to_bitget
         from aletheia.storage.repositories import list_all_open_positions
         from aletheia.execution.exchange_materialization import (
             materialize_bitget_close,
         )
-        from aletheia.exchanges.bitget.client import BitgetClient
+        from aletheia.uta.manager import (
+            create_native_protection_reader, native_protection_execution_modes,
+        )
+        from aletheia.uta.models import NativeProtectionHistory
 
         positions = list_all_open_positions()
+        supported_modes = native_protection_execution_modes()
         candidates = []
         for p in positions:
             tpsl_raw = p.get("exchange_tpsl_order_id")
@@ -2675,7 +2679,7 @@ def _tpsl_fill_check_body():
             except (ValueError, TypeError):
                 continue
             if (
-                p.get("execution_mode") in {"bitget_demo", "bitget_live_limited"}
+                p.get("execution_mode") in supported_modes
                 and isinstance(tpsl_ids, dict)
                 and (tpsl_ids.get("sl") or tpsl_ids.get("tp"))
             ):
@@ -2685,20 +2689,13 @@ def _tpsl_fill_check_body():
             return {"materialized": [], "failed_count": 0, "errors": []}
 
         grouped = {
-            "bitget_demo": [item for item in candidates if item[0]["execution_mode"] == "bitget_demo"],
-            "bitget_live_limited": [
-                item for item in candidates
-                if item[0]["execution_mode"] == "bitget_live_limited"
-            ],
+            mode: [item for item in candidates if item[0]["execution_mode"] == mode]
+            for mode in supported_modes
         }
 
         async def _check_account(execution_mode, account_candidates):
             if not account_candidates:
                 return {"materialized": [], "errors": []}
-            account_mode = execution_mode_environment(execution_mode)
-            if account_mode not in {"demo", "live"}:
-                raise ValueError("bitget_account_environment_unavailable")
-            from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
             from aletheia.execution.reconciliation import _UTAReconciliationProjection
             reader_identity = _configured_identity(execution_mode)
             if reader_identity is None:
@@ -2716,17 +2713,18 @@ def _tpsl_fill_check_body():
                         for pos, _tpsl_ids in account_candidates
                     ],
                 }
-            # BitgetClient._headers() re-reads secrets per request, so this
-            # snapshot cannot bind what the raw client signs with. What it can do
-            # is prove, through an identity-enforcing read, that the execute Order
-            # belongs to the verified account before its economics are trusted.
+            # A reader's declared identity is not proof of signed account
+            # membership. The exact UTA Order read below must prove ownership
+            # before the durable claim or private economics can be trusted.
             # get_order is exact and window-free when venue_order_id is present
             # (ccxt_adapter.py:479-520 -> exchange.fetch_order), unlike get_fills,
             # which always demands a time window and scans the account.
             account_prover = _UTAReconciliationProjection(
                 execution_mode, reader_identity
             )
-            client = BitgetClient(mode=account_mode, profile=configured_bitget_profile())
+            client = create_native_protection_reader(
+                execution_mode, expected_account=reader_identity,
+            )
             materialized = []
             errors = []
             try:
@@ -2741,24 +2739,18 @@ def _tpsl_fill_check_body():
                             history = await client.get_plan_order_history(
                                 order_id=plan_order_id
                             )
-                            execute_ids = {
-                                str(row.get("executeOrderId") or "").strip()
-                                for row in history
-                                if isinstance(row, dict)
-                                and str(row.get("orderId") or "")
-                                == str(plan_order_id)
-                                and str(row.get("planStatus") or "").lower()
-                                == "executed"
-                                and str(row.get("executeOrderId") or "").strip()
-                            }
+                            if not isinstance(history, NativeProtectionHistory):
+                                raise ValueError("native_protection_history_invalid")
+                            if history.identity != reader_identity or history.plan_order_id != str(plan_order_id):
+                                raise ValueError("native_protection_history_identity_mismatch")
+                            execute_ids = set(history.execute_order_ids)
                             if len(execute_ids) != 1:
                                 continue
                             execute_order_id = next(iter(execute_ids))
                             reason = (
                                 "stop_loss" if plan_type == "sl" else "take_profit"
                             )
-                            # This executeOrderId was discovered by the raw
-                            # client, which re-reads its credentials per request.
+                            # The discovered child ID alone is not account proof.
                             # Nothing durable may be written for an execute Order
                             # this account cannot be shown to own: the claim sets
                             # pending_close_order_id, so a later refusal would wedge
@@ -2795,7 +2787,7 @@ def _tpsl_fill_check_body():
                             # across a configuration change.
                             private_fills = await client.get_order_fill_reports(
                                 order_id=execute_order_id,
-                                symbol=to_bitget(pos["symbol"]),
+                                symbol=pos["symbol"],
                                 market_type=pos["market_type"],
                                 identity=reader_identity,
                             )

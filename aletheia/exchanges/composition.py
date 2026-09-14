@@ -181,9 +181,23 @@ def build_uta_registry(
     return registry
 
 
+NATIVE_PROTECTION_EXECUTION_MODES = ("bitget_demo", "bitget_live_limited")
+
+
+def create_native_protection_reader(execution_mode: str, *, expected_account: UTAAccountIdentity):
+    from aletheia.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+    from aletheia.exchanges.bitget.profile_config import configured_bitget_profile
+
+    if execution_mode not in NATIVE_PROTECTION_EXECUTION_MODES or expected_account.execution_mode != execution_mode:
+        raise ValueError("native_protection_account_unsupported")
+    return BitgetNativeProtectionReader(expected_account, profile=configured_bitget_profile())
+
+
 def bind_uta_provider() -> None:
     """Bind factories only; resolve no credentials and create no clients here."""
     configure_uta_provider(
         registry_factory=build_uta_registry,
         retention_contract=funding_history_retention_contract,
+        native_protection_reader_factory=create_native_protection_reader,
+        native_protection_modes=NATIVE_PROTECTION_EXECUTION_MODES,
     )

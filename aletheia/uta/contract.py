@@ -9,10 +9,12 @@ from aletheia.uta.models import (
     CommandReport,
     ExecutionMassStatus,
     FillListReport,
+    FillReport,
     FillQuery,
     FundingLedgerQuery,
     FundingLedgerReport,
     ModifyOrderCommand,
+    NativeProtectionHistory,
     OrderListReport,
     OrderQuery,
     OrderQueryReport,
@@ -29,6 +31,20 @@ from aletheia.uta.models import (
 )
 
 UTA_CONTRACT_VERSION = 1
+
+
+class NativeProtectionReader(Protocol):
+    """Read-only native escape hatch; Core still proves and materializes fills."""
+
+    identity: UTAAccountIdentity
+
+    async def get_plan_order_history(self, *, order_id: str) -> NativeProtectionHistory: ...
+
+    async def get_order_fill_reports(
+        self, *, order_id: str, symbol: str, market_type: str, identity: UTAAccountIdentity,
+    ) -> tuple[FillReport, ...]: ...
+
+    async def close(self) -> None: ...
 
 
 @runtime_checkable

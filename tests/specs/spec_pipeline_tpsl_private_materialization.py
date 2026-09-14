@@ -136,6 +136,10 @@ def _patch_configured_reader(monkeypatch, *identities):
     otherwise its assertions pass vacuously through the identity gate.
     """
     import aletheia.uta.manager as uta_manager
+    from aletheia.exchanges import composition
+
+    monkeypatch.setattr(uta_manager, "_native_protection_reader_factory", composition.create_native_protection_reader)
+    monkeypatch.setattr(uta_manager, "_native_protection_modes", composition.NATIVE_PROTECTION_EXECUTION_MODES)
 
     monkeypatch.setattr(
         uta_manager,
@@ -216,6 +220,65 @@ def _exact_fill_reads(calls) -> list[tuple[str, str]]:
         for method, _mode, query in calls
         if method == "get_fills" and query.venue_order_id
     ]
+
+
+@pytest.mark.parametrize("report_kind", ["exact", "wrong_account", "wrong_plan", "raw"])
+def test_scheduler_native_port_validates_discovery_before_claim(tmp_path, monkeypatch, report_kind):
+    db = _setup_db(tmp_path, monkeypatch)
+    from aletheia.agent_runtime import scheduler
+    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.storage import repositories as repo
+    from aletheia.uta import manager
+    from aletheia.uta.models import NativeProtectionHistory
+
+    identity = _identity("bitget_demo")
+    position = _seed_position("bitget_demo", suffix="port", plan_ids={"sl": "PLAN"})
+    _patch_configured_reader(monkeypatch, identity)
+    proofs = []
+    _patch_evidence_reader(monkeypatch, [_private_close_fill("EXEC")], calls=proofs)
+    fill = _private_close_report("EXEC", identity)
+    calls = []
+
+    class Reader:
+        async def get_plan_order_history(self, *, order_id):
+            if report_kind == "raw":
+                return [{"orderId": order_id, "executeOrderId": "EXEC"}]
+            return NativeProtectionHistory(
+                identity=_identity("bitget_live_limited") if report_kind == "wrong_account" else identity,
+                plan_order_id="OTHER" if report_kind == "wrong_plan" else order_id,
+                execute_order_ids=("EXEC",),
+            )
+
+        async def get_order_fill_reports(self, **kwargs):
+            calls.append(kwargs)
+            return (fill,)
+
+        async def close(self):
+            calls.append("closed")
+
+    reader = Reader()
+    reader.identity = identity
+    monkeypatch.setattr(manager, "_native_protection_reader_factory", lambda *_a, **_k: reader)
+
+    def forbidden_client(*_a, **_k):
+        pytest.fail("Core constructed a concrete client")
+
+    monkeypatch.setattr(bitget_client, "BitgetClient", forbidden_client)
+    result = scheduler._tpsl_fill_check_body()
+    assert calls[-1] == "closed"
+    if report_kind == "exact":
+        assert result["failed_count"] == 0
+        assert repo._select_one("positions", position.id)["status"] == "closed"
+        assert _account_proofs(proofs) == [("EXEC", "usdt_futures", True)]
+        assert calls[0]["symbol"] == "BTC/USDT"
+        assert calls[0]["identity"] == identity
+    else:
+        assert result["failed_count"] == 1
+        assert repo._select_one("positions", position.id)["status"] == "open"
+        assert db.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM fills").fetchone()[0] == 1
+        assert proofs == []
+        assert calls == ["closed"]
 
 
 def _account_proofs(calls) -> list[tuple[str, str, bool]]:

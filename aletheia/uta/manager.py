@@ -10,6 +10,7 @@ from decimal import Decimal
 
 from aletheia.config.loader import load_config
 from aletheia.portfolio.disappearance_confirmation import logical_account_fingerprint
+from aletheia.uta.contract import NativeProtectionReader
 from aletheia.uta.models import OrderQuery, OrderQueryReport, ReadCompleteness, UTAAccountIdentity
 from aletheia.uta.registry import UTARegistry
 
@@ -49,17 +50,39 @@ class UnifiedState:
 
 _registry_factory: Callable[..., UTARegistry] | None = None
 _retention_contract: Callable[..., tuple[int, str]] | None = None
+_native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None
+_native_protection_modes: tuple[str, ...] = ()
 
 
 def configure_uta_provider(
     *,
     registry_factory: Callable[..., UTARegistry] | None,
     retention_contract: Callable[..., tuple[int, str]] | None,
+    native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None,
+    native_protection_modes: tuple[str, ...] = (),
 ) -> None:
     """Bind the configured exchange at the existing application entrypoint."""
     global _registry_factory, _retention_contract
+    global _native_protection_reader_factory, _native_protection_modes
     _registry_factory = registry_factory
     _retention_contract = retention_contract
+    _native_protection_reader_factory = native_protection_reader_factory
+    _native_protection_modes = native_protection_modes
+
+
+def native_protection_execution_modes() -> tuple[str, ...]:
+    return _native_protection_modes if _native_protection_reader_factory is not None else ()
+
+
+def create_native_protection_reader(
+    execution_mode: str, *, expected_account: UTAAccountIdentity,
+) -> NativeProtectionReader:
+    if _native_protection_reader_factory is None or execution_mode not in _native_protection_modes:
+        raise RuntimeError("native_protection_reader_unavailable")
+    reader = _native_protection_reader_factory(execution_mode, expected_account=expected_account)
+    if reader.identity != expected_account:
+        raise ValueError("uta_account_identity_mismatch")
+    return reader
 
 
 def build_uta_registry(
