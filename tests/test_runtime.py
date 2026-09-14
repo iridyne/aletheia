@@ -267,6 +267,62 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_market_data_persists_exact_execution_targets(tmp_path, monkeypatch):
+    setup_env(tmp_path, monkeypatch)
+    from aletheia.config.schema import AletheiaConfig
+    from aletheia.data import ccxt_provider
+    from aletheia.data.providers import Ticker
+    from aletheia.risk.engine import _market_data_age_seconds
+    from aletheia.trading import market_data as md
+
+    cfg = AletheiaConfig()
+    cfg.market_data.ccxt_exchange = "binance"
+    monkeypatch.setattr(md, "load_config", lambda: cfg)
+    monkeypatch.setattr(md, "observed_instruments_from_config", lambda cfg: [])
+    monkeypatch.setattr(md, "xstocks_instruments_from_config", lambda cfg: [])
+    monkeypatch.setattr(repo, "get_active_universe_members", lambda **kwargs: [])
+    monkeypatch.setattr(repo, "list_all_open_positions", lambda: [{
+        "symbol": "BTC/USDT", "market_type": "usdt_futures",
+        "execution_mode": "bitget_demo",
+    }])
+    monkeypatch.setattr(repo, "list_candidate_planning_refresh_assets", lambda **kwargs: [
+        {"venue": "okx", "symbol": "ETH/USDT", "market_type": "perp"}
+    ] if not kwargs.get("venue") else [])
+    monkeypatch.setattr(repo, "list_watchable_entry_plans", lambda limit=None: [{
+        "venue": "bitget", "symbol": "SOL/USDT", "market_type": "spot",
+    }])
+    opened, closed = [], []
+
+    class Provider:
+        def __init__(self, venue):
+            self.venue = venue
+
+        async def get_ticker(self, instrument):
+            assert instrument.exchange == self.venue
+            return Ticker(instrument.symbol, 100, 1000, 0, provider=self.venue)
+
+        async def close(self):
+            closed.append(self.venue)
+
+    def provider(**kwargs):
+        assert kwargs["fallback_exchange"] == kwargs["exchange"]
+        opened.append(kwargs["exchange"])
+        return Provider(kwargs["exchange"])
+
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", provider)
+    result = await md.collect_market_snapshots()
+    assert not result["errors"]
+    expected = {("bitget", "BTC/USDT", "perp"),
+                ("okx", "ETH/USDT", "perp"), ("bitget", "SOL/USDT", "spot")}
+    assert {(r["exchange"], r["symbol"], r["market_type"])
+            for r in repo.list_market_snapshots()} == expected
+    assert sorted(opened) == sorted(closed) == ["bitget", "okx"]
+    for venue, symbol, market in expected:
+        assert _market_data_age_seconds(symbol, market, venue=venue) is not None
+        assert _market_data_age_seconds(symbol, market, venue="binance") is None
+
+
+@pytest.mark.anyio
 async def test_market_data_rejects_cross_venue_fallback_snapshot(
     tmp_path, monkeypatch
 ):
