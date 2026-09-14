@@ -77,6 +77,31 @@ a "soft deprecation".
   [`DEBUG_AUDIT_PLAYBOOK.md`](docs/governance/protocols/DEBUG_AUDIT_PLAYBOOK.md)
   SOP-14.
 
+### Durable Git checkpoints
+
+Issue comments and progress checkpoints are evidence, not durable source state.
+Once one independently coherent bounded mutation batch has passed its focused
+verification and self-review, commit that scoped batch before starting the next
+independent mutation batch.
+
+- An uncommitted checkpoint must say `UNCOMMITTED` explicitly and remains
+  incomplete until committed or reverted. Do not accumulate several already-
+  verified checkpoints in one growing dirty worktree.
+- A completed-batch checkpoint references the resulting commit SHA and, after
+  publication, its PR. Without a commit SHA, do not describe source convergence
+  as completed, landed, or durable.
+- In long-running owner-approved work, open or update a normal reviewable PR once
+  a coherent slice exists; do not wait for the entire program or several unrelated
+  ownership domains to accumulate. Split PRs by independently reviewable root
+  cause / ownership boundary, not by session order or arbitrary file count.
+- A PR may contain several tightly related commits. Do not create micro-commits or
+  micro-PRs for trivial edits merely to satisfy this rule.
+- A batch may remain temporarily uncommitted only when the same accepted change
+  requires an atomic cross-file/package cutover to stay buildable or testable.
+  Record that exact reason; this exception never carries completed unrelated work.
+- Commit, PR, merge, deployment, and runtime proof remain separate claims. Follow
+  the matched Development Workflow and PR Review Lifecycle guides for details.
+
 ## Environment and verification boundaries
 
 Use `uv run` for Python. macOS is development/control only; do not infer Fedora
