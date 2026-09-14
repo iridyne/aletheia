@@ -425,9 +425,16 @@ async def lifespan(app: FastAPI):
         _aletheia_logger.setLevel(logging.DEBUG)
     stage_started = _log_startup_stage("logging", stage_started, startup_started)
 
-    from aletheia.exchanges.composition import bind_uta_provider
+    from aletheia.uta.manager import configure_uta_provider
 
-    bind_uta_provider()
+    try:
+        from aletheia.exchanges.composition import bind_uta_provider
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.exchanges", "aletheia.exchanges.composition"}:
+            raise
+        configure_uta_provider(registry_factory=None, retention_contract=None)
+    else:
+        bind_uta_provider()
     cfg = bootstrap()
     event_loop_lag_task = None
     # Apply proxy config to process env before any HTTP client or scheduler runs.
