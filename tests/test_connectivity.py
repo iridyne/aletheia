@@ -52,13 +52,17 @@ async def test_missing_exchange_probe_cannot_prove_connectivity(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exchange", ["bitget", "okx", "binance"])
-async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange):
+@pytest.mark.parametrize("preference", [None, "", "stale", "okx"])
+async def test_exchange_response_still_proves_external_egress(monkeypatch, exchange, preference):
     from contextlib import asynccontextmanager
     from aletheia.agent_runtime import connectivity
     from aletheia.config.schema import AletheiaConfig
 
     cfg = AletheiaConfig()
-    cfg.exchange.name = exchange
+    cfg.exchange.name = exchange if preference is None else preference
+    if preference is not None:
+        from aletheia.config.exchanges import EXCHANGE_UNIFICATION_MAP
+        cfg.exchange.paper_execution_mode = EXCHANGE_UNIFICATION_MAP[exchange][1]
     client = MagicMock(get=AsyncMock(return_value=MagicMock(status_code=200)))
 
     @asynccontextmanager
@@ -72,9 +76,17 @@ async def test_exchange_response_still_proves_external_egress(monkeypatch, excha
     result, egress = await connectivity._probe_exchange_and_external(cfg)
     client.get.assert_awaited_once_with(connectivity._EXCHANGE_ENDPOINTS[exchange])
     assert result["reachable"] is True
+    assert result["exchange"] == exchange
     assert egress == {
         "reachable": True, "latency_ms": result["latency_ms"], "error_code": None,
     }
+
+    pause = AsyncMock()
+    monkeypatch.setattr(connectivity, "_pause_for_network", pause)
+    monkeypatch.setattr(connectivity, "_record_probe_result", lambda result: result)
+    monkeypatch.setattr(connectivity, "_record_external_probe_result", lambda result: result)
+    await connectivity.startup_exchange_gate(cfg)
+    pause.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -92,7 +104,9 @@ async def test_network_diagnostic_errors_hide_proxy_credentials(monkeypatch, set
 
     monkeypatch.setattr("aletheia.net.httpx_client", client)
     result = (await test_network_proxy() if settings else
-              await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(name="bitget"))))
+              await probe_exchange(SimpleNamespace(exchange=SimpleNamespace(
+                  name="bitget", paper_execution_mode="bitget_demo",
+              ))))
     assert result["reachable"] is False
     assert result["error"] == "RuntimeError"
     assert "synthetic-secret" not in repr(result)

@@ -93,11 +93,15 @@ async def probe_exchange(cfg=None) -> dict:
 
     Returns {reachable: bool, latency_ms: float|None, error: str|None, exchange: str}
     """
+    from aletheia.config.exchange_alignment import execution_exchange_for_mode
+
     if cfg is None:
         from aletheia.config.loader import load_config
         cfg = load_config()
 
-    exchange_name = cfg.exchange.name
+    exchange_name = execution_exchange_for_mode(
+        cfg.exchange.paper_execution_mode, configured_exchange=cfg.exchange.name,
+    ) or cfg.exchange.name
     url = _EXCHANGE_ENDPOINTS.get(exchange_name)
     if not url:
         return {
