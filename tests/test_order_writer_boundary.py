@@ -48,6 +48,8 @@ def test_order_writer_ownership():
     "db.execute('INSERT /* bypass */ INTO orders DEFAULT VALUES')",
     "db.execute('UPDATE -- bypass\\norders SET status=?')",
     "persist: Callable = repo._update\npersist('orders', order_id, row)",
+    "db.execute('DROP TABLE orders')",
+    "db.execute('ALTER TABLE orders ADD COLUMN bad TEXT')",
 ])
 def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     target = tmp_path / directory / "other.py"
@@ -66,6 +68,7 @@ def test_order_writer_guard_rejects_other_owners(tmp_path, directory, source):
     "def other():\n    def insert_order(row):\n        _insert('orders', row)",
     "def insert_order(seed=_insert('orders', row)):\n    pass",
     "@decorate(_insert('orders', row))\ndef insert_order(row):\n    pass",
+    "def insert_order(row):\n    db.execute('DROP TABLE orders')",
 ])
 def test_new_repository_wrapper_is_not_an_order_owner(tmp_path, source):
     target = tmp_path / "aletheia/storage/repositories.py"
@@ -79,7 +82,7 @@ def test_order_guard_accepts_canonical_owner_and_delegation(tmp_path):
     sources = {
         "aletheia/execution/coordinator.py": "def submit(row):\n    from ..storage.repositories import insert_order as persist\n    persist(row)",
         "aletheia/storage/repositories.py": "def insert_order(row):\n    _insert('orders', row)\ndef finalize_exchange_acknowledgement(row):\n    transition_order(row['id'], status='submitted')",
-        "aletheia/storage/migrations.py": "db.execute('UPDATE [orders] SET status=?')",
+        "aletheia/storage/migrations.py": "db.execute('UPDATE [orders] SET status=?')\ndb.execute('ALTER TABLE orders ADD COLUMN example TEXT')\ndb.execute('DROP TABLE IF EXISTS orders')",
     }
     for path, source in sources.items():
         target = tmp_path / path
