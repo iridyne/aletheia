@@ -8,6 +8,8 @@ import ast
 import inspect
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).parent.parent
 SRC = PROJECT_ROOT / "aletheia"
 
@@ -29,6 +31,54 @@ def _get_imports(path: Path) -> set[str]:
 # ---------------------------------------------------------------------------
 # Dependency direction rules
 # ---------------------------------------------------------------------------
+
+
+def _assert_risk_writer_boundary(root: Path):
+    """Named writer/literal SQL guard; not an arbitrary dynamic-SQL proof."""
+    import re
+
+    owner = root / "aletheia/risk/engine.py"
+    repository = root / "aletheia/storage/repositories.py"
+    storage = {repository, root / "aletheia/storage/migrations.py"}
+    writers = {"insert_risk_decision", "insert_authoritative_risk_decision"}
+    risk_sql = re.compile(r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)\s+risk_decisions\b", re.I)
+    for directory in ("aletheia", "extensions", "legacy", "ops", "scripts"):
+        for path in (root / directory).rglob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.ImportFrom) and node.module == "aletheia.storage.repositories":
+                    if any(alias.name in writers for alias in node.names):
+                        assert path in {owner, repository}, (path, node.lineno)
+                if isinstance(node, ast.Call):
+                    name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
+                    if name in writers:
+                        assert path in {owner, repository}, (path, node.lineno)
+                    if name in {"_insert", "_insert_many", "_update"} and node.args:
+                        table = node.args[0]
+                        if isinstance(table, ast.Constant) and table.value == "risk_decisions":
+                            assert path in storage, (path, node.lineno)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and risk_sql.search(node.value):
+                    assert path in storage, (path, node.lineno)
+
+
+def test_risk_decisions_have_one_application_writer():
+    _assert_risk_writer_boundary(PROJECT_ROOT)
+
+
+@pytest.mark.parametrize("directory", ["aletheia", "extensions", "legacy", "ops", "scripts"])
+@pytest.mark.parametrize("source", [
+    "from aletheia.storage.repositories import insert_risk_decision as write",
+    "repo.insert_authoritative_risk_decision(decision)",
+    "repo._insert('risk_decisions', row)",
+    "db.execute('INSERT OR IGNORE INTO risk_decisions VALUES (?)')",
+    "db.execute('update risk_decisions SET approved=1')",
+    "db.execute('DELETE FROM risk_decisions')",
+])
+def test_risk_writer_guard_rejects_non_owner(tmp_path, directory, source):
+    path = tmp_path / directory / "other.py"
+    path.parent.mkdir()
+    path.write_text(source, encoding="utf-8")
+    with pytest.raises(AssertionError):
+        _assert_risk_writer_boundary(tmp_path)
 
 
 def test_fill_writes_stay_with_exchange_materialization():
