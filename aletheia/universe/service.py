@@ -668,16 +668,12 @@ class UniverseService:
             if cfg.universe.candidate_selection_policy == "candidate_selection_utility_v1":
                 from aletheia.universe.candidate_selection_authority import (
                     candidate_selection_authority_block_reason,
-                    candidate_selection_overlap_block_reason,
                 )
                 from aletheia.universe.candidate_selection_shadow import (
                     target_admitted_identity_keys,
                     target_candidates_from_bundle,
                 )
 
-                overlap_block_reason = candidate_selection_overlap_block_reason()
-                if overlap_block_reason is not None:
-                    raise RuntimeError(overlap_block_reason)
                 from aletheia.universe.candidate_selection_authority import candidate_selection_policy_identity
                 qualification = {"selection_policy": candidate_selection_policy_identity(cfg)}
                 block_reason = candidate_selection_authority_block_reason(cfg)

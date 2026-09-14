@@ -61,6 +61,17 @@ def test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp
     assert db.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("legacy_unavailable", [False, True])
+def test_legacy_learning_cannot_veto_current_candidate_publication(tmp_path, monkeypatch, legacy_unavailable):
+    def legacy_rows(**kwargs):
+        if legacy_unavailable:
+            raise RuntimeError("legacy ledger unavailable")
+        return [{"stage": "paper_active", "experiment_id": "historical-experiment"}]
+
+    monkeypatch.setattr("aletheia.learning.ledger.list_open_experiments", legacy_rows)
+    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+
+
 def test_actionability_manifest_rotates_existing_policy_epoch(tmp_path, monkeypatch):
     from tests.test_entry_logic import setup_env
     from aletheia.config.loader import load_config, save_config
