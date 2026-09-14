@@ -1,10 +1,9 @@
 """Guard Promotion Pipeline.
 
-Manages the lifecycle of trading guards:
-  candidate → active (when evidence threshold met)
-  active → deprecated (when ineffective)
+Owner review promotes candidates; TTL maintenance expires learned guards.
 
-Deterministic. No LLM. Requires explicit config opt-in (auto_promote_enabled).
+Manual promotion and explicit maintenance only. Scheduled work expires learned guards;
+legacy loss-rate promotion/deprecation is not a current authority.
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from aletheia.config.loader import load_config, get_data_dir
+from aletheia.config.loader import get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
 from aletheia.knowledge.document import (
     canonicalize_inline_document,
@@ -93,107 +92,6 @@ def _deprecate_expired_learned_guards() -> int:
     return deprecated
 
 
-def run_promotion_check() -> dict:
-    """Check candidate guards for promotion eligibility.
-
-    Returns summary of promotions and deprecations applied.
-    Requires config.guard.auto_promote_enabled = True.
-    """
-    cfg = load_config()
-    guard_cfg = getattr(cfg, "guard", None)
-    if not guard_cfg or not guard_cfg.auto_promote_enabled:
-        # Expiry deprecation is independent of the auto-promote gate — run it always.
-        expired_deprecated = _deprecate_expired_learned_guards()
-        return {
-            "skipped": True, "reason": "auto_promote_enabled is False",
-            "expired_deprecated": expired_deprecated,
-        }
-
-    min_trades = getattr(guard_cfg, "min_matching_trades", None)
-    if not isinstance(min_trades, int) or isinstance(min_trades, bool) or min_trades < 1:
-        return {"skipped": True, "reason": "invalid min_matching_trades"}
-    candidates = load_trading_guards(status="candidate")
-    if not candidates:
-        return {"promotions": 0, "deprecations": 0, "candidates_checked": 0}
-
-    # Automatic promotion is fail-closed when the shared Learning reviewer has
-    # stopped or accumulated a stale/oversized backlog. Existing active guards
-    # remain unchanged; the owner-controlled manual promotion route is separate.
-    from aletheia.learning.control import promotion_refreeze_reason
-    refreeze_reason = promotion_refreeze_reason()
-    if refreeze_reason is not None:
-        return {"skipped": True, "refrozen": True, "reason": refreeze_reason}
-
-    from aletheia.analytics.guard_effectiveness import _rows_matching_guard, _clean_rows
-    from aletheia.analytics.trade_attribution import build_trade_attribution_rows
-    from aletheia.knowledge.guards import learned_guard_block_authorized
-
-    # #159: this job MUTATES live guard state, so only learn loss-rates from genuine
-    # post-clean-window trade outcomes — synthetic/administrative closes (reconciler
-    # sweeps, cleanups) and pre-floor dirty data must not drive promotion/deprecation.
-    rows = _clean_rows(build_trade_attribution_rows(limit=500))
-    promotions = 0
-    deprecations = 0
-    skipped_non_learned = 0
-    skipped_unauthorized = 0
-
-    for guard in candidates:
-        # Fix 6 (P0 2026-07-12): safety-type seed/manual guards are owner-controlled
-        # and must NEVER be processed by the automatic learned-guard job. Only learned
-        # (auto-generated) guards flow through here.
-        if guard_origin(guard) != "learned":
-            skipped_non_learned += 1
-            continue
-        # Fix 3: shadow-only learned guards are observe-only. The automatic job never
-        # promotes them and never strips their shadow-only marker.
-        if guard.shadow_only or "shadow-only" in set(guard.tags or []):
-            skipped_unauthorized += 1
-            continue
-
-        matched = _rows_matching_guard(guard, rows)
-        if len(matched) < min_trades:
-            continue
-
-        losses = [r for r in matched if float(r.get("realized_pnl", 0)) < 0]
-        loss_rate = len(losses) / len(matched) if matched else 0
-
-        # Auto-deprecation of an ineffective learned guard is safe cleanup.
-        if loss_rate < 0.3 and len(matched) >= min_trades * 2:
-            if _update_guard_status(guard.guard_id, "deprecated"):
-                deprecations += 1
-                logger.info("Deprecated guard %s (loss_rate=%.0f%%, not effective)",
-                            guard.guard_id, loss_rate * 100)
-            continue
-
-        # Fixes 4/5: historical loss-rate correlation is NOT causal block authority.
-        # A learned guard is promoted to an active block ONLY when the
-        # ranker_learned_guard experiment authorizes it (AT-01 verdict + AT-02 path
-        # authority). Fail-closed on master → nothing auto-promotes into a blocker.
-        if loss_rate >= 0.6:
-            if learned_guard_block_authorized(guard) and _promote_guard_to_active(guard.guard_id, loss_rate):
-                promotions += 1
-                logger.info("Promoted guard %s to active (loss_rate=%.0f%%, experiment-authorized)",
-                            guard.guard_id, loss_rate * 100)
-            else:
-                skipped_unauthorized += 1
-                logger.info("guard_promotion: %s meets loss threshold but lacks experiment "
-                            "authority — kept observe-only (fail-closed)", guard.guard_id)
-
-    # Expiry deprecation pass: soft-deprecate any learned candidate/active guard that
-    # has passed its effective expires_at deadline (#195). This is separate from the
-    # loss-rate deprecation above and runs regardless of auto_promote_enabled state.
-    expired_deprecated = _deprecate_expired_learned_guards()
-
-    return {
-        "promotions": promotions,
-        "deprecations": deprecations,
-        "candidates_checked": len(candidates),
-        "skipped_non_learned": skipped_non_learned,
-        "skipped_unauthorized": skipped_unauthorized,
-        "expired_deprecated": expired_deprecated,
-    }
-
-
 def promote_guard_candidate_to_active(
     guard_id: str,
     *,
@@ -204,8 +102,7 @@ def promote_guard_candidate_to_active(
 ) -> bool:
     """Promote a candidate guard to active without deleting the candidate record.
 
-    score_penalty=10.0 / enforcement=hard_block are written so ranker
-    evaluate_guards actually penalizes matching opportunities (断口G fix).
+    Preserve manual configured effects and learned shadow-only observation.
 
     Refuses promotion of expired learned candidates (#195).
     """
@@ -373,11 +270,6 @@ def _persist_guard_promotion(
         )
 
 
-def _promote_guard_to_active(guard_id: str, loss_rate: float) -> bool:
-    """Backward-compatible auto-promotion entry point."""
-    return promote_guard_candidate_to_active(guard_id, loss_rate=loss_rate)
-
-
 def _update_candidate_row_status(
     path,
     *,
@@ -440,47 +332,6 @@ def _record_guard_promotion_event(
         # leaves authority without reconstructable provenance. Log at WARNING and re-raise.
         logger.warning("Failed to record guard promotion event", exc_info=True)
         raise
-
-
-def _update_guard_status(guard_id: str, new_status: str) -> bool:
-    """Update a guard's status in its markdown file."""
-    guards_dir = get_data_dir() / "knowledge" / "guards"
-    candidates_dir = get_data_dir() / "knowledge" / "guard_candidates"
-
-    for search_dir in [guards_dir, candidates_dir]:
-        if not search_dir.exists():
-            continue
-        for path in search_dir.glob("*.md"):
-            try:
-                meta, body = parse_frontmatter(path)
-                if not meta or meta.get("guard_id") != guard_id:
-                    continue
-
-                meta["status"] = new_status
-                content = render_frontmatter(meta, body)
-                path.write_text(content, encoding="utf-8")
-                if new_status == "deprecated":
-                    _update_candidate_row_status(
-                        path,
-                        item_type=(
-                            "trading_guard"
-                            if search_dir == guards_dir
-                            else "guard_candidate"
-                        ),
-                    )
-
-                if new_status == "active" and search_dir == candidates_dir:
-                    target = guards_dir / path.name
-                    guards_dir.mkdir(parents=True, exist_ok=True)
-                    target.write_text(content, encoding="utf-8")
-                    path.unlink()
-
-                return True
-            except Exception as e:
-                logger.warning("Failed to update guard %s: %s", guard_id, e)
-                continue
-
-    return False
 
 
 # ---------------------------------------------------------------------------

@@ -8,9 +8,8 @@ review before promotion", bypassing the Learning experiment/authority chain enti
 The corrected chain (verified end-to-end here, real DB, no module mocking):
   1. an auto-generated candidate is reachable by load_trading_guards(status="candidate")
      and is created SHADOW-ONLY (observe-only);
-  2. with a repeated losing pattern AND auto_promote_enabled=True, run_promotion_check
-     still does NOT promote it — a learned guard needs experiment authority
-     (ranker_learned_guard: AT-01 verdict + AT-02 path authority), which is fail-closed;
+  2. with a repeated losing pattern AND legacy auto_promote_enabled=True, the scheduled
+     guard task only performs expiry maintenance and never promotes it;
   3. the promotion MECHANISM itself is intact: an owner-authored (manual, non-shadow)
      candidate can still be promoted via the explicit owner route.
 """
@@ -37,7 +36,7 @@ class TestGuardPromotionChain:
     def test_auto_candidate_is_shadow_and_not_auto_promoted(self, e2e_db):
         from aletheia.knowledge.manager import create_guard_candidate
         from aletheia.knowledge.guards import load_trading_guards, guard_origin
-        from aletheia.analytics.guard_promotion import run_promotion_check
+        from aletheia.agent_runtime.scheduler import _run_guard_promotion
 
         # 1) create an auto-style candidate (mirrors outcome_recorder's metadata)
         guard_id = "auto_momentum_long_solusdt"
@@ -73,8 +72,7 @@ class TestGuardPromotionChain:
         cfg.exchange.paper_execution_mode = "bitget_demo"
         cfg.guard.auto_promote_enabled = True
         save_config(cfg)
-        result = run_promotion_check()
-        assert result.get("promotions", 0) == 0, f"learned guard must not auto-promote: {result}"
+        _run_guard_promotion()
 
         # 6) it stays a shadow candidate; it never became an active blocker
         assert not any(x.guard_id == guard_id for x in load_trading_guards(status="active"))

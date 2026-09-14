@@ -351,10 +351,11 @@ def test_learned_guard_without_lab_authority_cannot_create_legacy_experiment():
 
 @spec_claim(SpecClaim(
     "GA-S03", "guard_authority", "§no auto-promotion of learned/shadow", "L2b",
-    "run_promotion_check never auto-promotes a shadow-only learned candidate."))
+    "The scheduled guard expiry job never promotes a shadow-only learned candidate."))
 def test_promotion_never_auto_promotes_shadow_learned():
     from aletheia.knowledge.guards import TradingGuard, GuardAppliesTo, GuardPredicate
     from aletheia.analytics import guard_promotion as gp
+    from aletheia.agent_runtime import scheduler
 
     shadow_candidate = TradingGuard(
         guard_id="auto_momentum_long_solusdt", title="learned", status="candidate",
@@ -366,18 +367,17 @@ def test_promotion_never_auto_promotes_shadow_learned():
     cfg = MagicMock()
     cfg.guard.auto_promote_enabled = True
     cfg.guard.min_matching_trades = 3
+    cfg.runtime.paused = False
 
-    with patch.object(gp, "load_config", return_value=cfg), \
+    with patch.object(scheduler, "load_config", return_value=cfg), \
          patch.object(gp, "load_trading_guards", return_value=[shadow_candidate]), \
          patch("aletheia.learning.control.promotion_refreeze_reason", return_value=None), \
          patch("aletheia.analytics.trade_attribution.build_trade_attribution_rows", return_value=[]), \
          patch("aletheia.analytics.guard_effectiveness._clean_rows", return_value=[]), \
-         patch.object(gp, "_promote_guard_to_active") as promote_spy:
-        result = gp.run_promotion_check()
+         patch.object(gp, "promote_guard_candidate_to_active") as promote_spy:
+        scheduler._run_guard_promotion()
 
-    assert result["promotions"] == 0
     promote_spy.assert_not_called()
-    assert result.get("skipped_unauthorized", 0) >= 1
 
 
 @spec_claim(
@@ -718,13 +718,13 @@ def test_promote_refuses_expired_learned_candidate(tmp_path, monkeypatch):
 
 @spec_claim(SpecClaim(
     "GA-B07", "guard_authority", "§expiry deprecation runs even when auto-promote is disabled", "L2b",
-    "run_promotion_check still runs _deprecate_expired_learned_guards when auto_promote_enabled=False "
-    "and returns expired_deprecated in the skipped result (#195)."))
+    "The scheduled guard job still expires learned guards with legacy auto-promotion disabled (#195)."))
 def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     from datetime import datetime, timedelta, timezone
     from aletheia.knowledge.frontmatter import parse_frontmatter, render_frontmatter
     from aletheia.analytics import guard_promotion as gp
+    from aletheia.agent_runtime import scheduler
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     guards_dir = tmp_path / "knowledge" / "guards"
@@ -740,11 +740,9 @@ def test_expiry_deprecation_runs_when_auto_promote_disabled(tmp_path, monkeypatc
     }
     (guards_dir / "should_deprecate.md").write_text(render_frontmatter(exp, ""), encoding="utf-8")
 
-    with patch.object(gp, "load_config", return_value=MagicMock(
-        guard=MagicMock(auto_promote_enabled=False)
+    with patch.object(scheduler, "load_config", return_value=MagicMock(
+        guard=MagicMock(auto_promote_enabled=False), runtime=MagicMock(paused=False),
     )):
-        result = gp.run_promotion_check()
+        scheduler._run_guard_promotion()
 
-    assert result.get("skipped") is True
-    assert result.get("expired_deprecated") == 1
     assert parse_frontmatter(guards_dir / "should_deprecate.md")[0]["status"] == "deprecated"

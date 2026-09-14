@@ -1848,13 +1848,9 @@ class EventTriggerConfig(BaseModel):
 class GuardConfig(BaseModel):
     enabled: bool = True
     enforce_in_paper_ranker: bool = True
-    # P0 (2026-07-12): default OFF. Automatic promotion of learned/auto guards to
-    # active hard blocks bypassed the Learning experiment/authority chain and turned
-    # historical loss-rate correlation into causal hard blocks. Auto guards are now
-    # permanently shadow-only (see knowledge/guards.py guard_origin + evaluate_guards
-    # seam); owner must explicitly opt in AND only manual/authorized guards promote.
+    # Historical config decode only; no runtime auto-promotion consumer remains.
     auto_promote_enabled: bool = False
-    # Automatic lifecycle mutations require at least one clean trade as evidence.
+    # Historical auto-promotion threshold; not current mutation authority.
     min_matching_trades: int = Field(default=3, ge=1)
     max_score_penalty: float = Field(default=40.0, ge=0.0, le=100.0)
 

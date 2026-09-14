@@ -3781,19 +3781,14 @@ def _run_broker_funding_settler():
 
 
 def _run_guard_promotion():
-    """Promote candidate trading guards to active when evidence threshold met.
-
-    Deterministic, no-LLM learning task. Re-homed from the deleted
-    backtest_orchestrator → lifecycle_automation cycle. Gated by
-    config.guard.auto_promote_enabled inside run_promotion_check().
-    """
+    """Expire learned guards; retain the persisted job identity and pause gates."""
     cfg = load_config()
     if cfg.runtime.paused:
         return
     try:
-        from aletheia.analytics.guard_promotion import run_promotion_check
-        result = run_promotion_check()
-        logger.info("guard_promotion: %s", result)
+        from aletheia.analytics.guard_promotion import _deprecate_expired_learned_guards
+        expired = _deprecate_expired_learned_guards()
+        logger.info("guard_promotion: expired_deprecated=%s", expired)
     except Exception as e:
         logger.warning("guard_promotion job failed: %s", e)
         _record_job_failure("guard_promotion", str(e))
