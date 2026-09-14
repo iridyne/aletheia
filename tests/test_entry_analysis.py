@@ -26,7 +26,7 @@ def _anchor(kind: str, price: float, source: str) -> EntryAnchor:
 
 
 def _context(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
-    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_learning import empty_entry_learning_context
 
     return EntryAnalysisContext(
         analysis_cutoff_at="2026-09-02T00:00:00Z",
@@ -48,7 +48,7 @@ def _context(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
 
 
 def _context_v2(anchors: tuple[EntryAnchor, ...]) -> EntryAnalysisContext:
-    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_learning import empty_entry_learning_context
 
     base = _context(anchors).model_dump(exclude={"context_fingerprint"})
     base.update(
@@ -254,7 +254,7 @@ def test_v2_candidate_facts_include_bounded_primary_and_secondary_opportunity_ev
 def test_unavailable_treatment_learning_is_replaced_by_empty_baseline():
     from types import SimpleNamespace
 
-    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import _bind_experimental_entry_learning_context
 
     scope = {

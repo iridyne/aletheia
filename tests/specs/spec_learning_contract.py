@@ -93,8 +93,8 @@ def test_entry_learning_projection_is_read_only_and_full_denominator():
         EntryLearningTreatmentAdapter,
         _filled_unit_outcome,
         build_entry_learning_context,
-        empty_entry_learning_context,
     )
+    from aletheia.trading.entry_learning import empty_entry_learning_context
 
     source = inspect.getsource(build_entry_learning_context)
     assert "julianday(pg.created_at)<=julianday(?)" in source

@@ -182,7 +182,7 @@ def _no_plan_hypothesis(reason_code: str = "INSUFFICIENT_EVIDENCE") -> EntryHypo
 
 
 def _plan(generation: dict, *, profiles=None) -> EntryPlan:
-    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
         EntryAnalysisContext, EntryAnchor, EntryHypothesis, canonical_json, fingerprint,
     )
@@ -786,7 +786,7 @@ def test_full_demo_canonical_planner_persists_compiled_plan(monkeypatch, profile
     from types import SimpleNamespace
 
     from aletheia.config.loader import load_config
-    from aletheia.learning.entry_context import empty_entry_learning_context
+    from aletheia.trading.entry_learning import empty_entry_learning_context
     from aletheia.trading.entry_analysis import (
         EntryAnalysisContext, EntryAnchor, EntryHypothesis,
         canonical_json, fingerprint,

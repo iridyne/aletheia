@@ -324,6 +324,15 @@ def _bind_demo_quality_epoch(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_entry_learning(monkeypatch):
+    """Exercise actual optional Entry evidence against isolated test state."""
+    from aletheia.learning.entry_context import load_entry_learning_context
+    from aletheia.trading import entry_learning
+
+    monkeypatch.setattr(entry_learning, "_context_loader", load_entry_learning_context)
+
+
+@pytest.fixture(autouse=True)
 def _fast_network_timeout(request, monkeypatch):
     """Set very short httpx connect timeout so external calls fail fast.
 

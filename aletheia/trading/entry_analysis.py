@@ -11,7 +11,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aletheia.learning.entry_context import EntryLearningContext
+from aletheia.trading.entry_learning import (
+    EntryLearningContext, empty_entry_learning_context, resolve_entry_learning_context,
+)
 from aletheia.trading.entry_contract import entry_prompt_fingerprint
 
 
@@ -329,8 +331,6 @@ def _bind_experimental_entry_learning_context(
     treatment: object,
     learning_scope: dict[str, Any],
 ) -> EntryLearningContext:
-    from aletheia.learning.entry_context import empty_entry_learning_context
-
     if learning_context.status != "observational":
         return empty_entry_learning_context(
             **learning_scope,
@@ -742,12 +742,6 @@ def build_entry_analysis_context(
     if opportunity_context is None:
         learning_context: object = {"availability": "unavailable", "reason": "exact_ai_entry_evidence_unavailable"}
     else:
-        from aletheia.learning.entry_context import (
-            build_entry_learning_context,
-            empty_entry_learning_context,
-            resolve_entry_learning_treatment,
-        )
-
         learning_scope = {
             "as_of_at": cutoff.isoformat(),
             "mechanism": str(opportunity_context.opportunity["primary_mechanism"]),
@@ -756,40 +750,9 @@ def build_entry_analysis_context(
             "policy": str(opportunity_context.candidate_selection["policy"]),
             "policy_epoch": opportunity_context.candidate_selection.get("policy_epoch"),
         }
-        treatment = resolve_entry_learning_treatment(
-            planning_generation_id=str(generation["id"]),
-            **learning_scope,
+        learning_context = resolve_entry_learning_context(
+            generation=generation, model_provider=model_provider, profiles=profiles, **learning_scope,
         )
-        if treatment.payload.get("include_learning_context") is True:
-            from aletheia.config.loader import load_config
-
-            provider_config = load_config().models.providers.get(str(model_provider))
-            current_behavior_identity = {
-                "producer_commit": str(generation.get("producer_commit") or ""),
-                "behavior_fingerprint": str(generation.get("behavior_fingerprint") or ""),
-                "entry_behavior_fingerprint": str(generation.get("entry_behavior_fingerprint") or ""),
-                "schema_fingerprint": str(generation.get("schema_fingerprint") or ""),
-                "mechanism_version": str(generation.get("mechanism_version") or ""),
-                "model_provider": str(model_provider),
-                "model": str(getattr(provider_config, "model", "") or ""),
-                "prompt_fingerprint": entry_prompt_fingerprint(),
-                "entry_profile_registry_hash": fingerprint(profiles),
-            }
-            learning_context = build_entry_learning_context(
-                **learning_scope,
-                exclude_generation_id=str(generation["id"]),
-                current_behavior_identity=current_behavior_identity,
-            )
-            learning_context = _bind_experimental_entry_learning_context(
-                learning_context,
-                treatment,
-                learning_scope,
-            )
-        else:
-            learning_context = empty_entry_learning_context(
-                **learning_scope,
-                reasons=(f"entry_learning_treatment:{treatment.reason}",),
-            )
     candidate_fact_refs = [candidate_ref]
     if opportunity_context is not None:
         candidate_fact_refs.extend(_candidate_opportunity_evidence_refs(opportunity_context.opportunity))
