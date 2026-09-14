@@ -16,11 +16,15 @@ or lack the CCXT-native surface they need - 2026-07-07 audit, #49):
 
 - xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
   because only Bitget lists those tokens and the config fallback (bybit) would not find them.
-- ``universe/registry.py::sync_registry`` and ``universe/features.py::collect_features``: use
+- ``universe/features.py::collect_features``: uses
   ``CCXTProvider(exchange=md.ccxt_exchange, fallback_exchange=md.ccxt_fallback)`` — same
   config resolution as the factory, but the factory returns a ``FallbackChainProvider``
   whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. #91 fix
   aligned the fallback exchange resolution with the factory so the two agree.
+
+Registry sync uses the existing Core factory's exact-venue selection and the
+normalized ``get_market_instruments`` capability. It loads primary metadata
+only; the historical configured fallback client was never read by registry.
 
 Any NEW direct construction site should be added here with its reason; a bare
 ``CCXTProvider(...)`` outside this list is a review-flagged deviation.
@@ -36,12 +40,14 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 import logging
+import math
 import time
 from typing import Any
 
 from aletheia.data import providers
 from aletheia.data.providers import (
     Candle,
+    MarketInstrument,
     OHLCVAttempt,
     OHLCVResult,
     Ticker,
@@ -49,7 +55,7 @@ from aletheia.data.providers import (
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
 )
-from aletheia.data.symbols import InstrumentId, to_canonical
+from aletheia.data.symbols import InstrumentId, build_instrument_background, to_canonical
 from aletheia.data.venue_health import (
     VenueCoolingDownError,
     is_venue_available,
@@ -59,6 +65,18 @@ from aletheia.data.venue_health import (
 )
 
 logger = logging.getLogger("aletheia.ccxt_provider")
+
+
+def _precision_to_decimals(p) -> int | None:
+    """Normalize CCXT decimal-place or fractional tick-size precision."""
+    if p is None:
+        return None
+    try:
+        if isinstance(p, float) and 0 < p < 1:
+            return max(0, int(round(-math.log10(p))))
+        return int(p)
+    except (ValueError, OverflowError):
+        return None
 
 
 def _resolve_ccxt_symbol(symbol: InstrumentId | str) -> tuple[str, str, str]:
@@ -381,6 +399,40 @@ class CCXTProvider:
                 if sell_vol > 0:
                     return buy_vol / sell_vol
         return None
+
+    async def get_market_instruments(self) -> list[MarketInstrument]:
+        exchange = self._ensure_primary()
+        await exchange.load_markets()
+        result = []
+        for symbol_key, info in exchange.markets.items():
+            if not info.get("active", True) or info.get("option"):
+                continue
+            quote = (info.get("quote") or "").upper()
+            base = (info.get("base") or "").upper()
+            if quote != "USDT" or not base:
+                continue
+            market_type = "perp" if info.get("swap") or info.get("future") else "spot"
+            native_id = (info.get("id") or "").upper()
+            precision = info.get("precision") or {}
+            result.append(MarketInstrument(
+                venue=self._primary_name,
+                symbol=f"{base}/{quote}",
+                base_asset=base,
+                quote_asset=quote,
+                market_type=market_type,
+                background=build_instrument_background(
+                    symbol=str(info.get("symbol") or symbol_key),
+                    venue=self._primary_name,
+                    market_type=market_type,
+                    market_info=info,
+                ),
+                min_notional=((info.get("limits") or {}).get("cost") or {}).get("min"),
+                price_precision=_precision_to_decimals(precision.get("price")),
+                amount_precision=_precision_to_decimals(precision.get("amount")),
+                is_test_or_dated="TEST" in native_id or "_" in native_id,
+                is_tokenized_equity=str((info.get("info") or {}).get("instCategory") or "") == "3",
+            ))
+        return result
 
     async def get_ohlcv_observation(
         self,

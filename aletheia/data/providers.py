@@ -81,6 +81,23 @@ def timeframe_ms(timeframe: str) -> int:
 
 
 @dataclass
+class MarketInstrument:
+    """Active USDT spot/perpetual listing facts, never registry admission."""
+
+    venue: str
+    symbol: str
+    base_asset: str
+    quote_asset: str
+    market_type: str
+    background: dict
+    min_notional: float | None = None
+    price_precision: int | None = None
+    amount_precision: int | None = None
+    is_test_or_dated: bool = False
+    is_tokenized_equity: bool = False
+
+
+@dataclass
 class Ticker:
     """A point-in-time ticker snapshot.
 
@@ -286,6 +303,11 @@ class MarketDataProvider(Protocol):
     the existing primary venue's 1h buy/sell ratio without writes or fallback.
     Unsupported reads return None; acquisition errors propagate to the caller.
     Core owns whether a feature observation warrants this optional request.
+
+    The optional async ``get_market_instruments()`` capability returns active
+    USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
+    primary venue, without persistence or cross-venue fallback. Core retains
+    product admission, configured exclusions and registry lifecycle ownership.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...
