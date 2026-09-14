@@ -177,3 +177,19 @@ Read-only Fedora inspection during this batch found checkout
 `6749c31b62a36a0497659cf25608025f8ab4218f`, clean, with Gateway active/running
 under PID 106503 and invocation `9f00a439f9964455b6c00f189665083f`. These facts
 prove neither current program deployment nor schema/provider/settlement health.
+
+## Uncommitted Scheme A Exchange dependency correction
+
+Working-tree continuation on `b1cfd7a7573af925520c85b86c1d043dc3e7cb58`:
+the generic CCXT account factory moved to `extensions/exchanges/composition.py`;
+Bitget, Binance and OKX profiles moved to their respective venue packages.
+The generic CCXT profile package no longer re-exports or imports venue profiles.
+Existing callers now import their concrete venue profiles directly. This changes
+module ownership, not credentials, account selection, execution or settlement.
+
+Observed verification: 195 focused adapter/coordinator/reconciliation/diagnostic
+tests passed before adding the dependency guard; the resulting seven UTA boundary
+tests passed. A fresh-process smoke imported the generic CCXT adapter without
+loading any of the three venue packages. This does not prove all optional
+Extensions absent-safe, complete Scheme A ownership, or runtime qualification.
+These changes remain part of the uncommitted migration; no deployment occurred.
