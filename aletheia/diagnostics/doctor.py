@@ -813,26 +813,28 @@ def _probe_config_gates(report: Report) -> None:
 
 
 def _probe_credentials(report: Report) -> None:
-    """Which secrets are SET vs MISSING.
+    """Sanitized configured/missing/unavailable credential status.
 
     `creds.llm` answers "are the credentials shaped correctly", which is NOT
     "can this system do inference". Keep its wording confined to configuration;
     reachability is `llm.inference`'s job.
     """
     from aletheia.config.loader import load_config
-    from aletheia.config.secrets import get_secret
+    from aletheia.uta.manager import read_credential_presence
     cfg = load_config()
 
-    demo_keys = ["bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase"]
-    demo_set = [k for k in demo_keys if get_secret(k)]
+    demo_presence = read_credential_presence("bitget_demo", cfg=cfg)
     mode = cfg.exchange.mode
     pem = getattr(cfg.exchange, "paper_execution_mode", "")
 
-    if len(demo_set) == len(demo_keys):
+    if demo_presence is None or len(demo_presence) != 3:
+        report.add("creds.bitget_demo", "blocker" if (mode == "demo" and pem == "bitget_demo") else "warn",
+                   "bitget demo credential status unavailable — configuration not verified")
+    elif all(demo_presence):
         report.add("creds.bitget_demo", "ok", "all 3 demo credentials SET")
-    elif demo_set:
+    elif any(demo_presence):
         report.add("creds.bitget_demo", "warn",
-                   f"partial: {len(demo_set)}/3 demo credentials SET",
+                   f"partial: {sum(demo_presence)}/3 demo credentials SET",
                    "set the missing ones in Settings → Credentials (or `aletheia secrets set bitget.demo.*`)")
     else:
         # Missing demo creds only BLOCKS if the system is configured to place demo orders.
@@ -864,14 +866,19 @@ def _probe_credentials(report: Report) -> None:
 
     secret_ref = pcfg.api_key_secret_ref
     if secret_ref:
-        if get_secret(secret_ref):
+        from aletheia.model_provider.router import provider_credential_status
+        configured = provider_credential_status(provider, pcfg).get("configured")
+        if configured is True:
             report.add("creds.llm", "ok",
                        f"LLM credentials configured (default={provider}, secret_ref={secret_ref}) "
                        "— inference not verified here, see llm.inference")
+        elif configured is False:
+            report.add("creds.llm", "warn",
+                   f"LLM provider secret missing (default={provider}, secret_ref={secret_ref})",
+                   "Settings -> Model Provider, or set the configured model secret")
         else:
             report.add("creds.llm", "warn",
-                       f"LLM provider secret missing (default={provider}, secret_ref={secret_ref})",
-                       "Settings -> Model Provider, or set the configured model secret")
+                       f"LLM credential status unavailable (default={provider}) — configuration not verified")
         return
 
     endpoint = pcfg.base_url

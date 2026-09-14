@@ -235,6 +235,19 @@ nullable setup field, not unrelated optional routes.
 
 ## Startup filesystem repair ownership
 
+The Doctor credential audit at `cb7237329bf7138f84ab1a825c4bee54e9541183`
+found `_probe_credentials` reading raw Bitget Demo and selected-model secrets.
+Doctor now consumes existing Model credential-status metadata and a boolean-only
+selected-account presence query through the existing UTA composition binding.
+Exchange composition reuses its profile reference map; it reads only the
+requested account's fields, with no client creation, enumeration or writes.
+Absent adapters, failed stores and malformed presence are unavailable rather
+than fabricated missing/configured states. The existing Bitget Demo scope,
+known present/partial/missing messages and independent inference probe remain.
+Binding resolves no secrets; default-provider status uses only its configured
+HTTP reference. Synthetic boundary and Doctor regressions do not prove actual
+credential configuration, reachability, or runtime qualification.
+
 The Telegram health-route audit at `54d525afc9d172918ec42690ab0bc11545a98f1d`
 found Core's route module resolving `telegram.bot_token` and calling Telegram
 directly even when the optional Telegram package was absent. The handler now
