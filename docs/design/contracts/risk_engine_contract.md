@@ -66,8 +66,8 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 6b | Cross-pool Symbol Dedup | 同 live/demo 池内同标的禁止重复开仓(防跨 broker 重复) | —(始终启用) | `symbol_already_open:{sym}` | :141 |
 | 7 | Short Allowed | 方向合法 | `risk.allow_short_{live/demo}` | `short_not_allowed_{live/demo}` | :138 |
 | 8 | Max Daily Loss | 只读 authoritative account snapshot；来源不可用→拒绝但不伪造 breach；真实日损突破→**自动触发 kill switch** | `risk.max_daily_loss_pct`, `kill_switch_enabled_{live/demo}` | `account_loss_unavailable:{reason}` / `max_daily_loss_exceeded:{r}<=-{lim}` | engine.py check #8 |
-| 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
-| 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
+| 9a | Exchange Allowlist | `AccountConfigBinding.GLOBAL` 账户必须匹配；OKX/Binance 保留既有 `SELF_CONTAINED` 豁免 | `risk.allowed_exchange` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `exchange_not_allowed:{a}!={e}` | engine.py check #9a |
+| 9b | Account Mode Match | `GLOBAL` 账户要求 live↔mode=live / demo↔mode=demo；`SELF_CONTAINED` 保留既有豁免 | `exchange.mode` + `EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS` | `account_mode_mismatch:...` | engine.py check #9b |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
 | 11 | Data Freshness | 只接受 Proposal 对应 venue + physical market 的精确快照；同 symbol 的其他 venue/market 不得替代。live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` / `_MAX_DEMO_DATA_AGE_SECONDS=1800` | `stale_market_data:age={a}` (live); `stale_market_data_demo:age={a}` (registered demo modes) | engine.py `_market_data_age_seconds` |
 | 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |

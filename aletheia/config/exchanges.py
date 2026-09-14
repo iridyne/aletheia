@@ -2,6 +2,34 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
+
+class AccountConfigBinding(str, Enum):
+    GLOBAL = "global"
+    SELF_CONTAINED = "self_contained"
+
+
+# Existing account-policy attributes, not an adapter-granted Risk capability.
+# The owner explicitly retained these exemptions in #3134.
+EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS = {
+    "bitget_demo": AccountConfigBinding.GLOBAL,
+    "bitget_live_limited": AccountConfigBinding.GLOBAL,
+    "okx_demo": AccountConfigBinding.SELF_CONTAINED,
+    "okx_live_limited": AccountConfigBinding.SELF_CONTAINED,
+    "binance_testnet": AccountConfigBinding.SELF_CONTAINED,
+    "binance_live_limited": AccountConfigBinding.SELF_CONTAINED,
+}
+
+
+def execution_mode_account_config_binding(execution_mode: str) -> AccountConfigBinding:
+    """Unknown identities never inherit an exemption; Risk separately rejects them."""
+    return EXECUTION_MODE_ACCOUNT_CONFIG_BINDINGS.get(
+        execution_mode,
+        AccountConfigBinding.GLOBAL,
+    )
+
+
 # Maps exchange_id → (ccxt_exchange_name, paper_execution_mode)
 EXCHANGE_UNIFICATION_MAP: dict[str, tuple[str, str]] = {
     "okx": ("okx", "okx_demo"),
