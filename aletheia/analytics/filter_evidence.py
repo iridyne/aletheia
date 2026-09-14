@@ -19,7 +19,6 @@ from aletheia.data.symbols import (
     instrument_background_from_metadata,
     instrument_background_rejection_reason,
 )
-from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     FilterCandidateOutcome,
@@ -29,6 +28,8 @@ from aletheia.storage.models import (
 from aletheia.universe.outcome_economics import COST_MODEL_VERSION
 
 logger = logging.getLogger("aletheia.analytics.filter_evidence")
+
+POLICY_EPOCH_LABEL = "opportunity_information_integrity/v4"
 
 _SCHEMA_VERSION = "v1"
 _HORIZONS = {

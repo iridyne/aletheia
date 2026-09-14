@@ -785,7 +785,7 @@ def _opportunity_evidence_manifest(
     pre_filter: dict,
     pre_filter_evidence_id: str | None = None,
 ) -> dict:
-    from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
+    from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
 
     existing = metadata.get("evidence_manifest")
     producer_epoch = (
