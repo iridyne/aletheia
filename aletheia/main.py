@@ -52,10 +52,17 @@ app = typer.Typer(
 
 @app.callback()
 def _configure_runtime() -> None:
-    from aletheia.exchanges.composition import bind_uta_provider
     from aletheia.model_provider.router import configure_model_provider
+    from aletheia.uta.manager import configure_uta_provider
 
-    bind_uta_provider()
+    try:
+        from aletheia.exchanges.composition import bind_uta_provider
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.exchanges", "aletheia.exchanges.composition"}:
+            raise
+        configure_uta_provider(registry_factory=None, retention_contract=None)
+    else:
+        bind_uta_provider()
 
     from aletheia.risk.demo_entry_quality import configure_regime_reader
     from aletheia.universe.service import configure_regime_refresh
