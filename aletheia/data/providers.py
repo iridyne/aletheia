@@ -1,17 +1,39 @@
 """Market-data provider protocol + value models (Ticker, Candle).
 
-Pure models — no I/O, no third-party deps. ``CCXTProvider`` (ccxt_provider.py)
-is the concrete implementation; tests supply lightweight fakes that satisfy the
-``MarketDataProvider`` Protocol structurally.
+Normalized contracts with no concrete adapter imports or third-party deps.
+Composition binds the optional listing read; tests can replace the side effect.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 import math
 from typing import Iterable, Literal, Protocol, runtime_checkable
 
 from aletheia.data.symbols import InstrumentId
+
+
+_listing_reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None = None
+
+
+def configure_listing_reader(
+    reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None,
+) -> None:
+    global _listing_reader
+    _listing_reader = reader
+
+
+async def read_market_listing(venue: str, *, spot_only: bool) -> frozenset[str]:
+    """Read confirmed listing facts; unavailable is never confirmed emptiness."""
+    if _listing_reader is None:
+        raise RuntimeError("market listing reader unavailable")
+    listed = await _listing_reader(venue, spot_only)
+    if not isinstance(listed, frozenset) or not listed or any(
+        not isinstance(symbol, str) or not symbol.strip() for symbol in listed
+    ):
+        raise ValueError("market listing result is empty or invalid")
+    return listed
 
 
 # Canonical timeframe → milliseconds. Single source of truth for bar durations.

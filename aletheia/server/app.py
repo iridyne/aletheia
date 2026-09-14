@@ -1118,6 +1118,18 @@ else:
     configure_entry_learning(load_entry_learning_context)
 
 
+from aletheia.data.providers import configure_listing_reader
+
+try:
+    from aletheia.data.ccxt_provider import read_market_listing
+except ModuleNotFoundError as exc:
+    if exc.name != "aletheia.data.ccxt_provider":
+        raise
+    configure_listing_reader(None)
+else:
+    configure_listing_reader(read_market_listing)
+
+
 from aletheia.risk.demo_entry_quality import configure_demo_quality_epoch, configure_regime_reader
 from aletheia.universe.service import configure_regime_refresh
 

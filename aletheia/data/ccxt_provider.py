@@ -461,6 +461,36 @@ async def load_public_market_capabilities(
             raise RuntimeError("ccxt_cleanup_failed")
 
 
+async def read_market_listing(venue: str, spot_only: bool) -> frozenset[str]:
+    """Normalize exact-venue public listings; own and close the fresh client."""
+    provider = get_market_data_provider(
+        exchange=venue, native_ccxt=True, fallback_exchange=venue,
+    )
+    try:
+        exchange = provider._ensure_primary()
+        if spot_only:
+            exchange.options["defaultType"] = "spot"
+        markets = await exchange.load_markets()
+        if not isinstance(markets, dict) or not markets:
+            raise ValueError(f"load_markets returned empty/invalid result for {venue}")
+        # Preserve the two consumers' existing active predicates, including 0:
+        # spot-only uses identity; the all-market cache uses equality.
+        listed = frozenset(
+            to_canonical(str(symbol))
+            for symbol, market in markets.items()
+            if isinstance(market, dict)
+            and (
+                market.get("spot") is True and market.get("active") is not False
+                if spot_only else market.get("active") != False  # noqa: E712
+            )
+        )
+        if not listed:
+            raise ValueError(f"no active {'spot ' if spot_only else ''}markets found for {venue}")
+        return listed
+    finally:
+        await provider.close()
+
+
 def _opt_float(value) -> float | None:
     if value is None:
         return None
