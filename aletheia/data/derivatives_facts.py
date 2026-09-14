@@ -8,7 +8,7 @@ import math
 import hashlib
 from typing import Literal, NotRequired, TypedDict
 
-from aletheia.data.freshness import assess_freshness
+from aletheia.data.freshness import MAX_FUTURE_SKEW, assess_freshness
 from aletheia.utils.dt import parse_utc
 
 
@@ -32,6 +32,37 @@ class DerivativesFact(TypedDict):
     coverage: NotRequired[str]
     population: NotRequired[str]
     reference_kind: NotRequired[str | None]
+
+
+def provider_source_time(
+    raw: dict,
+    acquired_at: datetime,
+) -> tuple[str | None, str]:
+    """Normalize one CCXT source timestamp without inventing source-now."""
+    raw_timestamp = raw.get("timestamp")
+    raw_datetime = raw.get("datetime")
+    try:
+        if raw_timestamp is not None:
+            if isinstance(raw_timestamp, bool):
+                return None, "invalid"
+            timestamp = float(raw_timestamp)
+            if not math.isfinite(timestamp):
+                return None, "invalid"
+            parsed = datetime.fromtimestamp(timestamp / 1000, timezone.utc)
+        elif raw_datetime:
+            parsed = datetime.fromisoformat(str(raw_datetime).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.astimezone(timezone.utc)
+        else:
+            return None, "missing"
+    except (OSError, OverflowError, TypeError, ValueError):
+        return None, "invalid"
+
+    acquired_at = acquired_at.astimezone(timezone.utc)
+    if parsed > acquired_at + MAX_FUTURE_SKEW:
+        return parsed.isoformat(), "future"
+    return parsed.isoformat(), "provided"
 
 
 def finite(value) -> float | None:
@@ -119,8 +150,6 @@ def _fact(
 
 
 def normalize_funding(raw, *, instrument, provider, venue, acquired_at, interval_seconds=None, value_kind="observed"):
-    from aletheia.data.collectors.derivatives import provider_source_time
-
     source, status = provider_source_time(raw, acquired_at)
     result = _fact(
         "funding_rate",
@@ -176,8 +205,6 @@ def open_interest_usd(raw, *, instrument, amount_unit=None, mark_price=None, val
 def normalize_open_interest(
     raw, *, instrument, provider, venue, acquired_at, amount_unit=None, mark_price=None, value_unit=None
 ):
-    from aletheia.data.collectors.derivatives import provider_source_time
-
     source, status = provider_source_time(raw, acquired_at)
     value, reason = open_interest_usd(raw, instrument=instrument, amount_unit=amount_unit,
         mark_price=mark_price, value_unit=value_unit)
@@ -288,7 +315,6 @@ def ccxt_metadata(symbol, venue, market, raw, *, family, ratios=None, acquired_a
     )
     # CCXT leaves unified OKX funding timestamp empty although the response has ts.
     if venue == 'okx' and family == 'funding' and isinstance(info, dict) and info.get('ts') is not None:
-        from aletheia.data.collectors.derivatives import provider_source_time
         acquired = datetime.fromisoformat(acquired_at) if acquired_at else datetime.now(timezone.utc)
         source, status = provider_source_time({'timestamp': info['ts']}, acquired)
         data = json.loads(metadata)
@@ -315,7 +341,6 @@ def comparison_row(row: dict) -> dict:
 
 def price_snapshot(symbol, venue, raw, *, instrument, acquired_at, provider='ccxt', reference_kind='index'):
     """Mark and reference from one response share a clock; no cross-response premium guess."""
-    from aletheia.data.collectors.derivatives import provider_source_time
     if not _instrument_valid(instrument):
         return None
     if provider == 'ccxt' and raw.get('symbol') is not None:
