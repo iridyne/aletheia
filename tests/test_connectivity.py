@@ -165,6 +165,10 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     import aletheia.agent_runtime.connectivity as conn_mod
 
     cfg = load_config()
+    cfg.exchange.name = "okx"
+    cfg.health.require_llm_at_startup = False
+    loader.save_config(cfg)
+    notifications = MagicMock()
     resume_loop = AsyncMock(return_value=None)
     monkeypatch.setattr(
         "aletheia.agent_runtime.scheduler.pause_scheduler",
@@ -173,7 +177,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     monkeypatch.setattr(conn_mod, "_exchange_auto_resume_loop", resume_loop)
     monkeypatch.setattr(
         "aletheia.notifications.notify_operator",
-        lambda *args, **kwargs: None,
+        notifications,
     )
 
     await conn_mod._pause_for_network(
@@ -182,7 +186,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
             "reachable": False,
             "latency_ms": None,
             "error": "timeout",
-            "exchange": cfg.exchange.name,
+            "exchange": "bitget",
         },
     )
     await asyncio.sleep(0)
@@ -193,6 +197,7 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
     acquired_at = persisted.runtime.connectivity_pause_acquired_at
     assert persisted.runtime.paused is True
     assert persisted.runtime.paused_by_connectivity is True
+    assert persisted.runtime.pause_owners["exchange_connectivity"].reason == "bitget_unreachable"
     assert generation
     assert acquired_at
     datetime.fromisoformat(acquired_at)
@@ -208,6 +213,18 @@ async def test_network_pause_persists_owner_generation_and_timestamp(
         if event.get("event_type") == "exchange_connectivity_paused"
     ]
     assert pause_events[-1]["after"]["pause_generation"] == generation
+    assert "bitget" in pause_events[-1]["message"]
+    assert "bitget" in notifications.call_args.args[1]
+
+    conn_mod._escalate_exchange_stall(cfg, {"exchange": "bitget", "error": "timeout"}, 3)
+    assert "bitget" in notifications.call_args.args[1]
+    conn_mod._record_probe_result({"exchange": "bitget", "reachable": True})
+    monkeypatch.setattr("aletheia.agent_runtime.scheduler.resume_scheduler", lambda: None)
+    assert await conn_mod._resume_from_network(cfg, pause_generation=generation) is True
+    assert "bitget" in notifications.call_args.args[1]
+    resume_events = [event for event in read_jsonl("audit.jsonl")
+                     if event.get("event_type") == "exchange_connectivity_resumed"]
+    assert "bitget" in resume_events[-1]["message"]
 
 
 @pytest.mark.asyncio
