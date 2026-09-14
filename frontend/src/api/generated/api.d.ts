@@ -8412,16 +8412,12 @@ export interface components {
         };
         /** GuardConfigUpdate */
         GuardConfigUpdate: {
-            /** Auto Promote Enabled */
-            auto_promote_enabled?: boolean | null;
             /** Enabled */
             enabled?: boolean | null;
             /** Enforce In Paper Ranker */
             enforce_in_paper_ranker?: boolean | null;
             /** Max Score Penalty */
             max_score_penalty?: number | null;
-            /** Min Matching Trades */
-            min_matching_trades?: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

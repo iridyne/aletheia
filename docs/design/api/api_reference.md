@@ -357,7 +357,7 @@ or `unavailable`; `X-Aletheia-Data-Instrument` records the exact requested scope
 | POST | `/settings/app` | App-level settings (timezone, locale) |
 | POST | `/settings/pi_daemon` | PI daemon config (debounce, cooldown) |
 | POST | `/settings/serenity` | Serenity research config (auto_promote, min_score_for_pi) |
-| POST | `/settings/guard` | Guard / lesson-promotion config (`auto_promote_enabled`, thresholds) |
+| POST | `/settings/guard` | Current guard config (`enabled`, `enforce_in_paper_ranker`, `max_score_penalty`). Retired `auto_promote_enabled` / `min_matching_trades` writes return 422; historical values remain readable. |
 | POST | `/settings/operator` | Operator loop config |
 | POST | `/settings/regime` | Regime classifier config |
 | POST | `/settings/health-config` | Health check thresholds |
