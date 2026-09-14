@@ -19,6 +19,7 @@ def approvable_risk_trade(
     direction: str,
     price: float,
     opportunity_id: str | None = None,
+    venue: str = "bitget",
 ) -> dict[str, float | str]:
     """Seed the fail-closed prerequisites for one proposal with explicit Risk prerequisites."""
     if direction == "long":
@@ -40,7 +41,12 @@ def approvable_risk_trade(
     )
     repo.insert_opportunity(opportunity)
     repo.insert_market_snapshot(
-        MarketSnapshot(symbol=symbol, market_type=market_type, price=price)
+        MarketSnapshot(
+            symbol=symbol,
+            market_type=market_type,
+            price=price,
+            exchange=venue,
+        )
     )
     monkeypatch.setattr(
         "aletheia.data.price_feed.get_fresh_price_for_protective_close",

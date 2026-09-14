@@ -121,7 +121,7 @@ def test_stale_market_data_blocks_live(tmp_path, monkeypatch):
     _unlock_live_auto(tmp_path)
     # Insert a stale snapshot (2 hours old).
     stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000, exchange="bitget")
     snap.snapshot_at = stale
     repo.insert_market_snapshot(snap)
 
@@ -135,7 +135,7 @@ def test_stale_market_data_blocks_live(tmp_path, monkeypatch):
 def test_fresh_market_data_passes_freshness(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     _unlock_live_auto(tmp_path)
-    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)  # fresh now
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000, exchange="bitget")  # fresh now
     repo.insert_market_snapshot(snap)
     p = TradeProposal(symbol="BTC/USDT", market_type="spot", direction="long",
                       execution_mode="bitget_live_limited", quantity=0.0001, price=60000)
@@ -144,16 +144,40 @@ def test_fresh_market_data_passes_freshness(tmp_path, monkeypatch):
     assert not any("stale_market_data" in v for v in result.violations)
 
 
+@pytest.mark.parametrize("mode,venue", [
+    ("bitget_demo", "bitget"), ("bitget_live_limited", "bitget"),
+    ("okx_demo", "okx"), ("okx_live_limited", "okx"),
+    ("binance_testnet", "binance"), ("binance_live_limited", "binance"),
+])
+@pytest.mark.parametrize("exact", [False, True])
+def test_risk_freshness_binds_proposal_venue_and_market(tmp_path, monkeypatch, mode, venue, exact):
+    setup_env(tmp_path, monkeypatch)
+    if mode.endswith("live_limited"):
+        _unlock_live_auto(tmp_path)
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="spot", price=60000, exchange=venue,
+    ))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="perp", price=60000,
+        exchange=venue if exact else "other-venue",
+    ))
+    proposal = TradeProposal(symbol="BTC/USDT", market_type="usdt_futures", direction="long",
+                             execution_mode=mode, quantity=0.0001, price=60000, leverage=1)
+    result = evaluate_proposal(proposal, decision_role="preflight")
+    token = "stale_market_data:" if mode.endswith("live_limited") else "stale_market_data_demo:"
+    assert any(v.startswith(token) for v in result.violations) is not exact
+
+
 def test_future_market_data_fails_closed(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
-    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000)
+    snap = MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000, exchange="bitget")
     snap.snapshot_at = future
     repo.insert_market_snapshot(snap)
 
     from aletheia.risk.engine import _market_data_age_seconds
 
-    assert _market_data_age_seconds("BTC/USDT") is None
+    assert _market_data_age_seconds("BTC/USDT", "spot", venue="bitget") is None
 
 
 # --- max_total_live_exposure (live) ---

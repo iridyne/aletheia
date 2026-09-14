@@ -16,6 +16,7 @@ from aletheia.config.exchanges import (
     EXTERNAL_EXECUTION_MODES,
     LIVE_EXECUTION_MODE_SET,
     execution_mode_environment,
+    execution_mode_venue,
     is_live_execution_mode,
 )
 from aletheia.config.loader import load_config
@@ -720,17 +721,13 @@ def _effective_position_margin_cap(
     return min(configured_cap, available)
 
 
-def _market_data_age_seconds(symbol: str, market_type: str | None = None) -> float | None:
-    """Age in seconds of the latest market snapshot for symbol, or None if absent.
+def _market_data_age_seconds(symbol: str, market_type: str, *, venue: str | None) -> float | None:
+    """Age of the Proposal's exact physical instrument, or None if unavailable."""
+    from aletheia.data.price_feed import get_latest_exact_market_snapshot
 
-    When ``market_type`` (proposal vocabulary, e.g. "usdt_futures") is given, a
-    typed snapshot is preferred so a futures freshness check does not pass on a
-    spot snapshot for the same symbol (#13). ``latest_snapshot`` falls back to
-    the symbol-only lookup when no typed snapshot exists, so this stays fail-closed
-    on genuinely absent data without introducing new stale rejections.
-    """
-    from aletheia.trading.market_data import latest_snapshot
-    row = latest_snapshot(symbol, market_type=market_type)
+    if not venue:
+        return None
+    row = get_latest_exact_market_snapshot(symbol, market_type, venue)
     if not row:
         return None
     ts = row.get("snapshot_at")
@@ -1274,7 +1271,11 @@ def _evaluate_proposal_locked(
     # Live-only checks: data freshness, single-trade risk, strategy lifecycle.
     if _is_live(proposal.execution_mode):
         # 11. Data freshness
-        age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
+        age = _market_data_age_seconds(
+            proposal.symbol,
+            proposal.market_type,
+            venue=execution_mode_venue(proposal.execution_mode),
+        )
         if age is None or age > _MAX_DATA_AGE_SECONDS:
             violations.append(f"stale_market_data:age={age}")
 
@@ -1347,7 +1348,11 @@ def _evaluate_proposal_locked(
 
         # Demo orders require fresh venue data (see _MAX_DEMO_DATA_AGE_SECONDS).
         if proposal.execution_mode in DEMO_EXECUTION_MODES:
-            demo_age = _market_data_age_seconds(proposal.symbol, market_type=proposal.market_type)
+            demo_age = _market_data_age_seconds(
+                proposal.symbol,
+                proposal.market_type,
+                venue=execution_mode_venue(proposal.execution_mode),
+            )
             if demo_age is None or demo_age > _MAX_DEMO_DATA_AGE_SECONDS:
                 violations.append(f"stale_market_data_demo:age={demo_age}")
 

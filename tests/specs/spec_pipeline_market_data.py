@@ -44,7 +44,7 @@ def _setup_db(tmp_path, monkeypatch):
 
 
 def _insert_fresh_snapshot(conn, symbol: str, price: float = 50000.0, age_seconds: float = 0.0,
-                           market_type: str = "spot"):
+                           market_type: str = "spot", exchange: str = "bitget"):
     """Insert a market_snapshots row with a controlled timestamp and market_type."""
     snap_id = str(uuid.uuid4())
     # age_seconds > 0 means the snapshot is that many seconds old
@@ -53,8 +53,8 @@ def _insert_fresh_snapshot(conn, symbol: str, price: float = 50000.0, age_second
     ).isoformat()
     conn.execute(
         "INSERT INTO market_snapshots (id, symbol, market_type, price, volume_24h, "
-        "change_pct_24h, snapshot_at, provider) VALUES (?,?,?,?,?,?,?,?)",
-        (snap_id, symbol, market_type, price, 1_000_000.0, 0.5, snap_ts, "ccxt"),
+        "change_pct_24h, snapshot_at, provider, exchange) VALUES (?,?,?,?,?,?,?,?,?)",
+        (snap_id, symbol, market_type, price, 1_000_000.0, 0.5, snap_ts, "ccxt", exchange),
     )
     conn.commit()
     return snap_id
@@ -153,7 +153,7 @@ def test_market_data_freshness_seen_by_risk_engine(tmp_path, monkeypatch):
     _insert_fresh_snapshot(conn, "BTC/USDT", price=60000.0, age_seconds=2.0)
 
     from aletheia.risk.engine import _market_data_age_seconds
-    age = _market_data_age_seconds("BTC/USDT")
+    age = _market_data_age_seconds("BTC/USDT", "spot", venue="bitget")
 
     assert age is not None, (
         "_market_data_age_seconds returned None despite a fresh snapshot existing — "
@@ -602,42 +602,43 @@ def test_market_data_freshness_prefers_typed_snapshot(tmp_path, monkeypatch):
     from aletheia.risk.engine import _market_data_age_seconds
 
     # usdt_futures proposal → should resolve the ~3s perp row, not the 300s spot row.
-    age = _market_data_age_seconds("BTC/USDT", market_type="usdt_futures")
+    age = _market_data_age_seconds("BTC/USDT", market_type="usdt_futures", venue="bitget")
     assert age is not None, "typed freshness returned None despite a fresh perp snapshot"
     assert age < 120.0, (
         f"Expected the ~3s perp snapshot, got age={age:.1f}s — futures freshness "
         "is reading the stale spot row (#13 regression)"
     )
 
-    # Symbol-only (legacy) call still returns the most recent row regardless of type.
-    legacy = _market_data_age_seconds("BTC/USDT")
-    assert legacy is not None and legacy < 120.0
+    # Historical display access remains independently available.
+    from aletheia.trading.market_data import latest_snapshot
+    assert latest_snapshot("BTC/USDT") is not None
 
 
 # ---------------------------------------------------------------------------
-# PL-MD-07  L2b  typed_fallback: typed query with no typed row falls back
+# PL-MD-07  L2b  exact_identity: Risk rejects cross-market/venue fallback
 # ---------------------------------------------------------------------------
 
 
 @spec_claim(
     SpecClaim(
-        "PL-MD-07", "pipeline_market_data", "§3 typed_fallback", "L2b",
-        "_market_data_age_seconds(symbol, market_type='usdt_futures') falls back "
-        "to the symbol-only snapshot when no typed row exists, so old spot-only "
-        "DBs do not fail freshness closed (age=None) for futures proposals (#13)",
+        "PL-MD-07", "pipeline_market_data", "§3 exact_identity", "L2b",
+        "Risk freshness requires the Proposal's exact venue and physical market; "
+        "fresh same-symbol observations from another market or venue cannot substitute (#3134)",
     ),
 )
-def test_market_data_freshness_falls_back_to_symbol_only(tmp_path, monkeypatch):
-    """Only a spot snapshot exists → a futures freshness query still finds it."""
+def test_market_data_freshness_requires_exact_identity(tmp_path, monkeypatch):
+    """Historical display fallback must not grant Risk freshness authority."""
     conn = _setup_db(tmp_path, monkeypatch)
 
     _insert_fresh_snapshot(conn, "BTC/USDT", price=60000.0, age_seconds=5.0, market_type="spot")
 
     from aletheia.risk.engine import _market_data_age_seconds
 
-    age = _market_data_age_seconds("BTC/USDT", market_type="usdt_futures")
-    assert age is not None, (
-        "typed futures query returned None despite a fresh spot snapshot — the "
-        "symbol-only fallback is missing, which would fail freshness closed (#13)"
-    )
-    assert age < 120.0
+    assert _market_data_age_seconds("BTC/USDT", "usdt_futures", venue="bitget") is None
+    _insert_fresh_snapshot(conn, "BTC/USDT", market_type="perp", exchange="okx")
+    assert _market_data_age_seconds("BTC/USDT", "usdt_futures", venue="bitget") is None
+    assert _market_data_age_seconds("BTC/USDT", "usdt_futures", venue=None) is None
+    _insert_fresh_snapshot(conn, "BTC/USDT", age_seconds=3600, market_type="perp")
+    assert _market_data_age_seconds("BTC/USDT", "usdt_futures", venue="bitget") > 1800
+    from aletheia.trading.market_data import latest_snapshot
+    assert latest_snapshot("BTC/USDT") is not None

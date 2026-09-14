@@ -223,7 +223,9 @@ def test_gateway_routes_approved_live_order_to_broker(tmp_path, monkeypatch):
         ))
     opp = Opportunity(symbol="BTC/USDT", market="spot", direction_bias="long", scanner_family="momentum")
     repo.insert_opportunity(opp)
-    repo.insert_market_snapshot(MarketSnapshot(symbol="BTC/USDT", market_type="spot", price=60000))
+    repo.insert_market_snapshot(MarketSnapshot(
+        symbol="BTC/USDT", market_type="spot", exchange="bitget", price=60000,
+    ))
 
     from aletheia.execution.gateway import submit_proposal
     result = submit_proposal(
