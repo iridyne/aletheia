@@ -1,9 +1,8 @@
 """Focused regressions for B9-data batch (#91, #92).
 
-- #91: universe/registry + universe/features built CCXTProvider with the SAME
-       exchange for primary and fallback — a primary outage had no cross-
-       exchange fallback. Now uses market_data.ccxt_fallback like the
-       get_market_data_provider factory does.
+- #91: features retains configured fallback construction. Registry has always
+       loaded primary metadata only; its regression now proves no cross-venue
+       substitution and no write on failed reads, rather than constructor args.
 - #92: MacroCollector.collect() called _fetch_tradfi() (which drives yfinance
        HTTP under the hood) directly from an async context, blocking the
        scheduler's event loop for the length of each ticker fetch. Now routed
@@ -34,45 +33,28 @@ def _cfg_with(md_kwargs: dict):
     return cfg
 
 
-def test_universe_registry_uses_configured_fallback_exchange(monkeypatch):
-    """#91: registry.py used to build CCXTProvider(exchange=venue, fallback_exchange=venue).
-    Now the fallback comes from cfg.market_data.ccxt_fallback (matching the
-    market-data factory) so a primary outage actually falls through."""
-    from aletheia.data import ccxt_provider as _ccxt_mod
-
-    captured: dict = {}
-
-    class FakeCCXTProvider:
-        def __init__(self, *, exchange, fallback_exchange):
-            captured["exchange"] = exchange
-            captured["fallback_exchange"] = fallback_exchange
-
-    monkeypatch.setattr(_ccxt_mod, "CCXTProvider", FakeCCXTProvider)
-
+def test_universe_registry_never_substitutes_fallback_venue(monkeypatch):
+    """Registry has always loaded primary markets only, not fallback data."""
+    from aletheia.data.ccxt_provider import CCXTProvider
     from aletheia.universe import registry as _reg
-    # Sanity: the module inlines `from aletheia.data.ccxt_provider import CCXTProvider`
-    # inside sync_universe; running that call is the SUT. Drive it with a stubbed
-    # cfg and a mocked _load_demo_whitelist so we exit early without a real
-    # ccxt exchange.
     monkeypatch.setattr(_reg, "_load_demo_whitelist", _AsyncNone())
-
     cfg = _cfg_with({"ccxt_exchange": "bitget", "ccxt_fallback": "okx"})
+    closed = []
 
-    class _EnsurePrimaryFails(Exception):
-        pass
+    class Exchange:
+        async def load_markets(self):
+            raise RuntimeError("primary listing unavailable")
 
-    # Short-circuit the rest of sync_universe: FakeCCXTProvider has no
-    # `_ensure_primary`, so the AttributeError inside the try/except bail is fine.
-    try:
+    async def close(self):
+        closed.append(self._primary_name)
+
+    monkeypatch.setattr(CCXTProvider, "_ensure_primary", lambda self: Exchange())
+    monkeypatch.setattr(CCXTProvider, "_ensure_fallback", lambda *args: pytest.fail("cross-venue registry"))
+    monkeypatch.setattr(CCXTProvider, "close", close)
+    monkeypatch.setattr(_reg.repo, "sync_universe_assets", lambda *args, **kwargs: pytest.fail("unavailable listing must not write"))
+    with pytest.raises(RuntimeError, match="primary listing unavailable"):
         asyncio.run(_reg.sync_registry(cfg))
-    except Exception:
-        pass
-
-    assert captured.get("exchange") == "bitget"
-    assert captured.get("fallback_exchange") == "okx", (
-        "universe registry must use ccxt_fallback for fallback_exchange; "
-        f"got {captured.get('fallback_exchange')!r}"
-    )
+    assert closed == ["bitget"]
 
 
 def test_universe_features_uses_configured_fallback_exchange(monkeypatch):
