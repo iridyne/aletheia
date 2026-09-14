@@ -5,7 +5,7 @@
 > Source files:
 > - `aletheia/trading/serenity_evidence.py` (确定性证据评估器 D2)
 > - `aletheia/trading/serenity_scoring.py` (评分卡 + bucket)
-> - `aletheia/agents/research_worker.py` (多镜头研究 pipeline + 符号过滤 + 晋升)
+> - `extensions/serenity/research_worker.py` (多镜头研究 pipeline + 符号过滤 + 晋升)
 > - 决策/执行/持仓层的 trade_school 穿透 (见 §8–§10)
 > Cross-references: decision_lifecycle_contract.md · knowledge_contract.md · risk_engine_contract.md · live_unlock_contract.md · data_model.md
 > Last updated: 2026-09-07 (D2 canonical Candidate entry)
@@ -181,7 +181,7 @@ Universe 使用其真实 member ID 与 short_term；不复制一份来源注册�
 ## §7 晋升链 promote → durable Candidate
 
 手工 `routes/data.py:promote_serenity_theme` 与自动
-`research_worker._auto_promote_serenity_opportunities` 使用同一
+Core `trading.serenity_publication.auto_publish_serenity_candidates` 使用同一
 `trading.serenity_publication.publish_serenity_candidates(theme_id, opportunity_ids, *, min_score_for_pi=None,
 new_candidates_only=False) -> list[str]`。返回按请求去重顺序的 durable Candidate IDs；
 `new_candidates_only=True` 只计新建。空请求拒绝；同 source+material 幂等复用，不再叫 pending。

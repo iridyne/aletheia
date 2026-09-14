@@ -425,6 +425,10 @@ claim 时绝不清除，由 reconciliation 继续独占收敛。
   出现 match-cap 取消，下一次平仓自动改为**可成交限价**：价 = 最新价 ×（对手方向 ±1%），
   GTC 挂单穿透对手价、残余量留在簿上由既有部分成交物化收敛；取价失败则回退市价。定价方向按
   venue 侧对手方向计算（UTA 客户端会把 hedge 平仓翻转到持仓反侧）。
+  Core 通过现有 UTA capabilities 的 `match_cap_close_fallback=supported` 判断该回退，
+  不通过 venue 或 execution_mode 名称选择；当前仅 Bitget profile 声明该能力，
+  其他 profile 不支持，缺失声明为 unknown。取价 venue 来自已绑定的账户 identity。
+  此能力不授予下单、解除停泊 claim 或重试 unknown outcome 的权限。
 - **未决 claim 不得关闭保护性观察**：Position Manager 仍读取 exact fresh mark 并评估
   Layer-0/SL/TP/max-hold/trailing；若保护规则再次触发，只记录等待原 claim 收敛，绝不调用
   exchange close 或创建替代 Order。`positions` 的 owner read model 同时暴露

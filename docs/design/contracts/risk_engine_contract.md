@@ -69,7 +69,7 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 9a | Exchange Allowlist | 交易所匹配(self-contained 豁免) | `risk.allowed_exchange` | `exchange_not_allowed:{a}!={e}` | :162 |
 | 9b | Account Mode Match | live↔mode=live / demo↔mode=demo | `exchange.mode` | `account_mode_mismatch:...` | :170 |
 | 10 | Max Leverage | 期货杠杆上限；demo 默认 125x，仍受设置 API 的可执行上界约束 | `risk.max_futures_leverage_{live/demo}` | `exceeds_max_leverage:{l}>{cap}` | :181 |
-| 11 | Data Freshness | live<120s / demo<1800s | `_MAX_DATA_AGE_SECONDS=120` | `stale_market_data:age={a}` (live path); `stale_market_data_demo:age={a}` (demo path for bitget_demo/okx_demo only, engine.py:238-241) | :188 |
+| 11 | Data Freshness | Proposal 的精确 venue/physical market；live≤120s / demo≤1800s；缺失拒绝 | `_MAX_DATA_AGE_SECONDS=120` / `_MAX_DEMO_DATA_AGE_SECONDS=1800` | `stale_market_data:age={a}` (live); `stale_market_data_demo:age={a}` (registered demo modes) | engine.py `_market_data_age_seconds` |
 | 12 | Total Account Exposure | 同一账户池的 open Position、未决 entry Order、pre-Order Risk reservation 与新单名义敞口之和不得超过该模式资本基数的配置比例；每个 exchange demo mode 独立，live 保持合并池 | `risk.{demo/live}.capital.max_total_exposure_pct` | `max_total_live_exposure_exceeded:{p}>{cap}` / `max_total_demo_exposure_exceeded:{p}>{cap}` | engine.py check #12 |
 | 13 | Single Trade Risk | 止损距离×数量<上限；demo 默认 20%，设置 API 只保留正数下限 | `risk.max_{/demo_}single_trade_risk_pct` | `max_single_trade_risk_missing_stop_price` (live, no stop_price, engine.py:207); `exceeds_single_trade_risk:{r}>{max}` (live, over cap); `exceeds_demo_single_trade_risk:{r}>{max}` (demo) | :202 |
 | 14 | Scanner-Family Evidence | live 需该单 `scanner_family`(经 opportunity 解析)在干净窗有 ≥N 已结算证据且方向胜率≥门槛(取代已删的策略 FSM 准入,Position C 2026-07-02;fail-closed:无 family/无证据/样本不足/胜率不足均拒) | `risk.live_family_min_samples`(30)/`risk.live_family_min_win_rate_pct`(50.0) + `repo.family_direction_edge` | `family_not_live_eligible:{unknown/family:no_evidence/family:samples=n<N/family:wr=w<T}` | :211 |
@@ -81,6 +81,17 @@ policy、flat legacy migration、局部 Settings 更新、整体替换、复制�
 | 19 | Per-symbol Cumulative Notional | 同标的同池累计名义(含本单)≤ 上限(CUM-ADD 均价合并会绕过 #5 单仓上限)；上限由 sizing 公式推导：`capital_base × risk_pct × leverage × max_per_symbol_entries`，永不与首单产生矛盾 | `risk.capital.max_per_symbol_entries`(无量纲次数，默认 3) | `exceeds_per_symbol_notional:{sym}:{proj}>{cap}` | :285 |
 
 > ⚠️ 关卡 #11 的 `_MAX_DATA_AGE_SECONDS` 是模块常量,非 config 字段。若要 config 化需迁移 + 测试。
+
+关卡 #9a/#9b 的配置约束由账户身份注册表中的 `AccountConfigBinding` 明确表达：
+Bitget demo/live 为 `GLOBAL`，保留全局交易所 allowlist 和 account-mode 检查；
+OKX demo/live、Binance testnet/live 为 `SELF_CONTAINED`，保留原有两项豁免。
+这是 #3134 所有者批准的等价表示变更，不统一或取消豁免，也不是适配器可授予的
+Risk capability。未知身份不继承豁免，仍受既有未知 execution mode 拒绝约束。
+
+关卡 #11 按 Proposal execution mode 解析物理 venue，只读该 venue、symbol 和
+physical market 的快照；`usdt_futures` 对应 `perp`，允许同一 instrument 的历史
+存储键，不允许跨 venue/market 替代。缺失沿用既有 stale/unavailable 拒绝标签；
+时间阈值、未来时间容差、账户豁免及历史展示兼容读取不变（#3134 所有者批准；PL-MD-07/09）。
 >
 > **Entry Plan 入场**：Risk 验证已持久化的 Plan 与 Proposal 意图、当前 generation、policy identity 和
 > 价格/风险边界。Gateway 只接收 identity/hash 有效的 typed execution receipt；成交事实来自 UTA
