@@ -21,6 +21,29 @@ def _imports(path: Path) -> set[str]:
     return modules
 
 
+@spec_claim(
+    SpecClaim(
+        "TM-S01",
+        "trading_mandate_contract",
+        "observe-only module boundary",
+        "L2a",
+        "Trading Mandate assessment has no storage, Risk, execution, model, or network dependency.",
+    )
+)
+def test_mandate_assessment_has_no_behavior_authority_dependencies():
+    imports = _imports(ROOT / "core/aletheia/trading/trading_mandate.py")
+    assert not any(
+        module.startswith((
+            "aletheia.storage",
+            "aletheia.risk",
+            "aletheia.execution",
+            "aletheia.model_provider",
+            "httpx",
+        ))
+        for module in imports
+    )
+
+
 
 
 @spec_claim(
