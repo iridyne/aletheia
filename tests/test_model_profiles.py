@@ -328,6 +328,7 @@ async def test_candidate_key_stays_bound_to_its_endpoint(client, monkeypatch, pr
         return "synthetic-stored-key"
 
     async def catalogue(provider):
+        assert getattr(provider, "_aletheia_provider_name", None) == "scoped"
         observed.append((provider.base_url, provider.api_key))
         return []
 

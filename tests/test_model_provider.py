@@ -24,6 +24,28 @@ from aletheia.model_provider.router import (
 )
 
 
+@pytest.mark.parametrize("bound", [None, "selected-endpoint"])
+def test_attempt_endpoint_identity_is_never_guessed_from_current_config(monkeypatch, bound):
+    from types import SimpleNamespace
+    from aletheia.model_provider.base import _configured_provider_name, clone_provider_with_model
+
+    reads = []
+
+    def config():
+        reads.append(True)
+        return SimpleNamespace(models=SimpleNamespace(providers={
+            "unrelated-endpoint": SimpleNamespace(type="openai_compatible", base_url="https://shared.test", model="same"),
+        }))
+
+    monkeypatch.setattr("aletheia.config.loader.load_config", config)
+    provider = SimpleNamespace(name="unbound-transport", base_url="https://shared.test", model="same")
+    if bound:
+        provider._aletheia_provider_name = bound
+    assert _configured_provider_name(provider) == (bound or "unbound-transport")
+    assert _configured_provider_name(clone_provider_with_model(provider, "another-model")) == (bound or "unbound-transport")
+    assert reads == []
+
+
 def test_router_injects_api_key_from_secret_ref(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
 

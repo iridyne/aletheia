@@ -566,6 +566,7 @@ async def detect_models(req: DetectModelsRequest):
     else:
         raise HTTPException(400, f"No detect-models support for {provider_type}")
 
+    setattr(provider, "_aletheia_provider_name", req.provider)
     try:
         return {"models": await provider.list_models()}
     finally:
@@ -626,6 +627,7 @@ async def test_model_candidate(req: TestCandidateRequest):
     else:
         raise HTTPException(400, f"No test-candidate support for {provider_type}")
 
+    setattr(provider, "_aletheia_provider_name", req.provider)
     candidate_identity = await asyncio.to_thread(
         _candidate_configuration_identity, req, provider_type, pcfg, api_key, protocol
     )

@@ -171,6 +171,18 @@ route caller, and its claimed allowlist reduction was false. The corrective
 batch switches the caller; the concrete-import allowlist still has two entries.
 No assertion was weakened to manufacture full architectural convergence.
 
+The Model attempt-provenance audit at `163b35a33` found a second endpoint-name
+resolver in the shared provider envelope. It inferred an alias from concrete
+class names, current configuration, URL and model; even an unrelated sole
+configuration could be selected. Normal cached providers already receive an
+explicit endpoint binding from the router, and request-local model clones retain
+that binding. The two candidate construction paths now bind the requested
+endpoint before discovery/probing too. The inference envelope no longer scans
+configuration or guesses an alias; an unbound direct test/transport instance
+retains only its own label. This changes no stored history, pricing, fallback,
+budget policy or writer. Model/Core concrete imports and credential ingress
+remain separate, incomplete boundaries.
+
 ## Startup filesystem repair ownership
 
 At `bcb88659ebece300db0a54a7802323e0d2f0a24e`, the next entrypoint audit found
