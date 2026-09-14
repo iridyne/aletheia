@@ -24,6 +24,20 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
+@pytest.fixture
+def reviewer_provider(monkeypatch):
+    """Construct no client or credential when the inference boundary is mocked."""
+    from aletheia.agents import lesson_reviewer
+
+    provider = object()
+
+    def resolve(tier):
+        assert tier == "deep"
+        return provider
+
+    monkeypatch.setattr(lesson_reviewer, "get_provider_for_tier", resolve)
+    return provider
+
 
 def _project_root() -> str:
     import pathlib
@@ -277,9 +291,9 @@ def test_applied_policy_version_closure():
               "Fixed 2026-06-28 (content-probe fixes).",
               status="implemented"),
 )
-async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
+async def test_lesson_reviewer_promotes_and_applies(monkeypatch, reviewer_provider):
     """Behavioral proof on the autouse in-memory DB. Mocks ONLY the LLM network
-    boundary (llm_structured); LessonStore / PolicyStore / evidence SQL all run for
+    boundary and its provider construction; LessonStore / PolicyStore / evidence SQL all run for
     real, and we assert the resulting DB state — not that a mock was called.
     """
     from datetime import datetime, timedelta, timezone
@@ -342,7 +356,7 @@ async def test_lesson_reviewer_promotes_and_applies(monkeypatch):
     assert skills[0].name == f"lesson:{lesson.lesson_id}"
 
 
-async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch):
+async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch, reviewer_provider):
     from unittest.mock import AsyncMock
 
     import aletheia.agents.lesson_reviewer as lr
@@ -369,6 +383,7 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch)
         f"judgment_failed:{lesson.lesson_id}:structured_empty_content"
     ]
     assert call.await_args.kwargs["schema"] is lr._LessonJudgment
+    assert call.await_args.kwargs["provider"] is reviewer_provider
     assert call.await_args.kwargs["reasoning_effort"] == "none"
     assert len(lr._LessonJudgment(
         decision="accept", reasoning="x" * 201,
@@ -376,7 +391,7 @@ async def test_lesson_reviewer_surfaces_structured_judgment_failure(monkeypatch)
 
 
 async def test_lesson_reviewer_does_not_treat_model_reasoning_as_transport_failure(
-    monkeypatch,
+    monkeypatch, reviewer_provider,
 ):
     from unittest.mock import AsyncMock
 
