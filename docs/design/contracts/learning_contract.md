@@ -84,6 +84,13 @@ results can influence a later trading judgment, even when it lives outside `alet
 | Supporting audits | trade insights/stats, family scorecard, opportunity flow, debate impact, thesis lineage, go-live scorecard | read models/gates; some are outcome sources or concurrent controls, not Learning treatments |
 | Operator control loop | `agent_shell/operator_loop.py` | may tighten confidence, size/risk cap, stop or scanner settings under its own safety contract; loosening requires higher authority |
 
+Core `trading.sizing_policy.resolve_learned_notional` retains the static notional
+and trace contract. Optional `learning.sizing_evidence` owns the existing
+prospective evidence adapter, bound by the Web/CLI entrypoints without executing
+it at startup. Missing evidence returns the static baseline with an explicit
+unavailable reason; evidence cannot grant Persona sizing authority. The configured
+adapter's causal keys, assignments and exposure metadata are preserved.
+
 ### 1.2 Measured-path maturity
 
 `consumer_wired` means a call site exists. It does not mean the path creates an exposure, has an

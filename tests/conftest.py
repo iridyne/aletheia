@@ -333,6 +333,14 @@ def _bind_entry_learning(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_sizing_evidence(monkeypatch):
+    from aletheia.learning.sizing_evidence import resolve_sizing_evidence
+    from aletheia.trading import sizing_policy
+
+    monkeypatch.setattr(sizing_policy, "_learned_notional_resolver", resolve_sizing_evidence)
+
+
+@pytest.fixture(autouse=True)
 def _fast_network_timeout(request, monkeypatch):
     """Set very short httpx connect timeout so external calls fail fast.
 

@@ -57,6 +57,17 @@ def _configure_runtime() -> None:
 
     bind_uta_provider()
 
+    from aletheia.trading.sizing_policy import configure_sizing_evidence
+
+    try:
+        from aletheia.learning.sizing_evidence import resolve_sizing_evidence
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"aletheia.learning", "aletheia.learning.sizing_evidence"}:
+            raise
+        configure_sizing_evidence(None)
+    else:
+        configure_sizing_evidence(resolve_sizing_evidence)
+
     from aletheia.trading.entry_learning import configure_entry_learning
 
     try:
