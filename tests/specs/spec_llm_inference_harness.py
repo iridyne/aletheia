@@ -61,12 +61,12 @@ async def test_fallback_candidates_are_explicit_and_bounded(monkeypatch):
 )
 def test_retired_model_transports_have_no_active_entrypoint():
     from aletheia.model_provider.registry import PROVIDER_TYPES
-    from aletheia.model_provider.router import PROVIDER_REGISTRY
+    from aletheia.model_provider.registry import API_PROVIDER_TYPES
     from aletheia.server.routes.model import router
 
     retired = {"codex_cli", "claude_cli", "pi_cli", "openai_native", "anthropic_native", "databricks"}
     assert retired.isdisjoint(PROVIDER_TYPES)
-    assert retired.isdisjoint(PROVIDER_REGISTRY)
+    assert retired.isdisjoint(API_PROVIDER_TYPES)
     for module in retired | {"cli_harness", "codex_auth", "oauth", "openai_oauth", "claude_oauth"}:
         assert not (_ROOT / "aletheia" / "model_provider" / f"{module}.py").exists()
     retired_paths = (

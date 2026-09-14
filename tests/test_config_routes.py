@@ -2164,9 +2164,10 @@ async def test_telegram_health_reachable(client, monkeypatch):
 async def test_http_candidate_can_verify_without_catalogue_permission(client, monkeypatch, provider_type, protocol):
     """Manual models remain verifiable when the endpoint catalogue is forbidden."""
     from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.router import PROVIDER_REGISTRY
+    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
 
-    provider_class = PROVIDER_REGISTRY[provider_type]
+    provider_class = OpenAICompatibleProvider if provider_type == "openai_compatible" else AnthropicCompatibleProvider
 
     async def no_catalogue(self):
         return ModelHealth(

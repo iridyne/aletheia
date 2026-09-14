@@ -1,6 +1,7 @@
 """Model provider router — creates and caches provider instances from config."""
 
 import asyncio
+from collections.abc import Callable
 from concurrent.futures import Future
 from datetime import datetime, timezone
 import hashlib
@@ -17,14 +18,15 @@ from aletheia.model_provider.base import (
     ModelProvider,
     clone_provider_with_model,
 )
-from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
-from aletheia.model_provider.registry import provider_config_protocol
+from aletheia.model_provider.registry import API_PROVIDER_TYPES, PROVIDER_TYPES, provider_config_protocol
 
-PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
-    "openai_compatible": OpenAICompatibleProvider,
-    "anthropic_compatible": AnthropicCompatibleProvider,
-}
+_provider_factory: Callable[..., ModelProvider] | None = None
+
+
+def configure_model_provider(factory: Callable[..., ModelProvider] | None) -> None:
+    """Bind client construction at the existing process entrypoint, without I/O."""
+    global _provider_factory
+    _provider_factory = factory
 
 _cache: dict[str, ModelProvider] = {}
 
@@ -77,7 +79,7 @@ def provider_is_configured(name: str, pcfg) -> bool:
     if pcfg is None:
         return False
     provider_type = str(getattr(pcfg, "type", "") or name)
-    if provider_type in PROVIDER_REGISTRY:
+    if provider_type in API_PROVIDER_TYPES:
         endpoint = str(
             getattr(pcfg, "base_url", None)
             or ""
@@ -102,7 +104,7 @@ def provider_configuration_identity(
     provider_type = str(getattr(pcfg, "type", "") or name)
     refs = (
         getattr(pcfg, "api_key_secret_ref", None),
-    ) if provider_type in PROVIDER_REGISTRY else ()
+    ) if provider_type in API_PROVIDER_TYPES else ()
     credential_fingerprints: list[dict[str, str | None]] = []
     for ref in refs:
         if not ref:
@@ -144,7 +146,7 @@ def provider_configuration_identity(
 def provider_verification_snapshot(name: str, pcfg) -> dict[str, object]:
     """Return current-identity verification facts, failing closed on mismatch."""
 
-    if pcfg is None or str(getattr(pcfg, "type", "") or name) not in PROVIDER_REGISTRY:
+    if pcfg is None or str(getattr(pcfg, "type", "") or name) not in API_PROVIDER_TYPES:
         return {
             "verified": None,
             "verified_at": None,
@@ -187,7 +189,7 @@ def persist_provider_verification(
         pcfg = cfg.models.providers.get(name)
         if (
             pcfg is None
-            or str(getattr(pcfg, "type", "") or name) not in PROVIDER_REGISTRY
+            or str(getattr(pcfg, "type", "") or name) not in API_PROVIDER_TYPES
             or provider_configuration_identity(name, pcfg) != identity
         ):
             return False
@@ -206,14 +208,6 @@ def persist_provider_verification(
     if persisted:
         invalidate_health_cache()
     return persisted
-
-
-def _resolve_type(name: str, pcfg) -> str:
-    """Decode an omitted historical type, never reinterpret an explicit type."""
-    provider_type = pcfg.type or name
-    if provider_type in PROVIDER_REGISTRY:
-        return provider_type
-    raise ValueError(f"Cannot resolve provider type for: {name}")
 
 
 def get_provider(name: str | ModelSelection | None = None) -> ModelProvider:
@@ -238,36 +232,12 @@ def get_provider(name: str | ModelSelection | None = None) -> ModelProvider:
         raise ValueError(f"Model provider is disabled: {name}")
     _require_provider_configured(name, pcfg)
 
+    if _provider_factory is None:
+        raise ValueError("model_adapter_unavailable")
     if name in _cache:
         return _cache[name]
 
-    api_key = None
-    if pcfg.api_key_secret_ref:
-        api_key = get_secret(pcfg.api_key_secret_ref)
-
-    ptype = _resolve_type(name, pcfg)
-
-    if ptype == "openai_compatible":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = OpenAICompatibleProvider(
-            base_url=pcfg.base_url,
-            model=pcfg.model,
-            protocol=protocol,
-            api_key=api_key,
-        )
-    elif ptype == "anthropic_compatible":
-        protocol = provider_config_protocol(ptype, pcfg)
-        provider = AnthropicCompatibleProvider(
-            base_url=pcfg.base_url,
-            model=pcfg.model,
-            api_key=api_key,
-            auth_scheme=getattr(pcfg, "auth_scheme", "x-api-key"),
-            protocol=protocol,
-        )
-    else:
-        raise ValueError(f"Unknown provider type: {ptype}")
-
-    return _cache_provider(name, provider)
+    return _cache_provider(name, _provider_factory(name, pcfg))
 
 
 async def get_provider_async(name: str | ModelSelection | None = None) -> ModelProvider:
@@ -616,7 +586,7 @@ async def _refresh_health_all() -> list[ModelHealth]:
         )
     # Include registry-backed singleton and adapter rows even before an owner
     # creates a config entry, so consumers never infer health from omission.
-    for name in PROVIDER_REGISTRY:
+    for name in PROVIDER_TYPES:
         if name in cfg.models.providers:
             continue
         results.append(
