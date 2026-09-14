@@ -1429,7 +1429,7 @@ def test_paused_config_reports_each_active_owner(monkeypatch):
 
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
     import aletheia.config.loader as loader
-    import aletheia.config.secrets as secrets
+    from aletheia.model_provider import http_runtime, router
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
@@ -1438,7 +1438,8 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
         type="anthropic_compatible", enabled=True, api_key_secret_ref="model.gateway.api_key"
     )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(secrets, "get_secret", lambda key: "secret" if key == "model.gateway.api_key" else None)
+    monkeypatch.setattr(http_runtime, "get_secret", lambda key, **kwargs: "synthetic-secret" if key == "model.gateway.api_key" else None)
+    monkeypatch.setattr(router, "_provider_status_reader", http_runtime.http_credential_status)
 
     r = dx.Report(generated_at="t")
     dx._probe_credentials(r)
@@ -1450,7 +1451,7 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
 
 def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):
     import aletheia.config.loader as loader
-    import aletheia.config.secrets as secrets
+    from aletheia.model_provider import http_runtime, router
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
@@ -1459,7 +1460,8 @@ def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypa
         type="anthropic_compatible", enabled=True, api_key_secret_ref="model.gateway.api_key"
     )
     monkeypatch.setattr(loader, "load_config", lambda: cfg)
-    monkeypatch.setattr(secrets, "get_secret", lambda key: None)
+    monkeypatch.setattr(http_runtime, "get_secret", lambda key, **kwargs: None)
+    monkeypatch.setattr(router, "_provider_status_reader", http_runtime.http_credential_status)
 
     r = dx.Report(generated_at="t")
     dx._probe_credentials(r)

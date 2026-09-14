@@ -121,6 +121,15 @@ def read_credential_revision(execution_mode: str, *, cfg=None) -> tuple[str, tup
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest(), refs
 
 
+def read_credential_presence(execution_mode: str, *, cfg=None) -> tuple[bool, ...] | None:
+    """Resolve only the requested account's references; never expose raw values."""
+    try:
+        scope, _profile, _venue, _environment, fields, _profile_type = _profile_spec(cfg or load_config(), execution_mode)
+        return tuple(bool(get_secret(f"{scope}.{field}", strict=True)) for field in fields)
+    except Exception:
+        return None
+
+
 def funding_history_retention_contract(
     execution_mode: str,
     *,
@@ -225,6 +234,7 @@ def bind_uta_provider() -> None:
         registry_factory=build_uta_registry,
         retention_contract=funding_history_retention_contract,
         credential_revision_reader=read_credential_revision,
+        credential_presence_reader=read_credential_presence,
         native_protection_reader_factory=create_native_protection_reader,
         native_protection_modes=NATIVE_PROTECTION_EXECUTION_MODES,
     )

@@ -51,6 +51,7 @@ class UnifiedState:
 _registry_factory: Callable[..., UTARegistry] | None = None
 _retention_contract: Callable[..., tuple[int, str]] | None = None
 _credential_revision_reader: Callable[..., tuple[str, tuple[str, ...]]] | None = None
+_credential_presence_reader: Callable[..., tuple[bool, ...] | None] | None = None
 _native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None
 _native_protection_modes: tuple[str, ...] = ()
 
@@ -60,15 +61,18 @@ def configure_uta_provider(
     registry_factory: Callable[..., UTARegistry] | None,
     retention_contract: Callable[..., tuple[int, str]] | None,
     credential_revision_reader: Callable[..., tuple[str, tuple[str, ...]]] | None = None,
+    credential_presence_reader: Callable[..., tuple[bool, ...] | None] | None = None,
     native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None,
     native_protection_modes: tuple[str, ...] = (),
 ) -> None:
     """Bind the configured exchange at the existing application entrypoint."""
     global _registry_factory, _retention_contract, _credential_revision_reader
+    global _credential_presence_reader
     global _native_protection_reader_factory, _native_protection_modes
     _registry_factory = registry_factory
     _retention_contract = retention_contract
     _credential_revision_reader = credential_revision_reader
+    _credential_presence_reader = credential_presence_reader
     _native_protection_reader_factory = native_protection_reader_factory
     _native_protection_modes = native_protection_modes
 
@@ -82,6 +86,19 @@ def read_credential_revision(execution_mode: str, *, cfg=None) -> tuple[str, tup
     if _credential_revision_reader is None:
         raise ValueError("exchange_adapter_unavailable")
     return _credential_revision_reader(execution_mode, cfg=cfg)
+
+
+def read_credential_presence(execution_mode: str, *, cfg=None) -> tuple[bool, ...] | None:
+    """Return only selected-account presence; absent/error evidence is unknown."""
+    if _credential_presence_reader is None:
+        return None
+    try:
+        presence = _credential_presence_reader(execution_mode, cfg=cfg)
+    except Exception:
+        return None
+    if isinstance(presence, tuple) and presence and all(type(value) is bool for value in presence):
+        return presence
+    return None
 
 
 def create_native_protection_reader(
