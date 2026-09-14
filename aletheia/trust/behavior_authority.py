@@ -8,6 +8,15 @@ answer to who may actually block a paper candidate.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
+
+
+_candidate_filter_path_resolver: Callable[[str], bool] | None = None
+
+
+def configure_candidate_filter_path(resolver: Callable[[str], bool] | None) -> None:
+    global _candidate_filter_path_resolver
+    _candidate_filter_path_resolver = resolver
 
 
 @dataclass(frozen=True)
@@ -75,10 +84,9 @@ def authorize_candidate_block(
     required_path = required_paths.get(source)
     if not prospective_authority or learning_path_id != required_path:
         return False
-    try:
-        from aletheia.learning.registry import get_learning_path
-
-        learning_path = get_learning_path(required_path)
-    except (KeyError, TypeError):
+    if _candidate_filter_path_resolver is None:
         return False
-    return "candidate_filter" in learning_path.allowed_effects
+    try:
+        return _candidate_filter_path_resolver(required_path) is True
+    except Exception:
+        return False

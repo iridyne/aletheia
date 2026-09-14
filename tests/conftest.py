@@ -333,6 +333,14 @@ def _bind_entry_learning(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_candidate_filter_path(monkeypatch):
+    from aletheia.learning.registry import candidate_filter_path_declared
+    from aletheia.trust import behavior_authority
+
+    monkeypatch.setattr(behavior_authority, "_candidate_filter_path_resolver", candidate_filter_path_declared)
+
+
+@pytest.fixture(autouse=True)
 def _bind_learning_safety(monkeypatch):
     from aletheia.learning import control
     from aletheia.trust import learning_safety
