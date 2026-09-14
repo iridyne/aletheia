@@ -91,12 +91,17 @@ def resolve_live_execution_identity(cfg=None) -> dict[str, Any]:
     if str(getattr(cfg.exchange, "mode", "") or "").lower() != "live":
         raise ValueError("exchange_mode_not_live")
     credential_revision, refs = _credential_revision(broker)
-    from aletheia.uta.manager import _account_generation, _profile_spec
+    from aletheia.uta.manager import build_uta_registry
 
-    scope, uta_profile, _venue, _environment, _fields, _profile_type = (
-        _profile_spec(cfg, mode)
-    )
-    credential_generation = _account_generation(cfg, mode, scope, uta_profile)
+    accounts = build_uta_registry(cfg, execution_modes=(mode,)).configured_identities()
+    if len(accounts) != 1 or (
+        accounts[0].execution_mode != mode
+        or accounts[0].venue != broker
+        or accounts[0].environment != "live"
+    ):
+        raise ValueError("exchange_adapter_unavailable")
+    uta_profile = accounts[0].profile
+    credential_generation = accounts[0].credential_generation
     config_revision = _digest({
         "broker": broker,
         "execution_mode": mode,
