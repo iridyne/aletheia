@@ -82,7 +82,7 @@ def test_archived_fill_models_preserve_economics_without_current_learning_author
         assess_position_closure,
         assess_reportable_outcome,
     )
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
 
     archived = _closed_row(
         execution_mode="paper_internal", funding_source="local_simulation",
@@ -406,7 +406,7 @@ def test_archived_account_events_preserves_exact_subsecond_instants():
 
 
 def test_learning_realized_assessment_composes_central_semantics():
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
 
     clean = _closed_row(closed_at=datetime.now(timezone.utc).isoformat())
     eligible = assess_realized_position(clean)

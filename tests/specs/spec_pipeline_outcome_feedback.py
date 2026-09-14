@@ -176,7 +176,7 @@ def test_futures_close_without_funding_evidence_is_explicitly_ineligible(
 ):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.analytics.factor_feedback import build_factor_feedback
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from aletheia.portfolio.outcome_closure import close_position_verified
     from aletheia.storage import repositories as repo
     from tests.test_outcome_closure import _position, _verified_result

@@ -18,7 +18,7 @@ from typing import Any
 
 from aletheia.analytics.outcome_semantics import valid_settlement_price_provenance
 from aletheia.learning.models import LearningExperiment, LearningHypothesis
-from aletheia.learning.outcomes import (
+from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )

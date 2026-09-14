@@ -77,7 +77,7 @@ def _fetch_evidence(lesson) -> dict:
     as_of_at = datetime.now(timezone.utc)
 
     def _agg(where_extra: str, params: tuple) -> dict:
-        from aletheia.learning.outcomes import assess_candidate_outcome
+        from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 
         rows = db.execute(
             "SELECT id,outcome_candidate_key,status,horizon,entry_ts,due_at,settled_at,venue,direction,market_type,"

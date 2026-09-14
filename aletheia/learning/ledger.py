@@ -352,7 +352,7 @@ def linked_settled_exposure_counts(
     from datetime import datetime, timezone
 
     from aletheia.analytics.learning_window import clean_window_cutoff
-    from aletheia.learning.outcomes import assess_candidate_outcome
+    from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 
     cutoff = clean_window_cutoff("1970-01-01T00:00:00+00:00")
     db = get_db()

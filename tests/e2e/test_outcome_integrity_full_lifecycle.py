@@ -9,7 +9,7 @@ def test_verified_exchange_close_flows_once_to_risk_reporting_and_learning(monke
         eligible_strategy_outcomes,
     )
     from aletheia.analytics.trade_stats import build_trade_stats
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from aletheia.portfolio import outcome_closure
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.server.routes.analytics import get_equity_curve
@@ -67,7 +67,7 @@ def test_administrative_close_is_raw_only_and_risk_fails_closed_without_fake_los
     from aletheia.analytics.outcome_integrity import build_outcome_cohort_summary
     from aletheia.analytics.trade_stats import build_trade_stats
     from aletheia.config.loader import load_config, save_config
-    from aletheia.learning.outcomes import assess_realized_position
+    from aletheia.analytics.outcome_semantics import assess_realized_position
     from aletheia.portfolio import outcome_closure
     from aletheia.portfolio.account_loss import authoritative_account_realized_loss
     from aletheia.risk.engine import evaluate_proposal

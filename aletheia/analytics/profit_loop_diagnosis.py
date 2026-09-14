@@ -266,7 +266,7 @@ def _group_returns(facts: Iterable[Mapping[str, Any]], predicate) -> tuple[list[
     #1269: All rows must pass assess_candidate_outcome(), not direct settled+finite check.
     Returns (eligible_values, rejection_reasons).
     """
-    from aletheia.learning.outcomes import assess_candidate_outcome
+    from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 
     values = []
     rejection_reasons: dict[str, int] = {}

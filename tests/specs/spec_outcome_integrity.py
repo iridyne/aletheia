@@ -110,9 +110,9 @@ def test_dependency_neutral_outcome_read_model_exists():
         "aletheia.exchanges", "aletheia.agent_shell",
     ):
         assert forbidden not in source
-    learning_source = _source("aletheia/learning/outcomes.py")
-    assert "assess_position_closure" in learning_source
-    assert "SYNTHETIC_CLOSE_REASONS" not in learning_source
+    assessment_source = _source("aletheia/analytics/outcome_semantics.py")
+    assert "assess_reportable_outcome" in assessment_source
+    assert "SYNTHETIC_CLOSE_REASONS" not in assessment_source
 
 
 @spec_claim(

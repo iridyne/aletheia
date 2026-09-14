@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
-from aletheia.learning.outcomes import (
+from aletheia.analytics.outcome_semantics import (
     assess_candidate_outcome,
     candidate_outcome_temporal_reason,
 )

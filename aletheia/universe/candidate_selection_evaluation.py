@@ -9,7 +9,7 @@ import math
 from statistics import mean, stdev
 from typing import Any
 
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 from aletheia.storage import repositories as repo
 from aletheia.universe.candidate_selection_shadow import candidate_selection_training_cutoff
 from aletheia.universe.economic_utility import select_non_overlapping_t0_clusters

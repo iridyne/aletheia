@@ -93,7 +93,7 @@ def _compute_outcome(symbol: str | None, proposal_id: str | None, decided_at: st
                 f"Outcome pending: linked position still open, uPnL=${float(upnl):+.2f}."
                 if upnl is not None else "Outcome pending: linked position still open."
             )
-        from aletheia.learning.outcomes import assess_realized_position
+        from aletheia.analytics.outcome_semantics import assess_realized_position
         assessed = assess_realized_position(position)
         if not assessed.eligible:
             return f"Outcome unavailable: linked close excluded ({assessed.reason})."
@@ -130,7 +130,7 @@ def _compute_missed_opportunity(
                 (opp[0],),
             ).fetchone()
             if row:
-                from aletheia.learning.outcomes import assess_candidate_outcome
+                from aletheia.analytics.outcome_semantics import assess_candidate_outcome
                 assessed = assess_candidate_outcome(dict(row))
                 if assessed.eligible:
                     return (

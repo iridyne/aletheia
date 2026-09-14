@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from aletheia.storage.repositories import complete_outcome_economics_sql
-from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 from aletheia.storage.sqlite import get_db
 
 Finding = Literal[

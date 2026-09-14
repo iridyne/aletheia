@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Iterable
 from aletheia.analytics.filter_evidence import decode_filter_decision_batch
-from aletheia.learning.outcomes import candidate_outcome_temporal_reason
+from aletheia.analytics.outcome_semantics import candidate_outcome_temporal_reason
 
 from aletheia.storage import repositories as repo
 from aletheia.storage.sqlite import iso_instant_us, register_instant_us

@@ -15,7 +15,7 @@ import math
 from statistics import fmean
 from typing import Any, Mapping
 
-from aletheia.learning.outcomes import assess_candidate_outcome
+from aletheia.analytics.outcome_semantics import assess_candidate_outcome
 from aletheia.storage.sqlite import get_db
 from aletheia.universe.twin_experiment import (
     TWIN_EXPERIMENT_ASSIGNMENT_CONTRACT,
