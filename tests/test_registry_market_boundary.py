@@ -19,7 +19,7 @@ def _fact(base="BTC", **kwargs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["missing", "wrong_type", "wrong_venue", "wrong_symbol", "wrong_market", "read_error"])
+@pytest.mark.parametrize("failure", ["missing", "wrong_type", "wrong_venue", "wrong_symbol", "wrong_market", "read_error", "background_venue", "background_symbol", "background_market_type", "background_physical_market_type"])
 async def test_unavailable_market_facts_never_write_registry(monkeypatch, failure):
     cfg = AletheiaConfig()
     cfg.market_data.ccxt_exchange = "bitget"
@@ -31,6 +31,10 @@ async def test_unavailable_market_facts_never_write_registry(monkeypatch, failur
                 raise RuntimeError("listing unavailable")
             if failure == "wrong_type":
                 return [{}]
+            if failure.startswith("background_"):
+                field = failure.removeprefix("background_")
+                fact = _fact()
+                return [replace(fact, background=fact.background | {field: "wrong"})]
             changes = {"wrong_venue": {"venue": "okx"}, "wrong_symbol": {"symbol": "ETH/USDT"}, "wrong_market": {"market_type": "option"}}
             return [replace(_fact(), **changes[failure])]
 
@@ -54,7 +58,9 @@ async def test_registry_retains_admission_blacklist_and_cleanup(monkeypatch):
     cfg.exchange.enabled_markets = {"usdt_futures": False}
     cfg.universe.blacklist = ["SCAM/USDT"]
     closed, stored = [], []
-    facts = [_fact(), _fact("SCAM"), _fact("BTC3L"), _fact("TEST", is_test_or_dated=True), replace(_fact("ETH"), market_type="perp")]
+    perp = _fact("ETH")
+    perp = replace(perp, market_type="perp", background=perp.background | {"market_type": "perp", "physical_market_type": "perp"})
+    facts = [_fact(), _fact("SCAM"), _fact("BTC3L"), _fact("TEST", is_test_or_dated=True), perp]
 
     class Provider:
         async def get_market_instruments(self):

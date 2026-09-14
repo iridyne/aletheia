@@ -112,6 +112,11 @@ async def sync_registry(cfg: AletheiaConfig) -> int:
             or not isinstance(item.base_asset, str) or not item.base_asset
             or item.quote_asset != "USDT"
             or item.symbol != f"{item.base_asset}/{item.quote_asset}"
+            or not isinstance(item.background, dict)
+            or any(item.background.get(field) != expected for field, expected in (
+                ("venue", item.venue), ("symbol", item.symbol),
+                ("market_type", item.market_type), ("physical_market_type", item.market_type),
+            ))
             for item in instruments
         ):
             raise ValueError("market_instruments_identity_invalid")
