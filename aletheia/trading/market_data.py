@@ -8,6 +8,7 @@ import asyncio
 import logging
 
 from aletheia.config.loader import load_config
+from aletheia.config.exchanges import execution_mode_venue
 from aletheia.data.symbols import InstrumentId, MARKET_SPOT, MARKET_PERP, to_canonical, to_bitget
 from aletheia.storage.models import MarketSnapshot
 from aletheia.storage.repositories import insert_market_snapshot, insert_market_snapshot_batch
@@ -221,7 +222,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
 
     Sources (first occurrence wins for dedup):
       1. Open position symbols (never capped; lifecycle pricing comes first)
-      2. Active pending candidates (never displaced by discovery work)
+      2. Active pending candidates and EntryPlans (never displaced by discovery work)
       3. Config core symbols (always included when capacity remains)
       4. Active universe members (dynamic — the main altcoin source)
 
@@ -239,7 +240,10 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
                 continue
             try:
                 mt = _instrument_market_from_row(pos.get("market_type"))
-                iid = InstrumentId.from_parts(exchange, sym, mt)
+                venue = execution_mode_venue(pos.get("execution_mode"))
+                if venue is None:
+                    continue
+                iid = InstrumentId.from_parts(venue, sym, mt)
                 seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
             except (ValueError, Exception):
                 pass
@@ -248,11 +252,19 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
     n_open = len(seen)
 
     try:
-        for asset in repo.list_candidate_planning_refresh_assets(venue=exchange):
+        for asset in repo.list_candidate_planning_refresh_assets():
             iid = InstrumentId.from_parts(asset["venue"], asset["symbol"], asset["market_type"])
             seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
     except Exception:
         logger.warning("market_snapshots: planning expansion failed", exc_info=True)
+    try:
+        for plan in repo.list_watchable_entry_plans(limit=None):
+            iid = InstrumentId.from_parts(
+                plan["venue"], plan["symbol"], _instrument_market_from_row(plan["market_type"]),
+            )
+            seen.setdefault((iid.exchange, iid.symbol, iid.market_type), iid)
+    except Exception:
+        logger.warning("market_snapshots: entry plan expansion failed", exc_info=True)
     n_pending = len(seen) - n_open
 
     for iid in observed_instruments_from_config(cfg):
@@ -333,13 +345,6 @@ async def collect_market_snapshots() -> dict:
         get_market_data_provider,
         require_exact_ticker_venue,
     )
-    primary_exchange = cfg.market_data.ccxt_exchange or "binance"
-    provider = get_market_data_provider(
-        exchange=primary_exchange,
-        native_ccxt=True,
-        fallback_exchange=primary_exchange,
-    )
-
     collected = []
     errors = []
     # Batch accumulators — all network fetches complete first, then a single
@@ -377,9 +382,16 @@ async def collect_market_snapshots() -> dict:
         )
 
     primary_written = 0
+    providers = {}
     try:
         for instrument in instruments:
             try:
+                venue = instrument.exchange
+                if venue not in providers:
+                    providers[venue] = get_market_data_provider(
+                        exchange=venue, native_ccxt=True, fallback_exchange=venue,
+                    )
+                provider = providers[venue]
                 snap = await _fetch_snap(instrument, provider)
                 _pending_snaps.append(snap)
                 collected.append(str(instrument))
@@ -392,14 +404,19 @@ async def collect_market_snapshots() -> dict:
                 primary_written = insert_market_snapshot_batch(_pending_snaps)
                 _pending_snaps.clear()
             logger.info(
-                "market_data source finished venue=%s attempted=%d written=%d errors=%d",
-                primary_exchange,
+                "market_data sources finished attempted=%d written=%d errors=%d",
                 len(instruments),
                 primary_written,
                 len(errors),
             )
         finally:
-            await provider.close()
+            close_results = await asyncio.gather(
+                *(provider.close() for provider in providers.values()),
+                return_exceptions=True,
+            )
+            for result in close_results:
+                if isinstance(result, BaseException):
+                    raise result
 
     # xStocks: separate Bitget provider (no API key needed, ON-series tokens).
     # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
