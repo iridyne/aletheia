@@ -352,6 +352,36 @@ class CCXTProvider:
             raise last_err
         raise RuntimeError("ohlcv fetch failed")
 
+    async def get_taker_buy_ratio(self, symbol: str) -> float | None:
+        """Read the existing venue-native 1h ratio; never persist or fall back."""
+        exchange = self._ensure_primary("perp")
+        ex_id = getattr(exchange, "id", "")
+        if ex_id == "binance":
+            taker_data = await asyncio.wait_for(
+                exchange.fapipublic_get_takerlongshortratio({
+                    "symbol": symbol.replace("/", ""), "period": "1h", "limit": 1,
+                }),
+                timeout=5.0,
+            )
+            if taker_data and len(taker_data) > 0:
+                ratio = float(taker_data[0].get("buySellRatio", 0))
+                if ratio > 0:
+                    return ratio
+        elif ex_id == "okx":
+            resp = await asyncio.wait_for(
+                exchange.public_get_rubik_stat_taker_volume({
+                    "ccy": symbol.split("/")[0], "instType": "CONTRACTS", "period": "1H",
+                }),
+                timeout=5.0,
+            )
+            rows = (resp or {}).get("data") or []
+            if rows:
+                sell_vol = float(rows[0][1])
+                buy_vol = float(rows[0][2])
+                if sell_vol > 0:
+                    return buy_vol / sell_vol
+        return None
+
     async def get_ohlcv_observation(
         self,
         symbol: InstrumentId | str,

@@ -88,10 +88,18 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         def _ensure_primary(self, _market_type=None):
             return self.exchange
 
+        async def get_taker_buy_ratio(self, symbol):
+            return 1.25
+
         async def close(self):
             self.closed = True
 
     async def fetch_single(exchange, asset, *_args, **_kwargs):
+        reader = _kwargs["taker_reader"]
+        if asset["market_type"] == "perp":
+            assert reader.__self__.exchange is exchange
+        else:
+            assert reader is None
         symbol = (
             f"{asset['symbol']}:USDT"
             if asset["market_type"] == "perp"

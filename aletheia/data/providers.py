@@ -281,6 +281,11 @@ class MarketDataProvider(Protocol):
     market history or change venue health. Observation consumers require this
     capability explicitly; ordinary OHLCV support does not imply it, and its
     absence is unavailable rather than permission to use a writable read.
+
+    The optional async ``get_taker_buy_ratio(symbol) -> float | None`` reads
+    the existing primary venue's 1h buy/sell ratio without writes or fallback.
+    Unsupported reads return None; acquisition errors propagate to the caller.
+    Core owns whether a feature observation warrants this optional request.
     """
 
     async def get_ticker(self, symbol: InstrumentId | str) -> Ticker: ...
