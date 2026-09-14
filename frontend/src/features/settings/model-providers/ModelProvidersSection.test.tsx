@@ -30,7 +30,7 @@ const EXISTING_PROFILE: ProviderConfigView = {
 	enabled: false,
 	model: "model-a",
 	base_url: "https://provider.example/v1",
-	protocol: "openai",
+	protocol: "chat_completions",
 	auth_scheme: "bearer",
 	api_key: { configured: true, last4: "1234" },
 	oauth: { configured: false, last4: null },
@@ -69,8 +69,8 @@ function renderCleanModelSettings() {
 	);
 }
 
-function renderModelSettingsWithProvider() {
-	const client = cleanModelClient({ primary_api: EXISTING_PROFILE });
+function renderModelSettingsWithProvider(protocol = EXISTING_PROFILE.protocol) {
+	const client = cleanModelClient({ primary_api: { ...EXISTING_PROFILE, protocol } });
 	return renderToStaticMarkup(
 		<QueryClientProvider client={client}>
 			<ModelProvidersSection qc={client} />
@@ -201,9 +201,10 @@ describe("ModelProvidersSection", () => {
 		);
 	});
 
-	it("names provider switches and keeps the editor label outside its switch label", () => {
-		const html = renderModelSettingsWithProvider();
+	it.each(["chat_completions", "responses", "anthropic_messages", ""])("shows protocol %s and names the provider switch", (protocol) => {
+		const html = renderModelSettingsWithProvider(protocol);
 		expect(html).toContain('aria-label="Enable Primary API"');
+		expect(html).toContain(protocol || "protocol not configured");
 
 		const client = cleanModelClient();
 		const editor = renderToStaticMarkup(

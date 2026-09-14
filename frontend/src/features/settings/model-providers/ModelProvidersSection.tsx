@@ -519,7 +519,7 @@ function ApiProfiles({
 										))}
 									</div>
 									<div className="model-card-meta">
-										{provider.type} · {provider.model || "model not selected"}
+										{provider.type} · {provider.protocol || "protocol not configured"} · {provider.model || "model not selected"}
 										{provider.api_key.configured
 											? ` · key ··${provider.api_key.last4}`
 											: " · key not configured"}

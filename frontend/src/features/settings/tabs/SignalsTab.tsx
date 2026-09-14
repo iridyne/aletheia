@@ -47,6 +47,7 @@ export const EQUITIES_SECTION = {
 
 function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const md = settings?.market_data || {}
+  const serverStockTokens = md.observed_stock_tokens ?? []
   const exchangeSettings = settings?.exchange || {}
   const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'gate', 'kucoin', 'htx']
 
@@ -56,8 +57,7 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
   const [yfinance, setYfinance] = useState(!!md.enable_yfinance_macro)
   const [longShortRatio, setLongShortRatio] = useState(md.enable_long_short_ratio ?? true)
   const [historyHours, setHistoryHours] = useState(md.derivatives_history_hours ?? 24)
-  const [stocks, setStocks] = useState(listToCsv(md.observed_stocks))
-  const [stockTokens, setStockTokens] = useState(listToCsv(md.observed_stock_tokens))
+  const [stockTokens, setStockTokens] = useState(listToCsv(serverStockTokens))
   const [predMarkets, setPredMarkets] = useState(listToCsv(md.observed_prediction_markets))
   const [confirmExchangeDivergence, setConfirmExchangeDivergence] = useState(false)
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
@@ -77,7 +77,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       enable_yfinance_macro: yfinance,
       enable_long_short_ratio: longShortRatio,
       derivatives_history_hours: historyHours,
-      observed_stocks: parseCsvList(stocks),
       observed_stock_tokens: parseCsvList(stockTokens),
       observed_prediction_markets: parseCsvList(predMarkets),
       confirm_exchange_divergence: confirmExchangeDivergence,
@@ -92,8 +91,7 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
     || yfinance !== !!md.enable_yfinance_macro
     || longShortRatio !== (md.enable_long_short_ratio ?? true)
     || historyHours !== (md.derivatives_history_hours ?? 24)
-    || stocks !== listToCsv(md.observed_stocks)
-    || stockTokens !== listToCsv(md.observed_stock_tokens)
+    || stockTokens !== listToCsv(serverStockTokens)
     || predMarkets !== listToCsv(md.observed_prediction_markets)
 
   useSettingsDraftLifecycle({
@@ -108,8 +106,7 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
       setYfinance(!!md.enable_yfinance_macro)
       setLongShortRatio(md.enable_long_short_ratio ?? true)
       setHistoryHours(md.derivatives_history_hours ?? 24)
-      setStocks(listToCsv(md.observed_stocks))
-      setStockTokens(listToCsv(md.observed_stock_tokens))
+      setStockTokens(listToCsv(serverStockTokens))
       setPredMarkets(listToCsv(md.observed_prediction_markets))
       setConfirmExchangeDivergence(false)
     },
@@ -154,11 +151,6 @@ function MarketDataCard({ settings, qc, onDirty }: SettingsDirtyProps) {
           onChange={e => { setHistoryHours(Math.max(0, Math.min(168, parseInt(e.target.value) || 0))); setMsg(null) }}
           style={{ width: '80px' }} />
         <span className="hint">hours (0 = off)</span>
-      </Row>
-      <Row label="Observed stocks" hint="Yahoo Finance tickers for macro correlation. Comma-separated (e.g. SPY, QQQ, NVDA).">
-        <input value={stocks} placeholder="SPY, QQQ, NVDA, AAPL"
-          onChange={e => { setStocks(e.target.value); setMsg(null) }}
-          className="mono w-full" />
       </Row>
       <Row label="Stock tokens" hint="Exchange-traded equity tokens for real-time price tracking. Supports Bitget r-series (rNVDA/USDT, rTSLA/USDT) and ON-series (AAPLON/USDT). Comma-separated. Used by equity_observer for cross-validation and Serenity for supply-chain research.">
         <input value={stockTokens} placeholder="rNVDA/USDT, rTSLA/USDT, AAPLON/USDT"
@@ -328,7 +320,8 @@ function PredictionToggleCard({ qc }: { qc: SettingsProps['qc'] }) {
 // ─── Equities ───
 
 function EquitiesCard({ settings, qc, onDirty }: SettingsDirtyProps) {
-  const serverTickers: string[] = settings?.market_data?.observed_equities ?? []
+  const md = settings?.market_data
+  const serverTickers: string[] = md?.observed_equities ?? []
   const [draft, setDraft] = useState<string[]>(serverTickers)
   const [input, setInput] = useState('')
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null)
