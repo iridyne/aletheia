@@ -2044,7 +2044,7 @@ async def test_model_test_candidate_invalid_provider(client):
 @pytest.mark.anyio
 async def test_bitget_test_candidate_pass(client, monkeypatch):
     """Reachable candidate creds return connected=true, echo no creds, persist nothing."""
-    import aletheia.server.routes.bitget as bitget_routes
+    import httpx
 
     class FakeResp:
         def json(self):
@@ -2056,7 +2056,7 @@ async def test_bitget_test_candidate_pass(client, monkeypatch):
         async def __aexit__(self, *a): return False
         async def get(self, *a, **k): return FakeResp()
 
-    monkeypatch.setattr(bitget_routes.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
     secret = "bg-candidate-secret-5555"
     resp = await client.post("/api/bitget/test-candidate", json={
@@ -2078,7 +2078,7 @@ async def test_bitget_test_candidate_pass(client, monkeypatch):
 @pytest.mark.anyio
 async def test_bitget_test_candidate_fail(client, monkeypatch):
     """Rejected candidate creds never echo an upstream message or candidate secret."""
-    import aletheia.server.routes.bitget as bitget_routes
+    import httpx
 
     upstream_secret = "bitget-upstream-secret-CAFEBABE"
 
@@ -2092,7 +2092,7 @@ async def test_bitget_test_candidate_fail(client, monkeypatch):
         async def __aexit__(self, *a): return False
         async def get(self, *a, **k): return FakeResp()
 
-    monkeypatch.setattr(bitget_routes.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
 
     resp = await client.post("/api/bitget/test-candidate", json={
         "profile": "demo",

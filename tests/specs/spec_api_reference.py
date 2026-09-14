@@ -43,6 +43,7 @@ def test_learning_settings_endpoint_is_documented():
 # Repository root — all path lookups are relative to this.
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _ROUTES = _ROOT / "aletheia" / "server" / "routes"
+_CREDENTIAL_ROUTES = _ROOT / "aletheia" / "exchanges" / "credential_routes.py"
 _APP_PY = _ROOT / "aletheia" / "server" / "app.py"
 
 
@@ -103,14 +104,14 @@ def test_trust_boundary_handlers_call_write_audit():
 
     Covered handlers:
       - routes/live.py   (live-unlock / live-lock)
-      - routes/bitget.py (exchange-credentials POST for Bitget, Binance, OKX)
+      - exchanges/credential_routes.py (credential POST for Bitget, Binance, OKX)
 
     The kill-switch audit is delegated to aletheia.risk.kill_switch.activate /
     deactivate — verified separately (API-S07 covers the middleware guard).
     """
     trust_files = {
         "live.py": _ROUTES / "live.py",
-        "bitget.py": _ROUTES / "bitget.py",
+        "credential_routes.py": _CREDENTIAL_ROUTES,
     }
     for name, path in trust_files.items():
         src = path.read_text(encoding="utf-8")
@@ -174,11 +175,11 @@ def test_live_unlock_requires_confirm_field():
     ),
 )
 def test_credentials_get_helpers_omit_value_key():
-    """AST-parse routes/bitget.py: every return dict in the three
+    """AST-parse Exchange credential ingress: every return dict in the three
     _*_cred_status helpers must not contain a string key named 'value'
     or 'api_secret'.  They are allowed to include 'configured' and 'last4'.
     """
-    tree = ast.parse((_ROUTES / "bitget.py").read_text(encoding="utf-8"))
+    tree = ast.parse(_CREDENTIAL_ROUTES.read_text(encoding="utf-8"))
 
     forbidden_keys = {"value", "api_secret"}
     helper_names = {"_cred_status", "_binance_cred_status", "_okx_cred_status"}
@@ -338,11 +339,11 @@ def test_kill_switch_post_without_active_returns_422(tmp_path, monkeypatch):
 @spec_claim(
     SpecClaim(
         "API-S06", "api_reference", "§trust-boundary credentials invariant", "L2c",
-        "No GET handler in routes/bitget.py returns a dict containing 'value' or 'api_secret'",
+        "No Exchange credential GET handler returns a dict containing 'value' or 'api_secret'",
     ),
 )
 def test_no_get_handler_returns_raw_credential_value():
-    """Invariant: scan every function in routes/bitget.py whose name starts
+    """Invariant: scan every Exchange credential ingress function whose name starts
     with a GET-handler pattern (*_status) or is decorated for a GET route.
     For each one, confirm it never returns a dict with a 'value' or 'api_secret'
     key literal.
@@ -350,7 +351,7 @@ def test_no_get_handler_returns_raw_credential_value():
     This is stronger than API-S03: it covers all functions reachable from GET
     routes, not just the named helper functions.
     """
-    tree = ast.parse((_ROUTES / "bitget.py").read_text(encoding="utf-8"))
+    tree = ast.parse(_CREDENTIAL_ROUTES.read_text(encoding="utf-8"))
     forbidden_keys = {"value", "api_secret"}
 
     # Collect all async def functions that are decorated with @router.get
@@ -367,7 +368,7 @@ def test_no_get_handler_returns_raw_credential_value():
             if node.name.endswith("_status") or node.name.startswith("_") and "cred" in node.name:
                 get_functions.add(node.name)
 
-    assert get_functions, "No GET-related functions found in bitget.py — invariant scan is vacuous"
+    assert get_functions, "No credential GET-related functions found — invariant scan is vacuous"
 
     for node in ast.walk(tree):
         if not (
@@ -477,10 +478,12 @@ def test_tunnel_enabled_no_token_returns_401(tmp_path, monkeypatch):
 def test_exchange_credential_checks_use_private_endpoints():
     import inspect
 
-    from aletheia.server.routes.bitget import (
+    from aletheia.exchanges.credential_routes import (
         binance_test_candidate,
-        binance_test_connection,
         okx_test_candidate,
+    )
+    from aletheia.server.routes.bitget import (
+        binance_test_connection,
         okx_test_connection,
     )
 
@@ -514,7 +517,7 @@ def test_retired_binance_testnet_routes_and_aliases_are_absent():
         "/settings/binance-testnet-credentials",
         "/binance-testnet/test-connection",
     )
-    route_source = (_ROUTES / "bitget.py").read_text(encoding="utf-8")
+    route_source = (_ROUTES / "bitget.py").read_text(encoding="utf-8") + _CREDENTIAL_ROUTES.read_text(encoding="utf-8")
     client_source = (_ROOT / "frontend" / "src" / "api" / "client.ts").read_text(
         encoding="utf-8",
     )

@@ -1071,6 +1071,12 @@ app.include_router(data_router)
 app.include_router(live_router)
 app.include_router(model_router)
 app.include_router(bitget_router)
+try:
+    from aletheia.exchanges.credential_routes import router as exchange_credentials_router
+except ImportError:
+    logger.warning("exchange_credential_routes_unavailable")
+else:
+    app.include_router(exchange_credentials_router)
 app.include_router(risk_router)
 app.include_router(update_router)
 app.include_router(gateway_router)
