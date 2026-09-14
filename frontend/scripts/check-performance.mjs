@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-const output = resolve(process.env.VITE_BUILD_OUT_DIR || '../aletheia/dashboard_static')
+const output = resolve(process.env.VITE_BUILD_OUT_DIR || '../core/aletheia/dashboard_static')
 const html = readFileSync(join(output, 'index.html'), 'utf8')
 const manifestPath = join(output, '.vite', 'manifest.json')
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))

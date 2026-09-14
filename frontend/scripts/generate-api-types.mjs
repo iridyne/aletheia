@@ -23,7 +23,7 @@ function run(command, args, options = {}) {
 
 try {
   run('uv', [
-    'run', 'python', join(repositoryRoot, 'scripts/export_openapi_schema.py'),
+    'run', 'python', '-m', 'scripts.export_openapi_schema',
     '--output', openapiPath,
   ], { cwd: repositoryRoot })
 
