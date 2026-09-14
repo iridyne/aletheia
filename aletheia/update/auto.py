@@ -226,6 +226,8 @@ def _doctor_healthy() -> dict[str, Any]:
     try:
         code = (
             "import json; "
+            "from aletheia.main import _configure_runtime; "
+            "_configure_runtime(); "
             "from aletheia.diagnostics.doctor import build_report; "
             "from aletheia.storage.migrations import migration_status; "
             "from aletheia.update.auto import _evaluate_runtime_diagnostics; "

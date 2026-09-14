@@ -585,6 +585,54 @@ def test_doctor_runs_in_a_fresh_interpreter(monkeypatch):
     assert calls[0][0][:2] == [auto.sys.executable, "-c"]
 
 
+def test_fresh_doctor_binds_real_credential_status_before_reporting(monkeypatch):
+    from aletheia.update import auto
+
+    prefix = '''
+import socket
+from aletheia.config import loader, secrets
+from aletheia.config.schema import AletheiaConfig, ProviderConfig
+from aletheia.diagnostics import doctor
+from aletheia.exchanges import composition
+from aletheia.model_provider import http_runtime
+from aletheia.storage import migrations
+cfg = AletheiaConfig()
+cfg.exchange.mode = "demo"
+cfg.exchange.paper_execution_mode = "bitget_demo"
+cfg.models.default_provider = "selected"
+cfg.models.providers["selected"] = ProviderConfig(type="openai_compatible", enabled=True, api_key_secret_ref="selected-reference")
+loader.load_config = lambda: cfg
+def forbidden(*args, **kwargs):
+    raise AssertionError("unexpected raw secret, client construction or network")
+secrets.get_secret = forbidden
+socket.socket.connect = forbidden
+composition.CCXTUTAAdapter = forbidden
+def synthetic_secret(ref, *, strict):
+    assert strict is True
+    assert ref in {"bitget.demo.api_key", "bitget.demo.api_secret", "bitget.demo.passphrase", "selected-reference"}
+    return "synthetic-value"
+composition.get_secret = synthetic_secret
+http_runtime.get_secret = synthetic_secret
+def isolated_report():
+    report = doctor.Report()
+    doctor._probe_credentials(report)
+    assert all(check.severity == "ok" for check in report.checks), report
+    report.add("llm.inference", "ok", "isolated fixture, not an online probe")
+    report.add("content.signal_settlement", "info", "isolated fixture")
+    return report
+doctor.build_report = isolated_report
+migrations.migration_status = lambda: {"current": True}
+'''
+    def run(command, **kwargs):
+        assert command[:2] == [auto.sys.executable, "-c"]
+        return subprocess.run(
+            [*command[:2], prefix + command[2]], cwd=Path(__file__).resolve().parents[1],
+            env=kwargs["env"], capture_output=True, text=True, timeout=20,
+        )
+    monkeypatch.setattr(auto, "_run", run)
+    assert auto._doctor_healthy() == {"ok": True, "detail": "ready"}
+
+
 @pytest.mark.parametrize(("mode", "target", "live_state", "allowed"), [
     ("paper_internal", "local_paper", "live_disabled", False),
     ("bitget_demo", "external_exchange", "live_disabled", True),
