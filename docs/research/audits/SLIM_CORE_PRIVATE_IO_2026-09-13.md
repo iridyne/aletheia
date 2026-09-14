@@ -249,6 +249,16 @@ qualification semantics change here.
 
 ## Startup filesystem repair ownership
 
+The brokerless composition audit at `0f188b5694c21b38caa8b4c8177f953047f6d340`
+found CLI dispatch and Web lifespan importing Exchange composition unconditionally.
+Both existing entrypoints now clear the existing UTA bindings when the Exchange
+package or composition module is absent. Installed binding remains unchanged;
+unrelated dependency failures still propagate. Fresh-process regressions cover
+both missing paths, stale callback removal, unknown credential presence and
+inability to create an adapter, without credentials or network access. Web proof
+ends before runtime bootstrap; this is not full service or Fedora runtime proof.
+Explicit exchange-dependent maintenance commands are unchanged.
+
 The Doctor credential audit at `cb7237329bf7138f84ab1a825c4bee54e9541183`
 found `_probe_credentials` reading raw Bitget Demo and selected-model secrets.
 Doctor now consumes existing Model credential-status metadata and a boolean-only
