@@ -12,7 +12,7 @@ import time
 import ccxt
 import pytest
 
-from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
 from aletheia.uta.errors import UTAError, UTAErrorCode
 from aletheia.uta.models import (
     CancelOrderCommand,
@@ -29,16 +29,9 @@ from aletheia.uta.models import (
     VerifiedExitQuery,
     VerifiedExitState,
 )
-from aletheia.uta.profiles import (
-    BinanceLiveProfile,
-    BinanceTestnetProfile,
-    BitgetClassicV2LiveProfile,
-    BitgetClassicV2Profile,
-    BitgetUTAV3LiveProfile,
-    BitgetUTAV3Profile,
-    OKXDemoProfile,
-    OKXLiveProfile,
-)
+from extensions.exchanges.binance.profile import BinanceLiveProfile, BinanceTestnetProfile
+from extensions.exchanges.bitget.profile import BitgetClassicV2LiveProfile, BitgetClassicV2Profile, BitgetUTAV3LiveProfile, BitgetUTAV3Profile
+from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
 
 
 ACCOUNT_PARITY = json.loads(
@@ -190,6 +183,34 @@ def _profile(kind):
     if kind == "classic_v2":
         return BitgetClassicV2Profile(**credentials)
     return BitgetUTAV3Profile(**credentials)
+
+
+@pytest.mark.parametrize("profile_type,supported", [
+    (BitgetClassicV2Profile, True),
+    (BitgetUTAV3Profile, True),
+    (BitgetClassicV2LiveProfile, True),
+    (BitgetUTAV3LiveProfile, True),
+    (BinanceTestnetProfile, False),
+    (BinanceLiveProfile, False),
+    (OKXDemoProfile, False),
+    (OKXLiveProfile, False),
+])
+def test_match_cap_close_fallback_is_explicit_profile_capability(profile_type, supported):
+    from aletheia.uta.models import CapabilitySupport, UTACapabilities
+
+    credentials = {"api_key": "key", "secret": "secret"}
+    if profile_type not in {BinanceTestnetProfile, BinanceLiveProfile}:
+        credentials["passphrase"] = "passphrase"
+    profile = profile_type(**credentials)
+    identity = _identity(profile).model_copy(
+        update={"execution_mode": profile.expected_execution_mode},
+    )
+    adapter = CCXTUTAAdapter(identity, profile)
+    expected = CapabilitySupport.SUPPORTED if supported else CapabilitySupport.UNSUPPORTED
+    assert adapter.capabilities.match_cap_close_fallback is expected
+    assert UTACapabilities(source="missing").match_cap_close_fallback is CapabilitySupport.UNKNOWN
+    assert adapter._exchange is None
+    assert adapter._session is None
 
 
 def _identity(profile):
@@ -517,6 +538,101 @@ async def test_total_read_failure_and_raw_object_are_never_complete_empty(monkey
     assert positions.completeness is ReadCompleteness.PARTIAL
     assert orders.completeness is ReadCompleteness.PARTIAL
     await adapter.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["identical", "conflicting_fill", "wrong_symbol", "wrong_market"])
+async def test_exact_history_never_chooses_last_conflicting_order(monkeypatch, case):
+    profile = _profile("classic_v2")
+    exchange = FakeExchange()
+    row = {
+        "id": "same-order", "clientOrderId": "same-client", "symbol": "BTC/USDT",
+        "side": "buy", "type": "market", "amount": "1", "filled": "0",
+        "remaining": "1", "status": "open",
+    }
+    other = dict(row)
+    if case == "conflicting_fill":
+        other.update(filled="1", remaining="0", status="closed")
+    elif case == "wrong_symbol":
+        other["symbol"] = "ETH/USDT"
+        exchange.markets["ETH/USDT"] = {
+            **exchange.markets["BTC/USDT"], "symbol": "ETH/USDT", "base": "ETH",
+        }
+    elif case == "wrong_market":
+        other["symbol"] = "BTC/USDT:USDT"
+    exchange.order_responses = [[row] for _ in profile.open_order_requests]
+    exchange.closed_order_responses = [[other] for _ in profile.closed_order_requests]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    from aletheia.uta.compat import instrument_from_local
+    try:
+        result = await adapter.get_order(OrderQuery(
+            client_order_id="same-client",
+            scope=QueryScope(
+                instrument=instrument_from_local("BTC/USDT", "spot"),
+                start_at=datetime.now(timezone.utc) - timedelta(days=1),
+            ),
+        ))
+    finally:
+        await adapter.close()
+    if case == "identical":
+        assert result.completeness is ReadCompleteness.COMPLETE
+        assert result.found.venue_order_id == "same-order"
+    else:
+        assert result.completeness is ReadCompleteness.PARTIAL
+        assert result.found is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["binance", "okx", "classic_v2", "uta_v3"])
+@pytest.mark.parametrize("conflicting", [False, True])
+async def test_open_order_duplicate_conflict_is_partial(monkeypatch, kind, conflicting):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    row = {
+        "id": "same-order", "clientOrderId": "same-client", "symbol": "BTC/USDT",
+        "side": "buy", "type": "market", "amount": "1", "filled": "0",
+        "remaining": "1", "status": "open",
+    }
+    other = dict(row)
+    if conflicting:
+        other.update(filled="0.5", remaining="0.5")
+    exchange.order_responses = [[row, other] for _ in profile.open_order_requests]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        result = await adapter.get_open_orders()
+    finally:
+        await adapter.close()
+    assert len(result.orders) == 1
+    assert result.completeness is (
+        ReadCompleteness.PARTIAL if conflicting else ReadCompleteness.COMPLETE
+    )
+    assert result.reason_code == ("open_order_surface_partial" if conflicting else None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["id", "clientOrderId"])
+async def test_direct_exact_order_mismatch_is_not_complete_not_found(monkeypatch, field):
+    profile = _profile("binance")
+    exchange = FakeExchange()
+    exchange.exact_order = {
+        "id": "expected-order", "clientOrderId": "expected-client", "symbol": "BTC/USDT",
+        "side": "buy", "type": "market", "amount": "1", "filled": "0",
+        "remaining": "1", "status": "open",
+    }
+    exchange.exact_order[field] = "foreign-identity"
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        result = await adapter.get_order(OrderQuery(
+            venue_order_id="expected-order", client_order_id="expected-client",
+        ))
+    finally:
+        await adapter.close()
+    assert result.completeness is ReadCompleteness.PARTIAL
+    assert result.reason_code == "ambiguous_exact_order_identity"
+    assert result.found is None
 
 
 def test_adapter_refuses_cross_loop_reuse(monkeypatch):

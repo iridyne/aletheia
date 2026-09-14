@@ -128,16 +128,22 @@ def _execute(proposal_id: str, risk_id: str):
 
 
 def _fill(exchange_order_id: str, client_id: str):
-    return {
-        "orderId": exchange_order_id,
-        "clientOid": client_id,
-        "tradeId": "private-fill-1",
-        "fillPrice": "101.5",
-        "fillQuantity": "0.01",
-        "fee": "0.001",
-        "feeCoin": "USDT",
-        "cTime": "1784050000000",
-    }
+    from tests.fill_reports import reports
+
+    return reports(
+        [{
+            "orderId": exchange_order_id,
+            "clientOid": client_id,
+            "tradeId": "private-fill-1",
+            "fillPrice": "101.5",
+            "fillQuantity": "0.01",
+            "fee": "0.001",
+            "feeCoin": "USDT",
+            "cTime": "1784050000000",
+        }],
+        identity=_identity(),
+        market_type="spot",
+    )[0]
 
 
 @pytest.mark.parametrize(
@@ -632,11 +638,12 @@ def test_six_mode_commands_use_real_uta_profiles_and_durable_identity(tmp_path, 
     from aletheia.execution import coordinator, gateway
     from aletheia.execution.exchange_materialization import materialize_bitget_entry
     from aletheia.storage import repositories as repo
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
     from aletheia.uta.models import CancelOrderCommand
-    from aletheia.uta.profiles import (BinanceTestnetProfile, BinanceLiveProfile, OKXDemoProfile,
-                                     OKXLiveProfile, BitgetUTAV3Profile, BitgetUTAV3LiveProfile)
+    from extensions.exchanges.binance.profile import BinanceTestnetProfile, BinanceLiveProfile
+    from extensions.exchanges.okx.profile import OKXDemoProfile, OKXLiveProfile
+    from extensions.exchanges.bitget.profile import BitgetUTAV3Profile, BitgetUTAV3LiveProfile
     from tests.uta.test_ccxt_adapter import FakeExchange, _identity as profile_identity, _install
     from tests.execution_authority import seed_order_authority
 
