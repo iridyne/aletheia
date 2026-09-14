@@ -23,6 +23,87 @@ from aletheia.storage import repositories as repo
 from aletheia.storage.models import AuditEvent, Fill, Order, Position, new_id
 from aletheia.uta.models import FillReport
 
+def claim_observed_tpsl_close(
+    position_id: str,
+    *,
+    execute_order_id: str,
+    reason: str,
+    expected_account,
+):
+    """Atomically register an observed native TPSL execution without placing it."""
+    from aletheia.execution.coordinator import _position_account
+    from aletheia.uta.models import UTAAccountIdentity
+    from aletheia.uta.manager import native_protection_execution_modes
+
+    execute_order_id = str(execute_order_id or "").strip()
+    if not execute_order_id:
+        raise ValueError("TPSL execute order identity unavailable")
+    with repo.transaction(immediate=True):
+        position = repo._select_one("positions", position_id)
+        if position is None or position.get("status") != "open":
+            return None, False
+        execution_mode = position.get("execution_mode")
+        if execution_mode not in native_protection_execution_modes():
+            raise ValueError(
+                "automatic TPSL close registration requires a supported native reader"
+            )
+        # The observing reader is built from current configuration, but the claim
+        # carries the entry Order's frozen identity. Only a reader authenticating
+        # as exactly that account may produce or advance this claim; reconcile()
+        # rejects the same mismatch, and this bridge must not be the softer door.
+        entry_account = _position_account(position)
+        if expected_account is None or entry_account != expected_account:
+            raise ValueError("uta_account_identity_mismatch")
+        pending_id = position.get("pending_close_order_id")
+        if pending_id:
+            existing = repo.get_order(pending_id)
+            if (
+                existing is not None
+                and existing.get("exchange_order_id") == execute_order_id
+                and existing.get("position_id") == position_id
+            ):
+                # A claim written before this account proof existed carries a NULL
+                # identity, and materialize_bitget_close enforces none of its own.
+                # Advancing it would file evidence under absent or foreign
+                # provenance, so the carrier proves itself or the claim waits.
+                try:
+                    claimed = UTAAccountIdentity.model_validate_json(
+                        existing.get("uta_account_identity_json") or ""
+                    )
+                except ValueError as exc:
+                    raise ValueError("uta_account_identity_unavailable") from exc
+                if claimed != entry_account:
+                    raise ValueError("uta_account_identity_mismatch")
+                return existing, False
+            raise RuntimeError("TPSL execute order conflicts with pending close claim")
+
+        close_order = Order(
+            uta_account_identity_json=entry_account.model_dump_json(),
+            proposal_id=position.get("proposal_id"),
+            client_order_id=f"close-{position_id}",
+            position_id=position_id,
+            close_reason=reason,
+            symbol=position["symbol"],
+            market_type=position["market_type"],
+            direction=position["direction"],
+            order_type="market",
+            quantity=float(position["quantity"]),
+            price=None,
+            execution_mode=execution_mode,
+            exchange_order_id=execute_order_id,
+            status="materialization_missing",
+            error_reason="private_fill_evidence_pending",
+        )
+        repo.insert_order(close_order)
+        repo.claim_position_close(
+            position_id,
+            order_id=close_order.id,
+            status="materialization_missing",
+            requested_at=datetime.now(timezone.utc).isoformat(),
+        )
+        return repo.get_order(close_order.id), True
+
+
 def materialize_observed_close_chain(
     position: dict,
     evidence: VerifiedExitResult,

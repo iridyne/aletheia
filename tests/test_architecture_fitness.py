@@ -138,6 +138,18 @@ def test_risk_writer_guard_accepts_canonical_storage_and_risk_import(tmp_path):
     _assert_risk_writer_boundary(tmp_path)
 
 
+def test_scheduler_does_not_own_order_or_close_claim_writes():
+    """Scheduling observed evidence must delegate its durable execution claim."""
+    tree = ast.parse((SRC / "agent_runtime/scheduler.py").read_text(encoding="utf-8"))
+    writers = {"insert_order", "claim_position_close"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            assert not writers.intersection(alias.name for alias in node.names), node.lineno
+        if isinstance(node, ast.Call):
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id if isinstance(node.func, ast.Name) else None
+            assert name not in writers, node.lineno
+
+
 def test_fill_writes_stay_with_exchange_materialization():
     """Keep observed-close and native Fill writes under the same Core owner."""
     import re

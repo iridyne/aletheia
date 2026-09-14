@@ -86,7 +86,7 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Generation / EntryPlan | Repository generation claim/bind/defer/complete APIs; `transition_entry_plan`, trigger binding and monitoring | Planner/compiler/watcher ownership and multi-leg aggregation remain Core; complete callback/dynamic-write audit still needed. |
 | Proposal | Repository immutable Proposal helpers and native per-leg construction | Research-bundle import rejects Proposal rows; complete callback and dynamic-write audit remain separate from the importer boundary. |
 | RiskDecision | `risk.engine._persist_risk_result` calls ordinary or authoritative insert; authoritative repository insertion owns deduplication | Preflight and final exact-order decisions are different facts, not interchangeable duplicate implementations. Revalidated at `62ae485498e107607e75ae9635a055958a6c05d4`: named writer imports/calls are confined to Risk Engine and the canonical repository delegation; literal table writes are restricted to `insert_risk_decision` or migrations. The guard covers Core, Extensions, Legacy, Ops and scripts, including relative imports, keyword table arguments, quoted SQL identifiers and forbidden repository wrappers; arbitrary dynamic SQL remains outside this lexical proof. |
-| Order | `insert_order`, `transition_order`, `update_order_metadata`, `replace_order_error_reason`, acknowledgement finalization | Coordinator/Gateway, reconciliation/materialization, observed TP/SL and adopted/administrative evidence producers remain to classify; pending-close reason-only cleanup now uses the repository CAS writer. |
+| Order | `insert_order`, `transition_order`, `update_order_metadata`, `replace_order_error_reason`, acknowledgement finalization | Creation is partitioned by fact: Coordinator owns submission intent, exchange materialization owns observed closes including native TP/SL claims, and position reconciler owns explicitly adopted external exposure. Scheduler delegates observed claims and no longer creates Orders or claims Position close state. These distinct facts must not be collapsed into a new submission path. Pending-close reason-only cleanup uses the repository CAS writer; remaining transition/callback/dynamic-write proof is still open. |
 | Fill | `insert_fill` called by exchange materialization and observed administrative close evidence | Private Fill normalization versus administrative synthetic evidence must not be conflated. `_verify_durable_fills` also validates/amends historical fee-source provenance. |
 | Position entry | `insert_position`: native private-fill materialization or explicit external-position adoption | These represent distinct provenance. Generic compatible-position coalescing needs exact Plan/account audit before changing it. |
 | Position field groups | Repository materialization / exit-plan / observation / closed-settlement field allowlists and status CAS | Producers span materializer, position manager, protection coordinator, reconciler and PnL; field ownership is not proof of one high-level owner. |
@@ -95,6 +95,28 @@ are narrower than generic SQL but do not alone prove application ownership.
 | Pause / resume | `agent_runtime.pause_ownership` durable leases, lock and config mutation; scheduler pause/resume and resume gates consume it | Separate owner leases coordinate one pause state; optional components may not bypass leases or independently clear authority. |
 | Execution identity | `config.exchanges.EXECUTION_MODE_ENVIRONMENTS`, `EXECUTION_MODE_VENUES`, and derived Demo/Live/External sets; Gateway, Risk, lifecycle cleanup, startup scope and reconciliation consume these helpers/sets | UTA profile composition and venue-native recovery branches remain explicit exceptions; unknown identities stay unavailable. |
 | Historical Position repair | Schema migrations, bounded Outcome remediation and fixed-target #3111 overlap repair | The #3111 helper is explicit module CLI only, exact-snapshot/evidence checked and audit-idempotent; no production importer/caller. No repair was executed in this audit. |
+
+## Observed-close ownership convergence
+
+The current-head audit at base `64a14b3e50f0fc74376043ad9360231b206b56df`
+found `scheduler._claim_observed_tpsl_close` creating an Order and claiming
+Position close state directly. The transaction now lives as
+`execution.exchange_materialization.claim_observed_tpsl_close`; the old
+definition is deleted and the scheduler calls the materializer after the same
+exact-account/remote-order proof. No exchange command is introduced.
+
+The operation remains distinct from Coordinator's active `_claim_close`:
+observed execution starts as `materialization_missing` with a known remote
+order ID and unknown private fills; active close starts as `pending` before a
+new external command. Combining them would conflate observation and authority.
+The existing claim identity/conflict/idempotency checks, immediate transaction,
+causal links and subsequent private-fill materialization are unchanged.
+
+The bounded architecture guard rejects the demonstrated scheduler-to-Order or
+close-claim writer calls/imports. Existing PL-TPSL regressions cover exact
+account membership, configuration rotation, pending-claim conflicts and
+private evidence. This is not an arbitrary dynamic-SQL proof, a complete Order
+transition-writer audit, or runtime qualification.
 
 ## Fitness baseline and next proof
 
