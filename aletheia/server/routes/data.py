@@ -1695,7 +1695,7 @@ async def get_market_ohlcv(
             provider = None
             try:
                 try:
-                    from aletheia.data.ccxt_provider import get_market_data_provider
+                    from aletheia.data.providers import get_market_data_provider
 
                     provider = get_market_data_provider(effective_exchange)
                     fetch_kwargs = {

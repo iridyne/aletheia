@@ -129,6 +129,7 @@ def forbidden(*args, **kwargs):
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
 providers.configure_listing_reader(forbidden)
+providers.configure_market_data_factory(forbidden)
 attempted = []
 if missing:
     class MissingAdapter:
@@ -164,8 +165,10 @@ else:
     assert missing != "broken_dependency", "transitive errors must propagate"
     if missing:
         assert providers._listing_reader is None
+        assert providers._provider_factory is None
     else:
         assert providers._listing_reader is ccxt_provider.read_market_listing
+        assert providers._provider_factory is ccxt_provider.create_market_data_provider
 if missing:
     assert attempted
 '''

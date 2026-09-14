@@ -305,8 +305,7 @@ async def test_ohlcv_route_falls_back_on_typed_empty_provider_result(client, mon
 @pytest.mark.parametrize("failure", ["missing_adapter", "construction"])
 @pytest.mark.parametrize("exact_history", [False, True])
 async def test_ohlcv_history_survives_provider_initialization_failure(client, monkeypatch, failure, exact_history):
-    import builtins
-    from aletheia.data import ccxt_provider
+    from aletheia.data import ccxt_provider, providers
     from aletheia.data.providers import Candle
 
     repo.upsert_ohlcv_candles(
@@ -315,14 +314,7 @@ async def test_ohlcv_history_survives_provider_initialization_failure(client, mo
         candles=[Candle(timestamp=1700000000000, open=1, high=2, low=0.5, close=1.4, volume=10)],
     )
     if failure == "missing_adapter":
-        original_import = builtins.__import__
-
-        def absent(name, *args, **kwargs):
-            if name == "aletheia.data.ccxt_provider":
-                raise ModuleNotFoundError("isolated absent adapter", name=name)
-            return original_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", absent)
+        monkeypatch.setattr(providers, "_provider_factory", None)
     else:
         def unavailable(_exchange):
             raise RuntimeError("provider construction failed")
