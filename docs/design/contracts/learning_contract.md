@@ -395,6 +395,14 @@ Current consumers:
 | `lesson_reviewer` | `proposed` for promotion and `accepted` for overturn checks |
 | `doctor` / analytics | Counts and status visibility |
 
+Core reads persisted lesson facts through `repositories.list_lessons`, shared
+with the optional authoring store. Existing Web/CLI composition binds
+`learning.risk_evidence.authorize_lesson_treatment`; Core retains category,
+expiry, dry-run, static-source and matching-rule interpretation. Missing
+treatment evidence never removes a static owner rule or authorizes an automatic
+block; when a matching automatic rule needs unavailable evidence, the existing
+`lesson_check_error:internal_failure` rejection remains in force.
+
 `reduce_size` recommendations remain advisory-only inside risk checks. Changing
 them into hard sizing constraints touches a trust boundary and requires explicit
 owner approval.

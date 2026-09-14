@@ -210,6 +210,8 @@ def test_older_applied_risk_lesson_is_not_truncated(tmp_path, monkeypatch):
     status="implemented",
 ))
 def test_automatic_risk_lesson_requires_paper_treatment_authority(tmp_path, monkeypatch):
+    from aletheia.learning.risk_evidence import authorize_lesson_treatment
+    monkeypatch.setattr("aletheia.risk.engine._lesson_treatment", authorize_lesson_treatment)
     from datetime import datetime, timedelta, timezone
     from unittest.mock import MagicMock
 
