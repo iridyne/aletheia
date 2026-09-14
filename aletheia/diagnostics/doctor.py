@@ -3016,7 +3016,7 @@ def _probe_network(report: Report) -> None:
         enforce = bool(getattr(net, "enforce", False))
         protocol = getattr(net, "proxy_protocol", "http")
     except Exception as e:
-        report.add("network.proxy", "info", f"could not read config: {e}")
+        report.add("network.proxy", "info", f"could not read config: {type(e).__name__}")
         return
 
     mode = "ENFORCE/fail-closed" if enforce else "fail-open"
@@ -3033,12 +3033,11 @@ def _probe_network(report: Report) -> None:
     import time
     import urllib.request
 
-    # SOCKS can't be probed with urllib's ProxyHandler — defer reachability to the
-    # exchange connectivity monitor (which rides the aiohttp_socks path).
+    # urllib's ProxyHandler cannot probe SOCKS; configuration is not reachability proof.
     if str(protocol).startswith("socks"):
         report.add("network.proxy", "info",
-                   f"{protocol} proxy configured [{mode}] — {proxy_url}; "
-                   "reachability verified by the exchange connectivity monitor")
+                   f"{protocol} proxy configured [{mode}]; "
+                   "reachability not probed here")
         return
 
     proxy_opener = urllib.request.build_opener(
@@ -3072,7 +3071,7 @@ def _probe_network(report: Report) -> None:
 
     leak_note = f"; egress {proxy_ip} ≠ direct {direct_ip}" if (proxy_ip and direct_ip) else ""
     report.add("network.proxy", "ok",
-               f"proxy reachable [{mode}] ({latency_ms}ms) — {proxy_url}{leak_note}")
+               f"proxy reachable [{mode}] ({latency_ms}ms){leak_note}")
 
 
 def _probe_runtime_session_provenance(report: Report) -> None:

@@ -28,6 +28,35 @@ def setup_env(tmp_path, monkeypatch):
     run_migrations()
 
 
+def test_proxy_diagnostics_do_not_disclose_credentials(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    import urllib.request
+    import aletheia.config.loader as loader
+
+    secret = "synthetic-proxy-secret"
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *args: MagicMock())
+    monkeypatch.setattr(dx, "_egress_ip", lambda opener: None)
+    for protocol in ("http", "socks5"):
+        monkeypatch.setattr(loader, "load_config", lambda: SimpleNamespace(
+            network=SimpleNamespace(proxy_url=f"{protocol}://user:{secret}@localhost:8080",
+                                    proxy_protocol=protocol, enforce=True),
+        ))
+        report = dx.Report()
+        dx._probe_network(report)
+        assert secret not in repr(report)
+        assert "ENFORCE/fail-closed" in repr(report)
+
+    def unavailable_config():
+        raise ValueError(secret)
+
+    monkeypatch.setattr(loader, "load_config", unavailable_config)
+    report = dx.Report()
+    dx._probe_network(report)
+    assert secret not in repr(report)
+    assert "ValueError" in repr(report)
+
+
 class _FakeStdout:
     def __init__(self, encoding: str):
         self.encoding = encoding
