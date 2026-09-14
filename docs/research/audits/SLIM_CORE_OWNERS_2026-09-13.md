@@ -77,6 +77,15 @@ does not claim one semantic owner for every Order state transition, detect
 arbitrarily assembled SQL, or remove the frozen venue clients' unused legacy
 methods.
 
+Fill writer follow-up: every production `insert_fill` call is owned by Exchange
+Materialization, but its same-id fee-provenance upgrade still issued one direct
+`UPDATE fills`. That update now uses a narrow repository method, preserving the
+existing enclosing transaction and fail-closed evidence checks. A scoped AST
+guard reserves Fill writer calls for Exchange Materialization and direct table
+mutation for repositories/migrations across Core, Extensions and Ops. This does
+not change normalized report parsing, fill identity, fee completeness or
+reconciliation semantics.
+
 Fresh working-tree verification follow-up after the approved Risk binding:
 architecture fitness **142 passed in 99.49s**; Ruff passes all existing `core/`,
 `extensions/` and `ops/` source directories; `git diff --check` passes. There is

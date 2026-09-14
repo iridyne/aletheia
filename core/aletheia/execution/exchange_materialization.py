@@ -795,10 +795,7 @@ def _verify_durable_fills(
         if upgrade_source and local.get("fee_source") != fee_source:
             # Exact identity, economics, and exchange time allow an older row's
             # provenance to be upgraded. Any mismatch above remains fail-closed.
-            db.execute(
-                "UPDATE fills SET fee_source=? WHERE id=?",
-                (fee_source, local["id"]),
-            )
+            repo.update_fill_fee_source(local["id"], fee_source)
 
 
 def materialize_bitget_entry(

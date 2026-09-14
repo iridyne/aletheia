@@ -722,6 +722,49 @@ def test_order_storage_and_submission_have_one_core_boundary():
                     assert path == coordinator, (path, node.lineno)
 
 
+def test_fill_materialization_has_one_core_owner():
+    import re
+
+    repository = SRC / "storage" / "repositories.py"
+    migrations = SRC / "storage" / "migrations.py"
+    materialization = SRC / "execution" / "exchange_materialization.py"
+    writers = {"insert_fill", "update_fill_fee_source"}
+    sql = re.compile(
+        r"\b(?:(?:INSERT|REPLACE)\s+(?:OR\s+\w+\s+)?INTO\s+"
+        r"|UPDATE\s+|DELETE\s+FROM\s+)fills\b",
+        re.I,
+    )
+    for sample in (
+        "INSERT OR IGNORE INTO fills (id) VALUES (?)",
+        "UPDATE FILLS SET fee_source='reconciled'",
+        "DELETE FROM fills WHERE id=?",
+    ):
+        assert sql.search(sample)
+    for root in (SRC, PROJECT_ROOT / "extensions", PROJECT_ROOT / "ops"):
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom) and node.module == "aletheia.storage.repositories":
+                    if any(alias.name in writers for alias in node.names):
+                        assert path in {repository, materialization}, (path, node.lineno)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    if path not in {repository, migrations}:
+                        assert not sql.search(node.value), (path, node.lineno)
+                if not isinstance(node, ast.Call):
+                    continue
+                name = (
+                    node.func.id if isinstance(node.func, ast.Name)
+                    else node.func.attr if isinstance(node.func, ast.Attribute)
+                    else None
+                )
+                if name in {"_insert", "_insert_many", "_update"} and node.args:
+                    table = node.args[0].value if isinstance(node.args[0], ast.Constant) else None
+                    if table == "fills":
+                        assert path == repository, (path, node.lineno)
+                if name in writers:
+                    assert path == materialization, (path, node.lineno, name)
+
+
 def test_core_connectivity_does_not_own_exchange_probe_protocol():
     path = SRC / "agent_runtime" / "connectivity.py"
     source = path.read_text(encoding="utf-8")

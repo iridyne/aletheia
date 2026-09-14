@@ -2805,6 +2805,10 @@ def insert_fill(f: Fill) -> None:
         )
 
 
+def update_fill_fee_source(fill_id: str, fee_source: str) -> None:
+    _update("fills", fill_id, {"fee_source": fee_source})
+
+
 def _seed_entry_fill_outcome(f: Fill) -> None:
     """Register the existing fixed-horizon owner at the actual Fill T0."""
 
