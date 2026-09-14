@@ -7,54 +7,54 @@ schema_version: 1
 trust_boundaries:
   - id: risk
     paths:
-      - aletheia/risk/**
+      - core/aletheia/risk/**
     focused_commands:
       - uv run pytest tests/specs/spec_risk_engine.py -q
       - uv run pytest tests/specs/spec_kill_conditions.py -q
   - id: execution
     paths:
-      - aletheia/execution/**
+      - core/aletheia/execution/**
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
       - uv run pytest tests/e2e/test_pipeline_exchange_entry_to_position.py tests/specs/spec_pipeline_exchange_materialization.py -q
   - id: bitget_auth
     paths:
-      - aletheia/exchanges/bitget/auth.py
+      - extensions/exchanges/bitget/auth.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: bitget_client
     paths:
-      - aletheia/exchanges/bitget/client.py
+      - extensions/exchanges/bitget/client.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: secrets
     paths:
-      - aletheia/config/secrets.py
+      - core/aletheia/config/secrets.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: permissions
     paths:
-      - aletheia/agent_runtime/permissions.py
+      - core/aletheia/agent_runtime/permissions.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: tool_registry
     paths:
-      - aletheia/agent_runtime/tool_registry.py
+      - core/aletheia/agent_runtime/tool_registry.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: agent_shell_registry
     paths:
-      - aletheia/agent_shell/registry.py
+      - core/aletheia/agent_shell/registry.py
     focused_commands:
       - uv run pytest tests/specs/spec_execution.py -q
   - id: audit_writer
     paths:
-      - aletheia/files/jsonl.py
+      - core/aletheia/files/jsonl.py
     focused_commands:
       - uv run pytest tests/specs/spec_audit_chain.py -q
   - id: live_routes
     paths:
-      - aletheia/server/routes/live.py
+      - core/aletheia/server/routes/live.py
     focused_commands:
       - uv run pytest tests/specs/spec_live_unlock.py -q
       - uv run pytest tests/specs/spec_audit_chain.py -q

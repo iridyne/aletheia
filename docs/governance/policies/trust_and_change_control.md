@@ -492,26 +492,26 @@ remains human-controlled.
 These modules are change-controlled:
 
 ```text
-aletheia/risk/
-aletheia/execution/
-aletheia/exchanges/bitget/auth.py
-aletheia/exchanges/bitget/client.py
-aletheia/config/secrets.py
-aletheia/agent_runtime/permissions.py
-aletheia/agent_shell/registry.py
-aletheia/agent_runtime/tool_registry.py
-aletheia/files/jsonl.py
-aletheia/server/routes/live.py
+core/aletheia/risk/
+core/aletheia/execution/
+extensions/exchanges/bitget/auth.py
+extensions/exchanges/bitget/client.py
+core/aletheia/config/secrets.py
+core/aletheia/agent_runtime/permissions.py
+core/aletheia/agent_shell/registry.py
+core/aletheia/agent_runtime/tool_registry.py
+core/aletheia/files/jsonl.py
+core/aletheia/server/routes/live.py
 ```
 
-- `aletheia/agent_shell/registry.py`: defines `FORBIDDEN_INTENTS` (line 415) —
+- core/aletheia/agent_shell/registry.py: defines FORBIDDEN_INTENTS (line 415) —
   the frozenset of command names that are always blocked regardless of permission
   mode. Modifying this set changes which agent intents are structurally
   unreachable.
-- `aletheia/agent_runtime/tool_registry.py`: defines `RESTRICTED_TOOLS` (line
+- core/aletheia/agent_runtime/tool_registry.py: defines RESTRICTED_TOOLS (line
   39) — the list of tool names that are never callable by LLM-driven agents.
   Removing a name here grants agents live, credential, or risk-limit capabilities.
-- `aletheia/files/jsonl.py`: the append-only JSONL writer backing
+- core/aletheia/files/jsonl.py: the append-only JSONL writer backing
   runtime-home `logs/audit.jsonl`. Any change to write semantics, append guarantees, or
   file-path routing directly affects the §1.4 audit chain invariant.
 
@@ -530,7 +530,7 @@ Every change to a controlled module must state:
 Example:
 
 ```text
-Change-controlled module: aletheia/execution/gateway.py
+Change-controlled module: core/aletheia/execution/gateway.py
 Invariant: existing proposal execution preserves proposal ID.
 Live behavior: unchanged.
 Secrets: unchanged.
@@ -540,14 +540,14 @@ Tests: uv run pytest tests/test_workflow_routes.py -q
 
 ### 6.3 Module-Specific Rules
 
-`aletheia/risk/`
+core/aletheia/risk/
 
 - Do not weaken or remove a risk check without explicit user approval.
 - New risk checks must persist a `RiskDecision`.
 - Risk rejection must be visible to API/UI consumers.
 - Tests must cover both approved and rejected paths.
 
-`aletheia/execution/`
+core/aletheia/execution/
 
 - All order placement must pass through Execution Gateway.
 - Do not let agents, dashboard routes, or Telegram call exchange clients directly
@@ -555,34 +555,34 @@ Tests: uv run pytest tests/test_workflow_routes.py -q
 - Do not create replacement proposals or orders to hide state transitions.
 - Tests must assert proposal/order/risk IDs.
 
-`aletheia/exchanges/bitget/auth.py`
+extensions/exchanges/bitget/auth.py
 
 - Do not change signing logic without checking current official Bitget docs.
 - Tests must cover deterministic signatures and secret redaction.
 - Never log raw prehash strings if they contain sensitive material.
 
-`aletheia/exchanges/bitget/client.py`
+extensions/exchanges/bitget/client.py
 
 - Market-data changes may use public endpoints.
 - Account/order changes must use stored credentials and redaction.
 - Demo-mode requests must preserve required demo headers.
 - Live order methods must remain gated by execution/risk layers.
 
-`aletheia/config/secrets.py`
+core/aletheia/config/secrets.py
 
 - GET-style APIs must never return raw secrets.
 - CLI/API errors must redact secret values.
 - Tests must prove secrets do not appear in config, logs, agent context, or API
   GET responses.
 
-`aletheia/agent_runtime/permissions.py`
+core/aletheia/agent_runtime/permissions.py
 
 - Restricted tools remain uncallable by LLM-driven agents.
 - Permission mode expansion must be explicit and tested.
 - Agents must not gain live unlock, credential mutation, risk-limit mutation, or
   execution-gateway mutation through registry mistakes.
 
-`aletheia/server/routes/live.py`
+core/aletheia/server/routes/live.py
 
 - First live unlock must require explicit human confirmation.
 - Live lock/unlock must write audit events.
