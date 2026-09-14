@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from tests.position_fixture import force_update_position
+from tests.test_broker_funding_economics import configured_funding_retention as configured_funding_retention
 
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
