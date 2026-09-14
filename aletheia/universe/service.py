@@ -14,6 +14,7 @@ import logging
 import threading
 import time
 from contextlib import contextmanager
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -21,6 +22,7 @@ from aletheia.config.loader import load_config
 from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
+    MarketRegimeRecord,
     UniverseMember,
     UniverseScannerRun,
     UniverseSnapshot,
@@ -33,6 +35,13 @@ from aletheia.universe.candidate_opportunity import (
 logger = logging.getLogger("aletheia.universe")
 
 _TWIN_SHADOW_TIMEOUT_SEC = 10.0
+_regime_refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None = None
+
+
+def configure_regime_refresh(refresher: Callable[[int], Awaitable[MarketRegimeRecord | None]] | None) -> None:
+    """Bind optional market-context refresh without running it during startup."""
+    global _regime_refresher
+    _regime_refresher = refresher
 
 # Phase 3 retention (2026-07-17): universe_snapshots + universe_members
 # change-suppression. Universe refresh runs every ~10 min but the allocation
@@ -554,37 +563,21 @@ class UniverseService:
         except Exception as e:
             logger.warning("Forward outcome settlement failed (non-fatal): %s", e)
 
-        # Detect market regime (non-fatal — falls back to sideways)
+        # Optional market-context refresh; unavailable context stays absent.
         current_regime = None
         try:
             if not cfg.regime.enabled:
                 raise RuntimeError("regime disabled by config")
 
-            from aletheia.regime.collector import collect_regime_inputs
-            from aletheia.regime.detector import debounced_detect
-            from aletheia.storage.models import MarketRegimeRecord
-
-            regime_inputs = await collect_regime_inputs()
-            if regime_inputs:
-                current_regime = debounced_detect(
-                    min_hold_periods=cfg.regime.min_hold_periods,
-                    **regime_inputs,
-                )
-                record = MarketRegimeRecord(
-                    state=current_regime.state,
-                    confidence=current_regime.confidence,
-                    long_bias=current_regime.long_bias,
-                    short_bias=current_regime.short_bias,
-                    signals=json.dumps(current_regime.signals),
-                    detected_at=current_regime.detected_at,
-                )
-                repo.insert_market_regime(record)
+            if _regime_refresher is None:
+                raise RuntimeError("regime_refresher_unavailable")
+            current_regime = await _regime_refresher(cfg.regime.min_hold_periods)
+            if current_regime is not None:
+                repo.insert_market_regime(current_regime)
                 logger.info(
                     "Regime: %s (conf=%.2f, long_bias=%.2f, short_bias=%.2f)",
-                    current_regime.state,
-                    current_regime.confidence,
-                    current_regime.long_bias,
-                    current_regime.short_bias,
+                    current_regime.state, current_regime.confidence,
+                    current_regime.long_bias, current_regime.short_bias,
                 )
         except Exception as e:
             logger.warning("Regime detection failed (non-fatal): %s", e)

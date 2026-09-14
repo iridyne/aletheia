@@ -20,6 +20,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from aletheia.storage.models import MarketRegimeRecord
+
 logger = logging.getLogger("aletheia.regime")
 REGIME_DETECTOR_BEHAVIOR_VERSION = "regime-detector/v1"
 
@@ -275,6 +277,41 @@ def debounced_detect(
         _published_regime = raw
 
     return _published_regime
+
+
+async def collect_regime_record(min_hold_periods: int) -> MarketRegimeRecord | None:
+    """Return normalized context; Universe retains its existing persistence owner."""
+    import json
+    from aletheia.regime.collector import collect_regime_inputs
+
+    inputs = await collect_regime_inputs()
+    if not inputs:
+        return None
+    current = debounced_detect(min_hold_periods=min_hold_periods, **inputs)
+    return MarketRegimeRecord(
+        state=current.state, confidence=current.confidence,
+        long_bias=current.long_bias, short_bias=current.short_bias,
+        signals=json.dumps(current.signals), detected_at=current.detected_at,
+    )
+
+
+def read_published_regime() -> tuple[object, object]:
+    """Read published evidence only; do not fabricate the UI's sideways default."""
+    if _published_regime is not None:
+        from aletheia.data.freshness import assess_freshness
+
+        verdict = assess_freshness(
+            {"detected_at": getattr(_published_regime, "detected_at", None)},
+            "regime", timestamp_field="detected_at",
+        )
+        if verdict.usable:
+            return getattr(_published_regime, "state", None), getattr(_published_regime, "confidence", None)
+    from aletheia.storage.repositories import get_latest_market_regime
+
+    regime = get_latest_market_regime()
+    if not regime or not regime.get("state"):
+        return None, None
+    return regime.get("state"), regime.get("confidence")
 
 
 def get_current_regime() -> MarketRegime:

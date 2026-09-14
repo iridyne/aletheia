@@ -315,6 +315,16 @@ def _block_real_exchange_orders(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _bind_regime_evidence(monkeypatch):
+    from aletheia.regime import detector
+    from aletheia.risk import demo_entry_quality
+    from aletheia.universe import service
+
+    monkeypatch.setattr(demo_entry_quality, "_published_regime_reader", lambda: detector.read_published_regime())
+    monkeypatch.setattr(service, "_regime_refresher", detector.collect_regime_record)
+
+
+@pytest.fixture(autouse=True)
 def _bind_demo_quality_epoch(monkeypatch):
     """Use actual epoch persistence against test-owned DBs, without starting Web/CLI."""
     from aletheia.learning import demo_entry_quality as policy
