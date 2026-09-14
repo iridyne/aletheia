@@ -8,16 +8,18 @@ The accepted [UTA boundary](../../design/proposals/unified_trading_account.md)
 and current Issue define the target; the older
 [consumer matrix](uta_consumer_port_matrix_2026-08-27.md) is historical evidence.
 
-## Remaining concrete-client reachability
+## Concrete-client reachability
 
 `UTA-S07` scans production imports outside `uta/` and `exchanges/`. Following
-the native-protection read-port extraction (base `b829d0535`), only the candidate
-credential route remains on its concrete-import allowlist:
+native-protection extraction and scoped credential-ingress separation (base
+`a6ed49f74`), its concrete Bitget/OKX/Binance import allowlist is empty. Existing
+server composition mounts the credential router only when available; this does
+not claim that every Core credential or model-provider seam is converged.
 
 | Entrypoint / consumer | Actual read and downstream authority | Containment consequence |
 | --- | --- | --- |
 | `server.routes.bitget` stored-credential connection endpoints, called by `ExecutionTab` | Previously three native clients read account/positions. They now call existing `uta.manager.probe_account_reachable` off the HTTP event loop. It accepts only complete account evidence, classifies errors without raw messages, and uses `query_uta` teardown. UI consumes `connected` / `error`; it does not consume the old Binance position count. | One existing account-probe owner; no separate route client or probe executor. Endpoint mode identifies the configured account, not trading permission. |
-| Same module's candidate-credential endpoints | Bitget delegates its read-only candidate account-info probe to `exchanges.bitget.auth.probe_candidate_credentials`; the route no longer composes signatures or endpoint URLs. Binance/OKX construct temporary CCXT balance probes. No candidate credentials are persisted. | The route still imports the concrete Bitget extension. This is not complete Core/Extension or credential-authority convergence. |
+| `exchanges.credential_routes` credential management and candidate probes | Existing nine HTTP handlers and their request/status helpers moved intact out of Core. Fixed venue/profile credential keys, selected-Live conflict rejection, redacted status, audit, native Bitget account-info and temporary CCXT balance probes are unchanged. Candidate credentials are never persisted. | Core account routes import neither Secret Store nor concrete Exchange code. Missing credential-adapter imports remove only credential routes; configured-account routes and cached UTA state remain importable. AST equality and full OpenAPI equality bind this extraction; broader trust/model credential readers remain separate gaps. |
 | `agent_runtime.scheduler._tpsl_fill_check_body` | Existing startup composition binds a read-only `NativeProtectionReader`. The Bitget implementation owns client construction, profile selection, parent/child wire parsing and symbol conversion. Core validates normalized account/parent identity, proves exact Order membership before `_claim_observed_tpsl_close`, then sends exact private fills to `materialize_bitget_close` after another configured-identity check. | No scheduler concrete-client import or wire parser remains. This necessary native exception adds no writer, transport, lifecycle owner or UTAAdapter v1 method. Raw per-request credential behavior is unchanged; the independent account proof remains mandatory. |
 
 ## Independently necessary evidence boundaries

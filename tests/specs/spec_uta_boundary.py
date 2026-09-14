@@ -234,13 +234,8 @@ def test_unqualified_legacy_private_io_is_explicitly_contained():
     # exactly, so it shrinks only alongside a real migration and can never grow
     # silently.
     #
-    # One entry remains; TPSL discovery now crosses the normalized reader port.
-    # * `server/routes/bitget.py` — candidate-credential probes are one-shot
-    #   read-only checks and do not persist the supplied credentials. Stored
-    #   account probes in this module already use `uta.manager`.
-    allowed = {
-        "aletheia/server/routes/bitget.py",
-    }
+    # TPSL uses its normalized port; credential ingress belongs to Exchange.
+    allowed = set()
     actual = set()
     for path in (ROOT / "aletheia").rglob("*.py"):
         if path.is_relative_to(UTA_ROOT) or path.is_relative_to(
