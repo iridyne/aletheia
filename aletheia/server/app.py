@@ -34,7 +34,6 @@ from aletheia.server.routes.bitget import router as bitget_router
 from aletheia.server.routes.risk import router as risk_router
 from aletheia.server.routes.update import router as update_router
 from aletheia.server.routes.gateway import router as gateway_router
-from aletheia.server.routes.telegram import router as telegram_router
 from aletheia.server.routes.news import router as news_router
 from aletheia.server.routes.command import router as command_router
 from aletheia.server.routes.operator import router as operator_router
@@ -1192,7 +1191,14 @@ else:
 app.include_router(risk_router)
 app.include_router(update_router)
 app.include_router(gateway_router)
-app.include_router(telegram_router)
+try:
+    from aletheia.telegram.routes import router as telegram_router
+except ModuleNotFoundError as exc:
+    if exc.name not in {"aletheia.telegram", "aletheia.telegram.routes"}:
+        raise
+    logger.warning("telegram_routes_unavailable")
+else:
+    app.include_router(telegram_router)
 app.include_router(news_router)
 app.include_router(command_router)
 app.include_router(operator_router)
