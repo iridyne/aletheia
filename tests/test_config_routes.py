@@ -725,16 +725,19 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
     from aletheia.config.loader import get_data_dir, load_config, save_config
     from aletheia.config.schema import UniverseConfig
     from aletheia.storage.models import AuditEvent
+    from aletheia.universe.candidate_eligibility import canonical_fingerprint
     from aletheia.universe.candidate_selection_authority import (
+        candidate_selection_policy_identity,
         recover_candidate_selection_authority_transition,
         stage_candidate_selection_authority_transition,
     )
 
     cfg = load_config()
+    epoch = canonical_fingerprint(candidate_selection_policy_identity(cfg))
     target = UniverseConfig.model_validate({
         **cfg.universe.model_dump(mode="json"),
         "candidate_selection_policy": "candidate_selection_utility_v1",
-        "candidate_selection_policy_epoch": "candidate-selection-utility:active",
+        "candidate_selection_policy_epoch": epoch,
     })
     legacy = UniverseConfig.model_validate({
         **target.model_dump(mode="json"),
@@ -748,7 +751,7 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
         source="dashboard",
         event_type="candidate_selection_authority_rolled_back",
         entity_type="universe_config",
-        entity_id="candidate-selection-utility:active",
+        entity_id=epoch,
     )
     stage_candidate_selection_authority_transition(
         audit_event_id=event.id,
@@ -761,6 +764,7 @@ def test_candidate_selection_transition_journal_recovers_after_process_exit():
     assert recover_candidate_selection_authority_transition() is True
     restored = load_config().universe
     assert restored.candidate_selection_policy == "candidate_selection_utility_v1"
+    assert restored.candidate_selection_policy_epoch == epoch
     from aletheia.universe.candidate_selection_authority import candidate_selection_authority_block_reason
     assert candidate_selection_authority_block_reason(load_config()) is None
     assert not (get_data_dir() / "candidate_selection_authority_transition.json").exists()
