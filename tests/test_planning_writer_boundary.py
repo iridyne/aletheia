@@ -84,6 +84,10 @@ def test_all_generation_lifecycle_callers_are_guarded(tmp_path, writer):
     "from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
     "if True:\n    from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
     "class Export:\n    from aletheia.storage.repositories import transition_entry_plan as plan_state_writer",
+    "plan_state_writer, unused = transition_entry_plan, None",
+    "[plan_state_writer] = [repo.transition_entry_plan]",
+    "plan_state_writer = transition_entry_plan if configured else None",
+    "(plan_state_writer := repo.transition_entry_plan)",
 ])
 def test_named_writer_alias_cannot_be_reexported(tmp_path, source):
     owner = tmp_path / "aletheia/execution/gateway.py"
@@ -110,6 +114,10 @@ def test_planning_guard_rejects_new_named_owner(tmp_path, writer, directory):
     "persist: Callable = repo._update\npersist('{table}', rid, row)",
     "db.execute('UPDATE /* comment */ main.[{table}] SET status=?')",
     "def new_writer(row):\n    _insert('{table}', row)",
+    "db.execute('DROP TABLE IF EXISTS {table}')",
+    "db.execute('ALTER TABLE {table} RENAME TO retired')",
+    "persist, unused = repo._update, None\npersist('{table}', rid, row)",
+    "persist = _update\npersist('{table}', rid, row)",
 ])
 def test_planning_guard_rejects_raw_writer(tmp_path, table, source):
     target = tmp_path / "aletheia/storage/repositories.py"
