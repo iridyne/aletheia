@@ -404,6 +404,26 @@ def test_approved_demo_proposal_rechecks_kill_switch_before_dispatch(tmp_path, m
     assert conn.execute("SELECT COUNT(*) FROM positions").fetchone()[0] == 0
 
 
+@pytest.fixture
+def executable_spot_rules(monkeypatch):
+    from decimal import Decimal
+    from aletheia.execution import order_constraints
+
+    def read(mode, symbol, market_type):
+        assert (mode, symbol, market_type) == ("bitget_demo", "BTC/USDT", "spot")
+        return order_constraints.OrderConstraints(
+            venue="bitget",
+            symbol=symbol,
+            market_type=market_type,
+            min_quantity=Decimal("0.01"),
+            max_quantity=None,
+            amount_step=Decimal("0.01"),
+            min_notional=None,
+        )
+
+    monkeypatch.setattr(order_constraints, "get_order_constraints", read)
+
+
 @spec_claim(
     SpecClaim(
         "PL-MSI-10",
@@ -415,7 +435,9 @@ def test_approved_demo_proposal_rechecks_kill_switch_before_dispatch(tmp_path, m
         status="implemented",
     )
 )
-def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monkeypatch):
+def test_known_pre_order_terminal_rejection_releases_reservation(
+    tmp_path, monkeypatch, executable_spot_rules
+):
     conn = _setup_db(tmp_path, monkeypatch)
     _risk_config(monkeypatch, demo_slots=1)
 
@@ -472,7 +494,7 @@ def test_known_pre_order_terminal_rejection_releases_reservation(tmp_path, monke
     )
 )
 def test_terminal_no_order_reservation_is_inactive_after_cleanup_failure(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, executable_spot_rules,
 ):
     conn = _setup_db(tmp_path, monkeypatch)
     _risk_config(monkeypatch, demo_slots=1)

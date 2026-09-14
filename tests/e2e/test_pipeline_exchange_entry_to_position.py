@@ -628,7 +628,7 @@ def test_real_risk_admits_an_exchange_entry_once_the_runtime_agrees(
             id="exchange-entry-snapshot",
             symbol="BTC/USDT",
             market_type="usdt_futures",
-            exchange=cfg.market_data.ccxt_exchange,
+            exchange="bitget",
             price=100.05,
             volume_24h=500_000_000.0,
             snapshot_at=_dt.now(timezone.utc).isoformat(),

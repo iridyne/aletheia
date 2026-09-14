@@ -155,7 +155,9 @@ def test_gateway_persists_decision_reasoning(tmp_path, monkeypatch):
     from aletheia.storage.repositories import insert_market_snapshot
 
     rationale = "ENRICH-TEST: momentum breakout, ADX rising, regime risk_on"
-    insert_market_snapshot(MarketSnapshot(symbol="ETH/USDT", market_type="usdt_futures", price=1551.57))
+    insert_market_snapshot(MarketSnapshot(
+        symbol="ETH/USDT", market_type="usdt_futures", exchange="okx", price=1551.57,
+    ))
 
     result = submit_proposal(
         symbol="ETH/USDT",
