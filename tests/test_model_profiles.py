@@ -251,7 +251,8 @@ async def test_retired_provider_history_is_read_only_and_never_resolves_secrets(
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.model_provider import router as model_router
-    from aletheia.server.routes import model as model_routes, ui
+    from aletheia.server.routes import ui
+    from aletheia.model_provider import credential_routes as model_routes
 
     http, _ = client
     cfg = load_config()
@@ -335,7 +336,7 @@ async def test_candidate_key_stays_bound_to_its_endpoint(client, monkeypatch, pr
         await catalogue(provider)
         return ModelHealth(provider=provider.name, available=True, model=provider.model)
 
-    monkeypatch.setattr("aletheia.server.routes.model.get_secret", secret)
+    monkeypatch.setattr("aletheia.model_provider.credential_routes.get_secret", secret)
     adapter = f"aletheia.model_provider.{provider_type}." + (
         "OpenAICompatibleProvider" if provider_type == "openai_compatible" else "AnthropicCompatibleProvider"
     )
@@ -394,7 +395,8 @@ async def test_http_profile_never_resolves_or_deletes_historical_oauth_refs(clie
     from aletheia.config.loader import load_config, save_config
     from aletheia.config.schema import ProviderConfig
     from aletheia.model_provider import router as model_router
-    from aletheia.server.routes import model as model_routes, ui
+    from aletheia.server.routes import ui
+    from aletheia.model_provider import credential_routes as model_routes
 
     http, _ = client
     cfg = load_config()
@@ -637,7 +639,7 @@ async def test_profile_create_rolls_back_secret_when_config_save_fails(client, m
     def fail_save(_cfg):
         raise RuntimeError("simulated config write failure")
 
-    monkeypatch.setattr("aletheia.server.routes.model.save_config", fail_save)
+    monkeypatch.setattr("aletheia.model_provider.credential_routes.save_config", fail_save)
     with pytest.raises(RuntimeError, match="config write failure"):
         await client[0].post(
             "/api/settings/model-profiles",
@@ -671,7 +673,7 @@ async def test_profile_update_restores_previous_secret_when_config_save_fails(cl
     def fail_save(_cfg):
         raise RuntimeError("simulated config write failure")
 
-    monkeypatch.setattr("aletheia.server.routes.model.save_config", fail_save)
+    monkeypatch.setattr("aletheia.model_provider.credential_routes.save_config", fail_save)
     with pytest.raises(RuntimeError, match="config write failure"):
         await client[0].patch(
             "/api/settings/model-profiles/stable-api",
@@ -918,7 +920,7 @@ async def test_delete_failure_restores_prior_secret_and_keeps_profile(client, mo
     def fail_save(_cfg):
         raise RuntimeError("simulated configuration-store failure")
 
-    monkeypatch.setattr("aletheia.server.routes.model.save_config", fail_save)
+    monkeypatch.setattr("aletheia.model_provider.credential_routes.save_config", fail_save)
     with pytest.raises(RuntimeError, match="configuration-store failure"):
         await http.delete(
             "/api/settings/model-profiles/retry-delete-api",
@@ -1018,7 +1020,7 @@ async def test_candidate_cannot_send_stored_key_to_changed_endpoint(client, monk
 
     monkeypatch.setattr("aletheia.config.secrets.get_secret", secret)
     monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", secret)
-    monkeypatch.setattr("aletheia.server.routes.model.get_secret", secret)
+    monkeypatch.setattr("aletheia.model_provider.credential_routes.get_secret", secret)
     monkeypatch.setattr(f"aletheia.model_provider.{provider_type}." + (
         "OpenAICompatibleProvider" if provider_type == "openai_compatible" else "AnthropicCompatibleProvider"
     ) + ".list_models", catalogue)
@@ -1079,7 +1081,7 @@ async def test_profile_ids_are_validated_and_cannot_collide(client):
 @pytest.mark.anyio
 async def test_legacy_model_mutation_is_absent_and_cannot_write(client, monkeypatch):
     from aletheia.config.loader import load_config
-    from aletheia.server.routes import model as model_routes
+    from aletheia.model_provider import credential_routes as model_routes
 
     http, _ = client
     before = load_config().models.model_dump()
