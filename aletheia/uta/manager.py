@@ -50,6 +50,7 @@ class UnifiedState:
 
 _registry_factory: Callable[..., UTARegistry] | None = None
 _retention_contract: Callable[..., tuple[int, str]] | None = None
+_credential_revision_reader: Callable[..., tuple[str, tuple[str, ...]]] | None = None
 _native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None
 _native_protection_modes: tuple[str, ...] = ()
 
@@ -58,20 +59,29 @@ def configure_uta_provider(
     *,
     registry_factory: Callable[..., UTARegistry] | None,
     retention_contract: Callable[..., tuple[int, str]] | None,
+    credential_revision_reader: Callable[..., tuple[str, tuple[str, ...]]] | None = None,
     native_protection_reader_factory: Callable[..., NativeProtectionReader] | None = None,
     native_protection_modes: tuple[str, ...] = (),
 ) -> None:
     """Bind the configured exchange at the existing application entrypoint."""
-    global _registry_factory, _retention_contract
+    global _registry_factory, _retention_contract, _credential_revision_reader
     global _native_protection_reader_factory, _native_protection_modes
     _registry_factory = registry_factory
     _retention_contract = retention_contract
+    _credential_revision_reader = credential_revision_reader
     _native_protection_reader_factory = native_protection_reader_factory
     _native_protection_modes = native_protection_modes
 
 
 def native_protection_execution_modes() -> tuple[str, ...]:
     return _native_protection_modes if _native_protection_reader_factory is not None else ()
+
+
+def read_credential_revision(execution_mode: str, *, cfg=None) -> tuple[str, tuple[str, ...]]:
+    """Return opaque selected-account revision evidence, never credential values."""
+    if _credential_revision_reader is None:
+        raise ValueError("exchange_adapter_unavailable")
+    return _credential_revision_reader(execution_mode, cfg=cfg)
 
 
 def create_native_protection_reader(

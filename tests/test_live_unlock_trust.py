@@ -15,8 +15,7 @@ def _config(monkeypatch, broker: str):
     cfg.exchange.name = broker
     cfg.exchange.mode = "live"
     cfg.risk.allowed_exchange = broker
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
-    bind_live_identity(monkeypatch, trust)
+    bind_live_identity(monkeypatch, lambda ref: f"secret:{ref}")
     return cfg, trust
 
 
@@ -28,6 +27,75 @@ def _account_result(*, uid="account-1", environment="live", permissions=("trade"
             "permissions": list(permissions),
         },
     }
+
+
+@pytest.mark.parametrize("broker,profile,generation,revision,config_revision", [
+    ("bitget", "classic_v2", 2, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "62abe39f52570e304fd81a7d75e01642eb2c4b3edb8da40103be8db3b8ee262c"),
+    ("bitget", "uta_v3", 5, "e5cc2bc4fa7947e245c77d4f81ab3e1acacfca62aa4b7fedb1a457cdf3dc1434", "e36dc17008c5a8bb79a513ca416db0a706be3494b4e9fbb8b27f7499a740b46b"),
+    ("okx", "okx_live", 0, "a672a19babf643410474e084618f6b92839b0e4cce3df8d3f0b16b72068aff76", "a8de0f070a66658dae23156f110f460f8ff390f0b852b663d36d538b16aea693"),
+    ("binance", "binance_live", 0, "c3373675b3aec36cecc8ea26e7c020eca214023cce91c9af2385918cbfd2cc60", "2113bd513e61e0fee2f1678f6baec045e52225886107b6850da5d200536527b2"),
+])
+def test_live_identity_preserves_pre_extraction_hashes(monkeypatch, broker, profile, generation, revision, config_revision):
+    """Synthetic golden identities measured on a6ed49f74 before extraction."""
+    cfg, trust = _config(monkeypatch, broker)
+    cfg.exchange.paper_execution_mode = ""
+    if broker == "bitget":
+        cfg.exchange.bitget_profile = profile
+    fields = ("api_key", "api_secret") if broker == "binance" else ("api_key", "api_secret", "passphrase")
+    assert trust.resolve_live_execution_identity(cfg) == {
+        "broker": broker,
+        "execution_mode": f"{broker}_live_limited",
+        "account_environment": "live",
+        "credential_refs": [f"{broker}.live.{field}" for field in fields],
+        "credential_revision": "sha256:" + revision,
+        "credential_generation": generation,
+        "uta_profile": profile,
+        "config_revision": "sha256:" + config_revision,
+        "adapter_capability_version": "live-private-account-v1",
+    }
+
+
+@pytest.mark.anyio
+async def test_missing_credentials_fail_without_probe(monkeypatch):
+    cfg, trust = _config(monkeypatch, "bitget")
+    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", lambda _ref: None)
+
+    async def forbidden(*_a, **_k):
+        pytest.fail("missing credentials cannot reach the private probe")
+
+    monkeypatch.setattr(trust, "_private_account_probe", forbidden)
+    result = await trust.run_live_preflight(cfg)
+    assert result["reason_code"] == "credentials_not_configured"
+    assert result["ok"] is False
+
+
+@pytest.mark.parametrize("requested,configured_mode", [("okx_live_limited", "live"), ("bitget_live_limited", "demo")])
+def test_revision_reader_cannot_read_unselected_scope(monkeypatch, requested, configured_mode):
+    from aletheia.exchanges import composition
+
+    cfg, _trust = _config(monkeypatch, "bitget")
+    cfg.exchange.mode = configured_mode
+
+    def forbidden(_ref):
+        pytest.fail("unselected account must not resolve credentials")
+
+    monkeypatch.setattr(composition, "get_secret", forbidden)
+    with pytest.raises(ValueError, match="selected_live_account_required"):
+        composition.read_credential_revision(requested, cfg=cfg)
+
+
+@pytest.mark.anyio
+async def test_credential_revision_failure_never_echoes_secret_store_error(monkeypatch):
+    cfg, trust = _config(monkeypatch, "bitget")
+
+    def unavailable(_ref):
+        raise ValueError("synthetic-sensitive-store-error")
+
+    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", unavailable)
+    result = await trust.run_live_preflight(cfg)
+    assert result["reason_code"] == "credential_revision_unavailable"
+    assert "synthetic-sensitive-store-error" not in str(result)
+    assert result["ok"] is False
 
 
 @pytest.mark.parametrize("broker,profile", [
@@ -388,7 +456,7 @@ def test_evidence_expires_and_binds_credential_revision(monkeypatch):
     assert valid is False
     assert reason == "stale_unlock_evidence"
 
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"rotated:{ref}")
+    monkeypatch.setattr("aletheia.exchanges.composition.get_secret", lambda ref: f"rotated:{ref}")
     valid, reason = trust.evidence_matches_config(cfg, evidence)
     assert valid is False
     assert reason == "credential_revision_mismatch"
@@ -406,8 +474,7 @@ def _route_evidence(cfg, monkeypatch):
     from datetime import datetime, timedelta, timezone
     import aletheia.trust.live_unlock as trust
 
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"secret:{ref}")
-    bind_live_identity(monkeypatch, trust)
+    bind_live_identity(monkeypatch, lambda ref: f"secret:{ref}")
     identity = trust.resolve_live_execution_identity(cfg)
     now = datetime.now(timezone.utc)
     evidence = {

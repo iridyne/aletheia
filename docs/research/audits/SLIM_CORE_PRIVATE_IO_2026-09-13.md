@@ -31,6 +31,15 @@ Fill identity, quantity, price, fees and immutable materialization remain requir
 The raw client's per-request credential resolution is distinct from UTA's
 account-identity proof; moving only its import would not converge that authority.
 
+Live trust's revision reader now crosses the existing UTA composition binding.
+Only the selected live scope is resolved inside Exchange composition, using the
+existing profile field list; Core receives the same hash and reference names,
+not credential values. Synthetic pre-extraction identities for Bitget classic/
+UTA, OKX and Binance match field-for-field, including config revision. Missing
+credentials still fail before private probing; unbound or missing adapters are
+unavailable. The unused raw account/environment parsers were deleted after
+confirming no callers; normalized UTA authority remains the only active proof.
+
 Installed CCXT `bitget.fetch_order` selects ordinary spot/mix/UTA order-detail
 endpoints. `fetch_closed_orders` has a trigger-history option, but its normalized
 parent/child evidence is not the scheduler's authority. The native client's

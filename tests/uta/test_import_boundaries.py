@@ -8,6 +8,8 @@ import pytest
 
 
 @pytest.mark.parametrize("target,blocked,action", [
+    ("aletheia.trust.live_unlock", ("aletheia.config.secrets", "aletheia.exchanges", "ccxt"),
+     "import asyncio\nfrom aletheia.config.schema import AletheiaConfig\ncfg = AletheiaConfig()\ncfg.exchange.name = 'bitget'\ncfg.exchange.mode = 'live'\nassert asyncio.run(module.run_live_preflight(cfg))['reason_code'] == 'exchange_adapter_unavailable'"),
     ("aletheia.server.routes.bitget", ("aletheia.config.secrets", "aletheia.exchanges", "ccxt"),
      "assert not {'set_exchange_credentials', 'test_candidate_credentials', 'get_secret', 'set_secret'} & vars(module).keys()"),
     ("aletheia.server.app", ("aletheia.exchanges.bitget.auth",),

@@ -74,10 +74,9 @@ def _setup_live_workspace(tmp_path, monkeypatch, *, broker: str = "okx", unlock:
     cfg.exchange.paper_execution_mode = f"{broker}_demo" if broker != "binance" else "binance_testnet"
     cfg.risk.allowed_exchange = broker
     cfg.agent.permission_mode = "Full"
-    monkeypatch.setattr(trust, "get_secret", lambda ref: f"test-secret:{ref}")
     from tests.live_identity import bind_live_identity
 
-    bind_live_identity(monkeypatch, trust)
+    bind_live_identity(monkeypatch, lambda ref: f"test-secret:{ref}")
     if unlock:
         cfg.live.state = "live_limited"
         cfg.live.unlock_evidence = _fresh_live_evidence(cfg, trust)
