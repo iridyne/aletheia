@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from aletheia.config.schema import UniverseConfig
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
@@ -117,9 +119,14 @@ def test_target_policy_authority_is_explicit_and_fail_closed(monkeypatch):
     "a slow market snapshot; downstream freshness retains its separate authority.",
     status="implemented",
 ))
-def test_current_candidate_bootstrap_without_slow_cache(tmp_path, monkeypatch):
+@pytest.mark.parametrize("stream_available", [False, True])
+def test_current_candidate_bootstrap_without_slow_cache(
+    tmp_path, monkeypatch, bitget_fast_stream, stream_available
+):
     from tests.test_candidate_selection_utility import test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache
-    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(tmp_path, monkeypatch)
+    test_empty_universe_bootstraps_candidate_and_planning_without_slow_cache(
+        tmp_path, monkeypatch, bitget_fast_stream, stream_available
+    )
 
 
 @spec_claim(SpecClaim(
