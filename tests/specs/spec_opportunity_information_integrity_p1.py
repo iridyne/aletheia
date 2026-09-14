@@ -27,8 +27,8 @@ _CONTRACT = "opportunity_information_integrity"
     )
 )
 def test_information_integrity_policy_epoch_is_durable_and_idempotent():
+    from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
     from aletheia.learning.opportunity_information_policy import (
-        POLICY_EPOCH_LABEL,
         ensure_opportunity_information_policy_epoch,
         opportunity_information_policy_context,
     )
@@ -444,6 +444,7 @@ def test_post_trade_context_uses_exact_proposal_id_without_truncation():
         TradeProposal(
             id=proposal_id,
             opportunity_id="source-context-exact",
+            execution_mode="bitget_demo",
             symbol="BTC/USDT",
             market_type="spot",
             direction="long",
@@ -499,6 +500,7 @@ def test_same_proposal_duplicate_finals_are_explicit_integrity_error():
     repo.insert_trade_proposal(TradeProposal(
         id=proposal_id,
         opportunity_id="source-context-ambiguous",
+        execution_mode="bitget_demo",
         symbol="BTC/USDT",
         market_type="spot",
         direction="long",

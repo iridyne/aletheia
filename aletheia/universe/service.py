@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from aletheia.config.loader import load_config
-from aletheia.learning.opportunity_information_policy import POLICY_EPOCH_LABEL
+from aletheia.analytics.filter_evidence import POLICY_EPOCH_LABEL
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import (
     UniverseMember,
@@ -467,76 +467,6 @@ def _capture_universe_discovery_nonfatal(
         logger.warning("Universe Discovery Benchmark capture failed (non-fatal): %s", exc)
 
 
-def _active_paper_learning_identity(path_id: str) -> tuple[bool, dict | None]:
-    """Return one canonical admitted Paper identity, failing closed otherwise."""
-    try:
-        from aletheia.learning.hypotheses import hypothesis_fingerprint
-        from aletheia.learning.ledger import get_record, list_open_experiments
-        from aletheia.learning.registry import get_learning_path
-
-        paper = [
-            row
-            for row in list_open_experiments(path_id=path_id)
-            if str(row.get("stage") or "") in {"paper_10", "paper_25", "paper_50", "paper_active"}
-        ]
-        if not paper:
-            return False, None
-        if len(paper) != 1:
-            logger.error(
-                "Learning identity restriction found %d active Paper experiments for %s",
-                len(paper),
-                path_id,
-            )
-            return True, None
-        hypothesis = get_record("learning_hypotheses", str(paper[0]["hypothesis_id"]))
-        if not hypothesis or hypothesis.get("path_id") != path_id:
-            raise ValueError("active Paper hypothesis is missing or belongs to another path")
-        scope = json.loads(str(hypothesis.get("scope_json") or "null"))
-        action = json.loads(str(hypothesis.get("action_json") or "null"))
-        if not isinstance(scope, dict) or not isinstance(action, dict):
-            raise ValueError("active Paper scope/action is not an object")
-        if (
-            set(scope) != {"family", "direction", "market_type"}
-            or scope.get("family") not in {"momentum", "mean_reversion", "volatility", "derivatives"}
-            or scope.get("direction") not in {"long", "short"}
-            or scope.get("market_type") not in {"spot", "perp"}
-        ):
-            raise ValueError("active Paper UFC scope is not canonical")
-        target_horizon = str(hypothesis.get("target_horizon") or "")
-        source_cohort = str(hypothesis.get("source_type") or "")
-        behavior_version = str(hypothesis.get("behavior_contract_version") or "")
-        schema_version = int(hypothesis["fingerprint_schema_version"])
-        if not target_horizon or not source_cohort or not behavior_version:
-            raise ValueError("active Paper hypothesis identity is incomplete")
-        if get_learning_path(path_id).behavior_contract_version != behavior_version:
-            raise ValueError("active Paper behavior contract is not current")
-        fingerprint = hypothesis_fingerprint(
-            path_id=path_id,
-            scope=scope,
-            action=action,
-            target_horizon=target_horizon,
-            source_cohort=source_cohort,
-            behavior_contract_version=behavior_version,
-            schema_version=schema_version,
-        )
-        if fingerprint != hypothesis.get("fingerprint"):
-            raise ValueError("active Paper hypothesis fingerprint mismatch")
-        return True, {
-            "experiment_id": str(paper[0]["experiment_id"]),
-            "fingerprint": fingerprint,
-            "scope": scope,
-            "action": action,
-            "target_horizon": target_horizon,
-            "source_cohort": source_cohort,
-            "behavior_contract_version": behavior_version,
-            "fingerprint_schema_version": schema_version,
-        }
-    except Exception:
-        logger.exception(
-            "Learning identity restriction unavailable for %s; suppressing influence",
-            path_id,
-        )
-        return True, None
 
 
 class UniverseService:
