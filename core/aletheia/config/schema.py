@@ -1,0 +1,2186 @@
+"""Config schema using Pydantic v2 models."""
+
+from collections.abc import Mapping
+from datetime import datetime, timezone
+import logging
+from typing import Annotated, Any, Literal
+from urllib.parse import urlsplit
+from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, TypeAdapter, field_validator, model_validator
+
+from aletheia.config.execution_costs import (
+    EXECUTION_FEE_PCT_BOUNDS,
+    FALLBACK_SPREAD_BPS_BOUNDS,
+    SLIPPAGE_BPS_BOUNDS,
+)
+
+_logger = logging.getLogger("aletheia.config")
+
+# The recognized Bitget endpoint-family identities. Declared here because the
+# set of VALID profile names is a configuration fact, not a venue-client fact:
+# `bitget_profile` is validated on load, and asking "is this a known profile?"
+# must not require importing a concrete exchange client. `exchanges/bitget/`
+# reads this rather than keeping a parallel copy.
+KNOWN_BITGET_PROFILES = frozenset({"classic_v2", "uta_v3"})
+
+_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_WILDCARD_HOSTS = {"0.0.0.0", "::"}
+
+# Shared settings types keep API requests and persisted config on the same
+# boundary.  A schedule hour is a wall-clock hour, while webhook timeouts must
+# remain finite because urllib rejects non-finite or non-positive deadlines.
+NotificationHour = Annotated[int, Field(ge=0, le=23)]
+WebhookTimeoutSeconds = Annotated[FiniteFloat, Field(ge=1.0, le=60.0)]
+UTAGeneration = Annotated[int, Field(ge=0)]
+
+
+class AppConfig(BaseModel):
+    name: str = "Aletheia Trading OS"
+    dashboard_port: int = 8787
+    auto_open_browser: bool = True
+    bind_host: str = "127.0.0.1"
+    # Overview Equity Curve semantics when a time range (7D/30D/90D) is selected:
+    #   full_cumulative  — every point's Y is the all-time cumulative realized PnL;
+    #                      the range only narrows the visible window, so the end
+    #                      point never changes between ranges (standard equity
+    #                      curve; the default).
+    #   window_relative  — cumulative restarts from 0 at the window's first trade,
+    #                      so the end point shows "PnL earned within this window"
+    #                      (differs across ranges; useful for period attribution).
+    equity_curve_mode: str = "full_cumulative"
+
+    @field_validator("bind_host")
+    @classmethod
+    def validate_bind_host(cls, v: str) -> str:
+        if v not in _LOOPBACK_HOSTS and v not in _WILDCARD_HOSTS:
+            _logger.warning(
+                "bind_host=%s is a specific interface address — API will be network-exposed without authentication",
+                v,
+            )
+        elif v in _WILDCARD_HOSTS:
+            _logger.info("bind_host=%s — dashboard accessible on all network interfaces", v)
+        return v
+
+    @field_validator("equity_curve_mode")
+    @classmethod
+    def validate_equity_curve_mode(cls, v: str) -> str:
+        if v not in ("full_cumulative", "window_relative"):
+            return "full_cumulative"
+        return v
+
+
+class PauseOwnerLease(BaseModel):
+    """Durable evidence that one subsystem currently requires a pause."""
+
+    reason: str
+    generation: str | None = None
+    acquired_at: str | None = None
+    # ``source`` and ``scope`` keep the owner projection auditable without
+    # coupling it to a particular caller or exposing any credentials.
+    source: str | None = None
+    scope: Literal["global", "demo", "live"] | None = None
+    # Active leases are the entries in ``RuntimeConfig.pause_owners``.  The
+    # explicit bit makes the serialized contract self-describing for readers
+    # that do not know that map membership is the active-state signal.
+    active: bool = True
+
+
+BRAKE_FIELDS_BY_SCOPE = {
+    "global": "kill_switch_active",
+    "demo": "demo_brake_active",
+    "live": "live_brake_active",
+}
+BRAKE_OWNERS_BY_SCOPE = {
+    "global": "kill_switch",
+    "demo": "demo_brake",
+    "live": "live_brake",
+}
+
+
+class RuntimeConfig(BaseModel):
+    _pause_scope: Literal["demo", "live"] = PrivateAttr(default="demo")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_pause_owner(cls, value):
+        """Lift the old shared boolean/connection flag into explicit owners.
+
+        An old unowned ``paused: true`` cannot be attributed after the fact, so
+        it is conservatively represented as a manual owner with unknown time and
+        generation.  No timestamp or identity is invented during migration.
+        """
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        owners = dict(data.get("pause_owners") or {})
+        if not owners and (data.get("paused") or data.get("paused_by_connectivity")):
+            if data.get("paused_by_connectivity"):
+                owners["exchange_connectivity"] = {
+                    "reason": "legacy_connectivity_pause",
+                    "generation": data.get("connectivity_pause_generation"),
+                    "acquired_at": data.get("connectivity_pause_acquired_at"),
+                }
+            else:
+                owners["manual"] = {
+                    "reason": "legacy_unowned_pause",
+                    "generation": None,
+                    "acquired_at": None,
+                }
+        # Brakes pre-date the durable owner model.  Lift their persisted
+        # booleans into explicit leases while preserving unknown legacy
+        # identity as unknown rather than inventing a generation.
+        for scope, field in BRAKE_FIELDS_BY_SCOPE.items():
+            owner = BRAKE_OWNERS_BY_SCOPE[scope]
+            if data.get(field) and owner not in owners:
+                owners[owner] = {
+                    "reason": f"legacy_{field}",
+                    "generation": data.get(f"{owner}_generation"),
+                    "acquired_at": data.get(f"{owner}_acquired_at"),
+                    "source": "legacy_config",
+                    "scope": scope,
+                    "active": True,
+                }
+        for owner, lease in list(owners.items()):
+            if isinstance(lease, Mapping):
+                legacy_lease = dict(lease)
+                if not legacy_lease.get("source"):
+                    legacy_lease["source"] = "legacy_config"
+                for scope, known_owner in BRAKE_OWNERS_BY_SCOPE.items():
+                    if owner == known_owner:
+                        legacy_lease.setdefault("scope", scope)
+                        break
+                owners[owner] = legacy_lease
+        if owners:
+            data["pause_owners"] = owners
+            data["paused"] = any(
+                not isinstance(lease, Mapping) or lease.get("active", True)
+                for lease in owners.values()
+            )
+        return data
+
+    def __setattr__(self, name: str, value) -> None:
+        if name == "paused" and "pause_owners" in self.__dict__:
+            if bool(value):
+                if "manual" not in self.pause_owners or not self.pause_owners["manual"].active:
+                    self.acquire_pause("manual", reason="manual_pause_assignment")
+            else:
+                self.release_pause("manual")
+            return
+        if name in BRAKE_FIELDS_BY_SCOPE.values() and "pause_owners" in self.__dict__:
+            active = bool(value)
+            super().__setattr__(name, active)
+            scope = next(scope for scope, field in BRAKE_FIELDS_BY_SCOPE.items() if field == name)
+            owner = BRAKE_OWNERS_BY_SCOPE[scope]
+            current = self.pause_owners.get(owner)
+            if active and (current is None or not current.active):
+                self.acquire_pause(
+                    owner,
+                    reason=f"{scope}_trading_brake_active",
+                    source="runtime_config",
+                    scope=scope,
+                )
+            elif not active and current is not None:
+                self.release_pause(owner, generation=current.generation)
+            self._sync_pause_fields()
+            return
+        super().__setattr__(name, value)
+
+    @model_validator(mode="after")
+    def normalize_pause_fields(self):
+        self._sync_pause_fields()
+        return self
+
+    def _sync_pause_fields(self) -> None:
+        owners = self.pause_owners
+        active_owners = {owner: lease for owner, lease in owners.items() if lease.active}
+        effective_owners = {
+            owner: lease
+            for owner, lease in active_owners.items()
+            if lease.scope is None or lease.scope in {"global", self._pause_scope}
+        }
+        connectivity = active_owners.get("exchange_connectivity")
+        super().__setattr__("paused", bool(effective_owners))
+        super().__setattr__("paused_by_connectivity", connectivity is not None)
+        super().__setattr__(
+            "connectivity_pause_generation",
+            connectivity.generation if connectivity is not None else None,
+        )
+        super().__setattr__(
+            "connectivity_pause_acquired_at",
+            connectivity.acquired_at if connectivity is not None else None,
+        )
+        for scope, field in BRAKE_FIELDS_BY_SCOPE.items():
+            super().__setattr__(field, BRAKE_OWNERS_BY_SCOPE[scope] in active_owners)
+
+    def set_pause_scope(self, scope: str | None) -> None:
+        """Keep the compatibility pause projection aligned with the active mode."""
+        object.__setattr__(self, "_pause_scope", "live" if scope == "live" else "demo")
+        self._sync_pause_fields()
+
+    def acquire_pause(
+        self,
+        owner: str,
+        *,
+        reason: str,
+        generation: str | None = None,
+        acquired_at: str | None = None,
+        source: str | None = "runtime_config",
+        scope: Literal["global", "demo", "live"] | None = None,
+    ) -> PauseOwnerLease:
+        """Acquire or refresh one owner's lease without disturbing other owners."""
+        if scope is None:
+            for known_scope, known_owner in BRAKE_OWNERS_BY_SCOPE.items():
+                if owner == known_owner:
+                    scope = known_scope
+                    break
+        lease = PauseOwnerLease(
+            reason=reason,
+            generation=generation or uuid4().hex,
+            acquired_at=acquired_at or datetime.now(timezone.utc).isoformat(),
+            source=source,
+            scope=scope,
+        )
+        owners = dict(self.pause_owners)
+        owners[owner] = lease
+        super().__setattr__("pause_owners", owners)
+        self._sync_pause_fields()
+        return lease
+
+    def release_pause(self, owner: str, *, generation: str | None = None) -> bool:
+        """Release only the matching owner generation; keep all others paused."""
+        current = self.pause_owners.get(owner)
+        if current is None:
+            return False
+        if generation is not None and not (
+            current.generation == generation
+            or (generation == "" and current.generation is None)
+        ):
+            return False
+        owners = dict(self.pause_owners)
+        del owners[owner]
+        super().__setattr__("pause_owners", owners)
+        self._sync_pause_fields()
+        return True
+
+    gateway_mode: str = "background"
+    scheduler_enabled: bool = True
+    paused: bool = False
+    pause_owners: dict[str, PauseOwnerLease] = Field(default_factory=dict)
+    # Only connectivity recovery may release a pause it acquired.
+    paused_by_connectivity: bool = False
+    # Durable evidence binding recovery to the exact connectivity pause it owns.
+    connectivity_pause_generation: str | None = None
+    connectivity_pause_acquired_at: str | None = None
+    # Global trading brake. When true, the risk engine rejects every proposal
+    # (paper and live). Set by human action or auto-tripped on daily-loss limit.
+    kill_switch_active: bool = False
+    demo_brake_active: bool = False
+    live_brake_active: bool = False
+    # Git versioning of data/knowledge, data/playbooks, data/reports.
+    git_enabled: bool = True
+    # Hot-reload the inner uvicorn worker when files under aletheia/ change.
+    # True = any Claude session that edits a .py file gets the change live without
+    # a manual `aletheia gateway restart`. The supervisor PID does not change, so
+    # single-instance mutex (pidfile) is preserved. Set False before going live.
+    auto_reload: bool = True
+
+
+class ExchangeConfig(BaseModel):
+    name: str = ""
+    mode: str = "demo"
+    enabled_markets: dict[str, bool] = Field(default_factory=lambda: {"spot": True, "usdt_futures": True})
+    # When both spot and usdt_futures are enabled, which market_type to emit per
+    # canonical symbol in the legacy observed_instruments_from_config path.
+    # "auto" → perp (Aletheia primary trading instrument; short requires perp,
+    # long defaults to perp). "spot" | "perp" → always that type. Prevents
+    # market_observer from running the LLM twice for the same ETH (redundant
+    # 76% vs 74% spot vs perp directional read — price is the same). Dedup
+    # OD-S01 locks this against regression.
+    preferred_market_type: str = "auto"
+    # Symbol list — semantics determined by risk.symbol_filter_mode:
+    #   "whitelist" → only these may trade; "blacklist" → these are blocked.
+    symbol_list: list[str] = Field(default_factory=list)
+    # Where autonomous paper trades execute:
+    #   "okx_demo"        → OKX simulated trading via CCXT (auto-filtered symbol set).
+    #   "binance_testnet" → Binance Futures Testnet via CCXT (556 pairs, highest coverage).
+    #   "bitget_demo"     → Bitget demo/simulated-trading API (paptrading header,
+    #                       USDT-futures only, 42 pairs). Requires mode == "demo".
+    # Empty until the owner selects an external exchange environment.
+    paper_execution_mode: str = ""
+    # Futures position mode: "hedge" (long/short separate) or "one_way".
+    position_mode: str = "hedge"
+    # Bitget broker capability profile.
+    #   "classic_v2" → /api/v2/ endpoint family (marginCoin, marginMode, size, idLessThan).
+    #   "uta_v3"     → /api/v3/ Unified Trading Account (category, qty, posSide, cursor).
+    #                  Experimental: Demo qualification required before any live use.
+    bitget_profile: str = "classic_v2"
+    # Non-secret configuration component of the exact account generation.
+    # Credential mutations carry a separate durable counter in secrets.enc.
+    uta_account_config_generations: dict[str, UTAGeneration] = Field(default_factory=dict)
+
+    @field_validator("bitget_profile")
+    @classmethod
+    def _validate_bitget_profile(cls, v: str) -> str:
+        if v not in KNOWN_BITGET_PROFILES:
+            raise ValueError(
+                f"bitget_profile must be one of {sorted(KNOWN_BITGET_PROFILES)}, got {v!r}"
+            )
+        return v
+
+    @field_validator("uta_account_config_generations")
+    @classmethod
+    def _validate_uta_mode_keys(cls, value: dict) -> dict:
+        if any(not isinstance(key, str) or not key.strip() for key in value):
+            raise ValueError("UTA account generation keys must be non-empty")
+        return value
+
+    def uta_account_config_generation_for(self, execution_mode: str) -> int:
+        return self.uta_account_config_generations.get(execution_mode, 0)
+    # Explicit perp symbol allowlist. Empty = all perps passing universe registry.
+    futures_symbols: list[str] = Field(
+        default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+    )
+
+
+DerivativesComparisonVenue = Literal['binance', 'okx', 'bitget']
+
+
+class MarketDataConfig(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def decode_legacy_equities(cls, value):
+        """Decode historical lists once; runtime and saves expose only canonical tickers."""
+        if isinstance(value, Mapping) and "observed_stocks" in value:
+            value = dict(value)
+            legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_stocks"))
+            if "observed_equities" not in value or value["observed_equities"] == []:
+                value["observed_equities"] = legacy
+        if isinstance(value, Mapping) and "observed_xstocks" in value:
+            value = dict(value)
+            legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_xstocks"))
+            tokens = TypeAdapter(list[str]).validate_python(value.get(
+                "observed_stock_tokens",
+                cls.model_fields["observed_stock_tokens"].get_default(call_default_factory=True),
+            ))
+            value["observed_stock_tokens"] = list(dict.fromkeys(tokens + legacy))
+        return value
+
+    # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
+    provider: str = "ccxt"
+    ccxt_exchange: str = "binance"
+    ccxt_fallback: str = "bybit"
+    # Symbols to observe for market analysis (canonical BTC/USDT format).
+    # Kept for backwards compatibility — if observed_instruments is non-empty it takes
+    # precedence and this list is derived from it automatically.
+    observed_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    # Full instrument identifiers: "exchange:BASE/QUOTE:market_type"
+    # e.g. ["binance:BTC/USDT:spot", "binance:BTC/USDT:perp", "bybit:ETH/USDT:spot"]
+    # When non-empty, this is the authoritative source for what to observe.
+    # When empty, observed_symbols + ccxt_exchange + "spot" are used (legacy path).
+    observed_instruments: list[str] = Field(default_factory=list)
+    # Separate observation coverage: observed_instruments also feeds trading context.
+    derivatives_comparison_venues: list[DerivativesComparisonVenue] = Field(
+        default_factory=lambda: ['binance', 'okx', 'bitget'], max_length=3,
+    )
+    ohlcv_cache_ttl_min: int = 10
+    # Append macro (SPY/VIX/DXY/Gold) block to LLM market context prompt.
+    enable_yfinance_macro: bool = False
+    # Round 2 macro signals (Step 1-4 zero-cost data integration).
+    # Binance Futures globalLongShortAccountRatio; populates
+    # OpenInterestSnapshot.long_short_ratio which compute_leverage_state already
+    # consumes into crowding_score (normalizer.py:73-77).
+    enable_long_short_ratio: bool = True
+    # Alternative.me Fear & Greed Index — single value 0-100 updated ~daily.
+    # Fills MacroSnapshot.fng_value + fng_classification; renders into the macro
+    # block of enriched_context. Failure is degraded (other macro fields preserved).
+    enable_fear_greed: bool = True
+    # CoinGecko top-N markets — universe-scale price/change snapshots every Phase B
+    # tick (~10 min). Builds a "Top Gainers / Top Losers" summary string folded
+    # into MacroSnapshot.top_movers_summary. No API key (public free tier).
+    enable_coingecko_top: bool = True
+    # Phase 3 retention (2026-07-17): reduced default 100 → 50. Persisted rows
+    # per fetch drop by half; the top-50 already cover >95% of the movers-summary
+    # signal so no downstream consumer noticed the cut in shadow runs.
+    coingecko_top_n: int = 50  # CoinGecko hard ceiling is 250 per_page
+    coingecko_top_n_default: int = 50  # Explicit default surface for Settings UI.
+    # On startup / sparse-window detection, backfill derivatives history (funding +
+    # OI) up to this many hours so the LLM sees trend, not a single point. 0 = off.
+    derivatives_history_hours: int = 24
+    # Hyperliquid public info API (zero key) — cross-venue perp OI + funding for
+    # observed symbols, tagged exchange="hyperliquid" in the funding/OI tables.
+    # Excluded from the PRIMARY per-symbol read (so it never pollutes the venue
+    # the LLM sees); kept as queryable cross-venue context. Phase B cadence (~10m).
+    enable_hyperliquid: bool = True
+    # DefiLlama public API (zero key) — total stablecoin mcap / chain TVL / DEX
+    # volume, stored in onchain_snapshots and folded into the macro context block.
+    # Fills the on-chain hole left by the never-built Glassnode. Phase B cadence.
+    enable_defillama: bool = True
+    # Master switch for prediction market observation (Polymarket). When False,
+    # prediction_observer does not run and the Prediction Lens page shows disabled.
+    prediction_enabled: bool = False
+    # Polymarket category slugs (or keywords) to observe. prediction_observer
+    # fetches active markets matching these categories every 30 minutes.
+    observed_prediction_markets: list[str] = Field(default_factory=lambda: ["crypto", "politics"])
+    # US equities to observe — canonical Yahoo Finance tickers (e.g. "AAPL").
+    # equity_observer fetches daily bars via yfinance AND real-time price via
+    # exchange stock tokens (r-series + ON-series on Bitget; future OKX SWAP).
+    # Runs Mon–Fri 14:30–21:00 UTC (US market hours). Empty = disabled.
+    observed_equities: list[str] = Field(default_factory=list)
+    # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
+    # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
+    # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.
+    # Default covers the major r-series + ON-series starters; edit in Settings UI.
+    observed_stock_tokens: list[str] = Field(
+        default_factory=lambda: [
+            "rNVDA/USDT", "rTSLA/USDT", "rAAPL/USDT", "rAMD/USDT",
+            "rMSFT/USDT", "rGOOGL/USDT", "rAMZN/USDT", "rMETA/USDT",
+            "AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT",
+        ]
+    )
+    # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
+    enable_crypto_fallback: bool = True
+    # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).
+    # Replaces the dead CoinGlass/CCXT/Bitget-OI paths. Free tier: 100 req/day.
+    # Set coinalyze_api_key in secrets to enable; gracefully skips if absent.
+    enable_coinalyze: bool = True
+    coinalyze_api_key: str | None = None
+    # Cross-source price divergence detection.
+    price_divergence_threshold_pct: float = 2.0
+    price_divergence_alert_enabled: bool = True
+
+
+class LiveConfig(BaseModel):
+    state: str = "live_disabled"
+    first_live_confirmation_done: bool = False
+    # Sanitised, short-lived proof that the selected live account was privately
+    # authenticated.  Raw credentials and exchange payloads never belong here.
+    unlock_evidence: dict[str, Any] | None = None
+
+
+class AgentConfig(BaseModel):
+    permission_mode: str = "Paper"
+    autonomous_learning: bool = True
+    # When true, suppress historical performance stats from the System Operator prompt
+    # so the LLM cannot trigger self-protection based on past WR/PnL.
+    # Intended for demo/test phases where pipeline throughput matters more than
+    # performance-based gating. Re-disable before evaluating real results.
+    bypass_distress_gate: bool = False
+
+
+class OperatorConfig(BaseModel):
+    enabled: bool = True
+    bind_host: str = "127.0.0.1"
+    port: int = 8791
+    permission_mode: str = "ReadOnly"
+    heartbeat_interval_sec: int = 10
+    heartbeat_stale_after_sec: int = 45
+    restart_after_sec: int = 90
+    max_restart_failures: int = 3
+    loop_enabled: bool = True
+    main_session_id: str = "operator-main"
+
+    @field_validator("bind_host")
+    @classmethod
+    def validate_bind_host(cls, v: str) -> str:
+        if v not in _LOOPBACK_HOSTS:
+            _logger.warning("operator.bind_host=%s is not loopback — operator API will be network-exposed", v)
+        return v
+
+
+class ProviderConfig(BaseModel):
+    type: str = ""
+    display_name: str = ""
+    base_url: str = ""
+    protocol: str = "chat_completions"
+    model: str = "default"
+    # Opt-in by default: a provider entry that made it into config.yaml but
+    # nobody has enabled yet must not be probed. Fresh installs never enable
+    # anything until the operator configures it explicitly.
+    enabled: bool = False
+    command: str = ""
+    mode: str = ""
+    api_key_secret_ref: str | None = None
+    codex_model: str | None = None
+    workspace_url: str | None = None  # Historical workspace provenance; not an HTTP endpoint.
+    # Auth header for anthropic_compatible: "x-api-key" (native Anthropic, default)
+    # or "bearer" (gateway-fronted endpoints e.g. Databricks AI Gateway).
+    auth_scheme: str = "x-api-key"
+    # Historical subscription fields: decode/read provenance only; no active OAuth owner.
+    auth_type: str = "api_key"  # "api_key" | "oauth" | "none"
+    oauth_token_ref: str | None = None
+    oauth_refresh_ref: str | None = None
+    oauth_expires_at: int | None = None  # Unix ms timestamp
+    # Explicit verification is durable evidence for the exact provider
+    # configuration identity.  The identity is a one-way fingerprint; raw
+    # credentials never belong in config or API responses.
+    verification_identity: str | None = None
+    verification_verified: bool | None = None
+    verification_at: str | None = None
+    verification_source: str | None = None
+    verification_reason_code: str | None = None
+    verification_detail: str | None = None
+    # Request-level model fallback. When the configured model returns a
+    # transient capacity/rate-limit error, the runtime will try these fallback
+    # models in order before giving up. Discovered catalogue models are NOT
+    # used as automatic fallbacks; this is the complete ordered fallback list.
+    model_fallback_enabled: bool = True
+    fallback_models: list[str] = Field(default_factory=list)
+    # Process-wide inference admission. Every completion for this Provider is
+    # executed on the persistent broker loop; zero RPM/TPM means unlimited.
+    inference_max_concurrency: int = Field(default=2, ge=1, le=16)
+    inference_requests_per_minute: int = Field(default=60, ge=0, le=10_000)
+    inference_tokens_per_minute: int = Field(default=120_000, ge=0, le=100_000_000)
+    inference_queue_capacity: int = Field(default=64, ge=1, le=1_000)
+    inference_reserved_high_priority_slots: int = Field(default=8, ge=0, le=1_000)
+    inference_timeout_sec: float = Field(default=300.0, ge=1.0, le=1_800.0)
+
+
+class ModelSelection(BaseModel):
+    """An endpoint/model pair; blank historical model IDs remain unavailable."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    endpoint_id: str
+    model_id: str
+
+
+class ModelsConfig(BaseModel):
+    # Fresh installs ship blank: no default provider name, no pre-populated
+    # provider stubs. The operator adds providers explicitly via the Settings
+    # page (POST /settings/model-profiles) — see routes/model.py. Historically we seeded
+    # openai_compatible → localhost:8000 and anthropic_compatible → localhost:8001,
+    # which meant every fresh clone tripped the boot-time LLM probe against
+    # services that were never there. Existing config.yaml files are untouched
+    # by this default change (loader merges on top of user-supplied values).
+    default_provider: str = ""
+    deep: ModelSelection | None = None
+    fast: ModelSelection | None = None
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def decode_historical_tier_providers(cls, value):
+        if not isinstance(value, dict):
+            return value
+        decoded = dict(value)
+        providers = value.get("providers", {})
+        if not isinstance(providers, dict):
+            raise ValueError("Model providers must be a mapping")
+        for tier in ("deep", "fast"):
+            old_field = f"{tier}_provider"
+            if tier in decoded:
+                if old_field in decoded:
+                    raise ValueError("Both historical and current model tier fields are present")
+                continue
+            old_endpoint = decoded.pop(old_field, None)
+            if old_endpoint is not None and not isinstance(old_endpoint, str):
+                raise ValueError("Historical tier provider must be a string or null")
+            endpoint = old_endpoint or value.get("default_provider")
+            if endpoint is not None and not isinstance(endpoint, str):
+                raise ValueError("Default model provider must be a string")
+            profile = providers.get(endpoint) if endpoint else None
+            model = profile.get("model", ProviderConfig.model_fields["model"].default) if isinstance(profile, dict) else getattr(profile, "model", "")
+            decoded[tier] = {"endpoint_id": endpoint, "model_id": model or ""} if endpoint else None
+        return decoded
+
+
+class StrictRiskPolicyModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        allow_inf_nan=False,
+        validate_assignment=True,
+    )
+
+
+class RiskCapitalPolicy(StrictRiskPolicyModel):
+    # Existing v1/v2 policies intentionally migrate to account equity because
+    # this default is merged underneath every persisted override.
+    base_source: Literal["account_equity", "custom"] = "account_equity"
+    base_usdt: float = Field(default=100.0, gt=0)
+    max_position_margin_usdt: float = Field(default=50.0, gt=0)
+    # Per-symbol cumulative bound (CUM-ADD), expressed as a COUNT of full-size
+    # entries — never a currency amount. Same-symbol adds average-merge into ONE
+    # position, so the single-position cap does not bound repeated accumulation.
+    # The engine derives the USD ceiling from the same formula sizing uses
+    # (capital_base × per_trade_risk_pct × leverage × this count), so a first
+    # entry is always exactly 1/N of the cap and can never be rejected by it at
+    # any account size or leverage. A hardcoded dollar cap silently goes stale as
+    # equity grows; a count cannot. 0 disables the check.
+    max_per_symbol_entries: int = Field(default=3, ge=0)
+    max_total_exposure_pct: float = Field(default=5.0, ge=0)
+
+
+class RiskLossPolicy(StrictRiskPolicyModel):
+    max_single_trade_risk_pct: float = Field(default=0.25, gt=0)
+    max_daily_loss_pct: float = Field(default=1.0, gt=0)
+
+
+class RiskPositionsPolicy(StrictRiskPolicyModel):
+    max_open_positions: int = Field(default=3, ge=1)
+    allow_short: bool = True
+
+
+class RiskLeveragePolicy(StrictRiskPolicyModel):
+    futures_cap: int = Field(default=2, ge=1)
+    major_cap: int = Field(default=3, ge=1)
+    mid_cap: int = Field(default=2, ge=1)
+    alt_cap: int = Field(default=1, ge=1)
+    account_cap: float = Field(default=1.5, ge=1)
+
+
+class RiskMarginPolicy(StrictRiskPolicyModel):
+    warning_ratio: float = Field(default=0.70, ge=0, le=1)
+    block_ratio: float = Field(default=0.85, ge=0, le=1)
+    min_entry_liquidation_buffer_pct: float = Field(default=5.0, gt=0)
+    runtime_liquidation_buffer_pct: float = Field(default=3.0, gt=0)
+
+
+class RiskCorrelationPolicy(StrictRiskPolicyModel):
+    enabled: bool = True
+    max_sector_concentration_pct: float = Field(default=60.0, ge=0)
+    max_portfolio_beta: float = Field(default=3.0, ge=0)
+    min_positions_for_concentration: int = Field(default=4, ge=0)
+
+
+class RiskExitPolicy(StrictRiskPolicyModel):
+    catastrophic_stop_enabled: bool = True
+    catastrophic_stop_pct: float = Field(default=10.0, gt=0, le=100)
+    catastrophic_stop_pct_serenity: float = Field(default=15.0, gt=0, le=100)
+    horizon_hard_backstop_mult: float = Field(default=3.0, gt=0)
+    # Horizon-due review may hold (roll the authored horizon) instead of
+    # flattening. Default True is the safer behavior: expiry is not a forced
+    # close. False restores close-or-explicit-extend.
+    horizon_due_allow_hold: bool = True
+
+
+class RiskEligibilityPolicy(StrictRiskPolicyModel):
+    family_min_samples: int = Field(default=30, ge=0)
+    family_min_win_rate_pct: float = Field(default=50.0, ge=0, le=100)
+    # Exchange-demo entry quality (ignored on live when left at these defaults).
+    # min_regime_confidence_to_enter <= 0 disables the confidence stand-down.
+    # family_min_expectancy is None on live; 0.0 on demo means "must not be negative".
+    min_regime_confidence_to_enter: float = Field(default=0.0, ge=0, le=1)
+    sideways_standdown: bool = False
+    family_min_expectancy: float | None = None
+
+
+class ModeRiskPolicy(StrictRiskPolicyModel):
+    policy_id: str = Field(min_length=1)
+    revision: int = Field(default=1, ge=1)
+    capital: RiskCapitalPolicy = Field(default_factory=RiskCapitalPolicy)
+    loss: RiskLossPolicy = Field(default_factory=RiskLossPolicy)
+    positions: RiskPositionsPolicy = Field(default_factory=RiskPositionsPolicy)
+    leverage: RiskLeveragePolicy = Field(default_factory=RiskLeveragePolicy)
+    margin: RiskMarginPolicy = Field(default_factory=RiskMarginPolicy)
+    correlation: RiskCorrelationPolicy = Field(default_factory=RiskCorrelationPolicy)
+    exits: RiskExitPolicy = Field(default_factory=RiskExitPolicy)
+    eligibility: RiskEligibilityPolicy | None = None
+    auto_trip_mode_brake_on_daily_loss: bool = False
+
+
+LIVE_RISK_POLICY_BOUNDS: dict[str, tuple[float, float]] = {
+    "loss.max_daily_loss_pct": (0.1, 20.0),
+    "loss.max_single_trade_risk_pct": (0.01, 10.0),
+    "capital.max_total_exposure_pct": (1.0, 50.0),
+    "capital.max_position_margin_usdt": (1.0, 100_000.0),
+    "capital.base_usdt": (1.0, 100_000.0),
+    "capital.max_per_symbol_entries": (0, 20),
+    "leverage.futures_cap": (1, 20),
+    "leverage.major_cap": (1, 10),
+    "leverage.mid_cap": (1, 5),
+    "leverage.alt_cap": (1, 3),
+    "leverage.account_cap": (1.0, 5.0),
+    "margin.min_entry_liquidation_buffer_pct": (1.0, 20.0),
+    "margin.runtime_liquidation_buffer_pct": (1.0, 20.0),
+    "margin.warning_ratio": (0.3, 0.95),
+    "margin.block_ratio": (0.5, 0.99),
+    "positions.max_open_positions": (1, 50),
+    "correlation.max_sector_concentration_pct": (10.0, 100.0),
+    "correlation.max_portfolio_beta": (0.5, 10.0),
+    "correlation.min_positions_for_concentration": (1, 200),
+    "eligibility.family_min_samples": (1, 500),
+    "eligibility.family_min_win_rate_pct": (0.0, 100.0),
+}
+
+
+def validate_mode_risk_policy(mode: Literal["demo", "live"], policy: ModeRiskPolicy) -> None:
+    """Validate the mode-aware contract at every Risk Policy ingress."""
+    invalid = []
+    if not policy.policy_id.strip():
+        invalid.append("policy_id")
+    if mode == "live":
+        if policy.eligibility is None:
+            invalid.append("eligibility")
+        for path, (lo, hi) in LIVE_RISK_POLICY_BOUNDS.items():
+            parent, _, child = path.partition(".")
+            group = getattr(policy, parent)
+            if group is None:
+                continue
+            value = float(getattr(group, child))
+            if not lo <= value <= hi:
+                invalid.append(path)
+    if invalid:
+        raise ValueError(f"Invalid risk policy fields: {sorted(invalid)}")
+
+
+def _legacy_mode_policy(data: dict, mode: str) -> dict:
+    is_live = mode == "live"
+    suffix = "live" if is_live else "demo"
+    return {
+        "policy_id": f"{mode}-migrated-v2",
+        "revision": 1,
+        "capital": {
+            "base_usdt": data.get(
+                "max_live_limited_cap_usdt" if is_live else "starting_capital_usdt",
+                100.0,
+            ),
+            "max_position_margin_usdt": data.get(
+                f"max_{suffix}_position_margin_usdt",
+                data.get(
+                    f"max_{suffix}_position_notional_usdt",
+                    50.0 if is_live else 100_000.0,
+                ),
+            ),
+            "max_per_symbol_entries": data.get("max_per_symbol_entries", 3),
+            # Demo default 0 = disabled. This check bounds TOTAL NOTIONAL against
+            # equity, i.e. it is a leverage cap wearing a percentage: at 100% it
+            # pins the account to 1.0x while `leverage.account_cap` says 10x, and
+            # the tighter, leverage-BLIND one silently won. #17 bounds the same
+            # ratio correctly (sum(notional x leverage) / equity), so keeping both
+            # only means one of them is dead weight. Live keeps its 5% envelope,
+            # where 1.0x-equivalent exposure is the intended conservatism.
+            # Live reads the flat max_total_live_exposure_pct override; demo is
+            # always 0.0 here because check #17 (account leverage) governs the same
+            # ratio correctly — the flat key must not bleed into demo's base.
+            "max_total_exposure_pct": (
+                data.get("max_total_live_exposure_pct", 5.0) if is_live else 0.0
+            ),
+        },
+        "loss": {
+            "max_single_trade_risk_pct": data.get(
+                "max_single_trade_risk_pct" if is_live
+                else "max_demo_single_trade_risk_pct",
+                0.25 if is_live else 20.0,
+            ),
+            "max_daily_loss_pct": data.get("max_daily_loss_pct", 1.0),
+        },
+        "positions": {
+            "max_open_positions": data.get(
+                f"max_open_positions_{suffix}", 3 if is_live else 200
+            ),
+            "allow_short": data.get(f"allow_short_{suffix}", True),
+        },
+        "leverage": {
+            "futures_cap": data.get(
+                f"max_futures_leverage_{suffix}", 2 if is_live else 125
+            ),
+            "major_cap": data.get(
+                f"max_leverage_major_{suffix}", 3 if is_live else 20
+            ),
+            "mid_cap": data.get(
+                f"max_leverage_mid_{suffix}", 2 if is_live else 10
+            ),
+            "alt_cap": data.get(
+                f"max_leverage_alt_{suffix}", 1 if is_live else 5
+            ),
+            "account_cap": data.get(
+                f"max_account_leverage_{suffix}", 1.5 if is_live else 10.0
+            ),
+        },
+        "margin": {
+            "warning_ratio": data.get("futures_margin_warning_ratio", 0.70),
+            "block_ratio": data.get("futures_margin_force_close_ratio", 0.85),
+            "min_entry_liquidation_buffer_pct": data.get(
+                "min_liquidation_buffer_pct", 5.0
+            ),
+            "runtime_liquidation_buffer_pct": data.get(
+                "runtime_liquidation_buffer_pct", 3.0
+            ),
+        },
+        "correlation": {
+            "enabled": data.get("correlation_guard_enabled", True),
+            "max_sector_concentration_pct": data.get(
+                "max_sector_concentration_pct", 60.0
+            ),
+            "max_portfolio_beta": data.get("max_portfolio_beta", 3.0),
+        },
+        "exits": {
+            "catastrophic_stop_enabled": data.get(
+                "catastrophic_stop_enabled", True
+            ),
+            "catastrophic_stop_pct": data.get("catastrophic_stop_pct", 10.0),
+            "catastrophic_stop_pct_serenity": data.get(
+                "catastrophic_stop_pct_serenity", 15.0
+            ),
+            "horizon_hard_backstop_mult": data.get(
+                "horizon_hard_backstop_mult", 3.0
+            ),
+            "horizon_due_allow_hold": data.get(
+                "horizon_due_allow_hold", True
+            ),
+        },
+        "eligibility": (
+            {
+                "family_min_samples": data.get("live_family_min_samples", 30),
+                "family_min_win_rate_pct": data.get(
+                    "live_family_min_win_rate_pct", 50.0
+                ),
+                "min_regime_confidence_to_enter": 0.0,
+                "sideways_standdown": False,
+                "family_min_expectancy": None,
+            }
+            if is_live
+            else {
+                "family_min_samples": data.get("demo_family_min_samples", 20),
+                "family_min_win_rate_pct": 0.0,
+                "min_regime_confidence_to_enter": data.get(
+                    "demo_min_regime_confidence_to_enter", 0.60
+                ),
+                "sideways_standdown": data.get("demo_sideways_standdown", True),
+                "family_min_expectancy": data.get("demo_family_min_expectancy", 0.0),
+            }
+        ),
+        "auto_trip_mode_brake_on_daily_loss": data.get(
+            f"kill_switch_enabled_{suffix}", is_live
+        ),
+    }
+
+
+def default_mode_risk_policy(mode: Literal["demo", "live"]) -> ModeRiskPolicy:
+    """Return the current shipped default for one independently owned mode."""
+    return ModeRiskPolicy.model_validate(_legacy_mode_policy({}, mode))
+
+
+def _merge_policy(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        # None override on a nested dict → keep default (None = "use shipped default")
+        if value is None and isinstance(merged.get(key), dict):
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_policy(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+
+# Flat legacy risk field -> (mode, group, field) in the nested v2 policy.
+# Hoisted out of RiskConfig.__setattr__ so one table drives BOTH directions:
+# __setattr__ pushes a flat write down into nested, and validate_mode_policies
+# mirrors nested back up into flat so a nested-only write cannot leave a flat
+# reader stale.  Only these mode-suffixed names are mirrored -- see
+# validate_mode_policies for why the shared table is not.
+_RISK_MODE_PATHS = {
+    "max_live_limited_cap_usdt": ("live", "capital", "base_usdt"),
+    "starting_capital_usdt": ("demo", "capital", "base_usdt"),
+    "max_live_position_notional_usdt": (
+        "live", "capital", "max_position_margin_usdt",
+    ),
+    "max_demo_position_notional_usdt": (
+        "demo", "capital", "max_position_margin_usdt",
+    ),
+    "max_live_position_margin_usdt": (
+        "live", "capital", "max_position_margin_usdt",
+    ),
+    "max_demo_position_margin_usdt": (
+        "demo", "capital", "max_position_margin_usdt",
+    ),
+    "max_total_live_exposure_pct": (
+        "live", "capital", "max_total_exposure_pct",
+    ),
+    "max_single_trade_risk_pct": (
+        "live", "loss", "max_single_trade_risk_pct",
+    ),
+    "max_demo_single_trade_risk_pct": (
+        "demo", "loss", "max_single_trade_risk_pct",
+    ),
+    "max_open_positions_live": (
+        "live", "positions", "max_open_positions",
+    ),
+    "max_open_positions_demo": (
+        "demo", "positions", "max_open_positions",
+    ),
+    "allow_short_live": ("live", "positions", "allow_short"),
+    "allow_short_demo": ("demo", "positions", "allow_short"),
+    "max_futures_leverage_live": (
+        "live", "leverage", "futures_cap",
+    ),
+    "max_futures_leverage_demo": (
+        "demo", "leverage", "futures_cap",
+    ),
+    "max_leverage_major_live": ("live", "leverage", "major_cap"),
+    "max_leverage_major_demo": ("demo", "leverage", "major_cap"),
+    "max_leverage_mid_live": ("live", "leverage", "mid_cap"),
+    "max_leverage_mid_demo": ("demo", "leverage", "mid_cap"),
+    "max_leverage_alt_live": ("live", "leverage", "alt_cap"),
+    "max_leverage_alt_demo": ("demo", "leverage", "alt_cap"),
+    "max_account_leverage_live": (
+        "live", "leverage", "account_cap",
+    ),
+    "max_account_leverage_demo": (
+        "demo", "leverage", "account_cap",
+    ),
+    "kill_switch_enabled_live": (
+        "live", None, "auto_trip_mode_brake_on_daily_loss",
+    ),
+    "kill_switch_enabled_demo": (
+        "demo", None, "auto_trip_mode_brake_on_daily_loss",
+    ),
+    "live_family_min_samples": (
+        "live", "eligibility", "family_min_samples",
+    ),
+    "live_family_min_win_rate_pct": (
+        "live", "eligibility", "family_min_win_rate_pct",
+    ),
+    "demo_sideways_standdown": (
+        "demo", "eligibility", "sideways_standdown",
+    ),
+    "demo_min_regime_confidence_to_enter": (
+        "demo", "eligibility", "min_regime_confidence_to_enter",
+    ),
+    "demo_family_min_samples": (
+        "demo", "eligibility", "family_min_samples",
+    ),
+    "demo_family_min_expectancy": (
+        "demo", "eligibility", "family_min_expectancy",
+    ),
+}
+
+
+class RiskConfig(BaseModel):
+    schema_version: int = 4
+    demo: ModeRiskPolicy
+    live: ModeRiskPolicy
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_flat_policies(cls, value):
+        data = dict(value or {})
+        # `max_per_symbol_notional_usdt` became `max_per_symbol_entries` (a count).
+        # The policy models are extra="forbid", so a persisted config still
+        # carrying the retired key would fail validation and take the whole
+        # runtime down — it must be dropped here, before model construction.
+        # The old absolute value is deliberately NOT converted: a dollar ceiling
+        # carries no information about how many entries it was meant to allow,
+        # and the stale value is exactly what this migration exists to retire.
+        data.pop("max_per_symbol_notional_usdt", None)
+        # Flat legacy field rename: max_{live/demo}_position_notional_usdt →
+        # max_{live/demo}_position_margin_usdt. Keep the old key in data so
+        # _legacy_mode_policy can still read it; add the new key for the flat field.
+        for suffix, default in (("live", 50.0), ("demo", 100_000.0)):
+            old_flat = f"max_{suffix}_position_notional_usdt"
+            new_flat = f"max_{suffix}_position_margin_usdt"
+            if old_flat in data and new_flat not in data:
+                data[new_flat] = data[old_flat]
+        # schema_version < 4 migration: demo.capital.max_total_exposure_pct was
+        # persisted as 100.0 by _legacy_mode_policy's old default, or 5.0 by the
+        # flat max_total_live_exposure_pct bleeding into demo. Both were bugs:
+        # 100.0 made check #12 a 1.0x leverage cap, 5.0 came from a live-only flat
+        # override polluting demo's base.  Check #17 governs the same ratio
+        # correctly, so demo defaults to 0 (disabled) as of schema_version 4.
+        # Persisted 100.0 or 5.0 on schema_version < 4 are unambiguously the old
+        # buggy defaults, not user choices — erase them so the code default (0.0)
+        # wins.  Any other value is kept as-is, including a freshly saved 100 or 5
+        # on schema_version 4.
+        incoming_version = int(data.get("schema_version", 0))
+        if incoming_version < 4:
+            demo_override = data.get("demo")
+            if isinstance(demo_override, dict):
+                capital = demo_override.get("capital")
+                val = capital.get("max_total_exposure_pct") if isinstance(capital, dict) else None
+                if val in (100.0, 5.0):
+                    capital = {k: v for k, v in capital.items() if k != "max_total_exposure_pct"}
+                    data["demo"] = {**demo_override, "capital": capital}
+        for mode in ("demo", "live"):
+            override = data.get(mode)
+            if isinstance(override, dict):
+                capital = override.get("capital")
+                if isinstance(capital, dict):
+                    capital = dict(capital)
+                    capital.pop("max_per_symbol_notional_usdt", None)
+                    old_val = capital.pop("max_position_notional_usdt", None)
+                    if old_val is not None:
+                        new_val = capital.get("max_position_margin_usdt")
+                        if new_val is not None and new_val != old_val:
+                            raise ValueError(
+                                f"{mode}.capital: conflicting max_position_notional_usdt "
+                                f"({old_val}) and max_position_margin_usdt ({new_val})"
+                            )
+                        capital.setdefault("max_position_margin_usdt", old_val)
+                    override = {**override, "capital": capital}
+                    data[mode] = override
+            base = _legacy_mode_policy(data, mode)
+            data[mode] = (
+                _merge_policy(base, override)
+                if isinstance(override, dict)
+                else base
+            )
+        data["schema_version"] = 4
+        return data
+
+    @model_validator(mode="after")
+    def validate_mode_policies(self):
+        validate_mode_risk_policy("demo", self.demo)
+        validate_mode_risk_policy("live", self.live)
+        self._mirror_nested_into_flat()
+        return self
+
+    def _mirror_nested_into_flat(self) -> None:
+        """Refresh the flat legacy aliases from the nested policies they alias.
+
+        `__setattr__` syncs flat -> nested, but nothing synced the other way, and
+        five writers persist a nested block with no flat write: the autonomous
+        operator loop's `reduce_sizing` (`operator_loop.py:590`, `:621`) and the
+        copy / replace / reset-defaults risk-policy routes (`settings.py:2201`,
+        `:2237`, `:2273`).  `_save_config_locked` dumps the full model, and
+        `migrate_flat_policies` lets the nested override win on the next load, so
+        the flat attribute kept its stale default forever after.
+
+        Three production readers take a flat field off a RAW config with no
+        `legacy_view`, plus `GET /settings` which hands the whole flat dump to the
+        33-field Risk-Limits editor:
+          - `risk/engine.py:2971` `check_account_leverage`, served to the dashboard
+            by `server/routes/risk.py:197` -- reported cap 1.5 while the admission
+            gate correctly enforced a nested 3.0
+          - `diagnostics/doctor.py:762` -- the demo margin-cap blocker check could
+            never fire once the operator loop had reduced the nested cap
+          - `trust/guard_chain.py:173` -- shared field, and that module has no
+            production callers
+
+        Enforcement was never wrong: the admission tree rebinds
+        `cfg.risk = resolved_policy.legacy_view(cfg.risk)` (`engine.py:1026`), so
+        every check inside it already read nested.  This was a monitoring and
+        diagnostics divergence, which is why it survived 31 green account-leverage
+        specs -- every one of them writes the FLAT key.
+
+        Only `_RISK_MODE_PATHS` is mirrored.  The shared table (`max_daily_loss_pct`,
+        the margin ratios, the catastrophic-stop fields) has ONE flat name per pair
+        of nested values, so a nested-only write that makes demo and live disagree
+        has no correct single flat answer.  Picking a side silently would be a new
+        bug wearing the old bug's clothes; its only raw reader is the caller-less
+        `guard_chain`.  Deleting those flat names is the real fix and is its own
+        change.
+
+        `object.__setattr__` bypasses the flat -> nested hook, so this cannot
+        recurse.  It also bypasses `validate_assignment`, which is safe here
+        because `validate_mode_risk_policy` above has already bounded the nested
+        value being copied up.
+        """
+        declared = type(self).model_fields
+        for flat, (mode, group, field) in _RISK_MODE_PATHS.items():
+            if flat not in declared:
+                continue
+            target = getattr(self, mode)
+            if group is not None:
+                target = getattr(target, group, None)
+            if target is None:
+                continue
+            object.__setattr__(self, flat, getattr(target, field))
+
+    def __setattr__(self, name: str, value) -> None:
+        """Keep one-release legacy assignments synchronized with v2 policies."""
+        super().__setattr__(name, value)
+        if "demo" not in self.__dict__ or "live" not in self.__dict__:
+            return
+        mode_paths = _RISK_MODE_PATHS
+        shared_paths = {
+            "max_per_symbol_entries": ("capital", "max_per_symbol_entries"),
+            "max_daily_loss_pct": ("loss", "max_daily_loss_pct"),
+            "futures_margin_warning_ratio": ("margin", "warning_ratio"),
+            "futures_margin_force_close_ratio": ("margin", "block_ratio"),
+            "min_liquidation_buffer_pct": (
+                "margin", "min_entry_liquidation_buffer_pct",
+            ),
+            "runtime_liquidation_buffer_pct": (
+                "margin", "runtime_liquidation_buffer_pct",
+            ),
+            "correlation_guard_enabled": ("correlation", "enabled"),
+            "max_sector_concentration_pct": (
+                "correlation", "max_sector_concentration_pct",
+            ),
+            "max_portfolio_beta": ("correlation", "max_portfolio_beta"),
+            "catastrophic_stop_enabled": ("exits", "catastrophic_stop_enabled"),
+            "catastrophic_stop_pct": ("exits", "catastrophic_stop_pct"),
+            "catastrophic_stop_pct_serenity": (
+                "exits", "catastrophic_stop_pct_serenity",
+            ),
+            "horizon_hard_backstop_mult": (
+                "exits", "horizon_hard_backstop_mult",
+            ),
+            "horizon_due_allow_hold": (
+                "exits", "horizon_due_allow_hold",
+            ),
+        }
+        if name in mode_paths:
+            mode, group, field = mode_paths[name]
+            target = getattr(self, mode)
+            if group is not None:
+                target = getattr(target, group)
+            if target is not None:
+                setattr(target, field, value)
+        elif name in shared_paths:
+            group, field = shared_paths[name]
+            for mode in ("demo", "live"):
+                setattr(getattr(getattr(self, mode), group), field, value)
+
+    # Kill switch auto-trigger: when enabled, breaching max_daily_loss_pct trips
+    # the global trading brake automatically. Separate toggles for demo and live.
+    kill_switch_enabled_live: bool = True
+    kill_switch_enabled_demo: bool = False
+    max_daily_loss_pct: float = 1.0
+    max_single_trade_risk_pct: float = 0.25
+    max_total_live_exposure_pct: float = 5.0
+    # Hard ceiling and fallback when the matching account has no local balance
+    # snapshot. Exchange-backed orders use min(this value, available USDT).
+    max_live_position_margin_usdt: float = 50.0
+    max_live_limited_cap_usdt: float = 100.0
+    # Paper/demo boundaries remain explicit Risk Engine inputs even though their
+    # dashboard/API controls do not impose application-level maximums. Account
+    # balance, shared guards, and exchange constraints can still tighten them.
+    starting_capital_usdt: float = 100.0
+    # Default demo configured ceiling/fallback. Exchange-backed demo orders use
+    # the lower of this value and the demo account's cached available USDT.
+    max_demo_position_margin_usdt: float = 100_000.0
+    # Per-symbol cumulative bound (CUM-ADD), as a COUNT of full-size entries.
+    # Same-symbol+direction adds average-merge into ONE position, so repeated adds
+    # can grow a position past the single-trade cap. The engine derives the USD
+    # ceiling from sizing's own formula, so this stays correct at any account size
+    # and any leverage. Replaced the former absolute `max_per_symbol_notional_usdt`,
+    # whose fixed $400 came to reject every normal first entry once equity passed
+    # $400 / (per_trade_risk_pct × leverage). 0 disables.
+    max_per_symbol_entries: int = 3
+    max_demo_single_trade_risk_pct: float = 20.0
+    max_futures_leverage_live: int = 2
+    max_futures_leverage_demo: int = 125
+    # Per-asset-tier leverage limits (major=BTC/ETH, mid=SOL/BNB/XRP, alt=others)
+    max_leverage_major_demo: int = 20
+    max_leverage_major_live: int = 3
+    max_leverage_mid_demo: int = 10
+    max_leverage_mid_live: int = 2
+    max_leverage_alt_demo: int = 5
+    max_leverage_alt_live: int = 1
+    # Account-level aggregate leverage cap: sum(notional*leverage)/equity
+    max_account_leverage_demo: float = 10.0
+    max_account_leverage_live: float = 1.5
+    # Margin monitoring thresholds
+    futures_margin_warning_ratio: float = 0.70
+    futures_margin_force_close_ratio: float = 0.85
+    # Liquidation buffer: reject if est. liq price within X% of entry
+    min_liquidation_buffer_pct: float = 5.0
+    # ── Layer-0 catastrophic stop (exit-intent plan M6) ────────────────────────
+    # Force-close a position when its ADVERSE move from entry exceeds this %,
+    # regardless of the position's own stop. This is the hard backstop that makes
+    # handing stop discretion to the System Operator safe: it fires before any
+    # strategy exit and is NOT relaxable by an ExitPlan. School-aware — serenity
+    # (long-horizon research) tolerates a wider drawdown. Disable → no force-close.
+    catastrophic_stop_enabled: bool = True
+    catastrophic_stop_pct: float = 10.0            # short_term / default school
+    catastrophic_stop_pct_serenity: float = 15.0   # serenity holdings
+    # Runtime liquidation-proximity monitor (M6): emergency force-close a LEVERAGED
+    # position when current price is within this % of its estimated liquidation
+    # price. Tighter than the pre-trade min_liquidation_buffer_pct because by now the
+    # position is live and near wipeout. Only applies when leverage > 1.
+    runtime_liquidation_monitor_enabled: bool = True
+    runtime_liquidation_buffer_pct: float = 3.0
+    # Horizon hard backstop (exit-intent plan M2/D3, N=3): when the Operator sets an
+    # expected_horizon on a position, hitting it wakes the Operator for a must-answer
+    # decision (close / extend). The position is auto-closed only at the far backstop
+    # min(expected_horizon * this multiplier, the school's absolute max_hold).
+    horizon_hard_backstop_mult: float = 3.0
+    horizon_due_allow_hold: bool = True
+    max_open_positions_live: int = 3
+    max_open_positions_demo: int = 200
+    # "whitelist" = only symbol_list may trade; "blacklist" = all except symbol_list.
+    symbol_filter_mode: Literal["whitelist", "blacklist"] = "blacklist"
+    symbol_list: list[str] = Field(default_factory=list)
+    allowed_exchange: str = ""
+    allow_short_demo: bool = True
+    allow_short_live: bool = True
+    require_risk_check_for_all_orders: bool = True
+    # Portfolio correlation guard (check #16)
+    correlation_guard_enabled: bool = True
+    max_sector_concentration_pct: float = 60.0
+    max_portfolio_beta: float = 3.0
+    # Scanner-family live-eligibility gate (check #14, Position C 2026-07-02).
+    # Replaces the deleted strategy-FSM eligibility gate: a LIVE trade needs its
+    # scanner_family (in the proposal's direction) to show a proven clean-window
+    # edge — at least N settled forward outcomes AND win_rate >= threshold.
+    live_family_min_samples: int = 30
+    live_family_min_win_rate_pct: float = 50.0
+    # Demo-mode entry quality aliases (check #14 for demo)
+    demo_sideways_standdown: bool = True
+    demo_min_regime_confidence_to_enter: float = 0.60
+    demo_family_min_samples: int = 0
+    demo_family_min_expectancy: float | None = 0.0
+
+
+class TelegramConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    enabled: bool = False
+    allowed_chat_ids: list[int] = Field(default_factory=list)
+    notify_trade_fills: bool = True
+    notify_daily_summary: bool = True
+    daily_summary_hour_cst: NotificationHour = 8
+    dnd_enabled: bool = False
+    dnd_start_hour: NotificationHour = 23
+    dnd_end_hour: NotificationHour = 7
+
+
+class WebhookConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True, hide_input_in_errors=True)
+
+    enabled: bool = False
+    url: str = ""
+    secret: str = ""
+    notify_trade_fills: bool = True
+    notify_alerts: bool = True
+    notify_daily_summary: bool = True
+    timeout_sec: WebhookTimeoutSeconds = 10.0
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def normalize_url(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_enabled_url(cls, value: object) -> object:
+        if not isinstance(value, Mapping) or not value.get("enabled"):
+            return value
+        raw_url = value.get("url")
+        if not cls.url_is_usable(raw_url):
+            raise ValueError("enabled webhook requires a valid HTTP(S) URL")
+        return value
+
+    @staticmethod
+    def url_is_usable(raw_url: object) -> bool:
+        url = raw_url.strip() if isinstance(raw_url, str) else ""
+        if not url or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in url
+        ):
+            return False
+        try:
+            parsed = urlsplit(url)
+            port = parsed.port
+            hostname = parsed.hostname
+        except ValueError:
+            return False
+        return not (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or port == 0
+        )
+
+
+class HealthConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    enabled: bool = True
+    alert_via_telegram: bool = True
+    alert_via_windows_toast: bool = True
+    max_agent_failure_ratio: float = Field(default=0.5, ge=0.0, le=1.0)
+    llm_unavailable_alert_after: int = Field(default=3, ge=1, le=100)
+    # Silent-degradation guard: flag the market-data feed as stale when the newest
+    # snapshot is older than this (market data is collected every 5 min).
+    market_data_max_staleness_min: int = Field(default=30, ge=5, le=1440)
+    # Gateway supervisor (process self-healing).
+    supervisor_max_restarts: int = Field(default=5, ge=1, le=50)
+    supervisor_restart_window_sec: int = Field(default=600, ge=60, le=86400)
+    supervisor_backoff_cap_sec: int = Field(default=60, ge=5, le=3600)
+    # --- Deterministic self-heal: the health-check job ACTS on the signals it
+    # already computes (NO LLM). Closes the gap where /api/health flagged stale
+    # code for 11h but nothing consumed the signal to restart.
+    self_heal_enabled: bool = True            # master toggle
+    # min_interval (30m) is deliberately > supervisor_restart_window_sec (600s):
+    # two self-heal restarts can never fall inside one supervisor window, so
+    # self-heal alone can never exhaust the supervisor's give-up budget.
+    self_heal_min_interval_sec: int = Field(default=1800, ge=300, le=86400)
+    self_heal_max_per_hour: int = Field(default=2, ge=0, le=12)
+    self_heal_code_drift: bool = True         # restart on code_updated_pending_restart (self-terminating)
+    self_heal_market_data: bool = True        # restart on market_data_stale (rate-limited; external root cause)
+    self_heal_port_cleanup: bool = True       # clean orphan/port-holder PIDs (cleanup, not restart)
+    # LLM-unavailable / kill_switch / agent_failure are alert-only by design —
+    # a restart cannot fix an external outage, human kill switch, or bad strategy.
+    # Fail-loud LLM startup gate: at boot, probe every enabled provider with a REAL
+    # inference call; if none can actually complete one, pause the trading loop
+    # (runtime.paused=True) instead of running blind. The process stays ALIVE (it is
+    # NOT killed — that would just trigger a supervisor/watchdog respawn loop); the
+    # Web UI shows the degraded state and the operator resumes after fixing a provider.
+    # Default off: fresh installs have no providers configured (see ModelsConfig
+    # defaults), so gating startup on LLM connectivity would pause the runtime
+    # before the operator has any UI path to configure one. Existing installs
+    # that opted in keep their setting because loader.load_config merges on top
+    # of user-supplied values.
+    require_llm_at_startup: bool = False
+    startup_gate_max_retries: int = Field(default=3, ge=1, le=10)
+    startup_gate_retry_delay_sec: int = Field(default=15, ge=5, le=120)
+    # Auto-resume: when startup gate pauses the system, periodically probe LLM
+    # and auto-resume when connectivity is restored.
+    auto_resume_enabled: bool = True
+    auto_resume_interval_sec: int = Field(default=300, ge=30, le=3600)
+    # Stall detection: after this many consecutive failed probes, escalate to
+    # operator with root-cause classification (secret_missing vs network vs auth).
+    auto_resume_stall_threshold: int = Field(default=6, ge=1, le=100)
+    # backoff_factor must be > 1.0 to actually back off; le=10 caps runaway growth.
+    auto_resume_stall_backoff_factor: float = Field(default=2.0, ge=1.0, le=10.0)
+    # max_interval must be >= 1 to prevent a zero/negative sleep in the loop.
+    auto_resume_max_interval_sec: int = Field(default=1800, ge=1, le=86400)
+    # Exchange connectivity monitor: detect network outages and auto-pause/resume.
+    exchange_probe_interval_sec: int = Field(default=60, ge=10, le=300)
+    exchange_probe_failure_threshold: int = Field(default=3, ge=1, le=20)
+    exchange_auto_resume_interval_sec: int = Field(default=60, ge=10, le=600)
+    exchange_auto_resume_success_threshold: int = Field(default=2, ge=1, le=10)
+    exchange_stall_threshold: int = Field(default=30, ge=1, le=100)
+    # Layered pause: when True, pause only AI-dependent jobs (observer, trader,
+    # operator) while keeping data-collection jobs running. This prevents data
+    # gaps during LLM outages. When False, all jobs are halted (legacy behavior).
+    layered_pause_enabled: bool = True
+    # Startup Behavior Gate: when True, the gateway boots the API/Dashboard and
+    # essential data jobs but keeps AI decisions + new trading PAUSED until a set
+    # of ground-truth checks pass (DB integrity, config↔active-scope, exchange
+    # sync, no unexplained pending orders/closes, no active
+    # reconciliation incident, learning influence within bounds, no user
+    # pause/kill switch). On failure it records a durable blocker, keeps data
+    # collection running under a layered pause, surfaces the reason in
+    # Doctor/Health, and periodically re-checks. Default off (opt-in), matching
+    # require_llm_at_startup. See agent_runtime/startup_behavior_gate.py.
+    startup_behavior_gate_enabled: bool = False
+    # How often the startup-gate recheck loop re-evaluates while blocked.
+    startup_gate_recheck_interval_sec: int = Field(default=60, ge=5, le=3600)
+
+
+class RetentionConfig(BaseModel):
+    @field_validator("*")
+    @classmethod
+    def reject_nonpositive_values(cls, value: int | float) -> int | float:
+        if value <= 0:
+            raise ValueError("retention values must be positive")
+        return value
+
+    # Telemetry pruning (days). Trust-bearing records are NEVER pruned.
+    agent_runs_days: int = 90
+    tool_calls_days: int = 90
+    run_steps_days: int = 30
+    market_snapshots_days: int = 30
+    portfolio_snapshots_days: int = 90
+    jsonl_max_mb: float = 50.0
+    # Operational capacity budget, not a write-denial boundary. Trust-bearing
+    # writes always remain authoritative; crossing the budget raises diagnostics
+    # and asks the operator to inspect retention/compaction evidence.
+    app_db_capacity_mb: int = Field(default=2048, ge=512, le=65536)
+    # Opportunities older than this that are still 'open' are marked 'expired'.
+    # Prevents indefinite accumulation of stale signals (default: 48h).
+    opportunity_ttl_hours: int = 48
+
+    # ── Phase 3 retention windows (2026-07-17) ─────────────────────────────
+    # All values in days unless otherwise noted. Trust-bearing tables (audit chain,
+    # learning_*) are NEVER pruned regardless of what appears here. Windows below
+    # only govern telemetry/observability tables. See docs/design/data/RETENTION_POLICY.md.
+
+    # agent_shell_messages: type-tiered.
+    #   context messages (large, near-duplicated) drop first;
+    #   everything else keeps the full 14 days.
+    agent_shell_messages_context_days: int = 3
+    agent_shell_messages_other_days: int = 14
+    agent_run_steps_days: int = 14
+    agent_shell_events_days: int = 14
+    agent_shell_heartbeats_days: int = 2
+
+    # agent_shell_artifacts: type-tiered.
+    #   strategy_evaluation is high-volume, low-value → 7d.
+    #   proposal/report/daily_summary carry review evidence → 30d.
+    #   other artifact types default to 14d.
+    agent_shell_artifacts_strategy_days: int = 7
+    agent_shell_artifacts_proposal_days: int = 30
+    agent_shell_artifacts_other_days: int = 14
+
+    # agent_shell_tasks: split by terminal status. Completed tasks decay quickly,
+    # failed tasks are kept longer for post-mortem.
+    agent_shell_tasks_completed_days: int = 14
+    agent_shell_tasks_failed_days: int = 30
+    agent_shell_sessions_days: int = 14
+    agent_shell_commands_days: int = 14
+
+    # Filter family. `clean_window_cutoff` guard (Phase 2 decision A) still applies:
+    # candidate_outcomes older than the retention window are kept whenever they are
+    # still needed by an open experiment (min(now-days, min_open_experiment_started_at)).
+    filter_candidate_outcomes_days: int = 30
+    filter_decisions_days: int = 45
+    filter_decision_batches_days: int = 30
+    filter_shadow_experiments_days: int = 90
+
+    # Market/derivatives snapshots.
+    funding_rate_snapshots_days: int = 7
+    open_interest_snapshots_days: int = 7
+    coingecko_top_snapshots_days: int = 3
+    universe_feature_snapshots_days: int = 14
+    universe_snapshots_days: int = 30
+    universe_scanner_runs_days: int = 30
+
+    # Controller + causal-control telemetry.
+    controller_recommendations_days: int = 30
+    alpha_control_observations_days: int = 60
+    market_regimes_days: int = 60
+    serenity_evidence_days: int = 60
+    serenity_run_events_days: int = 60
+    runtime_sessions_days: int = 90
+    backtest_runs_days: int = 60
+
+    # market_ohlcv per-timeframe TTL. Newer, denser bars decay fastest;
+    # daily bars persist for training-window use.
+    market_ohlcv_1m_days: int = 2
+    market_ohlcv_5m_days: int = 7
+    market_ohlcv_15m_days: int = 30
+    market_ohlcv_1h_days: int = 90
+    market_ohlcv_4h_days: int = 180
+    market_ohlcv_1d_days: int = 730
+
+    # Filesystem retention (days unless keep_recent).
+    agent_shell_session_logs_days: int = 14
+    agent_shell_task_notes_completed_days: int = 7
+    agent_shell_task_notes_failed_days: int = 30
+    backups_keep_recent: int = 7
+    diagnostics_days: int = 14
+    pre_migration_backup_days: int = 30
+
+
+class MarketAwareExitsConfig(BaseModel):
+    """Market-aware exit intelligence for position_manager."""
+    enabled: bool = False
+    min_hold_hours_before_market_exit: float = 0.5
+    max_signal_age_min: float = 35.0
+    urgent_exit_score: int = Field(default=80, ge=50, le=100)
+    urgent_exit_max_pnl_pct: float = -0.3
+    tighten_stop_score: int = Field(default=60, ge=30, le=90)
+    confidence_collapse_score: int = Field(default=30, ge=10, le=50)
+    tighten_atr_mult: float = Field(default=0.8, ge=0.3, le=2.0)
+    tighten_pct: float = 0.8
+
+
+class PersonaParam(BaseModel):
+    """One Operator-decidable sizing parameter as a bounded range [min, init, max].
+
+    Persona supplies the range; the System Operator decides the actual value WITHIN
+    it (P2+, context-aware); the risk-engine hard caps remain the outer envelope the
+    range can never exceed. For P1 the effective value is `init`.
+    See docs/design/operator/dynamic_sizing_operator_persona_design.md.
+    """
+    min: float
+    init: float
+    max: float
+
+
+class TradingPersona(BaseModel):
+    """A named 'trading style' = a bundle of Operator-decidable sizing bounds.
+
+    `params` maps a param name → its [min,init,max] range. `operator_decidable`
+    marks which params the Operator may move within range (P2+); others stay pinned
+    at init. Recognised param keys (P1): notional_usdt, kelly_fraction, leverage_max,
+    per_trade_loss_pct, max_adds, add_fraction.
+    """
+    name: str
+    description: str = ""
+    params: dict[str, PersonaParam] = Field(default_factory=dict)
+    operator_decidable: dict[str, bool] = Field(default_factory=dict)
+    # Progressive-unlock ladder (P4): the ORDER active sizing params are unfrozen in when
+    # persona_progressive_unlock_enabled is on. Position i unlocks only after the
+    # earlier ones and enough clean samples accrue; distress refreezes all. Empty =
+    # never progressively unlock this persona (use the static operator_decidable).
+    # Runtime ignores reference-only fields that do not have an entry consumer.
+    unlock_ladder: list[str] = Field(default_factory=list)
+
+
+def _default_personas() -> dict:
+    """Built-in personas. `conservative` init values equal the current flat-config
+    defaults so enabling persona sizing with the default persona is a ZERO behavior
+    change. `balanced`/`roll` widen the ranges (roll = small base + high leverage +
+    pyramid, per owner's 滚仓 brief). All ranges stay inside the risk-engine hard
+    envelope; the Operator/Learning can never exceed the envelope regardless.
+    """
+    def P(mn, i, mx):
+        return PersonaParam(min=mn, init=i, max=mx)
+    return {
+        "conservative": TradingPersona(
+            name="conservative",
+            description="现状档:窄区间,init=当前扁平配置(启用后零行为变化)",
+            params={
+                "notional_usdt": P(5, 25, 100),      # == default_notional_usdt
+                "kelly_fraction": P(0.10, 0.25, 0.40),  # == vol_kelly_cap_fraction
+                "leverage_max": P(1, 5, 5),
+                "per_trade_loss_pct": P(1.0, 2.0, 2.0),  # == default_stop_loss_pct
+                "max_adds": P(0, 0, 0),
+                "add_fraction": P(0.0, 0.0, 0.0),
+            },
+            operator_decidable={},  # P1: all pinned at init
+        ),
+        "balanced": TradingPersona(
+            name="balanced",
+            description="温和放大:更大基准与温和加仓上限",
+            params={
+                "notional_usdt": P(25, 200, 500),
+                "kelly_fraction": P(0.15, 0.35, 0.50),
+                "leverage_max": P(1, 5, 5),
+                "per_trade_loss_pct": P(1.0, 2.0, 3.0),
+                "max_adds": P(0, 0, 1),
+                "add_fraction": P(0.0, 0.0, 0.5),
+            },
+            operator_decidable={},
+            unlock_ladder=["notional_usdt", "kelly_fraction"],
+        ),
+        "roll": TradingPersona(
+            name="roll",
+            description="滚仓:小本金+高杠杆+金字塔加浮盈+极紧止损,博超额(高方差)",
+            params={
+                # Grounded initial values (owner + operator, 2026-07-02): 1% single-
+                # trade loss (classic 1% rule), leverage init 10x / HARD CAP 15x (20x
+                # buffer too thin), legacy scaling ≤0.5, ≤3 pyramid adds. NOTE: the
+                # The asset-tier demo leverage cap still clamps this; the default
+                # roll persona ceiling remains deliberately lower than that boundary.
+                "notional_usdt": P(20, 50, 200),
+                "kelly_fraction": P(0.10, 0.25, 0.50),
+                "leverage_max": P(5, 10, 15),
+                "per_trade_loss_pct": P(0.5, 0.75, 1.0),  # 极紧,max 1% = 单笔亏损铁律
+                "max_adds": P(0, 3, 3),
+                "add_fraction": P(0.0, 0.5, 1.0),
+            },
+            operator_decidable={},
+            # Only parameters consumed by the production entry-sizing path may
+            # progressively unlock. Leverage, stops and adds stay reference-only.
+            unlock_ladder=["notional_usdt", "kelly_fraction"],
+        ),
+    }
+
+
+class TradingConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    # Paper position exit rules used by the position_manager. Non-zero defaults so
+    # the autonomous loop actually closes positions and realizes PnL.
+    default_stop_loss_pct: float = 2.0
+    default_take_profit_pct: float = 4.0
+    max_position_hold_hours: float = 72.0
+    # Edge Lab: realistic paper fill simulation
+    slippage_bps: FiniteFloat = Field(
+        default=5.0,
+        ge=SLIPPAGE_BPS_BOUNDS[0],
+        le=SLIPPAGE_BPS_BOUNDS[1],
+    )  # basis points of adverse slippage on paper fills
+    execution_fee_pct: FiniteFloat = Field(
+        default=0.06,
+        ge=EXECUTION_FEE_PCT_BOUNDS[0],
+        le=EXECUTION_FEE_PCT_BOUNDS[1],
+    )  # % fee per side — Bitget taker (0.06%); change to match your live exchange
+    # Account-wide position adoption ("接管即纳管"). When ON, the periodic
+    # reconcile job AUTO-ADOPTS external DEMO positions (positions on the demo
+    # account that Aletheia did not open) into local management, and
+    # reconcile-closes demo orphans. Owner decision 2026-06-12: DEFAULT ON — the
+    # mandate is unified AI management of the whole account, so leaving externals
+    # unmanaged would defeat the point. This flag is a KILL-SWITCH to DISABLE the
+    # behavior, not an opt-in. ⚠️ Consequence when ON: pre-existing demo positions
+    # get default stops/TP from position_manager and MAY be auto-closed. LIVE
+    # positions are NEVER auto-adopted regardless of this flag (human-confirmed only).
+    auto_adopt_enabled: bool = True
+    # Conviction-weighted notional sizing with an ATR-derived cap. The historical
+    # ``vol_kelly_cap_fraction`` name is compatibility-only; it is a policy scaling
+    # factor, not a Kelly-optimal fraction.
+    default_notional_usdt: float = 25.0
+    vol_sizing_enabled: bool = True
+    vol_target_risk_usdt: float = 25.0
+    vol_target_pct: float = 1.5
+    vol_kelly_cap_fraction: float = 0.25
+    # Trailing stop / breakeven
+    trail_enabled: bool = True
+    trail_atr_mult: float = 1.5
+    trail_pct: float = 1.0
+    breakeven_trigger_pct: float = 1.5
+    # New eligible Paper positions freeze these defaults into their ExitPlan.
+    # Unauthored legacy/existing positions never receive trailing behavior.
+    # Exit-intent plan M5/D5: on thesis invalidation (serenity opportunity dismissed),
+    # default is to auto-close (D5 option 2, current behavior). Set False to instead
+    # WAKE the Operator to review/veto (the AI review path) rather than auto-closing.
+    thesis_auto_close: bool = True
+    # Exchange-native TPSL bracket orders (Bitget demo/live only). Default off —
+    # enable after verifying Bitget TPSL API behavior in demo mode.
+    exchange_tpsl_enabled: bool = False
+    # Market-aware exit intelligence: uses Market Observer signals to dynamically
+    # tighten stops or exit early when market conditions deteriorate.
+    market_aware_exits: "MarketAwareExitsConfig" = Field(default_factory=lambda: MarketAwareExitsConfig())
+    # --- Trading personas (dynamic-sizing design, P1) ---
+    # When persona_sizing_enabled is False (DEFAULT), sizing uses the flat fields
+    # above (default_notional_usdt / vol_kelly_cap_fraction / ...) → ZERO behavior
+    # change. When True, sizing reads the ACTIVE persona's params (P1: their init).
+    # The Operator/Learning that decides values WITHIN each persona range arrives in
+    # P2/P3; the risk-engine hard caps stay the immutable outer envelope regardless.
+    persona_sizing_enabled: bool = False
+    active_persona: str = "conservative"
+    personas: dict[str, TradingPersona] = Field(default_factory=_default_personas)
+    # --- Persona learning (P3): the Operator's decision space as a learnable policy ---
+    # When enabled, the sizing risk_appetite is nudged by the historical clean-window
+    # reward of the current context bucket (regime). Default OFF (dormant). The learner
+    # self-refreezes (returns no adjustment) when it lacks clean samples or its own
+    # recent policy is degrading — a soft circuit-breaker, no config flip needed.
+    persona_learning_enabled: bool = False
+    persona_learning_min_samples: int = 15
+    # --- Progressive unlock (P4): durable prospective state machine ---
+    # When enabled, production-consumed params in a persona's unlock_ladder become
+    # operator-decidable only through the persisted Persona rollout record. Each step
+    # requires exact persona/policy/manifest evidence, sample + market-day coverage,
+    # and a stable non-degrading verdict; distress/provenance failures refreeze all.
+    # Default OFF → the static operator_decidable dict applies (P1-P3 behavior).
+    persona_progressive_unlock_enabled: bool = False
+    # Durable invalidation fence. A disable transition increments this before
+    # publishing config so an old cohort cannot match after a process restart.
+    persona_rollout_generation: int = Field(default=0, ge=0)
+    persona_unlock_step_samples: int = 25
+    # --- Pyramid add-on policy helper (P4, roll persona) ---
+    # DEFAULT OFF. The pure helper can calculate a bounded add plan, but no production
+    # scheduler/Operator caller or Risk-approved add-order materializer exists.
+    # Settings/API block new enablement; retained fields allow old configs to disable
+    # the flag and preserve forward compatibility.
+    persona_pyramid_enabled: bool = False
+    persona_pyramid_add_trigger_pct: float = 1.0
+    # Optional scheduler recheck. It may perform only the same evidence-gated
+    # one-step transition as the durable rollout state machine.
+    persona_auto_advance_enabled: bool = False
+
+
+class UpdateConfig(BaseModel):
+    # On-demand self-upgrade (git pull). Human-triggered only; never a daemon.
+    enabled: bool = True
+    branch: str = "master"
+    last_check_time: str | None = None
+    last_known_remote_commit: str | None = None
+    current_commit: str | None = None
+
+
+class EmitDedupConfig(BaseModel):
+    """Cross-lifecycle dedup guards for universe signal emission (#1325)."""
+
+    enabled: bool = False
+    # W1: Repeat score decay — effective_score = raw × factor^k
+    repeat_decay_enabled: bool = False
+    repeat_decay_factor: float = Field(default=0.85, ge=0.5, le=0.99)
+    repeat_decay_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+    # W2: Terminal cooldown — suppress if (symbol, direction, family) emitted within N min
+    terminal_cooldown_enabled: bool = False
+    terminal_cooldown_minutes: int = Field(default=60, ge=10, le=360)
+    # W3: Coarse fingerprint memory — suppress if same bucket seen within window
+    fingerprint_memory_enabled: bool = False
+    fingerprint_memory_window_hours: float = Field(default=6.0, ge=1.0, le=24.0)
+
+
+class UniverseConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+
+    enabled: bool = True
+    refresh_interval_min: int = 10
+    market_type: str = "crypto"
+    max_candidates: int = 30
+    core_pool_size: int = 10
+    min_volume_24h_usdt: float = 5_000_000
+    max_spread_bps: FiniteFloat = Field(
+        default=25.0,
+        ge=FALLBACK_SPREAD_BPS_BOUNDS[0],
+        le=FALLBACK_SPREAD_BPS_BOUNDS[1],
+    )
+    min_depth_10bps_usd: float = 25_000
+    explore_ratio: float = 0.2
+    # Static family quota — ACTIVE whenever regime detection returns no state
+    # (~75% of refreshes in practice, so this is the dominant allocation path, not
+    # a rare fallback). Rebalanced 2026-07-03 from the data: the old default gave
+    # derivatives 0.35 + event 0.05 = 40% of the quota to two families that
+    # produce ZERO / ~1% of candidates (funding/OI feed gap), so their share went
+    # unused and momentum backfilled it → 84% momentum in the live pool. New split
+    # reflects which families actually fire: momentum trimmed, volatility &
+    # short_bias given explicit shares (they previously relied on the 0.3 default
+    # cap), derivatives/event kept small for when their feeds return. Sums to 1.0.
+    family_quota: dict[str, float] = Field(default_factory=lambda: {
+        "momentum": 0.30, "mean_reversion": 0.25, "volatility": 0.20,
+        "short_bias": 0.10, "derivatives": 0.10, "event": 0.05,
+    })
+    # Per-regime family quota overrides (2A+.9). Maps regime state
+    # (bull/bear/sideways/volatile) → family quota dict. When the current regime
+    # has an entry here, it REPLACES `family_quota` for that refresh; otherwise
+    # allocation falls back to the static `family_quota` above. Rationale: a bear
+    # regime should give short_bias/derivatives more of the universe and starve
+    # long-only momentum, a volatile regime should favour the volatility family,
+    # etc. Empty dict → fully backward compatible (static quota everywhere).
+    family_quota_by_regime: dict[str, dict[str, float]] = Field(default_factory=lambda: {
+        "bull": {"momentum": 0.40, "mean_reversion": 0.15, "derivatives": 0.25,
+                 "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
+        "bear": {"short_bias": 0.30, "derivatives": 0.30, "mean_reversion": 0.20,
+                 "momentum": 0.10, "volatility": 0.05, "event": 0.05},
+        "sideways": {"mean_reversion": 0.35, "momentum": 0.20, "derivatives": 0.25,
+                     "volatility": 0.10, "event": 0.05, "short_bias": 0.05},
+        "volatile": {"volatility": 0.30, "derivatives": 0.25, "momentum": 0.20,
+                     "mean_reversion": 0.15, "event": 0.05, "short_bias": 0.05},
+    })
+    blacklist: list[str] = Field(default_factory=list)
+    fallback_symbols: list[str] = Field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    snapshot_ttl_enabled: bool = True
+    snapshot_ttl_hours: float = 24.0
+    # Per-family scoring weight multipliers (operator-adjustable via adjust_scanner_weight).
+    # Default 1.0 means no bias; values >1 boost that family's candidates, <1 suppresses.
+    scanner_weights: dict[str, float] = Field(default_factory=dict)
+    # Scanner-family regime scoring (P1b 2026-07-02, Position B). The regime→direction
+    # and regime→family score deltas the ranker applies per candidate. This is a SOFT,
+    # scanner-family-level signal that applies to ALL opportunities — including the ~70%
+    # that have NO linked strategy (the orphan gap) — NOT a hard block. It deliberately
+    # stays soft per owner directive (high-dimensional, refutable self-evolution; no
+    # low-dimensional symbol/direction/scanner hard interception; see memory
+    # negfeedback-high-dimensional-evolve). Defaults reproduce the prior hardcoded ranker
+    # values EXACTLY (verified no-op) — extracted to config so the regime affinity lives
+    # at the scanner-family layer, is operator/learning-tunable, and is documented rather
+    # than buried in _compute_trade_score. Locked by spec SP-S06/SP-S07.
+    scanner_regime_scoring: dict[str, float] = Field(default_factory=lambda: {
+        "bear_short": 20.0, "bear_long": -25.0,
+        "bull_long": 20.0, "bull_short": -20.0,
+        "volatile_penalty": 10.0,
+        "sideways_trend_penalty": 25.0, "sideways_reversion_bonus": 15.0,
+    })
+    # Entry TTL — how long an opportunity's valid_until window stays open for
+    # execution consideration. Consolidated from per-family _FAMILY_TTL (#1325).
+    # Previously each family had its own TTL (30m…24h) which mixed two semantics:
+    # "how long the signal is fresh enough to act on" vs "how long to keep the
+    # symbol on the watchlist". Scanner refreshes every 10 min, so 15 min covers
+    # one missed refresh + ranker processing latency (measured p75=25 min).
+    entry_ttl_sec: int = Field(default=900, ge=300, le=3600)
+    # Frozen hard ceiling for one continuously compatible Candidate attention
+    # identity. Completed re-selection may extend the soft lease, never this age.
+    candidate_max_continuous_age_sec: int = Field(default=3600, ge=300, le=86_400)
+    # Utility is the runtime default; Legacy remains readable for historical records.
+    # The config loader derives the operational epoch from full config semantics.
+    candidate_selection_policy: Literal[
+        "legacy_total_score_v1", "candidate_selection_utility_v1"
+    ] = "candidate_selection_utility_v1"
+    candidate_selection_policy_epoch: str | None = None
+    # Cross-lifecycle emission dedup guards (#1325). Default off; each guard
+    # ships in its own week: W1=repeat_decay, W2=terminal_cooldown, W3=fingerprint.
+    emit_dedup: EmitDedupConfig = Field(default_factory=EmitDedupConfig)
+
+    @model_validator(mode="after")
+    def _validate_candidate_selection_authority(self):
+        if (
+            self.candidate_selection_policy == "legacy_total_score_v1"
+            and self.candidate_selection_policy_epoch is not None
+        ):
+            raise ValueError("legacy candidate selection cannot carry a target policy epoch")
+        return self
+
+    @field_validator("family_quota", "family_quota_by_regime", mode="before")
+    @classmethod
+    def _validate_family_quotas(cls, v: object) -> object:
+        import math as _math
+        _CANONICAL = {"momentum", "mean_reversion", "volatility", "short_bias", "derivatives", "event"}
+        def _check_quota(quota: dict, label: str = "family_quota") -> None:
+            if not isinstance(quota, dict):
+                return
+            for k, val in quota.items():
+                if k not in _CANONICAL:
+                    raise ValueError(f"not in canonical families: '{k}' not in canonical set {sorted(_CANONICAL)}")
+                if not isinstance(val, (int, float)) or not _math.isfinite(float(val)):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be a finite number, got {val!r}")
+                if not (0.0 <= float(val) <= 1.0):
+                    raise ValueError(f"finite in {label}: value for '{k}' must be in [0, 1], got {val}")
+            total = sum(float(x) for x in quota.values())
+            if abs(total - 1.0) > 0.01:
+                raise ValueError(f"finite in {label}: values must sum to ~1.0, got {total:.4f}")
+        if isinstance(v, dict):
+            if v and all(isinstance(val, dict) for val in v.values()):
+                for regime, quota in v.items():
+                    _check_quota(quota, f"family_quota_by_regime[{regime}]")
+            else:
+                _check_quota(v)
+        return v
+
+    @model_validator(mode="after")
+    def _validate_candidate_attention_bounds(self):
+        if self.candidate_max_continuous_age_sec < self.entry_ttl_sec:
+            raise ValueError(
+                "candidate_max_continuous_age_sec must be >= entry_ttl_sec"
+            )
+        return self
+
+
+class FastTriggerConfig(BaseModel):
+    """Deterministic trigger capability plus legacy Setup rollout compatibility."""
+
+    enabled: bool = True
+    # Legacy UniverseSetup rows retain their historical rollout identity. Current
+    # Entry Plans use ``enabled`` and always proceed to canonical Risk/Gateway.
+    mode: Literal["off", "shadow", "execute"] = "shadow"
+    max_setups: int = Field(default=10, ge=1, le=10)
+    authorization_ttl_minutes: int = Field(default=60, ge=1, le=60)
+    trigger_behavior_version: Literal["momentum-fast-trigger/v1"] = (
+        "momentum-fast-trigger/v1"
+    )
+
+
+class RegimeConfig(BaseModel):
+    enabled: bool = True
+    min_hold_periods: int = Field(default=3, ge=1, le=20)
+    bias_threshold: float = 0.30
+    short_enabled: bool = True
+
+
+class HistoricalDataConfig(BaseModel):
+    """Local OHLCV storage and bulk download settings."""
+
+    model_config = ConfigDict(validate_assignment=True)
+    enabled: bool = True
+    max_bars_per_pair: int = Field(default=50_000, ge=1_000, le=200_000)
+    default_months: int = Field(default=6, ge=1, le=24)
+    nightly_backfill_enabled: bool = True
+    nightly_backfill_hour_cst: int = Field(default=3, ge=0, le=23)
+    min_bars_for_backtest: int = Field(default=200, ge=30, le=5_000)
+    active_universe_backfill_enabled: bool = True
+    active_universe_backfill_interval_minutes: int = Field(default=10, ge=5, le=60)
+    active_universe_backfill_max_pairs_per_run: int = Field(default=3, ge=1, le=10)
+
+
+class EventTriggerConfig(BaseModel):
+    """Real-time-ish event detection on price_feed ticks."""
+    enabled: bool = True
+    price_move_pct_threshold: float = 3.0
+    volume_surge_multiplier: float = 3.0
+    watch_universe_members: bool = True
+    # #26 note (2026-07-08): `trigger_strategy_design` +
+    # `strategy_design_min_move_pct` are DEAD CONFIG — the strategy_designer
+    # subsystem was removed with Position C (2026-07-02), so no code consumes
+    # these fields. Kept as legacy keys so existing config.yaml files don't
+    # error on the extra=forbid pass. Do not add new consumers; new
+    # event-driven wiring lives in the operator/serenity path.
+    trigger_strategy_design: bool = True
+    strategy_design_min_move_pct: float = 5.0
+
+
+class GuardConfig(BaseModel):
+    enabled: bool = True
+    enforce_in_paper_ranker: bool = True
+    # P0 (2026-07-12): default OFF. Automatic promotion of learned/auto guards to
+    # active hard blocks bypassed the Learning experiment/authority chain and turned
+    # historical loss-rate correlation into causal hard blocks. Auto guards are now
+    # permanently shadow-only (see knowledge/guards.py guard_origin + evaluate_guards
+    # seam); owner must explicitly opt in AND only manual/authorized guards promote.
+    auto_promote_enabled: bool = False
+    # Automatic lifecycle mutations require at least one clean trade as evidence.
+    min_matching_trades: int = Field(default=3, ge=1)
+    max_score_penalty: float = Field(default=40.0, ge=0.0, le=100.0)
+
+
+class TunnelConfig(BaseModel):
+    enabled: bool = False
+    tunnel_id: str = ""
+    hostname: str = ""
+    credentials_path: str = ""
+    cloudflared_path: str = ""
+    metrics_port: int = 0
+
+
+class RemoteControlConfig(BaseModel):
+    """Private-network Remote Control settings, independent from Cloudflare tunnel."""
+
+    enabled: bool = False
+    bind_hosts: list[str] = Field(default_factory=list)
+    require_token: bool = False
+
+
+class NetworkConfig(BaseModel):
+    # Structured proxy definition (source of truth). ``proxy_url`` below is
+    # recomposed from these three parts by the model validator; every consumer
+    # (aletheia.net) still reads ``proxy_url``. Default 7890 (Clash/Mihomo common
+    # port). Set proxy_host="" to disable (direct). On machines without a proxy the
+    # reachability check in net.py falls back to direct automatically (unless
+    # ``enforce`` is on) — so this default is safe on all machines.
+    proxy_protocol: Literal["http", "https", "socks5"] = "http"
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 7890
+    # Composed URL, kept for backward compatibility with existing consumers and
+    # legacy config files. Recomputed from the parts on every load/save.
+    proxy_url: str = "http://127.0.0.1:7890"
+    no_proxy: str = ""    # comma-separated bypass list, e.g. "127.0.0.1,localhost"
+    # Fail-closed policy. When True, outbound traffic MUST go through the proxy: if
+    # the proxy is unreachable the request fails rather than silently connecting
+    # direct (which would leak the real IP to exchanges / providers). When False,
+    # an unreachable proxy falls back to a direct connection (availability first).
+    # Default False for portability — a fresh install / CI box without a proxy must
+    # not be bricked by a strict default. Enable it in Settings for production.
+    enforce: bool = False
+
+    @model_validator(mode="after")
+    def _sync_proxy_url(self) -> "NetworkConfig":
+        fields_set = self.model_fields_set
+        structured_set = bool(
+            {"proxy_protocol", "proxy_host", "proxy_port"} & fields_set
+        )
+        # Legacy migration: a config predating the structured fields carries only
+        # proxy_url. Parse it back into the parts so the UI reflects reality.
+        if "proxy_url" in fields_set and not structured_set and self.proxy_url:
+            self.parse_proxy_url()
+        # Recompose the canonical URL from the parts (empty host = disabled/direct).
+        self.recompose_proxy_url()
+        return self
+
+    def recompose_proxy_url(self) -> None:
+        """Rebuild proxy_url from protocol/host/port. Empty host = disabled (direct).
+
+        Shared by the model validator and the /settings/network route (setattr does
+        not re-run the validator, so the route calls this explicitly after mutating).
+        """
+        host = (self.proxy_host or "").strip()
+        self.proxy_url = f"{self.proxy_protocol}://{host}:{self.proxy_port}" if host else ""
+
+    def parse_proxy_url(self) -> None:
+        """Decompose an externally-set proxy_url back into protocol/host/port."""
+        from urllib.parse import urlparse
+
+        parsed = urlparse(self.proxy_url)
+        scheme = (parsed.scheme or "http").lower()
+        if scheme in ("socks", "socks5h"):
+            scheme = "socks5"
+        self.proxy_protocol = scheme if scheme in ("http", "https", "socks5") else "http"
+        if parsed.hostname:
+            self.proxy_host = parsed.hostname
+        if parsed.port:
+            self.proxy_port = parsed.port
+
+
+class PiDaemonConfig(BaseModel):
+    """System Operator daemon configuration.
+
+    #97 note (2026-07-07): the class name and the top-level config field
+    `pi_daemon` are LEGACY — the subsystem is the System Operator daemon
+    (per Product Direction naming, "PI Agent" → "System Operator"). The
+    legacy `pi_daemon` field name is preserved as a backwards-compatible
+    key so existing config.yaml files, audit trails, and API contracts
+    keep working. New UI copy and prose docs must use "System Operator
+    daemon"; the frontend/api translation layer treats `pi_daemon` as
+    the on-the-wire key that carries this class's fields.
+
+    Naming registry (single source of truth):
+        legacy config field:   cfg.pi_daemon
+        legacy audit event:    pi_daemon_config_changed / pi_daemon_config
+        legacy REST path:      POST /api/settings/pi_daemon
+        current product name:  "System Operator daemon"
+    """
+    model_config = ConfigDict(validate_assignment=True)
+
+    enabled: bool = True
+    debounce_sec: float = Field(default=2.0, ge=0.0, le=60.0)
+    cooldown_sec: float = Field(default=45.0, ge=0.0, le=600.0)
+    heartbeat_sec: float = Field(default=60.0, ge=60.0, le=3600.0)
+
+
+class NewsFeedEntry(BaseModel):
+    name: str
+    url: str
+    source: str
+    categories: list[str] = Field(default_factory=list)
+    enabled: bool = True
+
+
+_DEFAULT_NEWS_FEEDS: list[dict] = [
+    {"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "source": "coindesk", "categories": ["crypto"], "enabled": True},
+    {"name": "CoinTelegraph", "url": "https://cointelegraph.com/rss", "source": "cointelegraph", "categories": ["crypto"], "enabled": True},
+    {"name": "Federal Reserve Press", "url": "https://www.federalreserve.gov/feeds/press_all.xml", "source": "fed", "categories": ["macro"], "enabled": True},
+    {"name": "SEC Press Releases", "url": "https://www.sec.gov/news/pressreleases.rss", "source": "sec-press", "categories": ["regulatory", "official"], "enabled": True},
+    {"name": "CFTC Press Releases", "url": "https://www.cftc.gov/RSS/RSSGP/rssgp.xml", "source": "cftc-press", "categories": ["regulatory", "official"], "enabled": True},
+    {"name": "Ethereum Foundation Blog", "url": "https://blog.ethereum.org/feed.xml", "source": "ethereum-foundation", "categories": ["crypto", "protocol", "official"], "enabled": True},
+    {"name": "MarketWatch Top Stories", "url": "http://feeds.marketwatch.com/marketwatch/topstories/", "source": "marketwatch", "categories": ["markets"], "enabled": True},
+    {"name": "CNBC Economy", "url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=20910258", "source": "cnbc-economy", "categories": ["macro"], "enabled": True},
+    {"name": "The Block", "url": "https://www.theblock.co/rss.xml", "source": "theblock", "categories": ["crypto"], "enabled": False},
+    {"name": "Decrypt", "url": "https://decrypt.co/feed", "source": "decrypt", "categories": ["crypto"], "enabled": False},
+    {"name": "Bitcoin Magazine", "url": "https://bitcoinmagazine.com/feed", "source": "bitcoinmagazine", "categories": ["crypto"], "enabled": False},
+    {"name": "Nikkei Asia", "url": "https://asia.nikkei.com/rss/feed/nar", "source": "nikkei-asia", "categories": ["markets", "asia"], "enabled": False},
+    {"name": "Yahoo Finance", "url": "https://finance.yahoo.com/news/rssindex", "source": "yahoo-finance", "categories": ["markets"], "enabled": False},
+]
+
+
+class NewsConfig(BaseModel):
+    model_config = ConfigDict(validate_assignment=True)
+    enabled: bool = True
+    fetch_interval_minutes: int = Field(default=15, ge=5, le=120)
+    retention_days: int = Field(default=7, ge=1, le=90)
+    feeds: list[NewsFeedEntry] = Field(default_factory=lambda: [NewsFeedEntry(**f) for f in _DEFAULT_NEWS_FEEDS])
+
+
+class SerenityConfig(BaseModel):
+    """Serenity Research school — long-horizon industrial-chain analyst lens.
+
+    Promotion publishes Candidates to the shared Entry Planner. Auto-promotion
+    is disabled by default; manual promotion retains the curator workflow.
+    """
+    enabled: bool = False
+    auto_promote: bool = False
+    min_score_for_pi: int = 72
+    # Holding horizon is independent of compiled entry-order expiry and stop geometry.
+    max_hold_days: int = 90
+
+
+class ControllerConfig(BaseModel):
+    """Filter feedback controller — negative-feedback tuning of opportunity filters.
+
+    The every-N-hours SHADOW job computes filter-version pass/reject findings,
+    appends them to `controller_recommendations`, and can preregister/evaluate
+    prospective observe-only experiments for replay-ready monotonic thresholds.
+    It NEVER writes trading config. Full closed-loop actuation remains out of scope.
+    See aletheia/analytics/filter_controller.py + filter_registry.py.
+    """
+    # Opt-in switch for a diagnostic observe job with no trading consumer.
+    shadow_enabled: bool = False
+    # How often the observe job runs (hours). Low-frequency: verdicts are based on
+    # multi-hour forward-return horizons, so more frequent runs add no signal.
+    observe_interval_hours: int = 6
+    # Minimum settled forward-outcome samples for a (filter, family) cell before the
+    # controller will emit a loosen/tighten verdict. Below this → insufficient_data.
+    min_samples_gate: int = 20
+    # Max fractional step a bounded auto-tune (Phase 2) may move a param in one cycle.
+    # Unused in Phase 1 (recorded for forward-compat and UI display).
+    max_step: float = 0.10
+    # Cross-run stability signal: a (filter, cell) key must sustain
+    # evidence_verdict='overrestrictive_suspect' across this many consecutive most-
+    # recent runs before it is surfaced as a persistent (human-review) recommendation.
+    # Single-run suspects are noise-prone; the stability filter is what makes the
+    # observational signal actionable enough for operator attention.
+    persistent_min_consecutive_runs: int = 3
+    # Ceiling on how many recent runs the stability analyzer examines. A cell that
+    # does not appear in one of the last N runs (implicit absence) breaks its streak.
+    persistent_max_runs_lookback: int = 10
+
+
+class ObservationConfig(BaseModel):
+    """Observation Lab execution-ownership contract (Issue #1072 Worker split).
+
+    Determines WHICH process owns the periodic Observation cycle. There is no
+    ``both`` state — exactly one owner runs the cycle at a time.
+
+    - ``main`` (default, backward compatible): the ordinary Main Runtime
+      APScheduler owns and executes ``filter_controller_observe``. Restart
+      / update / smoke behavior is unchanged from before #1072.
+    - ``worker``: a sibling ``aletheia-observer`` checkout owns the cycle via
+      its own systemd timer + ``aletheia observe run`` invocation. In this
+      mode the Main Runtime MUST NOT register or execute the cycle, and
+      settings reconciliation MUST NOT recreate it — the ownership contract
+      is enforced at three gates (scheduler start, reconcile, run).
+
+    The two owners intentionally may run different commits while sharing the
+    same ``~/.aletheia`` data root; that is the whole point of the split.
+    """
+
+    execution_owner: str = Field(
+        default="main",
+        pattern="^(main|worker)$",
+        description="Which process owns the Observation cycle: main | worker.",
+    )
+
+
+class EconomicsConfig(BaseModel):
+    """Tokenomics harness configuration (Phase 2 scaffold; see #475).
+
+    All defaults preserve the current pre-tokenomics behaviour: nothing is
+    enabled, no budget declaration is enforced, no prompt header is
+    prepended. Operators opt in per phase via these flags.
+
+    - `enabled`: master switch. When False, every other flag here is
+      ignored — the tokenomics harness stays entirely dormant.
+    - `budgets_shadow_enabled`: turn on Phase 2B's shadow-mode
+      `would_block` observation on every LLM call. Requires `enabled`.
+      No enforcement even when True.
+    - `enforcement_mode`: Phase 3 decision surface. Default
+      `warn_only` means budget crossings are signals, never blocks.
+      `fallback_to_defaults` and `hard_block` are opt-in for
+      non-safety callers only; safety-relevant callers
+      (pi_trading_decision, risk_critic,
+      agent_shell/trading_decision) stay warn-only regardless.
+    - `harness_header_default_on`: Phase 5 feature flag. Off until an
+      ablation study (see docs/design/proposals/
+      tokenomics_harness_phase_plan_2026-07-30.md §4 Phase 5) clears
+      it. Not consumed yet.
+    """
+    enabled: bool = False
+    budgets_shadow_enabled: bool = False
+    enforcement_mode: str = Field(
+        default="warn_only",
+        pattern="^(warn_only|fallback_to_defaults|hard_block)$",
+    )
+    harness_header_default_on: bool = False
+    # Phase 4 detect-only secret-shape observation. It never blocks a call.
+    prompt_guardrail_detection_enabled: bool = False
+
+
+class LearningConfig(BaseModel):
+    """Paper Learning capability with independently owner-gated authority."""
+
+    # Measurement is safe and remains available even if every authority gate is off.
+    contribution_evaluation_enabled: bool = True
+    # The sole measured Paper path is available by default.  This does not admit
+    # a Shadow experiment: exact owner admission, policy identity, contribution,
+    # control, harm, allocation, pause, and refreeze gates remain independent.
+    lifecycle_automation_enabled: bool = True
+    paper_influence_enabled: bool = True
+    paper_influence_paths: list[str] = Field(
+        default_factory=lambda: ["universe_family_calibration"],
+    )
+    auto_refreeze: bool = True
+    evaluation_interval_minutes: int = Field(default=60, ge=15, le=1_440)
+    paper_active_allocation_pct: float = Field(default=0.80, gt=0.0, le=0.90)
+
+
+class AletheiaConfig(BaseModel):
+    @field_validator("trading_mandate", mode="before")
+    @classmethod
+    def _preserve_malformed_trading_mandate(cls, value: object):
+        # Keep malformed enabled objects loadable so the read-only resolver can
+        # report ``mandate_unavailable`` instead of guessing or bricking startup.
+        from aletheia.trading.trading_mandate import TradingMandateConfig
+
+        if value is None or isinstance(value, TradingMandateConfig):
+            return value
+        if isinstance(value, Mapping):
+            return TradingMandateConfig.model_validate(dict(value))
+        return TradingMandateConfig(enabled=True, raw_value=value)
+
+    @model_validator(mode="after")
+    def _sync_runtime_pause_scope(self):
+        self.runtime.set_pause_scope(self.exchange.mode)
+        return self
+
+    app: AppConfig = Field(default_factory=AppConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    exchange: ExchangeConfig = Field(default_factory=ExchangeConfig)
+    market_data: MarketDataConfig = Field(default_factory=MarketDataConfig)
+    live: LiveConfig = Field(default_factory=LiveConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    operator: OperatorConfig = Field(default_factory=OperatorConfig)
+    models: ModelsConfig = Field(default_factory=ModelsConfig)
+    risk: RiskConfig = Field(default_factory=lambda: RiskConfig.model_validate({}))
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    webhook: WebhookConfig = Field(default_factory=WebhookConfig)
+    update: UpdateConfig = Field(default_factory=UpdateConfig)
+    trading: TradingConfig = Field(default_factory=TradingConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
+    universe: UniverseConfig = Field(default_factory=UniverseConfig)
+    fast_trigger: FastTriggerConfig = Field(default_factory=FastTriggerConfig)
+    regime: RegimeConfig = Field(default_factory=RegimeConfig)
+    guard: GuardConfig = Field(default_factory=GuardConfig)
+    tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
+    remote_control: RemoteControlConfig = Field(default_factory=RemoteControlConfig)
+    network: NetworkConfig = Field(default_factory=NetworkConfig)
+    historical_data: HistoricalDataConfig = Field(default_factory=HistoricalDataConfig)
+    event_triggers: EventTriggerConfig = Field(default_factory=EventTriggerConfig)
+    pi_daemon: PiDaemonConfig = Field(default_factory=PiDaemonConfig)
+    news: NewsConfig = Field(default_factory=NewsConfig)
+    serenity: SerenityConfig = Field(default_factory=SerenityConfig)
+    controller: ControllerConfig = Field(default_factory=ControllerConfig)
+    observation: ObservationConfig = Field(default_factory=ObservationConfig)
+    learning: LearningConfig = Field(default_factory=LearningConfig)
+    economics: EconomicsConfig = Field(default_factory=EconomicsConfig)
+    # Optional, single observe-only governance declaration. Strict validation is
+    # deferred to resolve_trading_mandate() so malformed enabled config is honest.
+    trading_mandate: Any = None

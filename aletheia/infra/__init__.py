@@ -1,2 +1,0 @@
-"""Infra/runtime observability helpers."""
-

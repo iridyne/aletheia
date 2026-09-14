@@ -1,0 +1,247 @@
+"""Bulk OHLCV history downloader — paginated fetch + incremental sync.
+
+Used by:
+- ``aletheia data download`` CLI for manual bulk imports
+- Nightly backfill scheduler job
+- Backtest orchestrator when coverage is insufficient
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from dataclasses import dataclass
+
+logger = logging.getLogger("aletheia.history_downloader")
+
+_PAGE_SIZE = 500
+_RATE_LIMIT_SEC = 0.35
+_LEFT_GAP_PROBE_PAGES = (500, 100, 24, 6)
+
+
+@dataclass
+class DownloadResult:
+    symbol: str
+    timeframe: str
+    bars_fetched: int
+    oldest_ts: int | None
+    newest_ts: int | None
+    error: str | None = None
+
+
+async def download_symbol_history(
+    symbol: str,
+    timeframe: str,
+    months: int = 6,
+    exchange: str | None = None,
+    market_type: str = "spot",
+    progress_callback=None,
+) -> DownloadResult:
+    """Download historical OHLCV data for a symbol, persisting to SQLite.
+
+    Incremental: fills both the left gap (before the oldest local bar) and the
+    right gap (after the newest local bar). New listings on some exchanges return
+    empty data when queried from far before listing, so left-gap fetches step
+    backward from the local oldest bar instead of starting at the month boundary.
+    """
+    from aletheia.config.loader import load_config
+    from aletheia.data.ccxt_provider import get_market_data_provider, timeframe_ms
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.storage.repositories import (
+        get_ohlcv_newest_ts,
+        upsert_ohlcv_candles,
+    )
+
+    cfg = load_config()
+    target_exchange = (exchange or cfg.market_data.ccxt_exchange).lower()
+    instrument = InstrumentId.from_parts(target_exchange, symbol, market_type)
+    tf_ms = timeframe_ms(timeframe)
+    if tf_ms == 0:
+        return DownloadResult(symbol, timeframe, 0, None, None, f"unsupported timeframe: {timeframe}")
+
+    max_bars = cfg.historical_data.max_bars_per_pair
+    now_ms = int(time.time() * 1000)
+    start_ts = now_ms - months * 30 * 24 * 3600 * 1000
+
+    newest_existing = get_ohlcv_newest_ts(
+        symbol, timeframe, exchange=target_exchange, market_type=market_type
+    )
+
+    # Determine the oldest bar to detect left-gap (history before existing data).
+    from aletheia.storage.repositories import get_ohlcv_coverage
+    cov = get_ohlcv_coverage(
+        symbol, timeframe, exchange=target_exchange, market_type=market_type
+    )
+    oldest_existing = cov.get("oldest_ts")
+    if not newest_existing:
+        newest_existing = cov.get("newest_ts")
+
+    # Historical backfill must not silently switch venue: every persisted bar is
+    # labeled with target_exchange, so primary and fallback are intentionally equal.
+    provider = get_market_data_provider(
+        target_exchange, native_ccxt=True, fallback_exchange=target_exchange
+    )
+    total_fetched = 0
+    first_ts: int | None = None
+    last_ts: int | None = None
+    error: str | None = None
+
+    def _record_page(candles: list) -> None:
+        # Download owns writes after range filtering; acquisition must not
+        # persist the unfiltered response through the provider as well.
+        nonlocal total_fetched, first_ts, last_ts
+        if not candles:
+            return
+        upsert_ohlcv_candles(
+            symbol, timeframe, candles,
+            exchange=target_exchange, market_type=market_type,
+        )
+        page_oldest = candles[0].timestamp
+        page_newest = candles[-1].timestamp
+        first_ts = page_oldest if first_ts is None else min(first_ts, page_oldest)
+        last_ts = page_newest if last_ts is None else max(last_ts, page_newest)
+        total_fetched += len(candles)
+        if progress_callback:
+            progress_callback(total_fetched)
+
+    async def _fetch_forward(fetch_since: int, fetch_until: int) -> None:
+        nonlocal error
+        current_since = fetch_since
+        while current_since < fetch_until and total_fetched < max_bars:
+            try:
+                candles = await provider.get_ohlcv(
+                    instrument, timeframe, limit=_PAGE_SIZE, since=current_since,
+                    _persist_result=False,
+                )
+            except Exception as e:
+                error = str(e)
+                logger.warning("history_downloader: fetch failed %s %s since=%d: %s",
+                               symbol, timeframe, current_since, e)
+                break
+
+            if not candles:
+                break
+
+            candles = [c for c in candles if fetch_since <= c.timestamp < fetch_until]
+            if not candles:
+                break
+
+            _record_page(candles)
+            current_since = candles[-1].timestamp + tf_ms
+
+            if len(candles) < _PAGE_SIZE:
+                break
+
+            await asyncio.sleep(_RATE_LIMIT_SEC)
+
+    async def _fetch_backward(left_cursor: int) -> None:
+        """Walk left from a known bar, probing closer when pre-listing pages are empty."""
+        nonlocal error
+        while left_cursor > start_ts + tf_ms and total_fetched < max_bars:
+            candles = []
+            window_since = max(start_ts, left_cursor - _PAGE_SIZE * tf_ms)
+            try:
+                for probe_pages in _LEFT_GAP_PROBE_PAGES:
+                    window_since = max(start_ts, left_cursor - probe_pages * tf_ms)
+                    candles = await provider.get_ohlcv(
+                        instrument, timeframe, limit=_PAGE_SIZE, since=window_since,
+                        _persist_result=False,
+                    )
+                    candles = [
+                        c for c in (candles or [])
+                        if window_since <= c.timestamp < left_cursor
+                    ]
+                    if candles:
+                        break
+            except Exception as e:
+                error = str(e)
+                logger.warning(
+                    "history_downloader: fetch failed %s %s since=%d: %s",
+                    symbol, timeframe, window_since, e,
+                )
+                break
+
+            if not candles:
+                break
+
+            _record_page(candles)
+            left_cursor = candles[0].timestamp
+
+            if len(candles) < _PAGE_SIZE:
+                break
+
+            await asyncio.sleep(_RATE_LIMIT_SEC)
+
+    try:
+        if oldest_existing and newest_existing:
+            # Left gap: fetch near the local oldest bar first. Querying from the
+            # distant requested start can return an empty page for new listings.
+            await _fetch_backward(oldest_existing)
+            await _fetch_forward(newest_existing + tf_ms, now_ms)
+        else:
+            await _fetch_forward(start_ts, now_ms)
+            if total_fetched == 0 and error is None:
+                # Some exchanges return [] when since predates a new listing.
+                # Probe progressively closer to now to discover the first usable
+                # window, then reuse the normal left/right gap logic.
+                bootstrap = []
+                for probe_pages in _LEFT_GAP_PROBE_PAGES:
+                    probe_since = max(start_ts, now_ms - probe_pages * tf_ms)
+                    try:
+                        bootstrap = await provider.get_ohlcv(
+                            instrument, timeframe, limit=_PAGE_SIZE, since=probe_since,
+                            _persist_result=False,
+                        )
+                    except Exception as e:
+                        error = str(e)
+                        logger.warning(
+                            "history_downloader: bootstrap failed %s %s since=%d: %s",
+                            symbol, timeframe, probe_since, e,
+                        )
+                        break
+                    bootstrap = [
+                        c for c in (bootstrap or [])
+                        if probe_since <= c.timestamp < now_ms
+                    ]
+                    if bootstrap:
+                        break
+                if bootstrap:
+                    _record_page(bootstrap)
+                    await _fetch_backward(bootstrap[0].timestamp)
+                    await _fetch_forward(bootstrap[-1].timestamp + tf_ms, now_ms)
+    finally:
+        await provider.close()
+
+    logger.info("history_downloader: %s %s fetched %d bars [%s → %s]",
+                symbol, timeframe, total_fetched,
+                first_ts, last_ts)
+
+    return DownloadResult(
+        symbol=symbol,
+        timeframe=timeframe,
+        bars_fetched=total_fetched,
+        oldest_ts=first_ts,
+        newest_ts=last_ts,
+        error=error,
+    )
+
+
+def check_coverage(
+    symbol: str,
+    timeframe: str,
+    min_bars: int | None = None,
+    *,
+    exchange: str = "",
+    market_type: str = "",
+) -> bool:
+    """Return True if enough local bars exist for backtesting."""
+    from aletheia.config.loader import load_config
+    from aletheia.storage.repositories import get_ohlcv_coverage
+
+    if min_bars is None:
+        min_bars = load_config().historical_data.min_bars_for_backtest
+    cov = get_ohlcv_coverage(
+        symbol, timeframe, exchange=exchange, market_type=market_type
+    )
+    return cov["bar_count"] >= min_bars

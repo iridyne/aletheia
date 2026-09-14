@@ -1,0 +1,553 @@
+"""OKX exchange client — thin CCXT wrapper for demo and live modes.
+
+Supports:
+- place_order(OrderRequest) -> OrderResponse
+- get_positions() -> list of position dicts
+- fetch_balance() -> CCXT unified balance dict
+- fetch_time() -> Unix ms (connectivity probe)
+- close() for session teardown
+
+Demo mode: CCXT sandbox mode injects `x-simulated-trading: 1` header.
+"""
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import ccxt.async_support as ccxt
+
+from aletheia.config.secrets import get_secret
+from aletheia.data.symbols import to_canonical, to_ccxt_perp
+
+logger = logging.getLogger("aletheia.okx_client")
+
+
+@dataclass
+class OrderRequest:
+    symbol: str  # canonical BTC/USDT
+    market_type: str  # usdt_futures
+    side: str  # buy | sell
+    order_type: str  # market | limit
+    quantity: float
+    price: float | None = None
+    client_oid: str | None = None
+    reduce_only: bool = False
+    leverage: int | None = None   # USDT-futures: set on the exchange before an open
+
+
+@dataclass
+class OrderResponse:
+    order_id: str
+    client_oid: str | None = None
+    status: str = "submitted"
+    fill_price: float | None = None
+    filled_quantity: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Adapter capability + market-type routing (owner principle 2: the core is
+# exchange-agnostic; spot-vs-perp differences live here at the adapter boundary).
+# ---------------------------------------------------------------------------
+
+# Market types this adapter can route to an OKX order. Both confirmed on demo
+# (docs/research/integrations/DEMO_LIVE_SPOT_PARITY_EVENT_2026-06-28.md).
+SUPPORTED_MARKET_TYPES = frozenset({"spot", "usdt_futures"})
+
+
+def _okx_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _okx_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def is_leveraged_market(market_type: str) -> bool:
+    """Spot carries no leverage / no contracts / no funding; usdt_futures (perp) does."""
+    return market_type != "spot"
+
+
+def okx_ccxt_symbol(market_type: str, symbol: str) -> str:
+    """Resolve the CCXT symbol for an OKX order by market type.
+
+    spot         → canonical pair, NO settle suffix   (BTC/USDT)
+    usdt_futures → CCXT perp with settle suffix        (BTC/USDT:USDT)
+    """
+    if market_type == "spot":
+        return to_canonical(symbol)
+    return to_ccxt_perp(symbol)
+
+
+class OKXClient:
+    """OKX via CCXT — USDT-M perpetual swaps AND spot. Supports demo and live modes."""
+
+    def __init__(self, mode: str = "demo"):
+        api_key = get_secret(f"okx.{mode}.api_key")
+        api_secret = get_secret(f"okx.{mode}.api_secret")
+        passphrase = get_secret(f"okx.{mode}.passphrase")
+        if not api_key or not api_secret or not passphrase:
+            raise RuntimeError(
+                f"OKX {mode} credentials not configured. "
+                f"Set okx.{mode}.api_key, okx.{mode}.api_secret, and okx.{mode}.passphrase "
+                "via Settings → Credentials."
+            )
+        # Do NOT create the aiohttp session / ccxt exchange here. __init__ runs in
+        # a synchronous context (often a different event loop than the one that
+        # will await our methods, e.g. okx_broker._run_coro spins a fresh
+        # asyncio.run() in a worker thread). aiohttp binds its connector to the
+        # CREATING loop, so an exchange built here then used under a different loop
+        # raises "Future attached to a different loop" — which silently broke
+        # load_markets()/contractSize lookup and re-exposed the contractSize bug
+        # (orders mis-sized by contractSize). Defer creation to _ensure_exchange()
+        # so the session is born in the same loop that awaits it (CLAUDE.md: CCXT
+        # binds aiohttp to the creating event loop).
+        self._api_key = api_key
+        self._api_secret = api_secret
+        self._passphrase = passphrase
+        self._mode = mode
+        self._session = None
+        self._exchange = None
+
+    def _ensure_exchange(self):
+        """Lazily build the ccxt exchange + aiohttp session in the CURRENT loop.
+
+        Must only be called from inside an async method (i.e. with a running loop
+        that will also drive every subsequent await on this exchange).
+        """
+        if self._exchange is not None:
+            return self._exchange
+        from aletheia.net import make_ccxt
+        self._exchange, self._session = make_ccxt(
+            "okx",
+            apiKey=self._api_key,
+            secret=self._api_secret,
+            password=self._passphrase,
+            options={"defaultType": "swap"},
+        )
+        if self._mode == "demo":
+            self._exchange.set_sandbox_mode(True)
+        return self._exchange
+
+    async def _contract_size(self, ccxt_symbol: str) -> float:
+        """Return the contractSize for an OKX swap symbol (coins per contract).
+
+        CCXT's `amount` for OKX swaps is denominated in CONTRACTS, not coins.
+        Each contract represents `contractSize` coins (e.g. TRX=1000, ETH=0.1,
+        SOL=1, BTC=0.01). We store/risk/PnL everything in coin quantity, so the
+        order path divides coins→contracts and the read path multiplies back.
+        Defaults to 1.0 when markets are unavailable (safe for contractSize==1).
+        """
+        try:
+            ex = self._ensure_exchange()
+            if not ex.markets:
+                await ex.load_markets()
+                assert ex.markets is not None
+            m = ex.markets.get(ccxt_symbol) or {}
+            cs = m.get("contractSize")
+            return float(cs) if cs else 1.0
+        except Exception as e:
+            logger.warning("OKX contractSize lookup failed for %s: %s — defaulting to 1.0", ccxt_symbol, e)
+            return 1.0
+
+    async def set_leverage(self, ccxt_symbol: str, leverage: int) -> None:
+        """Set leverage for an OKX swap symbol before opening. Raises on failure.
+
+        Uses cross margin to match place_order's swap defaults. Fail-closed so the
+        broker aborts rather than opening at the account-default leverage. The exact
+        params (cross vs isolated, posSide in hedge mode) should be confirmed against
+        a live OKX demo account.
+        """
+        ex = self._ensure_exchange()
+        await ex.set_leverage(int(leverage), ccxt_symbol, params={"mgnMode": "cross"})
+
+    async def place_order(self, order: OrderRequest) -> OrderResponse:
+        """Place a market or limit order on OKX.
+
+        `order.quantity` is in COIN units (our canonical internal unit). Routing
+        depends on order.market_type (owner principle 2 — adapter-boundary split):
+        - usdt_futures (perp): OKX/CCXT `amount` is in CONTRACTS, so convert
+          coins→contracts via contractSize, set leverage first (fail-closed), and
+          convert filled contracts back to coins on the way out. Symbol carries a
+          settle suffix (BTC/USDT:USDT) derived from the quote currency.
+        - spot: `amount` is the coin quantity directly (no contracts, no leverage,
+          no funding). A spot MARKET BUY uses tgtCcy=base_ccy so `amount` stays in
+          base coins; reduceOnly does not exist for spot — a spot close is a plain
+          market SELL of the held base amount.
+        """
+        spot = not is_leveraged_market(order.market_type)
+        ccxt_symbol = okx_ccxt_symbol(order.market_type, order.symbol)
+        ex = self._ensure_exchange()
+
+        params = {}
+        if order.client_oid:
+            # OKX clOrdId: alphanumeric only, max 32 chars. Strip hyphens from UUIDs
+            # and "close-<uuid>" prefixes before truncating.
+            params["clOrdId"] = order.client_oid.replace("-", "")[:32]
+
+        if spot:
+            # No leverage, no contract conversion: amount == coin quantity.
+            contract_size = 1.0
+            amount = order.quantity
+            # OKX spot MARKET BUY otherwise sizes `amount` in quote (cost); force
+            # base-ccy sizing so it is interpreted as coins, matching our unit.
+            if order.order_type == "market" and order.side == "buy":
+                params["tgtCcy"] = "base_ccy"
+            # NOTE: reduceOnly intentionally omitted — derivatives-only concept.
+        else:
+            # Futures open: set intended leverage first (skip reduce-only closes). Fail-closed.
+            if order.leverage and order.leverage > 1 and not order.reduce_only:
+                await self.set_leverage(ccxt_symbol, order.leverage)
+            contract_size = await self._contract_size(ccxt_symbol)
+            amount = order.quantity / contract_size if contract_size else order.quantity
+            if order.reduce_only:
+                params["reduceOnly"] = True
+
+        try:
+            resp = await ex.create_order(
+                symbol=ccxt_symbol,
+                type=order.order_type,
+                side=order.side,
+                amount=amount,
+                price=order.price if order.order_type == "limit" else None,
+                params=params,
+            )
+        except ccxt.BaseError as e:
+            logger.error("OKX order failed: %s", e)
+            raise RuntimeError(f"OKX: {e}") from e
+
+        status = self._map_status(resp.get("status", ""))
+        order_id = resp.get("id", "")
+
+        # OKX market orders fill instantly but CCXT create_order may return
+        # status "open" before the exchange updates. Poll once to confirm fill;
+        # adopt the refreshed order unconditionally so we also capture a partial
+        # fill's price/qty detail (not just the fully-filled case).
+        if status != "filled" and order.order_type == "market" and order_id:
+            import asyncio as _aio
+            await _aio.sleep(0.3)
+            try:
+                fetched = await ex.fetch_order(order_id, ccxt_symbol)
+                status = self._map_status(fetched.get("status", status))
+                resp = fetched
+            except Exception as e:
+                logger.debug("fetch_order after market order failed: %s", e)
+
+        # Detect a partial fill: CCXT reports it as status "open" with a non-zero
+        # `filled`, which _map_status flattens to "submitted" — the broker would then
+        # treat a real partial position as unfilled and never record it. Bitget's
+        # client already emits "partially_filled"; mirror it here.
+        if status != "filled" and float(resp.get("filled") or 0) > 0:
+            status = "partially_filled"
+
+        fill_price = None
+        filled_qty = None
+        if status in ("filled", "partially_filled"):
+            fill_price = float(resp["average"]) if resp.get("average") else None
+            # resp["filled"] is in CONTRACTS — convert back to coin units to match
+            # our internal/storage convention.
+            if resp.get("filled"):
+                filled_qty = float(resp["filled"]) * contract_size
+
+        return OrderResponse(
+            order_id=order_id,
+            client_oid=resp.get("clientOrderId"),
+            status=status,
+            fill_price=fill_price,
+            filled_quantity=filled_qty,
+        )
+
+    async def get_open_orders(self) -> list[dict]:
+        """Currently-open orders for CR-EX-01 reconciliation. Each dict carries the
+        exchange order id under 'id'. CCXT fetch_open_orders() with no symbol returns
+        all open orders; demo vs live is chosen by this client's mode.
+
+        NOTE (needs-demo confirmation): implemented from CCXT's unified method + OKX
+        docs and covered by mock tests. The exact response shape (fields under 'info',
+        whether a symbol arg is required) should be confirmed once against an OKX demo
+        account, ideally captured as a fixture — see PARTIAL_REDUCE_RESEARCH.md.
+        """
+        try:
+            orders = await self._ensure_exchange().fetch_open_orders()
+            return [
+                {"id": str(o.get("id")), "symbol": o.get("symbol"), "status": o.get("status")}
+                for o in (orders or [])
+                if o.get("id")
+            ]
+        except ccxt.BaseError as e:
+            logger.error("OKX %s get_open_orders failed: %s", self._mode, e)
+            raise RuntimeError(f"OKX {self._mode} open_orders: {e}") from e
+
+    async def place_algo_order(
+        self,
+        symbol: str,
+        market_type: str,
+        close_side: str,
+        quantity: float,
+        stop_price: float | None = None,
+        take_profit_price: float | None = None,
+    ) -> dict:
+        """Place reduce-only protective trigger orders (SL and/or TP) for an EXISTING position.
+
+        Unlike place_order (which opens), this places standalone conditional/algo
+        orders that close the position when a trigger price is hit — the OKX
+        equivalent of Bitget's place_tpsl_order. `close_side` is the side that
+        REDUCES the position (sell for a long, buy for a short). `quantity` is in
+        COIN units; for perps it is converted to contracts via contractSize, same
+        as place_order. SL and TP are placed as two separate reduce-only trigger
+        orders (mirrors bitget_broker._try_place_tpsl). Returns {"sl": id, "tp": id}
+        for whichever legs were placed. Non-fatal per leg — a failed leg is logged
+        and omitted, never raised, so a partial bracket still protects.
+
+        Perp only: OKX spot has no reduce-only / position concept, so protective
+        trigger orders are not placed for spot (caller must not rely on them).
+        """
+        if is_leveraged_market(market_type) is False:
+            logger.info("OKX spot has no reduce-only protective orders — skipping for %s", symbol)
+            return {}
+
+        ccxt_symbol = okx_ccxt_symbol(market_type, symbol)
+        ex = self._ensure_exchange()
+        contract_size = await self._contract_size(ccxt_symbol)
+        amount = quantity / contract_size if contract_size else quantity
+
+        result: dict = {}
+        # Two separate reduce-only market-trigger orders. CCXT-okx maps the unified
+        # stopLossPrice / takeProfitPrice params to OKX algo (slTriggerPx/tpTriggerPx)
+        # orders with market execution.
+        legs = []
+        if stop_price:
+            legs.append(("sl", {"reduceOnly": True, "stopLossPrice": float(stop_price)}))
+        if take_profit_price:
+            legs.append(("tp", {"reduceOnly": True, "takeProfitPrice": float(take_profit_price)}))
+
+        for leg, params in legs:
+            try:
+                resp = await ex.create_order(
+                    symbol=ccxt_symbol, type="market", side=close_side,
+                    amount=amount, price=None, params=params,
+                )
+                oid = resp.get("id") or ""
+                if oid:
+                    result[leg] = oid
+            except ccxt.BaseError as e:
+                logger.warning("OKX %s trigger placement failed for %s: %s", leg, symbol, e)
+            except Exception as e:  # noqa: BLE001 — protective placement must never raise
+                logger.warning("OKX %s trigger placement error for %s: %s", leg, symbol, e)
+        return result
+
+    async def cancel_algo_order(self, symbol: str, market_type: str, algo_id: str) -> None:
+        """Cancel a pending algo/trigger order. Non-fatal on failure."""
+        ccxt_symbol = okx_ccxt_symbol(market_type, symbol)
+        try:
+            ex = self._ensure_exchange()
+            await ex.cancel_order(algo_id, ccxt_symbol, params={"trigger": True})
+        except Exception as e:  # noqa: BLE001
+            logger.warning("OKX cancel algo %s (%s) failed: %s", algo_id, symbol, e)
+
+    async def get_positions(self) -> list[dict]:
+        """Fetch open positions.
+
+        CCXT reports `contracts` (contract count); we expose `quantity` in COIN
+        units (contracts × contractSize) so storage/PnL/adoption stay consistent
+        with the rest of the system. CCXT's per-position `contractSize` is used
+        directly (no markets lookup needed).
+        """
+        try:
+            positions = await self._ensure_exchange().fetch_positions()
+            result = []
+            for p in positions:
+                contracts = abs(float(p.get("contracts", 0) or 0))
+                if contracts == 0:
+                    continue
+                contract_size = float(p.get("contractSize") or 1.0)
+                qty = contracts * contract_size
+                result.append({
+                    "symbol": p.get("symbol", ""),
+                    "side": p.get("side", ""),
+                    "position_id": str(
+                        p.get("id")
+                        or (p.get("info") or {}).get("posId")
+                        or ""
+                    ) or None,
+                    "quantity": qty,
+                    "entry_price": float(p.get("entryPrice", 0) or 0),
+                    "unrealized_pnl": float(p.get("unrealizedPnl", 0) or 0),
+                    "mark_price": float(p.get("markPrice", 0) or 0),
+                })
+            return result
+        except ccxt.BaseError as e:
+            logger.error("OKX get_positions failed: %s", e)
+            raise RuntimeError(f"OKX positions: {e}") from e
+
+    async def get_verified_position_exit(self, request):
+        """Verify one disappeared position from direct state and private fills."""
+        from aletheia.execution.verified_exit import (
+            VerifiedExitFill,
+            classify_verified_exit,
+            inconclusive_verified_exit,
+            private_history_window_available,
+        )
+
+        expected_mode = "okx_demo" if self._mode == "demo" else "okx_live_limited"
+        if (
+            request.broker_id != expected_mode
+            or request.execution_mode != expected_mode
+            or request.account_environment != self._mode
+        ):
+            return inconclusive_verified_exit(request, "account_identity_mismatch")
+        if request.market_type != "usdt_futures":
+            return inconclusive_verified_exit(request, "unsupported_market_type")
+        if not private_history_window_available(request):
+            return inconclusive_verified_exit(request, "history_window_unavailable")
+
+        endpoint = "/api/v5/trade/fills-history"
+        try:
+            positions = await self.get_positions()
+            present = any(
+                to_canonical(str(position.get("symbol") or "")) == request.symbol
+                and str(position.get("side") or "").lower() == request.direction
+                and float(position.get("quantity") or 0) > 0
+                for position in positions
+            )
+            if present:
+                return classify_verified_exit(
+                    request, position_absent=False, history_complete=False,
+                    close_fills=(), ambiguous_activity=False, pages=0,
+                    source_endpoint=endpoint,
+                )
+
+            exchange = self._ensure_exchange()
+            ccxt_symbol = okx_ccxt_symbol(request.market_type, request.symbol)
+            market = exchange.market(ccxt_symbol)
+            instrument_id = str((market or {}).get("id") or "")
+            if not instrument_id:
+                raise ValueError("OKX instrument identity unavailable")
+            contract_size = await self._contract_size(ccxt_symbol)
+            raw_fills: list[dict] = []
+            cursor = None
+            pages = 0
+            complete = False
+            for _ in range(100):
+                params = {
+                    "instType": "SWAP",
+                    "instId": instrument_id,
+                    "begin": str(request.history_start_ms),
+                    "end": str(request.history_end_ms),
+                    "limit": "100",
+                }
+                if cursor:
+                    params["after"] = cursor
+                payload = await exchange.private_get_trade_fills_history(params)
+                if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+                    raise RuntimeError("private fill history rejected")
+                page = payload.get("data")
+                if not isinstance(page, list):
+                    raise ValueError("malformed private fill history")
+                pages += 1
+                raw_fills.extend(page)
+                if len(page) < 100:
+                    complete = True
+                    break
+                next_cursor = str(page[-1].get("billId") or "")
+                if not next_cursor or next_cursor == cursor:
+                    break
+                cursor = next_cursor
+
+            close_fills: list[VerifiedExitFill] = []
+            ambiguous = False
+            expected_side = "sell" if request.direction == "long" else "buy"
+            known_entry_order_ids = set(request.known_entry_order_ids)
+            for raw in raw_fills:
+                timestamp = _okx_int(raw.get("ts") or raw.get("fillTime"))
+                if not request.history_start_ms <= timestamp <= request.history_end_ms:
+                    continue
+                if str(raw.get("instId") or "") != instrument_id:
+                    ambiguous = True
+                    continue
+                pos_side = str(raw.get("posSide") or "").lower()
+                side = str(raw.get("side") or "").lower()
+                closes_direction = side == expected_side and pos_side in {
+                    request.direction, "net",
+                }
+                remote_order_id = str(raw.get("ordId") or "").strip()
+                if remote_order_id in known_entry_order_ids and not closes_direction:
+                    continue
+                if not closes_direction:
+                    ambiguous = True
+                    continue
+                fill_id = str(raw.get("billId") or raw.get("tradeId") or "")
+                price = _okx_float(raw.get("fillPx"))
+                contracts = _okx_float(raw.get("fillSz"))
+                if not fill_id or not price or not contracts or timestamp < 1:
+                    ambiguous = True
+                    continue
+                fee = _okx_float(raw.get("fee"))
+                pnl = _okx_float(raw.get("fillPnl"))
+                close_fills.append(VerifiedExitFill(
+                    fill_id=fill_id,
+                    order_id=str(raw.get("ordId") or "") or None,
+                    price=price,
+                    quantity=contracts * contract_size,
+                    fee=abs(fee) if fee is not None else None,
+                    fee_currency=str(raw.get("feeCcy") or "") or None,
+                    realized_pnl=pnl,
+                    filled_at_ms=timestamp,
+                ))
+            return classify_verified_exit(
+                request,
+                position_absent=True,
+                history_complete=complete,
+                close_fills=tuple(close_fills),
+                ambiguous_activity=ambiguous,
+                pages=pages,
+                source_endpoint=endpoint,
+            )
+        except Exception:
+            return inconclusive_verified_exit(
+                request, "broker_query_failed", source_endpoint=endpoint,
+            )
+
+    async def fetch_balance(self) -> dict:
+        """Fetch account balance. Returns CCXT unified balance."""
+        try:
+            return await self._ensure_exchange().fetch_balance()
+        except ccxt.BaseError as e:
+            logger.error("OKX fetch_balance failed: %s", e)
+            raise RuntimeError(f"OKX balance: {e}") from e
+
+    async def fetch_time(self) -> int:
+        """Fetch server time (connectivity test). Returns Unix ms."""
+        try:
+            return await self._ensure_exchange().fetch_time()
+        except ccxt.BaseError as e:
+            raise RuntimeError(f"OKX time: {e}") from e
+
+    async def close(self):
+        """Close the underlying CCXT session and owned aiohttp session.
+
+        No-op if the exchange was never lazily created (e.g. constructed then
+        closed without any awaited call).
+        """
+        from aletheia.net import close_ccxt
+
+        exchange, session = self._exchange, self._session
+        if not await close_ccxt(exchange, session):
+            raise RuntimeError("ccxt_cleanup_failed")
+        self._exchange = None
+        self._session = None
+
+    @staticmethod
+    def _map_status(raw: str) -> str:
+        mapping = {
+            "closed": "filled",
+            "open": "submitted",
+            "canceled": "cancelled",
+            "expired": "cancelled",
+        }
+        return mapping.get(raw, raw)

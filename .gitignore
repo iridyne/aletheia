@@ -1,14 +1,14 @@
 __pycache__/
 *.py[cod]
 # Touched by restart endpoint to trigger uvicorn --reload (dev mode)
-aletheia/_reload_sentinel.py
+core/aletheia/_reload_sentinel.py
 *.egg-info/
 dist/
 build/
 .venv/
 .env
 # Legacy runtime migration source only (repo-root anchored). A bare `data/` also matches the
-# SOURCE package aletheia/data/ at every level — which silently excluded it from
+# SOURCE package core/aletheia/data/ at every level — which silently excluded it from
 # git and broke the checkout. Keep the leading slash so it stays root-scoped.
 /data/
 *.db
@@ -18,7 +18,7 @@ secrets.enc
 node_modules/
 frontend/dist/
 # Frontend build artifacts — gitignored; run `cd frontend && npm run build` before first use or after UI changes.
-aletheia/dashboard_static/
+core/aletheia/dashboard_static/
 .pytest_cache/
 .pytest_cache_ai/
 url-to-markdown/
