@@ -1,14 +1,18 @@
 # Aletheia Trading OS
 
-Aletheia is an internal, local-first AI trading system that turns market
-evidence into risk-gated decisions, external Demo/Testnet execution, cost-complete
-outcomes, and measurable learning evidence. The active scope covers crypto
-spot/perpetuals and the narrowly declared stock-linked perpetual profile through
-explicitly configured `bitget_demo`, `okx_demo`, or `binance_testnet` accounts.
-Live trading and other research surfaces remain outside that core.
+Aletheia is an internal, local-first AI trading system. The accepted Slim
+Product is an exchange/provider-agnostic Core, the active Bitget Exchange
+Extension, and explicitly configured HTTP Model Endpoints. The currently
+declared qualification route is crypto spot/perpetuals on **Bitget Demo**.
+This describes the approved boundary, not proof of end-to-end operation,
+completed architecture convergence, profitability, or a deployed instance.
 
-The canonical support contracts are [`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md)
-and [`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md).
+For current scope, use the existing authorities:
+[`ACTIVE_RUNTIME_SCOPE.md`](docs/product/ACTIVE_RUNTIME_SCOPE.md) is the sole
+machine-readable active-admission declaration;
+[`CAPABILITY_GROUND_TRUTH.md`](docs/product/CAPABILITY_GROUND_TRUTH.md) owns
+capability promises and their evidence limits. This README is a navigation and
+setup guide, not a second support registry.
 
 ## Start here
 
@@ -26,9 +30,10 @@ uv run aletheia install
 aletheia gateway start
 ```
 
-Open `http://127.0.0.1:8787`. Configure providers, credentials, runtime
-settings, and any explicit live authority from Dashboard Settings. The install
-shim can be rerun after moving the repository or changing shell setup.
+Open `http://127.0.0.1:8787`. Configure the Bitget Demo account, HTTP Model
+Endpoints, and runtime settings from Dashboard Settings. Live is outside the
+current supported product; setup does not enable it. The install shim can be
+rerun after moving the repository or changing shell setup.
 
 Common entry points: `aletheia gateway status`, `aletheia gateway restart`,
 `aletheia doctor`, `aletheia observe list`, and `aletheia observe status <observation-id>`.
@@ -38,48 +43,48 @@ For shared-runtime operation and recovery, read the [`Runbook`](docs/operations/
 
 Read [`AGENTS.md`](AGENTS.md) before changing anything. It is the mandatory
 router for safety boundaries, environment limits, task-specific guides, and PR
-lifecycle rules. Determine current behavior from runtime facts, current code,
-tests, persisted state, and the two canonical support contracts above; identify
-exact commit/runtime provenance when it matters.
+lifecycle rules. Within an owner-authorized task, derive the engineering plan,
+relevant failure cases and technical verification without routine approval
+handoffs; escalate only at the boundaries defined there. Separate approved
+behavior from observed behavior and identify exact commit/runtime provenance
+when making implementation or deployment claims.
 
 ## The active trading loop
 
 ```mermaid
 flowchart LR
-    A[Market evidence] --> B[Universe / opportunity]
-    B --> C[System Operator]
-    C --> D[Trade Proposal]
-    D --> E[Risk Engine]
-    E -->|approved| F[Execution Gateway]
-    E -->|rejected| G[Risk evidence]
-    F --> H[Configured exchange Demo/Testnet]
-    H --> I[Fill / position / settlement]
-    I --> J[Cost-complete genuine outcome]
-    J --> K[Attribution and learning measurement]
-    G --> K
+    A[Market evidence] --> B[Universe / Candidate]
+    B --> C[Planning Generation]
+    C --> D[System Operator hypothesis]
+    D --> E[Compiler / immutable Entry Plan]
+    E --> F[Proposal / Risk Decision]
+    F -->|approved| G[Execution Gateway / Coordinator / UTA]
+    F -->|rejected| R[Risk evidence]
+    G --> H[Bitget Demo Extension]
+    H --> I[Order / private Fill]
+    I --> J[Position / protection / verified close]
+    J --> K[Accounting / eligible Outcome]
 ```
 
-The System Operator owns entry decisions, Risk approval precedes every
-execution, and orders use the Execution Gateway. Learning, research, and
-Observation Lab evidence cannot grant trading authority.
+The System Operator remains the entry strategy authority. Risk approval precedes
+execution, and exchange mutations pass through the Execution Gateway. This is a
+summary of the declared route, not a claim that the entire route has been
+qualified. Missing fill or economic evidence remains explicitly unresolved.
 
 ## Current declared boundary
 
-| Area | Position |
-| --- | --- |
-| Local runtime, scheduler, market data, dynamic universe | Supported core |
-| Candidate / Opportunity → Operator → Risk → configured external Demo/Testnet | Declared active flow; exact route qualification required |
-| Position lifecycle and cost-complete outcomes | External Fill and verified economic evidence required |
-| Observation Lab | Evidence infrastructure; zero trading authority |
-| Declared stock-linked perpetual profile | Bounded active scope; exact instrument capability required |
-| Serenity research and preferences | Experimental |
-| Other equity and prediction-market execution | Outside active scope |
-| Live execution | Outside Supported core; explicit owner authority required |
+OKX/Binance and stock-linked perpetual new-entry support are frozen. Historical
+identities and exposure-recovery obligations remain valid. Ordinary equity and
+prediction-market execution are outside the active instrument scope; the
+separately authorized CN extension remains disabled. The former internal
+simulator is [archived](docs/design/history/local_simulated_runtime_scope.md),
+not an alternative current execution route.
 
-Registered routes do not certify account credentials, instrument capability or
-economic qualification. The support contracts linked above are authoritative
-when deeper documents disagree. The former internal simulator is
-[archived](docs/design/history/local_simulated_runtime_scope.md).
+Research, Observation and Learning are not independent trading authorities.
+Their optional/frozen support classification does not remove existing explicitly
+owner-gated Learning behavior; the active declaration and relevant Contracts
+retain those boundaries. Consult Capability Ground Truth rather than deriving
+support from an adapter, a UI control, or a passing test.
 
 ## Development and preview
 

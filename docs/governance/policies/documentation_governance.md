@@ -127,7 +127,12 @@ classification:
 | D2 — Change Structure | State ownership, long-lived mainline, subsystem topology, authority, or product scope changes | Requires an accepted `docs/design/proposals/` Proposal before the target state enters any Contract |
 
 SDD depth is a semantic classifier only; it does not replace owner approval for
-a D1/D2 decision.
+a new D1/D2 decision. [Root AGENTS.md](../../../AGENTS.md#bounded-engineering-delegation)
+is the single development-delegation authority: the owner selects outcomes and
+material decisions; the AI derives technical root cause, relevant boundary cases,
+implementation and verification within the authorized task. An already accepted
+delta does not need repeated approval per commit or checkpoint. Recording a task
+in an Issue preserves existing authorization; it does not create new authority.
 
 **Contract update rule.** Code changing does not require a Contract change.
 Update a Contract only when an approved D1/D2 change is accepted.
@@ -182,19 +187,33 @@ path, and economic outcome is not a product capability.
 
 ## Authority and conflict resolution
 
-Use this order when documents conflict:
+First identify the question; different kinds of truth are not interchangeable:
 
-1. repository governance;
-2. Product Truth;
-3. current Contracts;
-4. accepted Decisions;
-5. current Operations procedures;
-6. Proposals;
-7. research and frozen historical evidence.
+| Question | Canonical authority / evidence |
+|---|---|
+| What development work is authorized, and who decides? | The owner's explicit task/accepted decision, bounded by [root AGENTS.md](../../../AGENTS.md), safety policies and applicable review/release rules |
+| Which trading route is admitted now? | [ACTIVE_RUNTIME_SCOPE.md](../../product/ACTIVE_RUNTIME_SCOPE.md), the single machine-readable active-admission declaration |
+| What capabilities are currently promised, frozen or optional? | [CAPABILITY_GROUND_TRUTH.md](../../product/CAPABILITY_GROUND_TRUTH.md) |
+| What behavior is approved? | The narrowest current Contract; accepted Decisions explain why |
+| What exists and works in this code revision? | Current source and applicable executable evidence, with their actual limitations |
+| What is deployed or economically qualified? | Exact-runtime identity, observations and required external/economic evidence, not repository status |
+| What work is open, reviewed or closed? | GitHub Issues/PRs; their status is not implementation, deployment or qualification proof |
 
-Code, executable tests, durable data, and current runtime facts determine
-whether the documented statement remains true. When they disagree, correct
-the appropriate authority and track any remaining repair in GitHub.
+Within the same subject, repository governance bounds Product Truth, current
+Contracts, accepted Decisions, Operations, Proposals and finally historical
+references. The active admission and capability declarations narrow broader
+`DIRECTION.md`, `SCOPE.md`, architecture overviews and inventories; those broader
+documents must link to, not expand, current support. README files are routers,
+not competing policy or capability registries.
+
+Use code/tests/data/runtime to verify factual claims, not to authorize changed
+semantics. If code disagrees with an approved Contract, record a conformance gap;
+do not weaken the Contract to match a bug. If an overview or README disagrees
+with a current authority, correct the overview. If current authorities genuinely
+conflict and accepted owner decisions/current evidence cannot resolve them,
+escalate that specific decision under root AGENTS.md. Keep historical evidence
+intact with its original scope. Closure of an old task neither proves all its
+claims nor automatically authorizes restarting it.
 
 Each fact has one canonical owner document. Other documents link to it instead
 of copying it. Do not add commit-SHA binding, broad metadata registries,
