@@ -55,6 +55,8 @@ def api(
         "--host", "127.0.0.1", "--port", str(port),
         "--reload", "--reload-dir", str(root / "aletheia"),
     ]
+    if (root / "extensions").is_dir():
+        command.extend(["--reload-dir", str(root / "extensions")])
     typer.echo(
         f"Starting isolated preview API at http://127.0.0.1:{port} "
         f"with isolated runtime state under {data_dir}"

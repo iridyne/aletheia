@@ -125,7 +125,8 @@ def main():
 
     from watchfiles import watch, Change
 
-    log(f"Watching {ALETHEIA_DIR} for .py changes...")
+    watch_dirs = [path for path in (ALETHEIA_DIR, PROJECT_ROOT / "extensions") if path.is_dir()]
+    log(f"Watching {watch_dirs} for .py changes...")
     log(f"Debounce={DEBOUNCE_SEC}s, Cooldown={COOLDOWN_SEC}s, MaxRestarts={MAX_RESTARTS_PER_MINUTE}/min")
 
     restart_times: list[float] = []
@@ -133,7 +134,7 @@ def main():
     storm_disabled = False
 
     for changes in watch(
-        ALETHEIA_DIR,
+        *watch_dirs,
         debounce=int(DEBOUNCE_SEC * 1000),
         watch_filter=lambda change, path: (
             change != Change.deleted
