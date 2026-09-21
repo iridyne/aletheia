@@ -9,7 +9,7 @@ from unittest.mock import Mock, call
 import pytest
 
 
-@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py"])
+@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py", "universe/features.py"])
 def test_standard_core_consumers_do_not_import_concrete_data(module):
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
     assert not any(

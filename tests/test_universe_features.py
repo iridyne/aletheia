@@ -81,7 +81,7 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         instances = []
 
         def __init__(self, *, exchange, fallback_exchange):
-            assert (exchange, fallback_exchange) == ("bitget", "okx")
+            assert (exchange, fallback_exchange) == ("bitget", "bitget")
             self.exchange = Exchange()
             self.closed = False
             self.instances.append(self)

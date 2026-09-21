@@ -13,16 +13,11 @@ the managed session and malformed-market guard without substituting another venu
 The optional ``get_ohlcv_observation`` capability is deliberately primary-only and
 does not enter this fallback loop.
 
-Documented direct-construction sites (routing through the factory would either be wrong
-or lack the CCXT-native surface they need - 2026-07-07 audit, #49):
+The remaining documented direct-construction site is an intentional venue-native
+exception (routing through the generic factory would select the configured fallback):
 
 - xStocks (ON-series): builds ``CCXTProvider(exchange="bitget", fallback_exchange="bitget")``
   because only Bitget lists those tokens and the config fallback (bybit) would not find them.
-- ``universe/features.py::collect_features``: uses
-  ``CCXTProvider(exchange=md.ccxt_exchange, fallback_exchange=md.ccxt_fallback)`` — same
-  config resolution as the factory, but the factory returns a ``FallbackChainProvider``
-  whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. The
-  feature observation capabilities pin their own reads to the primary venue.
 
 Registry sync uses the existing Core factory's exact-venue selection and the
 normalized ``get_market_instruments`` capability. It loads primary metadata
