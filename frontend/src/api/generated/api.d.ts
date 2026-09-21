@@ -11746,11 +11746,8 @@ export interface components {
         };
         /** SchedulerSnapshot */
         SchedulerSnapshot: {
-            /**
-             * Enabled
-             * @default false
-             */
-            enabled: boolean;
+            /** Enabled */
+            enabled?: boolean | null;
             /**
              * Running
              * @default false
@@ -12258,7 +12255,6 @@ export interface components {
             runtime: components["schemas"]["RuntimeSnapshot"];
             /**
              * @default {
-             *       "enabled": false,
              *       "running": false,
              *       "state": "not_available"
              *     }
