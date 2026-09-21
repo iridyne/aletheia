@@ -1,46 +1,27 @@
-"""Tests for CR-EX-01: OKX/Binance live-order reconciliation via CCXT get_open_orders.
+"""Current UTA open-order evidence preserves malformed-row incompleteness."""
 
-Docs/CCXT-implemented; the exchange call is mocked here (no keys/network). The real
-response shape is pending one demo sampling (see PARTIAL_REDUCE_RESEARCH.md).
-"""
+import pytest
 
-import asyncio
-
-
-
-class _FakeExchange:
-    def __init__(self, orders):
-        self._orders = orders
-
-    async def fetch_open_orders(self):
-        return self._orders
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+from aletheia.uta.models import ReadCompleteness
+from tests.uta.test_ccxt_adapter import FakeExchange, _identity, _install, _profile
 
 
-
-
-# ── get_open_orders response parsing (real client, mocked ccxt exchange) ─────
-
-def test_okx_get_open_orders_parses(monkeypatch):
-    import aletheia.exchanges.okx.client as okxmod
-    monkeypatch.setattr(okxmod, "get_secret", lambda k: "x")
-    c = okxmod.OKXClient(mode="demo")
-    monkeypatch.setattr(c, "_ensure_exchange", lambda: _FakeExchange([
-        {"id": 123, "symbol": "BTC/USDT:USDT", "status": "open"},
-        {"id": None},          # dropped — no id
-        {"symbol": "no-id"},   # dropped — no id
-    ]))
-    assert asyncio.run(c.get_open_orders()) == [
-        {"id": "123", "symbol": "BTC/USDT:USDT", "status": "open"}
-    ]
-
-
-def test_binance_get_open_orders_parses(monkeypatch):
-    import aletheia.exchanges.binance.client as binmod
-    monkeypatch.setattr(binmod, "get_secret", lambda k: "x")
-    c = binmod.BinanceClient(mode="testnet")
-    monkeypatch.setattr(c, "_ensure_exchange", lambda: _FakeExchange([
-        {"id": "abc", "symbol": "ETH/USDT:USDT", "status": "open"},
-    ]))
-    assert asyncio.run(c.get_open_orders()) == [
-        {"id": "abc", "symbol": "ETH/USDT:USDT", "status": "open"}
-    ]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("venue", ["okx", "binance"])
+@pytest.mark.parametrize("malformed", [False, True])
+async def test_open_orders_keep_identity_and_incomplete_evidence(monkeypatch, venue, malformed):
+    profile = _profile(venue)
+    exchange = FakeExchange()
+    row = dict(id="order-1", symbol="BTC/USDT:USDT", status="open", amount="1", filled="0")
+    rows = [row, {**row, "id": None}] if malformed else [row]
+    exchange.order_responses = [rows for _ in profile.open_order_requests]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.get_open_orders()
+        assert [order.venue_order_id for order in report.orders] == ["order-1"]
+        expected = ReadCompleteness.PARTIAL if malformed else ReadCompleteness.COMPLETE
+        assert report.completeness is expected
+    finally:
+        await adapter.close()

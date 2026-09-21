@@ -624,13 +624,10 @@ def resolve_orders_missing_from_exchange(
     exchange_open_ids: set[str],
     modes: tuple[str, ...] = _CCXT_LIVE_MODES,
 ) -> list[str]:
-    """Pure CR-EX-01 core: given locally-open orders (for the given execution modes) and
-    the set of order ids the exchange still reports OPEN, return the exchange_order_ids
-    that should converge to 'filled' — locally open but no longer open on the exchange.
+    """Historical CR-EX-01 projection: identify orders absent from the open set.
 
-    Kept pure so the decision is unit-tested without an exchange; ``exchange_open_ids`` is
-    produced by OKXClient / BinanceClient.get_open_orders() (implemented from CCXT; the
-    real response shape is pending one demo sampling — see _reconcile_ccxt_broker).
+    This result alone is not Fill evidence. Current reconciliation reads exact
+    UTA Order/Fill reports and materializes proven private fills separately.
     """
     resolved: list[str] = []
     for o in local_orders:

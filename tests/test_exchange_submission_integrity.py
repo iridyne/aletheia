@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import importlib
 import json
 import sqlite3
 import threading
@@ -550,56 +549,29 @@ error_factory,):
     assert len(repo.list_orders(limit=10)) == 1
 
 
-@pytest.mark.parametrize(
-    "client_module,client_name,mode,market_type",
-    [
-        pytest.param(
-            "aletheia.exchanges.okx.client",
-            "OKXClient",
-            "demo",
-            "spot",
-            id="okx-client",
-        ),
-        pytest.param(
-            "aletheia.exchanges.binance.client",
-            "BinanceClient",
-            "testnet",
-            "usdt_futures",
-            id="binance-client",
-        ),
-    ],
-)
+@pytest.mark.parametrize("venue", ["okx", "binance"])
 @pytest.mark.real_place_order
-def test_ccxt_bad_response_wrapped_by_real_client_remains_ambiguous(
-    monkeypatch, client_module, client_name, mode, market_type,
-):
-    """The shared broker classifier must see through each real client wrapper."""
-    module = importlib.import_module(client_module)
-    client_type = getattr(module, client_name)
-    client = object.__new__(client_type)
-    client._mode = mode
-
-    class _Exchange:
-        async def create_order(self, **_kwargs):
-            raise ccxt.BadResponse("create-order response unavailable")
-
-    monkeypatch.setattr(client, "_ensure_exchange", lambda: _Exchange())
-    request = module.OrderRequest(
-        symbol="BTC/USDT",
-        market_type=market_type,
-        side="buy",
-        order_type="market",
-        quantity=0.001,
-        client_oid="wrapped-bad-response",
+@pytest.mark.asyncio
+async def test_ccxt_bad_response_from_uta_remains_ambiguous(monkeypatch, venue):
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import (
+        FakeExchange, _identity, _install, _profile, _okx_command, _binance_command,
     )
 
-    with pytest.raises(RuntimeError) as captured:
-        asyncio.run(client.place_order(request))
-
-    from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
-
-    assert isinstance(captured.value.__cause__, ccxt.BadResponse)
-    assert is_ambiguous_submission_error(captured.value) is True
+    profile = _profile(venue)
+    exchange = FakeExchange()
+    exchange.create_response = ccxt.BadResponse("create-order response unavailable")
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    command = _okx_command(identity, market_type="spot") if venue == "okx" else _binance_command(identity)
+    try:
+        report = await adapter.submit_order(command)
+        assert report.evidence is CommandEvidence.AMBIGUOUS
+        assert report.order is None
+        assert [event[0] for event in exchange.events].count("create_order") == 1
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.parametrize(
