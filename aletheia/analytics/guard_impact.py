@@ -26,7 +26,7 @@ from aletheia.config.loader import get_data_dir
 from aletheia.knowledge.frontmatter import parse_frontmatter
 from aletheia.knowledge.guards import TradingGuard, evaluate_guards, load_trading_guards
 from aletheia.storage.repositories import valid_keyed_shadow_projection_sql
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, readonly_db
 
 _HORIZONS = ("1h", "4h", "24h")
 _VERDICT_PROTECTIVE = "protective"
@@ -35,11 +35,15 @@ _VERDICT_GROSS_ONLY = POSITIVE_GROSS_ONLY
 _VERDICT_INSUFFICIENT = "insufficient_data"
 
 
+@readonly_db(allow_missing=True)
 def build_guard_impact_audit(hours: int = 24) -> dict[str, Any]:
     """Build a deterministic, read-only guard impact report."""
     hours_i = max(1, int(hours or 24))
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_i)).isoformat()
-    db = get_db()
+    try:
+        db = get_db()
+    except FileNotFoundError:
+        db = None
 
     active_guards = [
         g for g in load_trading_guards(scope="paper_entry", status="active")
@@ -495,6 +499,8 @@ def _fmt_outcomes(outcomes: dict[str, Any]) -> str:
 
 
 def _table_exists(db, table: str) -> bool:
+    if db is None:
+        return False
     row = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table,),
