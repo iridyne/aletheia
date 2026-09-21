@@ -22,7 +22,7 @@ from aletheia.analytics.outcome_semantics import (
     classify_outcome_row,
     outcome_values,
 )
-from aletheia.storage.sqlite import get_db
+from aletheia.storage.sqlite import get_db, readonly_db
 
 _HORIZONS = ("15m", "1h", "4h")
 _VERDICT_MISSED = MISSED_ALPHA
@@ -31,11 +31,15 @@ _VERDICT_PROTECTIVE = PROTECTIVE
 _VERDICT_INSUFFICIENT = INSUFFICIENT
 
 
+@readonly_db(allow_missing=True)
 def build_debate_impact_audit(hours: int = 24) -> dict[str, Any]:
     """Build a deterministic, read-only debate impact report."""
     hours_i = max(1, int(hours or 24))
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours_i)).isoformat()
-    db = get_db()
+    try:
+        db = get_db()
+    except FileNotFoundError:
+        db = None
 
     flow = _decision_flow(db, cutoff)
     opportunities = _debated_opportunities(db, cutoff)
@@ -330,6 +334,8 @@ def _fmt_trace(row: dict[str, Any]) -> str:
 
 
 def _table_exists(db, table: str) -> bool:
+    if db is None:
+        return False
     found = db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (table,),
