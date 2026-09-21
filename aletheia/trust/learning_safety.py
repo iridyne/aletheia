@@ -3,6 +3,27 @@
 from collections.abc import Callable
 
 
+# These scheduled jobs create, review, apply, promote, or automatically roll out
+# learned state. Outcome settlement and shadow resolution are deliberately absent:
+# they preserve measurement truth even while autonomous Learning is disabled.
+AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
+    "dreaming_daily",
+    "lesson_reviewer",
+    "insight_synthesizer",
+    "confidence_calibration",
+    "post_trade_reviewer",
+    "risk_critic",
+    "guard_promotion",
+    "filter_controller_observe",
+    "persona_rollout",
+    "learning_startup_catchup",
+})
+
+
+def is_autonomous_learning_job(job_id: str) -> bool:
+    return job_id in AUTONOMOUS_LEARNING_JOBS
+
+
 _influence_gate: Callable[[], str | None] | None = None
 _refreeze_reason: Callable[[], str | None] | None = None
 

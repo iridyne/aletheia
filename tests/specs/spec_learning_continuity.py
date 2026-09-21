@@ -27,6 +27,7 @@ def _keep_spec_memory_db_open(monkeypatch):
 def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
     from aletheia.agent_runtime import scheduler
     from aletheia.learning import control
+    from aletheia.trust.learning_safety import AUTONOMOUS_LEARNING_JOBS
 
     monkeypatch.setattr(
         control,
@@ -49,8 +50,8 @@ def test_autonomous_learning_jobs_share_one_effective_gate(monkeypatch):
         "dreaming_daily", "lesson_reviewer", "insight_synthesizer",
         "confidence_calibration", "post_trade_reviewer", "risk_critic",
         "guard_promotion", "filter_controller_observe", "persona_rollout",
-    } <= control.AUTONOMOUS_LEARNING_JOBS
-    assert {"outcome_settler", "shadow_resolver"}.isdisjoint(control.AUTONOMOUS_LEARNING_JOBS)
+    } <= AUTONOMOUS_LEARNING_JOBS
+    assert {"outcome_settler", "shadow_resolver"}.isdisjoint(AUTONOMOUS_LEARNING_JOBS)
 
 
 @spec_claim(SpecClaim(

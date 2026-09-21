@@ -22,25 +22,10 @@ from aletheia.storage.repositories import (
     transaction,
 )
 from aletheia.storage.sqlite import get_db
+from aletheia.trust.learning_safety import is_autonomous_learning_job
 
 
 _CST = ZoneInfo("Asia/Shanghai")
-
-# These scheduled jobs create, review, apply, promote, or automatically roll out
-# learned state. Outcome settlement and shadow resolution are deliberately absent:
-# they preserve measurement truth even while autonomous Learning is disabled.
-AUTONOMOUS_LEARNING_JOBS: frozenset[str] = frozenset({
-    "dreaming_daily",
-    "lesson_reviewer",
-    "insight_synthesizer",
-    "confidence_calibration",
-    "post_trade_reviewer",
-    "risk_critic",
-    "guard_promotion",
-    "filter_controller_observe",
-    "persona_rollout",
-    "learning_startup_catchup",
-})
 
 DAILY_LEARNING_SCHEDULES: dict[str, tuple[int, int]] = {
     "dreaming_daily": (2, 0),
@@ -74,10 +59,6 @@ _REVIEWER_BACKLOG_LIMIT = 160
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def is_autonomous_learning_job(job_id: str) -> bool:
-    return job_id in AUTONOMOUS_LEARNING_JOBS
 
 
 def global_learning_refreeze_reason() -> str | None:

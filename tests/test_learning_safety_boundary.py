@@ -19,6 +19,9 @@ class MissingLearning:
             raise AssertionError("Core imported concrete Learning: " + fullname)
 sys.meta_path.insert(0, MissingLearning())
 from aletheia.trust.learning_safety import learning_influence_allowed, learning_refreeze_reason
+from aletheia.trust.learning_safety import is_autonomous_learning_job
+assert is_autonomous_learning_job("risk_critic") is True
+assert is_autonomous_learning_job("outcome_settler") is False
 from aletheia.trading import persona, persona_rollout, sizing_policy
 from aletheia.trust.behavior_authority import authorize_candidate_block
 cfg = SimpleNamespace(agent=SimpleNamespace(autonomous_learning=True), runtime=SimpleNamespace(paused=False))
