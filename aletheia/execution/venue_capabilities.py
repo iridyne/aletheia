@@ -190,9 +190,24 @@ async def fetch_venue_capabilities(execution_mode: str) -> dict | None:
     :func:`load_venue_capabilities`.
     """
     if execution_mode == "okx_demo":
-        from aletheia.data.ccxt_provider import load_public_market_capabilities
+        from aletheia.data.providers import get_market_data_provider
 
-        return await load_public_market_capabilities("okx", sandbox=True)
+        provider = get_market_data_provider("okx", exact_venue=True)
+        try:
+            read = getattr(provider, "get_public_market_capabilities", None)
+            if not callable(read):
+                raise RuntimeError("market capabilities unavailable")
+            capabilities = await read(sandbox=True)
+            if not isinstance(capabilities, dict) or any(
+                key not in {"spot", "swap"}
+                or not isinstance(symbols, frozenset)
+                or any(not isinstance(symbol, str) or not symbol.strip() for symbol in symbols)
+                for key, symbols in capabilities.items()
+            ):
+                raise ValueError("market capabilities invalid")
+            return capabilities
+        finally:
+            await provider.close()
     return load_venue_capabilities(execution_mode)
 
 

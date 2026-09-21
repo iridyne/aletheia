@@ -728,6 +728,39 @@ class CCXTProvider:
         except Exception as e:  # noqa: BLE001
             logger.debug("ohlcv persist skipped for %s/%s: %s", canon, timeframe, e)
 
+    async def get_public_market_capabilities(
+        self,
+        *,
+        sandbox: bool = False,
+    ) -> dict[str, frozenset[str]]:
+        """Read active USDT spot/swap symbols without fallback or persistence.
+
+        The sandbox client is request-local and never changes this provider's
+        ordinary clients. No credentials or private endpoints are involved.
+        """
+        from aletheia.net import close_ccxt, make_ccxt
+
+        exchange, session = make_ccxt(self._primary_name, options={"defaultType": "swap"})
+        try:
+            if sandbox:
+                exchange.set_sandbox_mode(True)
+            await exchange.load_markets()
+            symbols: dict[str, set[str]] = {"swap": set(), "spot": set()}
+            for info in exchange.markets.values():
+                if not info.get("active", True):
+                    continue
+                market_type = info.get("type")
+                if market_type not in symbols:
+                    continue
+                if (info.get("quote") or "").upper() != "USDT":
+                    continue
+                canonical = to_canonical(f"{info.get('base', '')}/USDT")
+                symbols[market_type].add(canonical)
+            return {key: frozenset(value) for key, value in symbols.items()}
+        finally:
+            if not await close_ccxt(exchange, session):
+                raise RuntimeError("ccxt_cleanup_failed")
+
     async def close(self) -> None:
         """Close exchange clients AND the aiohttp sessions we injected. Idempotent.
 
@@ -760,41 +793,6 @@ class CCXTProvider:
             except (Exception, _aio.CancelledError):  # noqa: BLE001
                 pass
         self._sessions = []
-
-
-async def load_public_market_capabilities(
-    exchange_name: str,
-    *,
-    sandbox: bool = False,
-) -> dict[str, frozenset[str]]:
-    """Load active USDT spot/swap symbols through the generic CCXT factory.
-
-    This is public market metadata only: no credentials or private account
-    endpoints are involved. The caller owns no client; this helper always closes
-    the loop-local provider before returning or re-raising.
-    """
-    from aletheia.net import close_ccxt, make_ccxt
-
-    exchange, session = make_ccxt(exchange_name, options={"defaultType": "swap"})
-    try:
-        if sandbox:
-            exchange.set_sandbox_mode(True)
-        await exchange.load_markets()
-        symbols: dict[str, set[str]] = {"swap": set(), "spot": set()}
-        for info in exchange.markets.values():
-            if not info.get("active", True):
-                continue
-            market_type = info.get("type")
-            if market_type not in symbols:
-                continue
-            if (info.get("quote") or "").upper() != "USDT":
-                continue
-            canonical = to_canonical(f"{info.get('base', '')}/USDT")
-            symbols[market_type].add(canonical)
-        return {key: frozenset(value) for key, value in symbols.items()}
-    finally:
-        if not await close_ccxt(exchange, session):
-            raise RuntimeError("ccxt_cleanup_failed")
 
 
 async def read_market_listing(venue: str, spot_only: bool) -> frozenset[str]:

@@ -15,11 +15,12 @@ is cheap and offline.
 
 from types import SimpleNamespace
 
+import pytest
+
 from aletheia.config import loader
 from aletheia.data.ccxt_provider import (
     _install_market_id_guard,
     get_market_data_provider,
-    load_public_market_capabilities,
     CCXTProvider,
 )
 from aletheia.data.sources.chain import FallbackChainProvider
@@ -137,8 +138,6 @@ def test_market_id_guard_drops_malformed_ccxt_rows():
 
 
 async def test_public_market_capabilities_use_generic_factory_and_close(monkeypatch):
-    from aletheia.data import ccxt_provider as module
-
     events: list[object] = []
 
     class FakeExchange:
@@ -167,7 +166,8 @@ async def test_public_market_capabilities_use_generic_factory_and_close(monkeypa
 
     monkeypatch.setattr("aletheia.net.close_ccxt", close_ccxt)
 
-    result = await load_public_market_capabilities("okx", sandbox=True)
+    provider = CCXTProvider(exchange="okx", fallback_exchange="bybit")
+    result = await provider.get_public_market_capabilities(sandbox=True)
 
     assert result == {
         "swap": frozenset({"BTC/USDT"}),
@@ -179,3 +179,26 @@ async def test_public_market_capabilities_use_generic_factory_and_close(monkeypa
         "load_markets",
         ("close", "FakeExchange", "object"),
     ]
+
+
+@pytest.mark.parametrize("failure", ["read", "cancel", "cleanup"])
+async def test_public_market_capability_failure_closes_local_client(monkeypatch, failure):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    error = asyncio.CancelledError() if failure == "cancel" else RuntimeError("read failed")
+    exchange = SimpleNamespace(
+        markets={}, load_markets=AsyncMock(side_effect=None if failure == "cleanup" else error),
+    )
+    session = object()
+    close = AsyncMock(return_value=failure != "cleanup")
+    monkeypatch.setattr("aletheia.net.make_ccxt", lambda *args, **kwargs: (exchange, session))
+    monkeypatch.setattr("aletheia.net.close_ccxt", close)
+    provider = CCXTProvider(exchange="okx", fallback_exchange="bybit")
+    expected = asyncio.CancelledError if failure == "cancel" else RuntimeError
+    with pytest.raises(expected, match=None if failure == "cancel" else (
+        "ccxt_cleanup_failed" if failure == "cleanup" else "read failed"
+    )):
+        await provider.get_public_market_capabilities()
+    close.assert_awaited_once_with(exchange, session)
+    assert provider._primary is None and provider._fallback is None
