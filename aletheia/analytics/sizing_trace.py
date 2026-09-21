@@ -628,7 +628,7 @@ def _table_exists(db, table: str) -> bool:
 def _load_config():
     from aletheia.config.loader import load_config
 
-    return load_config()
+    return load_config(persist_migrations=False)
 
 
 def _notional(quantity: Any, price: Any) -> float | None:
