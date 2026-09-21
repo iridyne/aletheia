@@ -92,6 +92,12 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         async def get_taker_buy_ratio(self, symbol):
             return 1.25
 
+        async def get_funding_observation(self, symbol, *, ticker=None):
+            return None
+
+        async def get_open_interest_observation(self, symbol):
+            return None
+
         async def close(self):
             self.closed = True
 
@@ -99,8 +105,12 @@ async def test_mixed_market_collection_binds_each_fetch_to_physical_market(
         reader = _kwargs["taker_reader"]
         if asset["market_type"] == "perp":
             assert reader.__self__.exchange is exchange
+            assert _kwargs["funding_reader"].__self__.exchange is exchange
+            assert _kwargs["open_interest_reader"].__self__.exchange is exchange
         else:
             assert reader is None
+            assert _kwargs["funding_reader"] is None
+            assert _kwargs["open_interest_reader"] is None
         symbol = (
             f"{asset['symbol']}:USDT"
             if asset["market_type"] == "perp"
