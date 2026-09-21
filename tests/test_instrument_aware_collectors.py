@@ -4,7 +4,7 @@ import asyncio
 
 
 def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -67,7 +67,7 @@ def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkey
 
 
 def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -111,7 +111,7 @@ def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypa
 
 
 def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:
@@ -179,7 +179,7 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
 
 
 def test_volume_scanner_keeps_observation_only_equity_out_of_crypto_ranking(monkeypatch):
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
 
     class FakeExchange:

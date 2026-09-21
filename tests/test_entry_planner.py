@@ -1487,7 +1487,7 @@ def test_expired_attention_projects_consistently_without_sweep_or_mutation():
 
 def test_fresh_stored_book_does_not_import_optional_collector(monkeypatch):
     from aletheia.agent_shell import entry_planner
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
     generation, _ = repo.ensure_candidate_planning_generation(candidate.id)
@@ -1506,7 +1506,7 @@ def test_fresh_stored_book_does_not_import_optional_collector(monkeypatch):
 
     real_import = builtins.__import__
     def without_collector(name, *args, **kwargs):
-        if name == "aletheia.data.collectors.microstructure":
+        if name == "extensions.data.collectors.microstructure":
             raise ModuleNotFoundError(name, name=name)
         return real_import(name, *args, **kwargs)
 
@@ -1520,7 +1520,7 @@ def test_fresh_stored_book_does_not_import_optional_collector(monkeypatch):
 
 @pytest.mark.parametrize("bad_book", ["missing", "venue", "market", "future", "stale", "timeout", "load", "fetch", "invalid", "persistence", "factory", "capability", "close", "malformed"])
 def test_first_freeze_waits_for_exact_fresh_book_then_resumes(monkeypatch, bad_book, caplog):
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
     from aletheia.data import providers
 
     candidate = _typed_candidate(mechanism="reversal", family="mean_reversion", estimated_cost=0.1)
@@ -1793,7 +1793,7 @@ def test_system_planner_repairs_identity_without_rewriting(monkeypatch, field, w
 
 @pytest.mark.parametrize("bad_book", ["wide", "thin"])
 def test_market_quality_wait_does_not_bind_and_recovers_same_generation(monkeypatch, bad_book):
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
     from aletheia.data.providers import Candle
     from aletheia.trading.entry_plan_compiler import require_entry_market_quality
     from aletheia.config.loader import load_config

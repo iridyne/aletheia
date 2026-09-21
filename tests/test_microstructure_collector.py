@@ -5,7 +5,7 @@ import pytest
 
 
 def test_parse_orderbook_accepts_ccxt_count_column_and_contract_size():
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
 
     snapshot = _parse_orderbook(
         "TEST/USDT",
@@ -27,7 +27,7 @@ def test_parse_orderbook_accepts_ccxt_count_column_and_contract_size():
 
 @pytest.mark.parametrize("failure", [None, "load_markets", "fetch_order_book", "parse"])
 def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkeypatch, failure):
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from extensions.data.collectors.microstructure import MicrostructureCollector
     from extensions.data import ccxt_provider
     from aletheia.data.symbols import InstrumentId
 
@@ -96,13 +96,13 @@ def test_futures_instrument_uses_derivatives_orderbook_and_keeps_identity(monkey
     ],
 )
 def test_parse_orderbook_rejects_impossible_geometry(orderbook):
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
 
     assert _parse_orderbook("BTC/USDT", "binance", orderbook, latency_ms=0) is None
 
 
 def test_parse_orderbook_rejects_invalid_contract_size():
-    from aletheia.data.collectors.microstructure import _contract_size
+    from extensions.data.collectors.microstructure import _contract_size
 
     with pytest.raises(ValueError, match="invalid contract size"):
         _contract_size({"contract": True, "contractSize": float("nan")})

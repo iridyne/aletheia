@@ -45,6 +45,8 @@ def test_public_data_has_one_physical_implementation():
     for relative in (
         "ccxt_provider.py", "sources/__init__.py", "sources/chain.py",
         "sources/coingecko.py", "sources/binance_public.py",
+        "collectors/microstructure.py", "collectors/derivatives.py",
+        "collectors/volume_scanner.py",
         "collectors/coingecko_top.py", "collectors/defillama.py",
         "collectors/hyperliquid.py",
         "collectors/macro.py", "collectors/coinalyze.py",

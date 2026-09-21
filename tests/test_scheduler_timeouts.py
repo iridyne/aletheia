@@ -551,11 +551,11 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     from aletheia.agent_runtime import scheduler
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from extensions.data.collectors.defillama import DefiLlamaCollector
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
     from extensions.data.collectors.hyperliquid import HyperliquidCollector
     from extensions.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.microstructure import MicrostructureCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
 
     class _Clock:
         now = 1_000.0

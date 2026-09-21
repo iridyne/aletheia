@@ -494,8 +494,8 @@ def test_derivatives_persistence_failure_degrades_domain_and_job(
 ):
     from aletheia.agent_runtime import scheduler as sch
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.data.collectors.derivatives import DerivativesCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.models import FundingRateSnapshot, OpenInterestSnapshot
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
@@ -607,10 +607,10 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
     from aletheia.agent_runtime import scheduler as sch
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from extensions.data.collectors.coinalyze import CoinalyzeCollector
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
     from extensions.data.collectors.macro import MacroCollector
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.microstructure import MicrostructureCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage import repositories as repo
 

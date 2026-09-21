@@ -32,7 +32,7 @@ _LOCAL_FUNDING = _ROOT / "aletheia" / "portfolio" / "local_funding.py"
 _PAPER_ACCOUNT = _ROOT / "aletheia" / "portfolio" / "paper_account.py"
 _VERGEX_STRUCTURE = _ROOT / "aletheia" / "data" / "collectors" / "vergex_structure.py"
 _POSITION_X = _ROOT / "aletheia" / "data" / "position_x.py"
-_DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
+_DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
 _RELATIVE_RANK = _ROOT / "aletheia" / "universe" / "relative_rank_shadow.py"
 _UNIVERSE_FEATURES = _ROOT / "aletheia" / "universe" / "features.py"
 _MARKET_DATA = _ROOT / "aletheia" / "trading" / "market_data.py"
@@ -589,7 +589,7 @@ def test_coinalyze_collector_exists():
     ),
 )
 def test_ccxt_liquidation_dead_code_removed():
-    _DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
+    _DERIVATIVES = _ROOT / "extensions" / "data" / "collectors" / "derivatives.py"
     src = _DERIVATIVES.read_text(encoding="utf-8")
     assert "_fetch_liquidations_ccxt" not in src, (
         "derivatives.py still contains _fetch_liquidations_ccxt dead code — "
@@ -669,7 +669,10 @@ def test_regime_is_inline_not_separate_collector():
     ))
     assert projected["risk_regime"] == "risk_off"
 
-    for py_file in list((_ROOT / "aletheia").rglob("*.py")) + list((_ROOT / "extensions").rglob("*.py")):
+    for py_file in (
+        *(_ROOT / "aletheia").rglob("*.py"),
+        *(_ROOT / "extensions").rglob("*.py"),
+    ):
         text = py_file.read_text(encoding="utf-8", errors="ignore")
         assert "class RegimeCollector" not in text, (
             f"{py_file}: RegimeCollector must not exist as a class "
@@ -1062,7 +1065,7 @@ def test_scheduler_persists_coinalyze_outputs(monkeypatch):
 def test_orderbook_identity_reaches_storage_and_consumers():
     root = _ROOT
     model = (root / "aletheia/data/models.py").read_text(encoding="utf-8")
-    collector = (root / "aletheia/data/collectors/microstructure.py").read_text(encoding="utf-8")
+    collector = (root / "extensions/data/collectors/microstructure.py").read_text(encoding="utf-8")
     repo = (root / "aletheia/storage/repositories.py").read_text(encoding="utf-8")
     observer = (root / "aletheia/agents/market_observer.py").read_text(encoding="utf-8")
     features = (root / "aletheia/universe/features.py").read_text(encoding="utf-8")

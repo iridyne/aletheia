@@ -30,6 +30,9 @@ Proposal as stable decision history.
 - [Scoped credential Data collectors](slim_core_scoped_data_collectors.md): preserve
   the approved per-adapter credential exception within the Data compartment.
 
+- [Native Data collector compartment](slim_core_native_data_collectors.md): keep
+  existing native protocol acquisition in the Data Extension.
+
 - [Public-context Data adapters](slim_core_public_context_adapters.md): place
   existing optional protocol collectors behind the established Data boundary.
 
