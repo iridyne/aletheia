@@ -286,8 +286,6 @@ def _pnl_distribution(rows) -> list[dict]:
 
 
 def _by_regime(rows) -> list[dict]:
-    from aletheia.regime.detector import REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS, REGIME_VOLATILE
-
     buckets: dict[str, dict] = {}
     for r in rows:
         tag = r["regime_tag"]
@@ -301,7 +299,7 @@ def _by_regime(rows) -> list[dict]:
         b["total_pnl_pct"] += _pnl_pct(r)
 
     # #1259: canonical states always emitted; historical extras appended
-    canonical = [REGIME_BULL, REGIME_BEAR, REGIME_SIDEWAYS, REGIME_VOLATILE, "unknown"]
+    canonical = ["bull", "bear", "sideways", "volatile", "unknown"]
     extras = sorted(k for k in buckets if k not in canonical)
 
     result = []
