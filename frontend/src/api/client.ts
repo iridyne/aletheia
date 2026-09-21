@@ -2485,7 +2485,6 @@ export const api = {
 			confirm_exchange_divergence: boolean;
 			ohlcv_cache_ttl_min: number;
 			enable_yfinance_macro: boolean;
-			observed_stocks: string[];
 			observed_stock_tokens: string[];
 			observed_xstocks: string[];
 			observed_prediction_markets: string[];

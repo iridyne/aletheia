@@ -4,13 +4,13 @@ import { describe, expect, it } from 'vitest'
 import { SignalsTab } from './SignalsTab'
 import SRC from './SignalsTab.tsx?raw'
 
-function renderSignalsTab() {
+function renderSignalsTab(marketData: { observed_equities?: string[] } = {}) {
   const client = new QueryClient()
   client.setQueryData(['prediction-status'], { enabled: true })
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <SignalsTab
-        settings={{ market_data: {}, exchange: {}, news: { enabled: true, feeds: [] } }}
+        settings={{ market_data: marketData, exchange: {}, news: { enabled: true, feeds: [] } }}
         qc={client}
         onDirty={() => undefined}
       />
@@ -19,6 +19,15 @@ function renderSignalsTab() {
 }
 
 describe('SignalsTab', () => {
+  it('renders only the canonical equities control, including an explicit empty workset', () => {
+    expect(renderSignalsTab({ observed_equities: ['TSLA'] })).toContain('Remove TSLA')
+    const empty = renderSignalsTab({ observed_equities: [] })
+    expect(empty).toContain('No tickers — equity_observer will not run.')
+    expect(empty).not.toContain('Observed stocks')
+    expect(SRC).not.toContain('observed_stocks')
+    expect(SRC).toContain('api.updateEquities(draft)')
+  })
+
   it('preserves section order and deep-link anchors', () => {
     const html = renderSignalsTab()
     const ids = ['market-data-sources', 'macro-sentiment-signals', 'news-feeds', 'prediction-markets', 'observed-us-equities']

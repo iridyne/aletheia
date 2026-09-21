@@ -21,6 +21,21 @@ round-trip and persistence behavior. This contract does not add migrations,
 change defaults, alter authority ownership, or change strategy and execution
 policy.
 
+## Canonical equity observation settings
+
+`observed_equities` is the sole runtime equity-ticker workset. Historical config
+decoding validates and consumes `observed_stocks`, using it only when the canonical
+list is absent or empty, preserving the former effective workset. Decoding does
+not write the source file. Runtime objects and normal saves contain no legacy
+field, so an explicit empty canonical save remains empty after reload.
+
+`POST /api/settings/equities` owns normalized equity edits through the existing
+locked config mutation. The generic market-data endpoint rejects both the retired
+`observed_stocks` input and the duplicate `observed_equities` input. Scheduler,
+observer and Settings use only the canonical list. This retirement under #3134
+does not change observation-only classification or tokenized-equity configuration.
+The former control is [historical](../history/observed_stocks_settings_control.md).
+
 ## Executable evidence
 
 - `tests/test_config.py` covers unknown root/nested fields, safe error paths,

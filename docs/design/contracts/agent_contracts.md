@@ -176,8 +176,10 @@ replays cash/Position/hook facts, pauses scheduling, or changes infrastructure r
 
 The retired name is absent from the manual agent catalog and is rejected with
 HTTP 403 by `POST /api/agent-runs/start`, including Operator service calls.
-Use `equity_observer`; historical runs and the existing `observed_stocks`
-configuration fallback remain readable.
+Use `equity_observer`; historical runs remain readable. Historical
+`observed_stocks` config is decoded into the sole `observed_equities` workset
+under the [configuration contract](configuration_contract.md); no runtime alias
+or writable legacy control remains.
 
 #### prediction_observer
 

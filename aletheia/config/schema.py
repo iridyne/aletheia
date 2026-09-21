@@ -7,7 +7,7 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PrivateAttr, TypeAdapter, field_validator, model_validator
 
 from aletheia.config.execution_costs import (
     EXECUTION_FEE_PCT_BOUNDS,
@@ -347,6 +347,17 @@ DerivativesComparisonVenue = Literal['binance', 'okx', 'bitget']
 
 
 class MarketDataConfig(BaseModel):
+    @model_validator(mode="before")
+    @classmethod
+    def decode_historical_equities(cls, value):
+        """Preserve the historical workset without retaining a runtime alias."""
+        if isinstance(value, Mapping) and "observed_stocks" in value:
+            value = dict(value)
+            legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_stocks"))
+            if "observed_equities" not in value or value["observed_equities"] == []:
+                value["observed_equities"] = legacy
+        return value
+
     # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
     provider: str = "ccxt"
     ccxt_exchange: str = "binance"
@@ -408,8 +419,6 @@ class MarketDataConfig(BaseModel):
     # exchange stock tokens (r-series + ON-series on Bitget; future OKX SWAP).
     # Runs Mon–Fri 14:30–21:00 UTC (US market hours). Empty = disabled.
     observed_equities: list[str] = Field(default_factory=list)
-    # Deprecated: use observed_equities instead. Kept for backwards compat.
-    observed_stocks: list[str] = Field(default_factory=list)
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
     # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
     # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.

@@ -481,7 +481,7 @@ async def run_equity_observer(permission_mode: str = "Observe", run_id: str | No
         return {"outputs": outputs, "errors": errors}
 
     cfg = load_config()
-    tickers = cfg.market_data.observed_equities or cfg.market_data.observed_stocks
+    tickers = cfg.market_data.observed_equities
     if not tickers:
         outputs.append("no_equities_configured")
         return {"outputs": outputs, "errors": errors}
