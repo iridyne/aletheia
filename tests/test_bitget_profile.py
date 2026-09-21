@@ -1,24 +1,14 @@
-"""Bitget profile contract tests — verifies classic_v2/uta_v3 isolation.
+"""Native reader profile construction, configuration and startup gates.
 
-These are offline tests (no network, no credentials). They verify:
-- Profile-aware client construction (unknown profile raises).
-- classic_v2 cannot call uta_v3 endpoints and vice-versa.
-  (place_order/get_positions under uta_v3 now route to v3 — see
-  tests/test_bitget_uta_v3_switch.py.)
-- Profile-specific error codes for "no position".
-- Profile-specific pagination parameter name.
-- Config validator rejects unknown profile values.
-- Startup gate check recognises known profiles and warns on uta_v3.
+Private account request-family isolation and close rejection semantics belong to
+the current UTA profiles (tests/uta/test_ccxt_adapter.py). Native exact-fill and
+plan-history pagination is exercised by test_tpsl and test_bitget_uta_v3_switch,
+not by tables belonging to the retired native trading implementation.
 """
 
 import pytest
 
-from aletheia.exchanges.bitget.client import (
-    BitgetClient,
-    ProfileContractError,
-    profile_close_absent_codes,
-    profile_pagination_param,
-)
+from aletheia.exchanges.bitget.client import BitgetClient
 
 
 # ─── Construction ────────────────────────────────────────────────────────────
@@ -42,57 +32,6 @@ def test_unknown_profile_raises():
 def test_default_profile_is_classic_v2():
     c = BitgetClient(mode="demo")
     assert c.profile == "classic_v2"
-
-
-# ─── Profile enforcement: uta_v3 cannot use classic_v2 endpoints ─────────────
-
-
-def test_classic_v2_get_mix_account_blocked_on_uta_v3(monkeypatch):
-    import asyncio
-
-    c = BitgetClient(mode="demo", profile="uta_v3")
-    with pytest.raises(ProfileContractError, match="classic_v2"):
-        asyncio.run(c.get_mix_account())
-
-
-# ─── Profile enforcement: classic_v2 cannot use uta_v3 endpoints ─────────────
-
-
-def test_uta_v3_get_uta_account_blocked_on_classic_v2(monkeypatch):
-    """classic_v2 client must not call the v3 UTA account endpoint."""
-    import asyncio
-
-    c = BitgetClient(mode="demo", profile="classic_v2")
-    with pytest.raises(ProfileContractError, match="uta_v3"):
-        asyncio.run(c.get_uta_account())
-
-
-# ─── Error code tables ────────────────────────────────────────────────────────
-
-
-def test_classic_v2_close_absent_codes():
-    codes = profile_close_absent_codes("classic_v2")
-    assert "22002" in codes
-    assert "25227" in codes
-    assert "45110" not in codes
-
-
-def test_uta_v3_close_absent_codes_include_45110():
-    codes = profile_close_absent_codes("uta_v3")
-    assert "22002" in codes
-    assert "25227" in codes
-    assert "45110" in codes
-
-
-# ─── Pagination parameter ─────────────────────────────────────────────────────
-
-
-def test_classic_v2_uses_id_less_than_pagination():
-    assert profile_pagination_param("classic_v2") == "idLessThan"
-
-
-def test_uta_v3_uses_cursor_pagination():
-    assert profile_pagination_param("uta_v3") == "cursor"
 
 
 # ─── Config validator ────────────────────────────────────────────────────────

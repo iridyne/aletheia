@@ -429,7 +429,7 @@ def test_cross_layer_outcome_lifecycle_has_final_e2e_inventory():
             "test_archived_account_is_outside_active_reconciliation_scope",
         ),
         "tests/test_verified_exit.py": (
-            "test_bitget_verified_exit_uses_direct_position_and_close_fill",
+            "test_protocol_classification_requires_absence_complete_history_and_full_quantity",
             "test_uta_verified_exit_preserves_private_evidence_boundary",
         ),
         "tests/test_outcome_history_remediation.py": (

@@ -1,40 +1,41 @@
-"""set_leverage fail-closed behaviour (Round 2 futures enablement).
+"""The current Bitget UTA owner must abort entry if leverage preparation fails."""
 
-The exchange-side leverage call is what makes a perp open use the PI's chosen
-leverage instead of the account default. It MUST fail closed: if the exchange
-rejects the leverage change, the broker aborts rather than opening at the wrong
-size. This verifies the BitgetClient native implementation's success/failure
-outcome via a mocked HTTP transport (no network, no real order).
-"""
-
-import httpx
+import ccxt
 import pytest
 
-from aletheia.exchanges.bitget.client import BitgetClient
+from aletheia.uta.errors import UTAErrorCode
+from aletheia.uta.models import CommandEvidence
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+from tests.uta.test_ccxt_adapter import (
+    FakeExchange,
+    _bitget_command,
+    _identity,
+    _install,
+    _profile,
+)
 
 
-class _Resp:
-    def __init__(self, code: str):
-        self._code = code
-
-    def json(self):
-        return {"code": self._code, "msg": "simulated", "data": {}}
-
-
-@pytest.mark.real_network  # opt out of the fast-timeout httpx wrapper; we mock post directly
-async def test_bitget_set_leverage_fail_closed(monkeypatch):
-    monkeypatch.setattr(BitgetClient, "_get_creds", lambda self: ("key", "secret", "pass"))
-    client = BitgetClient(mode="demo")
-
-    # Success code 00000 → no raise (leverage accepted).
-    async def _ok_post(self, url, **kw):
-        return _Resp("00000")
-    monkeypatch.setattr(httpx.AsyncClient, "post", _ok_post)
-    await client.set_leverage("BTCUSDT", 3)  # must not raise
-
-    # Any non-success code → RAISES (fail-closed: caller aborts the order).
-    async def _fail_post(self, url, **kw):
-        return _Resp("40774")
-    monkeypatch.setattr(httpx.AsyncClient, "post", _fail_post)
-    with pytest.raises(RuntimeError):
-        await client.set_leverage("BTCUSDT", 3)
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("failure", ["rejected", "timeout"])
+async def test_bitget_set_leverage_fail_closed(monkeypatch, kind, failure):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.leverage_response = (
+        ccxt.InvalidOrder("simulated leverage rejection")
+        if failure == "rejected"
+        else TimeoutError()
+    )
+    _install(monkeypatch, exchange)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
+    try:
+        report = await adapter.submit_order(_bitget_command(identity, leverage="3"))
+        assert report.evidence is CommandEvidence.NOT_SENT
+        if failure == "rejected":
+            assert report.error_code == UTAErrorCode.INVALID_ORDER.value
+        assert [event for event in exchange.events if event[0] == "set_leverage"] == [
+            ("set_leverage", 3, "BTC/USDT:USDT", {"uta": kind == "uta_v3"})
+        ]
+        assert not any(event[0] == "create_order" for event in exchange.events)
+    finally:
+        await adapter.close()

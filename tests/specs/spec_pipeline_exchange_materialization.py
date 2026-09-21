@@ -1135,20 +1135,8 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(tmp_path, mo
         fee=float("nan"),
         filled_at_ms=1_784_700_001_000,
     )
-    _patch_bitget_history(monkeypatch, [good, bad])
-    funding_queries: list[dict] = []
-    if lifecycle == "futures_close":
-        from aletheia.exchanges.bitget import client as bitget_client
-
-        async def _funding_ledger(self, **kwargs):
-            funding_queries.append(kwargs)
-            return []
-
-        monkeypatch.setattr(
-            bitget_client.BitgetClient,
-            "get_funding_ledger",
-            _funding_ledger,
-        )
+    private_queries = []
+    _patch_bitget_history(monkeypatch, [good, bad], calls=private_queries)
     initial_order_status = repo.get_order(order.id)["status"]
     initial_proposal_status = repo.get_trade_proposal(proposal.id)["status"]
     initial_position = (
@@ -1173,7 +1161,9 @@ def test_mixed_nonfinite_private_batch_never_mutates_entry_or_close(tmp_path, mo
     second = reconcile()
     assert second["inconclusive"] == 1
     assert second["materialized_fills"] == 0
-    assert funding_queries == []
+    methods = {method for method, _mode, _query in private_queries}
+    assert "get_fills" in methods
+    assert "get_funding_ledger" not in methods
     assert repo.get_order(order.id)["status"] == initial_order_status
     assert repo.get_trade_proposal(proposal.id)["status"] == initial_proposal_status
     assert db.execute("SELECT COUNT(*) FROM fills WHERE order_id=?", (order.id,)).fetchone()[0] == 0

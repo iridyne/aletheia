@@ -12,8 +12,8 @@ autouse guard in conftest.py also blocks unmocked calls). These verify:
 - a failed demo order leaves a DB trace marked error and fabricates NO fill;
 - aggregate responses create no Fill/Position; private history supplies exact
   price/quantity/fee/time before local accounting changes;
-- place_order builds the mix body with marginCoin + tradeSide (hedge mode);
-- a hedge-mode close places a real close order (tradeSide:close + holdSide), then
+- request-family and hedge-close wire semantics live in test_bitget_adapter;
+- a hedge-mode close submits a normalized reduce-only order, then
   realizes PnL only after exact private fill reconciliation.
 """
 
@@ -26,7 +26,6 @@ from aletheia.storage.sqlite import reset_db
 from aletheia.storage.migrations import run_migrations
 from aletheia.storage import repositories as repo
 from aletheia.storage.models import MarketSnapshot, Position
-from aletheia.exchanges.bitget.client import OrderRequest
 
 
 def setup_env(tmp_path, monkeypatch):
@@ -259,97 +258,6 @@ def test_demo_records_private_fill_price_not_aggregate_or_request(tmp_path, monk
     assert fills[0]["fill_price"] == 60123.5  # confirmed, not the 60000 request
     positions = repo.list_positions(status="open")
     assert positions[0]["entry_price"] == 60123.5
-
-
-# --- place_order mix body shape -------------------------------------------
-
-@pytest.mark.real_place_order
-def test_place_order_mix_body_has_margin_coin_and_tradeside(tmp_path, monkeypatch):
-    """The mix order body must carry marginCoin + tradeSide:open (hedge mode).
-    Captures the JSON body via a mocked httpx post."""
-    setup_env(tmp_path, monkeypatch)
-    _demo_config(monkeypatch)
-    import json
-    from aletheia.exchanges.bitget import client as bg
-
-    sent = {}
-
-    class _Resp:
-        def json(self):
-            return {"code": "00000", "data": {"orderId": "EX-9", "clientOid": "c"}}
-
-    class _FakeAsyncClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            return False
-        async def post(self, url, content=None, headers=None):
-            sent["body"] = json.loads(content)
-            return _Resp()
-        async def get(self, url, headers=None):
-            # order/detail follow-up — report not-filled so no fabrication
-            class _D:
-                def json(self_inner):
-                    return {"code": "00000", "data": {"state": "live"}}
-            return _D()
-
-    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
-    monkeypatch.setattr(bg.BitgetClient, "_headers", lambda self, *a, **k: {})
-
-    client = bg.BitgetClient(mode="demo")
-    import asyncio
-    asyncio.run(client.place_order(OrderRequest(
-        symbol="BTCUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=0.001, client_oid="p1",
-    )))
-    assert sent["body"]["marginCoin"] == "USDT"
-    assert sent["body"]["tradeSide"] == "open"
-    assert sent["body"]["productType"] == "USDT-FUTURES"
-
-
-@pytest.mark.real_place_order
-def test_place_order_hedge_close_body_has_holdside(tmp_path, monkeypatch):
-    """A close OrderRequest (hold_side set) builds tradeSide:close + holdSide."""
-    setup_env(tmp_path, monkeypatch)
-    _demo_config(monkeypatch)
-    import json
-    from aletheia.exchanges.bitget import client as bg
-
-    sent = {}
-
-    class _Resp:
-        def json(self):
-            return {"code": "00000", "data": {"orderId": "EX-C", "clientOid": "c"}}
-
-    class _FakeAsyncClient:
-        def __init__(self, *a, **k):
-            pass
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *a):
-            return False
-        async def post(self, url, content=None, headers=None):
-            sent["body"] = json.loads(content)
-            return _Resp()
-        async def get(self, url, headers=None):
-            class _D:
-                def json(self_inner):
-                    return {"code": "00000", "data": {"state": "filled", "priceAvg": "60000", "baseVolume": "0.001"}}
-            return _D()
-
-    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
-    monkeypatch.setattr(bg.BitgetClient, "_headers", lambda self, *a, **k: {})
-
-    client = bg.BitgetClient(mode="demo")
-    import asyncio
-    asyncio.run(client.place_order(OrderRequest(
-        symbol="BTCUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=0.001, hold_side="long",
-    )))
-    assert sent["body"]["tradeSide"] == "close"
-    assert sent["body"]["holdSide"] == "long"
 
 
 # --- demo close (hedge-mode reduce) ---------------------------------------

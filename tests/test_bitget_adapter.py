@@ -1,261 +1,122 @@
-"""Tests for the Bitget adapter methods added to satisfy §19.3 ExchangeAdapter.
+"""Bitget position evidence and close direction through the current UTA owner.
 
-Covers: get_account, get_positions, get_open_orders, cancel_order, get_fills.
-HTTP is faked (no network); auth/creds are stubbed.
+Account, open-order, cancel, fill and funding parity lives in
+tests/uta/test_ccxt_adapter.py; the retired native trading client is not an owner.
+These tests preserve exchange position provenance and the historic hedge-close
+direction regression through the actual installed CCXT request builder.
 """
 
-import json
+from datetime import datetime, timezone
+from decimal import Decimal
 
+import ccxt.async_support as ccxt
 import pytest
 
-from aletheia.exchanges.bitget import client as bg
+from aletheia.uta.models import CommandEvidence, ReadCompleteness
+from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+from tests.uta.test_ccxt_adapter import (
+    FakeExchange,
+    _bitget_command,
+    _identity,
+    _install,
+    _profile,
+)
 
 
-class _FakeResp:
-    def __init__(self, payload):
-        self._payload = payload
-
-    def json(self):
-        return self._payload
-
-
-class _FakeAsyncClient:
-    """Minimal async-context httpx.AsyncClient replacement returning canned JSON.
-
-    `routes` maps a substring of the request path -> payload dict.
-    Records (method, url) into `calls`.
-    """
-
-    routes: dict = {}
-    calls: list = []
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-    def _match(self, url):
-        for frag, payload in self.routes.items():
-            if frag in url:
-                return payload
-        return {"code": "00000", "data": []}
-
-    async def get(self, url, headers=None, **kwargs):
-        type(self).calls.append(("GET", url))
-        return _FakeResp(self._match(url))
-
-    async def post(self, url, headers=None, content=None, **kwargs):
-        type(self).calls.append(("POST", url, content))
-        return _FakeResp(self._match(url))
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+async def test_get_positions_preserves_exchange_identity_and_open_time(monkeypatch, kind):
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    exchange.positions = [{
+        "symbol": "BTC/USDT:USDT", "side": "long", "contracts": "50",
+        "entryPrice": "60000", "unrealizedPnl": "12.5", "leverage": "2",
+        "info": {"posId": "bitget-position-1", "openTime": "1784044800000"},
+    }]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.get_positions()
+        assert report.completeness is ReadCompleteness.COMPLETE
+        assert len(report.positions) == 1
+        position = report.positions[0]
+        assert position.instrument.canonical_symbol == "BTC/USDT"
+        assert position.side == "long"
+        assert position.quantity == Decimal("0.5")
+        assert position.entry_price == Decimal("60000")
+        assert position.unrealized_pnl == Decimal("12.5")
+        assert position.leverage == Decimal("2")
+        assert position.venue_position_id == "bitget-position-1"
+        assert position.opened_at == datetime.fromtimestamp(1784044800, timezone.utc)
+        assert position.opened_at_provenance == "exchange_reported"
+    finally:
+        await adapter.close()
 
 
-@pytest.fixture
-def fake_http(monkeypatch):
-    _FakeAsyncClient.routes = {}
-    _FakeAsyncClient.calls = []
-    monkeypatch.setattr(bg, "httpx_client", lambda **kwargs: _FakeAsyncClient())
-    # Stub credentials so authenticated calls don't require secret storage.
-    monkeypatch.setattr(bg.BitgetClient, "_get_creds", lambda self: ("k", "s", "p"))
-    return _FakeAsyncClient
+def _bitget_adapter(monkeypatch, kind):
+    """Actual CCXT codec, with local markets and no credential lookup."""
+    exchange = ccxt.bitget()
+    exchange.set_markets([{
+        "id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC",
+        "quote": "USDT", "settle": "USDT", "settleId": "USDT", "type": "swap",
+        "spot": False, "swap": True, "future": False, "option": False,
+        "contract": True, "linear": True, "inverse": False, "contractSize": 1,
+        "precision": {"amount": 0.001, "price": 0.1},
+    }])
+    async def load(*args, **kwargs):
+        return exchange.markets
+
+    exchange.load_markets = load
+    _install(monkeypatch, exchange)
+    profile = _profile(kind)
+    return CCXTUTAAdapter(_identity(profile), profile), exchange
 
 
-@pytest.mark.anyio
-async def test_get_account(fake_http):
-    fake_http.routes = {"/api/v2/spot/account/info": {
-        "code": "00000",
-        "data": {"userId": "123", "accountStatus": "normal"},
-    }}
-    client = bg.BitgetClient(mode="demo")
-    acct = await client.get_account()
-    assert acct.user_id == "123"
-    assert acct.status == "normal"
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("position_side", ["long", "short"])
+@pytest.mark.parametrize("purpose", ["entry", "exit"])
+@pytest.mark.parametrize("post_only", [False, True])
+async def test_bitget_order_wire_preserves_entry_and_hedge_close_direction(
+    monkeypatch, kind, position_side, purpose, post_only
+):
+    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    identity = adapter.identity
+    requests = []
 
+    async def classic(request):
+        requests.append(("classic_v2", request))
+        return {"code": "00000", "data": {"orderId": "wire-order-1"}}
 
-@pytest.mark.anyio
-async def test_get_positions(fake_http):
-    fake_http.routes = {"/api/v2/mix/position/all-position": {
-        "code": "00000",
-        "data": [
-            {"symbol": "BTCUSDT", "posId": "bitget-position-1",
-             "holdSide": "long", "total": "0.5",
-             "averageOpenPrice": "60000", "unrealizedPL": "12.5", "leverage": "2"},
-        ],
-    }}
-    client = bg.BitgetClient(mode="demo")
-    positions = await client.get_positions()
-    assert len(positions) == 1
-    assert positions[0].symbol == "BTCUSDT"
-    assert positions[0].side == "long"
-    assert positions[0].quantity == 0.5
-    assert positions[0].entry_price == 60000.0
-    assert positions[0].position_id == "bitget-position-1"
+    async def uta(request):
+        requests.append(("uta_v3", request))
+        return {"code": "00000", "data": {"orderId": "wire-order-1"}}
 
-
-@pytest.mark.anyio
-async def test_get_positions_preserves_exchange_open_time(fake_http):
-    fake_http.routes = {"/api/v2/mix/position/all-position": {
-        "code": "00000",
-        "data": [{
-            "symbol": "BTCUSDT", "holdSide": "long", "total": "0.5",
-            "averageOpenPrice": "60000", "openTime": "1784044800000",
-        }],
-    }}
-    positions = await bg.BitgetClient(mode="demo").get_positions()
-    assert positions[0].ctime_ms == 1784044800000
-
-
-@pytest.mark.anyio
-async def test_get_open_orders(fake_http):
-    fake_http.routes = {"/api/v2/spot/trade/unfilled-orders": {
-        "code": "00000",
-        "data": [{"orderId": "888", "symbol": "ETHUSDT", "side": "buy",
-                  "size": "1.0", "price": "3000", "status": "live"}],
-    }}
-    client = bg.BitgetClient(mode="demo")
-    orders = await client.get_open_orders()
-    assert len(orders) == 1
-    assert orders[0]["orderId"] == "888"
-
-
-@pytest.mark.anyio
-async def test_cancel_order(fake_http):
-    fake_http.routes = {"/api/v2/spot/trade/cancel-order": {
-        "code": "00000", "data": {"orderId": "888"},
-    }}
-    client = bg.BitgetClient(mode="demo")
-    result = await client.cancel_order("888", symbol="ETHUSDT")
-    assert result["cancelled"] is True
-    assert result["order_id"] == "888"
-    # a POST was actually issued
-    assert any(c[0] == "POST" for c in fake_http.calls)
-
-
-@pytest.mark.anyio
-async def test_cancel_order_error_surfaces(fake_http):
-    fake_http.routes = {"/api/v2/spot/trade/cancel-order": {
-        "code": "40109", "msg": "order not found",
-    }}
-    client = bg.BitgetClient(mode="demo")
-    result = await client.cancel_order("nope", symbol="ETHUSDT")
-    assert result["cancelled"] is False
-    assert "order not found" in result["error"]
-
-
-@pytest.mark.anyio
-async def test_get_fills(fake_http):
-    fake_http.routes = {"/api/v2/spot/trade/fills": {
-        "code": "00000",
-        "data": [{"orderId": "888", "fillPrice": "3000", "fillQuantity": "1.0",
-                  "fee": "3.0", "tradeId": "t1"}],
-    }}
-    client = bg.BitgetClient(mode="demo")
-    fills = await client.get_fills()
-    assert len(fills) == 1
-    assert fills[0]["fillPrice"] == "3000"
-
-
-@pytest.mark.anyio
-async def test_get_funding_ledger_uses_private_contract_bills(fake_http):
-    fake_http.routes = {"/api/v2/mix/account/bill": {
-        "code": "00000",
-        "data": {
-            "bills": [{
-                "billId": "funding-1",
-                "symbol": "BTCUSDT",
-                "amount": "-1.5",
-                "fee": "0",
-                "businessType": "contract_settle_fee",
-                "coin": "USDT",
-                "cTime": "1784044800000",
-            }],
-            "endId": "funding-1",
-        },
-    }}
-    client = bg.BitgetClient(mode="demo")
-    ledger = await client.get_funding_ledger(
-        broker_id="bitget_demo",
-        symbol="BTC/USDT",
-        start_time_ms=1783987200000,
-        end_time_ms=1784073600000,
-    )
-    assert ledger["events"][0]["event_id"] == "funding-1"
-    assert ledger["events"][0]["funding_cost"] == 1.5
-    assert any(
-        "/api/v2/mix/account/bill" in call[1]
-        and "businessType=contract_settle_fee" in call[1]
-        for call in fake_http.calls
-    )
-
-
-# --- UTA (unified account) close direction regression (2026-07-31) ---
-# Empirically verified on bitget_demo: a UTA (v3) close requires `side` OPPOSITE
-# the position (close long = sell, close short = buy) together with
-# tradeSide="close" and posSide. Sending side SAME as the position made the
-# exchange resolve the order as an OPEN (tradeSide=open_short/open_long),
-# doubling the position instead of closing it — the root cause of the UNI
-# exposure doubling incident. The non-UTA v2 mix path keeps side SAME as the
-# open side (DECISIONS.md 2026-06-09).
-
-_UTA_ROUTES = {
-    "/api/v3/account/assets": {
-        "code": "00000",
-        "data": {"assets": [{"coin": "USDT", "available": "1000"}]},
-    },
-    "/api/v3/trade/place-order": {
-        "code": "00000",
-        "data": {"orderId": "ord-uta-1", "clientOid": "c1"},
-    },
-    "/api/v3/trade/fills": {"code": "00000", "data": {"list": []}},
-}
-
-
-@pytest.mark.anyio
-@pytest.mark.real_place_order
-async def test_uta_close_short_order_uses_opposite_side(fake_http):
-    """UTA close of a SHORT must submit side='buy' (opposite), not the open side."""
-    fake_http.routes = dict(_UTA_ROUTES)
-    client = bg.BitgetClient(mode="demo", profile="uta_v3")
-    await client.place_order(bg.OrderRequest(
-        symbol="UNIUSDT", market_type="usdt_futures", side="sell",
-        order_type="market", quantity=6144.0, hold_side="short",
-    ))
-    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
-    assert body["side"] == "buy"
-    assert body["tradeSide"] == "close"
-    assert body["posSide"] == "short"
-
-
-@pytest.mark.anyio
-@pytest.mark.real_place_order
-async def test_uta_close_long_order_uses_opposite_side(fake_http):
-    """UTA close of a LONG must submit side='sell' (opposite), not the open side."""
-    fake_http.routes = dict(_UTA_ROUTES)
-    client = bg.BitgetClient(mode="demo", profile="uta_v3")
-    await client.place_order(bg.OrderRequest(
-        symbol="UNIUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=6144.0, hold_side="long",
-    ))
-    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
-    assert body["side"] == "sell"
-    assert body["tradeSide"] == "close"
-    assert body["posSide"] == "long"
-
-
-@pytest.mark.anyio
-@pytest.mark.real_place_order
-async def test_uta_open_order_keeps_requested_side(fake_http):
-    """UTA OPEN orders must keep their requested side (no inversion)."""
-    fake_http.routes = dict(_UTA_ROUTES)
-    client = bg.BitgetClient(mode="demo", profile="uta_v3")
-    await client.place_order(bg.OrderRequest(
-        symbol="UNIUSDT", market_type="usdt_futures", side="buy",
-        order_type="market", quantity=10.0,
-    ))
-    body = json.loads(next(c[2] for c in fake_http.calls if c[0] == "POST"))
-    assert body["side"] == "buy"
-    assert body["posSide"] == "long"
-    assert "tradeSide" not in body or body["tradeSide"] == "open"
+    exchange.privateMixPostV2MixOrderPlaceOrder = classic
+    exchange.privateUtaPostV3TradePlaceOrder = uta
+    opening_side = "buy" if position_side == "long" else "sell"
+    closing_side = "sell" if position_side == "long" else "buy"
+    try:
+        report = await adapter.submit_order(_bitget_command(
+            identity, purpose=purpose, quantity="1", leverage=None,
+            side=closing_side if purpose == "exit" else opening_side,
+            reduce_only=purpose == "exit",
+            order_type="limit" if post_only else "market",
+            limit_price="60000" if post_only else None,
+            post_only=post_only,
+        ))
+        assert report.evidence is CommandEvidence.ACKNOWLEDGED
+        assert len(requests) == 1
+        family, body = requests[0]
+        assert family == kind
+        assert body["symbol"] == "BTCUSDT"
+        if post_only:
+            assert body["force" if kind == "classic_v2" else "timeInForce"] == "post_only"
+        if kind == "classic_v2":
+            assert body["marginCoin"] == "USDT"
+            assert body["productType"] == "USDT-FUTURES"
+            assert body["side"] == opening_side
+            assert body["tradeSide"] == ("Close" if purpose == "exit" else "Open")
+        else:
+            assert body["side"] == (closing_side if purpose == "exit" else opening_side)
+            assert body["posSide"] == position_side
+    finally:
+        await adapter.close()

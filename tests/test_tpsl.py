@@ -1,17 +1,13 @@
 """Native Bitget protocol and nonfatal qualified UTA protection failures."""
 from __future__ import annotations
 
-import json
-import inspect
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tests.async_test_utils import closing_coro_runner
 
-
-# ─── BitgetClient TPSL methods ───────────────────────────────────────────────
+# Native plan history and exact fills remain; protection mutations use UTA.
 
 
 def _make_client():
@@ -27,86 +23,6 @@ def _make_client():
     c.mode = "demo"
     c.demo = True
     return c
-
-
-@pytest.mark.asyncio
-async def test_place_tpsl_order_sends_correct_body():
-    """place_tpsl_order POSTs correct fields to /api/v2/mix/order/place-tpsl-order."""
-    client = _make_client()
-    captured = {}
-
-    async def mock_post(url, content, headers):
-        captured["url"] = url
-        captured["body"] = json.loads(content)
-        resp = MagicMock()
-        resp.json.return_value = {"code": "00000", "data": {"orderId": "plan-123"}}
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.place_tpsl_order(
-            symbol="BTCUSDT", plan_type="pos_loss",
-            trigger_price=95000.0, hold_side="long", size=0.01,
-        )
-
-    assert result == "plan-123"
-    body = captured["body"]
-    assert body["symbol"] == "BTCUSDT"
-    assert body["planType"] == "pos_loss"
-    assert body["triggerPrice"] == "95000.0"
-    assert body["holdSide"] == "long"
-    assert body["size"] == "0.01"
-    assert body["productType"] == "USDT-FUTURES"
-    assert body["marginMode"] == "crossed"
-
-
-@pytest.mark.asyncio
-async def test_cancel_plan_order_sends_correct_body():
-    captured = {}
-
-    async def mock_post(url, content, headers):
-        captured["body"] = json.loads(content)
-        resp = MagicMock()
-        resp.json.return_value = {"code": "00000", "data": {}}
-        return resp
-
-    client = _make_client()
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.cancel_plan_order("BTCUSDT", "plan-456")
-
-    assert result["cancelled"] is True
-    assert captured["body"]["orderIdList"] == [{"orderId": "plan-456"}]
-    assert captured["body"]["productType"] == "USDT-FUTURES"
-
-
-@pytest.mark.asyncio
-async def test_get_pending_plan_orders_returns_list():
-    client = _make_client()
-
-    async def mock_get(url, headers):
-        resp = MagicMock()
-        resp.json.return_value = {
-            "code": "00000",
-            "data": {"entrustedList": [{"orderId": "p1"}, {"orderId": "p2"}]},
-        }
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.get_pending_plan_orders()
-
-    assert len(result) == 2
-    assert result[0]["orderId"] == "p1"
 
 
 @pytest.mark.asyncio
@@ -337,37 +253,6 @@ async def test_get_order_fills_uta_treats_null_list_as_empty():
             market_type="usdt_futures",
         )
     assert result == []
-
-
-@pytest.mark.asyncio
-async def test_close_uta_position_requires_symbol_and_pos_side():
-    client = _make_client()
-    captured = {}
-
-    async def mock_post(url, content, headers):
-        captured["url"] = url
-        captured["body"] = json.loads(content)
-        resp = MagicMock()
-        resp.json.return_value = {"code": "00000", "data": {"orderId": "flash-1"}}
-        return resp
-
-    mock_httpx = MagicMock()
-    mock_httpx.__aenter__ = AsyncMock(return_value=MagicMock(post=mock_post))
-    mock_httpx.__aexit__ = AsyncMock(return_value=None)
-
-    with pytest.raises(ValueError, match="pos_side"):
-        await client.close_uta_position(symbol="XRP/USDT", pos_side="both")
-
-    with patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_httpx):
-        result = await client.close_uta_position(symbol="XRP/USDT", pos_side="short")
-
-    assert "/api/v3/trade/close-positions" in captured["url"]
-    assert captured["body"] == {
-        "category": "USDT-FUTURES",
-        "symbol": "XRPUSDT",
-        "posSide": "short",
-    }
-    assert result["orderId"] == "flash-1"
 
 
 def test_uta_protection_failure_preserves_position_without_fabricating_ids(tmp_path, monkeypatch):

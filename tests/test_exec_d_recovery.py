@@ -1,103 +1,55 @@
 """Tests for exec-d recovery path fixes.
 
-#1779 — Bitget: recover orderId via clientOid detail lookup
+#1779 — Bitget: recover order identity through current bounded UTA history
 #1783 — Binance: resolve missing orderId via origClientOrderId lookup
 #1785 — Binance: fix userTrades window violations (>7-day, fromId+endTime)
 """
 
 from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("case", ["found", "missing", "partial"])
+async def test_bitget_recovers_exact_client_order_identity(monkeypatch, kind, case):
+    from aletheia.uta.models import OrderQuery, ReadCompleteness
+    from aletheia.uta.compat import scope_from_local
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import FakeExchange, _profile, _identity, _install
 
-
-
-def _make_bitget_client():
-    """Build a BitgetClient with get_secret patched out."""
-    from aletheia.exchanges.bitget.client import BitgetClient
-    with patch("aletheia.exchanges.bitget.client.get_secret", return_value="dummy"):
-        return BitgetClient(mode="demo")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# #1779 — Bitget clientOid → orderId recovery
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_bitget_get_order_detail_by_client_oid_returns_order():
-    """get_order_detail_by_client_oid returns orderId dict on success."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
-        "code": "00000",
-        "data": {"orderId": "RECOVERED-99", "clientOid": "my-client-oid", "status": "filled"},
+    profile = _profile(kind)
+    exchange = FakeExchange()
+    row = {
+        "id": "RECOVERED-99", "clientOrderId": "client-1",
+        "symbol": "BTC/USDT:USDT", "side": "buy", "type": "market",
+        "amount": "1", "filled": "1", "status": "closed",
     }
-    mock_http = MagicMock()
-    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
-    mock_http.__aexit__ = AsyncMock(return_value=False)
-    mock_http.get = AsyncMock(return_value=mock_response)
+    exchange.order_responses = [[] for _ in profile.open_order_requests]
+    exchange.closed_order_responses = [
+        TimeoutError("synthetic history failure") if case == "partial"
+        else [row] if case == "found" else []
+        for _ in profile.closed_order_requests
+    ]
+    _install(monkeypatch, exchange)
+    adapter = CCXTUTAAdapter(_identity(profile), profile)
+    try:
+        report = await adapter.get_order(OrderQuery(
+            scope=scope_from_local("BTC/USDT", "usdt_futures",
+                start_at=datetime.now(timezone.utc) - timedelta(hours=1)),
+            client_order_id="client-1",
+        ))
+        assert report.completeness is (
+            ReadCompleteness.PARTIAL if case == "partial" else ReadCompleteness.COMPLETE
+        )
+        if case == "found":
+            assert report.found.venue_order_id == "RECOVERED-99"
+            assert report.found.client_order_id == "client-1"
+        else:
+            assert report.found is None
+    finally:
+        await adapter.close()
 
-    client = _make_bitget_client()
-    with (
-        patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_http),
-        patch.object(client, "_get_creds", return_value=("k", "s", "p")),
-    ):
-        result = await client.get_order_detail_by_client_oid("my-client-oid", "BTCUSDT")
-
-    assert result is not None
-    assert result["orderId"] == "RECOVERED-99"
-    assert result["clientOid"] == "my-client-oid"
-
-
-@pytest.mark.asyncio
-async def test_bitget_get_order_detail_by_client_oid_returns_none_on_not_found():
-    """get_order_detail_by_client_oid returns None when exchange reports not-found."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"code": "40009", "msg": "order not found"}
-    mock_http = MagicMock()
-    mock_http.__aenter__ = AsyncMock(return_value=mock_http)
-    mock_http.__aexit__ = AsyncMock(return_value=False)
-    mock_http.get = AsyncMock(return_value=mock_response)
-
-    client = _make_bitget_client()
-    with (
-        patch("aletheia.exchanges.bitget.client.httpx_client", return_value=mock_http),
-        patch.object(client, "_get_creds", return_value=("k", "s", "p")),
-    ):
-        result = await client.get_order_detail_by_client_oid("missing-oid", "BTCUSDT")
-
-    assert result is None
-
-
-@pytest.mark.asyncio
-async def test_bitget_recovers_order_id_from_client_oid():
-    """get_order_detail_by_client_oid exists on BitgetClient and returns orderId."""
-    from aletheia.exchanges.bitget.client import BitgetClient
-
-    detail_result = {
-        "orderId": "RECOVERED-FROM-DETAIL",
-        "clientOid": "proposal-coid-1",
-        "status": "filled",
-    }
-
-    async def _fake_detail(self, client_oid, symbol):  # noqa: ARG001
-        return detail_result if client_oid == "proposal-coid-1" else None
-
-    client = _make_bitget_client()
-    with patch.object(BitgetClient, "get_order_detail_by_client_oid", _fake_detail):
-        result = await client.get_order_detail_by_client_oid("proposal-coid-1", "BTCUSDT")
-
-    assert result is not None
-    assert result["orderId"] == "RECOVERED-FROM-DETAIL"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# #1783 — Binance origClientOrderId → orderId recovery
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _binance_adapter(monkeypatch):
     import ccxt.async_support as ccxt

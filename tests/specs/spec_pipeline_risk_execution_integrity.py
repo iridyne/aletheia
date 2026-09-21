@@ -651,19 +651,17 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
 ):
     db = _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history, _identity
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
-    async def _no_open_orders(self, market_type="spot"):
-        return []
-
-    async def _no_fills(self, symbol=None, market_type="spot"):
-        return []
-
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _no_open_orders)
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _no_fills)
+    identity = _identity("bitget_live_limited")
+    calls = []
+    patch_private_history(monkeypatch, reconciliation, [], open_ids=(), calls=calls)
+    monkeypatch.setattr(reconciliation, "build_uta_registry",
+                        lambda: SimpleNamespace(configured_identities=lambda: (identity,)))
     order = Order(
         source="adopted",
         symbol="BTC/USDT",
@@ -673,12 +671,14 @@ def test_reconciliation_absence_without_fill_evidence_stays_unresolved(
         quantity=0.001,
         price=60_000.0,
         execution_mode="bitget_live_limited",
+        uta_account_identity_json=identity.model_dump_json(),
         exchange_order_id="EX-ABSENT-NO-FILL",
         status="submitted",
     )
     repo.insert_order(order)
 
     result = reconcile()
+    assert {method for method, _mode, _query in calls} >= {"get_open_orders", "get_fills"}
     stored = dict(db.execute("SELECT * FROM orders WHERE id=?", (order.id,)).fetchone())
 
     assert result["filled"] == 0
@@ -712,19 +712,17 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
 ):
     _setup_db(tmp_path, monkeypatch)
 
-    from aletheia.exchanges.bitget import client as bitget_client
+    from aletheia.execution import reconciliation
+    from tests.specs.uta_private_history import patch_private_history, _identity
     from aletheia.execution.reconciliation import reconcile
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Order
 
-    async def _still_open(self, market_type="spot"):
-        return [{"orderId": "EX-PARTIAL"}]
-
-    async def _no_fills(self, symbol=None, market_type="spot"):
-        return []
-
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_open_orders", _still_open)
-    monkeypatch.setattr(bitget_client.BitgetClient, "get_fills", _no_fills)
+    identity = _identity("bitget_live_limited")
+    calls = []
+    patch_private_history(monkeypatch, reconciliation, [], open_ids=("EX-PARTIAL",), calls=calls)
+    monkeypatch.setattr(reconciliation, "build_uta_registry",
+                        lambda: SimpleNamespace(configured_identities=lambda: (identity,)))
     order = Order(
         source="adopted",
         symbol="BTC/USDT",
@@ -734,12 +732,14 @@ def test_partially_filled_order_remains_in_reconciliation_working_set(
         quantity=0.001,
         price=60_000.0,
         execution_mode="bitget_live_limited",
+        uta_account_identity_json=identity.model_dump_json(),
         exchange_order_id="EX-PARTIAL",
         status="partially_filled",
     )
     repo.insert_order(order)
 
     result = reconcile()
+    assert {method for method, _mode, _query in calls} >= {"get_open_orders", "get_fills"}
     stored = repo.get_order(order.id)
 
     assert result["checked"] == 1
