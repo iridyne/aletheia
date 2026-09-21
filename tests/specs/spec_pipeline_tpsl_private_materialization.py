@@ -128,6 +128,18 @@ def _private_close_report(exchange_order_id: str, identity):
     return reports([_private_close_fill(exchange_order_id)], identity=identity)[0]
 
 
+def _observe_reader_close(monkeypatch, calls, event):
+    from aletheia.exchanges.bitget.native_protection import BitgetNativeProtectionReader
+
+    close = BitgetNativeProtectionReader.close
+
+    async def observed_close(reader):
+        await close(reader)
+        calls.append(event)
+
+    monkeypatch.setattr(BitgetNativeProtectionReader, "close", observed_close)
+
+
 def _patch_configured_reader(monkeypatch, *identities):
     """Set the reader identity the TPSL bridge must authenticate as.
 
@@ -324,6 +336,8 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
     _patch_configured_reader(monkeypatch, _identity("bitget_demo"))
     calls: list[tuple] = []
 
+    _observe_reader_close(monkeypatch, calls, ("close",))
+
     class _Client:
         def __init__(self, mode, **_kwargs):
             calls.append(("client", mode))
@@ -354,9 +368,6 @@ def test_demo_tpsl_uses_execute_order_private_fill_not_plan_price(
 
         async def cancel_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never cancel an order")
-
-        async def close(self):
-            calls.append(("close",))
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
     monkeypatch.setattr(
@@ -437,6 +448,7 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
         monkeypatch, [_private_close_fill("EXEC-LIVE-SL")], calls=uta_calls
     )
     calls: list[tuple] = []
+    _observe_reader_close(monkeypatch, calls, ("close",))
 
     class _Client:
         def __init__(self, mode, **_kwargs):
@@ -465,9 +477,6 @@ def test_live_tpsl_converges_from_exact_private_fills_without_trading_calls(
 
         async def cancel_plan_order(self, *args, **kwargs):
             raise AssertionError("TPSL observation must never cancel a TPSL plan")
-
-        async def close(self):
-            calls.append(("close",))
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
     monkeypatch.setattr(
@@ -1102,6 +1111,8 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
     )
     venue_reads: list[str] = []
 
+    _observe_reader_close(monkeypatch, venue_reads, "close")
+
     class _Client:
         def __init__(self, mode, **_kwargs):
             venue_reads.append("client")
@@ -1117,9 +1128,6 @@ def test_evidence_read_is_identity_bound_and_unconfigured_account_reads_nothing(
         async def get_order_fill_reports(self, *, order_id, identity, **_kwargs):
             venue_reads.append("fills")
             return [_private_close_report(order_id, identity)]
-
-        async def close(self):
-            venue_reads.append("close")
 
     monkeypatch.setattr(bitget_client, "BitgetClient", _Client)
     monkeypatch.setattr(
