@@ -116,30 +116,11 @@ async def test_operator_event_stream_poll_does_not_block_the_event_loop(
 
 
 @pytest.mark.anyio
-async def test_runtime_event_stream_poll_does_not_block_the_event_loop(
-    client, monkeypatch
-):
-    from aletheia.server.routes import runtime as runtime_routes
-
-    read_started = threading.Event()
-    release_read = threading.Event()
-    released_by_loop: list[bool] = []
-
-    class BlockingService:
-        def list_events(self, *, limit):
-            read_started.set()
-            released_by_loop.append(release_read.wait(timeout=0.5))
-            return []
-
-    monkeypatch.setattr(runtime_routes, "_service", BlockingService)
-    request = asyncio.create_task(
-        client.get("/api/operator/runtime/events/stream?limit=5&once=true")
-    )
-    assert await asyncio.wait_for(asyncio.to_thread(read_started.wait), timeout=1.0)
-    release_read.set()
-
-    assert (await request).status_code == 200
-    assert released_by_loop == [True]
+async def test_retired_runtime_continuity_stream_is_not_exposed(client):
+    # RuntimeContinuityService and its router were retired in #2945. The live
+    # operator stream's non-blocking behavior is protected by the test above.
+    response = await client.get("/api/operator/runtime/events/stream?limit=5&once=true")
+    assert response.status_code == 404
 
 
 @pytest.mark.anyio
