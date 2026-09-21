@@ -549,7 +549,7 @@ class CCXTProvider:
         self, symbol: str, *, market_type: str = "spot",
     ) -> dict | None:
         """Acquire and normalize one exact-market orderbook without writing it."""
-        from aletheia.data.collectors.microstructure import _contract_size, _parse_orderbook
+        from extensions.data.collectors.microstructure import _contract_size, _parse_orderbook
 
         phase = "provider_setup"
         try:

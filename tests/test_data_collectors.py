@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 # ---------------------------------------------------------------------------
 
 def test_parse_orderbook_basic():
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
 
     ob = {
         "bids": [[50000.0, 1.0], [49990.0, 2.0]],
@@ -36,14 +36,14 @@ def test_parse_orderbook_basic():
 
 
 def test_parse_orderbook_empty():
-    from aletheia.data.collectors.microstructure import _parse_orderbook
+    from extensions.data.collectors.microstructure import _parse_orderbook
 
     snap = _parse_orderbook("BTC/USDT", "binance", {"bids": [], "asks": []}, 0)
     assert snap is None
 
 
 def test_depth_within():
-    from aletheia.data.collectors.microstructure import _depth_within
+    from extensions.data.collectors.microstructure import _depth_within
 
     levels = [[50000.0, 2.0], [49980.0, 3.0], [49950.0, 5.0]]
     # mid=50005, threshold=50005 * 0.001 = 50.005, so cutoff at 50005-50.005=49954.995
@@ -57,7 +57,7 @@ def test_depth_within():
 # ---------------------------------------------------------------------------
 
 def test_parse_funding_basic():
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from extensions.data.collectors.derivatives import _parse_funding
 
     raw = {
         "fundingRate": 0.0001,
@@ -75,14 +75,14 @@ def test_parse_funding_basic():
 
 
 def test_parse_funding_missing_rate():
-    from aletheia.data.collectors.derivatives import _parse_funding
+    from extensions.data.collectors.derivatives import _parse_funding
 
     snap = _parse_funding("BTC/USDT", "binance", {})
     assert snap is None
 
 
 def test_parse_oi_basic():
-    from aletheia.data.collectors.derivatives import _parse_oi
+    from extensions.data.collectors.derivatives import _parse_oi
 
     market = dict(id="BTCUSDT", symbol="BTC/USDT:USDT", swap=True,
                   base="BTC", quote="USDT", settle="USDT", linear=True, contractSize=1)

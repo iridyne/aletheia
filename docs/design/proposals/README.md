@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Native Data collector compartment](slim_core_native_data_collectors.md): keep
+  existing native protocol acquisition in the Data Extension.
+
 - [Planner Data boundary](slim_core_planner_data_boundary.md): use normalized
   observations without coupling stored-fact reads to optional collectors.
 

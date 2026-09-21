@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 class MissingCollector:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.data.collectors.derivatives":
+        if fullname == "extensions.data.collectors.derivatives":
             raise ModuleNotFoundError("collector intentionally absent", name=fullname)
 sys.meta_path.insert(0, MissingCollector())
 from aletheia.data.derivatives_facts import ccxt_metadata, normalize_funding, normalize_open_interest, price_snapshot
@@ -27,7 +27,7 @@ assert price_snapshot("BTC/USDT", "bitget", raw, instrument=instrument, acquired
 import json
 assert json.loads(ccxt_metadata("BTC/USDT", "okx", {}, {"info": {"ts": raw["timestamp"]}}, family="funding", acquired_at=now.isoformat()))["source_observed_at"] == now.isoformat()
 assert _provider_observed_at(raw, received_at=now) == now.isoformat()
-assert "aletheia.data.collectors.derivatives" not in sys.modules
+assert "extensions.data.collectors.derivatives" not in sys.modules
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
@@ -54,7 +54,7 @@ def test_source_time_preserves_missing_invalid_and_timezone_semantics(raw, statu
 
 def test_future_skew_boundary_and_retired_collector_entry():
     from datetime import datetime, timedelta, timezone
-    from aletheia.data.collectors import derivatives
+    from extensions.data.collectors import derivatives
     from aletheia.data.derivatives_facts import provider_source_time
     from aletheia.data.freshness import MAX_FUTURE_SKEW
 

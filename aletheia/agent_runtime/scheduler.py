@@ -4203,8 +4203,8 @@ def get_collector_targets(cfg):
 
 async def _async_data_collectors(cfg, tick: int) -> dict[str, object]:
     import time as _time
-    from aletheia.data.collectors.microstructure import MicrostructureCollector
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.microstructure import MicrostructureCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
     from aletheia.storage import repositories as repo
 
     _DC_HEALTH_TICK.set(tick)
@@ -4326,13 +4326,13 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     """
     import time as _time
     from aletheia.data.collectors.coinalyze import CoinalyzeCollector
-    from aletheia.data.collectors.derivatives import DerivativesCollector
+    from extensions.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.hyperliquid import HyperliquidCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.options_structure import OptionsStructureCollector
-    from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
+    from extensions.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.storage import repositories as repo
 
     _DC_HEALTH_TICK.set(tick)
@@ -4571,7 +4571,7 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     # live Funding/OI budget.  It runs last in the context lane and is dropped
     # honestly when that lane has no safe time left.
     if symbols and getattr(cfg.market_data, "derivatives_history_hours", 0) > 0:
-        from aletheia.data.collectors.derivatives import DerivativesCollector
+        from extensions.data.collectors.derivatives import DerivativesCollector
 
         history_result = await _bounded(
             DerivativesCollector().collect_history(symbols),

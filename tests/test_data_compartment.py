@@ -13,6 +13,8 @@ def test_public_data_has_one_physical_implementation():
     for relative in (
         "ccxt_provider.py", "sources/__init__.py", "sources/chain.py",
         "sources/coingecko.py", "sources/binance_public.py",
+        "collectors/microstructure.py", "collectors/derivatives.py",
+        "collectors/volume_scanner.py",
     ):
         assert not (root / "aletheia/data" / relative).exists()
         assert (root / "extensions/data" / relative).is_file()
