@@ -16,6 +16,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+from collections.abc import Awaitable, Callable
 
 from aletheia.config.exchanges import EXECUTION_MODE_VENUES
 
@@ -40,6 +41,17 @@ class OrderConstraints:
     min_notional: Decimal | None
 
 
+_constraints_reader: Callable[[str, str, str], Awaitable[OrderConstraints]] | None = None
+
+
+def configure_order_constraints_reader(reader: Callable[[str, str, str], Awaitable[OrderConstraints]] | None) -> None:
+    """Composition binds external acquisition; cached rules never survive unbinding."""
+    global _constraints_reader
+    with _cache_lock:
+        _constraints_reader = reader
+        _cache.clear()
+
+
 def venue_for_execution_mode(execution_mode: str) -> str | None:
     """Return the venue which will actually receive this order."""
     return _VENUES.get(execution_mode)
@@ -59,51 +71,6 @@ def _decimal(value: Any, field: str, *, required: bool = False) -> Decimal | Non
             raise ConstraintUnavailable(f"exchange rule has non-positive {field}")
         return None
     return parsed
-
-
-def _amount_step(precision: Any, precision_mode: str) -> Decimal:
-    if precision_mode == "significant_digits":
-        # This has no fixed increment.  Guessing a step would allow an invalid order.
-        raise ConstraintUnavailable("exchange uses unsupported amount precision")
-    if precision_mode == "decimal_places":
-        try:
-            places = int(precision)
-        except (TypeError, ValueError) as exc:
-            raise ConstraintUnavailable("exchange rule missing amount precision") from exc
-        if places < 0:
-            raise ConstraintUnavailable("exchange rule has invalid amount precision")
-        return Decimal(1).scaleb(-places)
-    return _decimal(precision, "amount precision", required=True)  # tick-size mode
-
-
-def constraints_from_market(
-    *, venue: str, symbol: str, market_type: str, market: dict[str, Any],
-    precision_mode: str,
-) -> OrderConstraints:
-    """Convert CCXT market metadata into Aletheia's canonical base-coin units."""
-    limits = market.get("limits") or {}
-    amount_limits = limits.get("amount") or {}
-    contract_size = Decimal("1")
-    if market_type != "spot":
-        contract_size = _decimal(market.get("contractSize") or 1, "contract size", required=True)
-
-    # Bitget spot may correctly publish minTradeAmount=0 while enforcing its
-    # positive minTradeUSDT instead.  Zero is therefore not silently treated as
-    # a valid minimum quantity, but is valid when a positive notional minimum is
-    # present (as Bitget's official symbol configuration specifies).
-    min_amount = _decimal(amount_limits.get("min"), "minimum amount") or Decimal("0")
-    max_amount = _decimal(amount_limits.get("max"), "maximum amount")
-    step = _amount_step((market.get("precision") or {}).get("amount"), precision_mode)
-    min_cost = _decimal((limits.get("cost") or {}).get("min"), "minimum notional")
-    if min_amount <= 0 and min_cost is None:
-        raise ConstraintUnavailable("exchange rule has no positive minimum amount or notional")
-    return OrderConstraints(
-        venue=venue, symbol=symbol, market_type=market_type,
-        min_quantity=min_amount * contract_size,
-        max_quantity=max_amount * contract_size if max_amount else None,
-        amount_step=step * contract_size,
-        min_notional=min_cost,
-    )
 
 
 def normalize_quantity(quantity: float, price: float, constraints: OrderConstraints, *, allow_increase: bool = True) -> float:
@@ -129,63 +96,6 @@ def normalize_quantity(quantity: float, price: float, constraints: OrderConstrai
     return float(adjusted)
 
 
-def _precision_mode_name(exchange: Any) -> str:
-    # CCXT exports integer constants; accepting the names keeps this converter
-    # straightforward to test without a network-bound exchange object.
-    mode = getattr(exchange, "precisionMode", None)
-    try:
-        import ccxt
-        if mode == ccxt.DECIMAL_PLACES:
-            return "decimal_places"
-        if mode == ccxt.SIGNIFICANT_DIGITS:
-            return "significant_digits"
-        if mode == ccxt.TICK_SIZE:
-            return "tick_size"
-    except ImportError:  # pragma: no cover - ccxt is a project dependency
-        pass
-    raise ConstraintUnavailable("exchange reported an unknown amount precision mode")
-
-
-def _find_market(exchange: Any, symbol: str, market_type: str) -> dict[str, Any]:
-    base, quote = symbol.upper().split("/", 1)
-    wants_spot = market_type == "spot"
-    for market in (exchange.markets or {}).values():
-        if not market.get("active", True):
-            continue
-        if str(market.get("base") or "").upper() != base or str(market.get("quote") or "").upper() != quote:
-            continue
-        if wants_spot and market.get("spot"):
-            return market
-        if not wants_spot and (market.get("swap") or market.get("future")):
-            return market
-    raise ConstraintUnavailable(f"{symbol} is not an active {market_type} market on the executable venue")
-
-
-async def _fetch_constraints(venue: str, symbol: str, market_type: str) -> OrderConstraints:
-    from aletheia.net import make_ccxt
-
-    exchange_id = "binanceusdm" if venue == "binance" else venue
-    default_type = "spot" if market_type == "spot" else "swap"
-    exchange, session = make_ccxt(exchange_id, options={"defaultType": default_type})
-    try:
-        await exchange.load_markets()
-        market = _find_market(exchange, symbol, market_type)
-        return constraints_from_market(
-            venue=venue, symbol=symbol, market_type=market_type, market=market,
-            precision_mode=_precision_mode_name(exchange),
-        )
-    except ConstraintUnavailable:
-        raise
-    except Exception as exc:
-        raise ConstraintUnavailable(f"could not refresh executable venue rules: {exc}") from exc
-    finally:
-        try:
-            await exchange.close()
-        finally:
-            if session is not None:
-                await session.close()
-
-
 def _run(coro):
     try:
         asyncio.get_running_loop()
@@ -206,13 +116,16 @@ def get_order_constraints(execution_mode: str, symbol: str, market_type: str) ->
     venue = venue_for_execution_mode(execution_mode)
     if venue is None:
         raise ConstraintUnavailable(f"no executable venue rules for mode {execution_mode}")
+    reader = _constraints_reader
+    if reader is None:
+        raise ConstraintUnavailable("executable venue rules unavailable")
     key = (venue, symbol.upper(), market_type)
     now = time.monotonic()
     with _cache_lock:
         cached = _cache.get(key)
         if cached and now - cached[1] < _CACHE_TTL_SECONDS:
             return cached[0]
-    constraints = _run(_fetch_constraints(venue, symbol, market_type))
+    constraints = _run(reader(venue, symbol, market_type))
     with _cache_lock:
         _cache[key] = (constraints, time.monotonic())
     return constraints
