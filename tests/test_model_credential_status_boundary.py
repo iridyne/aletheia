@@ -8,7 +8,7 @@ import pytest
 def test_status_preserves_real_store_failures(monkeypatch, tmp_path, store, keyring_state):
     from aletheia.config import secrets
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider.http_runtime import http_credential_status
+    from extensions.model_endpoints.http_runtime import http_credential_status
 
     monkeypatch.setattr(secrets, "get_data_dir", lambda: tmp_path)
     monkeypatch.setattr(secrets, "is_preview_mode", lambda: False)
@@ -52,7 +52,7 @@ def test_status_preserves_real_store_failures(monkeypatch, tmp_path, store, keyr
 ])
 def test_http_status_resolves_only_its_own_reference(monkeypatch, value, expected):
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider import http_runtime
+    from extensions.model_endpoints import http_runtime
 
     refs = []
 

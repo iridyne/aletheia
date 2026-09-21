@@ -122,7 +122,8 @@ def test_count_summary_normalizes_iso_run_timestamps(monkeypatch):
 
 def test_model_setup_uses_configured_credential_channels(monkeypatch):
     import aletheia.server.routes.ui as ui
-    from aletheia.model_provider import http_runtime, router
+    from extensions.model_endpoints import http_runtime
+    from aletheia.model_provider import router
 
     provider = SimpleNamespace(
         type="openai_compatible",

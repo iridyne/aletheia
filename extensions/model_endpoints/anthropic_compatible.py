@@ -1,4 +1,4 @@
-"""Anthropic-compatible model provider."""
+"""HTTP Model Extension for the Anthropic Messages protocol."""
 
 import asyncio
 import logging
@@ -17,7 +17,7 @@ from aletheia.model_provider.base import (
     structured_via_complete,
 )
 from aletheia.model_provider.registry import validate_provider_protocol
-from aletheia.model_provider.http_runtime import http_response_facts
+from extensions.model_endpoints.http_runtime import http_response_facts
 
 # SDK debug request logs contain prompts; the harness owns content-free telemetry.
 logging.getLogger("anthropic._base_client").setLevel(logging.WARNING)

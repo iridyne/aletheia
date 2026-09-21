@@ -1429,7 +1429,8 @@ def test_paused_config_reports_each_active_owner(monkeypatch):
 
 def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.model_provider import http_runtime, router
+    from extensions.model_endpoints import http_runtime
+    from aletheia.model_provider import router
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()
@@ -1451,7 +1452,8 @@ def test_llm_credentials_use_current_models_secret_ref(monkeypatch):
 
 def test_llm_credentials_warn_when_enabled_http_provider_secret_missing(monkeypatch):
     import aletheia.config.loader as loader
-    from aletheia.model_provider import http_runtime, router
+    from extensions.model_endpoints import http_runtime
+    from aletheia.model_provider import router
     from aletheia.config.schema import AletheiaConfig, ProviderConfig
 
     cfg = AletheiaConfig()

@@ -80,7 +80,7 @@ class FailClient:
     async def get(self, url, **k): raise httpx.ConnectError("refused")
     async def post(self, url, **k): raise httpx.ConnectError("refused")
 
-with patch("aletheia.model_provider.openai_compatible.httpx_client", FailClient):
+with patch("extensions.model_endpoints.openai_compatible.httpx_client", FailClient):
     health = await provider.healthcheck()
 ```
 

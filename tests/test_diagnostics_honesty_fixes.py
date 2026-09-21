@@ -70,7 +70,7 @@ def test_scheduler_consistency_checks_task_tiers_without_resolving_credentials(m
 
     monkeypatch.setattr("aletheia.model_provider.router.get_provider", forbidden)
     monkeypatch.setattr("aletheia.model_provider.router.load_config", forbidden)
-    monkeypatch.setattr("aletheia.model_provider.http_runtime.get_secret", forbidden)
+    monkeypatch.setattr("extensions.model_endpoints.http_runtime.get_secret", forbidden)
     cfg = AletheiaConfig()
     cfg.runtime.scheduler_enabled = True
     cfg.models.providers["task"] = ProviderConfig(

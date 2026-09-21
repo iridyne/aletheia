@@ -1183,9 +1183,9 @@ else:
 from aletheia.model_provider.router import configure_model_provider
 
 try:
-    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
+    from extensions.model_endpoints.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
 except ModuleNotFoundError as exc:
-    if exc.name != "aletheia.model_provider.http_runtime":
+    if exc.name not in {"extensions", "extensions.model_endpoints", "extensions.model_endpoints.http_runtime"}:
         raise
     configure_model_provider(None)
     logger.warning("model_adapter_unavailable")
@@ -1202,9 +1202,9 @@ app.include_router(data_router)
 app.include_router(live_router)
 app.include_router(model_router)
 try:
-    from aletheia.model_provider.credential_routes import router as model_credentials_router
+    from extensions.model_endpoints.credential_routes import router as model_credentials_router
 except ModuleNotFoundError as exc:
-    if exc.name != "aletheia.model_provider.credential_routes":
+    if exc.name not in {"extensions", "extensions.model_endpoints", "extensions.model_endpoints.credential_routes"}:
         raise
     logger.warning("model_credential_routes_unavailable")
 else:

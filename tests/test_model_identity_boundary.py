@@ -16,7 +16,7 @@ import pytest
 ])
 def test_identity_matches_pre_migration_goldens(monkeypatch, kind, protocol, stored, candidate):
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider import http_runtime
+    from extensions.model_endpoints import http_runtime
 
     refs = []
 

@@ -187,3 +187,17 @@ different model. Explicit candidate keys do not trigger an unused stored-key
 lookup. Anonymous endpoints without a configured reference remain anonymous.
 This restores #3134's configured-endpoint scope; it does not migrate credentials
 or claim that the remaining Model/Core import boundary has been converged.
+
+## Physical HTTP Extension boundary
+
+The accepted #3134 Scheme A target places concrete HTTP SDK transports,
+endpoint construction/credential-backed identity and HTTP/CLI credential ingress
+under `extensions/model_endpoints/`. Existing Web/CLI entrypoints compose them;
+the Model Port, normalized DTOs, router, broker and explicit fallback remain Core.
+Removing the Extension package leaves Core status/health/routing importable with
+explicit unavailable results, not a replacement transport or credential fallback.
+Old implementation paths are removed in the same change with no forwarding alias.
+The existing distribution includes the new source directory; there is no second
+distribution, plugin loader, runtime lifecycle, schema migration or credential
+scope change. Other Mixed packages require their own proven dispositions; this
+boundary does not authorize moving a whole package solely by its current name.

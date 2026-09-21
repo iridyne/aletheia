@@ -1,4 +1,4 @@
-"""HTTP endpoint credential ingress; routing roles remain Core-owned."""
+"""HTTP Extension credential ingress; routing roles remain Core-owned."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -94,8 +94,8 @@ async def _candidate_api_key(req, provider_type: str, pcfg, protocol: str | None
 @router.post("/model/detect-models")
 async def detect_models(req: DetectModelsRequest):
     """Probe a candidate provider identity without persisting credentials."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -157,8 +157,8 @@ async def test_model_candidate(req: TestCandidateRequest):
     inference verification and persists evidence only when the candidate matches
     the currently saved provider identity.
     """
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
     from aletheia.config.loader import load_config
 
     cfg = load_config()
@@ -400,7 +400,7 @@ def _candidate_configuration_identity(
     """Build the same identity that a verified profile will persist."""
 
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider.http_runtime import http_configuration_identity
+    from extensions.model_endpoints.http_runtime import http_configuration_identity
 
     values = pcfg.model_dump(mode="python") if pcfg is not None else {}
     for field_name in ProviderConfig.model_fields:
@@ -424,7 +424,7 @@ def _candidate_configuration_identity(
 
 
 def _apply_model_config_sync(req: ModelProfileMutation, verification: dict | None = None):
-    from aletheia.model_provider.http_runtime import http_configuration_identity
+    from extensions.model_endpoints.http_runtime import http_configuration_identity
 
     if req.api_key is not None:
         req.api_key = req.api_key.strip() or None

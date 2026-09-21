@@ -518,7 +518,7 @@ def test_model_health_freshness_boundary_is_server_owned():
 @pytest.mark.anyio
 async def test_model_health_separates_reachability_and_verification(client, monkeypatch):
     from aletheia.model_provider.base import ModelHealth
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def healthy(self):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
@@ -545,7 +545,7 @@ async def test_model_profile_verification_persists_and_config_change_invalidates
     client, monkeypatch
 ):
     from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
     async def healthy(self):
         return ModelHealth(provider="openai_compatible", available=True, model=self.model)
@@ -1977,7 +1977,7 @@ async def test_codex_routes_are_removed(client, method, path):
 @pytest.mark.anyio
 async def test_model_test_candidate_pass(client, monkeypatch):
     """A reachable candidate key returns available=true, echoes no key, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
 
     async def fake_health(self):
@@ -2007,7 +2007,7 @@ async def test_model_test_candidate_pass(client, monkeypatch):
 @pytest.mark.anyio
 async def test_model_test_candidate_probe_succeeds_without_model_catalogue(client, monkeypatch):
     """An inference probe must not require optional /models list permission."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
     import aletheia.model_provider.broker as broker
 
@@ -2035,7 +2035,7 @@ async def test_model_test_candidate_probe_succeeds_without_model_catalogue(clien
 @pytest.mark.anyio
 async def test_model_test_candidate_fail(client, monkeypatch):
     """An unreachable candidate returns available=false + error, persists nothing."""
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
     from aletheia.model_provider.base import ModelHealth
 
     async def fake_health(self):
@@ -2196,8 +2196,8 @@ async def test_telegram_health_reachable(client, monkeypatch):
 async def test_http_candidate_can_verify_without_catalogue_permission(client, monkeypatch, provider_type, protocol):
     """Manual models remain verifiable when the endpoint catalogue is forbidden."""
     from aletheia.model_provider.base import ModelHealth, ModelResponse
-    from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
-    from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+    from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
+    from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 
     provider_class = OpenAICompatibleProvider if provider_type == "openai_compatible" else AnthropicCompatibleProvider
 

@@ -7,12 +7,29 @@ import sys
 import pytest
 
 
+def test_http_extension_has_one_physical_implementation():
+    import tomllib
+
+    root = Path(__file__).resolve().parents[1]
+    for module in (
+        "http_runtime", "credential_routes", "credential_cli",
+        "openai_compatible", "anthropic_compatible",
+    ):
+        assert (root / "extensions" / "model_endpoints" / f"{module}.py").is_file()
+        assert not (root / "aletheia" / "model_provider" / f"{module}.py").exists()
+    build = tomllib.loads((root / "pyproject.toml").read_text())
+    assert "extensions" in build["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+
+
 @pytest.mark.parametrize("entrypoint", ["aletheia.model_provider.router", "aletheia.server.app"])
-def test_model_router_does_not_import_concrete_transports(entrypoint):
+@pytest.mark.parametrize("missing", ["implementations", "extensions.model_endpoints", "extensions"])
+def test_model_router_does_not_import_concrete_transports(entrypoint, missing):
     script = f"""
 import importlib
 import sys
-blocked = ('aletheia.model_provider.http_runtime', 'aletheia.model_provider.openai_compatible', 'aletheia.model_provider.anthropic_compatible', 'openai', 'anthropic')
+blocked = ('extensions.model_endpoints.http_runtime', 'extensions.model_endpoints.openai_compatible', 'extensions.model_endpoints.anthropic_compatible', 'openai', 'anthropic')
+if {missing!r} != 'implementations':
+    blocked = ({missing!r},)
 class RejectTransport:
     def find_spec(self, fullname, path=None, target=None):
         if any(fullname == item or fullname.startswith(item + '.') for item in blocked):
@@ -95,7 +112,7 @@ def test_core_constructor_port_preserves_cache_and_model_selection_without_readi
 ])
 def test_http_factory_resolves_only_selected_endpoint_reference(monkeypatch, provider_type, protocol):
     from aletheia.config.schema import ProviderConfig
-    from aletheia.model_provider import http_runtime
+    from extensions.model_endpoints import http_runtime
 
     refs = []
 
@@ -119,7 +136,8 @@ def test_http_factory_resolves_only_selected_endpoint_reference(monkeypatch, pro
 
 def test_cli_composition_binds_without_constructing_clients_or_resolving_keys(monkeypatch):
     from aletheia import main
-    from aletheia.model_provider import http_runtime, router
+    from extensions.model_endpoints import http_runtime
+    from aletheia.model_provider import router
     from aletheia.portfolio import outcome_hooks
 
     def forbidden(_ref):

@@ -1,4 +1,4 @@
-"""CLI ingress for HTTP endpoint credentials."""
+"""CLI ingress for HTTP Model Extension credentials."""
 
 import typer
 

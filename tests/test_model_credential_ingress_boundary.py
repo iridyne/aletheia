@@ -7,11 +7,14 @@ import sys
 import pytest
 
 
-def test_absent_model_ingress_keeps_core_routes_and_cli_importable():
-    script = """
+@pytest.mark.parametrize("missing", ["ingress", "extensions.model_endpoints", "extensions"])
+def test_absent_model_ingress_keeps_core_routes_and_cli_importable(missing):
+    script = f"missing = {missing!r}\n" + """
 import importlib
 import sys
-blocked = {'aletheia.model_provider.credential_routes', 'aletheia.model_provider.credential_cli'}
+blocked = {'extensions.model_endpoints.credential_routes', 'extensions.model_endpoints.credential_cli'}
+if missing != 'ingress':
+    blocked = {missing}
 class MissingIngress:
     def find_spec(self, fullname, path=None, target=None):
         if fullname in blocked:

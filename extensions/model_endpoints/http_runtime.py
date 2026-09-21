@@ -1,4 +1,4 @@
-"""HTTP construction and credential-backed identity; Core owns routing and lifetime."""
+"""HTTP Extension construction and identity; Core owns routing and lifetime."""
 
 import hashlib
 import json
@@ -103,9 +103,9 @@ def http_credential_status(name: str, pcfg) -> dict:
 async def verify_http_model_selection(endpoint_id: str, provider_type: str, model_id: str) -> dict:
     """Reuse the credential-ingress probe for one configured endpoint/model pair."""
     try:
-        from aletheia.model_provider.credential_routes import _verify_profile_candidate
+        from extensions.model_endpoints.credential_routes import _verify_profile_candidate
     except ModuleNotFoundError as exc:
-        if exc.name != "aletheia.model_provider.credential_routes":
+        if exc.name != "extensions.model_endpoints.credential_routes":
             raise
         from aletheia.model_provider.router import ModelAdapterUnavailable
 
@@ -121,13 +121,13 @@ def build_http_provider(name, pcfg):
     api_key = get_secret(pcfg.api_key_secret_ref) if pcfg.api_key_secret_ref else None
     protocol = provider_config_protocol(provider_type, pcfg)
     if provider_type == "openai_compatible":
-        from aletheia.model_provider.openai_compatible import OpenAICompatibleProvider
+        from extensions.model_endpoints.openai_compatible import OpenAICompatibleProvider
 
         return OpenAICompatibleProvider(
             base_url=pcfg.base_url, model=pcfg.model, protocol=protocol, api_key=api_key,
         )
     if provider_type == "anthropic_compatible":
-        from aletheia.model_provider.anthropic_compatible import AnthropicCompatibleProvider
+        from extensions.model_endpoints.anthropic_compatible import AnthropicCompatibleProvider
 
         return AnthropicCompatibleProvider(
             base_url=pcfg.base_url, model=pcfg.model, api_key=api_key,

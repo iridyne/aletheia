@@ -131,7 +131,7 @@ async def run(provider: str, samples: int, concurrency: int, output: Path) -> No
 
 
 def main() -> None:
-    from aletheia.model_provider.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
+    from extensions.model_endpoints.http_runtime import build_http_provider, http_configuration_identity, http_credential_status, verify_http_model_selection
     from aletheia.model_provider.router import configure_model_provider
 
     parser = argparse.ArgumentParser()
