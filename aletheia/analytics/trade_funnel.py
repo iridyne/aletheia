@@ -16,6 +16,8 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean, median
 from typing import Any
 
+from aletheia.storage.sqlite import readonly_db
+
 
 _COUNT_KEYS = (
     "opportunities_created",
@@ -48,6 +50,7 @@ _REQUIRED_TABLES = (
 _TINY_POSITION_NOTIONAL_USDT = 5.0
 
 
+@readonly_db(allow_missing=True)
 def build_trade_funnel_audit(
     *,
     hours: int | None = 24,
