@@ -134,6 +134,33 @@ def test_regime_historical_noncanonical_appended():
         assert tag in regimes
 
 
+@pytest.mark.parametrize("tags", [[], ["bull", None, "historical_regime"]])
+def test_trade_insights_route_preserves_history_without_regime_detector(monkeypatch, tags):
+    import builtins
+    from aletheia.analytics import outcome_integrity
+    from aletheia.server.routes.analytics import get_trade_insights
+
+    rows = [_make_row(regime_tag=tag, id=f"p{index}") for index, tag in enumerate(tags)]
+    monkeypatch.setattr(outcome_integrity, "read_complete_outcome_cohort", lambda **kwargs: _complete_cohort(rows))
+    expected = get_trade_insights(execution_mode="bitget_demo")
+    importing = builtins.__import__
+
+    def without_regime(name, *args, **kwargs):
+        if name == "aletheia.regime" or name.startswith("aletheia.regime."):
+            raise ModuleNotFoundError("optional Regime absent", name=name)
+        return importing(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_regime)
+    actual = get_trade_insights(execution_mode="bitget_demo")
+    assert actual == expected
+    assert actual["trade_count"] == len(rows)
+    assert [row["regime"] for row in actual["by_regime"]] == [
+        "bull", "bear", "sideways", "volatile", "unknown",
+        *(["historical_regime"] if tags else []),
+    ]
+    assert sum(row["trade_count"] for row in actual["by_regime"]) == len(rows)
+
+
 # ---------------------------------------------------------------------------
 # #1256 — R-Multiple uses frozen initial risk only
 # ---------------------------------------------------------------------------
