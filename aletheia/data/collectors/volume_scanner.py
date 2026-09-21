@@ -22,7 +22,7 @@ class VolumeScannerCollector:
     async def collect(self, symbols: list[InstrumentId | str]) -> dict[str, Any]:
         """Fetch exact-instrument tickers and rank by quote-currency volume."""
         from aletheia.config.loader import load_config
-        from aletheia.data.ccxt_provider import get_market_data_provider
+        from extensions.data.ccxt_provider import get_market_data_provider
         from aletheia.universe.features import _quote_volume_24h
 
         errors: list[str] = []

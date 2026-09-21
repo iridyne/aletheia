@@ -210,7 +210,7 @@ async def _fetch_stock_token_price(token_symbol: str, exchange: str = "bitget") 
     exchange defaults to 'bitget' — the current home for both r-series and
     ON-series tokens.  Future OKX SWAP tokens pass exchange='okx'.
     """
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     provider = CCXTProvider(exchange=exchange, fallback_exchange=exchange)
     try:

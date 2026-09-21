@@ -362,7 +362,7 @@ async def test_prefetch_batch_reuses_one_provider_and_bounds_concurrency(monkeyp
     from types import SimpleNamespace
 
     from aletheia.agents import market_observer as mo
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     class FakeProvider:
         def __init__(self):

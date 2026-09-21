@@ -881,8 +881,8 @@ def get_market_data_provider(
     if native_ccxt or not getattr(md, "enable_crypto_fallback", True):
         return ccxt
 
-    from aletheia.data.sources.binance_public import BinancePublicProvider
-    from aletheia.data.sources.chain import FallbackChainProvider
-    from aletheia.data.sources.coingecko import CoinGeckoProvider
+    from extensions.data.sources.binance_public import BinancePublicProvider
+    from extensions.data.sources.chain import FallbackChainProvider
+    from extensions.data.sources.coingecko import CoinGeckoProvider
 
     return FallbackChainProvider([ccxt, CoinGeckoProvider(), BinancePublicProvider()])

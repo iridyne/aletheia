@@ -3,7 +3,8 @@
 Executable claims for canonical-symbol convention, per-call provider factory,
 and provider chain. Implements zero-to-coverage for the data layer trust boundary.
 
-Contract source: aletheia/data/ (ccxt_provider.py, providers.py, symbols.py, cache.py)
+Core contracts: aletheia/data/ (providers.py, symbols.py, cache.py).
+Concrete public provider and fallback sources: extensions/data/.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _DATA_PKG = _ROOT / "aletheia" / "data"
+_DATA_EXTENSION = _ROOT / "extensions" / "data"
 
 
 # ---------------------------------------------------------------------------
@@ -28,13 +30,13 @@ _DATA_PKG = _ROOT / "aletheia" / "data"
         "data_layer_contract",
         "§2 per-call factory",
         "L2a",
-        "get_market_data_provider() exists in aletheia/data/ccxt_provider.py "
+        "get_market_data_provider() exists in extensions/data/ccxt_provider.py "
         "and is NOT a singleton (no @lru_cache, no module-level cache variable)",
     )
 )
 def test_get_market_data_provider_is_not_cached():
     """AST-scan ccxt_provider.py: function must exist, must carry no caching decorator."""
-    src_path = _DATA_PKG / "ccxt_provider.py"
+    src_path = _DATA_EXTENSION / "ccxt_provider.py"
     assert src_path.exists(), f"Expected {src_path}"
 
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
@@ -147,23 +149,23 @@ def test_symbols_exports():
         "data_layer_contract",
         "§2 fallback chain",
         "L2a",
-        "FallbackChainProvider exists in aletheia/data/sources/chain.py "
+        "FallbackChainProvider exists in extensions/data/sources/chain.py "
         "and is returned by get_market_data_provider() when enable_crypto_fallback is True",
     )
 )
 def test_fallback_chain_provider_exists_and_is_used():
     """Structural: class exists; source text of factory references FallbackChainProvider."""
-    from aletheia.data.sources.chain import FallbackChainProvider
+    from extensions.data.sources.chain import FallbackChainProvider
 
     assert callable(FallbackChainProvider), "FallbackChainProvider must be importable"
 
-    factory_src = (_DATA_PKG / "ccxt_provider.py").read_text(encoding="utf-8")
+    factory_src = (_DATA_EXTENSION / "ccxt_provider.py").read_text(encoding="utf-8")
     assert "FallbackChainProvider" in factory_src, (
         "get_market_data_provider() must reference FallbackChainProvider"
     )
     # The factory must import from the chain submodule.
-    assert "from aletheia.data.sources.chain import FallbackChainProvider" in factory_src, (
-        "ccxt_provider.py must import FallbackChainProvider from aletheia.data.sources.chain"
+    assert "from extensions.data.sources.chain import FallbackChainProvider" in factory_src, (
+        "ccxt_provider.py must import FallbackChainProvider from extensions.data.sources.chain"
     )
 
 

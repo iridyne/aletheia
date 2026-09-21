@@ -12,7 +12,7 @@ def no_concrete_data_import(monkeypatch):
     original = builtins.__import__
 
     def guarded(name, *args, **kwargs):
-        if name == "aletheia.data.ccxt_provider":
+        if name == "extensions.data.ccxt_provider":
             raise AssertionError("Core imported concrete Data adapter")
         return original(name, *args, **kwargs)
 

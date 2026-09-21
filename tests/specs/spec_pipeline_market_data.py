@@ -534,7 +534,7 @@ async def test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup(monke
     import asyncio
     import time
 
-    import aletheia.data.ccxt_provider as ccxt_mod
+    import extensions.data.ccxt_provider as ccxt_mod
     import aletheia.trading.market_data as md_mod
 
     cancellation_seen = asyncio.Event()

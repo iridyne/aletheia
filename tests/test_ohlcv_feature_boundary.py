@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.data.ccxt_provider import CCXTProvider
 from aletheia.data.providers import Candle, OHLCVResult, parse_ohlcv_candle
 from aletheia.data.symbols import InstrumentId
 
@@ -70,7 +70,7 @@ async def test_ccxt_ohlcv_observation_is_fresh_primary_only(monkeypatch) -> None
 
 @pytest.mark.asyncio
 async def test_ccxt_ohlcv_observation_honors_primary_cooldown(monkeypatch) -> None:
-    import aletheia.data.ccxt_provider as ccxt_module
+    import extensions.data.ccxt_provider as ccxt_module
     from aletheia.data.venue_health import VenueCoolingDownError
 
     provider = CCXTProvider("okx", "bitget")

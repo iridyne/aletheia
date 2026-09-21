@@ -35,7 +35,7 @@ def _cfg_with(md_kwargs: dict):
 
 def test_universe_registry_never_substitutes_fallback_venue(monkeypatch):
     """Registry has always loaded primary markets only, not fallback data."""
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.universe import registry as _reg
     monkeypatch.setattr(_reg, "_load_demo_whitelist", _AsyncNone())
     cfg = _cfg_with({"ccxt_exchange": "bitget", "ccxt_fallback": "okx"})
@@ -59,7 +59,7 @@ def test_universe_registry_never_substitutes_fallback_venue(monkeypatch):
 
 def test_universe_features_uses_configured_fallback_exchange(monkeypatch):
     """#91 features.py counterpart: same fix at collect_features()."""
-    from aletheia.data import ccxt_provider as _ccxt_mod
+    from extensions.data import ccxt_provider as _ccxt_mod
 
     captured: dict = {}
 

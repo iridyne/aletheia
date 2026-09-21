@@ -4,7 +4,7 @@ import inspect
 
 import pytest
 
-from aletheia.data.ccxt_provider import CCXTProvider
+from extensions.data.ccxt_provider import CCXTProvider
 
 
 def test_universe_features_does_not_call_native_ticker_batch() -> None:

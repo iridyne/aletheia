@@ -18,7 +18,7 @@ def test_features_do_not_call_orderbook_endpoint_or_collector_parser():
 
 @pytest.mark.asyncio
 async def test_provider_returns_exact_normalized_orderbook_without_fallback(monkeypatch):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
 
     calls = []
 

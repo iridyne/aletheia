@@ -16,7 +16,8 @@ PUBLIC = json.loads((Path(__file__).parent / 'fixtures/derivatives_public_ccxt_2
 
 @pytest.mark.parametrize('primary', ['binance', 'bitget'])
 def test_public_replay_preserves_ownership_partial_failure_and_price_identity(monkeypatch, primary):
-    from aletheia.data import ccxt_provider, freshness
+    from extensions.data import ccxt_provider
+    from aletheia.data import freshness
     now = datetime(2026, 9, 10, 14, 10, tzinfo=timezone.utc)
     class Clock(datetime):
         @classmethod

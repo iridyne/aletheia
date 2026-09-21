@@ -157,7 +157,7 @@ async def test_data_coverage_route_separates_persisted_data_from_job_health(clie
 @pytest.mark.anyio
 async def test_ohlcv_route_returns_candles_or_error(client, monkeypatch):
     from aletheia.data.providers import Candle
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     class _FakeCCXT:
         # signature mirrors the real CCXTProvider (since added for history paging)
@@ -198,7 +198,7 @@ async def test_ohlcv_route_marks_memory_cache_source(client, monkeypatch):
 
 @pytest.mark.anyio
 async def test_ohlcv_route_fresh_tail_bypasses_provider_cache(client, monkeypatch):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.providers import Candle
 
     class _LiveProvider:
@@ -234,7 +234,7 @@ async def test_ohlcv_route_fresh_tail_bypasses_provider_cache(client, monkeypatc
 
 @pytest.mark.anyio
 async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypatch):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.providers import Candle
 
     class _UnavailableCCXT:
@@ -271,7 +271,7 @@ async def test_ohlcv_route_falls_back_to_exact_database_history(client, monkeypa
 
 @pytest.mark.anyio
 async def test_ohlcv_route_falls_back_on_typed_empty_provider_result(client, monkeypatch):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.providers import Candle, OHLCVAttempt, OHLCVResult
 
     class _EmptyProvider:
@@ -305,7 +305,8 @@ async def test_ohlcv_route_falls_back_on_typed_empty_provider_result(client, mon
 @pytest.mark.parametrize("failure", ["missing_adapter", "construction"])
 @pytest.mark.parametrize("exact_history", [False, True])
 async def test_ohlcv_history_survives_provider_initialization_failure(client, monkeypatch, failure, exact_history):
-    from aletheia.data import ccxt_provider, providers
+    from extensions.data import ccxt_provider
+    from aletheia.data import providers
     from aletheia.data.providers import Candle
 
     repo.upsert_ohlcv_candles(
@@ -335,7 +336,7 @@ async def test_ohlcv_history_survives_provider_initialization_failure(client, mo
 
 @pytest.mark.anyio
 async def test_ohlcv_route_reports_typed_empty_without_database_history(client, monkeypatch):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.providers import OHLCVAttempt, OHLCVResult
 
     class _EmptyProvider:
@@ -361,7 +362,7 @@ async def test_ohlcv_route_reports_typed_empty_without_database_history(client, 
 
 @pytest.mark.anyio
 async def test_ohlcv_route_preserves_typed_partial_provider_result(client, monkeypatch):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     from aletheia.data.providers import Candle, OHLCVAttempt, OHLCVResult
 
     class _PartialProvider:
@@ -391,7 +392,7 @@ async def test_ohlcv_route_before_filters_to_history(client, monkeypatch):
     """`before` (unix seconds) must drop any candle at/after the cutoff so a
     scroll-back page never overlaps the chart's left-most bar."""
     from aletheia.data.providers import Candle
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     cutoff = 1700000000  # seconds
     captured = {}

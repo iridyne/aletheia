@@ -96,7 +96,7 @@ async def test_registry_routes_reviewed_stock_linked_perps_and_blocks_unknowns(m
     cfg.exchange.enabled_markets = {"usdt_futures": True}
     cfg.universe.blacklist = []
 
-    monkeypatch.setattr("aletheia.data.ccxt_provider.CCXTProvider._ensure_primary", lambda self: FakeExchange())
+    monkeypatch.setattr("extensions.data.ccxt_provider.CCXTProvider._ensure_primary", lambda self: FakeExchange())
     monkeypatch.setattr(
         "aletheia.universe.registry.repo.sync_universe_assets", fake_sync
     )

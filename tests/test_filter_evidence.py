@@ -539,7 +539,7 @@ def test_one_request_settles_every_row_it_brought_bars_for(monkeypatch):
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
 
@@ -623,7 +623,7 @@ def test_a_sibling_the_fetched_span_missed_is_fetched_not_starved(monkeypatch):
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
 
@@ -661,7 +661,7 @@ def test_an_uncovered_sibling_still_defers_when_the_budget_is_spent(monkeypatch)
     ])
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
 
@@ -709,7 +709,7 @@ def test_the_fetch_ceiling_holds_across_every_round(monkeypatch):
     repo.insert_filter_candidate_outcomes_batch(rows)
     provider = _SinceHonouringProvider()
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
 
@@ -745,7 +745,7 @@ def test_each_distinct_instrument_costs_one_unit_of_the_fetch_budget(monkeypatch
     ])
     provider = _PersistingProvider(entry_ms)
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
 

@@ -74,7 +74,7 @@ async def test_scheduler_registration_reaches_net_outcome_side_effect(
             return None
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: FixtureMarketProvider(),
     )
     # Guard-candidate generation is a separate downstream feature. Keep its real

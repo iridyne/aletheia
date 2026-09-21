@@ -432,7 +432,7 @@ def test_pending_filter_outcome_writer_and_settler_require_exact_venue_atomicall
 
 def test_perp_provider_fallback_never_downgrades_to_spot(monkeypatch):
     from aletheia.data.providers import Ticker
-    from aletheia.data.sources.chain import FallbackChainProvider
+    from extensions.data.sources.chain import FallbackChainProvider
     from aletheia.data.symbols import InstrumentId
 
     class Primary:
@@ -512,7 +512,7 @@ def test_settle_due_uses_exact_instrument_and_horizon_candles(monkeypatch):
         return Provider()
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+        "extensions.data.ccxt_provider.get_market_data_provider", provider_factory
     )
     monkeypatch.setattr(
         "aletheia.universe.outcome_recorder.repo.list_pending_forward_outcomes",
@@ -594,7 +594,7 @@ def test_observation_provider_is_pinned_per_persisted_venue(monkeypatch):
         for venue in ("bitget", "binance")
     ]
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+        "extensions.data.ccxt_provider.get_market_data_provider", provider_factory
     )
     monkeypatch.setattr(
         "aletheia.universe.outcome_recorder._local_observation",
@@ -635,7 +635,7 @@ def test_partial_exact_provider_construction_closes_created_provider(monkeypatch
         return Provider()
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider", provider_factory
+        "extensions.data.ccxt_provider.get_market_data_provider", provider_factory
     )
 
     with pytest.raises(RuntimeError, match="provider unavailable"):
@@ -675,7 +675,7 @@ def test_ticker_provider_mismatch_is_not_observation_evidence(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: Provider(),
     )
     monkeypatch.setattr(
@@ -716,7 +716,7 @@ def test_provider_close_failure_does_not_skip_other_cleanup(monkeypatch):
                 raise RuntimeError("close failed")
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda exchange, **_kwargs: Provider(exchange),
     )
     monkeypatch.setattr(
@@ -796,7 +796,7 @@ def test_migration_backfills_identity_without_inventing_historical_net():
 
 
 def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.data.providers import Candle
 
     calls = []
@@ -815,7 +815,7 @@ def test_derivative_ohlcv_persists_with_market_identity(monkeypatch):
 
 
 def test_forming_ohlcv_is_not_visible_to_db_consumers_and_closed_bar_is_persisted():
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.data.providers import Candle
     from aletheia.storage.repositories import get_ohlcv_candles
 
@@ -962,7 +962,7 @@ def _forward_row(entry, due, *, venue="okx"):
 def _install_settle_stubs(monkeypatch, row, provider):
     settled = []
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda *args, **kwargs: provider,
     )
     monkeypatch.setattr(

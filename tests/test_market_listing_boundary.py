@@ -17,7 +17,7 @@ import sys
 attempted = []
 class MissingAdapter:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.data.ccxt_provider":
+        if fullname == "extensions.data.ccxt_provider":
             attempted.append(fullname)
             raise ModuleNotFoundError("absent adapter", name=fullname)
 sys.meta_path.insert(0, MissingAdapter())
@@ -38,7 +38,7 @@ assert not attempted, attempted
 
 @pytest.mark.parametrize("spot_only", [False, True])
 async def test_adapter_preserves_listing_filters_and_closes(monkeypatch, spot_only):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     exchange = SimpleNamespace(options={}, load_markets=AsyncMock(return_value={
         "BTC/USDT": {"spot": True, "active": True},
@@ -60,7 +60,7 @@ async def test_adapter_preserves_listing_filters_and_closes(monkeypatch, spot_on
 
 @pytest.mark.parametrize("markets", [None, {}, {"BTC/USDT": {"active": False}}, RuntimeError("offline")])
 async def test_adapter_failure_closes(monkeypatch, markets):
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     load = AsyncMock(side_effect=markets) if isinstance(markets, Exception) else AsyncMock(return_value=markets)
     exchange = SimpleNamespace(options={}, load_markets=load)
@@ -114,7 +114,7 @@ async def test_cache_deadline_does_not_drain_or_cache_late_result(monkeypatch):
 
 
 @pytest.mark.parametrize("entrypoint", ["cli", "web", "collector"])
-@pytest.mark.parametrize("missing", [None, "aletheia.data.ccxt_provider", "broken_dependency"])
+@pytest.mark.parametrize("missing", [None, "extensions.data.ccxt_provider", "broken_dependency"])
 def test_listing_composition(entrypoint, missing):
     script = f"entrypoint = {entrypoint!r}\nmissing = {missing!r}\n" + '''
 import asyncio
@@ -134,12 +134,12 @@ attempted = []
 if missing:
     class MissingAdapter:
         def find_spec(self, fullname, path=None, target=None):
-            if fullname == "aletheia.data.ccxt_provider":
+            if fullname == "extensions.data.ccxt_provider":
                 attempted.append(fullname)
                 raise ModuleNotFoundError("isolated missing dependency", name=missing)
     sys.meta_path.insert(0, MissingAdapter())
 else:
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
     ccxt_provider.get_market_data_provider = forbidden
 class StopBeforeRuntime(Exception):
     pass

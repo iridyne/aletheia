@@ -252,7 +252,7 @@ async def test_xstock_listing_source_is_registered_and_bounded(monkeypatch):
     from tests.specs.spec_pipeline_market_data import (
         test_xstock_listing_check_has_hard_deadline_and_eventual_cleanup,
     )
-    from aletheia.data import ccxt_provider
+    from extensions.data import ccxt_provider
 
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     source = _MARKET_DATA.read_text(encoding="utf-8")

@@ -78,7 +78,7 @@ async def collect_regime_inputs() -> dict[str, Any]:
 
 async def _fetch_btc_daily_candles() -> list:
     """Fetch completed BTC/USDT 1d OHLCV — need 200+ bars for MA200."""
-    from aletheia.data.ccxt_provider import get_market_data_provider
+    from extensions.data.ccxt_provider import get_market_data_provider
 
     provider = get_market_data_provider()
     try:

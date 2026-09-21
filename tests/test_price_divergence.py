@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from aletheia.data.providers import Ticker
-from aletheia.data.sources.chain import (
+from extensions.data.sources.chain import (
     FallbackChainProvider,
     _last_fallback_alert,
     _should_alert,
@@ -42,7 +42,7 @@ class TestFallbackNotification:
         chain = FallbackChainProvider([p1, p2])
 
         with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
+            "extensions.data.sources.chain._load_divergence_config",
             return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             result = await chain.get_ticker("BTC/USDT")
@@ -62,7 +62,7 @@ class TestFallbackNotification:
         chain = FallbackChainProvider([p1, p2])
 
         with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
+            "extensions.data.sources.chain._load_divergence_config",
             return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             result = await chain.get_ticker("BTC/USDT")
@@ -80,7 +80,7 @@ class TestFallbackNotification:
         chain = FallbackChainProvider([p1, p2])
 
         with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
+            "extensions.data.sources.chain._load_divergence_config",
             return_value=(False, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             await chain.get_ticker("BTC/USDT")
@@ -97,7 +97,7 @@ class TestFallbackNotification:
         chain = FallbackChainProvider([p1, p2])
 
         with patch(
-            "aletheia.data.sources.chain._load_divergence_config",
+            "extensions.data.sources.chain._load_divergence_config",
             return_value=(True, 2.0),
         ), patch("aletheia.notifications.notify_operator") as mock_notify:
             await chain.get_ticker("BTC/USDT")

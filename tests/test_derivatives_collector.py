@@ -255,7 +255,7 @@ def test_lsr_failure_does_not_cancel_primary_funding_or_oi(monkeypatch, failure)
     """LSR is optional enrichment; its timeout must not consume the live path."""
     import aletheia.data.collectors.derivatives as mod
     from aletheia.config import loader as cfg_loader
-    from aletheia.data import ccxt_provider as provider_mod
+    from extensions.data import ccxt_provider as provider_mod
 
     class _Exchange:
         markets = {"BTC/USDT:USDT": _market("BTC/USDT")}
@@ -530,7 +530,7 @@ def _patch_collect_env(monkeypatch, tmp_path, exchange, *, lsr=False):
     mig.run_migrations()
 
     import aletheia.data.collectors.derivatives as mod
-    from aletheia.data import ccxt_provider as provider_mod
+    from extensions.data import ccxt_provider as provider_mod
 
     class _Provider:
         _primary_name = exchange.id

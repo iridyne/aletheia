@@ -136,7 +136,7 @@ def _controlled_admitted_target_candidate(cfg, monkeypatch, *, mechanism, direct
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import UniverseMember
     from aletheia.config.loader import save_config, load_config
-    from aletheia.data.ccxt_provider import CCXTProvider
+    from extensions.data.ccxt_provider import CCXTProvider
     from aletheia.data.providers import timeframe_ms
     from aletheia.universe.service import UniverseService
 

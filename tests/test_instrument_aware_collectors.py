@@ -46,7 +46,7 @@ def test_volume_scanner_fetches_exact_perp_and_normalizes_contract_volume(monkey
         return provider
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         fake_factory,
     )
     instrument = InstrumentId.from_parts("okx", "SPCX/USDT", "perp")
@@ -96,7 +96,7 @@ def test_volume_scanner_skips_missing_market_without_losing_valid_group(monkeypa
             return None
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda **kwargs: FakeProvider(),
     )
     instruments = [
@@ -163,7 +163,7 @@ def test_volume_scanner_rejects_nonfinite_raw_ticker_facts(monkeypatch):
             return None
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda **kwargs: FakeProvider(),
     )
 
@@ -207,7 +207,7 @@ def test_volume_scanner_keeps_observation_only_equity_out_of_crypto_ranking(monk
             return None
 
     monkeypatch.setattr(
-        "aletheia.data.ccxt_provider.get_market_data_provider",
+        "extensions.data.ccxt_provider.get_market_data_provider",
         lambda **kwargs: FakeProvider(),
     )
 
