@@ -290,9 +290,17 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
     from aletheia.storage.models import TradeProposal
     from aletheia.knowledge.retrieval import retrieve_lessons
     repo.insert_trade_proposal(TradeProposal(id="p1", strategy_id="s1", symbol="BTC/USDT",
-                                             market_type="futures", direction="long"))
+                                             market_type="futures", direction="long",
+                                             execution_mode="bitget_demo"))
+
+    provider = object()
+    monkeypatch.setattr(
+        "aletheia.agents.risk_critic.get_provider_for_tier",
+        lambda tier: {"deep": provider}[tier],
+    )
 
     async def ok_llm(*a, **k):
+        assert k["provider"] is provider
         return ("Position sizing crept up after wins; cap risk per trade to limit drawdown clustering.", None)
     monkeypatch.setattr("aletheia.agents.risk_critic.llm_complete", ok_llm)
 
@@ -300,7 +308,7 @@ async def test_risk_critic_writes_medium_confidence_only(tmp_path, monkeypatch):
     assert result["status"] in ("completed", "completed_with_errors")
     items = repo.list_knowledge_items(item_type="research_note")
     # Row exists (audit trail preserved) but medium_confidence, not retrieval-eligible.
-    assert items, "risk_critic must still record an auditable research_note"
+    assert items, f"risk_critic must still record an auditable research_note: {result}"
     assert all(i["confidence"] == "medium_confidence" for i in items), (
         "risk_critic macro observations must never be high_confidence — that gate "
         "produced audit-stub pollution before 2026-07-18"

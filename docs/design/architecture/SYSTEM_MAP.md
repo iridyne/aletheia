@@ -4,6 +4,8 @@
 > 断管道标记: ✅ 闭环 | ⚠️ 窄消费（仅API/CLI） | ❌ 断裂（写入无消费）
 > Last synced with code/design: 2026-09-13 (canonical Candidate entry / UTA convergence)
 
+本图是导航，不授予运行或交易权限；当前支持范围以 [Capability Ground Truth](../../product/CAPABILITY_GROUND_TRUTH.md) 和 [Active Runtime Scope](../../product/ACTIVE_RUNTIME_SCOPE.md) 为准，任务与 Agent 行为以 [Agent Contracts](../contracts/agent_contracts.md) 为准。管道连通不代表已部署或经济资格已验证。
+
 ---
 
 ## 零、运行托管层
@@ -36,7 +38,7 @@
 | `news_fetch` | 15min(可配) | `news_items(status=new)` | news_analyze | ✅ RSS I/O 与 LLM 分离 |
 | `news_analyze` | 5min | 更新 `news_items` sentiment/relevance/status | Market Observer + Research Worker | ✅ 单批3条；失败退避/终止，不伪造 analyzed；独立 timeout worker 不阻塞 RSS |
 | owner Position X aggregate/sanitized-holder import | explicit CLI only; sanitized batches compute an exact cross-sectional universe before storage | whitelisted `perp_structure_snapshots` + source/batch hash + coverage/universe audit; no holder rows or identities; seeds `perp_structure_shadow_outcomes` | Market Observer/System Operator advisory context + 1h/4h/24h shadow settlement + read-only multi-baseline gross evaluation | 🟡 no automatic endpoint/scheduler; retrospective imports fail evaluation; cost-aware unavailable; decision influence disabled |
-| `okx_demo_symbols` | 4h | (内存 set 缓存) | okx_broker(filter) | ✅ |
+| `okx_demo_symbols` | 4h | `execution.venue_capabilities` 内存 capability 缓存 | Gateway 精确 market 的 symbol availability 检查 | ✅ 保留 sandbox 产品事实刷新；不是独立 broker 或当前交易准入 |
 
 ---
 
@@ -50,11 +52,11 @@
 | `position_reconcile` | 5min | exchange positions vs local | reconciliation_reports | ✅ |
 | `tpsl_fill_check` | 90s | pending TP/SL orders | fill records | ✅ |
 | `post_trade_reviewer` | 4h | closed positions | knowledge_items(post_trade_review) | dreaming_agent, retrieve_lessons() | ✅ |
-| `risk_critic` | 6h | risk_decisions history | knowledge_items(lesson) | retrieve_lessons() → LLM prompts | ✅ |
+| `risk_critic` | 6h | proposal / risk_decisions history | medium-confidence `research_note`（subtype=risk_lesson） | advisory note / audit；不进入 `retrieve_lessons()` 的 high-confidence 池 | ✅ 不写 RiskDecision 或改硬风控 |
 | `equity_observer` | 工作日 09:30-16:00 America/New_York /30min | yfinance + bitget xStocks | opportunities(equity) | research/analytics（observation only） | ✅ |
 | `prediction_observer` | 30min | polymarket/kalshi API | prediction_market_runs + opportunities | divergence_scanner / research analytics（observation only） | ✅ |
-| `guard_promotion` | cron 04:00 CST | guard_candidate knowledge_items + reviewer health/backlog | trading_guard(active) | ✅ Learning 总开关关闭或审核失败/过期/积压时仅冻结新自动晋级，不改变现有 guard |
-| `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | ✅ Serenity 可经 promote→PiDecision 进入评估；每日批次键防重 |
+| `guard_promotion` | cron 04:00 CST | learned guards / candidates 的 expires_at | 仅 TTL 到期 deprecated | 显式 owner review 才可晋级；定时任务不自动晋级或按历史亏损率降级 | ✅ 保留任务身份及暂停/Learning gates |
+| `dreaming_daily` | cron 02:00 CST | knowledge_items + positions | knowledge_items(dreaming_log), serenity_* tables | 合格研究经 `publish_serenity_candidates` 发布 Candidate / PlanningGeneration，再由 Planner / Compiler 生成 EntryPlan | ✅ 每日批次键防重；不恢复 PiDecision 入场 |
 | `serenity_startup_catchup` | gateway 启动后4min一次 | 最近成功 Serenity run + 当前活动/批次记录 | 缺失时创建一个 scheduled research run | ✅ 补 02:00 漏跑；fresh/active/attempted 均 no-op，暂停恢复后仍可执行 |
 | `learning_startup_catchup` | gateway 启动后5min一次 | learning_job_health 每日成功水位 | 只补最新漏跑的 dreaming/memo/reviewer 日期窗口 | ✅ 成功窗口只跑一次；失败不认领，可在下次启动重试 |
 | `insight_synthesizer` | cron 02:30 CST + durable boot catch-up | knowledge_items + market_snapshots | trading_memo(knowledge_items) | retrieve_lessons() | ✅ |
@@ -62,10 +64,7 @@
 | `filter_controller_observe` | 6h（配置开启时） | 逐 filter/version/family/direction/market/horizon 的 pass/reject 净结果与未来首次样本 | controller_recommendations + filter_shadow_experiments/evaluations | CLI/API 诊断；只登记和评估 shadow，不写 config | ✅ 只读 |
 | `pi_operator_loop` | cron 每4h:15 CST + boot 2min catch-up（assessment 3h45m 防重） | system health + strategies + positions | operator_assessment, operator_actions, PiDecision(recommendations) | pi_daemon(wake signal) | ✅ |
 
-上表中会产出、审核、晋级或自动应用 Learning 状态的任务统一受
-`agent.autonomous_learning` 控制；结果结算、shadow 结果核验和 contribution measurement
-不受该开关影响。生命周期控制仍同时要求未暂停、无完整性事故、已启用生命周期与纸面影响，
-并且路径在白名单中。
+Learning 行为生产任务受 `agent.autonomous_learning` 控制；结果结算、funding、durable outcome replay 与 Observation Lab 保留各自独立边界。旧 contribution evaluator、measurement catch-up 和 lifecycle controller/reconciler 已退役，历史任务记录不代表当前调度或晋级权限；见 [Agent Contracts](../contracts/agent_contracts.md#1-scheduler-job-overview)。
 
 ### Opportunity 生命周期身份
 
@@ -100,7 +99,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 
 | 模块 | 写入路径 | 读取路径 | 管道 |
 |------|---------|---------|------|
-| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | retrieve_lessons() → advisory context（Market Observer / Entry Planner） | ✅ |
+| knowledge_items + knowledge_fts | post_trade_reviewer, risk_critic, dreaming_agent, insight_synthesizer | 仅符合 active + high-confidence 与文档完整性门槛的项可由 `retrieve_lessons()` 提供 advisory context；Risk Critic 的 medium-confidence note 不在该池 | ✅ 存储研究记录不等于交易上下文准入 |
 | trading_guards + guard_candidates | universe_refresh(Tier1 auto-gen), dreaming_agent | advisory candidate context；automatic lesson block → shadow-only candidate（历史自动晋级跳过） | ✅ 不伪装成 Risk Engine lesson |
 | ps_lessons (LessonStore) | dreaming_agent → lesson_reviewer | Entry Planner learning context / System Operator review → bounded advisory use | ✅ 晋级/推翻只认同标的、同方向、同 scanner 的干净净收益；全局样本只作背景，不能代替窄范围门槛 |
 | historical Ranker case/memo Learning | trade_case_study + latest trading_memo | 只读历史 funnel/attribution reports | 🟡 不创建当前 Entry exposure，不改变 Candidate/Risk/Execution |
@@ -135,7 +134,7 @@ Owner-facing Overview、API 和 CLI 使用同一只读 projection：`emitted_cou
 | Historical A2 (Knowledge gap) | ~~ps_skills 无生产者~~ | 已修: lesson_reviewer 产 draft skill;人工审核后才可 activate；与 `learning_contribution_observability` 无关 |
 | A3 | liquidation_events 不进风控 | 清算数据采集浪费 |
 | B1 | detect_contradictions() | 已有保守 support-vs-block 检测；UI 只呈现"需复核"数量，不自动裁决 |
-| B2 | serenity 4表 → promote→PiDecision **已闭环** | 原始4表仍不进 FTS,但 promote 路径已建(spec_serenity_promote) |
+| B2 | Serenity 研究经 canonical Candidate publication 消费 | 真实 PA/资格证据通过后发布 Candidate / PlanningGeneration；后续必须经 Planner / Compiler / EntryPlan / Risk / Gateway，见 [Serenity Contract](../contracts/serenity_contract.md) |
 | C1 | 6个analytics端点无前端UI | 已有能力不可达 |
 | C2 | Regime/Guard Config 无前端控制(MarketAwareExits 已部分接入) | regime/guard 只能手编 yaml |
 
