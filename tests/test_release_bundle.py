@@ -31,6 +31,9 @@ requires-python = ">=3.12"
     _write(root / "README.md", "release fixture\n")
     _write(root / "aletheia" / "__init__.py", '__version__ = "9.9.9"\n')
     _write(root / "aletheia" / "app.py", "VALUE = 1\n")
+    _write(root / "extensions" / "__init__.py", "")
+    _write(root / "extensions" / "model_endpoints" / "__init__.py", "")
+    _write(root / "extensions" / "model_endpoints" / "openai_compatible.py", "VALUE = 2\n")
     _write(root / "aletheia" / "dashboard_static" / "index.html", "<html></html>\n")
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js", "console.log('ok')\n")
     _write(root / "aletheia" / "dashboard_static" / "assets" / "app.js.map", "ignored\n")
@@ -65,6 +68,9 @@ def test_bundle_contains_only_runtime_whitelist_and_manifest(tmp_path: Path) -> 
 
     assert result.archive_path.name == f"aletheia-dogfood-{'a' * 12}.zip"
     assert "aletheia/app.py" in names
+    assert "extensions/__init__.py" in names
+    assert "extensions/model_endpoints/openai_compatible.py" in names
+    assert "extensions/model_endpoints/openai_compatible.py" in {item["path"] for item in manifest["files"]}
     assert "aletheia/dashboard_static/index.html" in names
     assert "aletheia/dashboard_static/assets/app.js" in names
     assert "scripts/runtime/start-release.ps1" in names
