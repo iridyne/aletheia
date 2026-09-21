@@ -33,9 +33,9 @@ flowchart TD
 
 `MarketDataProvider` is defined in `aletheia/data/providers.py` and currently exposes bounded async ticker/OHLCV reads plus close semantics.
 
-`get_market_data_provider()` in `aletheia/data/ccxt_provider.py` is the normal factory for crypto public-market reads. It returns a **fresh provider per caller/event loop** because async CCXT sessions are loop-bound.
+Core consumers enter through `get_market_data_provider()` in `aletheia/data/providers.py`. Composition binds the concrete implementation from `extensions/data/ccxt_provider.py`; an absent binding reports market data unavailable. The adapter returns a **fresh provider per caller/event loop** because async CCXT sessions are loop-bound.
 
-When crypto fallback is enabled, the factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks. Callers that require CCXT-native market metadata may request the native CCXT surface through the same factory contract.
+When crypto fallback is enabled, the adapter factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks in `extensions/data/sources/`. Core callers use normalized capabilities, including exact-venue reads without cross-source fallback. CCXT-native metadata access remains inside optional Data implementations, not the Core provider contract.
 
 ## Public market-data contract
 
