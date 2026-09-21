@@ -109,7 +109,7 @@ def test_report_wires_temporal_section(monkeypatch):
         "aletheia.analytics.outcome_integrity.eligible_strategy_outcomes",
         lambda **_: fake,
     )
-    rep = pr._collect()
+    rep = pr._collect(execution_mode="bitget_demo")
     assert "temporal" in rep
     assert rep["temporal"]["best_hour"]["hour"] == 9
     human = pr._render_human(rep)

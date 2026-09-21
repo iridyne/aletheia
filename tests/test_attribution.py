@@ -99,6 +99,6 @@ def test_report_wiring_emits_attribution(monkeypatch):
     import performance_report
 
     monkeypatch.setattr(oi, "eligible_strategy_outcomes", lambda **kw: outs)
-    rep = performance_report._collect()
+    rep = performance_report._collect(execution_mode="bitget_demo")
     assert "attribution" in rep
     assert rep["attribution"]["by_symbol"]["BTC"]["total_pnl"] == 10.0
