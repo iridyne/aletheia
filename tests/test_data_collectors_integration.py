@@ -1,7 +1,7 @@
 """Integration test — data_collectors Phase A + Phase B end-to-end (plan §9.3).
 
-Drives the same code path the scheduler tick fires (`_async_data_collectors`)
-but with all four external HTTP endpoints (CCXT exchanges, Alt.me, CoinGecko,
+Calls the collectors and repository writers in scheduler order (not the scheduler
+wrapper), with all four external HTTP endpoints (CCXT exchanges, Alt.me, CoinGecko,
 Binance fapi) mocked so the test is offline and deterministic. The acceptance
 criterion is plan §9.3: "after one round, the five new signals each have at
 least one row in their target storage location, and the enriched_context render
@@ -42,7 +42,11 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     the macro top_movers_summary."""
     # ----- mock CCXT funding/OI fetches -----
     class _FakeFutures:
-        markets = {"BTC/USDT:USDT": {}}
+        markets = {"BTC/USDT:USDT": {
+            "id": "BTC-USDT-SWAP", "symbol": "BTC/USDT:USDT", "swap": True,
+            "base": "BTC", "quote": "USDT", "settle": "USDT", "linear": True,
+            "contractSize": 0.01,
+        }}
 
         async def load_markets(self):
             return self.markets
@@ -56,13 +60,15 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
 
         async def fetch_open_interest(self, sym):
             return {
-                "openInterestAmount": 100_000.0,
+                "symbol": "BTC/USDT:USDT",
+                "openInterestAmount": 10_000_000.0,
                 "openInterestValue": 6_000_000_000.0,
-                "info": {"sumOpenInterest": "100000"},
+                # Native USD proof, not a guessed unit from the unified field.
+                "info": {"instId": "BTC-USDT-SWAP", "oi": "10000000", "oiUsd": "6000000000"},
             }
 
     class _FakeProvider:
-        _primary_name = "binance"
+        _primary_name = "okx"
         _sessions = []
 
         def _ensure_primary(self):
@@ -169,6 +175,9 @@ def test_round2_collectors_e2e_phase_b_tick(fresh_db, monkeypatch):
     # 2. OI row landed AND has long_short_ratio (Step 1 wiring)
     oi = repo.latest_open_interest("BTC/USDT")
     assert oi is not None, "open_interest_snapshots empty after tick"
+    assert oi["exchange"] == "okx"
+    assert oi["open_interest_usd"] == pytest.approx(6_000_000_000.0)
+    assert oi["open_interest_coin"] is None  # contracts are not proved base coins
     assert oi["long_short_ratio"] is not None, (
         "LSR write path broken — open_interest_snapshots.long_short_ratio is NULL "
         "even though the Binance LSR mock returned 2.09"
