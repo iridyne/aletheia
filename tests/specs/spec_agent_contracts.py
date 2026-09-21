@@ -477,12 +477,12 @@ def test_trading_domains_do_not_import_concrete_venue_implementations():
                         *(
                             f"{node.module}.{alias.name}"
                             for alias in node.names
-                            if node.module in {"aletheia.exchanges", "aletheia.execution"}
+                            if node.module in {"aletheia.exchanges", "extensions.exchanges", "aletheia.execution"}
                         ),
                     ]
                 for dependency in imported:
                     if (
-                        dependency.startswith("aletheia.exchanges.")
+                        dependency.startswith(("aletheia.exchanges.", "extensions.exchanges"))
                         or dependency in forbidden_brokers
                     ):
                         violations.append(

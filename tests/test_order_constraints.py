@@ -22,7 +22,7 @@ def _market(**overrides):
 
 
 def test_constraints_are_converted_from_contracts_to_internal_coin_units():
-    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
+    from extensions.exchanges.ccxt.order_rules import constraints_from_market
 
     constraints = constraints_from_market(
         venue="okx", symbol="BTC/USDT", market_type="usdt_futures",
@@ -35,7 +35,7 @@ def test_constraints_are_converted_from_contracts_to_internal_coin_units():
 
 
 def test_bitget_spot_zero_min_amount_uses_its_published_minimum_notional():
-    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
+    from extensions.exchanges.ccxt.order_rules import constraints_from_market
 
     market = _market(
         spot=True, swap=False, contractSize=None,
@@ -71,7 +71,7 @@ def test_missing_price_or_unsupported_precision_rejects_fail_closed():
         ConstraintUnavailable, normalize_quantity,
         OrderConstraints,
     )
-    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
+    from extensions.exchanges.ccxt.order_rules import constraints_from_market
 
     constraints = OrderConstraints(
         venue="bitget", symbol="BTC/USDT", market_type="spot",
@@ -182,7 +182,7 @@ async def test_exchange_reader_owns_client_and_session_cleanup(monkeypatch, load
     from types import SimpleNamespace
     import ccxt
     from aletheia import net
-    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+    from extensions.exchanges.ccxt.order_rules import read_order_constraints
     from aletheia.execution.order_constraints import ConstraintUnavailable
 
     events = []
@@ -221,8 +221,8 @@ async def test_exchange_reader_owns_client_and_session_cleanup(monkeypatch, load
 
 def test_existing_exchange_composition_binds_rules_without_io(monkeypatch):
     from aletheia.execution import order_constraints as rules
-    from aletheia.exchanges import composition
-    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+    from extensions.exchanges import composition
+    from extensions.exchanges.ccxt.order_rules import read_order_constraints
 
     monkeypatch.setattr(rules, "_constraints_reader", None)
     monkeypatch.setattr(rules, "_cache", {})
@@ -244,7 +244,7 @@ async def test_gateway_quantity_rules_use_exact_perpetual_identity(monkeypatch, 
     import ccxt.async_support as ccxt
     from aletheia import net
     from aletheia.execution import gateway, order_constraints as rules
-    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+    from extensions.exchanges.ccxt.order_rules import read_order_constraints
 
     exchange = ccxt.bitget({"options": {"fetchMarkets": {"types": ["swap"]}}})
     common = {
@@ -302,7 +302,7 @@ async def test_gateway_quantity_rules_use_exact_perpetual_identity(monkeypatch, 
 
 def test_rules_lookup_keeps_spot_distinct_from_same_pair_perpetual():
     from types import SimpleNamespace
-    from aletheia.exchanges.ccxt_order_rules import _find_market
+    from extensions.exchanges.ccxt.order_rules import _find_market
 
     spot = _market(spot=True, swap=False, contractSize=None)
     exchange = SimpleNamespace(markets={"BTC/USDT:USDT": _market(), "BTC/USDT": spot})

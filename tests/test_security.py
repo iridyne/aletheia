@@ -285,7 +285,7 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
     """A failing Binance candidate test returns the class name, not the raw error
     (which would echo the candidate api_key/secret submitted in the request)."""
     import ccxt.async_support as ccxt
-    from aletheia.exchanges.credential_routes import binance_test_candidate, BinanceCandidateRequest
+    from extensions.exchanges.credential_routes import binance_test_candidate, BinanceCandidateRequest
 
     SECRET = "cand-secret-CAFEBABE-should-not-leak"
 
@@ -303,7 +303,7 @@ async def test_binance_test_candidate_does_not_leak_exception_string(monkeypatch
 
 async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatch):
     import aletheia.net as net
-    from aletheia.exchanges.credential_routes import (
+    from extensions.exchanges.credential_routes import (
         BinanceCandidateRequest,
         OkxCandidateRequest,
         binance_test_candidate,
@@ -361,7 +361,7 @@ async def test_exchange_candidate_checks_use_private_balance_endpoint(monkeypatc
 
 async def test_exchange_candidate_cleanup_failure_closes_session_and_fails_closed(monkeypatch):
     import aletheia.net as net
-    from aletheia.exchanges.credential_routes import BinanceCandidateRequest, binance_test_candidate
+    from extensions.exchanges.credential_routes import BinanceCandidateRequest, binance_test_candidate
 
     calls = []
 
@@ -395,7 +395,7 @@ async def test_exchange_candidate_cleanup_failure_closes_session_and_fails_close
 async def test_exchange_credential_ingress_preserves_scope_lock_and_audit(monkeypatch, broker, handler_name, request_name):
     from types import SimpleNamespace
     from fastapi import HTTPException
-    from aletheia.exchanges import credential_routes as routes
+    from extensions.exchanges import credential_routes as routes
 
     cfg = SimpleNamespace(exchange=SimpleNamespace(name=broker), live=SimpleNamespace(state="live_limited"))
     writes, audit = [], []

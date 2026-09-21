@@ -91,7 +91,7 @@ def test_reconciliation_partitions_follow_registered_uta_identities():
 
 @pytest.mark.parametrize("mode", ["bitget_demo", "bitget_live_limited"])
 def test_bitget_tpsl_recovery_uses_registered_account_environment(monkeypatch, mode):
-    from aletheia.exchanges import composition
+    from extensions.exchanges import composition
     from extensions.exchanges.bitget import client, profile_config
     from tests.specs.uta_private_history import _identity
 

@@ -13,7 +13,7 @@ def test_gateway_imports_without_exchange_or_ccxt():
 import sys
 class AbsentExchange:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == "aletheia.exchanges" or fullname.startswith("aletheia.exchanges.") or fullname == "ccxt" or fullname.startswith("ccxt."):
+        if any(fullname == prefix or fullname.startswith(prefix + ".") for prefix in ("aletheia.exchanges", "extensions.exchanges", "ccxt")):
             raise ModuleNotFoundError("isolated absent Extension", name=fullname)
 sys.meta_path.insert(0, AbsentExchange())
 from aletheia.execution import gateway
@@ -29,7 +29,7 @@ def test_exchange_normalizes_dependency_failure_without_changing_quantity_gate(m
     import ccxt
     from aletheia import net
     from aletheia.execution import gateway, order_constraints as rules
-    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+    from extensions.exchanges.ccxt.order_rules import read_order_constraints
 
     closed = []
 

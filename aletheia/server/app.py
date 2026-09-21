@@ -429,10 +429,10 @@ async def lifespan(app: FastAPI):
     from aletheia.execution.order_constraints import configure_order_constraints_reader
 
     try:
-        from aletheia.exchanges.composition import bind_uta_provider
+        from extensions.exchanges.composition import bind_uta_provider
     except ModuleNotFoundError as exc:
         if exc.name not in {
-            "aletheia.exchanges", "aletheia.exchanges.composition",
+            "extensions.exchanges.composition",
             "extensions", "extensions.exchanges", "extensions.exchanges.ccxt",
             "extensions.exchanges.ccxt.adapter", "extensions.exchanges.ccxt.profile",
         }:
@@ -1217,10 +1217,10 @@ else:
     app.include_router(model_credentials_router)
 app.include_router(bitget_router)
 try:
-    from aletheia.exchanges.credential_routes import router as exchange_credentials_router
+    from extensions.exchanges.credential_routes import router as exchange_credentials_router
 except ModuleNotFoundError as exc:
     if exc.name not in {
-        "aletheia.exchanges", "aletheia.exchanges.credential_routes",
+        "extensions.exchanges.credential_routes",
         "extensions", "extensions.exchanges",
         "extensions.exchanges.bitget", "extensions.exchanges.bitget.auth",
     }:

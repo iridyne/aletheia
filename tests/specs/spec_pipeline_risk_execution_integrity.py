@@ -1934,7 +1934,7 @@ def test_position_absence_claim_converges_without_fabricated_economics(tmp_path,
     _setup_db(tmp_path, monkeypatch)
     from aletheia.config import loader
     from aletheia.execution.verified_exit import classify_verified_exit
-    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
+    from extensions.exchanges.ccxt.submission_errors import ClosePositionAbsentError
     from aletheia.portfolio import disappearance_settlement, position_reconciler
     from aletheia.storage import repositories as repo
     from aletheia.storage.models import Position

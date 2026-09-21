@@ -43,7 +43,7 @@ def test_learning_settings_endpoint_is_documented():
 # Repository root — all path lookups are relative to this.
 _ROOT = Path(__file__).resolve().parent.parent.parent
 _ROUTES = _ROOT / "aletheia" / "server" / "routes"
-_CREDENTIAL_ROUTES = _ROOT / "aletheia" / "exchanges" / "credential_routes.py"
+_CREDENTIAL_ROUTES = _ROOT / "extensions" / "exchanges" / "credential_routes.py"
 _APP_PY = _ROOT / "aletheia" / "server" / "app.py"
 
 
@@ -478,7 +478,7 @@ def test_tunnel_enabled_no_token_returns_401(tmp_path, monkeypatch):
 def test_exchange_credential_checks_use_private_endpoints():
     import inspect
 
-    from aletheia.exchanges.credential_routes import (
+    from extensions.exchanges.credential_routes import (
         binance_test_candidate,
         okx_test_candidate,
     )

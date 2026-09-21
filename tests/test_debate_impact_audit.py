@@ -90,6 +90,7 @@ def test_debate_impact_read_model_has_no_llm_http_exchange_or_ranker_calls():
         "aletheia.agents",
         "aletheia.agent_shell",
         "aletheia.exchanges",
+        "extensions.exchanges",
         "aletheia.execution",
         "aletheia.model_provider",
         "openai",
