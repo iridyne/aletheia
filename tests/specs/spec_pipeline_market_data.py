@@ -284,7 +284,7 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     import asyncio
     import aletheia.trading.market_data as md_mod
     import aletheia.config.loader as loader_mod
-    import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.data.providers as providers_mod
     import aletheia.data.venue_listing_cache as venue_cache_mod
 
     conn = _setup_db(tmp_path, monkeypatch)
@@ -317,12 +317,11 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingCCXTProvider())
     # get_market_data_provider also needs to return something that can be closed
     # The factory receives exact-venue kwargs even though this fake only drives
     # the separately pinned xStock failure path.
     monkeypatch.setattr(
-        ccxt_mod,
+        providers_mod,
         "get_market_data_provider",
         lambda **kwargs: _FailingCCXTProvider(),
     )
@@ -374,7 +373,7 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     import asyncio
     import aletheia.trading.market_data as md_mod
     import aletheia.config.loader as loader_mod
-    import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.data.providers as providers_mod
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -418,6 +417,15 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
 
     monkeypatch.setattr(md_mod, "_listed_symbols_on_exchange", _no_listed_symbols)
 
+    async def _previously_listed(exchange_name):
+        assert exchange_name == "bitget"
+        return frozenset({"AAPLON/USDT", "TSLAON/USDT"})
+
+    # Enter the fetch path with the earlier cached listing; the post-failure
+    # fresh listing above then proves delisting. Do not depend on adapter mocks
+    # accidentally breaking the independent listing port.
+    monkeypatch.setattr("aletheia.data.venue_listing_cache.get_venue_listing", _previously_listed)
+
     class _FailingProvider:
         async def get_ticker(self, instrument):
             raise RuntimeError("fetch failed")
@@ -425,9 +433,8 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
     monkeypatch.setattr(
-        ccxt_mod,
+        providers_mod,
         "get_market_data_provider",
         lambda **kwargs: _FailingProvider(),
     )
@@ -466,7 +473,7 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
     import asyncio
     import aletheia.trading.market_data as md_mod
     import aletheia.config.loader as loader_mod
-    import aletheia.data.ccxt_provider as ccxt_mod
+    import aletheia.data.providers as providers_mod
 
     _setup_db(tmp_path, monkeypatch)
 
@@ -500,9 +507,8 @@ def test_xstock_listing_check_failure_does_not_remove(tmp_path, monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_mod, "CCXTProvider", lambda **kwargs: _FailingProvider())
     monkeypatch.setattr(
-        ccxt_mod,
+        providers_mod,
         "get_market_data_provider",
         lambda **kwargs: _FailingProvider(),
     )

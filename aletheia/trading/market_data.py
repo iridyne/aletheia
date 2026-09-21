@@ -316,11 +316,7 @@ async def collect_market_snapshots() -> dict:
     else:
         xstocks = _xstocks_raw
 
-    from aletheia.data.ccxt_provider import (
-        CCXTProvider,
-        get_market_data_provider,
-    )
-    from aletheia.data.providers import require_exact_ticker_venue
+    from aletheia.data.providers import get_market_data_provider, require_exact_ticker_venue
     collected = []
     errors = []
     # Batch accumulators — all network fetches complete first, then a single
@@ -365,7 +361,7 @@ async def collect_market_snapshots() -> dict:
                 venue = instrument.exchange
                 if venue not in providers:
                     providers[venue] = get_market_data_provider(
-                        exchange=venue, native_ccxt=True, fallback_exchange=venue,
+                        exchange=venue, exact_venue=True,
                     )
                 provider = providers[venue]
                 snap = await _fetch_snap(instrument, provider)
@@ -394,14 +390,11 @@ async def collect_market_snapshots() -> dict:
                 if isinstance(result, BaseException):
                     raise result
 
-    # xStocks: separate Bitget provider (no API key needed, ON-series tokens).
-    # Deliberate exception: NOT routed through get_market_data_provider(). ON-series
-    # xStocks only list on Bitget, so both primary AND fallback must be bitget — the
-    # factory would force the config fallback (bybit), which doesn't list these tokens.
+    # xStocks retain a separate exact Bitget provider (no configured fallback).
     # Note: xstocks has already been filtered by the venue listing cache above;
     # the listing_cache below is the post-failure auto-remove path (kept as belt-and-suspenders).
     if xstocks:
-        xprovider = CCXTProvider(exchange="bitget", fallback_exchange="bitget")
+        xprovider = get_market_data_provider(exchange="bitget", exact_venue=True)
         listing_cache: dict[str, frozenset[str] | None] = {}
         xstock_error_start = len(errors)
         xstock_written = 0

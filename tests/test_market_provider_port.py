@@ -9,7 +9,7 @@ from unittest.mock import Mock, call
 import pytest
 
 
-@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py", "universe/features.py"])
+@pytest.mark.parametrize("module", ["server/routes/data.py", "trading/market_context.py", "trading/market_data.py", "universe/outcome_recorder.py", "portfolio/position_path_observer.py", "universe/registry.py", "universe/features.py"])
 def test_standard_core_consumers_do_not_import_concrete_data(module):
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aletheia" / module).read_text())
     assert not any(
@@ -22,6 +22,59 @@ def test_feature_scans_do_not_bootstrap_raw_exchange_clients():
     source = (Path(__file__).resolve().parents[1] / "aletheia" / "universe" / "features.py").read_text()
     assert "_ensure_primary" not in source
     assert ".load_markets" not in source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", [False, True])
+@pytest.mark.parametrize("quote_fails", [False, True])
+async def test_snapshot_collection_uses_bound_port_and_closes_provider(monkeypatch, token, quote_fails):
+    from aletheia.data import ccxt_provider, providers
+    from aletheia.data.symbols import InstrumentId
+    from aletheia.trading import market_data
+
+    instrument = InstrumentId.from_parts("bitget", "AAPLON/USDT" if token else "BTC/USDT", "spot")
+    calls, writes, closed = [], [], []
+    monkeypatch.setattr(market_data, "load_config", lambda: object())
+    monkeypatch.setattr(market_data, "_build_dynamic_instruments", lambda cfg: [] if token else [instrument])
+    monkeypatch.setattr(market_data, "xstocks_instruments_from_config", lambda cfg: [instrument] if token else [])
+    monkeypatch.setattr(market_data, "_xstock_failure_counts", {})
+    monkeypatch.setattr(market_data, "insert_market_snapshot_batch", lambda rows: writes.extend(rows) or len(rows))
+
+    async def unavailable_listing(*args):
+        return None
+
+    monkeypatch.setattr("aletheia.data.venue_listing_cache.get_venue_listing", unavailable_listing)
+    monkeypatch.setattr(market_data, "_listed_symbols_on_exchange", unavailable_listing)
+
+    class Provider:
+        async def get_ticker(self, target):
+            assert target == instrument
+            if quote_fails:
+                raise RuntimeError("quote unavailable")
+            return providers.Ticker(target.symbol, 100, 1000, 0, provider=target.exchange)
+
+        async def close(self):
+            closed.append(True)
+
+    def factory(exchange, *, exact_venue, fallback_venue):
+        calls.append((exchange, exact_venue, fallback_venue))
+        return Provider()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("concrete acquisition must remain behind configured Data port")
+
+    monkeypatch.setattr(providers, "_provider_factory", factory)
+    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", forbidden)
+    monkeypatch.setattr(ccxt_provider, "CCXTProvider", forbidden)
+    result = await market_data.collect_market_snapshots()
+    assert calls == [("bitget", True, None)]
+    assert closed == [True]
+    assert bool(result["errors"]) is quote_fails
+    assert len(writes) == (0 if quote_fails else 1)
+    if writes:
+        assert (writes[0].exchange, writes[0].symbol, writes[0].market_type) == (
+            instrument.exchange, instrument.symbol, instrument.market_type,
+        )
 
 
 @pytest.mark.parametrize("exact_venue", [False, True])
