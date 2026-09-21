@@ -76,7 +76,8 @@ def test_production_migrations_persist_stable_ledger_and_apply_once(tmp_path, mo
 
 
 @pytest.mark.real_db
-def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monkeypatch):
+@pytest.mark.parametrize("missing_dependency", [None, "aletheia.observation_lab", "lab_dependency"])
+def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monkeypatch, missing_dependency):
     """A fresh production migration starts on Lab authority without legacy engines."""
     import aletheia.config.loader as loader
     import aletheia.storage.migrations as migrations
@@ -90,6 +91,27 @@ def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monk
     loader._invalidate_config_cache()
     sqlite_store.reset_db()
     try:
+        if missing_dependency:
+            import builtins
+
+            original_import = builtins.__import__
+
+            def missing_lab(name, *args, **kwargs):
+                if name == "aletheia.observation_lab.canonical":
+                    raise ModuleNotFoundError("initialization dependency unavailable", name=missing_dependency)
+                return original_import(name, *args, **kwargs)
+
+            with monkeypatch.context() as absent:
+                absent.setattr(builtins, "__import__", missing_lab)
+                with pytest.raises(ModuleNotFoundError) as failure:
+                    migrations.apply_migrations()
+                assert failure.value.name == missing_dependency
+            # A failed dependency preflight must not make a partial install
+            # look current or prevent the next attempt from being fresh.
+            assert sqlite_store.get_db().execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+            ).fetchone()[0] == 0
+            assert migrations.migration_status()["current"] is False
         assert migrations.run_migrations() is True
         db = sqlite_store.get_db()
         authority = db.execute(
@@ -100,6 +122,12 @@ def test_fresh_production_schema_retires_legacy_experiment_tables(tmp_path, monk
             str(row[0]) for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert not legacy_tables.intersection(migrations._LEGACY_EXPERIMENT_TABLES)
+        assert migrations.apply_migrations() is False
+        if missing_dependency:
+            with monkeypatch.context() as absent:
+                absent.setattr(builtins, "__import__", missing_lab)
+                assert migrations.apply_migrations() is False
+                assert migrations.migration_status()["current"] is True
     finally:
         sqlite_store.reset_db()
 

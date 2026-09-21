@@ -8987,6 +8987,12 @@ def _apply_production_migrations(
     fresh_install = db.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
     ).fetchone()[0] == 0
+    if fresh_install:
+        # Resolve fresh-install initialization before recording schema progress.
+        # Otherwise a missing dependency leaves a current ledger with legacy
+        # authority, and the next attempt no longer recognizes a fresh install.
+        from aletheia.observation_lab.canonical import set_authority_source
+
     acquire_write_lock(timeout=_MIGRATION_LOCK_TIMEOUT_SEC)
     try:
         _ensure_migration_ledger(db)
@@ -9069,8 +9075,6 @@ def _apply_production_migrations(
             # A new installation has no legacy evidence to preserve.  Start
             # directly on the canonical Lab authority and remove the temporary
             # compatibility tables created by the historical baseline DDL.
-            from aletheia.observation_lab.canonical import set_authority_source
-
             set_authority_source(
                 "lab",
                 actor="schema_migration",
