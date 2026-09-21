@@ -10,7 +10,7 @@ export interface ShellBootstrap {
   availability?: BootstrapAvailability
   reason?: string
   gateway?: { running?: boolean; paused?: boolean }
-  scheduler?: { running?: boolean; state?: string; enabled?: boolean }
+  scheduler?: { running?: boolean; state?: string; enabled?: boolean | null }
   live?: { state?: string; enabled?: boolean }
   permission?: { mode?: string }
   kill_switch?: { active?: boolean }

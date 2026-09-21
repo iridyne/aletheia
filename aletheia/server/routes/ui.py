@@ -35,7 +35,7 @@ class SchedulerSnapshot(BaseModel):
     model_config = ConfigDict(extra="allow")
     running: bool = False
     state: str = "not_available"
-    enabled: bool = False
+    enabled: bool | None = None
 
 
 class LiveSnapshot(BaseModel):

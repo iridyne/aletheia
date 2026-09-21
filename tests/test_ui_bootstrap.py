@@ -222,6 +222,29 @@ def test_overview_bootstrap_fails_closed_before_current_account_reads(monkeypatc
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("enabled", [True, False, None])
+async def test_shell_bootstrap_preserves_unknown_scheduler_state(monkeypatch, enabled):
+    from aletheia.agent_runtime import scheduler
+    from aletheia.server.app import app
+
+    def status():
+        if enabled is None:
+            raise RuntimeError("synthetic diagnostic detail must not escape")
+        return {"enabled": enabled, "running": enabled, "state": "running" if enabled else "disabled"}
+
+    monkeypatch.setattr(scheduler, "status_snapshot", status)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/ui/shell-bootstrap")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    result = response.json()["scheduler"]
+    assert result["enabled"] is enabled
+    assert result["running"] is bool(enabled)
+    assert result["state"] == ("unavailable:RuntimeError" if enabled is None else "running" if enabled else "disabled")
+    assert "synthetic diagnostic detail" not in response.text
+
+
+@pytest.mark.anyio
 async def test_app_bootstrap_uses_no_store_and_scoped_json_compression():
     from aletheia.server.app import app
 
