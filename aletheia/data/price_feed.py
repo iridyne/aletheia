@@ -427,7 +427,7 @@ def get_watched_symbols() -> list[str]:
 async def refresh_watched_prices() -> dict:
     """Fetch tickers for watched symbols (SERIALLY) and update in-memory cache.
 
-    Uses a fresh CCXTProvider per call (CCXT binds aiohttp to the creating loop).
+    Uses a fresh exact-venue provider per group, closed on the same event loop.
     NOTE: fetches one symbol at a time — one network round-trip each, NOT a batch
     fetch_tickers call (I1 docstring-honesty fix: the prior docstring claimed a
     single batch round-trip, which the per-symbol loop below never did). The
@@ -451,12 +451,10 @@ async def refresh_watched_prices() -> dict:
     try:
         from collections import defaultdict
 
-        from aletheia.data.ccxt_provider import (
-            CCXTProvider,
+        from aletheia.data.providers import (
             get_market_data_provider,
+            require_exact_ticker_venue,
         )
-        from aletheia.data.providers import require_exact_ticker_venue
-        from aletheia.data.symbols import is_stock_token
         from aletheia.config.loader import load_config
 
         cfg = load_config()
@@ -465,16 +463,8 @@ async def refresh_watched_prices() -> dict:
             groups[instrument.exchange].append(instrument)
 
         for venue, group in groups.items():
-            # Bitget stock tokens are venue-exclusive; never fall back to a crypto
-            # provider that may interpret the same symbol as a different asset.
-            if any(is_stock_token(item.symbol) for item in group):
-                provider = CCXTProvider(exchange=venue, fallback_exchange=venue)
-            else:
-                provider = get_market_data_provider(
-                    exchange=venue,
-                    native_ccxt=True,
-                    fallback_exchange=venue,
-                )
+            # Every instrument, including venue-exclusive tokens, stays on its venue.
+            provider = get_market_data_provider(exchange=venue, exact_venue=True)
             try:
                 for instrument in group:
                     sym = instrument.symbol

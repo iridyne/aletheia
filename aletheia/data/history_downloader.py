@@ -46,8 +46,7 @@ async def download_symbol_history(
     backward from the local oldest bar instead of starting at the month boundary.
     """
     from aletheia.config.loader import load_config
-    from aletheia.data.ccxt_provider import get_market_data_provider
-    from aletheia.data.providers import timeframe_ms
+    from aletheia.data.providers import get_market_data_provider, timeframe_ms
     from aletheia.data.symbols import InstrumentId
     from aletheia.storage.repositories import (
         get_ohlcv_newest_ts,
@@ -81,7 +80,7 @@ async def download_symbol_history(
     # Historical backfill must not silently switch venue: every persisted bar is
     # labeled with target_exchange, so primary and fallback are intentionally equal.
     provider = get_market_data_provider(
-        target_exchange, native_ccxt=True, fallback_exchange=target_exchange
+        target_exchange, exact_venue=True
     )
     total_fetched = 0
     first_ts: int | None = None

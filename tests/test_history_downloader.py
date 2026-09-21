@@ -49,7 +49,7 @@ async def test_download_basic():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("BTC/USDT", "1h", months=3)
 
     assert result.bars_fetched == 1100
@@ -73,7 +73,7 @@ async def test_download_incremental():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 200, "oldest_ts": existing_ts, "newest_ts": existing_ts}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("BTC/USDT", "1h", months=6)
 
     assert result.bars_fetched == 200
@@ -100,7 +100,7 @@ async def test_download_left_gap_starts_near_oldest_existing():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 100, "oldest_ts": oldest_ts, "newest_ts": newest_ts}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("NES/USDT", "1h", months=6)
 
     assert result.bars_fetched == 10
@@ -127,7 +127,7 @@ async def test_download_left_gap_retries_closer_window_when_listing_start_is_emp
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 100, "oldest_ts": oldest_ts, "newest_ts": newest_ts}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("NES/USDT", "1h", months=6)
 
     assert result.bars_fetched == 10
@@ -158,7 +158,7 @@ async def test_download_right_gap_runs_after_empty_left_gap():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 100, "oldest_ts": oldest_ts, "newest_ts": newest_ts}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("RE/USDT", "1h", months=6)
 
     assert result.bars_fetched == 5
@@ -177,7 +177,7 @@ async def test_download_error_handling():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history("ETH/USDT", "1h", months=1)
 
     assert result.bars_fetched == 0
@@ -195,7 +195,7 @@ async def test_download_scopes_fetch_coverage_and_write_to_instrument():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}) as coverage, \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles") as upsert, \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider) as factory:
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider) as factory:
         await download_symbol_history(
             "BTC/USDT", "1h", months=1, exchange="okx", market_type="perp"
         )
@@ -208,7 +208,7 @@ async def test_download_scopes_fetch_coverage_and_write_to_instrument():
     coverage.assert_called_once_with(
         "BTC/USDT", "1h", exchange="okx", market_type="perp"
     )
-    factory.assert_called_once_with("okx", native_ccxt=True, fallback_exchange="okx")
+    factory.assert_called_once_with("okx", exact_venue=True)
     upsert.assert_not_called()
 
 
@@ -237,7 +237,7 @@ async def test_empty_new_listing_probes_near_now_then_backfills_left():
          patch("aletheia.storage.repositories.get_ohlcv_coverage",
                return_value={"bar_count": 0, "oldest_ts": None, "newest_ts": None}), \
          patch("aletheia.storage.repositories.upsert_ohlcv_candles"), \
-         patch("aletheia.data.ccxt_provider.get_market_data_provider", return_value=provider):
+         patch("aletheia.data.providers.get_market_data_provider", return_value=provider):
         result = await download_symbol_history(
             "CAP/USDT", "1h", months=1, exchange="okx", market_type="perp"
         )
