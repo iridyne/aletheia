@@ -4,11 +4,9 @@ External Demo and testnet adapters submit orders to exchange APIs. A per-test
 `tmp_path` DATA_DIR alone does not isolate credentials or network access, so
 execution tests must provide exchange-response fakes at the existing boundaries.
 
-This autouse guard makes "tests never touch the real exchange" structural: it replaces
-`BitgetClient.place_order` with a loud error by default. Tests that exercise the
-exchange path provide their own `monkeypatch.setattr(...place_order, fake)`, which
-overrides this within the test body. A test that reaches the exchange without a mock
-fails loudly instead of silently placing a real order.
+The mutation guard rejects real CCXT HTTP mutation transport. Tests exercise the
+real adapter with fake exchange methods or mocked HTTP transport; they cannot opt
+into real orders by applying a test marker. Native Bitget protection is read-only.
 """
 
 import os
@@ -45,8 +43,8 @@ _PYTEST_MARKERS = [
     "fast: default AI feedback set; cheap local tests suitable for every bug-fix loop.",
     "integration: tests that cross route, DB, scheduler, broker, runtime, or service boundaries.",
     "e2e: end-to-end pipeline tests (deselect with -m 'not e2e').",
-    "real_place_order: test exercises BitgetClient.place_order directly with httpx "
-    "mocked (no network) - opt out of the place_order guard.",
+    "real_place_order: test exercises a mutation implementation with mocked exchange "
+    "responses; does not authorize real mutation transport.",
     "real_llm: test provides its own LLM mock - opt out of the fast-fail guard.",
     "real_network: test needs real network calls - opt out of the market-data guard.",
     "real_db: test requires a real file-backed SQLite DB (WAL/lock/cross-connection) "
@@ -298,20 +296,17 @@ def api_only_runtime(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _block_real_exchange_orders(request, monkeypatch):
-    # Tests that verify place_order's own body-building mock httpx instead, so they
-    # opt out of this guard via @pytest.mark.real_place_order.
-    if request.node.get_closest_marker("real_place_order"):
-        return
-    from aletheia.exchanges.bitget import client as bg
+def _block_real_exchange_orders(monkeypatch):
+    from ccxt.async_support.base.exchange import Exchange
 
-    async def _blocked(self, order):  # noqa: ARG001
-        raise RuntimeError(
-            "BitgetClient.place_order reached the real exchange in a test. "
-            "Mock it with monkeypatch.setattr(BitgetClient, 'place_order', fake)."
-        )
+    fetch = Exchange.fetch
 
-    monkeypatch.setattr(bg.BitgetClient, "place_order", _blocked)
+    async def guarded_fetch(self, url, method="GET", headers=None, body=None):
+        if method.upper() not in {"GET", "HEAD"}:
+            raise RuntimeError("real CCXT mutation transport is forbidden in tests; mock the exchange")
+        return await fetch(self, url, method, headers, body)
+
+    monkeypatch.setattr(Exchange, "fetch", guarded_fetch)
 
 
 @pytest.fixture(autouse=True)

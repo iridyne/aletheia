@@ -574,219 +574,72 @@ async def test_ccxt_bad_response_from_uta_remains_ambiguous(monkeypatch, venue):
         await adapter.close()
 
 
-@pytest.mark.parametrize(
-    ("status_code", "readable"),
-    [
-        pytest.param(503, True, id="server-error"),
-        pytest.param(200, False, id="unreadable-success-response"),
-    ],
-)
-@pytest.mark.real_place_order
-def test_bitget_client_exposes_ambiguous_create_order_response(
-    monkeypatch,
-    status_code,
-    readable,
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("payload", [
+    {"code": "00000", "data": {"clientOid": "proposal-1"}},
+    {"code": "00000", "data": []},
+    {"code": "00000", "data": {"orderId": []}},
+    ["not-a-bitget-envelope"],
+    {"data": {}},
+    ccxt.ExchangeNotAvailable("synthetic server failure"),
+    ccxt.BadResponse("synthetic unreadable acknowledgement"),
+])
+async def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
+    monkeypatch, kind, payload,
 ):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import (
-        SubmissionResponseUnknownError,
-    )
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.uta.test_ccxt_adapter import _bitget_command
 
-    class _Response:
-        def __init__(self):
-            self.status_code = status_code
+    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    calls = []
 
-        def json(self):
-            if not readable:
-                raise json.JSONDecodeError("bad acknowledgement", "", 0)
-            return {"code": "50000", "msg": "temporary server failure"}
+    async def response(request):
+        calls.append(request)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
 
-    class _HTTP:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def post(self, *_args, **_kwargs):
-            return _Response()
-
-    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "_headers",
-        lambda *_args, **_kwargs: {},
-    )
-    request = bitget_client.OrderRequest(
-        symbol="BTCUSDT",
-        market_type="spot",
-        side="buy",
-        order_type="market",
-        quantity=0.001,
-        client_oid="bitget-response-unknown",
-    )
-
-    with pytest.raises(SubmissionResponseUnknownError):
-        asyncio.run(bitget_client.BitgetClient(mode="demo").place_order(request))
+    exchange.privateMixPostV2MixOrderPlaceOrder = response
+    exchange.privateUtaPostV3TradePlaceOrder = response
+    try:
+        report = await adapter.submit_order(_bitget_command(adapter.identity, leverage=None, quantity="1"))
+        assert len(calls) == 1
+        assert report.evidence is CommandEvidence.AMBIGUOUS
+        assert report.order is None
+        assert report.venue_order_id is None
+    finally:
+        await adapter.close()
 
 
-@pytest.mark.parametrize(
-    "payload",
-    [
-        pytest.param(
-            {"code": "00000", "data": {"clientOid": "proposal-1"}},
-            id="success-without-order-id",
-        ),
-        pytest.param(
-            {"code": "00000", "data": []},
-            id="success-with-non-object-data",
-        ),
-        pytest.param(
-            {"code": "00000", "data": {"orderId": []}},
-            id="success-with-non-string-order-id",
-        ),
-        pytest.param(["not-a-bitget-envelope"], id="non-object-envelope"),
-        pytest.param({"data": {}}, id="missing-response-code"),
-    ],
-)
-@pytest.mark.real_place_order
-def test_bitget_client_treats_unusable_create_order_envelope_as_unknown(
-    monkeypatch,
-    payload,
-):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import (
-        SubmissionResponseUnknownError,
-    )
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("code,purpose", [
+    ("40017", "entry"), ("22002", "exit"), ("25227", "exit"),
+])
+async def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch, kind, code, purpose):
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.uta.test_ccxt_adapter import _bitget_command
 
-    class _Response:
-        status_code = 200
+    adapter, exchange = _bitget_adapter(monkeypatch, kind)
 
-        @staticmethod
-        def json():
-            return payload
+    async def rejected(request):
+        response = {"code": code, "msg": "synthetic rejection", "data": None}
+        exchange.handle_errors(400, "Bad Request", "mock", "POST", {},
+                               json.dumps(response), response, {}, None)
+        raise AssertionError("expected CCXT rejection")
 
-    class _HTTP:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def post(self, *_args, **_kwargs):
-            return _Response()
-
-    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "_headers",
-        lambda *_args, **_kwargs: {},
-    )
-    request = bitget_client.OrderRequest(
-        symbol="BTCUSDT",
-        market_type="spot",
-        side="buy",
-        order_type="market",
-        quantity=0.001,
-        client_oid="proposal-1",
-    )
-
-    with pytest.raises(SubmissionResponseUnknownError):
-        asyncio.run(bitget_client.BitgetClient(mode="demo").place_order(request))
-
-
-@pytest.mark.real_place_order
-def test_bitget_explicit_create_order_rejection_remains_known(monkeypatch):
-    from aletheia.exchanges.bitget import client as bitget_client
-
-    class _Response:
-        status_code = 400
-
-        @staticmethod
-        def json():
-            return {
-                "code": "40017",
-                "msg": "Parameter verification failed",
-                "data": None,
-            }
-
-    class _HTTP:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def post(self, *_args, **_kwargs):
-            return _Response()
-
-    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "_headers",
-        lambda *_args, **_kwargs: {},
-    )
-    request = bitget_client.OrderRequest(
-        symbol="BTCUSDT",
-        market_type="spot",
-        side="buy",
-        order_type="market",
-        quantity=0.001,
-        client_oid="proposal-explicit-rejection",
-    )
-
-    with pytest.raises(RuntimeError, match="Bitget order error") as exc_info:
-        asyncio.run(bitget_client.BitgetClient(mode="demo").place_order(request))
-    assert type(exc_info.value) is RuntimeError
-
-
-@pytest.mark.real_place_order
-@pytest.mark.parametrize("response_code", ("22002", "25227"))
-def test_bitget_no_position_close_rejection_is_structured(
-    monkeypatch, response_code,
-):
-    from aletheia.exchanges.bitget import client as bitget_client
-    from aletheia.exchanges.submission_errors import ClosePositionAbsentError
-
-    class _Response:
-        status_code = 400
-
-        @staticmethod
-        def json():
-            return {
-                "code": response_code,
-                "msg": "No position available to close",
-                "data": None,
-            }
-
-    class _HTTP:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def post(self, *_args, **_kwargs):
-            return _Response()
-
-    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "_headers",
-        lambda *_args, **_kwargs: {},
-    )
-    request = bitget_client.OrderRequest(
-        symbol="BTCUSDT",
-        market_type="usdt_futures",
-        side="buy",
-        order_type="market",
-        quantity=0.001,
-        client_oid="close-position-1",
-        hold_side="long",
-    )
-
-    with pytest.raises(ClosePositionAbsentError, match=response_code):
-        asyncio.run(bitget_client.BitgetClient(mode="demo").place_order(request))
+    exchange.privateMixPostV2MixOrderPlaceOrder = rejected
+    exchange.privateUtaPostV3TradePlaceOrder = rejected
+    try:
+        report = await adapter.submit_order(_bitget_command(
+            adapter.identity, leverage=None, quantity="1", purpose=purpose, reduce_only=purpose == "exit",
+        ))
+        assert report.evidence is CommandEvidence.VENUE_REJECTED
+        if purpose == "exit":
+            assert report.reason_code == "close_position_absence_unverified"
+        assert report.order is None
+        assert report.venue_order_id is None
+    finally:
+        await adapter.close()
 
 
 def test_bitget_success_without_order_id_is_unknown_through_gateway_and_not_retried(

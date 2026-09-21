@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -11,43 +9,6 @@ import pytest
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 
-def _capture_bitget_http(monkeypatch) -> list[dict]:
-    from aletheia.exchanges.bitget import client as bitget_client
-
-    bodies: list[dict] = []
-
-    class _Response:
-        def json(self):
-            return {
-                "code": "00000",
-                "data": {"orderId": "EX-PRESET-1", "clientOid": "preset-spec"},
-            }
-
-    class _HTTP:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_args):
-            return False
-
-        async def post(self, _url, content=None, headers=None):
-            bodies.append(json.loads(content))
-            return _Response()
-
-    async def _no_detail(self, order_id, symbol):
-        return None
-
-    monkeypatch.setattr(bitget_client, "httpx_client", lambda **_kwargs: _HTTP())
-    monkeypatch.setattr(
-        bitget_client.BitgetClient,
-        "_headers",
-        lambda self, *_args, **_kwargs: {},
-    )
-    monkeypatch.setattr(bitget_client.BitgetClient, "_get_order_detail", _no_detail)
-    return bodies
-
-
-@pytest.mark.real_place_order
 @spec_claim(
     SpecClaim(
         "PL-BG-PRESET-01",
@@ -59,35 +20,46 @@ def _capture_bitget_http(monkeypatch) -> list[dict]:
         status="implemented",
     )
 )
-def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+async def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch, kind):
+    from aletheia.uta.models import CommandEvidence
+    from tests.test_bitget_adapter import _bitget_adapter
+    from tests.uta.test_ccxt_adapter import _bitget_command
 
-    bodies = _capture_bitget_http(monkeypatch)
+    adapter, exchange = _bitget_adapter(monkeypatch, kind)
+    exchange.markets["BTC/USDT:USDT"]["precision"]["price"] = 0.01
+    requests = []
 
-    asyncio.run(BitgetClient(mode="demo").place_order(OrderRequest(
-        symbol="BTCUSDT",
-        market_type="usdt_futures",
-        side="buy",
-        order_type="market",
-        quantity=0.01,
-        client_oid="preset-spec",
-        preset_stop_loss_price=59_000.25,
-        preset_take_profit_price=62_000.75,
-    )))
+    async def classic(request):
+        requests.append(("classic_v2", request))
+        return {"code": "00000", "data": {"orderId": "EX-PRESET-1"}}
 
-    assert bodies == [{
-        "symbol": "BTCUSDT",
-        "productType": "USDT-FUTURES",
-        "marginMode": "crossed",
-        "marginCoin": "USDT",
-        "side": "buy",
-        "orderType": "market",
-        "size": "0.01",
-        "tradeSide": "open",
-        "presetStopLossPrice": "59000.25",
-        "presetStopSurplusPrice": "62000.75",
-        "clientOid": "preset-spec",
-    }]
+    async def uta(request):
+        requests.append(("uta_v3", request))
+        return {"code": "00000", "data": {"orderId": "EX-PRESET-1"}}
+
+    exchange.privateMixPostV2MixOrderPlaceOrder = classic
+    exchange.privateUtaPostV3TradePlaceOrder = uta
+    try:
+        report = await adapter.submit_order(_bitget_command(
+            adapter.identity, quantity="1", leverage=None,
+            client_order_id="preset-spec", stop_loss_price="59000.25",
+            take_profit_price="62000.75",
+        ))
+        assert report.evidence is CommandEvidence.ACKNOWLEDGED
+        assert len(requests) == 1
+        family, body = requests[0]
+        assert family == kind
+        assert body["symbol"] == "BTCUSDT"
+        assert body["side"] == "buy"
+        assert body["orderType"] == "market"
+        assert body["clientOid"] == "preset-spec"
+        stop_key = "presetStopLossPrice" if kind == "classic_v2" else "stopLoss"
+        take_key = "presetStopSurplusPrice" if kind == "classic_v2" else "takeProfit"
+        assert body[stop_key] == "59000.25"
+        assert body[take_key] == "62000.75"
+    finally:
+        await adapter.close()
 
 
 @pytest.mark.real_place_order
@@ -111,37 +83,26 @@ async def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatc
     await test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, market, purpose)
 
 
-@pytest.mark.real_place_order
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("preset_stop_loss_price", 0.0),
-        ("preset_stop_loss_price", -1.0),
-        ("preset_stop_loss_price", float("nan")),
-        ("preset_stop_loss_price", float("inf")),
-        ("preset_take_profit_price", 0.0),
-        ("preset_take_profit_price", -1.0),
-        ("preset_take_profit_price", float("nan")),
-        ("preset_take_profit_price", float("inf")),
+        ("stop_loss_price", 0.0),
+        ("stop_loss_price", -1.0),
+        ("stop_loss_price", float("nan")),
+        ("stop_loss_price", float("inf")),
+        ("take_profit_price", 0.0),
+        ("take_profit_price", -1.0),
+        ("take_profit_price", float("nan")),
+        ("take_profit_price", float("inf")),
     ],
 )
 def test_bitget_rejects_invalid_preset_price_before_http(monkeypatch, field, value):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+    from tests.uta.test_ccxt_adapter import FakeExchange, _bitget_command, _identity, _install, _profile
 
-    bodies = _capture_bitget_http(monkeypatch)
-    request = OrderRequest(
-        symbol="BTCUSDT",
-        market_type="usdt_futures",
-        side="buy",
-        order_type="market",
-        quantity=0.01,
-        **{field: value},
-    )
-
-    with pytest.raises(ValueError, match="preset protection price"):
-        asyncio.run(BitgetClient(mode="demo").place_order(request))
-
-    assert bodies == []
+    _session, calls = _install(monkeypatch, FakeExchange())
+    with pytest.raises(ValueError):
+        _bitget_command(_identity(_profile("classic_v2")), **{field: value})
+    assert calls == []
 
 
 @spec_claim(
