@@ -77,7 +77,7 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     # historical_data.nightly_backfill_enabled — excluded from the required set.)
     job_ids = {j.id for j in s.get_jobs()}
     required = {
-        "market_data", "market_observer", "paper_trader", "pi_trading_decision",
+        "market_data", "market_observer", "pi_trading_decision",
         "position_manager", "reconciliation", "position_reconcile",
         "portfolio_snapshot", "exchange_sync", "health_check", "cleanup",
         "price_feed", "tpsl_fill_check", "connectivity_monitor",
@@ -86,6 +86,8 @@ def test_scheduler_starts_when_enabled(tmp_path, monkeypatch):
     }
     missing = required - job_ids
     assert not missing, f"critical scheduler jobs missing: {missing}"
+    # Entry Plan is the sole entry mainline; no fallback Ranker/PaperTrader job.
+    assert "paper_trader" not in job_ids
     # Floor guards against wholesale registration failure without pinning an exact N.
     assert len(job_ids) >= len(required)
     market_observer_job = s.get_job("market_observer")

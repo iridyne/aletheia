@@ -57,7 +57,7 @@ _EXECUTOR_WORKERS = {
 | `protective` | 1 | Position 保护检查；不得排在长时数据/结算任务之后 |
 | `learning_measurement` | 1 | 串行执行 contribution evaluator 与 boot measurement catch-up；不与 31-job `io` 队列共享排队 |
 | `observer` | 1 | boot catch-up 市场观察者；独立隔离，防被 LLM job 饿死 |
-| `agents` | 1 | LLM/agent 密集型 job（paper_trader、post_trade_reviewer 等）；串行防 SQLite 竞争 |
+| `agents` | 1 | LLM/agent 密集型 job（post_trade_reviewer 等）；串行防 SQLite 竞争 |
 
 **总工人数**：2 + 1 + 1 + 1 + 1 + 1 + 1 + 1 = **9**。
 
@@ -81,7 +81,6 @@ _EXECUTOR_WORKERS = {
 | 9 | `reconciliation` | 357 | interval | minutes=2 | io | — | 60 |
 | 10 | `portfolio_snapshot` | 361 | interval | minutes=10 | default | 45 | 120 |
 | 11 | `exchange_sync` | 366 | interval | minutes=5 | io | 60 | 60 |
-| 12 | `paper_trader` | 371 | interval | minutes=3 | agents | 300 | 60 |
 | 13 | `pi_trading_decision` | 376 | interval | minutes=15（固定安全网周期） | agents | 300 | 120 |
 | 14 | `price_feed` | 381 | interval | seconds=30 | fast_io | 45 | 15 |
 | 15 | `position_manager` | 385 | interval | minutes=5 | io | — | 60 |
@@ -143,6 +142,12 @@ An unavailable Lab never starts a legacy evaluator or lifecycle writer. Legacy
 evidence migration remains an explicit offline, proof-gated operation.
 
 ### 3.2 Archived local settlement
+
+The former `paper_trader` scheduling and wake path is retired under the
+[single Entry Plan mainline](entry-plan-contract.md#single-entry-mainline-and-source-ownership).
+Unavailable planning must not register or resume that historical entry fallback.
+Scheduler startup tests require its absence while retaining the current protective,
+reconciliation, observation and maintenance job assertions.
 
 The local funding settlement job is retired. Its former cadence and atomic
 handoff are recorded in [archived account controls](../history/local_paper_account_controls.md).
