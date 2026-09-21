@@ -34,10 +34,11 @@ def resolve_selected_execution_mode() -> str | None:
     """
     try:
         from aletheia.config.exchanges import live_execution_mode_for_exchange
-        from aletheia.config.loader import load_config
+        from aletheia.config.loader import load_config, read_only_config
         from aletheia.uta.manager import UTA_EXECUTION_MODES
 
-        cfg = load_config()
+        with read_only_config():
+            cfg = load_config()
         paper_mode = str(
             getattr(cfg.exchange, "paper_execution_mode", "") or ""
         ).strip()
