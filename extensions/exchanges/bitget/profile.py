@@ -50,6 +50,16 @@ class _BitgetDemoProfile(CCXTProfile):
         codes = {"22002", "25227", "45110"} if self._uta else {"22002", "25227"}
         return isinstance(response, dict) and str(response.get("code")) in codes
 
+    def acknowledgement_order_id(self, raw: object) -> str:
+        order_id = super().acknowledgement_order_id(raw)
+        info = raw.get("info")
+        if isinstance(info, dict) and "orderId" in info:
+            # CCXT stringifies native IDs, including containers and booleans.
+            native_id = super().acknowledgement_order_id({"id": info["orderId"]})
+            if native_id != order_id:
+                raise ValueError("inconsistent acknowledgement identity")
+        return order_id
+
     _venue_quantity = staticmethod(venue_contract_quantity)
 
     async def prepare_submit(self, exchange, command):

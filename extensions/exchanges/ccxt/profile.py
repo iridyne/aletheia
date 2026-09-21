@@ -113,6 +113,12 @@ class CCXTProfile:
     def external_client_order_id(value: str | None) -> str | None:
         return value
 
+    def acknowledgement_order_id(self, raw: object) -> str:
+        value = raw.get("id") if isinstance(raw, dict) else None
+        if type(value) not in (str, int) or not value or not str(value).strip():
+            raise ValueError("invalid acknowledgement identity")
+        return str(value).strip()
+
     mutation_trigger_order = False
     native_tpsl = False
     protection_replace = False
