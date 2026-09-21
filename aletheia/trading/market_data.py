@@ -15,7 +15,7 @@ from aletheia.storage.repositories import insert_market_snapshot, insert_market_
 from aletheia.trading.instruments import (
     MARKET_USDT_FUTURES,
     observed_instruments_from_config,
-    xstocks_instruments_from_config,
+    stock_tokens_from_config,
 )
 
 logger = logging.getLogger("aletheia.market_data")
@@ -125,21 +125,16 @@ def _auto_remove_xstock(sym: str, exchange_name: str, consecutive: int) -> bool:
         cfg = load_config()
         canon = to_canonical(sym)
         tokens = list(cfg.market_data.observed_stock_tokens or [])
-        legacy_tokens = list(cfg.market_data.observed_xstocks or [])
         filtered_tokens = [t for t in tokens if to_canonical(t) != canon]
-        filtered_legacy = [t for t in legacy_tokens if to_canonical(t) != canon]
-        if filtered_tokens == tokens and filtered_legacy == legacy_tokens:
+        if filtered_tokens == tokens:
             return False
         before = {
             "observed_stock_tokens": tokens,
-            "observed_xstocks": legacy_tokens,
         }
         after = {
             "observed_stock_tokens": filtered_tokens,
-            "observed_xstocks": filtered_legacy,
         }
         cfg.market_data.observed_stock_tokens = filtered_tokens
-        cfg.market_data.observed_xstocks = filtered_legacy
         save_config(cfg)
         logger.warning(
             "Auto-removed xStock %s from config (confirmed not listed on exchange, "
@@ -180,7 +175,7 @@ def _auto_remove_xstock(sym: str, exchange_name: str, consecutive: int) -> bool:
                     f"confirmed it absent (failure count={consecutive})"
                 ),
                 action=(
-                    "Review observed_stock_tokens and observed_xstocks in config "
+                    "Review observed_stock_tokens in config "
                     "to confirm removal"
                 ),
                 dedupe_sec=0,
@@ -284,7 +279,7 @@ def _build_dynamic_instruments(cfg) -> list[InstrumentId]:
 
 def market_snapshot_target_groups(cfg) -> set[tuple[str, str]]:
     """Return the venue/market-type groups this collector is responsible for."""
-    targets = _build_dynamic_instruments(cfg) + xstocks_instruments_from_config(cfg)
+    targets = _build_dynamic_instruments(cfg) + stock_tokens_from_config(cfg)
     return {(target.exchange, target.market_type) for target in targets}
 
 
@@ -304,7 +299,7 @@ async def collect_market_snapshots() -> dict:
     cfg = load_config()
 
     instruments = _build_dynamic_instruments(cfg)
-    _xstocks_raw = xstocks_instruments_from_config(cfg)
+    _xstocks_raw = stock_tokens_from_config(cfg)
     # Pre-filter xStocks against the venue listing whitelist.  This resolves
     # the root cause of the 569-consecutive-failure loop: delisted ON-series
     # tokens (AAPLON/USDT etc.) are dropped here before any network call is made.

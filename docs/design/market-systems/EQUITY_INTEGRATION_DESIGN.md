@@ -2,6 +2,8 @@
 
 > 本文是实施前的设计分析文档。目标：把 xStocks（链上）和 yfinance（链下）两条孤立路径
 > 合并成统一的 "US equity" 观察方向，做到数据互通、知识共享，并与现有 base 框架完整集成。
+> 下文的诊断与实施分层保留设计时背景，不代表当前任务或运行保证；当前配置以
+> [配置 Contract](../contracts/configuration_contract.md) 为准。
 
 ---
 
@@ -101,7 +103,7 @@ equity_observer (每 30 min，US market hours gate)
 │   │
 │   ├── [xStocks sub-path, optional]
 │   │   ├── xstock_sym = ticker_to_xstock(ticker)  → "AAPLON/USDT"
-│   │   ├── if xstock_sym in cfg.market_data.observed_xstocks:
+│   │   ├── if xstock_sym in cfg.market_data.observed_stock_tokens:
 │   │   │   ├── fetch 1h OHLCV via Bitget CCXTProvider
 │   │   │   └── persist to market_snapshots (exchange="bitget", asset_subclass="xstock")
 │   │   └── cross-validate: |xstock_price - yfinance_close| / yfinance_close → deviation%
@@ -123,36 +125,16 @@ equity_observer (每 30 min，US market hours gate)
 
 ### 3.2 配置字段重构
 
-**现在**：
-```yaml
-market_data:
-  observed_stocks: ["AAPL", "TSLA"]        # yfinance tickers
-  observed_xstocks: ["AAPLON/USDT", ...]   # Bitget symbols
-```
-
-**改后（已实施）**：
+当前配置示例：
 ```yaml
 market_data:
   observed_equities: ["AAPL", "TSLA", "NVDA", "SPY"]  # 唯一入口，canonical ticker
-  observed_xstocks: ["AAPLON/USDT", "TSLAON/USDT"]    # 仍需手动配置：决定哪些 ticker 激活 xStock 子路径
+  observed_stock_tokens: ["AAPLON/USDT", "TSLAON/USDT"]  # 代币观察范围
 ```
 
-> ⚠️ 设计稿原计划将 xStocks 激活改为"从 mapping table 自动派生"（无需 `observed_xstocks`）。
-> 实际实现（`equity_observer.py` line 285）仍做 `xstock_symbol in observed_xstocks` gate 检查，
-> 即 xStock 子路径**仍需手动配置** `observed_xstocks`。自动派生方案尚未实施；`observed_xstocks`
-> 字段未废弃。配置说明以当前代码为准。
-
-`config/schema.py` 字段：
-```python
-observed_equities: list[str] = Field(default_factory=list)
-# US equity tickers (Yahoo Finance canonical). equity_observer fetches daily bars
-# via yfinance + real-time price via Bitget xStocks if available.
-
-observed_xstocks: list[str] = Field(default_factory=list)
-# Bitget ON-series symbols (e.g. "AAPLON/USDT") to activate the xStock sub-path.
-# Only tickers whose mapped xstock symbol appears here get live cross-validation.
-# Required until auto-derivation from mapping table is implemented.
-```
+代币子路径读取 canonical token workset，不从 ticker mapping 自动扩展观察范围。
+旧 `observed_stocks` / `observed_xstocks` 不再是 runtime 或 Settings 控制入口；
+历史配置解码及清空后的行为由[配置 Contract](../contracts/configuration_contract.md)定义。
 
 ---
 
@@ -294,7 +276,7 @@ xStocks（Bitget ON-series）是代币化美股，存在**溢价/折价**（通�
 ### Phase 1：符号统一 + 配置重构（基础层，无破坏）
 
 1. `data/symbols.py`：加 `xstock_to_ticker()`、`ticker_to_xstock()`
-2. `config/schema.py`：加 `observed_equities`，保留 `observed_xstocks`（仍为活跃字段；自动派生方案未实施）
+2. `config/schema.py`：设计时新增 `observed_equities`；当前 token 配置已收敛到 `observed_stock_tokens`，见 §3.2。
 3. `storage/models.py`：Opportunity 加 `asset_subclass`、`canonical_ticker`（+ migrations）
 
 ### Phase 2：equity_observer agent（核心）

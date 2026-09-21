@@ -10,7 +10,6 @@ from aletheia.config.schema import AletheiaConfig
 def _cfg():
     cfg = AletheiaConfig()
     cfg.market_data.observed_symbols = []
-    cfg.market_data.observed_xstocks = []
     cfg.market_data.ccxt_exchange = "binance"
     return cfg
 
