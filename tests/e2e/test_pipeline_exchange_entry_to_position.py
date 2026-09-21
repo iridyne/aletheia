@@ -42,7 +42,7 @@ def _demo_capabilities():
     without instantiating it, so no credentials are involved.
     """
     from aletheia.uta.models import CapabilitySupport, UTACapabilities
-    from aletheia.uta.profiles.bitget import _BitgetDemoProfile as profile
+    from extensions.exchanges.bitget.profile import _BitgetDemoProfile as profile
 
     def support(flag: bool) -> CapabilitySupport:
         return (
