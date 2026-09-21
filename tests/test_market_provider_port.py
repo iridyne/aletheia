@@ -42,6 +42,21 @@ def test_exact_provider_requires_venue_before_factory(monkeypatch):
     factory.assert_not_called()
 
 
+def test_exact_provider_preserves_explicit_fallback_construction(monkeypatch):
+    from aletheia.data import providers
+
+    factory = Mock(return_value=object())
+    monkeypatch.setattr(providers, "_provider_factory", factory)
+
+    providers.get_market_data_provider(
+        "bitget", exact_venue=True, fallback_venue="okx",
+    )
+
+    factory.assert_called_once_with(
+        "bitget", exact_venue=True, fallback_venue="okx",
+    )
+
+
 def test_core_provider_port_is_absent_safe_without_concrete_imports():
     script = '''
 import sys

@@ -1036,7 +1036,10 @@ async def collect_features(
     # venue; ordinary provider fallback remains configured for other consumers.
     md = cfg.market_data
     venue = md.ccxt_exchange
-    spot_provider = get_market_data_provider(exchange=venue, exact_venue=True)
+    fallback_venue = md.ccxt_fallback or venue
+    spot_provider = get_market_data_provider(
+        exchange=venue, exact_venue=True, fallback_venue=fallback_venue,
+    )
     providers = [spot_provider]
     results = []
     priority_asset_ids = set(priority_asset_ids or ())
@@ -1062,7 +1065,9 @@ async def collect_features(
             logger.warning("Spot market bootstrap failed: %s", type(exc).__name__)
         perp_exchange = None
         if perp_assets:
-            perp_provider = get_market_data_provider(exchange=venue, exact_venue=True)
+            perp_provider = get_market_data_provider(
+                exchange=venue, exact_venue=True, fallback_venue=fallback_venue,
+            )
             providers.append(perp_provider)
             try:
                 perp_exchange = perp_provider._ensure_primary("perp")
