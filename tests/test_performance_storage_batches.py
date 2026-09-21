@@ -152,6 +152,8 @@ def test_context_collector_defers_network_results_into_one_transaction(tmp_path,
             enable_defillama=True,
             enable_coingecko_top=False,
             enable_coinalyze=False,
+            enable_options_structure=False,
+            derivatives_comparison_venues=[],
             derivatives_history_hours=0,
         )
     )
