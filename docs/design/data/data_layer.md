@@ -37,7 +37,7 @@ Consumers using the normalized Core boundary enter through `get_market_data_prov
 
 When crypto fallback is enabled, the adapter factory returns a `FallbackChainProvider` over the configured CCXT provider plus bounded public fallbacks in `extensions/data/sources/`. The Core provider contract exposes normalized capabilities, not native CCXT metadata. Primary-only observation capabilities do not use cross-source fallback. Ordinary ticker/OHLCV methods retain their configured fallback policy: selecting `exact_venue=True` does not disable that fallback when a distinct `fallback_venue` is explicitly supplied.
 
-This boundary is not yet universal. Remaining exceptions include `aletheia/data/collectors/volume_scanner.py`, `microstructure.py` and `derivatives.py`, which use the concrete factory's native CCXT surface; Entry Planner directly invokes `MicrostructureCollector` for its first orderbook refresh. These examples are not a complete consumer inventory or evidence that Core/optional Data separation is complete.
+This boundary is not yet universal. Remaining exceptions include `aletheia/data/collectors/volume_scanner.py`, `microstructure.py` and `derivatives.py`, which use the concrete factory's native CCXT surface. Entry Planner uses the normalized exact-venue orderbook capability and retains freshness admission, diagnostics and persistence. These examples are not a complete consumer inventory or evidence that Core/optional Data separation is complete.
 
 ## Public market-data contract
 
