@@ -73,6 +73,8 @@ from aletheia.data.venue_health import (
 
 logger = logging.getLogger("aletheia.ccxt_provider")
 
+_FEATURE_TICKER_CHUNK_SIZE = 100
+
 
 def _precision_to_decimals(p) -> int | None:
     """Normalize CCXT decimal-place or fractional tick-size precision."""
@@ -246,6 +248,47 @@ class CCXTProvider:
                     record_venue_failure(name, e)
                 logger.warning("ticker fetch failed on %s for %s: %s", name, ccxt_symbol, e)
         raise last_err if last_err else RuntimeError("ticker fetch failed")
+
+    async def get_tickers_observation(
+        self, symbols: list[str], *, market_type: str = "spot",
+    ) -> dict[str, dict]:
+        """Fetch feature tickers from the exact primary market without fallback."""
+        exchange = self._ensure_primary(market_type)
+        is_perp = market_type in {"perp", "futures", "swap", "usdt_futures"}
+        with self._market_type_context(exchange, market_type):
+            if not getattr(exchange, "markets", None):
+                await exchange.load_markets()
+        requested: list[str] = []
+        seen: set[str] = set()
+        for symbol in symbols:
+            if not isinstance(symbol, str) or not symbol.isascii():
+                continue
+            ccxt_symbol = to_ccxt_perp(symbol) if is_perp else to_canonical(symbol)
+            if ccxt_symbol in seen or ccxt_symbol not in (getattr(exchange, "markets", {}) or {}):
+                continue
+            seen.add(ccxt_symbol)
+            requested.append(ccxt_symbol)
+
+        tickers: dict[str, dict] = {}
+        with self._market_type_context(exchange, market_type):
+            for offset in range(0, len(requested), _FEATURE_TICKER_CHUNK_SIZE):
+                chunk = requested[offset:offset + _FEATURE_TICKER_CHUNK_SIZE]
+                try:
+                    raw = await exchange.fetch_tickers(chunk)
+                    if not isinstance(raw, dict):
+                        raise TypeError("ticker batch is not a mapping")
+                    for symbol in chunk:
+                        ticker = raw.get(symbol)
+                        if isinstance(ticker, dict) and ticker:
+                            tickers[symbol] = dict(ticker)
+                except Exception as exc:  # noqa: BLE001 — preserve per-chunk failure semantics
+                    logger.warning(
+                        "Ticker chunk %d-%d failed: %s",
+                        offset,
+                        offset + len(chunk),
+                        exc,
+                    )
+        return tickers
 
     async def get_ohlcv(
         self,

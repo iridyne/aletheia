@@ -314,6 +314,11 @@ class MarketDataProvider(Protocol):
     persistence or fallback. Core owns freshness reuse, diagnostics and the
     sole orderbook repository write.
 
+    The optional async ``get_tickers_observation(symbols, *, market_type)``
+    capability returns the existing feature-collection ticker mappings from the
+    exact primary venue. It performs no persistence or cross-venue fallback;
+    Core retains prefilter, volume and feature semantics.
+
     The optional async ``get_market_instruments()`` capability returns active
     USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
     primary venue, without persistence or cross-venue fallback. Core retains
