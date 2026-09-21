@@ -1003,74 +1003,48 @@ def test_immediate_close_revalidates_alternate_symbol_funding_candidate(
 
 
 @pytest.mark.asyncio
-async def test_okx_funding_reader_uses_private_account_bills():
-    from aletheia.exchanges.okx.client import OKXClient
+@pytest.mark.parametrize("venue,amount,cost", [("okx", "-1.25", 1.25), ("binance", "0.75", -0.75)])
+async def test_uta_private_funding_projection_preserves_signed_cost(monkeypatch, venue, amount, cost):
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from aletheia.execution import reconciliation
+    from tests.uta.test_ccxt_adapter import FakeExchange, _identity, _install, _profile
 
     now = datetime.now(timezone.utc)
     start_ms = int((now - timedelta(hours=2)).timestamp() * 1000)
     end_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
-    exchange = MagicMock()
-    exchange.load_markets = AsyncMock()
-    exchange.market.return_value = {"id": "BTC-USDT-SWAP"}
-    exchange.private_get_account_bills = AsyncMock(return_value={
-        "code": "0",
-        "data": [{
-            "billId": "okx-funding-1",
-            "instId": "BTC-USDT-SWAP",
-            "pnl": "-1.25",
-            "type": "8",
-            "subType": "173",
-            "ccy": "USDT",
-            "ts": str(start_ms + 30 * 60 * 1000),
-            "posSide": "long",
-        }],
-    })
-    with patch(
-        "aletheia.exchanges.okx.client.get_secret", return_value="configured",
-    ):
-        client = OKXClient(mode="demo")
-    client._exchange = exchange
-    ledger = await client.get_funding_ledger(
-        broker_id="okx_demo",
-        symbol="BTC/USDT",
-        start_time_ms=start_ms,
-        end_time_ms=end_ms,
-    )
-    assert ledger["events"][0]["event_id"] == "okx-funding-1"
-    assert ledger["events"][0]["funding_cost"] == 1.25
-    exchange.private_get_account_bills.assert_awaited_once()
+    timestamp = start_ms + 30 * 60 * 1000
+    exchange = FakeExchange()
+    if venue == "okx":
+        raw = dict(billId="funding-1", instId="BTC-USDT-SWAP", pnl=amount,
+                   type="8", subType="173", ccy="USDT", ts=str(timestamp))
+    else:
+        raw = dict(tranId="funding-1", symbol="BTCUSDT", income=amount,
+                   incomeType="FUNDING_FEE", asset="USDT", time=timestamp)
+    exchange.ledger = [{"info": raw}]
+    _install(monkeypatch, exchange)
+    profile = _profile(venue)
+    identity = _identity(profile)
+    adapter = CCXTUTAAdapter(identity, profile)
 
+    async def query(mode, method, request, *, expected_account):
+        assert mode == identity.execution_mode
+        assert expected_account == identity
+        assert method == "get_funding_ledger"
+        return await adapter.get_funding_ledger(request)
 
-@pytest.mark.asyncio
-async def test_binance_funding_reader_uses_signed_income_history():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    now = datetime.now(timezone.utc)
-    start_ms = int((now - timedelta(hours=2)).timestamp() * 1000)
-    end_ms = int((now - timedelta(hours=1)).timestamp() * 1000)
-    exchange = MagicMock()
-    exchange.fapiPrivateGetIncome = AsyncMock(return_value=[{
-        "tranId": "binance-funding-1",
-        "symbol": "BTCUSDT",
-        "income": "0.75",
-        "incomeType": "FUNDING_FEE",
-        "asset": "USDT",
-        "time": start_ms + 30 * 60 * 1000,
-    }])
-    with patch(
-        "aletheia.exchanges.binance.client.get_secret", return_value="configured",
-    ):
-        client = BinanceClient(mode="testnet")
-    client._exchange = exchange
-    ledger = await client.get_funding_ledger(
-        broker_id="binance_testnet",
-        symbol="BTC/USDT",
-        start_time_ms=start_ms,
-        end_time_ms=end_ms,
-    )
-    assert ledger["events"][0]["event_id"] == "binance-funding-1"
-    assert ledger["events"][0]["funding_cost"] == -0.75
-    exchange.fapiPrivateGetIncome.assert_awaited_once()
+    monkeypatch.setattr(reconciliation, "query_uta", query)
+    try:
+        ledger = await reconciliation._UTAReconciliationProjection(
+            identity.execution_mode, identity,
+        ).get_funding_ledger(
+            broker_id=identity.execution_mode, symbol="BTC/USDT",
+            start_time_ms=start_ms, end_time_ms=end_ms,
+        )
+        assert ledger["events"][0]["event_id"] == "funding-1"
+        assert ledger["events"][0]["funding_cost"] == cost
+        assert [event[0] for event in exchange.events].count("fetch_ledger") == 1
+    finally:
+        await adapter.close()
 
 
 def _seed_exchange_close_for_recovery(

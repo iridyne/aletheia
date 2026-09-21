@@ -190,24 +190,12 @@ async def test_okx_preflight_does_not_use_bitget_cache_or_client(monkeypatch):
         monkeypatch, trust, expected_mode="okx_live_limited", uid="okx-user"
     )
 
-    class FakeOKX:
-        def __init__(self, mode):
-            assert mode == "live"
-
-        async def fetch_balance(self):
-            return _account_result(uid="okx-user")
-
-        async def close(self):
-            pass
-
     class UnexpectedBitget:
         def __init__(self, mode):
             raise AssertionError("selected OKX preflight must not construct Bitget")
 
-    import aletheia.exchanges.okx.client as okx_client
     import aletheia.exchanges.bitget.client as bitget_client
 
-    monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", UnexpectedBitget)
 
     result = await trust.run_live_preflight(cfg)
@@ -229,16 +217,6 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
         error=RuntimeError("selected OKX authentication failed"),
     )
 
-    class InvalidOKX:
-        def __init__(self, mode):
-            pass
-
-        async def fetch_balance(self):
-            raise RuntimeError("selected OKX authentication failed")
-
-        async def close(self):
-            pass
-
     class ValidBitget:
         def __init__(self, mode):
             pass
@@ -249,10 +227,8 @@ async def test_valid_bitget_does_not_rescue_invalid_selected_okx(monkeypatch):
         async def close(self):
             pass
 
-    import aletheia.exchanges.okx.client as okx_client
     import aletheia.exchanges.bitget.client as bitget_client
 
-    monkeypatch.setattr(okx_client, "OKXClient", InvalidOKX)
     monkeypatch.setattr(bitget_client, "BitgetClient", ValidBitget)
     result = await trust.run_live_preflight(cfg)
     assert result["ok"] is False
@@ -336,19 +312,7 @@ async def test_demo_payload_fails_live_preflight(monkeypatch):
         environment="demo",
     )
 
-    class FakeOKX:
-        def __init__(self, mode):
-            pass
 
-        async def fetch_balance(self):
-            return _account_result(environment="demo")
-
-        async def close(self):
-            pass
-
-    import aletheia.exchanges.okx.client as okx_client
-
-    monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     result = await trust.run_live_preflight(cfg)
     assert result["ok"] is False
     assert result["reason_code"] == "environment_mismatch"
@@ -364,19 +328,7 @@ async def test_binance_selected_account_uses_binance_private_probe(monkeypatch):
         uid="binance-user",
     )
 
-    class FakeBinance:
-        def __init__(self, mode):
-            assert mode == "live"
 
-        async def fetch_balance(self):
-            return _account_result(uid="binance-user")
-
-        async def close(self):
-            pass
-
-    import aletheia.exchanges.binance.client as binance_client
-
-    monkeypatch.setattr(binance_client, "BinanceClient", FakeBinance)
     result = await trust.run_live_preflight(cfg)
     assert result["ok"] is True
     assert result["broker"] == "binance"
@@ -390,19 +342,7 @@ async def test_account_fingerprint_change_invalidates_bound_evidence(monkeypatch
         monkeypatch, trust, expected_mode="okx_live_limited", uid="okx-user"
     )
 
-    class FakeOKX:
-        def __init__(self, mode):
-            pass
 
-        async def fetch_balance(self):
-            return _account_result(uid="okx-user")
-
-        async def close(self):
-            pass
-
-    import aletheia.exchanges.okx.client as okx_client
-
-    monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     evidence = await trust.run_live_preflight(cfg)
     assert evidence["ok"] is True
     assert trust.evidence_matches_config(cfg, evidence) == (True, "ok")
@@ -421,19 +361,7 @@ async def test_permission_unknown_is_explicitly_denied(monkeypatch):
         permission="unknown",
     )
 
-    class FakeOKX:
-        def __init__(self, mode):
-            pass
 
-        async def fetch_balance(self):
-            return {"info": {"uid": "okx-user", "environment": "live"}}
-
-        async def close(self):
-            pass
-
-    import aletheia.exchanges.okx.client as okx_client
-
-    monkeypatch.setattr(okx_client, "OKXClient", FakeOKX)
     result = await trust.run_live_preflight(cfg)
     assert result["ok"] is False
     assert result["reason_code"] == "permission_unknown"

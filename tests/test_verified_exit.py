@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -261,306 +261,70 @@ async def test_bitget_complete_empty_history_confirms_absent_without_fill(fake_h
     assert result.state == "confirmed_absent_without_fill"
 
 
-class _FakeOKX:
-    async def fetch_positions(self, symbols=None):
-        return []
-
-    async def load_markets(self):
-        return {}
-
-    def market(self, symbol):
-        return {"id": "BTC-USDT-SWAP"}
-
-    async def private_get_trade_fills_history(self, params):
-        return {"code": "0", "data": [{
-            "billId": "okx-fill-1",
-            "tradeId": "trade-1",
-            "ordId": "okx-order-1",
-            "instId": "BTC-USDT-SWAP",
-            "side": "sell",
-            "posSide": "long",
-            "fillPx": "60100",
-            "fillSz": "5",
-            "fillPnl": "50",
-            "fee": "-0.25",
-            "feeCcy": "USDT",
-            "ts": str(NOW_MS - 59_000),
-        }]}
-
-
-class _TruncatedOKX(_FakeOKX):
-    async def private_get_trade_fills_history(self, params):
-        return {"code": "0", "data": [{
-            "billId": "unchanged-cursor",
-            "instId": "BTC-USDT-SWAP",
-            "side": "sell",
-            "posSide": "long",
-            "fillPx": "60100",
-            "fillSz": "0.01",
-            "ts": str(NOW_MS - 59_000),
-        }] * 100}
-
-
-class _FakeOKXWithKnownEntry(_FakeOKX):
-    async def private_get_trade_fills_history(self, params):
-        return {"code": "0", "data": [
-            {
-                "billId": "okx-entry-fill",
-                "ordId": "okx-entry-order",
-                "instId": "BTC-USDT-SWAP",
-                "side": "buy",
-                "posSide": "long",
-                "fillPx": "60000",
-                "fillSz": "5",
-                "fee": "-0.2",
-                "feeCcy": "USDT",
-                "ts": str(NOW_MS - 59_500),
-            },
-            {
-                "billId": "okx-close-fill",
-                "ordId": "okx-close-order",
-                "instId": "BTC-USDT-SWAP",
-                "side": "sell",
-                "posSide": "long",
-                "fillPx": "60100",
-                "fillSz": "5",
-                "fee": "-0.25",
-                "feeCcy": "USDT",
-                "ts": str(NOW_MS - 59_000),
-            },
-        ]}
-
-
 @pytest.mark.anyio
-async def test_okx_verified_exit_normalizes_contract_quantity():
-    from aletheia.exchanges.okx.client import OKXClient
-
-    client = object.__new__(OKXClient)
-    client._mode = "demo"
-    client._exchange = _FakeOKX()
-    client._session = None
-    with patch.object(client, "_contract_size", new=AsyncMock(return_value=0.1)):
-        result = await client.get_verified_position_exit(
-            _request("okx_demo", environment="demo")
-        )
-    assert result.state == "verified_fill"
-    assert result.fills[0].quantity == pytest.approx(0.5)
-
-
-@pytest.mark.anyio
-async def test_okx_ignores_only_known_entry_order_fills():
-    from aletheia.exchanges.okx.client import OKXClient
-
-    client = object.__new__(OKXClient)
-    client._mode = "demo"
-    client._exchange = _FakeOKXWithKnownEntry()
-    client._session = None
-    with patch.object(client, "_contract_size", new=AsyncMock(return_value=0.1)):
-        result = await client.get_verified_position_exit(
-            _request(
-                "okx_demo",
-                environment="demo",
-                known_entry_order_ids=("okx-entry-order",),
-            )
-        )
-    assert result.state == "verified_fill"
-    assert [fill.fill_id for fill in result.fills] == ["okx-close-fill"]
-
-
-@pytest.mark.anyio
-async def test_okx_repeated_pagination_cursor_is_inconclusive():
-    from aletheia.exchanges.okx.client import OKXClient
-
-    client = object.__new__(OKXClient)
-    client._mode = "demo"
-    client._exchange = _TruncatedOKX()
-    client._session = None
-    with patch.object(client, "_contract_size", new=AsyncMock(return_value=0.1)):
-        result = await client.get_verified_position_exit(
-            _request("okx_demo", environment="demo")
-        )
-    assert result.state == "inconclusive"
-    assert result.reason == "fill_history_incomplete"
-
-
-class _FakeBinance:
-    async def fetch_positions(self, symbols=None):
-        return []
-
-    async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
-        return [{
-            "id": "bn-fill-1",
-            "order": "bn-order-1",
-            "symbol": "BTC/USDT:USDT",
-            "side": "sell",
-            "price": 60_100.0,
-            "amount": 0.5,
-            "fee": {"cost": 0.25, "currency": "USDT"},
-            "timestamp": NOW_MS - 59_000,
-            "info": {"positionSide": "LONG", "realizedPnl": "50"},
-        }]
-
-
-class _TruncatedBinance(_FakeBinance):
-    async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
-        return [{
-            "id": "not-a-numeric-cursor",
-            "symbol": "BTC/USDT:USDT",
-            "side": "sell",
-            "price": 60_100.0,
-            "amount": 0.001,
-            "timestamp": NOW_MS - 59_000,
-            "info": {"positionSide": "LONG"},
-        }] * 1000
-
-
-class _FakeBinanceWithKnownEntry(_FakeBinance):
-    async def fetch_my_trades(self, symbol, since=None, limit=None, params=None):
-        return [
-            {
-                "id": "bn-entry-fill",
-                "order": "bn-entry-order",
-                "symbol": "BTC/USDT:USDT",
-                "side": "buy",
-                "price": 60_000.0,
-                "amount": 0.5,
-                "fee": {"cost": 0.2, "currency": "USDT"},
-                "timestamp": NOW_MS - 59_500,
-                "info": {"positionSide": "LONG", "realizedPnl": "0"},
-            },
-            {
-                "id": "bn-close-fill",
-                "order": "bn-close-order",
-                "symbol": "BTC/USDT:USDT",
-                "side": "sell",
-                "price": 60_100.0,
-                "amount": 0.5,
-                "fee": {"cost": 0.25, "currency": "USDT"},
-                "timestamp": NOW_MS - 59_000,
-                "info": {"positionSide": "LONG", "realizedPnl": "50"},
-            },
-        ]
-
-
-@pytest.mark.anyio
-async def test_binance_verified_exit_and_network_error_fail_closed():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    client = object.__new__(BinanceClient)
-    client._mode = "testnet"
-    client._exchange = _FakeBinance()
-    client._session = None
-    verified = await client.get_verified_position_exit(
-        _request("binance_testnet", environment="testnet")
+@pytest.mark.parametrize("venue", ["okx", "binance", "okx_live", "binance_live"])
+@pytest.mark.parametrize("case", ["complete", "known_entry", "network_error", "full_unpageable", "expired", "wrong_account"])
+async def test_uta_verified_exit_preserves_private_evidence_boundary(monkeypatch, venue, case):
+    from datetime import datetime, timedelta, timezone
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from aletheia.uta.errors import UTAError, UTAErrorCode
+    from aletheia.uta.models import InstrumentIdentity, VerifiedExitQuery, VerifiedExitState
+    from tests.uta.test_ccxt_adapter import (
+        FakeExchange, _profile, _identity, _install, BinanceLiveProfile, OKXLiveProfile,
     )
-    assert verified.state == "verified_fill"
 
-    client._exchange.fetch_my_trades = AsyncMock(side_effect=RuntimeError("denied"))
-    failed = await client.get_verified_position_exit(
-        _request("binance_testnet", environment="testnet")
-    )
-    assert failed.state == "inconclusive"
-    assert failed.reason == "broker_query_failed"
-
-
-@pytest.mark.anyio
-async def test_binance_ignores_only_known_entry_order_fills():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    client = object.__new__(BinanceClient)
-    client._mode = "testnet"
-    client._exchange = _FakeBinanceWithKnownEntry()
-    client._session = None
-    result = await client.get_verified_position_exit(
-        _request(
-            "binance_testnet",
-            environment="testnet",
-            known_entry_order_ids=("bn-entry-order",),
-        )
-    )
-    assert result.state == "verified_fill"
-    assert [fill.fill_id for fill in result.fills] == ["bn-close-fill"]
-
-
-@pytest.mark.anyio
-async def test_binance_unpageable_full_response_is_inconclusive():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    client = object.__new__(BinanceClient)
-    client._mode = "testnet"
-    client._exchange = _TruncatedBinance()
-    client._session = None
-    result = await client.get_verified_position_exit(
-        _request("binance_testnet", environment="testnet")
-    )
-    assert result.state == "inconclusive"
-    assert result.reason == "fill_history_incomplete"
-
-
-@pytest.mark.anyio
-async def test_all_clients_reject_wrong_account_identity_without_querying():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    client = object.__new__(BinanceClient)
-    client._mode = "testnet"
-    client._exchange = AsyncMock()
-    client._session = None
-    result = await client.get_verified_position_exit(
-        _request("okx_demo", environment="demo")
-    )
-    assert result.state == "inconclusive"
-    assert result.reason == "account_identity_mismatch"
-    client._exchange.fetch_positions.assert_not_awaited()
-
-
-@pytest.mark.anyio
-async def test_expired_private_history_window_is_inconclusive_without_querying():
-    from aletheia.exchanges.binance.client import BinanceClient
-
-    client = object.__new__(BinanceClient)
-    client._mode = "testnet"
-    client._exchange = AsyncMock()
-    client._session = None
-    request = replace(
-        _request("binance_testnet", environment="testnet"),
-        history_start_ms=1,
-        history_end_ms=2,
-    )
-    result = await client.get_verified_position_exit(request)
-    assert result.state == "inconclusive"
-    assert result.reason == "history_window_unavailable"
-    client._exchange.fetch_positions.assert_not_awaited()
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("client_kind", "execution_mode"),
-    [("okx", "okx_live_limited"), ("binance", "binance_live_limited")],
-)
-async def test_live_limited_execution_identity_is_the_scoped_live_account(
-    client_kind, execution_mode,
-):
-    if client_kind == "okx":
-        from aletheia.exchanges.okx.client import OKXClient
-
-        client = object.__new__(OKXClient)
-        client._mode = "live"
-        client._exchange = _FakeOKX()
-        client._session = None
-        context = patch.object(
-            client, "_contract_size", new=AsyncMock(return_value=0.1)
-        )
+    if venue == "okx_live":
+        profile = OKXLiveProfile(api_key="synthetic", secret="synthetic", passphrase="synthetic")
+    elif venue == "binance_live":
+        profile = BinanceLiveProfile(api_key="synthetic", secret="synthetic")
     else:
-        from aletheia.exchanges.binance.client import BinanceClient
-
-        client = object.__new__(BinanceClient)
-        client._mode = "live"
-        client._exchange = _FakeBinance()
-        client._session = None
-        context = patch.object(client, "_ensure_exchange", return_value=client._exchange)
-
-    with context:
-        result = await client.get_verified_position_exit(
-            _request(execution_mode, environment="live")
-        )
-    assert result.reason != "account_identity_mismatch"
+        profile = _profile(venue)
+    now = datetime.now(timezone.utc)
+    exchange = FakeExchange()
+    row = dict(
+        id="close-fill", order="close", symbol="BTC/USDT:USDT", side="sell",
+        amount="1", price="60000", timestamp=int((now - timedelta(seconds=1)).timestamp() * 1000),
+        info={"positionSide": "LONG", "posSide": "long", "tradeSide": "close"},
+    )
+    exchange.trades = [row] * (1000 if case == "full_unpageable" else 1)
+    if case == "known_entry":
+        exchange.trades.append({
+            **row, "id": "entry-fill", "order": "entry", "side": "buy",
+            "info": {"positionSide": "LONG", "posSide": "long", "tradeSide": "open"},
+        })
+    if case == "network_error":
+        exchange.fetch_my_trades = AsyncMock(side_effect=TimeoutError("synthetic outage"))
+    _session, calls = _install(monkeypatch, exchange)
+    account = _identity(profile).model_copy(update={
+        "execution_mode": profile.expected_execution_mode,
+    })
+    adapter = CCXTUTAAdapter(account, profile)
+    identity = adapter.identity.model_copy(update={"account_id": "different"}) if case == "wrong_account" else adapter.identity
+    instrument = InstrumentIdentity(
+        canonical_symbol="BTC/USDT", venue_symbol="BTC/USDT:USDT",
+        market_type="usdt_futures", base_currency="BTC", quote_currency="USDT",
+        settlement_currency="USDT",
+    )
+    query = VerifiedExitQuery(
+        identity=identity, local_position_id="position", instrument=instrument,
+        direction="long", expected_quantity="0.01", local_order_ids=("entry",),
+        history_start_at=now - timedelta(days=91 if case == "expired" else 1),
+        history_end_at=now,
+    )
+    try:
+        if case == "wrong_account":
+            with pytest.raises(UTAError) as captured:
+                await adapter.verify_position_exit(query)
+            assert captured.value.code is UTAErrorCode.ACCOUNT_IDENTITY_MISMATCH
+            assert calls == []
+        else:
+            report = await adapter.verify_position_exit(query)
+            if case in {"complete", "known_entry"}:
+                assert report.state is VerifiedExitState.VERIFIED_FILL_EXIT
+                assert [fill.venue_fill_id for fill in report.exit_fills] == ["close-fill"]
+                assert float(report.exit_fills[0].quantity) == pytest.approx(0.01)
+            else:
+                assert report.state is VerifiedExitState.INCONCLUSIVE
+                assert report.exit_fills == ()
+    finally:
+        await adapter.close()
