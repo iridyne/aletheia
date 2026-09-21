@@ -102,37 +102,13 @@ def test_bitget_futures_open_body_carries_exact_preset_protection(monkeypatch):
         status="implemented",
     )
 )
-def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch):
-    from aletheia.exchanges.bitget.client import BitgetClient, OrderRequest
+@pytest.mark.parametrize("kind", ["classic_v2", "uta_v3"])
+@pytest.mark.parametrize("market", ["spot", "usdt_futures"])
+@pytest.mark.parametrize("purpose", ["entry", "exit"])
+async def test_bitget_spot_and_futures_close_never_send_entry_presets(monkeypatch, kind, market, purpose):
+    from tests.uta.test_bitget_entry_preset_scope import test_bitget_entry_presets_are_futures_entry_only
 
-    bodies = _capture_bitget_http(monkeypatch)
-    client = BitgetClient(mode="demo")
-    common = {
-        "side": "buy",
-        "order_type": "market",
-        "quantity": 0.01,
-        "preset_stop_loss_price": 90.0,
-        "preset_take_profit_price": 120.0,
-    }
-
-    asyncio.run(client.place_order(OrderRequest(
-        symbol="BTCUSDT",
-        market_type="spot",
-        **common,
-    )))
-    asyncio.run(client.place_order(OrderRequest(
-        symbol="BTCUSDT",
-        market_type="usdt_futures",
-        hold_side="long",
-        **common,
-    )))
-
-    assert len(bodies) == 2
-    assert bodies[0]["symbol"] == "BTCUSDT"
-    assert bodies[1]["tradeSide"] == "close"
-    for body in bodies:
-        assert "presetStopLossPrice" not in body
-        assert "presetStopSurplusPrice" not in body
+    await test_bitget_entry_presets_are_futures_entry_only(monkeypatch, kind, market, purpose)
 
 
 @pytest.mark.real_place_order

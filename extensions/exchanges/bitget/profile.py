@@ -125,10 +125,15 @@ class _BitgetDemoProfile(CCXTProfile):
             params["timeInForce"] = command.time_in_force
         if command.post_only:
             params["postOnly"] = True
-        if command.stop_loss_price is not None:
-            params["stopLoss"] = {"triggerPrice": command.stop_loss_price}
-        if command.take_profit_price is not None:
-            params["takeProfit"] = {"triggerPrice": command.take_profit_price}
+        if (
+            command.instrument.market_type != "spot"
+            and command.purpose == "entry"
+            and not command.reduce_only
+        ):
+            if command.stop_loss_price is not None:
+                params["stopLoss"] = {"triggerPrice": command.stop_loss_price}
+            if command.take_profit_price is not None:
+                params["takeProfit"] = {"triggerPrice": command.take_profit_price}
         if command.trigger_price is not None:
             if command.instrument.market_type == "spot":
                 raise UTAError(
