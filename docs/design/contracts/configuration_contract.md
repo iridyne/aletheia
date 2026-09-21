@@ -36,6 +36,18 @@ observer and Settings use only the canonical list. This retirement under #3134
 does not change observation-only classification or tokenized-equity configuration.
 The former control is [historical](../history/observed_stocks_settings_control.md).
 
+## Canonical tokenized-equity observation settings
+
+`observed_stock_tokens` is the sole runtime tokenized-equity workset. Historical
+decoding validates and consumes `observed_xstocks`, merging it with the historical
+canonical/default token list once without rewriting the source file. Normal
+saves contain no legacy alias; an explicit canonical empty save stays empty after
+reload. The generic market-data endpoint rejects `observed_xstocks` writes.
+Collector, equity observer and research context consume only the canonical list;
+confirmed delisting removes tokens from that list under the existing rule.
+This does not change listing evidence, observation-only admission or trading policy.
+The former alias is [historical](../history/observed_xstocks_settings_control.md).
+
 ## Executable evidence
 
 - `tests/test_config.py` covers unknown root/nested fields, safe error paths,

@@ -207,7 +207,6 @@ def _get_equity_context_block() -> str:
 
         cfg = load_config()
         tokens = list(cfg.market_data.observed_stock_tokens or [])
-        tokens += list(cfg.market_data.observed_xstocks or [])
 
         tickers = sorted({
             stock_token_to_ticker(t)

@@ -349,13 +349,21 @@ DerivativesComparisonVenue = Literal['binance', 'okx', 'bitget']
 class MarketDataConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
-    def decode_historical_equities(cls, value):
+    def decode_historical_observation_lists(cls, value):
         """Preserve the historical workset without retaining a runtime alias."""
         if isinstance(value, Mapping) and "observed_stocks" in value:
             value = dict(value)
             legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_stocks"))
             if "observed_equities" not in value or value["observed_equities"] == []:
                 value["observed_equities"] = legacy
+        if isinstance(value, Mapping) and "observed_xstocks" in value:
+            value = dict(value)
+            legacy = TypeAdapter(list[str]).validate_python(value.pop("observed_xstocks"))
+            tokens = value.get("observed_stock_tokens", cls.model_fields[
+                "observed_stock_tokens"
+            ].get_default(call_default_factory=True))
+            tokens = TypeAdapter(list[str]).validate_python(tokens)
+            value["observed_stock_tokens"] = list(dict.fromkeys(tokens + legacy))
         return value
 
     # "ccxt" uses CCXT Binance/Bybit; "bitget" falls back to BitgetClient (legacy).
@@ -422,7 +430,7 @@ class MarketDataConfig(BaseModel):
     # Tokenized equity/ETF spot symbols on any supported exchange (Bitget ON-series,
     # Bitget r-series, future OKX SWAP).  Canonical form e.g. "rNVDA/USDT",
     # "AAPLON/USDT".  equity_observer uses these for real-time price cross-validation.
-    # Replaces the narrower observed_xstocks (which remains a backward-compat alias).
+    # Historical observed_xstocks is consumed only during config decoding.
     # Default covers the major r-series + ON-series starters; edit in Settings UI.
     observed_stock_tokens: list[str] = Field(
         default_factory=lambda: [
@@ -431,8 +439,6 @@ class MarketDataConfig(BaseModel):
             "AAPLON/USDT", "TSLAON/USDT", "NVDAON/USDT", "SPYON/USDT",
         ]
     )
-    # Deprecated: use observed_stock_tokens instead.
-    observed_xstocks: list[str] = Field(default_factory=list)
     # Third-tier fallback: CoinGecko + Binance public API when CCXT primary+fallback both fail.
     enable_crypto_fallback: bool = True
     # Coinalyze cross-exchange OI + liquidation aggregator (requires API key).

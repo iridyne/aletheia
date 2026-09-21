@@ -347,8 +347,8 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     assert len(audit_rows) == 1
     assert md_mod._xstock_failure_counts["AAPLON/USDT"] == 5
     assert saved_configs == []
-    assert cfg.market_data.observed_stock_tokens == []
-    assert cfg.market_data.observed_xstocks == ["AAPLON/USDT"]
+    assert cfg.market_data.observed_stock_tokens == ["AAPLON/USDT"]
+    assert not hasattr(cfg.market_data, "observed_xstocks")
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ def test_xstock_consecutive_failures_emit_one_threshold_event(tmp_path, monkeypa
     SpecClaim(
         "PL-MD-08", "pipeline_market_data", "§4 xstock_auto_remove", "L2b",
         "When xStock fetch fails and live market-list check confirms symbol absent "
-        "on the responsible exchange, remove it from current and legacy config fields, "
+        "on the responsible exchange, remove it from the canonical token workset, "
         "audit the mutation, and reuse one venue listing per collection cycle",
         status="implemented",
     ),
@@ -439,7 +439,8 @@ def test_xstock_delist_confirmed_by_exchange_removes_immediately(tmp_path, monke
     )
     from aletheia.data.symbols import to_canonical
     removed = {"AAPLON/USDT", "TSLAON/USDT"}
-    for field in ("observed_stock_tokens", "observed_xstocks"):
+    assert not hasattr(saved_configs[-1].market_data, "observed_xstocks")
+    for field in ("observed_stock_tokens",):
         tokens = list(getattr(saved_configs[-1].market_data, field) or [])
         assert not removed.intersection({to_canonical(t) for t in tokens}), (
             f"confirmed-absent tokens remain in {field}: {tokens}"

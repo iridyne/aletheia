@@ -762,8 +762,6 @@ export interface components {
             observed_stock_tokens?: string[];
             /** Observed Symbols */
             observed_symbols?: string[];
-            /** Observed Xstocks */
-            observed_xstocks?: string[];
             /**
              * Ohlcv Cache Ttl Min
              * @default 10
