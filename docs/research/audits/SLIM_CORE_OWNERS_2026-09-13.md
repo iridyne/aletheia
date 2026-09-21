@@ -201,6 +201,12 @@ runtime path. Current source traces establish the following distinctions:
   knowledge effects (#3331), while Core/measurement jobs continue. Classification
   has one definition in `trust.learning_safety`; this is not blanket absence
   proof for the entire optional tree.
+- `economics.historical_viability` is an inert archive reader used by explicit
+  CLI list/show commands. It uses the existing read-only database context, not
+  current economics schema initialization/backfill. Missing history remains
+  empty without creating a database or tables; historical report values,
+  ordering and pagination are unchanged. This does not classify the active
+  inference ledger, pricing worker or paired-evaluation writers as Legacy.
 
 ### Data consumer and side-effect disposition
 
