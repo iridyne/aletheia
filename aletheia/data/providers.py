@@ -304,6 +304,11 @@ class MarketDataProvider(Protocol):
     Unsupported reads return None; acquisition errors propagate to the caller.
     Core owns whether a feature observation warrants this optional request.
 
+    The optional async ``get_funding_observation(symbol, *, ticker)`` and
+    ``get_open_interest_observation(symbol)`` capabilities return normalized,
+    source-timestamped observation mappings. They perform no persistence or
+    fallback; Core owns freshness admission, stored fallback and feature writes.
+
     The optional async ``get_market_instruments()`` capability returns active
     USDT non-option listing facts as ``list[MarketInstrument]`` from the exact
     primary venue, without persistence or cross-venue fallback. Core retains

@@ -117,6 +117,39 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
         async def fetch_open_interest(self, *a, **kw):
             return {}
 
+        async def get_funding_observation(self, _symbol, *, ticker=None):
+            from aletheia.data.derivatives_facts import (
+                funding_interval_seconds,
+                instrument_from_market,
+                normalize_funding,
+            )
+
+            received_at = now
+            raw = {
+                "fundingRate": ".001",
+                "timestamp": int(now.timestamp() * 1000),
+            }
+            evidence = normalize_funding(
+                raw,
+                instrument=instrument_from_market("BTC/USDT", MARKET),
+                provider="ccxt",
+                venue="bitget",
+                acquired_at=received_at,
+                interval_seconds=funding_interval_seconds({"interval": "1h"}),
+            )
+            return {
+                "funding_rate": 0.001,
+                "observed_at": now.isoformat(),
+                "received_at": now.isoformat(),
+                "evidence": evidence,
+                "interval_source": "bitget.contracts.fundInterval",
+                "interval_raw": "1h",
+                "interval_acquired_at": now.isoformat(),
+            }
+
+        async def get_open_interest_observation(self, _symbol):
+            return None
+
     feature = await _fetch_single_feature(
         Exchange(),
         dict(id="btc", symbol="BTC/USDT", venue="bitget", market_type="perp"),

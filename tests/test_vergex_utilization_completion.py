@@ -236,6 +236,21 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
         async def fetch_open_interest(self, _symbol):
             return {"openInterestValue": 12_000_000.0, "timestamp": int(now.timestamp() * 1000)}
 
+        async def get_funding_observation(self, _symbol, *, ticker=None):
+            return {
+                "funding_rate": 0.0002,
+                "observed_at": now.isoformat(),
+                "received_at": now.isoformat(),
+                "evidence": {},
+            }
+
+        async def get_open_interest_observation(self, _symbol):
+            return {
+                "observed_at": now.isoformat(),
+                "received_at": now.isoformat(),
+                "fact": {"availability": "available", "value": 12_000_000.0},
+            }
+
     db = get_db()
     db.execute(
         "INSERT INTO universe_registry (id, venue, market_type, symbol, metadata) "
