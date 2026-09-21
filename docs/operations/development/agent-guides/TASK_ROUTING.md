@@ -4,8 +4,9 @@
 
 ## SDD depth (orthogonal to A/B/C)
 
-The A/B/C classification decides when to act. SDD depth classifies the semantic
-nature of the change. They are independent.
+The A/B/C classification guides timing inside an owner-authorized task; it does
+not grant scope or select the next project priority. SDD depth classifies the
+semantic nature of the change. They are independent.
 
 - **D0** — restore truth / conformance repair; Contract Delta = `NONE`
 - **D1** — change semantics; requires explicit `ADDED / MODIFIED / REMOVED`
@@ -13,10 +14,18 @@ nature of the change. They are independent.
 - **D2** — change structure; requires accepted Proposal before target state
   enters Contract
 
-SDD depth is classification only. Human owner approval is separate and required before
-D1/D2 implementation begins. For D1/D2 or an explicitly selected high-risk
-D0, an optional advisory shadow audit is available; read
-[SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md) before using it.
+SDD depth is classification only. Follow the single
+[bounded engineering delegation](../../../../AGENTS.md#bounded-engineering-delegation)
+for permission and escalation. A new, unapproved D1/D2 requires owner acceptance;
+implementing an already accepted delta does not require another approval per
+commit, technical root cause, test plan or checkpoint. The AI derives those
+engineering details within the authorized outcome and existing Contracts.
+Resolvable technical uncertainty calls for investigation, not an automatic
+handoff; unresolved product semantics or unsafe verification do require escalation.
+
+For D1/D2 or an explicitly selected high-risk D0, an optional advisory shadow
+audit is available; read [SDD_SHADOW_WORKFLOW.md](SDD_SHADOW_WORKFLOW.md) before
+using it. It does not create another approval authority.
 
 See [documentation governance](../../../governance/policies/documentation_governance.md)
 for the full rule.

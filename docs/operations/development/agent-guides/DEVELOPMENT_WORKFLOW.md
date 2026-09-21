@@ -48,9 +48,14 @@ Before changing code:
 6. **Determine Verification**: executable tests, runtime observations, or
    economic evidence required to prove the change.
 
-SDD depth is a semantic classifier, not an approval process. AI pauses at a Human
-Decision Point (scope expansion, ambiguity, or D1/D2 approval needed) and returns
-facts + one recommended decision rather than broadening scope to resolve it.
+SDD depth is a semantic classifier, not an approval process. Under root
+[AGENTS.md](../../../../AGENTS.md#bounded-engineering-delegation), the AI derives
+the engineering facts, failure cases and technical verification above within the
+owner-authorized outcome. Routine implementation and checkpoint decisions do not
+require owner handoff. Escalate only at the decision boundaries defined there;
+resolvable technical uncertainty is investigated, while unapproved product or
+structural choices are returned as facts plus one recommended decision. This
+does not grant merge, release, deployment or shared-runtime restart authority.
 
 For D1/D2 or an explicitly selected high-risk D0, an optional pre-change shadow
 audit may be run before step 1 to surface semantic gaps early. Run convergence

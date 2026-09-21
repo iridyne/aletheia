@@ -16,6 +16,27 @@ this page does not assert that #3134 is complete.
 Risk approval must precede Gateway submission; genuine outcomes require verified
 economic evidence.
 
+## How to read project truth
+
+This file is the canonical capability boundary; [Active Runtime Scope](ACTIVE_RUNTIME_SCOPE.md)
+is the sole machine-readable active-admission declaration. They answer different
+questions and must remain consistent, rather than being copied into another
+manifest. See the [governance authority map](../governance/policies/documentation_governance.md#authority-and-conflict-resolution)
+for approved behavior, development permission and operational evidence.
+
+An accepted target is not an implemented subsystem. Implemented code is not an
+end-to-end test result. A passing test is not a deployed-runtime observation, and
+a deployed process is not economic qualification. Claims must retain their own
+scope and evidence; an Issue/PR being closed does not bridge these gaps or prove
+all of an umbrella program's completion criteria. Track outstanding proof in
+GitHub rather than maintaining a mutable completion snapshot in this document.
+
+Frozen new-entry support does not delete historical identity or existing
+exposure-recovery obligations. Optional/frozen Research and Learning support does
+not switch off the existing measurement or explicitly owner-gated influence
+semantics declared in Active Runtime Scope and the relevant Contracts. This
+classification grants no new trading, risk, credential or Live authority.
+
 ## Current capability boundary
 
 | Surface | Current boundary |

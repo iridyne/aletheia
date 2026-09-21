@@ -1,13 +1,17 @@
 # Aletheia Agent Guide
 
 This is the repository-wide router. Read it first, then read every matched
-guide completely; a nested `AGENTS.md` overrides this file for its scope.
+guide completely. Nested guides specialize their scope without expanding the
+human-decision, safety, or product-truth boundaries defined here.
 
 ## Role, priority, and invariants
 
-Aletheia is a local-first automated trading system: market data → agents →
-strategy proposal → Risk Engine → Execution Gateway → Bitget. This MVP is being
-hardened, not expanded. Preserve this order of priorities:
+Aletheia is a local-first AI trading system. The accepted product boundary and
+current qualification route are defined in
+[Capability Ground Truth](docs/product/CAPABILITY_GROUND_TRUTH.md) and
+[Active Runtime Scope](docs/product/ACTIVE_RUNTIME_SCOPE.md), not inferred from
+available adapters, old diagrams, another repository, or a closed Issue.
+This MVP is being hardened, not expanded. Preserve this order of priorities:
 `State consistency > Safety > Auditability > Semantic honesty > Tests >
 Capability > Agent autonomy`.
 
@@ -24,31 +28,60 @@ Before changing code, classify each change by semantic nature:
 - **D2 = change structure**: state ownership, mainline, subsystem topology, authority,
   or product scope changes.
 
-AI execution authority is constrained by the following:
+### Bounded engineering delegation
 
-- Owner alone defines current problem statement, root-cause acceptance, completion
-  criteria, phase promotion, and any D1/D2 semantic/structure decision.
-- Only the owner selects project priority and the next problem; backlog labels,
-  closed Issues, merged PRs, or green tests do not authorize either or prove runtime success.
-- Approval is per semantic change, not per implementation commit. Once the owner
-  accepts the Change Contract, AI may execute it without repeated approval. Ordinary
-  D0 repairs may proceed within approved scope while Delta is `NONE` and no ambiguity arises.
-- A new Issue records evidence or a defect; it is not execution authorization for
-  changed scope.
-- AI may investigate, reproduce, test, review, and implement only inside an owner-approved
-  issue scope.
-- If investigation reaches an unapproved D1/D2, ambiguity, or scope expansion,
-  the affected implementation stops and a decision packet is produced:
-  facts, inference with confidence, unresolved uncertainty, one recommended decision,
-  changed boundary, and required evidence.
-- Ask the owner the specific decision needed. Do not substitute more agents, parallel
-  implementations, or changed tests/contracts for that decision, or promote inference
-  into project truth. Nested guides inherit this boundary rather than redefining it.
+- The owner selects the desired outcome, product priorities, non-goals, business
+  acceptance, and any new material D1/D2 decision. An explicit owner request or
+  an already accepted Change Contract authorizes work within that scope; the AI
+  records it in the task Issue rather than requiring the owner to write an
+  engineering specification first.
+- Within that scope, the AI owns technical investigation, evidence-backed root
+  cause analysis, impact and relevant failure-mode analysis, derived technical
+  acceptance checks, implementation choices, focused tests, self-review, and PR
+  preparation. Routine engineering choices that preserve approved semantics,
+  state ownership and trust boundaries do not require repeated owner approval.
+- Derive acceptance checks from the requested outcome and current Contracts;
+  record material assumptions and what is not verified. The AI must not reduce
+  business acceptance, redefine completion, or weaken a Contract/test merely to
+  make a failing implementation appear correct. A root-cause hypothesis is not
+  a fact until supported by current evidence.
+- Approval is per material semantic/structural change, not per commit or
+  checkpoint. D0 repairs and implementation of an already approved D1/D2 may
+  continue without routine handoffs. For an authorized multi-part task, the AI
+  selects dependency order and continues independent in-scope work; it must not
+  select unrelated backlog work or reopen a closed program on its own.
+- Escalate the affected path only for a product/acceptance ambiguity that current
+  evidence cannot resolve, a new unapproved D1/D2, changed risk/economic policy,
+  Live/capital/credential/tool authority, an irreversible/destructive migration,
+  contradictory current authorities, or verification that cannot be performed
+  safely. Return facts, uncertainty, one recommended decision and required
+  evidence; continue other authorized independent work where possible.
+- Development delegation is not permission to merge, release, deploy, restart a
+  shared runtime, change secrets, reset qualification windows, or enable Live.
+  Follow the task's explicit operational authority and the PR/release rules;
+  otherwise stop at a reviewable PR and report the remaining approval or proof.
+- A new Issue records the task/evidence; its creation, labels, comments, closure,
+  merged PRs and green tests grant no additional scope or runtime authority.
+  External references and other repositories are evidence only. Historical
+  one-shot mandates do not become permanent background-development permission.
+
+### Safety invariants
 
 - Orders reach exchanges only through the backend Execution Gateway; Risk approval always precedes execution.
 - Live trading is off by default. Agents cannot expand tool, credential, Risk, Gateway, or live-unlock authority.
 - Never read, reveal, log, prompt, or commit credentials. Never invent healthy UI or runtime state; use `not available` or `not configured`.
 - Keep changes and verification proportional: one root cause and the smallest focused regression, with fail-closed handling at trust boundaries.
+
+### Read the authority that answers the question
+
+Use [documentation governance](docs/governance/policies/documentation_governance.md#authority-and-conflict-resolution)
+for the authority map. Active admission comes only from the existing Runtime
+Scope; capability promises come from Capability Ground Truth; approved behavior
+comes from the relevant Contract; actual implementation and deployment claims
+require code/tests and exact-runtime evidence respectively. README files and
+architecture overviews route readers but do not override these authorities.
+Do not duplicate the manifest or convert a target, Issue status, test count, or
+historical observation into proof of current capability.
 
 ### Convergence over compatibility (standing goal)
 

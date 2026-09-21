@@ -5,7 +5,7 @@ This directory is organized for AI agents first: read the smallest routing file,
 
 ## Agent Reading Protocol
 
-1. Start with this file.
+1. Read `../AGENTS.md` first, then use this file as a navigation map.
 2. Pick exactly one task lane below.
 3. Read that lane's `README.md` before opening individual documents.
 4. Prefer authoritative contracts and runbooks over old plans, audits, or session notes.
@@ -15,13 +15,19 @@ This directory is organized for AI agents first: read the smallest routing file,
 
 ## Authority Order
 
-1. `../AGENTS.md` - mandatory safety and repo rules.
-2. `governance/policies/` and `governance/protocols/` - change-control and triage rules.
-3. `product/definition/` and `product/gates/` - product scope and acceptance gates.
-4. `design/contracts/`, `design/data/`, `design/api/`, `design/architecture/` - executable system intent.
-5. `operations/runbooks/`, `operations/development/`, `operations/recovery/` - how to operate or recover.
-6. `design/proposals/` - durable design proposals for substantial changes; never execution tracking.
-7. `research/`, `references/`, and `archive/` - context and frozen evidence.
+The [governance authority map](governance/policies/documentation_governance.md#authority-and-conflict-resolution)
+is canonical. For a new task, distinguish:
+
+- Development permission and owner escalation: [AGENTS.md](../AGENTS.md).
+- Active trading admission: [ACTIVE_RUNTIME_SCOPE.md](product/ACTIVE_RUNTIME_SCOPE.md).
+- Current capability promises and evidence limits: [CAPABILITY_GROUND_TRUTH.md](product/CAPABILITY_GROUND_TRUTH.md).
+- Approved subsystem behavior: the narrowest current `design/contracts/` document.
+- Actual code, tests and deployed behavior: inspect the exact source/runtime;
+  an architecture overview, accepted target or GitHub closure is not proof.
+
+`product/definition/DIRECTION.md` owns long-term intent. Broader scope, gates,
+proposals and historical inventories cannot expand the active declaration.
+GitHub Issues/PRs track work and evidence, not a second runtime truth.
 
 ## Task Lanes
 
@@ -29,7 +35,7 @@ This directory is organized for AI agents first: read the smallest routing file,
 |---|---|---|
 | New agent session | `../AGENTS.md` | choose the narrow task lane below; external orchestrator owns session/worktree state |
 | Product definition or long-term direction | `product/definition/DIRECTION.md` | The single canonical direction document |
-| Product scope, evaluation, or admission | `product/README.md` | `product/SCOPE.md`, `product/gates/`, `product/experiments/` |
+| Product scope, evaluation, or admission | `product/README.md` | `product/ACTIVE_RUNTIME_SCOPE.md`, `product/CAPABILITY_GROUND_TRUTH.md`, then only the relevant contract/gate/experiment |
 | Architecture or subsystem behavior | `design/README.md` | `design/contracts/`, `design/architecture/`, `design/data/` |
 | API or schema work | `design/README.md` | `design/api/`, `design/data/`, `design/contracts/` |
 | Risk, execution, live unlock, audit chain | `governance/README.md` | `governance/policies/`, `design/contracts/` |
