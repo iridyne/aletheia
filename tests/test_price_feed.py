@@ -467,7 +467,7 @@ class TestRefreshWatchedPrices:
             InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
         ],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_refreshes_cache_on_success(self, mock_cfg, mock_provider_fn, mock_symbols):
         cfg = MagicMock()
@@ -506,7 +506,7 @@ class TestRefreshWatchedPrices:
             InstrumentId.from_parts("binance", "BTC/USDT", "perp"),
         ],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_same_symbol_spot_perp_basis_does_not_trigger_price_event(
         self, mock_cfg, mock_provider_fn, mock_symbols
@@ -540,7 +540,7 @@ class TestRefreshWatchedPrices:
         "aletheia.data.price_feed.get_watched_instruments",
         return_value=[InstrumentId.from_parts("binance", "BTC/USDT", "spot")],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     @pytest.mark.parametrize(
         ("previous_age_sec", "always_on", "expects_event"),
@@ -634,7 +634,7 @@ class TestRefreshWatchedPrices:
                 mock_events.assert_called_once()
 
     def test_universe_events_survive_slow_scheduler_tick_gate(self, monkeypatch):
-        from aletheia.data import ccxt_provider, price_feed
+        from aletheia.data import providers, price_feed
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 
@@ -678,7 +678,7 @@ class TestRefreshWatchedPrices:
         )
         provider.close = AsyncMock()
         monkeypatch.setattr(
-            ccxt_provider, "get_market_data_provider", lambda **_kwargs: provider,
+            providers, "get_market_data_provider", lambda **_kwargs: provider,
         )
 
         first_observed = datetime(2026, 8, 29, tzinfo=timezone.utc)
@@ -708,7 +708,7 @@ class TestRefreshWatchedPrices:
     def test_universe_recovery_requires_a_new_sampling_segment(
         self, monkeypatch, discontinuity
     ):
-        from aletheia.data import ccxt_provider
+        from aletheia.data import providers
         import aletheia.config.loader as loader
         import aletheia.storage.repositories as repo
 
@@ -780,7 +780,7 @@ class TestRefreshWatchedPrices:
         provider.get_ticker = AsyncMock(side_effect=quotes)
         provider.close = AsyncMock()
         monkeypatch.setattr(
-            ccxt_provider, "get_market_data_provider", lambda **_kwargs: provider,
+            providers, "get_market_data_provider", lambda **_kwargs: provider,
         )
 
         first_observed = datetime(2026, 8, 29, tzinfo=timezone.utc)
@@ -809,7 +809,7 @@ class TestRefreshWatchedPrices:
             InstrumentId.from_parts("binance", "ETH/USDT", "spot"),
         ],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_each_ticker_records_its_actual_observation_time(
         self, mock_cfg, mock_provider_fn, mock_symbols
@@ -848,7 +848,7 @@ class TestRefreshWatchedPrices:
         "aletheia.data.price_feed.get_watched_instruments",
         return_value=[InstrumentId.from_parts("binance", "ON/USDT", "perp")],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_cross_venue_fallback_never_enters_exact_cache(
         self, mock_cfg, mock_provider_fn, mock_symbols
@@ -874,8 +874,7 @@ class TestRefreshWatchedPrices:
 
         mock_provider_fn.assert_called_once_with(
             exchange="binance",
-            native_ccxt=True,
-            fallback_exchange="binance",
+            exact_venue=True,
         )
         assert result["refreshed"] == 0
         assert result["errors"] == [
@@ -891,7 +890,7 @@ class TestRefreshWatchedPrices:
         "aletheia.data.price_feed.get_watched_instruments",
         return_value=[InstrumentId.from_parts("binance", "BTC/USDT", "spot")],
     )
-    @patch("aletheia.data.ccxt_provider.get_market_data_provider")
+    @patch("aletheia.data.providers.get_market_data_provider")
     @patch("aletheia.config.loader.load_config")
     def test_handles_ticker_failure_gracefully(self, mock_cfg, mock_provider_fn, mock_symbols):
         cfg = MagicMock()
