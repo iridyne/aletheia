@@ -51,10 +51,6 @@ from aletheia.uta.models import (
 from extensions.exchanges.ccxt.profile import CCXTProfile
 
 
-class _AmbiguousAcknowledgementError(RuntimeError):
-    pass
-
-
 class CCXTUTAAdapter:
     """Common loop-owned crypto driver for normalized UTA reads and commands."""
 
@@ -1090,7 +1086,6 @@ class CCXTUTAAdapter:
                 "BadResponse",
                 "NetworkError",
                 "RateLimitExceeded",
-                "_AmbiguousAcknowledgementError",
             } or any(
                 marker in name
                 for name in lowered
@@ -1207,11 +1202,7 @@ class CCXTUTAAdapter:
             args = self._profile.submit_request(command)
             request_started = True
             raw = await self._request(exchange.create_order(*args))
-            if not isinstance(raw, dict):
-                raise _AmbiguousAcknowledgementError
-            venue_order_id = str(raw.get("id") or "").strip()
-            if not venue_order_id:
-                raise _AmbiguousAcknowledgementError
+            venue_order_id = self._profile.acknowledgement_order_id(raw)
             try:
                 order = self._profile.order(
                     {
@@ -1268,13 +1259,12 @@ class CCXTUTAAdapter:
                 raise
             request_started = True
             raw = await self._request(exchange.edit_order(*args))
-            if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
-                raise _AmbiguousAcknowledgementError
+            venue_order_id = self._profile.acknowledgement_order_id(raw)
             return self._command_report(
                 command,
                 CommandReport,
                 CommandEvidence.ACKNOWLEDGED,
-                venue_order_id=str(raw["id"]),
+                venue_order_id=venue_order_id,
             )
         except (Exception, TimeoutError) as exc:
             return self._mutation_failure(command, CommandReport, exc, request_started=request_started)
@@ -1292,13 +1282,12 @@ class CCXTUTAAdapter:
             args = self._profile.cancel_request(command)
             request_started = True
             raw = await self._request(exchange.cancel_order(*args))
-            if not isinstance(raw, dict) or not str(raw.get("id") or "").strip():
-                raise _AmbiguousAcknowledgementError
+            venue_order_id = self._profile.acknowledgement_order_id(raw)
             return self._command_report(
                 command,
                 CommandReport,
                 CommandEvidence.ACKNOWLEDGED,
-                venue_order_id=str(raw["id"]),
+                venue_order_id=venue_order_id,
             )
         except (Exception, TimeoutError) as exc:
             return self._mutation_failure(command, CommandReport, exc, request_started=request_started)
