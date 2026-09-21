@@ -208,6 +208,36 @@ runtime path. Current source traces establish the following distinctions:
   ordering and pagination are unchanged. This does not classify the active
   inference ledger, pricing worker or paired-evaluation writers as Legacy.
 
+### Analytics shared rules and active writer disposition
+
+These source traces separate shared trading evidence rules from optional report
+production. They do not classify all Analytics modules as optional or read-only.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| `universe.service` → Candidate selection bundle → `candidate_eligibility` / `economic_utility`; fixed-horizon recorder → `candidate_funding` | Current Candidate provenance, cohort cutoffs and frozen funding proof consume `analytics.temporal.parse_utc_instant`. It rejects naive timestamps; `utils.dt.parse_utc` accepts them as UTC. They are not interchangeable. Temporal PnL bucketing also uses the strict parser but does not own Candidate admission. |
+| `outcome_integrity.assess_reportable_outcome` → `learning_window` | Versioned clean-window and incident exclusions are shared reportability rules, not optional Learning configuration. `portfolio.outcome_hooks` uses this assessment when the existing attribution-retry owner persists eligibility/reason. The window helper itself is pure; it does not settle a Position or rewrite history. |
+| Repository calibration/pressure/spread readers → `learning_window.clean_window_cutoff` | Query-time cohort restrictions preserve the existing data floor and cost-model scope. Operator assessment reads family multipliers; this does not make historical quota allocation the current Candidate selection owner. Whole-package relocation would misclassify shared evidence dependencies. |
+| Scheduler → `insight_synthesizer` → `memo_effectiveness` | Synthesis reads eligible outcomes, optionally calls the shared Model path and inserts a namespaced `trading_memo`. Prior-memo evaluation updates that knowledge item's verdict/cohort tags through `update_knowledge_item`; it is not a pure reader. These effects do not update realized PnL or promote an execution policy. |
+| Scheduler / analytics calibration GET → `confidence_calibration`; synthesis job → `reasoning_feedback` | Builders persist namespaced knowledge reports through the canonical repository, with existing six-hour throttles. Calibration GET can invoke the builder when no report is available; reasoning-feedback GET reads the report. Thus HTTP GET is not evidence of physical read-only behavior for the calibration path. Cohort identity and incomplete-evidence handling remain shared rules. |
+| Post-trade reviewer → `trade_case_builder` → `knowledge.manager` | Case studies and learned guard candidates use existing knowledge document and row writers. Only high-confidence case studies are eligible for best-effort FTS indexing; learned guard candidates are medium-confidence and skipped by the index writer. Learned candidates retain shadow-only/observe-only semantics; generation does not grant blocking or execution authority. Review tool/run telemetry remains a separate existing side effect. |
+| Explicit guard API / scheduled TTL maintenance → `guard_promotion` | Explicit promotion persists knowledge rows and the promotion event in one repository transaction, with best-effort FTS indexing. After commit it attempts the retryable JSONL mirror and materializes the knowledge document; index or mirror failure does not roll back the canonical rows/event. Scheduled expiry touches learned guards only, updating files/rows and emitting deprecation events; seed/manual guards remain persistent. Neither path is correctly described as report-only, and learned shadow-only semantics are preserved. |
+| Serenity opportunity repository → `causal_controls` | Namespaced `alpha_control_observations` inserts join an existing caller transaction and commit only when not already in one. This is an observation writer, not Candidate publication or Order/Position settlement. The row builder supports outcome seeding with exact venue/price evidence, but this Serenity caller passes no venue and therefore does not seed those outcomes. |
+| Core Risk / Candidate producers → `filter_evidence`; scheduled controller → Lab | Filter facts use canonical repository writers; required Risk evidence joins the authoritative decision transaction. Controller recommendation persistence is only part of its effect: it builds bounded replays, registers experiments and invokes the existing Lab window runner. Main/worker ownership and cycle exclusion remain with the existing scheduler/Lab owners. Lab evaluation can revoke paper manifests through its canonical safety disposition; it is not a second Core settlement owner. |
+
+The report-facing `temporal`, `attribution`, `streaks` and performance-summary
+calculations do not themselves write trading state. Their imports alone do not
+establish whole-package absence safety: the Analytics initializer currently
+eagerly imports report and lifecycle-story modules. Remaining read models and
+dynamic consumers still need disposition before a package-wide move.
+
+Behavioral evidence includes `test_candidate_funding`,
+`test_candidate_selection_utility`, `test_outcome_integrity_read_model`,
+`test_learning_analytics_fixes`, `test_confidence_calibration`,
+`test_trade_case_builder`, `test_filter_shadow_experiments`,
+`test_observation_lab_evaluator` and `test_write_guardrails`.
+These fixtures do not prove deployed concurrency, runtime health or economics.
+
 ### Economics and research consumer disposition
 
 This source audit distinguishes current inference provenance from optional
