@@ -146,7 +146,7 @@ def test_trade_insights_route_preserves_history_without_regime_detector(monkeypa
     importing = builtins.__import__
 
     def without_regime(name, *args, **kwargs):
-        if name == "aletheia.regime" or name.startswith("aletheia.regime."):
+        if any(name == prefix or name.startswith(prefix + ".") for prefix in ("aletheia.regime", "extensions.regime")):
             raise ModuleNotFoundError("optional Regime absent", name=name)
         return importing(name, *args, **kwargs)
 

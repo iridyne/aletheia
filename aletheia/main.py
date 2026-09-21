@@ -87,9 +87,9 @@ def _configure_runtime() -> None:
     from aletheia.universe.service import configure_regime_refresh
 
     try:
-        from aletheia.regime.detector import read_published_regime, collect_regime_record
+        from extensions.regime.detector import read_published_regime, collect_regime_record
     except ModuleNotFoundError as exc:
-        if exc.name not in {"aletheia.regime", "aletheia.regime.detector"}:
+        if exc.name not in {"extensions", "extensions.regime", "extensions.regime.detector"}:
             raise
         configure_regime_reader(None)
         configure_regime_refresh(None)

@@ -108,8 +108,8 @@ def test_refresh_freezes_detected_regime_and_short_control_identity(tmp_path, mo
     before = candidate_selection_policy_identity(cfg)
     cfg.regime.short_enabled = not cfg.regime.short_enabled
     assert candidate_selection_policy_identity(cfg) != before
-    monkeypatch.setattr("aletheia.regime.collector.collect_regime_inputs", AsyncMock(return_value={"fixture": True}))
-    monkeypatch.setattr("aletheia.regime.detector.debounced_detect", lambda **kwargs: SimpleNamespace(
+    monkeypatch.setattr("extensions.regime.collector.collect_regime_inputs", AsyncMock(return_value={"fixture": True}))
+    monkeypatch.setattr("extensions.regime.detector.debounced_detect", lambda **kwargs: SimpleNamespace(
         state="bear", confidence=0.8, long_bias=0.2, short_bias=0.8, signals={},
         detected_at=datetime.now(timezone.utc).isoformat(),
     ))

@@ -119,7 +119,7 @@ def test_collect_marks_each_unreadable_authority_source(monkeypatch):
 
 
 def test_strict_regime_read_uses_the_authoritative_row_once(monkeypatch):
-    import aletheia.regime.detector as detector
+    import extensions.regime.detector as detector
     import aletheia.storage.repositories as repositories
     import aletheia.risk.demo_entry_quality as quality
 
@@ -139,7 +139,7 @@ def test_strict_regime_read_uses_the_authoritative_row_once(monkeypatch):
 
 
 def test_strict_regime_read_rejects_non_finite_confidence(monkeypatch):
-    import aletheia.regime.detector as detector
+    import extensions.regime.detector as detector
     import aletheia.storage.repositories as repositories
     import aletheia.risk.demo_entry_quality as quality
 
@@ -334,7 +334,7 @@ def test_ranker_skip_reason_uses_first_token():
 def setup_env(tmp_path, monkeypatch):
     import aletheia.config.loader as loader
     import aletheia.storage.sqlite as sq
-    from aletheia.regime.detector import reset_state
+    from extensions.regime.detector import reset_state
 
     monkeypatch.setattr(loader, "DATA_DIR", tmp_path)
     monkeypatch.setattr(loader, "CONFIG_PATH", tmp_path / "config.yaml")
@@ -350,8 +350,8 @@ def setup_env(tmp_path, monkeypatch):
 
 
 def _publish_regime(monkeypatch, *, state="sideways", confidence=0.50):
-    from aletheia.regime.detector import MarketRegime
-    import aletheia.regime.detector as det
+    from extensions.regime.detector import MarketRegime
+    import extensions.regime.detector as det
 
     monkeypatch.setattr(
         det,

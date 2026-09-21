@@ -311,7 +311,7 @@ def _block_real_exchange_orders(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _bind_regime_evidence(monkeypatch):
-    from aletheia.regime import detector
+    from extensions.regime import detector
     from aletheia.risk import demo_entry_quality
     from aletheia.universe import service
 
