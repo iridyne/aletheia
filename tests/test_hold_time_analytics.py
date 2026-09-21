@@ -198,10 +198,15 @@ def test_frontend_hold_time_coverage_contract_is_rendered():
     analytics = Path("frontend/src/charts/TradeAnalyticsPanel.tsx").read_text()
     insights = Path("frontend/src/charts/TradeInsightsPanel.tsx").read_text()
     client = Path("frontend/src/api/client.ts").read_text()
+    generated = Path("frontend/src/api/generated/api.d.ts").read_text()
 
     assert "fmtHoldCoverage" in analytics
     assert "timed" in analytics
-    assert "hold_time_available_count?: number" in client
-    assert "avg_hold_hours: number | null" in client
+    for schema in ("DirectionStats", "TradeStatsSource", "TradeStatsFamily"):
+        assert f'export type {schema} = components["schemas"]["{schema}"];' in client
+        fields = generated.split(f"\n        {schema}: {{", 1)[1].split("\n        };", 1)[0]
+        assert "hold_time_available_count: number" in fields
+        assert "hold_time_unavailable_count: number" in fields
+        assert "avg_hold_hours: number | null" in fields
     assert "avg_hold_hours === null ? '—'" in insights
     assert "timed" in insights
