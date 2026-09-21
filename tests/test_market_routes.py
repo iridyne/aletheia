@@ -59,10 +59,13 @@ async def test_market_snapshots_route(client):
 
 @pytest.mark.anyio
 async def test_portfolio_history_route(client):
-    repo.insert_portfolio_snapshot(PortfolioSnapshot(total_value_usdt=1000, unrealized_pnl=50))
+    repo.insert_portfolio_snapshot(PortfolioSnapshot(
+        total_value_usdt=1000, unrealized_pnl=50, execution_mode="exchange_account",
+    ))
     resp = await client.get("/api/market/portfolio-history")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+    assert resp.json()[0]["execution_mode"] == "exchange_account"
 
 
 @pytest.mark.anyio
@@ -72,6 +75,7 @@ async def test_portfolio_history_route_returns_latest_window_in_ascending_order(
         repo.insert_portfolio_snapshot(
             PortfolioSnapshot(
                 total_value_usdt=1000 + i,
+                execution_mode="exchange_account",
                 snapshot_at=(base + timedelta(minutes=i)).isoformat(),
             )
         )
@@ -81,6 +85,7 @@ async def test_portfolio_history_route_returns_latest_window_in_ascending_order(
     assert resp.status_code == 200
     data = resp.json()
     assert [row["total_value_usdt"] for row in data] == [1001, 1002]
+    assert all(row["execution_mode"] == "exchange_account" for row in data)
     assert [row["snapshot_at"] for row in data] == sorted(row["snapshot_at"] for row in data)
 
 
