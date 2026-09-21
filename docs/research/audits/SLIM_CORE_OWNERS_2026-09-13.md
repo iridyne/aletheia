@@ -268,6 +268,32 @@ consumer/side-effect disposition. The table must not be used as a package-wide
 move list. Named-writer/literal-SQL guards cannot prove arbitrary dynamic SQL,
 runtime call cardinality, deployed holder identity or economic qualification.
 
+### Candidate and Position read-model disposition
+
+These source traces distinguish evidence projection from the producers and
+authority owners whose persisted rows it reads.
+
+| Observed flow | Owner, side effects and movement constraint |
+| --- | --- |
+| `inspect candidate-facts` / candidate diagnosis / profit-gradient evidence → `candidate_facts` | Fixed-horizon first-exposure projection over filter facts and their recorded ancestry. Its standalone builder opens `readonly_db`; an injected connection is borrowed, with `BEGIN DEFERRED` / `ROLLBACK` only when no caller transaction exists. It does not publish Candidates or settle outcomes. Historical Opportunity/PI terminal labels do not define current Planning state. |
+| `control status` coverage → `candidate_coverage_counts` | Uses the caller's read-only connection and window-bounded identity set, streaming historical batch payloads to disprove earlier exposure. Registering the timestamp SQL function changes connection-local behavior, not durable rows. This is a current operator consumer, so the module is not wholly disposable Legacy. |
+| Candidate / Position diagnosis CLI → `profit_loop_diagnosis` | Derives metrics and classifications from supplied facts; does not open a database, run a policy or persist its diagnoses. Candidate fixed-horizon assessment and Position hypothesis-prefix evaluation reuse shared evidence rules. Directional comparisons are not realized settlement or policy authorization. |
+| Report builders / post-trade reviewer / hypothesis research → `trade_attribution` | Joins exact Proposal, Order, source-specific Opportunity or EntryPlan/Candidate ancestry and shared outcome eligibility. Reads historical PI context without creating synthetic Opportunity ancestry for current Universe entries. Report rows also feed case-study writers; the row builder itself does not publish those documents. |
+| Trade-path API / exit-policy report / geometry / Position replay → `trade_path` | Reads exact-instrument candles and persisted protection evidence, deriving excursion bounds and separating post-exit observations from holding-period claims. It does not fetch market data, create protection triggers or close Positions. Replay can supply its connection and explicit as-of cutoff; other callers use repository readers. |
+| Opportunity entry-exit audit / trade-insight R distribution → `entry_exit_geometry` | Verifies stored Proposal/Fill/plan/protection evidence and frozen historical cost arithmetic. The standalone report uses `readonly_db`; trade-insight helpers also pass their read connection. Historical paper-cost reconstruction grants no simulator, settlement or current cost-policy authority. |
+| `inspect factor-feedback` → `factor_feedback` | Retrospective grouping of eligible attribution rows. Labels such as `hard_blocked` describe the report's classification, not a current Candidate filter writer. No caller of this builder in the traced production flow applies those labels to admission. |
+| Family scorecard API / CLI / trade statistics → `family_scorecard` | Aggregates eligible Position outcomes and deduplicated historical shadows. Shadow epoch detection and deduplication are reads, not the similarly located epoch-creation path. The Data API wrapper calls its existing database initializer before the report; this route is not proven physically read-only merely because aggregation uses SELECTs. |
+
+Query-only intent is not proof of connection permissions: attribution, trade-path
+and family report branches can use ordinary repository openers when no read
+connection is supplied. This inventory does not claim package-wide physical
+read-only enforcement or optional-Extension absence safety. The read models do
+not replace Core accounting or the namespaced writers that consume their output.
+Behavioral evidence includes `test_candidate_facts`, `test_candidate_coverage_counts`,
+`test_profit_loop_diagnosis`, `test_trade_attribution`, `test_trade_path`,
+`test_factor_feedback` and `test_exit_policy_advisor`; it is not runtime or
+economic qualification evidence.
+
 ## Canonical mutation seams
 
 These are observed API owners and callers, not a blanket claim that each
