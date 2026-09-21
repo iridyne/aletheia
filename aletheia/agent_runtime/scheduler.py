@@ -22,6 +22,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from aletheia.config.exchanges import execution_mode_environment, is_live_execution_mode
 from aletheia.config.loader import load_config
+from aletheia.trust.learning_safety import is_autonomous_learning_job
 
 logger = logging.getLogger("aletheia.scheduler")
 
@@ -597,16 +598,16 @@ def _run_job_guarded(job_id: str, fn):
     try:
         try:
             from aletheia.learning.control import (
-                is_autonomous_learning_job,
                 learning_job_gate_reason,
                 record_learning_job_skipped,
                 record_learning_job_started,
                 record_learning_job_success,
             )
-        except ImportError:
+        except ImportError as exc:
             # Learning is an optional evidence consumer. Its absence must not
-            # prevent Core scheduler jobs from running or completing.
-            is_autonomous_learning_job = lambda _job_id: False
+            # grant Learning execution or prevent Core jobs from completing.
+            if is_autonomous_learning_job(job_id):
+                raise RuntimeError("learning_control_unavailable") from exc
             learning_job_gate_reason = lambda _job_id: None
             record_learning_job_skipped = lambda *_args, **_kwargs: None
             record_learning_job_started = lambda *_args, **_kwargs: None
