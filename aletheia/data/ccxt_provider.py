@@ -39,6 +39,8 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import contextmanager
+from datetime import datetime, timezone
+import json
 import logging
 import math
 import time
@@ -55,7 +57,12 @@ from aletheia.data.providers import (
     classify_ohlcv_outcome,
     parse_ohlcv_candle,
 )
-from aletheia.data.symbols import InstrumentId, build_instrument_background, to_canonical
+from aletheia.data.symbols import (
+    InstrumentId,
+    build_instrument_background,
+    to_canonical,
+    to_ccxt_perp,
+)
 from aletheia.data.venue_health import (
     VenueCoolingDownError,
     is_venue_available,
@@ -399,6 +406,103 @@ class CCXTProvider:
                 if sell_vol > 0:
                     return buy_vol / sell_vol
         return None
+
+    async def get_funding_observation(
+        self, symbol: str, *, ticker: dict | None = None,
+    ) -> dict | None:
+        """Acquire and normalize one exact-venue funding observation."""
+        from aletheia.data.derivatives_facts import (
+            finite,
+            funding_interval_seconds,
+            instrument_from_market,
+            normalize_funding,
+            provider_source_time,
+        )
+
+        exchange = self._ensure_primary("perp")
+        exchange_id = getattr(exchange, "id", self._primary_name)
+        perp_symbol = to_ccxt_perp(symbol)
+        market = (getattr(exchange, "markets", {}) or {}).get(perp_symbol) or {}
+        if exchange_id == "bitget":
+            info = (ticker or {}).get("info") or {}
+            raw = {
+                "fundingRate": info.get("fundingRate"),
+                "markPrice": info.get("markPrice"),
+                "timestamp": (ticker or {}).get("timestamp"),
+            }
+        else:
+            raw = await asyncio.wait_for(
+                exchange.fetch_funding_rate(perp_symbol), timeout=5.0,
+            )
+        if not isinstance(raw, dict):
+            return None
+
+        received_at = datetime.now(timezone.utc)
+        source_observed_at, source_time_status = provider_source_time(raw, received_at)
+        interval_raw = raw
+        interval_source = "funding_response.interval"
+        if exchange_id == "bitget":
+            hours = (market.get("info") or {}).get("fundInterval")
+            interval_raw = {"interval": f"{hours}h"}
+            interval_source = "bitget.contracts.fundInterval"
+        evidence = normalize_funding(
+            raw,
+            instrument=instrument_from_market(symbol, market),
+            provider="ccxt",
+            venue=exchange_id,
+            acquired_at=received_at,
+            interval_seconds=funding_interval_seconds(interval_raw),
+        )
+        return {
+            "funding_rate": finite(raw.get("fundingRate")),
+            "observed_at": source_observed_at,
+            "source_time_status": source_time_status,
+            "received_at": received_at.isoformat(),
+            "evidence": evidence,
+            "interval_source": interval_source,
+            "interval_raw": interval_raw.get("interval"),
+            "interval_acquired_at": (
+                getattr(exchange, "_candidate_markets_acquired_at", None)
+                if exchange_id == "bitget" else received_at.isoformat()
+            ),
+        }
+
+    async def get_open_interest_observation(self, symbol: str) -> dict | None:
+        """Acquire and normalize one exact-venue open-interest observation."""
+        from aletheia.data.derivatives_facts import (
+            ccxt_metadata,
+            normalize_open_interest,
+            provider_source_time,
+        )
+
+        exchange = self._ensure_primary("perp")
+        perp_symbol = to_ccxt_perp(symbol)
+        raw = await asyncio.wait_for(
+            exchange.fetch_open_interest(perp_symbol), timeout=5.0,
+        )
+        if not isinstance(raw, dict):
+            return None
+        received_at = datetime.now(timezone.utc)
+        source_observed_at, source_time_status = provider_source_time(raw, received_at)
+        market = (getattr(exchange, "markets", {}) or {}).get(perp_symbol) or {}
+        venue = self._primary_name
+        metadata = json.loads(
+            ccxt_metadata(symbol, venue, market, raw, family="open_interest")
+        )
+        fact = normalize_open_interest(
+            raw,
+            instrument=metadata["instrument"],
+            provider="ccxt",
+            venue=venue,
+            acquired_at=received_at,
+            value_unit=metadata.get("oi_unit"),
+        )
+        return {
+            "observed_at": source_observed_at,
+            "source_time_status": source_time_status,
+            "received_at": received_at.isoformat(),
+            "fact": fact,
+        }
 
     async def get_market_instruments(self) -> list[MarketInstrument]:
         exchange = self._ensure_primary()

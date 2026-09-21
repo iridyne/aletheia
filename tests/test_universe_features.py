@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import math
 
 import pytest
 
@@ -476,6 +477,35 @@ async def test_live_funding_override_requires_finite_rate(
                 ),
             }
 
+        async def get_funding_observation(self, _symbol, *, ticker=None):
+            try:
+                parsed_rate = float(live_rate)
+                if not math.isfinite(parsed_rate):
+                    parsed_rate = None
+            except (TypeError, ValueError):
+                parsed_rate = None
+            if isinstance(live_rate, bool):
+                parsed_rate = None
+            observed = now - timedelta(minutes=source_age)
+            return {
+                "funding_rate": parsed_rate,
+                "observed_at": observed.isoformat(),
+                "received_at": now.isoformat(),
+                "evidence": {},
+            }
+
+        async def get_open_interest_observation(self, _symbol):
+            available = venue == "okx"
+            observed = now - timedelta(minutes=source_age)
+            return {
+                "observed_at": observed.isoformat(),
+                "received_at": now.isoformat(),
+                "fact": {
+                    "availability": "available" if available else "unavailable",
+                    "value": 123.0 if available else None,
+                },
+            }
+
     feature = await _fetch_single_feature(
         Exchange(),
         {
@@ -512,7 +542,7 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
     )
     oi_received_at = funding_received_at + timedelta(minutes=1)
     assembled_at = oi_received_at + timedelta(minutes=1)
-    receipt_times = iter([scan_started_at, funding_received_at, oi_received_at, assembled_at])
+    receipt_times = iter([scan_started_at, assembled_at])
 
     class ResponseClock(datetime):
         @classmethod
@@ -544,6 +574,21 @@ async def test_live_derivatives_use_response_receipt_and_snapshot_assembly_time(
                 "openInterestValue": 123.0,
                 "info": {"oiUsd":123},
                 "timestamp": int(oi_received_at.timestamp() * 1000),
+            }
+
+        async def get_funding_observation(self, _symbol, *, ticker=None):
+            return {
+                "funding_rate": -0.0002,
+                "observed_at": funding_received_at.isoformat(),
+                "received_at": funding_received_at.isoformat(),
+                "evidence": {},
+            }
+
+        async def get_open_interest_observation(self, _symbol):
+            return {
+                "observed_at": oi_received_at.isoformat(),
+                "received_at": oi_received_at.isoformat(),
+                "fact": {"availability": "available", "value": 123.0},
             }
 
     snapshots = []

@@ -34,6 +34,25 @@ async def test_universe_live_oi_never_guesses_units(monkeypatch,raw,expected):
             return {'fundingRate':.001,'markPrice':60000,'interval':'8h','timestamp':int(now.timestamp()*1000)}
         async def fetch_open_interest(self,*a,**kw):
             return {**raw,'symbol':'BTC/USDT:USDT','timestamp':int(now.timestamp()*1000)}
+
+        async def get_funding_observation(self, _symbol, *, ticker=None):
+            return {
+                "funding_rate": .001,
+                "observed_at": now.isoformat(),
+                "received_at": now.isoformat(),
+                "evidence": {},
+            }
+
+        async def get_open_interest_observation(self, _symbol):
+            available = raw.get('openInterestValue') == 123 and raw.get('info') == {'oiUsd': '123'}
+            return {
+                "observed_at": now.isoformat(),
+                "received_at": now.isoformat(),
+                "fact": {
+                    "availability": "available" if available else "unavailable",
+                    "value": 123 if available else None,
+                },
+            }
     feature=await _fetch_single_feature(Exchange(),{'id':'btc','symbol':'BTC/USDT','venue':'okx','market_type':'perp'},
         {'bid':99,'ask':101},now,lambda s:s+':USDT',snapshot_buffer=[])
     assert feature['open_interest']==expected

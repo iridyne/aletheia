@@ -21,6 +21,7 @@ from aletheia.storage import repositories as repo
 from aletheia.trading.indicators import rsi, atr, sma, bollinger, volume_sma_ratio
 from aletheia.trading.technical_analysis import TechnicalBar, timeframe_milliseconds
 from aletheia.trading.technical_snapshot_service import get_technical_snapshot_service
+from aletheia.utils.dt import parse_utc
 
 logger = logging.getLogger("aletheia.universe.features")
 
@@ -547,6 +548,8 @@ async def _fetch_single_feature(
     force_persist: bool = False,
     *, diagnostics_out: dict[str, object] | None = None,
     taker_reader: Callable[[str], Awaitable[float | None]] | None = None,
+    funding_reader: Callable[..., Awaitable[dict | None]] | None = None,
+    open_interest_reader: Callable[[str], Awaitable[dict | None]] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -756,84 +759,52 @@ async def _fetch_single_feature(
         oi_row["top_trader_position_ratio"] if oi_row else None
     )
 
-    # P1a: Real-time funding rate for perp-eligible symbols overrides the fresh DB fallback.
-    # P2: Taker buy/sell ratio for perp symbols
+    # P1a: Data owns endpoint acquisition/decoding; Core retains freshness,
+    # stored fallback, proof-version stamping and feature persistence.
+    # P2: Taker buy/sell ratio for perp symbols remains lazily triggered here.
     taker_buy_ratio = None
     if is_perp:
-        perp_sym = to_ccxt_perp(symbol)
+        funding_reader = funding_reader or getattr(exchange, "get_funding_observation", None)
+        open_interest_reader = open_interest_reader or getattr(
+            exchange, "get_open_interest_observation", None,
+        )
         try:
-            if exchange.id == "bitget":
-                info = ticker.get("info") or {}
-                fr_data = {
-                    "fundingRate": info.get("fundingRate"),
-                    "markPrice": info.get("markPrice"),
-                    "timestamp": ticker.get("timestamp"),
-                }
-            else:
-                fr_data = await asyncio.wait_for(
-                    exchange.fetch_funding_rate(perp_sym),
-                    timeout=5.0,
-                )
-            received_at = datetime.now(timezone.utc)
-            if fr_data:
-                live_rate = fr_data.get("fundingRate")
-                if live_rate is not None and not isinstance(live_rate, bool):
-                    live_funding_rate = float(live_rate)
-                    if math.isfinite(live_funding_rate):
-                        observed_at = _provider_observed_at(
-                            fr_data, received_at=received_at,
-                        )
-                        if observed_at and fresh_row(
-                            {"observed_at": observed_at}, "funding", now=received_at,
-                        ):
-                            funding_rate = live_funding_rate
-                            funding_observed_at = observed_at
-                            from aletheia.data.derivatives_facts import (
-                                funding_interval_seconds, instrument_from_market, normalize_funding,
-                            )
-                            from aletheia.universe.candidate_funding import PERP_FUNDING_EVIDENCE_VERSION
-                            market = (getattr(exchange, "markets", {}) or {}).get(perp_sym) or {}
-                            interval_raw = fr_data
-                            interval_source = "funding_response.interval"
-                            if exchange.id == "bitget":
-                                hours = (market.get("info") or {}).get("fundInterval")
-                                interval_raw = {"interval": f"{hours}h"}
-                                interval_source = "bitget.contracts.fundInterval"
-                            funding_evidence = normalize_funding(
-                                fr_data, instrument=instrument_from_market(symbol, market),
-                                provider="ccxt", venue=exchange.id, acquired_at=received_at,
-                                interval_seconds=funding_interval_seconds(interval_raw),
-                            )
-                            funding_evidence.update(
-                                version=PERP_FUNDING_EVIDENCE_VERSION,
-                                interval_source=interval_source,
-                                interval_raw=interval_raw.get("interval"),
-                                interval_acquired_at=(getattr(exchange, "_candidate_markets_acquired_at", None)
-                                                      if exchange.id == "bitget" else received_at.isoformat()),
-                            )
+            if funding_reader is not None:
+                observation = await funding_reader(symbol, ticker=ticker)
+                received_at = parse_utc(observation.get("received_at")) if observation else None
+                observed_at = observation.get("observed_at") if observation else None
+                live_rate = observation.get("funding_rate") if observation else None
+                if (
+                    live_rate is not None and observed_at and received_at
+                    and fresh_row({"observed_at": observed_at}, "funding", now=received_at)
+                ):
+                    funding_rate = live_rate
+                    funding_observed_at = observed_at
+                    from aletheia.universe.candidate_funding import PERP_FUNDING_EVIDENCE_VERSION
+                    funding_evidence = dict(observation.get("evidence") or {})
+                    funding_evidence.update(
+                        version=PERP_FUNDING_EVIDENCE_VERSION,
+                        interval_source=observation.get("interval_source"),
+                        interval_raw=observation.get("interval_raw"),
+                        interval_acquired_at=observation.get("interval_acquired_at"),
+                    )
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
-        # Live and stored OI use the same proved canonical units.
         try:
-            from aletheia.data.derivatives_facts import ccxt_metadata, normalize_open_interest
-            oi_data = await asyncio.wait_for(
-                exchange.fetch_open_interest(perp_sym),
-                timeout=5.0,
-            )
-            received_at = datetime.now(timezone.utc)
-            observed_at = _provider_observed_at(
-                oi_data or {}, received_at=received_at,
-            )
-            if observed_at and fresh_row(
-                {"observed_at": observed_at}, "open_interest", now=received_at,
-            ):
-                market = (getattr(exchange, 'markets', {}) or {}).get(perp_sym) or {}
-                proof = json.loads(ccxt_metadata(symbol, venue, market, oi_data or {}, family='open_interest'))
-                fact = normalize_open_interest(oi_data or {}, instrument=proof['instrument'],
-                    provider='ccxt', venue=venue, acquired_at=received_at, value_unit=proof['oi_unit'])
-                if fact['availability'] == 'available':
-                    open_interest = fact['value']
+            if open_interest_reader is not None:
+                observation = await open_interest_reader(symbol)
+                received_at = parse_utc(observation.get("received_at")) if observation else None
+                observed_at = observation.get("observed_at") if observation else None
+                fact = observation.get("fact") if observation else None
+                if (
+                    fact and fact.get("availability") == "available"
+                    and observed_at and received_at
+                    and fresh_row(
+                        {"observed_at": observed_at}, "open_interest", now=received_at,
+                    )
+                ):
+                    open_interest = fact.get("value")
         except Exception:
             pass  # Keep only a freshness-qualified DB value as fallback.
 
@@ -1171,6 +1142,10 @@ async def collect_features(
                         diagnostics_out=local_diagnostics,
                         taker_reader=(getattr(perp_provider, "get_taker_buy_ratio", None)
                                       if _is_derivatives_market(asset.get("market_type")) else None),
+                        funding_reader=(getattr(perp_provider, "get_funding_observation", None)
+                                        if _is_derivatives_market(asset.get("market_type")) else None),
+                        open_interest_reader=(getattr(perp_provider, "get_open_interest_observation", None)
+                                              if _is_derivatives_market(asset.get("market_type")) else None),
                     )
                 except Exception as e:
                     local_diagnostics["ohlcv_unavailable"] = 1
