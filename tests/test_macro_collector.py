@@ -15,8 +15,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
-import aletheia.data.collectors.macro as macro_mod
-from aletheia.data.collectors.macro import MacroCollector, _fetch_fng
+import extensions.data.collectors.macro as macro_mod
+from extensions.data.collectors.macro import MacroCollector, _fetch_fng
 
 
 # ---------------------------------------------------------------------------

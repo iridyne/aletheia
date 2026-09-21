@@ -41,6 +41,14 @@ This boundary is not yet universal. Remaining exceptions include `aletheia/data/
 
 ## Public market-data contract
 
+Macro/FRED and Coinalyze acquisition lives in `extensions/data/collectors`.
+These concrete adapters retain the owner-approved exception to resolve only
+their own credential reference; Core consumers receive facts, not raw keys.
+Scheduler composition owns cadence and snapshot persistence. Doctor calls the
+optional Coinalyze presence probe and reports unavailable if the adapter is absent.
+Existing FRED attempt provenance and Coinalyze Learning policy-epoch behavior
+remain unchanged; neither adapter is claimed to be entirely side-effect-free.
+
 ### Canonical values
 
 Current canonical market-data models include:

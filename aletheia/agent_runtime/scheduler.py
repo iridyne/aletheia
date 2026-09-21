@@ -4325,12 +4325,12 @@ async def _async_data_collector_context(cfg, tick: int) -> dict[str, object]:
     persistence remains synchronous and therefore serial on the same thread.
     """
     import time as _time
-    from aletheia.data.collectors.coinalyze import CoinalyzeCollector
+    from extensions.data.collectors.coinalyze import CoinalyzeCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from extensions.data.collectors.defillama import DefiLlamaCollector
     from extensions.data.collectors.hyperliquid import HyperliquidCollector
-    from aletheia.data.collectors.macro import MacroCollector
+    from extensions.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.options_structure import OptionsStructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
     from aletheia.storage import repositories as repo

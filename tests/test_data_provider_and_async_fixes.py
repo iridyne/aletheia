@@ -104,7 +104,7 @@ async def test_macro_collector_runs_yfinance_off_loop(monkeypatch):
     so the blocking work is off-loop and all four tickers are concurrent.
     Assert this by making _fetch_one_tradfi_ticker block for a bit and running a
     competing async task in parallel — if the loop is stalled, the task can't tick."""
-    from aletheia.data.collectors import macro as _macro
+    from extensions.data.collectors import macro as _macro
 
     STALL_SEC = 0.5
 

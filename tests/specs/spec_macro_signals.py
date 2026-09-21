@@ -28,7 +28,7 @@ from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
 _DERIVATIVES = _ROOT / "aletheia" / "data" / "collectors" / "derivatives.py"
-_MACRO = _ROOT / "aletheia" / "data" / "collectors" / "macro.py"
+_MACRO = _ROOT / "extensions" / "data" / "collectors" / "macro.py"
 _CG_TOP = _ROOT / "extensions" / "data" / "collectors" / "coingecko_top.py"
 _MODELS = _ROOT / "aletheia" / "data" / "models.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
@@ -186,7 +186,7 @@ async def test_fng_failure_isolated_from_other_fields(monkeypatch):
     from types import SimpleNamespace
 
     import aletheia.config.loader as loader
-    from aletheia.data.collectors import macro as mod
+    from extensions.data.collectors import macro as mod
 
     async def fake_coingecko():
         return 52.0, 2_000_000_000_000.0, 1.5

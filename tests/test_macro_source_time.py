@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from aletheia.data.collectors import macro
+from extensions.data.collectors import macro
 from aletheia.data.context_builder import build_market_context_from_db
 from aletheia.data.freshness import fresh_row
 from extensions.regime.collector import _get_latest_vix
@@ -25,7 +25,7 @@ def test_stored_macro_context_survives_absent_collector(monkeypatch):
     real_import = builtins.__import__
 
     def without_collector(name, *args, **kwargs):
-        if name == 'aletheia.data.collectors.macro':
+        if name == 'extensions.data.collectors.macro':
             raise ModuleNotFoundError(name, name=name)
         return real_import(name, *args, **kwargs)
 

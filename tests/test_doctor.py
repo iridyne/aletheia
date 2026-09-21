@@ -362,6 +362,34 @@ def test_db_capacity_reports_wal_backlog_before_normal_size_labels():
     assert "remaining" in hint or "checkpoint" in hint
 
 
+def test_doctor_reports_absent_coinalyze_without_reading_credentials(tmp_path, monkeypatch):
+    import builtins
+
+    setup_env(tmp_path, monkeypatch)
+    original_import = builtins.__import__
+    missing = "extensions.data.collectors.coinalyze"
+    requested = []
+
+    def without_adapter(name, *args, **kwargs):
+        if name == missing:
+            raise ModuleNotFoundError(missing, name=missing)
+        return original_import(name, *args, **kwargs)
+
+    def forbidden_secret(_key):
+        requested.append(_key)
+        raise AssertionError("absent adapter must not resolve credentials")
+
+    monkeypatch.setattr(builtins, "__import__", without_adapter)
+    monkeypatch.setattr("aletheia.config.secrets.get_secret", forbidden_secret)
+    report = dx.Report(generated_at="t")
+    dx._probe_coinalyze(report)
+    checks = {c.name: c for c in report.checks}
+    assert checks["data.coinalyze"].severity == "info"
+    assert missing in checks["data.coinalyze"].detail
+    assert "could not read" in checks["data.coinalyze"].detail
+    assert not requested
+
+
 def test_doctor_reports_unconfigured_coinalyze_as_info(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     monkeypatch.setattr("aletheia.config.secrets.get_secret", lambda _key: None)

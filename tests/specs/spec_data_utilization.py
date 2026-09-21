@@ -556,7 +556,7 @@ def test_cross_venue_funding_omitted_when_no_hl_data():
 @spec_claim(
     SpecClaim(
         "DU-C01", _CONTRACT, "§coinalyze collector", "L2a",
-        "CoinalyzeCollector exists at aletheia/data/collectors/coinalyze.py and "
+        "CoinalyzeCollector exists at extensions/data/collectors/coinalyze.py and "
         "exposes a collect() method — the structural entry point that routes "
         "Coinalyze liquidation and cross-venue OI data into liquidation_events "
         "and open_interest_snapshots so existing downstream consumers "
@@ -565,9 +565,9 @@ def test_cross_venue_funding_omitted_when_no_hl_data():
     ),
 )
 def test_coinalyze_collector_exists():
-    mod = importlib.import_module("aletheia.data.collectors.coinalyze")
+    mod = importlib.import_module("extensions.data.collectors.coinalyze")
     assert hasattr(mod, "CoinalyzeCollector"), (
-        "CoinalyzeCollector class must exist in aletheia.data.collectors.coinalyze"
+        "CoinalyzeCollector class must exist in extensions.data.collectors.coinalyze"
     )
     collector = mod.CoinalyzeCollector()
     assert hasattr(collector, "collect"), "CoinalyzeCollector must have a collect() method"
@@ -650,13 +650,14 @@ def test_yfinance_provider_declared_in_utilization_doc():
 def test_regime_is_inline_not_separate_collector():
     """Macro labels share one projection; no standalone RegimeCollector class."""
     collectors_dir = _ROOT / "aletheia" / "data" / "collectors"
-    regime_files = list(collectors_dir.glob("*regime*"))
+    extension_collectors = _ROOT / "extensions" / "data" / "collectors"
+    regime_files = list(collectors_dir.glob("*regime*")) + list(extension_collectors.glob("*regime*"))
     assert not regime_files, (
         f"Unexpected RegimeCollector file(s): {regime_files}. "
         "Macro labels must remain a projection, not a second collector."
     )
 
-    macro_py = collectors_dir / "macro.py"
+    macro_py = extension_collectors / "macro.py"
     macro_src = macro_py.read_text(encoding="utf-8")
     assert "fresh_macro_row" in macro_src
     assert "def _classify_risk_regime" not in macro_src
@@ -668,7 +669,7 @@ def test_regime_is_inline_not_separate_collector():
     ))
     assert projected["risk_regime"] == "risk_off"
 
-    for py_file in (_ROOT / "aletheia").rglob("*.py"):
+    for py_file in list((_ROOT / "aletheia").rglob("*.py")) + list((_ROOT / "extensions").rglob("*.py")):
         text = py_file.read_text(encoding="utf-8", errors="ignore")
         assert "class RegimeCollector" not in text, (
             f"{py_file}: RegimeCollector must not exist as a class "

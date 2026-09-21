@@ -486,7 +486,7 @@ def test_symbol_independent_context_collectors_run_without_instruments(monkeypat
     from aletheia.agent_runtime import scheduler
     from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from extensions.data.collectors.defillama import DefiLlamaCollector
-    from aletheia.data.collectors.macro import MacroCollector
+    from extensions.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.options_structure import OptionsStructureCollector
 
     cfg = SimpleNamespace(
@@ -553,7 +553,7 @@ def test_shadow_context_lane_does_not_inherit_exhausted_core_budget(monkeypatch)
     from extensions.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.derivatives import DerivativesCollector
     from extensions.data.collectors.hyperliquid import HyperliquidCollector
-    from aletheia.data.collectors.macro import MacroCollector
+    from extensions.data.collectors.macro import MacroCollector
     from aletheia.data.collectors.microstructure import MicrostructureCollector
     from aletheia.data.collectors.volume_scanner import VolumeScannerCollector
 
