@@ -571,7 +571,7 @@ PnL 读取已拆出 `today_raw_closed_realized_pnl()` 与 `today_eligible_strate
 
 已知 synthetic reason 的分类优先于行上其他字段，不能用 `outcome_eligible=1` 覆盖
 `reconciled_gone` 或 maintenance reason。无结构化证据的旧行是 `legacy_unverified_close`，PnL 数值本身
-不能证明退出。现有 `analytics.close_reasons` 只是兼容 facade，reason registry 只在中央模块维护。
+不能证明退出。reason registry 只在中央模块维护，消费者直接读取 `analytics.outcome_integrity`。
 Operator、KPI、Risk、API/UI 等行为消费者已迁移并由 `OI-C02~C04` 的枚举式架构测试约束；
 新增消费者仍必须显式选择这三种读取口径之一。
 

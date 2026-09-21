@@ -32,9 +32,8 @@ _MIN_LOSS_RATE_FOR_GUARD = 0.7  # 70% losing trades with same factor pattern
 # TPSL fill keeps its genuine close_reason (stop_loss/take_profit) and is NOT synthetic
 # — we filter on the reason, not on whether the close went through the reconciler.
 # (junk-data sweep B3, 2026-06-28 — see LP-S08.)
-# Single source of truth in analytics/close_reasons.py (2026-07-01 consolidation);
-# re-exported here for backwards compatibility with existing call sites/tests.
-from aletheia.analytics.close_reasons import SYNTHETIC_CLOSE_REASONS as _SYNTHETIC_CLOSE_REASONS
+# Share the central closure registry without a forwarding module.
+from aletheia.analytics.outcome_integrity import SYNTHETIC_CLOSE_REASONS as _SYNTHETIC_CLOSE_REASONS
 
 
 def _is_synthetic_closure(row: dict) -> bool:

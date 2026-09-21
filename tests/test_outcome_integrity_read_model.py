@@ -417,14 +417,17 @@ def test_learning_realized_assessment_composes_central_semantics():
     assert assess_realized_position({**clean, "close_reason": "reconciled_gone"}).eligible is False
 
 
-def test_close_reason_compatibility_api_delegates_to_central_registry():
-    from aletheia.analytics.close_reasons import (
+def test_close_reason_consumers_use_central_registry_without_facade():
+    from importlib.util import find_spec
+
+    from aletheia.analytics.outcome_integrity import (
         SYNTHETIC_CLOSE_REASONS,
         is_synthetic_close,
     )
-    from aletheia.analytics.outcome_integrity import SYNTHETIC_CLOSE_REASONS as CENTRAL
+    from aletheia.analytics.trade_case_builder import _SYNTHETIC_CLOSE_REASONS
 
-    assert SYNTHETIC_CLOSE_REASONS is CENTRAL
+    assert find_spec("aletheia.analytics.close_reasons") is None
+    assert _SYNTHETIC_CLOSE_REASONS is SYNTHETIC_CLOSE_REASONS
     assert is_synthetic_close("reconciled_gone")
     assert not is_synthetic_close("take_profit")
 
