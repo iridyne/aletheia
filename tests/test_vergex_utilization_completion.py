@@ -161,12 +161,15 @@ async def test_feature_collector_fetches_and_persists_15m_1h_4h(tmp_path, monkey
         "VALUES ('asset-btc', 'okx', 'spot', 'BTC/USDT')"
     )
     db.commit()
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = FakeExchange()
     feat = await _fetch_single_feature(
-        FakeExchange(),
+        exchange,
         {"id": "asset-btc", "venue": "okx", "market_type": "spot", "symbol": "BTC/USDT"},
         {"quoteVolume": 1_000_000.0, "bid": 109.8, "ask": 110.0},
         now,
         lambda symbol: symbol,
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feat is not None
@@ -258,8 +261,10 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
         (json.dumps({"instrument_background": background}),),
     )
     db.commit()
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = FakeExchange()
     feature = await _fetch_single_feature(
-        FakeExchange(),
+        exchange,
         {
             "id": "asset-soxl", "venue": "binance", "market_type": "perp",
             "symbol": "SOXL/USDT",
@@ -271,6 +276,7 @@ async def test_stock_linked_feature_keeps_local_data_and_omits_btc_context(
         btc_return_24h=20.0,
         btc_return_4h=10.0,
         btc_closes_1h=[float(index) for index in range(1, 169)],
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feature is not None
@@ -329,9 +335,11 @@ async def test_pending_feature_refresh_bypasses_recent_row_suppression(
     )
     db.commit()
     buffered: list[UniverseFeatureSnapshot] = []
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = FakeExchange()
 
     feature = await _fetch_single_feature(
-        FakeExchange(),
+        exchange,
         {
             "id": "asset-priority",
             "venue": "okx",
@@ -343,6 +351,7 @@ async def test_pending_feature_refresh_bypasses_recent_row_suppression(
         lambda symbol: symbol,
         snapshot_buffer=buffered,
         force_persist=True,
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feature is not None
@@ -398,9 +407,11 @@ async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
     )
     db.commit()
     buffered: list[UniverseFeatureSnapshot] = []
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = PartialExchange()
 
     feature = await _fetch_single_feature(
-        PartialExchange(),
+        exchange,
         {
             "id": "asset-partial",
             "venue": "okx",
@@ -412,6 +423,7 @@ async def test_pending_feature_refresh_retains_complete_row_when_4h_fails(
         lambda symbol: symbol,
         snapshot_buffer=buffered,
         force_persist=True,
+        ohlcv_reader=observation_reader(exchange),
     )
 
     assert feature is None

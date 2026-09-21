@@ -53,8 +53,11 @@ async def test_universe_live_oi_never_guesses_units(monkeypatch,raw,expected):
                     "value": 123 if available else None,
                 },
             }
-    feature=await _fetch_single_feature(Exchange(),{'id':'btc','symbol':'BTC/USDT','venue':'okx','market_type':'perp'},
-        {'bid':99,'ask':101},now,lambda s:s+':USDT',snapshot_buffer=[])
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = Exchange()
+    feature=await _fetch_single_feature(exchange,{'id':'btc','symbol':'BTC/USDT','venue':'okx','market_type':'perp'},
+        {'bid':99,'ask':101},now,lambda s:s+':USDT',snapshot_buffer=[],
+        ohlcv_reader=observation_reader(exchange))
     assert feature['open_interest']==expected
     assert feature['feature_snapshot_id'] != 'old-feature'
 

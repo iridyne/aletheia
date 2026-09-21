@@ -10,6 +10,8 @@ Primary/fallback: each fetch tries the primary exchange, and on failure retries 
 the configured fallback. Venue-pinned xStock listing checks still enter through
 ``get_market_data_provider(native_ccxt=True, fallback_exchange=exchange)`` so they keep
 the managed session and malformed-market guard without substituting another venue.
+The optional ``get_ohlcv_observation`` capability is deliberately primary-only and
+does not enter this fallback loop.
 
 Documented direct-construction sites (routing through the factory would either be wrong
 or lack the CCXT-native surface they need - 2026-07-07 audit, #49):
@@ -19,8 +21,8 @@ or lack the CCXT-native surface they need - 2026-07-07 audit, #49):
 - ``universe/features.py::collect_features``: uses
   ``CCXTProvider(exchange=md.ccxt_exchange, fallback_exchange=md.ccxt_fallback)`` — same
   config resolution as the factory, but the factory returns a ``FallbackChainProvider``
-  whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. #91 fix
-  aligned the fallback exchange resolution with the factory so the two agree.
+  whose surface lacks ``_ensure_primary`` + ``load_markets`` these callers need. The
+  feature observation capabilities pin their own reads to the primary venue.
 
 Registry sync uses the existing Core factory's exact-venue selection and the
 normalized ``get_market_instruments`` capability. It loads primary metadata
@@ -621,17 +623,79 @@ class CCXTProvider:
         timeframe: str = "1h",
         limit: int = 100,
         since: int | None = None,
+        *,
+        use_cache: bool = True,
     ) -> OHLCVResult:
-        """Fetch OHLCV without changing venue health or market-data history."""
+        """Fetch fresh primary-venue OHLCV without fallback or durable writes."""
+        ccxt_symbol, canon, mkt = _resolve_ccxt_symbol(symbol)
 
-        return await self.get_ohlcv(
-            symbol,
-            timeframe=timeframe,
-            limit=limit,
-            since=since,
-            _record_venue_health=False,
-            _persist_result=False,
-        )
+        from aletheia.data.cache import get_cache
+
+        cache = get_cache()
+        if use_cache and since is None:
+            cached = cache.get(
+                canon, timeframe, limit,
+                market_type=mkt, exchange=self._primary_name,
+            )
+            if cached is not None:
+                return _cached_ohlcv_result(cached, limit)
+
+        if not is_venue_available(self._primary_name):
+            exc = VenueCoolingDownError(
+                f"market-data venue cooling down: {self._primary_name}"
+            )
+            exc.ohlcv_attempts = (OHLCVAttempt(  # type: ignore[attr-defined]
+                provider=self._primary_name,
+                outcome="failed",
+                reason=type(exc).__name__,
+            ),)
+            raise exc
+
+        exchange = self._ensure_primary(mkt)
+        try:
+            with self._market_type_context(exchange, mkt):
+                raw = await exchange.fetch_ohlcv(
+                    ccxt_symbol, timeframe=timeframe, since=since, limit=limit,
+                )
+            parsed = [
+                parse_ohlcv_candle(row, provider="ccxt", exchange=self._primary_name)
+                for row in raw
+            ]
+            candles = [candle for candle in parsed if candle is not None]
+            rejected = len(parsed) - len(candles)
+            attempt = OHLCVAttempt(
+                provider=self._primary_name,
+                outcome=classify_ohlcv_outcome(
+                    accepted=len(candles), rejected=rejected, requested=limit,
+                ),
+                accepted=len(candles),
+                rejected=rejected,
+            )
+            if candles:
+                tf_ms = providers.timeframe_ms(timeframe)
+                if tf_ms > 0 and candles[-1].timestamp + tf_ms > int(time.time() * 1000):
+                    candles[-1].is_closed = False
+            result = OHLCVResult(
+                candles,
+                requested=limit,
+                rejected=rejected,
+                attempts=(attempt,),
+                source="provider_fetch",
+            )
+            if use_cache and since is None:
+                cache.set(
+                    canon, timeframe, limit, result,
+                    market_type=mkt, exchange=self._primary_name,
+                )
+            return result
+        except Exception as exc:  # noqa: BLE001 — preserve one exact-venue attempt
+            attempt = OHLCVAttempt(
+                provider=self._primary_name,
+                outcome="failed",
+                reason=type(exc).__name__,
+            )
+            exc.ohlcv_attempts = (attempt,)  # type: ignore[attr-defined]
+            raise
 
     @staticmethod
     def _persist(

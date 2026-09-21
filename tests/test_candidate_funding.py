@@ -150,13 +150,16 @@ async def test_bitget_feature_freezes_same_ticker_and_existing_contract_interval
         async def get_open_interest_observation(self, _symbol):
             return None
 
+    from tests.ohlcv_test_helpers import observation_reader
+    exchange = Exchange()
     feature = await _fetch_single_feature(
-        Exchange(),
+        exchange,
         dict(id="btc", symbol="BTC/USDT", venue="bitget", market_type="perp"),
         dict(bid=99, ask=101, timestamp=int(now.timestamp() * 1000), info={"fundingRate": ".001"}),
         now,
         lambda s: s + ":USDT",
         snapshot_buffer=[],
+        ohlcv_reader=observation_reader(exchange),
     )
     assert feature["funding_rate"] == 0.001
     row = {

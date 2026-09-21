@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from aletheia.config.schema import AletheiaConfig
 from aletheia.data.freshness import fresh_row
 from aletheia.data.symbols import (
+    InstrumentId,
     instrument_analysis_context,
     instrument_background_from_metadata,
 )
@@ -520,6 +521,28 @@ async def _fetch_feature_orderbook(
         return None
 
 
+def _observed_candle_rows(result, *, venue: str) -> list:
+    """Convert closed, exact-venue observations to legacy feature rows."""
+    rows = []
+    for candle in result or ():
+        if (
+            str(getattr(candle, "exchange", "") or "").lower() != venue.lower()
+            or not str(getattr(candle, "provider", "") or "").strip()
+        ):
+            return []
+        if not getattr(candle, "is_closed", True):
+            continue
+        rows.append([
+            candle.timestamp,
+            candle.open,
+            candle.high,
+            candle.low,
+            candle.close,
+            candle.volume,
+        ])
+    return rows
+
+
 async def _fetch_single_feature(
     exchange, asset: dict, ticker: dict, now: datetime, to_ccxt_perp,
     btc_return_24h: float | None = None,
@@ -532,6 +555,7 @@ async def _fetch_single_feature(
     funding_reader: Callable[..., Awaitable[dict | None]] | None = None,
     open_interest_reader: Callable[[str], Awaitable[dict | None]] | None = None,
     orderbook_reader: Callable[..., Awaitable[dict | None]] | None = None,
+    ohlcv_reader: Callable[..., Awaitable[list]] | None = None,
 ) -> dict | None:
     """Fetch OHLCV + enrich for a single asset. Returns feature dict or None."""
     symbol = asset.get("symbol", "")
@@ -539,6 +563,8 @@ async def _fetch_single_feature(
     is_perp = _is_derivatives_market(asset.get("market_type"))
 
     ccxt_sym = to_ccxt_perp(symbol) if is_perp else symbol
+    venue = str(asset.get("venue") or getattr(exchange, "id", "unknown"))
+    market_type = str(asset.get("market_type") or "spot")
 
     quote_volume_24h = _quote_volume_24h(exchange, ccxt_sym, ticker)
     bid = ticker.get("bid")
@@ -551,28 +577,34 @@ async def _fetch_single_feature(
     ohlcv_15m = []
     ohlcv_1h = []
     ohlcv_4h = []
-    try:
-        ohlcv_15m = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="15m", limit=_OHLCV_15M_LIMIT),
+
+    async def _read_ohlcv(timeframe: str, limit: int) -> list:
+        if ohlcv_reader is None:
+            return []
+        result = await asyncio.wait_for(
+            ohlcv_reader(
+                InstrumentId.from_parts(venue, symbol, market_type),
+                timeframe=timeframe,
+                limit=limit,
+                use_cache=False,
+            ),
             timeout=_OHLCV_TIMEOUT,
         )
+        return _observed_candle_rows(result, venue=venue)
+
+    try:
+        ohlcv_15m = await _read_ohlcv("15m", _OHLCV_15M_LIMIT)
     except Exception as exc:
         logger.debug("Discovery OHLCV 15m unavailable: %s", type(exc).__name__)
 
     try:
-        ohlcv_1h = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="1h", limit=_OHLCV_1H_LIMIT),
-            timeout=_OHLCV_TIMEOUT,
-        )
+        ohlcv_1h = await _read_ohlcv("1h", _OHLCV_1H_LIMIT)
     except Exception as exc:
         logger.debug("Discovery OHLCV 1h unavailable: %s", type(exc).__name__)
 
     # P1b: 4h candles for multi-timeframe features
     try:
-        ohlcv_4h = await asyncio.wait_for(
-            exchange.fetch_ohlcv(ccxt_sym, timeframe="4h", limit=50),
-            timeout=_OHLCV_TIMEOUT,
-        )
+        ohlcv_4h = await _read_ohlcv("4h", 50)
     except Exception as exc:
         logger.debug("Discovery OHLCV 4h unavailable: %s", type(exc).__name__)
 
@@ -602,8 +634,6 @@ async def _fetch_single_feature(
             for c in rows
         ]
 
-    venue = str(asset.get("venue") or getattr(exchange, "id", "unknown"))
-    market_type = str(asset.get("market_type") or "spot")
     from aletheia.data.providers import parse_ohlcv_candle
 
     # Persist the exact closed inputs before handing their features to planning.
@@ -1002,8 +1032,8 @@ async def collect_features(
     from aletheia.data.ccxt_provider import CCXTProvider
     from aletheia.data.symbols import to_ccxt_perp
 
-    # #91 fix (features.py counterpart to registry.py): use market_data.ccxt_fallback
-    # instead of same-exchange fallback so a primary outage falls through cleanly.
+    # Feature observation capabilities pin their external reads to the primary
+    # venue; ordinary provider fallback remains configured for other consumers.
     md = cfg.market_data
     venue = md.ccxt_exchange
     fallback_venue = md.ccxt_fallback or venue
@@ -1091,12 +1121,19 @@ async def collect_features(
         )
         if needs_btc_context and spot_exchange is not None:
             try:
-                btc_ohlcv = await asyncio.wait_for(
-                    spot_exchange.fetch_ohlcv(
-                        "BTC/USDT", timeframe="1h", limit=_OHLCV_1H_LIMIT
-                    ),
-                    timeout=_OHLCV_TIMEOUT,
-                )
+                btc_reader = getattr(spot_provider, "get_ohlcv_observation", None)
+                btc_ohlcv = []
+                if btc_reader is not None:
+                    btc_result = await asyncio.wait_for(
+                        btc_reader(
+                            InstrumentId.from_parts(venue, "BTC/USDT", "spot"),
+                            timeframe="1h",
+                            limit=_OHLCV_1H_LIMIT,
+                            use_cache=False,
+                        ),
+                        timeout=_OHLCV_TIMEOUT,
+                    )
+                    btc_ohlcv = _observed_candle_rows(btc_result, venue=venue)
                 if btc_ohlcv:
                     btc_closes_1h = [float(c[4]) for c in btc_ohlcv]
                     btc_return_24h = _pct_return(btc_closes_1h, 24)
@@ -1137,6 +1174,11 @@ async def collect_features(
                                         if _is_derivatives_market(asset.get("market_type")) else None),
                         open_interest_reader=(getattr(perp_provider, "get_open_interest_observation", None)
                                               if _is_derivatives_market(asset.get("market_type")) else None),
+                        ohlcv_reader=(getattr(
+                            perp_provider if _is_derivatives_market(asset.get("market_type")) else spot_provider,
+                            "get_ohlcv_observation",
+                            None,
+                        )),
                         orderbook_reader=(getattr(
                             perp_provider if _is_derivatives_market(asset.get("market_type")) else spot_provider,
                             "get_orderbook_observation",
