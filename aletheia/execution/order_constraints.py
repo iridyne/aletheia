@@ -29,6 +29,10 @@ _cache_lock = threading.Lock()
 class ConstraintUnavailable(RuntimeError):
     """The authoritative venue rules cannot safely be used for this order."""
 
+    def __init__(self, message: str, *, temporary: bool = False) -> None:
+        super().__init__(message)
+        self.temporary = temporary
+
 
 @dataclass(frozen=True)
 class OrderConstraints:

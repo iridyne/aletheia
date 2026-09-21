@@ -14,7 +14,7 @@ from aletheia.config.exchanges import (
 )
 from aletheia.risk.engine import ProposalIntegrityError, evaluate_proposal
 from aletheia.execution.errors import PostSubmitDBError, SubmissionUnknownError
-from aletheia.exchanges.submission_errors import is_ambiguous_submission_error
+from aletheia.execution.errors import is_transient_dependency_error
 from aletheia.execution import venue_capabilities as _venue_capabilities
 from aletheia.execution.post_commit_audit import (
     write_post_commit_audit as _write_best_effort_post_commit_audit,
@@ -147,7 +147,7 @@ def _prepare_exchange_quantity(
             **({"allow_increase": False} if not allow_increase else {}),
         ), None
     except ConstraintUnavailable as exc:
-        if not allow_increase and is_ambiguous_submission_error(exc):
+        if not allow_increase and is_transient_dependency_error(exc):
             # Entry keeps transient venue metadata failures in preparation WAIT.
             raise
         logger.warning("Exchange order constraints unavailable for %s/%s: %s", execution_mode, symbol, exc)
@@ -1555,7 +1555,7 @@ def _execute_proposal(
             exception=exc,
         )
     except Exception as exc:
-        if execution_receipt and is_ambiguous_submission_error(exc):
+        if execution_receipt and is_transient_dependency_error(exc):
             return _wait_for_entry_market(proposal, owner_token, execution_receipt, "entry_preparation_dependency_unavailable")
         return _terminal_execution_error(
             proposal,
@@ -1652,7 +1652,7 @@ def _execute_proposal(
                 )
                 if recovered is not None:
                     return recovered
-                if execution_receipt and is_ambiguous_submission_error(e):
+                if execution_receipt and is_transient_dependency_error(e):
                     return _wait_for_entry_market(proposal, owner_token, execution_receipt, "entry_preparation_dependency_unavailable")
                 exchange_oid = getattr(e, "exchange_order_id", None)
                 failure_reason = ("entry_plan_price_invalidated"

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
+import httpx
+
+from aletheia.execution.order_constraints import ConstraintUnavailable
+
 
 class PostSubmitDBError(RuntimeError):
     """Order submitted to the exchange OK, but a subsequent local DB write
@@ -37,3 +43,47 @@ class SubmissionUnknownError(RuntimeError):
         super().__init__(message)
         self.exchange_order_id = exchange_order_id
         self.client_oid = client_oid
+
+
+def is_transient_dependency_error(error: BaseException) -> bool:
+    """Classify preparation dependency failures without importing Exchange code."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, ConstraintUnavailable) and current.temporary:
+            return True
+        if isinstance(
+            current,
+            (
+                httpx.RequestError,
+                json.JSONDecodeError,
+                UnicodeError,
+                TimeoutError,
+                ConnectionError,
+                BrokenPipeError,
+            ),
+        ):
+            return True
+        if isinstance(current, httpx.HTTPStatusError):
+            response = current.response
+            if response is not None and response.status_code >= 500:
+                return True
+
+        # Preserve generic transport classification through sanitized wrappers.
+        name = type(current).__name__.lower()
+        if any(
+            marker in name
+            for marker in (
+                "timeout",
+                "connection",
+                "transport",
+                "network",
+                "readerror",
+                "writeerror",
+                "protocolerror",
+                "brokenpipe",
+                "eoferror",
+            )
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
