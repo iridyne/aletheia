@@ -230,6 +230,10 @@ def create_native_protection_reader(execution_mode: str, *, expected_account: UT
 
 def bind_uta_provider() -> None:
     """Bind factories only; resolve no credentials and create no clients here."""
+    from aletheia.execution.order_constraints import configure_order_constraints_reader
+    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+
+    configure_order_constraints_reader(read_order_constraints)
     configure_uta_provider(
         registry_factory=build_uta_registry,
         retention_contract=funding_history_retention_contract,

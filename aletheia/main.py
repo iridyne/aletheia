@@ -67,6 +67,7 @@ def _configure_runtime() -> None:
         configure_market_data_factory(create_market_data_provider)
 
     from aletheia.uta.manager import configure_uta_provider
+    from aletheia.execution.order_constraints import configure_order_constraints_reader
 
     try:
         from aletheia.exchanges.composition import bind_uta_provider
@@ -74,6 +75,7 @@ def _configure_runtime() -> None:
         if exc.name not in {"aletheia.exchanges", "aletheia.exchanges.composition"}:
             raise
         configure_uta_provider(registry_factory=None, retention_contract=None)
+        configure_order_constraints_reader(None)
     else:
         bind_uta_provider()
 

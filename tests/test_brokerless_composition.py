@@ -16,12 +16,14 @@ import importlib
 import socket
 import sys
 from aletheia.uta import manager
+from aletheia.execution import order_constraints
 from aletheia.config import secrets
 
 def forbidden(*args, **kwargs):
     raise AssertionError("composition must not query credentials, clients, or old bindings")
 secrets.get_secret = forbidden
 socket.socket.connect = forbidden
+order_constraints.configure_order_constraints_reader(forbidden)
 manager.configure_uta_provider(
     registry_factory=forbidden, retention_contract=forbidden,
     credential_revision_reader=forbidden, credential_presence_reader=forbidden,
@@ -65,6 +67,7 @@ else:
     assert manager._retention_contract is None
     assert manager._credential_revision_reader is None
     assert manager._native_protection_reader_factory is None
+    assert order_constraints._constraints_reader is None
     try:
         manager.create_uta_adapter("bitget_demo")
     except KeyError:

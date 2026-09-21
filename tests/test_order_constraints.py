@@ -22,7 +22,7 @@ def _market(**overrides):
 
 
 def test_constraints_are_converted_from_contracts_to_internal_coin_units():
-    from aletheia.execution.order_constraints import constraints_from_market
+    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
 
     constraints = constraints_from_market(
         venue="okx", symbol="BTC/USDT", market_type="usdt_futures",
@@ -35,7 +35,7 @@ def test_constraints_are_converted_from_contracts_to_internal_coin_units():
 
 
 def test_bitget_spot_zero_min_amount_uses_its_published_minimum_notional():
-    from aletheia.execution.order_constraints import constraints_from_market
+    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
 
     market = _market(
         spot=True, swap=False, contractSize=None,
@@ -68,9 +68,10 @@ def test_quantity_is_rounded_up_to_step_and_minimum_notional():
 
 def test_missing_price_or_unsupported_precision_rejects_fail_closed():
     from aletheia.execution.order_constraints import (
-        ConstraintUnavailable, constraints_from_market, normalize_quantity,
+        ConstraintUnavailable, normalize_quantity,
         OrderConstraints,
     )
+    from aletheia.exchanges.ccxt_order_rules import constraints_from_market
 
     constraints = OrderConstraints(
         venue="bitget", symbol="BTC/USDT", market_type="spot",
@@ -109,7 +110,7 @@ def test_stale_rules_are_not_used_when_their_refresh_fails(monkeypatch):
     async def unavailable(*args):
         raise rules.ConstraintUnavailable("refresh failed")
 
-    monkeypatch.setattr(rules, "_fetch_constraints", unavailable)
+    monkeypatch.setattr(rules, "_constraints_reader", unavailable)
     with pytest.raises(rules.ConstraintUnavailable, match="refresh failed"):
         rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot")
 
@@ -137,3 +138,99 @@ def test_bounded_step_restores_only_one_ulp_of_division_noise():
     assert quantity == 0.996 and quantity * 5.03 <= 5.00988 + 1e-12
     with pytest.raises(ConstraintUnavailable, match="below exchange minimum"):
         normalize_quantity(0.995999999, 5.03, constraints, allow_increase=False)
+
+
+def test_core_rules_use_bound_reader_and_absence_clears_cached_authority(monkeypatch):
+    from aletheia.execution import order_constraints as rules
+
+    monkeypatch.setattr(rules, "_cache", {})
+    monkeypatch.setattr(rules, "_constraints_reader", None, raising=False)
+    calls = []
+
+    async def read(venue, symbol, market_type):
+        calls.append((venue, symbol, market_type))
+        return rules.OrderConstraints(
+            venue, symbol, market_type, Decimal("0.001"), None,
+            Decimal("0.001"), Decimal("5"),
+        )
+
+    rules.configure_order_constraints_reader(read)
+    assert rules.prepare_exchange_quantity("bitget_demo", "BTC/USDT", "spot", 0.0011, 2000) == 0.003
+    assert rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot").venue == "bitget"
+    assert calls == [("bitget", "BTC/USDT", "spot")]
+    rules.configure_order_constraints_reader(None)
+    with pytest.raises(rules.ConstraintUnavailable, match="unavailable"):
+        rules.get_order_constraints("bitget_demo", "BTC/USDT", "spot")
+    assert len(calls) == 1
+
+
+def test_core_rules_do_not_construct_or_decode_ccxt():
+    import ast
+    from pathlib import Path
+    from aletheia.execution import order_constraints as rules
+
+    tree = ast.parse(Path(rules.__file__).read_text())
+    imports = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+    imports += [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
+    assert not any(name and name.startswith(("ccxt", "aletheia.net", "aletheia.exchanges", "extensions")) for name in imports)
+    assert not hasattr(rules, "constraints_from_market")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("load_fails", [False, True])
+async def test_exchange_reader_owns_client_and_session_cleanup(monkeypatch, load_fails):
+    from types import SimpleNamespace
+    import ccxt
+    from aletheia import net
+    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+    from aletheia.execution.order_constraints import ConstraintUnavailable
+
+    events = []
+
+    async def load():
+        events.append("load")
+        if load_fails:
+            raise TimeoutError("synthetic transport timeout")
+
+    async def close_exchange():
+        events.append("exchange_closed")
+
+    async def close_session():
+        events.append("session_closed")
+
+    def make(exchange_id, *, options):
+        assert exchange_id == "binanceusdm"
+        assert options == {"defaultType": "swap"}
+        return SimpleNamespace(
+            load_markets=load, close=close_exchange, precisionMode=ccxt.DECIMAL_PLACES,
+            markets={"BTC/USDT:USDT": _market()},
+        ), SimpleNamespace(close=close_session)
+
+    monkeypatch.setattr(net, "make_ccxt", make)
+    if load_fails:
+        with pytest.raises(ConstraintUnavailable) as raised:
+            await read_order_constraints("binance", "BTC/USDT", "usdt_futures")
+        assert isinstance(raised.value.__cause__, TimeoutError)
+    else:
+        result = await read_order_constraints("binance", "BTC/USDT", "usdt_futures")
+        assert (result.venue, result.symbol, result.market_type) == ("binance", "BTC/USDT", "usdt_futures")
+        assert result.min_quantity == Decimal("0.001")
+        assert result.amount_step == Decimal("0.0001")
+    assert events == ["load", "exchange_closed", "session_closed"]
+
+
+def test_existing_exchange_composition_binds_rules_without_io(monkeypatch):
+    from aletheia.execution import order_constraints as rules
+    from aletheia.exchanges import composition
+    from aletheia.exchanges.ccxt_order_rules import read_order_constraints
+
+    monkeypatch.setattr(rules, "_constraints_reader", None)
+    monkeypatch.setattr(rules, "_cache", {})
+    monkeypatch.setattr(composition, "configure_uta_provider", lambda **kwargs: None)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("binding must not resolve credentials")
+
+    monkeypatch.setattr(composition, "get_secret", forbidden)
+    composition.bind_uta_provider()
+    assert rules._constraints_reader is read_order_constraints
