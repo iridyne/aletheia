@@ -21,43 +21,42 @@ def _reset_module_state():
 
 
 class TestLazyExchangeInit:
-    """OKXClient must NOT create its aiohttp session / ccxt exchange in __init__.
-
-    Regression guard for the cross-loop bug: __init__ runs in a sync context whose
-    event loop differs from the one that later awaits the client (okx_broker
-    _run_coro spins a fresh asyncio.run() in a worker thread). aiohttp binds its
-    connector to the creating loop, so eager construction in __init__ caused
-    "Future attached to a different loop" — which silently failed load_markets()
-    and re-exposed the contractSize sizing bug. The exchange must be created lazily
-    inside the awaiting loop via _ensure_exchange().
-    """
+    """The current UTA client is lazy, loop-owned and closed deterministically."""
 
     def _client(self):
-        from aletheia.exchanges.okx.client import OKXClient
-        with patch("aletheia.exchanges.okx.client.get_secret", return_value="x"):
-            return OKXClient(mode="demo")
+        from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+        from tests.uta.test_ccxt_adapter import _identity, _profile
+        profile = _profile("okx")
+        return CCXTUTAAdapter(_identity(profile), profile)
 
     def test_init_does_not_build_exchange(self):
-        c = self._client()
-        assert c._exchange is None, "__init__ must not eagerly build the ccxt exchange"
-        assert c._session is None, "__init__ must not eagerly build the aiohttp session"
+        client = self._client()
+        assert client._exchange is None
+        assert client._session is None
 
-    def test_init_stores_credentials_for_lazy_build(self):
-        c = self._client()
-        assert c._api_key and c._api_secret and c._passphrase and c._mode == "demo"
+    def test_init_keeps_selected_account_identity(self):
+        client = self._client()
+        assert client.identity.venue == "okx"
+        assert client.identity.environment == "demo"
 
-    def test_ensure_exchange_is_idempotent(self):
-        c = self._client()
-        with patch("aletheia.net.aiohttp_session", return_value=MagicMock()):
-            ex1 = c._ensure_exchange()
-            ex2 = c._ensure_exchange()
-            assert ex1 is ex2, "_ensure_exchange must reuse the same exchange within one loop"
+    @pytest.mark.asyncio
+    async def test_connect_is_idempotent(self, monkeypatch):
+        from tests.uta.test_ccxt_adapter import FakeExchange, _install
+        exchange = FakeExchange()
+        session, calls = _install(monkeypatch, exchange)
+        client = self._client()
+        try:
+            await client.connect()
+            await client.connect()
+            assert len(calls) == 1
+            assert client._exchange is exchange
+        finally:
+            await client.close()
+        assert exchange.closed and session.closed
 
-    def test_close_is_noop_when_never_used(self):
-        import asyncio
-        c = self._client()
-        # Constructed then closed with no awaited call — must not raise on None refs.
-        asyncio.run(c.close())
+    @pytest.mark.asyncio
+    async def test_close_is_noop_when_never_used(self):
+        await self._client().close()
 
 
 class TestSymbolFilter:

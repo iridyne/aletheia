@@ -230,8 +230,6 @@ async def test_stored_exchange_probe_uses_uta_off_request_loop(monkeypatch, venu
 
     monkeypatch.setattr(manager, "query_uta", query)
     monkeypatch.setattr(routes, "BitgetClient", forbidden_client, raising=False)
-    monkeypatch.setattr("aletheia.exchanges.binance.client.BinanceClient", forbidden_client)
-    monkeypatch.setattr("aletheia.exchanges.okx.client.OKXClient", forbidden_client)
     route, request_type = {
         "bitget": (routes.test_connection, routes.TestConnectionRequest),
         "binance": (routes.binance_test_connection, routes.BinanceTestRequest),
@@ -444,36 +442,26 @@ async def test_close_ccxt_reraises_cancellation_after_session_cleanup():
     assert calls == ["exchange", "session"]
 
 
-@pytest.mark.parametrize(
-    ("module_name", "class_name"),
-    [
-        ("aletheia.exchanges.binance.client", "BinanceClient"),
-        ("aletheia.exchanges.okx.client", "OKXClient"),
-    ],
-)
-async def test_exchange_client_close_surfaces_failure_and_retains_retry_handles(
-    monkeypatch, module_name, class_name
-):
-    import importlib
-    import aletheia.net as net
+@pytest.mark.parametrize("venue", ["okx", "binance"])
+async def test_uta_close_attempts_session_cleanup_after_exchange_failure(monkeypatch, venue):
+    from unittest.mock import AsyncMock
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
+    from tests.uta.test_ccxt_adapter import FakeExchange, _identity, _install, _profile
 
-    module = importlib.import_module(module_name)
-    client = getattr(module, class_name).__new__(getattr(module, class_name))
-    exchange = object()
-    session = object()
-    client._exchange = exchange
-    client._session = session
-    monkeypatch.setattr(net, "close_ccxt", lambda *_args: _false_async())
+    profile = _profile(venue)
+    exchange = FakeExchange()
+    session, _ = _install(monkeypatch, exchange)
+    client = CCXTUTAAdapter(_identity(profile), profile)
+    await client.connect()
+    exchange.close = AsyncMock(side_effect=RuntimeError("synthetic cleanup failure"))
 
-    with pytest.raises(RuntimeError, match="ccxt_cleanup_failed"):
-        await client.close()
-
-    assert client._exchange is exchange
-    assert client._session is session
-
-
-async def _false_async():
-    return False
+    # UTA teardown is bounded and must not mask the command report; the owned
+    # session is still closed even when exchange teardown raises.
+    await client.close()
+    exchange.close.assert_awaited_once()
+    assert session.closed
+    await client.close()
+    exchange.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
