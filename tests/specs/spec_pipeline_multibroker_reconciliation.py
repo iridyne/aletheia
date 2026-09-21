@@ -920,7 +920,7 @@ def test_private_fill_query_failure_stays_unresolved_and_sanitized(tmp_path, mon
 
 def _read_profile_fills(monkeypatch, execution_mode, profile, payload, venue_order_id, contract_size):
     import ccxt.async_support as ccxt
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from aletheia.uta.compat import instrument_from_local
     from aletheia.uta.models import FillQuery, QueryScope
     from tests.uta.test_ccxt_adapter import _install

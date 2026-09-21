@@ -48,7 +48,7 @@ from aletheia.uta.models import (
     VerifiedExitReport,
     VerifiedExitState,
 )
-from aletheia.uta.profiles.base import CCXTProfile
+from extensions.exchanges.ccxt.profile import CCXTProfile
 
 
 class _AmbiguousAcknowledgementError(RuntimeError):

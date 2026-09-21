@@ -101,7 +101,7 @@ async def test_bitget_recovers_order_id_from_client_oid():
 
 def _binance_adapter(monkeypatch):
     import ccxt.async_support as ccxt
-    from aletheia.uta.ccxt_adapter import CCXTUTAAdapter
+    from extensions.exchanges.ccxt.adapter import CCXTUTAAdapter
     from tests.uta.test_ccxt_adapter import _profile, _identity, _install
     exchange = ccxt.binanceusdm()
     exchange.set_markets([{"id": "BTCUSDT", "symbol": "BTC/USDT:USDT", "base": "BTC", "quote": "USDT", "settle": "USDT", "type": "swap", "spot": False, "swap": True, "future": False, "option": False, "contract": True, "linear": True, "inverse": False, "contractSize": 1}])
