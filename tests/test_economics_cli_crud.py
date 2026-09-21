@@ -182,6 +182,58 @@ def test_get_viability_report_returns_row_or_none():
     assert db.total_changes == before
 
 
+@pytest.mark.parametrize("command", ["viability-list", "viability-show"])
+def test_archived_viability_cli_does_not_initialize_current_economics(command):
+    """An archive read must not perform a pending current-ledger backfill."""
+    from aletheia.economics.schema import _TOOL_BACKFILL_KEY
+
+    _seed_viability_report(report_id="archived")
+    db = get_db()
+    db.execute("DELETE FROM economics_settings WHERE key=?", (_TOOL_BACKFILL_KEY,))
+    before = db.total_changes
+    args = ["audit", command]
+    if command == "viability-show":
+        args.append("archived")
+    result = runner.invoke(app, [*args, "--json"])
+    assert result.exit_code == 0, result.output
+    assert "archived" in result.output
+    assert db.total_changes == before
+    assert db.execute(
+        "SELECT 1 FROM economics_settings WHERE key=?", (_TOOL_BACKFILL_KEY,),
+    ).fetchone() is None
+
+
+@pytest.mark.parametrize("empty_database", [False, True])
+def test_absent_viability_history_does_not_create_database_or_schema(tmp_path, empty_database):
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    script = f"empty_database = {empty_database!r}\n" + '''
+import sqlite3
+from aletheia.storage.sqlite import db_path
+from aletheia.economics.historical_viability import list_viability_reports, get_viability_report
+from aletheia.server.routes.economics import viability_reports
+path = db_path()
+if empty_database:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(path).close()
+before = path.read_bytes() if path.exists() else None
+assert list_viability_reports() == []
+assert get_viability_report("missing") is None
+assert viability_reports(scope=None, limit=20, offset=0) == {
+    "reports": [], "limit": 20, "offset": 0, "total": 0}
+assert (path.read_bytes() if path.exists() else None) == before
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
+        env={**os.environ, "ALETHEIA_DATA_DIR": str(tmp_path)},
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 # ── CLI: catalog pricing is read-only ────────────────────────────────────────
 
 
