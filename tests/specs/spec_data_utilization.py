@@ -206,20 +206,17 @@ def test_llm_inference_observation_is_registered_without_raw_content():
 @spec_claim(
     SpecClaim(
         "DU-S23", _CONTRACT, "§3 primary funding delayed recovery", "L2c",
-        "Persisted primary-venue funding history is explicitly consumed by the "
-        "local-paper historical-ledger settler without being represented as a "
-        "broker account ledger.",
-        status="implemented",
+        "The former local-paper funding settler is retired; public funding "
+        "observations cannot replace private external-account funding evidence.",
+        status="superseded",
     ),
 )
-def test_primary_funding_history_is_registered_for_local_paper_recovery():
+def test_local_paper_funding_consumer_remains_retired():
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
-    funding = _LOCAL_FUNDING.read_text(encoding="utf-8")
-    account = _PAPER_ACCOUNT.read_text(encoding="utf-8")
-    assert "historical_ledger" in doc
-    assert "不冒充 broker ledger" in doc
-    assert "allow_historical_ledger" in funding
-    assert "allow_historical_ledger=True" in account
+    assert not _LOCAL_FUNDING.exists()
+    assert not _PAPER_ACCOUNT.exists()
+    assert "不能代替外部账户的私有 `broker_ledger`" in doc
+    assert "../history/local_simulated_risk_execution.md" in doc
 
 
 @spec_claim(
@@ -241,19 +238,29 @@ def test_operator_evaluation_observation_is_registered_and_consumed_read_only():
 
 @spec_claim(
     SpecClaim(
-        "DU-S24", _CONTRACT, "§3 xStock listing status", "L2a",
+        "DU-S24", _CONTRACT, "§3 xStock listing status", "L2b",
         "The venue-specific xStock listing source is registered, bounded, fail-open for "
         "configured intent, and its confirmed-removal consumer writes a system audit.",
         status="implemented",
     ),
 )
-def test_xstock_listing_source_is_registered_and_bounded():
+async def test_xstock_listing_source_is_registered_and_bounded(monkeypatch):
+    from unittest.mock import AsyncMock
+    from aletheia.data import providers
+    from aletheia.trading.market_data import _listed_symbols_on_exchange
+    from tests.test_market_listing_boundary import test_adapter_preserves_listing_filters_and_closes
+
     doc = _DATA_UTILIZATION_DOC.read_text(encoding="utf-8")
     source = _MARKET_DATA.read_text(encoding="utf-8")
 
     assert "xStock 上市状态" in doc and "DU-S24" in doc
-    assert "native_ccxt=True" in source
-    assert "fallback_exchange=exchange_name" in source
+    reader = AsyncMock(return_value=frozenset({"AAPLON/USDT"}))
+    monkeypatch.setattr(providers, "_listing_reader", reader)
+    assert await _listed_symbols_on_exchange("bitget") == frozenset({"AAPLON/USDT"})
+    reader.assert_awaited_once_with("bitget", True)
+    reader.side_effect = TimeoutError("synthetic listing timeout")
+    assert await _listed_symbols_on_exchange("bitget") is None
+    await test_adapter_preserves_listing_filters_and_closes(monkeypatch, True)
     assert "_XSTOCK_LISTING_TIMEOUT_SEC" in source
     assert "listing_cache" in source
     assert "xstock_observation_config_auto_removed" in source
@@ -427,12 +434,16 @@ def test_exchange_source_divergence_is_guarded_and_visible():
 
 @spec_claim(
     SpecClaim(
-        "DU-S19", _CONTRACT, "§verified exit private history", "L2a",
+        "DU-S19", _CONTRACT, "§verified exit private history", "L2b",
         "Bitget, OKX, and Binance private position/fill history is registered and "
-        "consumed only through the fail-closed VerifiedExitResult contract.",
+        "consumed through the fail-closed UTA VerifiedExitReport contract.",
     ),
 )
-def test_verified_exit_private_history_is_registered_and_bounded():
+@pytest.mark.parametrize("venue", ["classic_v2", "uta_v3", "okx", "binance"])
+@pytest.mark.parametrize("case", ["complete", "network_error", "full_unpageable", "expired", "wrong_account"])
+async def test_verified_exit_private_history_is_registered_and_bounded(monkeypatch, venue, case):
+    from tests.test_verified_exit import test_uta_verified_exit_preserves_private_evidence_boundary
+
     doc = _DATA_UTILIZATION_DOC.read_text(
         encoding="utf-8"
     )
@@ -444,14 +455,7 @@ def test_verified_exit_private_history_is_registered_and_bounded():
         "verified_fill", "confirmed_absent_without_fill", "inconclusive",
     ):
         assert state in protocol
-    for relative in (
-        "aletheia/exchanges/bitget/client.py",
-        "aletheia/exchanges/okx/client.py",
-        "aletheia/exchanges/binance/client.py",
-    ):
-        source = (_ROOT / relative).read_text(encoding="utf-8")
-        assert "get_verified_position_exit" in source
-        assert "inconclusive_verified_exit" in source
+    await test_uta_verified_exit_preserves_private_evidence_boundary(monkeypatch, venue, case)
 
 
 # ---------------------------------------------------------------------------
