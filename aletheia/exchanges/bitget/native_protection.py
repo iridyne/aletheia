@@ -38,4 +38,4 @@ class BitgetNativeProtectionReader:
         ))
 
     async def close(self) -> None:
-        await self._client.close()
+        """No persistent transport: the native client scopes HTTP per request."""
