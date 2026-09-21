@@ -179,7 +179,7 @@ def test_ccxt_usd_proof_and_binance_population_are_independent_of_primary_venue(
 
 
 def test_native_retry_keeps_legacy_heartbeat_but_new_interval_is_persisted():
-    from aletheia.data.collectors.hyperliquid import _parse_funding
+    from extensions.data.collectors.hyperliquid import _parse_funding
     from aletheia.storage import repositories as repo
     now = datetime.now(timezone.utc)
     first = _parse_funding('BTC/USDT', {'funding':'.001', 'markPx':'60000'}, now.isoformat()).model_dump()

@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from aletheia.data.collectors.defillama import _DL_STABLECOINS_URL
+from extensions.data.collectors.defillama import _DL_STABLECOINS_URL
 from tests.specs.spec_meta import SpecClaim, spec_claim
 
 _ROOT = Path(__file__).parent.parent.parent
-_DL = _ROOT / "aletheia" / "data" / "collectors" / "defillama.py"
+_DL = _ROOT / "extensions" / "data" / "collectors" / "defillama.py"
 _MIGRATIONS = _ROOT / "aletheia" / "storage" / "migrations.py"
 _REPOSITORIES = _ROOT / "aletheia" / "storage" / "repositories.py"
 
@@ -44,7 +44,7 @@ _CONTRACT = "data_layer_contract"
 )
 def test_defillama_collector_exists():
     assert _DL.exists(), "defillama.py not found"
-    from aletheia.data.collectors import defillama as mod
+    from extensions.data.collectors import defillama as mod
     assert hasattr(mod, "DefiLlamaCollector"), "DefiLlamaCollector not exported"
     assert callable(getattr(mod.DefiLlamaCollector, "collect")), (
         "DefiLlamaCollector.collect must be callable"
@@ -144,8 +144,8 @@ def test_defillama_stablecoin_total_usd():
     assert _FIXTURE_STABLE.exists(), f"Fixture missing: {_FIXTURE_STABLE}"
     raw = json.loads(_FIXTURE_STABLE.read_text(encoding="utf-8"))
 
-    from aletheia.data.collectors.defillama import _fetch_stablecoin_mcap
-    import aletheia.data.collectors.defillama as mod
+    from extensions.data.collectors.defillama import _fetch_stablecoin_mcap
+    import extensions.data.collectors.defillama as mod
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).isoformat()
@@ -216,7 +216,7 @@ def test_defillama_db_write_three_rows(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    import aletheia.data.collectors.defillama as mod
+    import extensions.data.collectors.defillama as mod
 
     class _MockResp:
         def __init__(self, data):
@@ -296,7 +296,7 @@ def test_defillama_one_endpoint_failure_isolated(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    import aletheia.data.collectors.defillama as mod
+    import extensions.data.collectors.defillama as mod
 
     class _MockResp:
         def __init__(self, data):
@@ -362,7 +362,7 @@ def test_defillama_empty_payloads_do_not_emit_zero_snapshots(tmp_path, monkeypat
     sq.close_db()
     mig.run_migrations()
 
-    import aletheia.data.collectors.defillama as mod
+    import extensions.data.collectors.defillama as mod
     from aletheia.data.collector_health import classify_collector_result
 
     class _MockResp:
@@ -434,8 +434,8 @@ def test_defillama_empty_payloads_do_not_emit_zero_snapshots(tmp_path, monkeypat
     ],
 )
 def test_defillama_invalid_dex_payloads_do_not_emit_zero_snapshot(payload, monkeypatch):
-    import aletheia.data.collectors.defillama as mod
-    from aletheia.data.collectors.defillama import _fetch_dex_volume
+    import extensions.data.collectors.defillama as mod
+    from extensions.data.collectors.defillama import _fetch_dex_volume
 
     class _MockResp:
         def raise_for_status(self):
@@ -491,7 +491,7 @@ async def test_defillama_live_e2e(tmp_path, monkeypatch):
     sq.close_db()
     mig.run_migrations()
 
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from extensions.data.collectors.defillama import DefiLlamaCollector
     result = await DefiLlamaCollector().collect()
 
     # Collection is pure; the caller owns persistence (scheduler batches it into

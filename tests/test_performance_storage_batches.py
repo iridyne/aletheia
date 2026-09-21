@@ -120,7 +120,7 @@ def test_agent_trace_flushes_as_one_batch_transaction(tmp_path, monkeypatch):
 def test_context_collector_defers_network_results_into_one_transaction(tmp_path, monkeypatch):
     _setup_db(tmp_path, monkeypatch)
     from aletheia.agent_runtime import scheduler
-    from aletheia.data.collectors.defillama import DefiLlamaCollector
+    from extensions.data.collectors.defillama import DefiLlamaCollector
     from aletheia.data.collectors.macro import MacroCollector
     from aletheia.data.models import MacroSnapshot
     from aletheia.storage.models import OnchainSnapshot

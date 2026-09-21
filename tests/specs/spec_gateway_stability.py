@@ -605,7 +605,7 @@ def test_scheduler_owned_rows_report_failure_only_after_persistence(monkeypatch,
     from types import SimpleNamespace
 
     from aletheia.agent_runtime import scheduler as sch
-    from aletheia.data.collectors.coingecko_top import CoinGeckoTopCollector
+    from extensions.data.collectors.coingecko_top import CoinGeckoTopCollector
     from aletheia.data.collectors.coinalyze import CoinalyzeCollector
     from extensions.data.collectors.derivatives import DerivativesCollector
     from aletheia.data.collectors.macro import MacroCollector
