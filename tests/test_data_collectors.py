@@ -528,20 +528,20 @@ async def test_coinalyze_collect_rotates_liquidation_budget_and_reports_deferred
 # ---------------------------------------------------------------------------
 
 def test_classify_risk_regime_risk_off():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=30.0, cap_change=None) == "risk_off"
     assert _classify_risk_regime(vix=None, cap_change=-5.0) == "risk_off"
 
 
 def test_classify_risk_regime_risk_on():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=12.0, cap_change=1.5) == "risk_on"
 
 
 def test_classify_risk_regime_neutral():
-    from aletheia.data.collectors.macro import _classify_risk_regime
+    from aletheia.data.freshness import _classify_risk_regime
 
     assert _classify_risk_regime(vix=20.0, cap_change=0.5) == "neutral"
     assert _classify_risk_regime(vix=None, cap_change=None) is None

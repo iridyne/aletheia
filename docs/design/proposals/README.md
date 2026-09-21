@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Slim Core macro projection](slim_core_macro_projection.md): keep stored macro
+  fact classification independent of optional acquisition code.
+
 - [Minimal canonical Derivatives Facts](derivatives_facts.md): explicit source/unit/time semantics over existing collectors and tables, with observation-only cross-venue readiness.
 
 - [Retire the local simulated exchange](retire_local_simulated_exchange.md): accepted removal of the internal execution/account runtime while preserving historical data.
