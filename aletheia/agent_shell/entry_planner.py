@@ -167,49 +167,50 @@ async def plan_next_candidate(
                 if generation.get("planner_input_json"):
                     context_model = EntryAnalysisContext.model_validate_json(generation["planner_input_json"])
                 else:
-                    from aletheia.data.collectors.microstructure import MicrostructureCollector
-                    from aletheia.data.symbols import InstrumentId
+                    from aletheia.data.providers import MarketDataObservationError, get_market_data_provider
 
                     orderbook = repo.latest_orderbook(
                         generation["symbol"], generation["venue"], generation["market_type"]
                     )
                     if not entry_orderbook_available(orderbook, datetime.now(timezone.utc)):
-                        instrument = InstrumentId(
-                            generation["venue"], generation["symbol"], generation["market_type"]
-                        )
                         started = asyncio.get_running_loop().time()
                         category, phase, exception_type = "invalid_payload", "parse", None
                         book_age_ms = None
                         orderbook = None
                         try:
                             async with asyncio.timeout(5):
-                                result = await MicrostructureCollector().collect(
-                                    [instrument], venue=generation["venue"]
-                                )
-                            for error in result.get("errors", ()):
-                                error_phase, _, error_type = error.partition(":")
-                                if error_phase in {"provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse"}:
-                                    phase = error_phase
-                                    if error_type.isascii() and error_type.isidentifier() and len(error_type) <= 80:
-                                        exception_type = error_type
-                                    category = "invalid_payload" if error_type == "invalid_orderbook" else "collector_error"
-                                    break
-                            for snapshot in result["snapshots"]:
-                                if (snapshot.exchange, snapshot.symbol, snapshot.market_type) != (
+                                try:
+                                    provider = get_market_data_provider(
+                                        generation["venue"], exact_venue=True,
+                                    )
+                                except Exception as exc:
+                                    raise MarketDataObservationError("provider_setup", exc) from None
+                                try:
+                                    candidate_book = await provider.get_orderbook_observation(
+                                        generation["symbol"], market_type=generation["market_type"],
+                                    )
+                                finally:
+                                    await provider.close()
+                            if isinstance(candidate_book, dict):
+                                if tuple(candidate_book.get(key) for key in ("exchange", "symbol", "market_type")) != (
                                     generation["venue"], generation["symbol"], generation["market_type"]
                                 ):
                                     category = "identity_mismatch"
-                                    continue
-                                candidate_book = snapshot.model_dump()
-                                now = datetime.now(timezone.utc)
-                                observed = datetime.fromisoformat(candidate_book["observed_at"].replace("Z", "+00:00"))
-                                if observed.tzinfo is not None:
-                                    book_age_ms = int((now - observed).total_seconds() * 1000)
-                                if entry_orderbook_available(candidate_book, now):
-                                    orderbook = candidate_book
-                                elif book_age_ms is not None:
-                                    category = "future" if book_age_ms < 0 else "stale"
-                                break
+                                else:
+                                    now = datetime.now(timezone.utc)
+                                    observed = datetime.fromisoformat(candidate_book["observed_at"].replace("Z", "+00:00"))
+                                    if observed.tzinfo is not None:
+                                        book_age_ms = int((now - observed).total_seconds() * 1000)
+                                    if entry_orderbook_available(candidate_book, now):
+                                        orderbook = candidate_book
+                                    elif book_age_ms is not None:
+                                        category = "future" if book_age_ms < 0 else "stale"
+                        except MarketDataObservationError as exc:
+                            category = "collector_error"
+                            if exc.phase in {"provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse"}:
+                                phase = exc.phase
+                            if exc.exception_type.isascii() and exc.exception_type.isidentifier() and len(exc.exception_type) <= 80:
+                                exception_type = exc.exception_type
                         except Exception as exc:
                             category = "timeout" if isinstance(exc, TimeoutError) else "collector_error"
                             phase, exception_type = "collect", type(exc).__name__

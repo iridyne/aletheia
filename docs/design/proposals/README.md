@@ -27,6 +27,9 @@ Proposal as stable decision history.
 
 ## Current proposals
 
+- [Planner Data boundary](slim_core_planner_data_boundary.md): use normalized
+  observations without coupling stored-fact reads to optional collectors.
+
 - [Slim Core macro projection](slim_core_macro_projection.md): keep stored macro
   fact classification independent of optional acquisition code.
 

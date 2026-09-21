@@ -19,6 +19,17 @@ _listing_reader: Callable[[str, bool], Awaitable[frozenset[str]]] | None = None
 _provider_factory: Callable[..., MarketDataProvider] | None = None
 
 
+class MarketDataObservationError(RuntimeError):
+    """Bounded acquisition diagnostics without a provider exception message."""
+
+    def __init__(self, phase: str, cause: Exception) -> None:
+        self.phase = phase if phase in {
+            "provider_setup", "load_markets", "market_metadata", "fetch_order_book", "parse",
+        } else "parse"
+        self.exception_type = type(cause).__name__
+        super().__init__(f"{self.phase}:{self.exception_type}")
+
+
 def configure_market_data_factory(factory: Callable[..., MarketDataProvider] | None) -> None:
     global _provider_factory
     _provider_factory = factory
@@ -327,6 +338,8 @@ class MarketDataProvider(Protocol):
     capability returns one normalized exact-market orderbook mapping without
     persistence or fallback. Core owns freshness reuse, diagnostics and the
     sole orderbook repository write.
+    Acquisition failures may raise ``MarketDataObservationError`` with a bounded
+    stage and exception type, never the external exception message.
 
     The optional async ``get_tickers_observation(symbols, *, market_type)``
     capability returns the existing feature-collection ticker mappings from the
