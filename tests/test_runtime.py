@@ -235,7 +235,7 @@ def test_scheduler_guard_rolls_back_leaked_sqlite_transaction(tmp_path, monkeypa
 async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.data.providers import Ticker
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers
 
     class _FakeCCXT:
         async def get_ticker(self, symbol):
@@ -246,7 +246,7 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_provider, "CCXTProvider", lambda **kw: _FakeCCXT())
+    monkeypatch.setattr(providers, "get_market_data_provider", lambda **kw: _FakeCCXT())
 
     # Disable xStocks so this test covers only the 3 crypto symbols (spot-only
     # collection path).  Must clear both the new stock-token field and the
@@ -271,7 +271,7 @@ async def test_market_data_writes_snapshot(tmp_path, monkeypatch):
 async def test_market_data_persists_exact_execution_targets(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.schema import AletheiaConfig
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers
     from aletheia.data.providers import Ticker
     from aletheia.risk.engine import _market_data_age_seconds
     from aletheia.trading import market_data as md
@@ -306,11 +306,11 @@ async def test_market_data_persists_exact_execution_targets(tmp_path, monkeypatc
             closed.append(self.venue)
 
     def provider(**kwargs):
-        assert kwargs["fallback_exchange"] == kwargs["exchange"]
+        assert kwargs["exact_venue"] is True
         opened.append(kwargs["exchange"])
         return Provider(kwargs["exchange"])
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", provider)
+    monkeypatch.setattr(providers, "get_market_data_provider", provider)
     result = await md.collect_market_snapshots()
     assert not result["errors"]
     expected = {("bitget", "BTC/USDT", "perp"),
@@ -329,7 +329,7 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
 ):
     setup_env(tmp_path, monkeypatch)
     from aletheia.data.providers import Ticker
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers
 
     class _CrossVenueProvider:
         async def get_ticker(self, symbol):
@@ -351,7 +351,7 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
         return _CrossVenueProvider()
 
     monkeypatch.setattr(
-        ccxt_provider, "get_market_data_provider", _provider_factory
+        providers, "get_market_data_provider", _provider_factory
     )
 
     from aletheia.config.loader import load_config, save_config
@@ -365,8 +365,7 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
 
     assert calls == [{
         "exchange": "binance",
-        "native_ccxt": True,
-        "fallback_exchange": "binance",
+        "exact_venue": True,
     }]
     assert result["collected"] == []
     assert len(result["errors"]) == 3
@@ -382,7 +381,7 @@ async def test_market_data_rejects_cross_venue_fallback_snapshot(
 async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, monkeypatch):
     setup_env(tmp_path, monkeypatch)
     from aletheia.config.loader import load_config, save_config
-    from aletheia.data import ccxt_provider
+    from aletheia.data import providers
     from aletheia.data.providers import Ticker
 
     cfg = load_config()
@@ -407,7 +406,7 @@ async def test_market_data_persists_successes_before_cancelled_fetch(tmp_path, m
         async def close(self):
             pass
 
-    monkeypatch.setattr(ccxt_provider, "get_market_data_provider", lambda **_kw: _Provider())
+    monkeypatch.setattr(providers, "get_market_data_provider", lambda **_kw: _Provider())
 
     from aletheia.trading.market_data import collect_market_snapshots
 
